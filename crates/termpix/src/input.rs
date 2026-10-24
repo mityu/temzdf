@@ -715,7 +715,10 @@ fn mods_and_kind(field: Option<&str>) -> (Modifiers, KeyEventKind) {
 
 /// `CSI code[:shifted[:base]] ; mods[:event] ; text u`
 fn kitty_key(fields: &[&str]) -> Option<Event> {
-    let code: u32 = fields.first()?.split(':').next()?.parse().ok()?;
+    let mut codes = fields.first()?.split(':');
+    let code: u32 = codes.next()?.parse().ok()?;
+    // Alternate keys (flag 4): the shifted key, then the base-layout key.
+    let shifted = codes.next().and_then(|c| c.parse::<u32>().ok()).and_then(char::from_u32);
     let (modifiers, kind) = mods_and_kind(fields.get(1).copied());
     let text = fields
         .get(2)
@@ -749,7 +752,21 @@ fn kitty_key(fields: &[&str]) -> Option<Event> {
             _ => ModifierKey::IsoLevel5Shift,
         }),
         57344..=63743 => KeyCode::Other(code),
-        _ => KeyCode::Char(char::from_u32(code)?),
+        _ => {
+            let base = char::from_u32(code)?;
+            // The protocol reports the unshifted key plus Shift. Report the character
+            // actually produced, like legacy input does: from the alternate key, or
+            // failing that from the associated text.
+            let single_text = text.as_deref().and_then(|t| {
+                let mut it = t.chars();
+                it.next().filter(|_| it.next().is_none())
+            });
+            match (modifiers.contains(Modifiers::SHIFT), shifted, single_text) {
+                (true, Some(c), _) => KeyCode::Char(c),
+                (true, None, Some(c)) => KeyCode::Char(c),
+                _ => KeyCode::Char(base),
+            }
+        }
     };
     Some(Event::Key(KeyEvent { code, modifiers, kind, text }))
 }
@@ -858,17 +875,23 @@ mod tests {
                 text: None
             })]
         );
-        // Shifted key with alternate codes and associated text
+        // Shifted key with alternate codes and associated text: the produced character
         let ev = parse(b"\x1b[97:65;2;65u");
         assert_eq!(
             ev,
             vec![Event::Key(KeyEvent {
-                code: KeyCode::Char('a'),
+                code: KeyCode::Char('A'),
                 modifiers: Modifiers::SHIFT,
                 kind: KeyEventKind::Press,
                 text: Some("A".into())
             })]
         );
+        // Shift without alternate keys (flag 4 off) falls back to the associated text;
+        // with neither, the base key is kept.
+        assert!(matches!(&parse(b"\x1b[103;2;71u")[0], Event::Key(KeyEvent { code: KeyCode::Char('G'), .. })));
+        assert!(matches!(&parse(b"\x1b[103;2u")[0], Event::Key(KeyEvent { code: KeyCode::Char('g'), .. })));
+        // Shifted digit row: Shift+3 on a US layout is '#'
+        assert!(matches!(&parse(b"\x1b[51:35;2u")[0], Event::Key(KeyEvent { code: KeyCode::Char('#'), .. })));
         // Repeat of an arrow key
         let ev = parse(b"\x1b[1;1:2A");
         assert!(matches!(&ev[0], Event::Key(KeyEvent { code: KeyCode::Up, kind: KeyEventKind::Repeat, .. })));
