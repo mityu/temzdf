@@ -19,6 +19,9 @@ use crate::viewer::Need;
 use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd, SynctexCmd};
 
 const FRAME: Duration = Duration::from_millis(16);
+/// Raw bytes of not-yet-shown images sent per idle iteration (about four
+/// 512 px tiles); small enough that input is never kept waiting.
+const UPLOAD_AHEAD_BATCH: usize = 4 << 20;
 /// Longest wait for the visible pages before showing the first frame.
 const FIRST_FRAME_WAIT: Duration = Duration::from_millis(1500);
 /// Retry interval while the file is incomplete or fails to open.
@@ -147,6 +150,16 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 dirty = false;
             }
         }
+        // Idle and the link is free: send pre-rendered neighbour tiles now, so
+        // scrolling to them later costs only a placement (matters over SSH).
+        let mut uploading = false;
+        if !dirty && !comp.is_congested(Instant::now()) && comp.has_pending_uploads() {
+            let mut ahead = Vec::new();
+            uploading = comp.upload_ahead(&mut ahead, UPLOAD_AHEAD_BATCH)?;
+            if !ahead.is_empty() {
+                tty.write_all(&ahead)?;
+            }
+        }
         // Requests are dispatched every iteration: some (Ctrl+click inverse search)
         // do not change the screen, so they must not wait for a redraw.
         for req in session.take_requests() {
@@ -169,7 +182,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         for due in [reload.due, session.next_deadline()].into_iter().flatten() {
             timeout = timeout.min(due.saturating_duration_since(Instant::now()));
         }
-        if congested || held {
+        if congested || held || uploading {
             // Re-check soon: the acknowledgement may never come, the frame-rate
             // interval passes, or the first frame stops waiting.
             timeout = timeout.min(Duration::from_millis(30));
