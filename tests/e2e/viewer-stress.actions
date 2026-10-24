@@ -1,4 +1,4 @@
-# Used with: TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf tests/fixtures/sample.pdf
+# Used with: TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf target/fixtures/sample.pdf
 # Sends many compressed tiles inline (like over SSH): scroll the whole document,
 # zoom in and out at several points. Pass = the terminal survives (exit code 0)
 # and the last screenshot shows the document.

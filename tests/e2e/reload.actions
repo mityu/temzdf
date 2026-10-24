@@ -1,5 +1,5 @@
 # Used with:
-#   mkdir -p target/e2e-reload && cp tests/fixtures/sample.pdf target/e2e-reload/doc.pdf
+#   mkdir -p target/e2e-reload && cp target/fixtures/sample.pdf target/e2e-reload/doc.pdf
 #   scripts/e2e.sh tests/e2e/reload.actions -- target/debug/temzdf target/e2e-reload/doc.pdf
 # Simulates how LaTeX tools write the PDF. Expected:
 #   before.png     page 2 ("3 Filler"), status 2 / 3
@@ -11,15 +11,15 @@ doc=target/e2e-reload/doc.pdf
 keys 2 shift+g
 pause 1.2
 shot before
-head -c 60000 tests/fixtures/sample.pdf >"$doc"
+head -c 60000 target/fixtures/sample.pdf >"$doc"
 pause 1.2
 shot truncated
-cp tests/fixtures/sample-short.pdf target/e2e-reload/.doc.pdf.tmp
+cp target/fixtures/sample-short.pdf target/e2e-reload/.doc.pdf.tmp
 mv target/e2e-reload/.doc.pdf.tmp "$doc"
 pause 1.5
 shot short
 rm "$doc"
 pause 0.5
-cp tests/fixtures/sample.pdf "$doc"
+cp target/fixtures/sample.pdf "$doc"
 pause 1.5
 shot recreated

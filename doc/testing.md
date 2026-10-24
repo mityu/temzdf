@@ -15,7 +15,9 @@ and what the screenshots should show. To look at many screenshots at once:
 
 ## Fixtures
 
-`tests/fixtures/*.tex` are built into PDFs and SyncTeX files with
-`scripts/build-fixtures.sh` (host TeX). Generated files are committed. The
-script rewrites the fixture directory in SyncTeX `Input:` lines to `./` so no
-machine-specific path is committed.
+`tests/fixtures/*.tex` are the sources. `scripts/build-fixtures.sh` builds them
+into `target/fixtures/` (PDF and SyncTeX) with a global TeX installation (or
+the one in `nix develop .#alldeps`), reproducibly
+(`SOURCE_DATE_EPOCH`), and skips fixtures newer than their source. Unit tests
+call it on first use (`pdf::fixture`); run it yourself before e2e scenarios.
+Generated files are never committed (see AGENTS.md).

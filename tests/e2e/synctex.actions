@@ -1,5 +1,5 @@
 # Used with:
-#   mkdir -p target/e2e-sync && cp tests/fixtures/sample.{pdf,synctex.gz} target/e2e-sync/
+#   mkdir -p target/e2e-sync && cp target/fixtures/sample.{pdf,synctex.gz} target/e2e-sync/
 #   scripts/e2e.sh tests/e2e/synctex.actions -- target/debug/temzdf \
 #     --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf
 # Expected:

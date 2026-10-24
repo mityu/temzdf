@@ -236,9 +236,24 @@ pub fn render(list: &DisplayList, bounds: PageBounds, scale: f32, area: PixelRec
     Ok(out)
 }
 
+/// A test fixture. LaTeX sources live in `tests/fixtures/`; everything built from
+/// them (PDF, SyncTeX) is generated into `target/fixtures/` by
+/// `scripts/build-fixtures.sh` on first use and never committed.
 #[cfg(test)]
 pub(crate) fn fixture(name: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures").join(name)
+    let root = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("repository root");
+    if name.ends_with(".tex") {
+        return root.join("tests/fixtures").join(name);
+    }
+    static BUILD: std::sync::Once = std::sync::Once::new();
+    BUILD.call_once(|| {
+        let status = std::process::Command::new(root.join("scripts/build-fixtures.sh"))
+            .current_dir(&root)
+            .status()
+            .expect("run scripts/build-fixtures.sh");
+        assert!(status.success(), "building the test fixtures failed");
+    });
+    root.join("target/fixtures").join(name)
 }
 
 #[cfg(test)]

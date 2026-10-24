@@ -21,7 +21,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley` + `taffy`). Depends only on `termpix`. |
 | `crates/temzdf` | The viewer binary (MuPDF via the `mupdf` crate, SyncTeX, reload). |
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
-| `tests/fixtures/` | LaTeX sources and generated PDFs/SyncTeX files used by tests. |
+| `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
 | `todo.md` | Long-running tasks and deferred work. |
 
 Dependency direction is strictly `temzdf -> termpix-ui -> termpix`. Never make the
@@ -49,7 +49,8 @@ scripts/e2e.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_dem
 Action files in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
 screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. See the
 script header for the helpers. `temzdf FILE --render-frame out.png` renders one
-screen headlessly. `scripts/build-fixtures.sh` rebuilds `tests/fixtures/`. The
+screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/` from
+`tests/fixtures/*.tex` (tests run it automatically; e2e scenarios need it first). The
 full testing approach is in `doc/testing.md`.
 
 Debugging terminal problems:
@@ -66,13 +67,23 @@ Debugging terminal problems:
 - `scripts/e2e.sh -t ghostty ...` runs the same scenarios in Ghostty; it exits
   with 3 when the terminal crashed.
 
-The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` is in it for scratch scripts). TeX (`latexmk`,
-`pdflatex`, `synctex`) comes from the host profile, not the flake.
+The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` is in it for scratch scripts). The default
+dev shell leaves out large tools that are usually installed globally: TeX
+(`latexmk`, `pdflatex`, `synctex`, needed for the fixtures) and the extra
+terminals/multiplexers for e2e (Ghostty, WezTerm, zellij). On this machine they
+come from the host profile. `nix develop .#alldeps` provides all of them.
 
 ## Conventions
 
 - Everything written into the repository (docs, comments, `todo.md`, skills,
   commit messages) is in English.
+- Never commit binary files (`.pdf`, `.gz`, images, ...) or anything a tool
+  generates (LaTeX/pandoc/typst output, SyncTeX files, logs, screenshots).
+  Generated files can embed machine-specific absolute paths without anyone
+  noticing. Commit the source plus a script that generates the output into
+  `target/` instead, as `scripts/build-fixtures.sh` does. Exceptions: lock files
+  (`Cargo.lock`, `flake.lock`), which pin dependencies and contain no paths.
+  (`tests/fixtures/*.pdf` and `*.synctex.gz` predate this rule and are unused.)
 - Paths written in docs, comments and commit messages are relative to the
   repository root. Never write absolute paths (home directories, scratch
   directories, `/nix/store/...`).

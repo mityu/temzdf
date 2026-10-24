@@ -66,7 +66,7 @@ Known problems:
   pixels compressed by Python's zlib, by miniz_oxide, or by zlib-rs at levels
   2, 3 or 6 are fine. termpix therefore compresses at level 2
   (`crates/termpix/src/graphics.rs`). Reproduce with
-  `TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf tests/fixtures/sample.pdf`
+  `TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf target/fixtures/sample.pdf`
   after switching the level back to 1. Not yet reported upstream.
 - Ghostty 1.3.1 with kitty keyboard flags 31 reports Shift+letter as the base
   key plus Shift (e.g. `CSI 103;2u` style with alternates); termpix maps it to the
