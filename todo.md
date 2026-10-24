@@ -33,6 +33,14 @@ below them are deferred.
   assertions on `TERMPIX_TRACE` output (no page re-upload, one strip sent),
   clipboard text and exit codes; where a whole image must match, store only a
   hash, or render references from the previous build into `target/` and diff.
+  Promising (user idea, 2026-10-25): render each scenario's expected screen
+  with `--render-frame` (same geometry, cell size, `--keys` for the same
+  actions; the mock terminal shows what a kitty-compatible terminal should) and
+  compare it with the e2e screenshot. Fits view-state checks such as zoom, page
+  jumps and search highlights, and needs no stored images. Needs: crop the
+  terminal's padding/decorations, wait until tiles settled, a small tolerance
+  for terminal-side scaling, and headless equivalents of mouse actions (wheel
+  and drag go through the kinetic scroll, so drive it with the same steps).
 - Tune the raster worker pool and measure performance.
 - Measure frame pacing over a real slow SSH link (fences and the writer thread
   are in place but were only tested locally, with a throttling pty proxy).
