@@ -54,6 +54,10 @@ struct Cli {
     /// For --render-frame: keys to press first, e.g. "Tab j Enter" (see headless.rs).
     #[arg(long, value_name = "KEYS")]
     keys: Option<String>,
+    /// For --render-frame: blend translucent layers in linear light like kitty
+    /// (scripts/e2e.sh compares against real terminals).
+    #[arg(long, hide = true)]
+    linear_blending: bool,
 }
 
 fn parse_pair(s: &str) -> Result<(u32, u32)> {
@@ -68,7 +72,13 @@ fn main() -> Result<()> {
         let (cols, rows) = parse_pair(&cli.size)?;
         let (cw, ch) = parse_pair(&cli.cell)?;
         let geometry = Geometry { cols: cols as u16, rows: rows as u16, cell: CellSize { width: cw, height: ch } };
-        let opts = headless::FrameOptions { geometry, page, scale: cli.scale, keys: cli.keys.clone() };
+        let opts = headless::FrameOptions {
+            geometry,
+            page,
+            scale: cli.scale,
+            keys: cli.keys.clone(),
+            linear_blending: cli.linear_blending,
+        };
         return headless::render_frame(&cli.file, out, &opts);
     }
     let forward = match &cli.forward {

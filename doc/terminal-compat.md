@@ -161,6 +161,14 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   at 100 KB/s (uncompressed frames, `zlib_level = 0`): `q` took over 15 s before,
   0.12 s after, and the shell came back clean. zellij may still hold input
   back while it is busy itself; that part is out of our hands.
+- kitty 0.49 blends translucent images in linear light: the current search
+  hit colour (255,120,0, alpha 150) over white shows as (255,191,172), not the
+  sRGB source-over (255,176,105). Scaled images are filtered against a
+  transparent border, darkening half a source pixel along each edge, so a 1x1
+  image stretched over the screen faded to black over half the screen width;
+  the background is now a screen-sized image. (Found by `expect` in e2e.)
+- WezTerm (nixpkgs build) uses 10x22 px cells at its default font, so
+  `scripts/e2e.sh` sizes its window as height/22 rows.
 - WezTerm nightly garbles Composited output sent as several strip images (black
   gaps, strips from older frames left behind), while one whole-screen image per
   frame works. Probe therefore picks `Backend::composited()` (whole frame) for

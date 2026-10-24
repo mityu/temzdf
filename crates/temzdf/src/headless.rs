@@ -26,6 +26,8 @@ pub struct FrameOptions {
     pub scale: Option<f32>,
     /// Keys to press before rendering, space separated (see [`parse_keys`]).
     pub keys: Option<String>,
+    /// Blend translucent layers in linear light (as kitty does).
+    pub linear_blending: bool,
 }
 
 /// Parse a key list like `"Tab j j Enter C-f 3 G"`, in the notation of
@@ -77,6 +79,9 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
             let mut bytes = Vec::new();
             comp.present(&layers, &mut bytes)?;
             let mut term = MockTerminal::new(opts.geometry, [0, 0, 0, 255]);
+            if opts.linear_blending {
+                term.set_blending(termpix::raster::Blending::Linear);
+            }
             term.feed(&bytes);
             term.render().save_png(out)?;
             return Ok(());

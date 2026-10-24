@@ -71,6 +71,9 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let backend = term.backend(caps.backend(), caps.has_backend_override());
     let medium = term.medium(caps.medium(), caps.has_medium_override());
     let mut comp = Compositor::new(backend, medium, caps.geometry);
+    // In the log (stderr is redirected): scripts/e2e.sh reads the geometry to
+    // render the expected screen headlessly.
+    eprintln!("temzdf: {} with {backend:?} over {medium:?}", geometry_line(caps.geometry));
     comp.encoder_mut().set_zlib_level(term.zlib_level);
     if caps.in_tmux {
         comp.set_tmux_passthrough(true);
@@ -245,6 +248,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 {
                     comp.set_geometry(g);
                     session.resize(g);
+                    eprintln!("temzdf: resized to {}", geometry_line(g));
                     dirty = true;
                 }
             }
@@ -414,6 +418,11 @@ impl Screen {
         }
         Ok(())
     }
+}
+
+/// "geometry COLSxROWS cells of WxH px" (the format scripts/e2e.sh parses).
+fn geometry_line(g: termpix::geom::Geometry) -> String {
+    format!("geometry {}x{} cells of {}x{} px", g.cols, g.rows, g.cell.width, g.cell.height)
 }
 
 /// `$XDG_STATE_HOME/temzdf/temzdf.log` (falling back to `~/.local/state`).

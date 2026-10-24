@@ -47,7 +47,9 @@ scripts/e2e.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_dem
 ```
 
 Action files in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
-screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. See the
+screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. For
+key-driven checks prefer `expect NAME KEYS`, which compares the terminal with
+a headless render and fails the run on a mismatch (`tests/e2e/expect.actions`). See the
 script header for the helpers. `temzdf FILE --render-frame out.png` renders one
 screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/` from
 `tests/fixtures/*.tex` (tests run it automatically; e2e scenarios need it first). The

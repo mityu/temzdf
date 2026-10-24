@@ -13,7 +13,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 
 use crate::geom::{Geometry, Rect};
-use crate::raster::{self, RgbaImage, RgbaRef};
+use crate::raster::{self, Blending, RgbaImage, RgbaRef};
 
 #[derive(Clone, Debug)]
 struct MockPlacement {
@@ -48,6 +48,7 @@ pub struct MockTerminal {
     placeholder_cells: HashMap<(u32, u32), (u32, u32, u32)>,
     /// Virtual placements (`U=1`): image id -> size in cells.
     virtual_sizes: HashMap<u32, (u32, u32)>,
+    blending: Blending,
 }
 
 fn utf8_len(first: u8) -> Option<usize> {
@@ -65,6 +66,11 @@ fn diacritic_index(c: char) -> Option<u32> {
 }
 
 impl MockTerminal {
+    /// Blend translucent images like a particular terminal (kitty: linear).
+    pub fn set_blending(&mut self, blending: Blending) {
+        self.blending = blending;
+    }
+
     pub fn new(geometry: Geometry, background: [u8; 4]) -> Self {
         Self {
             geometry,
@@ -78,6 +84,7 @@ impl MockTerminal {
             buf: Vec::new(),
             fg_id: 0,
             placeholder_cells: HashMap::new(),
+            blending: Blending::Srgb,
             virtual_sizes: HashMap::new(),
         }
     }
@@ -407,11 +414,12 @@ impl MockTerminal {
                 Some((c, r)) => (c * cell.width, r * cell.height),
                 None => (src.w, src.h),
             };
-            raster::blit(
+            raster::blit_blended(
                 &mut screen,
                 Rect::new(x, y, w, h),
                 RgbaRef { width: img.width, height: img.height, data: &img.data },
                 src,
+                self.blending,
             );
         }
         // Placeholder cells show one cell of their image's virtual placement.
@@ -420,7 +428,8 @@ impl MockTerminal {
             let (cw, ch) = (img.width / c, img.height / r);
             let src = Rect::new((img_col * cw) as i32, (img_row * ch) as i32, cw, ch);
             let dst = Rect::new((col * cell.width) as i32, (row * cell.height) as i32, cell.width, cell.height);
-            raster::blit(&mut screen, dst, RgbaRef { width: img.width, height: img.height, data: &img.data }, src);
+            let img = RgbaRef { width: img.width, height: img.height, data: &img.data };
+            raster::blit_blended(&mut screen, dst, img, src, self.blending);
         }
         screen
     }
