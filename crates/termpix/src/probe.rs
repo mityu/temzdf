@@ -139,7 +139,9 @@ impl Capabilities {
         }
         // WezTerm and zellij mishandle placements (moves, z-order, crops).
         if self.terminal == TerminalKind::WezTerm || self.in_zellij {
-            Backend::Composited { background: [0, 0, 0, 0] }
+            // zellij forwards every image uncompressed: strips keep updates
+            // small. WezTerm garbles side-by-side images: one whole frame.
+            if self.in_zellij { Backend::composited_strips(2) } else { Backend::composited() }
         } else {
             Backend::Layered
         }
@@ -209,7 +211,7 @@ pub fn interpret(env: &Env, replies: &[Event], kernel: Option<Geometry>, grid: (
         in_zellij: env.zellij,
         backend_override: match env.backend_override.as_deref() {
             Some("layered") => Some(Backend::Layered),
-            Some("composited") => Some(Backend::Composited { background: [0, 0, 0, 0] }),
+            Some("composited") => Some(Backend::composited()),
             _ => None,
         },
         medium_override: match env.medium_override.as_deref() {

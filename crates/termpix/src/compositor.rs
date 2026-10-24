@@ -21,9 +21,9 @@ use crate::graphics::{Delete, Encoder, Medium, PixelFormat, Pixels, Placement};
 use crate::input::GraphicsReply;
 use crate::raster::{self, RgbaImage, RgbaRef};
 
-/// Image id reserved for the composited frame.
-const FRAME_ID: u32 = 1;
 const FIRST_IMAGE_ID: u32 = 2;
+/// Image ids for the strips of the composited frame (strip i is `STRIP_IDS + i`).
+const STRIP_IDS: u32 = 0x7e_1000;
 
 pub const SYNC_BEGIN: &[u8] = b"\x1b[?2026h";
 pub const SYNC_END: &[u8] = b"\x1b[?2026l";
@@ -56,10 +56,29 @@ pub struct Layer {
     pub z: i32,
 }
 
+impl Backend {
+    /// Composited, one whole-screen image per frame (most compatible).
+    pub const fn composited() -> Self {
+        Self::Composited { background: [0, 0, 0, 0], strip_rows: 0 }
+    }
+
+    /// Composited as strips of `rows` cell rows; only changed strips are sent.
+    /// Much less traffic for small updates, but needs a terminal that handles
+    /// many images placed side by side (zellij does; WezTerm does not).
+    pub const fn composited_strips(rows: u32) -> Self {
+        Self::Composited { background: [0, 0, 0, 0], strip_rows: rows }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     Layered,
-    Composited { background: [u8; 4] },
+    /// `strip_rows`: send the frame as horizontal strips of this many cell rows,
+    /// re-sending only strips that changed; 0 sends one whole-screen image.
+    Composited {
+        background: [u8; 4],
+        strip_rows: u32,
+    },
 }
 
 #[derive(Debug)]
@@ -89,6 +108,8 @@ pub struct Compositor {
     /// Commands that must be emitted with the next frame (deletions).
     pending: Vec<u8>,
     last_frame: Option<RgbaImage>,
+    /// Number of composited strips currently shown.
+    strips: u32,
     /// Unanswered fence queries (id, when sent); see [`Compositor::is_congested`].
     fences: VecDeque<(u32, Instant)>,
     next_fence: u32,
@@ -112,6 +133,7 @@ impl Compositor {
             placed: HashMap::new(),
             pending: Vec::new(),
             last_frame: None,
+            strips: 0,
             fences: VecDeque::new(),
             next_fence: FENCE_IDS.start,
         }
@@ -222,7 +244,9 @@ impl Compositor {
         let mut body = std::mem::take(&mut self.pending);
         match self.backend {
             Backend::Layered => self.present_layered(layers, &mut body)?,
-            Backend::Composited { background } => self.present_composited(layers, background, &mut body)?,
+            Backend::Composited { background, strip_rows } => {
+                self.present_composited(layers, background, strip_rows, &mut body)?
+            }
         }
         if !body.is_empty() {
             out.extend_from_slice(SYNC_BEGIN);
@@ -312,8 +336,15 @@ impl Compositor {
         Ok(())
     }
 
-    fn present_composited(&mut self, layers: &[Layer], background: [u8; 4], out: &mut Vec<u8>) -> io::Result<()> {
-        let mut frame = RgbaImage::new(self.geometry.width_px(), self.geometry.height_px(), background);
+    fn present_composited(
+        &mut self,
+        layers: &[Layer],
+        background: [u8; 4],
+        strip_rows: u32,
+        out: &mut Vec<u8>,
+    ) -> io::Result<()> {
+        let (w, h) = (self.geometry.width_px(), self.geometry.height_px());
+        let mut frame = RgbaImage::new(w, h, background);
         let mut order: Vec<&Layer> = layers.iter().collect();
         order.sort_by_key(|l| l.z);
         for layer in order {
@@ -321,13 +352,32 @@ impl Compositor {
             let src = RgbaRef { width: img.width, height: img.height, data: &img.data };
             raster::blit(&mut frame, layer.dst, src, layer.src);
         }
-        if self.last_frame.as_ref() == Some(&frame) {
-            return Ok(());
+        // Send the frame as horizontal strips of whole cell rows, and only the
+        // strips that changed since the last frame.
+        let strip_h = if strip_rows == 0 { h } else { strip_rows * self.geometry.cell.height }.max(1);
+        let count = h.div_ceil(strip_h);
+        let row_bytes = w as usize * 4;
+        for i in 0..count {
+            let y0 = i * strip_h;
+            let y1 = (y0 + strip_h).min(h);
+            let range = y0 as usize * row_bytes..y1 as usize * row_bytes;
+            let unchanged = self.last_frame.as_ref().is_some_and(|last| {
+                i < self.strips && last.data.get(range.clone()) == Some(&frame.data[range.clone()])
+            });
+            if unchanged {
+                continue;
+            }
+            write!(out, "\x1b[{};1H", i * strip_h / self.geometry.cell.height.max(1) + 1)?;
+            let px = Pixels { width: w, height: y1 - y0, format: PixelFormat::Rgba, data: &frame.data[range] };
+            // Re-transmitting an id replaces the image and its placement in place.
+            let place = Placement { placement_id: 1, ..Default::default() };
+            self.encoder.transmit(out, STRIP_IDS + i, px, Some(&place))?;
         }
-        out.extend_from_slice(b"\x1b[H");
-        let px = Pixels { width: frame.width, height: frame.height, format: PixelFormat::Rgba, data: &frame.data };
-        let place = Placement { placement_id: 1, ..Default::default() };
-        self.encoder.transmit(out, FRAME_ID, px, Some(&place))?;
+        // Strips that no longer exist (the screen got shorter).
+        for i in count..self.strips {
+            self.encoder.delete(out, Delete::Image { id: STRIP_IDS + i, free: true });
+        }
+        self.strips = count;
         self.last_frame = Some(frame);
         Ok(())
     }
@@ -454,7 +504,7 @@ mod tests {
             ]
         };
         let mut screens = Vec::new();
-        for backend in [Backend::Layered, Backend::Composited { background: [0, 0, 0, 0] }] {
+        for backend in [Backend::Layered, Backend::composited(), Backend::composited_strips(2)] {
             let mut c = Compositor::new(backend, Medium::Direct { compress: true }, geometry());
             let img = c.add_image(30, 30, test_image());
             let mut out = Vec::new();
@@ -490,8 +540,9 @@ mod tests {
         let mut out = Vec::new();
         c.present(&[layer(img, 20, 0)], &mut out).unwrap();
         c.present(&[layer(img, 25, 0)], &mut out).unwrap();
-        assert!(c.is_congested(now));
-        assert!(!c.is_congested(now + FENCE_TIMEOUT + Duration::from_millis(1)));
+        let after = Instant::now();
+        assert!(c.is_congested(after));
+        assert!(!c.is_congested(after + FENCE_TIMEOUT + Duration::from_millis(1)));
     }
 
     #[test]
@@ -506,12 +557,28 @@ mod tests {
     }
 
     #[test]
+    fn composited_sends_only_changed_strips() {
+        let g = geometry(); // 8x4 cells of 10x20 px: two strips of two rows
+        let mut c = Compositor::new(Backend::composited_strips(2), Medium::Direct { compress: false }, g);
+        let img = c.add_image(30, 30, test_image());
+        let count = |out: &[u8]| String::from_utf8_lossy(out).matches("a=T,").count();
+        let mut out = Vec::new();
+        c.present(&[layer(img, 0, 0)], &mut out).unwrap();
+        assert_eq!(count(&out), 2, "first frame sends every strip");
+        let mut term = MockTerminal::new(g, [0, 0, 0, 255]);
+        term.feed(&out);
+        // Move the image within the top strip only (y < 40 px).
+        let mut out2 = Vec::new();
+        c.present(&[layer(img, 5, 0)], &mut out2).unwrap();
+        assert_eq!(count(&out2), 1, "only the top strip changed");
+        term.feed(&out2);
+        assert_eq!(term.render().pixel(5, 0), [255, 0, 0, 255]);
+        assert_eq!(term.render().pixel(4, 0), [0, 0, 0, 255], "uncovered: terminal background");
+    }
+
+    #[test]
     fn composited_skips_identical_frames() {
-        let mut c = Compositor::new(
-            Backend::Composited { background: [0, 0, 0, 0] },
-            Medium::Direct { compress: true },
-            geometry(),
-        );
+        let mut c = Compositor::new(Backend::composited(), Medium::Direct { compress: true }, geometry());
         let img = c.add_image(30, 30, test_image());
         let mut out = Vec::new();
         c.present(&[layer(img, 0, 0)], &mut out).unwrap();
