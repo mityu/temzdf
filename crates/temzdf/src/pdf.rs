@@ -112,6 +112,41 @@ pub fn page_bounds(doc: &Doc) -> Result<Vec<PageBounds>> {
         .collect()
 }
 
+/// A rectangle in page space (points from the page's top-left).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageRect {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+/// Upper bound on hits reported per page.
+const MAX_HITS_PER_PAGE: u32 = 500;
+
+/// Find `needle` on one page (MuPDF matching: case-insensitive, whitespace
+/// normalised). Each hit may span several rectangles (one per line); they are
+/// returned as separate rectangles, in reading order.
+pub fn search_page(doc: &Doc, page: usize, bounds: PageBounds, needle: &str) -> Result<Vec<PageRect>> {
+    if needle.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let quads = doc.load_page(page as i32)?.search(needle, MAX_HITS_PER_PAGE)?;
+    Ok(quads
+        .iter()
+        .map(|q| {
+            let xs = [q.ul.x, q.ur.x, q.ll.x, q.lr.x];
+            let ys = [q.ul.y, q.ur.y, q.ll.y, q.lr.y];
+            PageRect {
+                x0: xs.iter().copied().fold(f32::INFINITY, f32::min) - bounds.x0,
+                y0: ys.iter().copied().fold(f32::INFINITY, f32::min) - bounds.y0,
+                x1: xs.iter().copied().fold(f32::NEG_INFINITY, f32::max) - bounds.x0,
+                y1: ys.iter().copied().fold(f32::NEG_INFINITY, f32::max) - bounds.y0,
+            }
+        })
+        .collect())
+}
+
 pub fn display_list(doc: &Doc, page: usize) -> Result<Arc<DisplayList>> {
     let page = doc.load_page(page as i32)?;
     Ok(Arc::new(page.to_display_list(true)?))
@@ -192,6 +227,18 @@ mod tests {
         assert_eq!(filler.page, 1);
         let y = filler.y.expect("hyperref outline entries carry a position");
         assert!(y > 0.0 && y < 300.0, "Section 3 starts near the top of page 2, y={y}");
+    }
+
+    #[test]
+    fn search_finds_needles_on_every_page() {
+        let doc = open(&fixture("sample.pdf")).unwrap();
+        let bounds = page_bounds(&doc).unwrap();
+        let counts: Vec<usize> =
+            (0..bounds.len()).map(|p| search_page(&doc, p, bounds[p], "needle").unwrap().len()).collect();
+        assert_eq!(counts, [2, 1, 1], "per-page hits");
+        let hit = search_page(&doc, 0, bounds[0], "NEEDLE").unwrap()[0];
+        assert!(hit.x1 > hit.x0 && hit.y1 > hit.y0 && hit.y1 < bounds[0].height(), "{hit:?}");
+        assert!(search_page(&doc, 0, bounds[0], "  ").unwrap().is_empty());
     }
 
     #[test]

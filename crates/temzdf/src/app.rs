@@ -10,9 +10,9 @@ use termpix::compositor::Compositor;
 use termpix::input::Event;
 use termpix::tty::{self, Modes, TermEvent, Tty};
 
-use crate::session::{Action, Session};
+use crate::session::{Action, Request, Session};
 use crate::viewer::Need;
-use crate::workers::{self, AppEvent, DocCmd, RasterPool};
+use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd};
 
 const FRAME: Duration = Duration::from_millis(16);
 
@@ -39,6 +39,7 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
     let doc = workers::spawn_document(path.to_owned(), tx.clone())?;
     let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
     let pool = RasterPool::new(threads, tx.clone())?;
+    let search = workers::spawn_search(path.to_owned(), tx.clone())?;
 
     // Wait for the document before drawing anything.
     let info = loop {
@@ -68,6 +69,7 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
     let mut dirty = true;
     let mut out = Vec::new();
     let mut title = String::new();
+    let mut shown_cursor = None;
     loop {
         if dirty {
             let (layers, needs) = session.frame(&mut comp);
@@ -81,8 +83,31 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
                 title = t;
             }
             comp.present(&layers, &mut out)?;
+            // Show the text cursor only at an input caret (IME preedit follows it).
+            let cursor = session.cursor();
+            if cursor != shown_cursor {
+                match cursor {
+                    Some((col, row)) => {
+                        out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", row + 1, col + 1).as_bytes())
+                    }
+                    None => out.extend_from_slice(b"\x1b[?25l"),
+                }
+                shown_cursor = cursor;
+            } else if let Some((col, row)) = cursor
+                && !out.is_empty()
+            {
+                // Placing images moves the cursor; put it back.
+                out.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
+            }
             if !out.is_empty() {
                 tty.write_all(&out)?;
+            }
+            for req in session.take_requests() {
+                match req {
+                    Request::Search { generation, query, start_page } => {
+                        let _ = search.send(SearchCmd { generation, query, start_page });
+                    }
+                }
             }
             dirty = false;
         }
@@ -113,6 +138,9 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
                 Action::None => {}
             },
             Some(AppEvent::Term(TermEvent::Input(Event::Mouse(m)))) => dirty |= session.mouse(&m, now),
+            Some(AppEvent::Term(TermEvent::Input(Event::Paste(text)))) => {
+                dirty |= session.paste(&text) == Action::Redraw;
+            }
             Some(AppEvent::Term(_)) => {}
             Some(AppEvent::Opened(_)) => {}
             Some(AppEvent::PageLoaded(p, list)) => {
@@ -126,6 +154,13 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
             }
             Some(AppEvent::Rendered(r)) => {
                 session.viewer.rendered(&mut comp, r);
+                dirty = true;
+            }
+            Some(AppEvent::SearchHits { generation, page, rects }) => {
+                dirty |= session.search_hits(generation, page, rects, now);
+            }
+            Some(AppEvent::SearchFailed(e)) => {
+                session.message = Some(format!("search: {e}"));
                 dirty = true;
             }
             Some(AppEvent::RenderFailed(key, e)) => {

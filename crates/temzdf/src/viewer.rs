@@ -204,6 +204,19 @@ impl Viewer {
         }
     }
 
+    /// Screen pixel of a page-space point (points from the page's top-left).
+    pub fn page_to_screen(&self, page: usize, x: f32, y: f32) -> (f32, f32) {
+        let b = self.layout.pages[page];
+        let (sx, sy) = self.view.doc_to_screen(&self.layout, b.x + x, b.y + y);
+        (sx + self.origin_x as f32, sy)
+    }
+
+    /// Pages intersecting the page area.
+    pub fn visible_pages(&self) -> std::ops::Range<usize> {
+        let top = self.view.scroll_y / self.view.scale;
+        self.layout.pages_in(top, top + self.view.screen_h / self.view.scale)
+    }
+
     /// The page and page-space y at the top of the screen.
     pub fn top_position(&self) -> Target {
         let (_, y) = self.view.screen_to_doc(&self.layout, 0.0, 0.0);

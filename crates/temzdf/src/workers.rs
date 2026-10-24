@@ -10,7 +10,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use mupdf::DisplayList;
 use termpix::tty::TermEvent;
 
-use crate::pdf::{self, DocInfo};
+use crate::pdf::{self, DocInfo, PageRect};
 use crate::viewer::{RenderJob, Rendered, TileKey};
 
 pub enum AppEvent {
@@ -20,6 +20,58 @@ pub enum AppEvent {
     PageFailed(usize, String),
     Rendered(Rendered),
     RenderFailed(TileKey, String),
+    SearchHits { generation: u64, page: usize, rects: Vec<PageRect> },
+    SearchFailed(String),
+}
+
+/// A search request: find `query` on every page, starting at `start_page`.
+pub struct SearchCmd {
+    pub generation: u64,
+    pub query: String,
+    pub start_page: usize,
+}
+
+/// The search worker opens its own copy of the document so long searches do not
+/// delay page loading. A newer command interrupts the current search.
+pub fn spawn_search(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<Sender<SearchCmd>> {
+    let (tx, rx) = mpsc::channel::<SearchCmd>();
+    std::thread::Builder::new().name("temzdf-search".into()).spawn(move || {
+        let doc = match pdf::open(&path).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = events.send(AppEvent::SearchFailed(format!("{e:#}")));
+                return;
+            }
+        };
+        let (doc, bounds) = doc;
+        let mut pending = None;
+        loop {
+            let cmd = match pending.take() {
+                Some(c) => c,
+                None => match rx.recv() {
+                    Ok(c) => c,
+                    Err(_) => return,
+                },
+            };
+            let n = bounds.len();
+            for i in 0..n {
+                // A newer query replaces this one.
+                if let Some(newer) = rx.try_iter().last() {
+                    pending = Some(newer);
+                    break;
+                }
+                let page = (cmd.start_page + i) % n;
+                let ev = match pdf::search_page(&doc, page, bounds[page], &cmd.query) {
+                    Ok(rects) => AppEvent::SearchHits { generation: cmd.generation, page, rects },
+                    Err(e) => AppEvent::SearchFailed(format!("{e:#}")),
+                };
+                if events.send(ev).is_err() {
+                    return;
+                }
+            }
+        }
+    })?;
+    Ok(tx)
 }
 
 /// Requests for the document thread.

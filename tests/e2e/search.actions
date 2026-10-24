@@ -1,0 +1,13 @@
+# Used with: scripts/e2e.sh tests/e2e/search.actions -- target/debug/temzdf tests/fixtures/sample.pdf
+# Expected: typing shows the prompt with incremental highlights (typing.png),
+# Enter + n moves to the next hit (next.png), Esc clears highlights (cleared.png).
+keys slash
+type needle
+pause 0.8
+shot typing
+keys Return n
+pause 0.8
+shot next
+keys Escape
+pause 0.5
+shot cleared

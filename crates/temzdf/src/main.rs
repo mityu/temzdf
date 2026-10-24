@@ -3,6 +3,7 @@ mod headless;
 mod layout;
 mod outline;
 mod pdf;
+mod search;
 mod session;
 mod viewer;
 mod workers;

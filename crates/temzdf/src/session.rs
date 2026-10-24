@@ -11,10 +11,11 @@ use termpix::geom::{Geometry, Rect};
 use termpix::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
 };
-use termpix_ui::{ListView, StatusBar, Text, Theme};
+use termpix_ui::{Canvas, Color, EditResult, LineInput, ListView, StatusBar, Text, Theme};
 
 use crate::outline::{self, OutlinePanel};
-use crate::pdf::DocInfo;
+use crate::pdf::{DocInfo, PageRect, Target};
+use crate::search::SearchState;
 use crate::viewer::{LAYER_KEYS_END, Need, Viewer};
 
 pub const ZOOM_STEP: f32 = 1.1;
@@ -22,6 +23,19 @@ pub const ZOOM_STEP: f32 = 1.1;
 const Z_UI: i32 = -1_073_741_800;
 const KEY_STATUS: u32 = LAYER_KEYS_END;
 const KEY_SIDEBAR: u32 = LAYER_KEYS_END + 1;
+const KEY_INPUT: u32 = LAYER_KEYS_END + 2;
+/// Search hit highlights use keys from here on (one per visible hit).
+const KEY_HITS: u32 = LAYER_KEYS_END + 0x1000;
+/// Hit highlights: above page tiles, below UI.
+const Z_HITS: i32 = -1_073_741_850;
+const HIT_COLOR: Color = Color::rgba(255, 210, 0, 96);
+const CURRENT_HIT_COLOR: Color = Color::rgba(255, 120, 0, 150);
+
+/// Work the session asks the caller to do (on a worker, or inline).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Request {
+    Search { generation: u64, query: String, start_page: usize },
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -35,6 +49,7 @@ pub enum Action {
 enum WidgetState {
     Status(StatusBar),
     List(ListView, u32),
+    Input(LineInput),
 }
 
 struct WidgetImage {
@@ -55,6 +70,16 @@ pub struct Session {
     pub message: Option<String>,
     outline: OutlinePanel,
     sidebar_open: bool,
+    pub search: SearchState,
+    /// The search prompt, while typing a query.
+    input: Option<LineInput>,
+    /// Where the view was when the prompt opened (restored on Esc).
+    search_origin: Option<(Target, f32, f32)>,
+    requests: Vec<Request>,
+    /// Solid highlight images by (width, height, is current).
+    hit_images: HashMap<(u32, u32, bool), ImageId>,
+    /// Terminal cell for the text cursor (input caret), if shown.
+    caret_cell: Option<(u16, u16)>,
     // Input state
     count: Option<usize>,
     pointer: (f32, f32),
@@ -65,9 +90,16 @@ impl Session {
     pub fn new(name: String, info: DocInfo, geometry: Geometry) -> Self {
         let (w, h) = page_area(geometry);
         let outline = OutlinePanel::new(&info.outline, &info.labels);
+        let pages = info.bounds.len();
         Self {
             outline,
             sidebar_open: false,
+            search: SearchState::new(pages),
+            input: None,
+            search_origin: None,
+            requests: Vec::new(),
+            hit_images: HashMap::new(),
+            caret_cell: None,
             viewer: Viewer::new(info.bounds.clone(), w, h),
             info,
             name,
@@ -233,14 +265,26 @@ impl Session {
         let (mut layers, needs) = self.viewer.frame(comp);
         // Zoom as a percentage of 96 dpi ("100%" = actual size on a typical screen).
         let zoom = (self.viewer.view.scale * 72.0 / 96.0 * 100.0).round();
-        let status = StatusBar {
-            left: self.name.clone(),
-            right: format!("{}   {zoom}%", self.page_text()),
-            error: self.message.clone(),
-        };
         let (w, h) = (self.geometry.width_px(), self.bar_height());
         let y = self.geometry.height_px().saturating_sub(h) as i32;
-        layers.push(self.widget(comp, KEY_STATUS, WidgetState::Status(status), Rect::new(0, y, w, h)));
+        let bar = Rect::new(0, y, w, h);
+        self.caret_cell = None;
+        if let Some(mut input) = self.input.clone() {
+            input.hint = self.search_hint();
+            layers.push(self.widget(comp, KEY_INPUT, WidgetState::Input(input.clone()), bar));
+            // Put the terminal cursor at the caret so IME preedit shows there.
+            let caret_x = input.caret_x(&mut self.text, &self.theme, h);
+            let cell = self.geometry.cell;
+            self.caret_cell = Some(((caret_x as u32 / cell.width) as u16, (y as u32 / cell.height) as u16));
+        } else {
+            let mut right = format!("{}   {zoom}%", self.page_text());
+            if self.search.is_active() {
+                right = format!("/{} {}   {right}", self.search.query, self.search_hint());
+            }
+            let status = StatusBar { left: self.name.clone(), right, error: self.message.clone() };
+            layers.push(self.widget(comp, KEY_STATUS, WidgetState::Status(status), bar));
+        }
+        self.hit_layers(comp, &mut layers);
         if self.sidebar_open {
             let r = self.sidebar_rect();
             let state = WidgetState::List(self.outline.list.clone(), self.row_height());
@@ -256,6 +300,7 @@ impl Session {
             let px = match &state {
                 WidgetState::Status(s) => s.render(&mut self.text, &self.theme, rect.w, rect.h),
                 WidgetState::List(l, rh) => l.render(&mut self.text, &self.theme, rect.w, rect.h, *rh),
+                WidgetState::Input(i) => i.render(&mut self.text, &self.theme, rect.w, rect.h).0,
             };
             let image = match self.widgets.get(&key) {
                 Some(w) => {
@@ -270,11 +315,211 @@ impl Session {
         Layer { key, image, src: Rect::new(0, 0, rect.w, rect.h), dst: rect, z: Z_UI }
     }
 
+    /// "query  k/N" for the status bar or prompt.
+    fn search_hint(&self) -> String {
+        if !self.search.is_active() {
+            return String::new();
+        }
+        let total = self.search.total();
+        let more = if self.search.is_complete() { "" } else { "+" };
+        match self.search.current_ordinal() {
+            Some(k) => format!("{k}/{total}{more}"),
+            None if total == 0 && self.search.is_complete() => "no match".into(),
+            None => format!("{total}{more}"),
+        }
+    }
+
+    /// Terminal cell where the text cursor should be shown, if any.
+    pub fn cursor(&self) -> Option<(u16, u16)> {
+        self.caret_cell
+    }
+
+    /// Requests for the caller (searches to run).
+    pub fn take_requests(&mut self) -> Vec<Request> {
+        std::mem::take(&mut self.requests)
+    }
+
+    /// Results for one page. Returns true when the screen should be redrawn.
+    pub fn search_hits(&mut self, generation: u64, page: usize, rects: Vec<PageRect>, now: Instant) -> bool {
+        if !self.search.add(generation, page, rects) {
+            return false;
+        }
+        // Incremental search: move to the first match after where the search began.
+        if self.search.current.is_none() {
+            let from = self.search_origin.map_or_else(|| self.viewer.top_position(), |o| o.0);
+            if let Some(hit) = self.search.find_from(from, true)
+                && self.search.hits[hit.0].get(hit.1).is_some()
+                && (self.search.is_complete() || hit.0 == page)
+            {
+                self.search.current = Some(hit);
+                self.reveal_hit(hit, now);
+            }
+        }
+        true
+    }
+
+    fn reveal_hit(&mut self, hit: (usize, usize), now: Instant) {
+        if let Some(t) = self.search.target(hit) {
+            // Only scroll when the hit is not already comfortably on screen.
+            let (_, sy) = self.viewer.page_to_screen(t.page, 0.0, t.y.unwrap_or(0.0));
+            let h = self.viewer.view.screen_h;
+            if sy < h * 0.1 || sy > h * 0.85 {
+                self.viewer.goto(
+                    Target { page: t.page, y: t.y.map(|y| (y - h * 0.3 / self.viewer.view.scale).max(0.0)) },
+                    true,
+                    now,
+                );
+            }
+        }
+    }
+
+    fn start_search(&mut self) {
+        let query = self.input.as_ref().map(|i| i.text.clone()).unwrap_or_default();
+        let generation = self.search.start(&query);
+        if !query.trim().is_empty() {
+            let start_page = self.search_origin.map_or_else(|| self.viewer.top_position().page, |o| o.0.page);
+            self.requests.push(Request::Search { generation, query, start_page });
+        }
+    }
+
+    fn input_key(&mut self, k: &KeyEvent, now: Instant) -> Action {
+        let Some(input) = self.input.as_mut() else { return Action::None };
+        let ctrl = k.modifiers.without_locks().contains(Modifiers::CTRL);
+        let r = match k.code {
+            KeyCode::Escape | KeyCode::Char('c') if k.code == KeyCode::Escape || ctrl => {
+                // Cancel: forget the query and go back to where we were.
+                self.input = None;
+                self.search.clear();
+                if let Some((pos, sx, _)) = self.search_origin.take() {
+                    self.viewer.goto(pos, false, now);
+                    self.viewer.jump_to(sx, self.viewer.view.scroll_y);
+                }
+                return Action::Redraw;
+            }
+            KeyCode::Enter => {
+                self.input = None;
+                self.search_origin = None;
+                if self.search.is_active() && self.search.total() == 0 && self.search.is_complete() {
+                    self.message = Some(format!("Pattern not found: {}", self.search.query));
+                }
+                return Action::Redraw;
+            }
+            KeyCode::Backspace if input.text.is_empty() => {
+                self.input = None;
+                self.search.clear();
+                return Action::Redraw;
+            }
+            KeyCode::Backspace => input.backspace(),
+            KeyCode::Delete => input.delete(),
+            KeyCode::Left => input.left(),
+            KeyCode::Right => input.right(),
+            KeyCode::Home | KeyCode::Char('a') if k.code == KeyCode::Home || ctrl => {
+                input.home();
+                EditResult::Moved
+            }
+            KeyCode::End | KeyCode::Char('e') if k.code == KeyCode::End || ctrl => {
+                input.end();
+                EditResult::Moved
+            }
+            KeyCode::Char('w') if ctrl => input.delete_word(),
+            KeyCode::Char('u') if ctrl => {
+                input.clear();
+                EditResult::Changed
+            }
+            KeyCode::Char(c) if !ctrl => {
+                let text = k.text.clone().unwrap_or_else(|| c.to_string());
+                input.insert(&text);
+                EditResult::Changed
+            }
+            _ => EditResult::Ignored,
+        };
+        match r {
+            EditResult::Changed => {
+                self.start_search();
+                Action::Redraw
+            }
+            EditResult::Moved => Action::Redraw,
+            EditResult::Ignored => Action::None,
+        }
+    }
+
+    /// Bracketed paste: goes into the search prompt when it is open.
+    pub fn paste(&mut self, text: &str) -> Action {
+        let Some(input) = self.input.as_mut() else { return Action::None };
+        input.insert(&text.replace(['\n', '\r'], " "));
+        self.start_search();
+        Action::Redraw
+    }
+
+    fn open_search(&mut self) {
+        let v = &self.viewer;
+        self.search_origin = Some((v.top_position(), v.view.scroll_x, v.view.scroll_y));
+        self.input = Some(LineInput { prompt: "/".into(), ..Default::default() });
+        self.search.clear();
+    }
+
+    fn step_search(&mut self, forward: bool, now: Instant) {
+        if !self.search.is_active() {
+            return;
+        }
+        let hit = match self.search.current {
+            Some(_) => self.search.step(forward),
+            None => {
+                let h = self.search.find_from(self.viewer.top_position(), forward);
+                self.search.current = h;
+                h
+            }
+        };
+        match hit {
+            Some(h) => self.reveal_hit(h, now),
+            None => self.message = Some(format!("Pattern not found: {}", self.search.query)),
+        }
+    }
+
+    /// Highlight layers for the hits on visible pages.
+    fn hit_layers(&mut self, comp: &mut Compositor, layers: &mut Vec<Layer>) {
+        if !self.search.is_active() {
+            return;
+        }
+        let scale = self.viewer.view.scale;
+        let area =
+            Rect::new(self.viewer.origin_x(), 0, self.viewer.view.screen_w as u32, self.viewer.view.screen_h as u32);
+        let mut key = KEY_HITS;
+        for page in self.viewer.visible_pages() {
+            for (i, r) in self.search.hits[page].iter().enumerate() {
+                let (x0, y0) = self.viewer.page_to_screen(page, r.x0, r.y0);
+                let w = ((r.x1 - r.x0) * scale).round().max(1.0) as u32;
+                let h = ((r.y1 - r.y0) * scale).round().max(1.0) as u32;
+                let dst = Rect::new(x0.round() as i32, y0.round() as i32, w, h);
+                // Clip to the page area so highlights never cover the UI.
+                let Some(vis) = dst.intersect(&area) else { continue };
+                let current = self.search.current == Some((page, i));
+                let image = *self.hit_images.entry((w, h, current)).or_insert_with(|| {
+                    let mut c = Canvas::new(w, h);
+                    c.fill_rect(0.0, 0.0, w as f32, h as f32, if current { CURRENT_HIT_COLOR } else { HIT_COLOR });
+                    comp.add_image(w, h, c.finish())
+                });
+                let src = Rect::new(vis.x - dst.x, vis.y - dst.y, vis.w, vis.h);
+                layers.push(Layer { key, image, src, dst: vis, z: Z_HITS });
+                key += 1;
+            }
+        }
+        // Bound the highlight image cache (sizes change with zoom).
+        if self.hit_images.len() > 256 {
+            for (_, id) in self.hit_images.drain() {
+                comp.remove_image(id);
+            }
+        }
+    }
+
     pub fn key(&mut self, k: &KeyEvent, now: Instant) -> Action {
         if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
             return Action::None;
         }
         self.message = None;
+        if self.input.is_some() {
+            return self.input_key(k, now);
+        }
         if self.sidebar_open
             && let Some(action) = self.sidebar_key(k, now)
         {
@@ -296,6 +541,7 @@ impl Session {
                 self.count = Some(count.unwrap_or(0).saturating_mul(10).saturating_add(c as usize - '0' as usize));
                 return Action::None;
             }
+            KeyCode::Escape if self.search.is_active() => self.search.clear(),
             KeyCode::Char('q') | KeyCode::Escape => return Action::Quit,
             KeyCode::Char('c') if ctrl => return Action::Quit,
             KeyCode::Char('j') | KeyCode::Down => wheel_n(v, 1.0, count, now),
@@ -315,6 +561,9 @@ impl Session {
             KeyCode::Char('+' | '=') => v.zoom(ZOOM_STEP, centre),
             KeyCode::Char('-') => v.zoom(1.0 / ZOOM_STEP, centre),
             KeyCode::Char('0') | KeyCode::Char('w') => v.fit_width(),
+            KeyCode::Char('/') => self.open_search(),
+            KeyCode::Char('n') => self.step_search(true, now),
+            KeyCode::Char('N') => self.step_search(false, now),
             _ => return Action::None,
         }
         Action::Redraw

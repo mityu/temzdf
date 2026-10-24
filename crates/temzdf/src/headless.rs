@@ -14,7 +14,7 @@ use termpix::input::{KeyCode, KeyEvent, Modifiers};
 use termpix::mock::MockTerminal;
 
 use crate::pdf;
-use crate::session::Session;
+use crate::session::{Request, Session};
 use crate::viewer::{Need, Rendered};
 
 pub struct FrameOptions {
@@ -90,6 +90,18 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     let mut now = Instant::now();
     for key in parse_keys(opts.keys.as_deref().unwrap_or(""))? {
         session.key(&key, now);
+        for req in session.take_requests() {
+            match req {
+                Request::Search { generation, query, start_page } => {
+                    let n = session.info.bounds.len();
+                    for i in 0..n {
+                        let p = (start_page + i) % n;
+                        let rects = pdf::search_page(&doc, p, session.info.bounds[p], &query)?;
+                        session.search_hits(generation, p, rects, now);
+                    }
+                }
+            }
+        }
         for _ in 0..200 {
             if !session.viewer.is_animating() {
                 break;

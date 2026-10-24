@@ -258,8 +258,21 @@ impl LineInput {
         self.caret = 0;
     }
 
-    /// Render and return the pixels plus the caret x position (for placing the
+    /// Where the text starts (after the prompt), in pixels.
+    fn text_x(&self, text: &mut Text, theme: &Theme, h: f32) -> f32 {
+        let pad = h * 0.4;
+        pad + text.layout(&self.prompt, &theme.style(h, theme.accent, true), None).width() + pad * 0.5
+    }
+
+    /// The caret's x position for a widget of height `height` (for placing the
     /// terminal cursor, so IME preedit appears at the caret).
+    pub fn caret_x(&self, text: &mut Text, theme: &Theme, height: u32) -> f32 {
+        let h = height as f32;
+        self.text_x(text, theme, h)
+            + text.layout(&self.text[..self.caret], &theme.style(h, theme.bar_fg, false), None).width()
+    }
+
+    /// Render and return the pixels plus the caret x position.
     pub fn render(&self, text: &mut Text, theme: &Theme, width: u32, height: u32) -> (Vec<u8>, f32) {
         let (w, h) = (width as f32, height as f32);
         let pad = h * 0.4;
@@ -267,12 +280,12 @@ impl LineInput {
         c.fill_rect(0.0, 0.0, w, h, theme.input_bg);
         let prompt = text.layout(&self.prompt, &theme.style(h, theme.accent, true), None);
         c.text(&prompt, pad, (h - prompt.height()) / 2.0);
-        let x0 = pad + prompt.width() + pad * 0.5;
+        let x0 = self.text_x(text, theme, h);
         let hint = text.line(&self.hint, &theme.style(h, theme.bar_dim, false), w / 3.0);
         c.text(&hint, w - pad - hint.width(), (h - hint.height()) / 2.0);
         let body = text.layout(&self.text, &theme.style(h, theme.bar_fg, false), None);
         c.text(&body, x0, (h - body.height()) / 2.0);
-        let caret_x = x0 + text.layout(&self.text[..self.caret], &theme.style(h, theme.bar_fg, false), None).width();
+        let caret_x = self.caret_x(text, theme, height);
         c.fill_rect(caret_x, h * 0.18, (h * 0.08).max(1.0), h * 0.64, theme.accent);
         (c.finish(), caret_x)
     }
