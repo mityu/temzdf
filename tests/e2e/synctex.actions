@@ -1,0 +1,17 @@
+# Used with:
+#   mkdir -p target/e2e-sync && cp tests/fixtures/sample.{pdf,synctex.gz} target/e2e-sync/
+#   scripts/e2e.sh tests/e2e/synctex.actions -- target/debug/temzdf \
+#     --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf
+# Expected:
+#   forward.png  after `temzdf --forward` from another process: page 2 with the
+#                "Back to Section 1" line highlighted in red (forward.txt: exit status 0)
+#   inverse.txt  after Ctrl+click on the title on page 1: ".../sample.tex:<line>"
+line=$(grep -n "Back to Section" tests/fixtures/sample.tex | cut -d: -f1)
+pause 1
+target/debug/temzdf --forward "$line:sample.tex" target/e2e-sync/sample.pdf; echo "exit $?" >target/e2e-sync/forward.txt
+pause 0.8
+shot forward
+keys g
+pause 1
+xdotool mousemove 450 188 keydown ctrl click 1 keyup ctrl
+pause 1

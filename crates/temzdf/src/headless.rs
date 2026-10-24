@@ -92,7 +92,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         session.key(&key, now);
         for req in session.take_requests() {
             match req {
-                Request::OpenUri(_) | Request::Copy(_) => {}
+                Request::OpenUri(_) | Request::Copy(_) | Request::Inverse { .. } => {}
                 Request::Search { generation, query, start_page, .. } => {
                     let n = session.info.bounds.len();
                     for i in 0..n {

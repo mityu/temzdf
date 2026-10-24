@@ -15,6 +15,33 @@ pub struct Config {
     pub terminal: TerminalConfig,
     pub scroll: ScrollConfig,
     pub links: LinksConfig,
+    pub synctex: SynctexConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct SynctexConfig {
+    /// Inverse search command, run with `sh -c`. `%{input}`, `%{line}` and
+    /// `%{column}` are replaced by the (shell-quoted) source file, line and column.
+    pub editor: Option<String>,
+}
+
+impl SynctexConfig {
+    /// The shell command for a source location, if an editor is configured.
+    pub fn command(&self, file: &Path, line: u32, column: u32) -> Option<String> {
+        let template = self.editor.as_deref().filter(|e| !e.trim().is_empty())?;
+        Some(
+            template
+                .replace("%{input}", &shell_quote(&file.to_string_lossy()))
+                .replace("%{line}", &line.to_string())
+                .replace("%{column}", &column.to_string()),
+        )
+    }
+}
+
+/// Quote for POSIX sh: wrap in single quotes, escaping embedded ones.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -181,6 +208,15 @@ mod tests {
         assert_eq!(c.terminal.zlib_level, 6);
         assert_eq!(c.scroll.to_termpix().step, 40.0);
         assert_eq!(c.links.command(), ["firefox", "--new-tab"]);
+    }
+
+    #[test]
+    fn editor_command_substitutes_and_quotes() {
+        let c =
+            SynctexConfig { editor: Some("nvim --server /tmp/nv --remote-send ':e %{input}<CR>:%{line}<CR>'".into()) };
+        let cmd = c.command(Path::new("/doc/it's.tex"), 12, 0).unwrap();
+        assert_eq!(cmd, "nvim --server /tmp/nv --remote-send ':e '/doc/it'\\''s.tex'<CR>:12<CR>'");
+        assert!(SynctexConfig::default().command(Path::new("a.tex"), 1, 0).is_none());
     }
 
     #[test]

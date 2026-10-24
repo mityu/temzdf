@@ -11,10 +11,11 @@ use termpix::input::Event;
 use termpix::tty::{self, Modes, TermEvent, Tty};
 
 use crate::config::Config;
+use crate::ipc::{self, ForwardRequest};
 use crate::pdf;
 use crate::session::{Action, Pointer, Request, Session};
 use crate::viewer::Need;
-use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd};
+use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd, SynctexCmd};
 
 const FRAME: Duration = Duration::from_millis(16);
 /// Wait this long after the last change before reloading (see doc/reload.md).
@@ -30,9 +31,16 @@ pub struct Options {
     pub page: Option<usize>,
     pub scale: Option<f32>,
     pub config: Config,
+    /// Forward search to perform once the document is shown.
+    pub forward: Option<ForwardRequest>,
+    /// Inverse search command (overrides the config file).
+    pub editor: Option<String>,
 }
 
-pub fn run(path: &Path, opts: Options) -> Result<()> {
+pub fn run(path: &Path, mut opts: Options) -> Result<()> {
+    // Libraries (MuPDF, SyncTeX) print warnings to stdout/stderr, which would
+    // scribble over the screen; send them to a log file while the UI runs.
+    let _stdio = log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
     let mut tty = Tty::open(Modes::default())?;
     let caps = termpix::probe::probe(&mut tty, Duration::from_secs(1))?;
     if !caps.kitty_graphics {
@@ -57,6 +65,13 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
     // Keep the watcher alive for the whole session. Without it the viewer still
     // works, just without auto-reload.
     let watcher = workers::spawn_watcher(path, tx.clone());
+    let synctex = workers::spawn_synctex(path.to_owned(), tx.clone())?;
+    // Forward-search requests from other processes; a second viewer of the same
+    // file just goes without.
+    let _ipc = ipc::serve(path, tx.clone(), AppEvent::ForwardRequest).ok();
+    if let Some(editor) = opts.editor.take() {
+        opts.config.synctex.editor = Some(editor);
+    }
 
     // Wait for the document before drawing anything.
     let info = loop {
@@ -83,6 +98,9 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
         session.message = Some(format!("auto-reload disabled: {e}"));
     }
     let mut reload = ReloadState::default();
+    if let Some(req) = opts.forward.take() {
+        let _ = synctex.send(SynctexCmd::Forward { req, page_hint: session.viewer.current_page() });
+    }
     if let Some(scale) = opts.scale {
         session.viewer.set_scale(scale, (0.0, 0.0));
     }
@@ -127,23 +145,28 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
             if !out.is_empty() {
                 tty.write_all(&out)?;
             }
-            for req in session.take_requests() {
-                match req {
-                    Request::Search { generation, query, start_page, doc_generation } => {
-                        let _ = search.send(SearchCmd { generation, query, start_page, doc_generation });
-                    }
-                    Request::OpenUri(uri) => open_uri(&open_command, &uri),
-                    Request::Copy(text) => {
-                        use base64::Engine;
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-                        tty.write_all(format!("\x1b]52;c;{b64}\x1b\\").as_bytes())?;
-                    }
-                }
-            }
             dirty = false;
         }
+        // Requests are dispatched every iteration: some (Ctrl+click inverse search)
+        // do not change the screen, so they must not wait for a redraw.
+        for req in session.take_requests() {
+            match req {
+                Request::Search { generation, query, start_page, doc_generation } => {
+                    let _ = search.send(SearchCmd { generation, query, start_page, doc_generation });
+                }
+                Request::OpenUri(uri) => open_uri(&open_command, &uri),
+                Request::Inverse { page, x, y } => {
+                    let _ = synctex.send(SynctexCmd::Inverse { page, x, y });
+                }
+                Request::Copy(text) => {
+                    use base64::Engine;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+                    tty.write_all(format!("\x1b]52;c;{b64}\x1b\\").as_bytes())?;
+                }
+            }
+        }
         let mut timeout = if session.viewer.is_animating() { FRAME } else { Duration::from_secs(3600) };
-        if let Some(due) = reload.due {
+        for due in [reload.due, session.next_deadline()].into_iter().flatten() {
             timeout = timeout.min(due.saturating_duration_since(Instant::now()));
         }
         let event = match rx.recv_timeout(timeout) {
@@ -220,7 +243,32 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
                 session.reloading = true;
                 dirty = true;
             }
+            Some(AppEvent::ForwardRequest(req)) => {
+                let _ = synctex.send(SynctexCmd::Forward { req, page_hint: session.viewer.current_page() });
+            }
+            Some(AppEvent::ForwardResult(boxes)) => {
+                session.forward_result(boxes, now);
+                dirty = true;
+            }
+            Some(AppEvent::InverseResult(loc)) => {
+                match opts.config.synctex.command(&loc.file, loc.line, loc.column) {
+                    Some(cmd) => run_shell(&cmd),
+                    None => {
+                        session.message = Some(format!(
+                            "{}:{} (set [synctex] editor in the config to open it)",
+                            loc.file.display(),
+                            loc.line
+                        ))
+                    }
+                }
+                dirty = true;
+            }
+            Some(AppEvent::SynctexFailed(e)) => {
+                session.message = Some(format!("SyncTeX: {e}"));
+                dirty = true;
+            }
             Some(AppEvent::Reloaded(info)) => {
+                let _ = synctex.send(SynctexCmd::Reload);
                 reload.in_flight = false;
                 reload.attempts = 0;
                 session.reload(&mut comp, info);
@@ -252,8 +300,30 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
             }
         }
         dirty |= session.viewer.tick(Instant::now());
+        // A highlight expired.
+        dirty |= session.next_deadline().is_some_and(|d| Instant::now() >= d);
     }
     Ok(())
+}
+
+/// `$XDG_STATE_HOME/temzdf/temzdf.log` (falling back to `~/.local/state`).
+fn log_path() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
+    Some(base.join("temzdf").join("temzdf.log"))
+}
+
+/// Run a shell command detached from the terminal (inverse search).
+fn run_shell(cmd: &str) {
+    let _ = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 /// Auto-reload scheduling: a trailing debounce after change events, then

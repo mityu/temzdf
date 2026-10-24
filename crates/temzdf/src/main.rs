@@ -1,12 +1,14 @@
 mod app;
 mod config;
 mod headless;
+mod ipc;
 mod layout;
 mod outline;
 mod pdf;
 mod search;
 mod selection;
 mod session;
+mod synctex;
 mod viewer;
 mod workers;
 
@@ -37,6 +39,14 @@ struct Cli {
     /// Zoom in pixels per PDF point (default: fit width).
     #[arg(long)]
     scale: Option<f32>,
+    /// SyncTeX forward search: show what LINE[:COLUMN]:FILE produced. Sent to the
+    /// viewer that already has the PDF open, or opens it.
+    #[arg(long, value_name = "LINE[:COLUMN]:FILE")]
+    forward: Option<String>,
+    /// SyncTeX inverse search command (Ctrl+click), with %{input}, %{line} and
+    /// %{column} placeholders. Overrides [synctex] editor in the config file.
+    #[arg(long, value_name = "COMMAND")]
+    editor: Option<String>,
     /// Configuration file (default: $XDG_CONFIG_HOME/temzdf/config.toml).
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
@@ -60,6 +70,16 @@ fn main() -> Result<()> {
         let opts = headless::FrameOptions { geometry, page, scale: cli.scale, keys: cli.keys.clone() };
         return headless::render_frame(&cli.file, out, &opts);
     }
+    let forward = match &cli.forward {
+        Some(spec) => Some(ipc::ForwardRequest::parse_spec(spec).with_context(|| format!("bad --forward {spec:?}"))?),
+        None => None,
+    };
+    // A viewer of this file is already running: hand the request over and exit.
+    if let Some(req) = &forward
+        && ipc::send_forward(&cli.file, req)?
+    {
+        return Ok(());
+    }
     let config = config::Config::load(cli.config.as_deref())?;
-    app::run(&cli.file, app::Options { page, scale: cli.scale, config })
+    app::run(&cli.file, app::Options { page, scale: cli.scale, config, forward, editor: cli.editor.clone() })
 }

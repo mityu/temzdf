@@ -55,6 +55,10 @@ full testing approach is in `doc/testing.md`.
 Debugging terminal problems:
 
 - `cargo run -p termpix --example probe` prints what detection found.
+- `cargo run -p termpix --example events -- events.log` logs every parsed input
+  event (what the terminal really sends).
+- In interactive mode `temzdf` sends stdout/stderr (MuPDF and SyncTeX warnings)
+  to `$XDG_STATE_HOME/temzdf/temzdf.log`.
 - `TERMPIX_TRACE=out.bin <app>` records every byte written to the terminal;
   replay prefixes of it into a terminal (`cat out.bin`) to bisect crashes.
 - `TERMPIX_BACKEND=layered|composited` and `TERMPIX_MEDIUM=direct|shm|file`
@@ -96,4 +100,5 @@ The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` 
 - `doc/input.md`: mouse/keyboard reporting modes and smooth scrolling.
 - `doc/reload.md`: auto-reload design (learned from Skim and Okular).
 - `doc/testing.md`: how to verify changes without a human.
+- `doc/synctex.md`: forward/inverse search, editor setup, vendored parser.
 - `doc/config.md`: the configuration file format (keep in sync with `crates/temzdf/src/config.rs`).

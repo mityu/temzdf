@@ -17,6 +17,7 @@ use crate::outline::{self, OutlinePanel};
 use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, Target};
 use crate::search::SearchState;
 use crate::selection::{Caret, PageText, Selection};
+use crate::synctex::PdfBox;
 use crate::viewer::{LAYER_KEYS_END, Need, Viewer};
 
 pub const ZOOM_STEP: f32 = 1.1;
@@ -32,9 +33,12 @@ const Z_OVERLAY: i32 = -1_073_741_850;
 const HIT_COLOR: Color = Color::rgba(255, 210, 0, 96);
 const CURRENT_HIT_COLOR: Color = Color::rgba(255, 120, 0, 150);
 const SELECTION_COLOR: Color = Color::rgba(70, 130, 255, 90);
+/// Forward-search target, shown briefly.
+const FLASH_COLOR: Color = Color::rgba(255, 70, 70, 80);
+const FLASH_DURATION: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// Work the session asks the caller to do (on a worker, or inline).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Request {
     Search {
         generation: u64,
@@ -46,6 +50,12 @@ pub enum Request {
     OpenUri(String),
     /// Put text on the clipboard (OSC 52).
     Copy(String),
+    /// SyncTeX inverse search at a page-space point.
+    Inverse {
+        page: usize,
+        x: f32,
+        y: f32,
+    },
 }
 
 /// Mouse pointer shapes (OSC 22 names).
@@ -111,6 +121,8 @@ pub struct Session {
     restore_hit: Option<(usize, usize)>,
     /// The file changed and a reload is pending (shown in the status bar).
     pub reloading: bool,
+    /// Forward-search result highlighted until the deadline.
+    flash: Option<(Vec<PdfBox>, Instant)>,
     /// Terminal cell for the text cursor (input caret), if shown.
     caret_cell: Option<(u16, u16)>,
     /// Links per page, filled as pages load.
@@ -145,6 +157,7 @@ impl Session {
             selecting: false,
             restore_hit: None,
             reloading: false,
+            flash: None,
             caret_cell: None,
             links: vec![None; pages],
             pointer_shape: Pointer::Default,
@@ -522,6 +535,26 @@ impl Session {
         }
     }
 
+    /// Show a forward-search result: jump to the first box (unless it is already
+    /// comfortably visible) and highlight the boxes briefly.
+    pub fn forward_result(&mut self, boxes: Vec<PdfBox>, now: Instant) {
+        let Some(first) = boxes.first().copied() else { return };
+        let (_, sy) = self.viewer.page_to_screen(first.page, 0.0, first.rect.y0);
+        let h = self.viewer.view.screen_h;
+        if sy < h * 0.1 || sy > h * 0.8 {
+            self.push_history();
+            let offset = h * 0.3 / self.viewer.view.scale;
+            self.viewer.goto(Target { page: first.page, y: Some((first.rect.y0 - offset).max(0.0)) }, true, now);
+        }
+        self.flash = Some((boxes, now + FLASH_DURATION));
+    }
+
+    /// When the screen next needs redrawing without any input (a highlight
+    /// expiring), if ever.
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.flash.as_ref().map(|f| f.1)
+    }
+
     /// The file changed and the document thread has the new version. Keep the
     /// reading position (see `Viewer::replace_pages`), sidebar state, outline
     /// expansion and the search query (re-run on the new text); drop the text
@@ -669,6 +702,13 @@ impl Session {
             {
                 rects.extend(sel.rects(page, text).into_iter().map(|r| (page, r, SELECTION_COLOR)));
             }
+            if let Some((boxes, _)) = &self.flash {
+                rects.extend(boxes.iter().filter(|b| b.page == page).map(|b| (page, b.rect, FLASH_COLOR)));
+            }
+        }
+        if self.flash.as_ref().is_some_and(|f| Instant::now() >= f.1) {
+            self.flash = None;
+            rects.retain(|r| r.2 != FLASH_COLOR);
         }
         let scale = self.viewer.view.scale;
         let area =
@@ -817,7 +857,10 @@ impl Session {
             MouseEventKind::Press(MouseButton::Left) => self.press = Some((x, y)),
             MouseEventKind::Release(MouseButton::Left) => {
                 let clicked = self.press.take().is_some_and(|(px, py)| (px - x).hypot(py - y) < CLICK_SLOP);
-                if clicked && let Some(target) = self.link_at(x, y).map(|l| l.target.clone()) {
+                if clicked
+                    && !m.modifiers.contains(Modifiers::CTRL)
+                    && let Some(target) = self.link_at(x, y).map(|l| l.target.clone())
+                {
                     self.drag = None;
                     self.follow(target, now);
                     return true;
@@ -861,6 +904,14 @@ impl Session {
             }
             // Left drag over text selects; elsewhere (and with the middle or
             // right button) it pans. Pressing on a link does neither (it is a click).
+            // Ctrl+click: SyncTeX inverse search (open the source in the editor).
+            MouseEventKind::Press(MouseButton::Left) if mods.contains(Modifiers::CTRL) => {
+                let (sx, sy) = self.pointer;
+                if let Some((page, x, y)) = self.viewer.screen_to_page(sx, sy) {
+                    self.requests.push(Request::Inverse { page, x, y });
+                }
+                return false;
+            }
             MouseEventKind::Press(MouseButton::Left) => {
                 let (sx, sy) = self.pointer;
                 let had_selection = self.selection.take().is_some();

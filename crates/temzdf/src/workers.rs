@@ -10,7 +10,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use mupdf::DisplayList;
 use termpix::tty::TermEvent;
 
+use crate::ipc::ForwardRequest;
 use crate::pdf::{self, DocInfo, Link, PageRect};
+use crate::synctex::{PdfBox, Scanner, SourceLocation};
 use crate::viewer::{RenderJob, Rendered, TileKey};
 
 pub enum AppEvent {
@@ -33,6 +35,71 @@ pub enum AppEvent {
     Reloaded(DocInfo),
     /// Reloading failed (e.g. the file is still being written); retry later.
     ReloadFailed(String),
+    /// Another process asked for a forward search (`temzdf --forward`).
+    ForwardRequest(ForwardRequest),
+    ForwardResult(Vec<PdfBox>),
+    InverseResult(SourceLocation),
+    SynctexFailed(String),
+}
+
+pub enum SynctexCmd {
+    Forward {
+        req: ForwardRequest,
+        page_hint: usize,
+    },
+    Inverse {
+        page: usize,
+        x: f32,
+        y: f32,
+    },
+    /// The PDF was rebuilt: read the SyncTeX file again on next use.
+    Reload,
+}
+
+/// SyncTeX queries run here: parsing a big `.synctex.gz` takes a while and must
+/// not stall drawing. The file is (re)read lazily on the first query after
+/// start-up or a reload.
+pub fn spawn_synctex(pdf: PathBuf, events: Sender<AppEvent>) -> std::io::Result<Sender<SynctexCmd>> {
+    let (tx, rx) = mpsc::channel::<SynctexCmd>();
+    std::thread::Builder::new().name("temzdf-synctex".into()).spawn(move || {
+        let mut scanner: Option<Scanner> = None;
+        for cmd in rx {
+            if matches!(cmd, SynctexCmd::Reload) {
+                scanner = None;
+                continue;
+            }
+            if scanner.is_none() {
+                scanner = Scanner::open(&pdf);
+            }
+            let Some(s) = scanner.as_mut() else {
+                let name = pdf.with_extension("synctex.gz");
+                let msg = format!("no SyncTeX data ({} missing; compile with -synctex=1)", name.display());
+                if events.send(AppEvent::SynctexFailed(msg)).is_err() {
+                    return;
+                }
+                continue;
+            };
+            let ev = match cmd {
+                SynctexCmd::Forward { req, page_hint } => {
+                    let boxes = s.forward(&req.file, req.line, req.column, Some(page_hint));
+                    if boxes.is_empty() {
+                        AppEvent::SynctexFailed(format!("{}:{} is not in the PDF", req.file.display(), req.line))
+                    } else {
+                        AppEvent::ForwardResult(boxes)
+                    }
+                }
+                SynctexCmd::Inverse { page, x, y } => match s.inverse(page, x, y) {
+                    Some(loc) => AppEvent::InverseResult(loc),
+                    None => AppEvent::SynctexFailed("no source location here".into()),
+                },
+                SynctexCmd::Reload => continue,
+            };
+            if events.send(ev).is_err() {
+                return;
+            }
+        }
+    })?;
+    Ok(tx)
 }
 
 /// A search request: find `query` on every page, starting at `start_page`.

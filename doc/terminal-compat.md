@@ -125,3 +125,6 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
 `z=0` (Composited, or Layered without z-layering).
 - kitty 0.49.2: OSC 52 clipboard writes work (verified with `xclip` in
   `tests/e2e/select.actions`); OSC 22 pointer shapes are accepted.
+- SGR-pixel (1016) coordinates are zero-based in kitty 0.49.2 and Ghostty 1.3.1
+  (a click at window pixel 300 reports 300), unlike SGR cell coordinates, which
+  are one-based. Check with `cargo run -p termpix --example events -- log`.

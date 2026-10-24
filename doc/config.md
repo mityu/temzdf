@@ -27,6 +27,11 @@ smoothness_ms = 60
 [links]
 # Command for external links; the URI is appended. Default: xdg-open / open.
 open_command = ["xdg-open"]
+
+[synctex]
+# Inverse search (Ctrl+click), run with sh -c. %{input} (shell-quoted path),
+# %{line} and %{column} are substituted. See doc/synctex.md for editor setups.
+editor = "vim --servername VIM --remote-silent +%{line} %{input}"
 ```
 
 Precedence: environment variables (`TERMPIX_BACKEND`, `TERMPIX_MEDIUM`) override
