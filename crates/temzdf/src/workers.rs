@@ -10,13 +10,13 @@ use std::sync::{Arc, Condvar, Mutex};
 use mupdf::DisplayList;
 use termpix::tty::TermEvent;
 
-use crate::pdf::{self, DocInfo, PageRect};
+use crate::pdf::{self, DocInfo, Link, PageRect};
 use crate::viewer::{RenderJob, Rendered, TileKey};
 
 pub enum AppEvent {
     Term(TermEvent),
     Opened(Result<DocInfo, String>),
-    PageLoaded(usize, Arc<DisplayList>),
+    PageLoaded(usize, Arc<DisplayList>, Vec<Link>),
     PageFailed(usize, String),
     Rendered(Rendered),
     RenderFailed(TileKey, String),
@@ -82,10 +82,11 @@ pub enum DocCmd {
 pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<Sender<DocCmd>> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new().name("temzdf-doc".into()).spawn(move || {
-        let doc = match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
+        let (doc, bounds) = match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
             Ok((doc, info)) => {
+                let bounds = info.bounds.clone();
                 let _ = events.send(AppEvent::Opened(Ok(info)));
-                doc
+                (doc, bounds)
             }
             Err(e) => {
                 let _ = events.send(AppEvent::Opened(Err(format!("{e:#}"))));
@@ -95,7 +96,8 @@ pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Resul
         for cmd in rx {
             let ev = match cmd {
                 DocCmd::LoadPage(p) => match pdf::display_list(&doc, p) {
-                    Ok(list) => AppEvent::PageLoaded(p, list),
+                    // A page whose links cannot be read still renders.
+                    Ok(list) => AppEvent::PageLoaded(p, list, pdf::page_links(&doc, p, bounds[p]).unwrap_or_default()),
                     Err(e) => AppEvent::PageFailed(p, format!("{e:#}")),
                 },
             };

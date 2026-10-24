@@ -211,6 +211,15 @@ impl Viewer {
         (sx + self.origin_x as f32, sy)
     }
 
+    /// The page under a screen pixel, and the page-space point there.
+    pub fn screen_to_page(&self, sx: f32, sy: f32) -> Option<(usize, f32, f32)> {
+        let (dx, dy) = self.view.screen_to_doc(&self.layout, sx - self.origin_x as f32, sy);
+        let page = self.layout.page_at(dy);
+        let b = self.layout.pages.get(page)?;
+        let (x, y) = (dx - b.x, dy - b.y);
+        (x >= 0.0 && y >= 0.0 && x <= b.w && y <= b.h).then_some((page, x, y))
+    }
+
     /// Pages intersecting the page area.
     pub fn visible_pages(&self) -> std::ops::Range<usize> {
         let top = self.view.scroll_y / self.view.scale;

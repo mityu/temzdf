@@ -14,7 +14,7 @@ use termpix::input::{
 use termpix_ui::{Canvas, Color, EditResult, LineInput, ListView, StatusBar, Text, Theme};
 
 use crate::outline::{self, OutlinePanel};
-use crate::pdf::{DocInfo, PageRect, Target};
+use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, Target};
 use crate::search::SearchState;
 use crate::viewer::{LAYER_KEYS_END, Need, Viewer};
 
@@ -34,8 +34,25 @@ const CURRENT_HIT_COLOR: Color = Color::rgba(255, 120, 0, 150);
 /// Work the session asks the caller to do (on a worker, or inline).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
-    Search { generation: u64, query: String, start_page: usize },
+    Search {
+        generation: u64,
+        query: String,
+        start_page: usize,
+    },
+    /// Open an external link with the system handler.
+    OpenUri(String),
 }
+
+/// Mouse pointer shapes (OSC 22 names).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pointer {
+    Default,
+    Link,
+}
+
+/// Movement (pixels) below which a press and release count as a click.
+const CLICK_SLOP: f32 = 4.0;
+const HISTORY_LIMIT: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -80,6 +97,14 @@ pub struct Session {
     hit_images: HashMap<(u32, u32, bool), ImageId>,
     /// Terminal cell for the text cursor (input caret), if shown.
     caret_cell: Option<(u16, u16)>,
+    /// Links per page, filled as pages load.
+    links: Vec<Option<Vec<Link>>>,
+    pointer_shape: Pointer,
+    /// Where the left button went down (screen pixels).
+    press: Option<(f32, f32)>,
+    /// Jump history: positions (with horizontal scroll) to go back / forward to.
+    back: Vec<(Target, f32)>,
+    forward: Vec<(Target, f32)>,
     // Input state
     count: Option<usize>,
     pointer: (f32, f32),
@@ -100,6 +125,11 @@ impl Session {
             requests: Vec::new(),
             hit_images: HashMap::new(),
             caret_cell: None,
+            links: vec![None; pages],
+            pointer_shape: Pointer::Default,
+            press: None,
+            back: Vec::new(),
+            forward: Vec::new(),
             viewer: Viewer::new(info.bounds.clone(), w, h),
             info,
             name,
@@ -163,6 +193,7 @@ impl Session {
     /// Jump to the selected outline entry.
     fn open_selected_entry(&mut self, now: Instant) {
         if let Some(t) = self.outline.selected_entry().and_then(|i| self.info.outline[i].target) {
+            self.push_history();
             self.viewer.goto(t, true, now);
         }
     }
@@ -329,6 +360,74 @@ impl Session {
         }
     }
 
+    pub fn page_links(&mut self, page: usize, links: Vec<Link>) {
+        if let Some(slot) = self.links.get_mut(page) {
+            *slot = Some(links);
+        }
+    }
+
+    pub fn pointer(&self) -> Pointer {
+        self.pointer_shape
+    }
+
+    /// The link under a screen pixel.
+    fn link_at(&self, sx: f32, sy: f32) -> Option<&Link> {
+        let (page, x, y) = self.viewer.screen_to_page(sx, sy)?;
+        self.links
+            .get(page)?
+            .as_ref()?
+            .iter()
+            .find(|l| x >= l.rect.x0 && x <= l.rect.x1 && y >= l.rect.y0 && y <= l.rect.y1)
+    }
+
+    /// Remember the current position before a jump.
+    fn push_history(&mut self) {
+        let here = (self.viewer.top_position(), self.viewer.view.scroll_x);
+        if self
+            .back
+            .last()
+            .is_some_and(|(t, _)| t.page == here.0.page && (t.y.unwrap_or(0.0) - here.0.y.unwrap_or(0.0)).abs() < 1.0)
+        {
+            return;
+        }
+        self.back.push(here);
+        if self.back.len() > HISTORY_LIMIT {
+            self.back.remove(0);
+        }
+        self.forward.clear();
+    }
+
+    fn history(&mut self, backwards: bool, now: Instant) {
+        let (from, to) =
+            if backwards { (&mut self.back, &mut self.forward) } else { (&mut self.forward, &mut self.back) };
+        let Some((pos, sx)) = from.pop() else {
+            self.message = Some(
+                if backwards { "Already at the oldest position" } else { "Already at the newest position" }.into(),
+            );
+            return;
+        };
+        to.push((self.viewer.top_position(), self.viewer.view.scroll_x));
+        // Positions were recorded at the screen top; go there exactly.
+        let v = &mut self.viewer;
+        let b = v.layout.pages[pos.page.min(v.page_count() - 1)];
+        let y = (b.y + pos.y.unwrap_or(0.0)) * v.view.scale;
+        v.scroll_y.scroll_by(y as f64 - v.scroll_y.target(), now);
+        v.scroll_x.jump_to(sx as f64);
+    }
+
+    fn follow(&mut self, target: LinkTarget, now: Instant) {
+        match target {
+            LinkTarget::Internal(t) => {
+                self.push_history();
+                self.viewer.goto(t, true, now);
+            }
+            LinkTarget::External(uri) => {
+                self.message = Some(format!("Opening {uri}"));
+                self.requests.push(Request::OpenUri(uri));
+            }
+        }
+    }
+
     /// Terminal cell where the text cursor should be shown, if any.
     pub fn cursor(&self) -> Option<(u16, u16)> {
         self.caret_cell
@@ -398,7 +497,10 @@ impl Session {
             }
             KeyCode::Enter => {
                 self.input = None;
-                self.search_origin = None;
+                if let Some((pos, sx, _)) = self.search_origin.take() {
+                    self.back.push((pos, sx));
+                    self.forward.clear();
+                }
                 if self.search.is_active() && self.search.total() == 0 && self.search.is_complete() {
                     self.message = Some(format!("Pattern not found: {}", self.search.query));
                 }
@@ -546,6 +648,8 @@ impl Session {
             KeyCode::Char('c') if ctrl => return Action::Quit,
             KeyCode::Char('j') | KeyCode::Down => wheel_n(v, 1.0, count, now),
             KeyCode::Char('k') | KeyCode::Up => wheel_n(v, -1.0, count, now),
+            KeyCode::Left if k.modifiers.contains(Modifiers::ALT) => self.history(true, now),
+            KeyCode::Right if k.modifiers.contains(Modifiers::ALT) => self.history(false, now),
             KeyCode::Char('l') | KeyCode::Right => v.scroll_x.wheel(1.0, now),
             KeyCode::Char('h') | KeyCode::Left => v.scroll_x.wheel(-1.0, now),
             KeyCode::Char(' ') | KeyCode::PageDown => v.scroll_y.scroll_by(page, now),
@@ -553,11 +657,18 @@ impl Session {
             KeyCode::Char('b') | KeyCode::PageUp => v.scroll_y.scroll_by(-page, now),
             KeyCode::Char('d') => v.scroll_y.scroll_by(half, now),
             KeyCode::Char('u') => v.scroll_y.scroll_by(-half, now),
-            KeyCode::Char('g') | KeyCode::Home => v.goto_page(count.map_or(0, |c| c.saturating_sub(1)), true, now),
-            KeyCode::Char('G') | KeyCode::End => match count {
-                Some(c) => v.goto_page(c.saturating_sub(1), true, now),
-                None => v.scroll_y.scroll_by(f64::INFINITY, now),
-            },
+            KeyCode::Char('g') | KeyCode::Home => {
+                self.push_history();
+                self.viewer.goto_page(count.map_or(0, |c| c.saturating_sub(1)), true, now);
+            }
+            KeyCode::Char('G') | KeyCode::End => {
+                self.push_history();
+                match count {
+                    Some(c) => self.viewer.goto_page(c.saturating_sub(1), true, now),
+                    None => self.viewer.scroll_y.scroll_by(f64::INFINITY, now),
+                }
+            }
+            KeyCode::Char('o') if ctrl => self.history(true, now),
             KeyCode::Char('+' | '=') => v.zoom(ZOOM_STEP, centre),
             KeyCode::Char('-') => v.zoom(1.0 / ZOOM_STEP, centre),
             KeyCode::Char('0') | KeyCode::Char('w') => v.fit_width(),
@@ -584,6 +695,30 @@ impl Session {
         }
         // Leaving the sidebar clears its hover highlight.
         let hover_cleared = self.outline.list.hover.take().is_some();
+        let (x, y) = self.pointer;
+        // Links: pointer shape on hover, follow on click (press and release in place).
+        self.pointer_shape =
+            if self.drag.is_none() && self.link_at(x, y).is_some() { Pointer::Link } else { Pointer::Default };
+        match m.kind {
+            MouseEventKind::Press(MouseButton::Left) => self.press = Some((x, y)),
+            MouseEventKind::Release(MouseButton::Left) => {
+                let clicked = self.press.take().is_some_and(|(px, py)| (px - x).hypot(py - y) < CLICK_SLOP);
+                if clicked && let Some(target) = self.link_at(x, y).map(|l| l.target.clone()) {
+                    self.drag = None;
+                    self.follow(target, now);
+                    return true;
+                }
+            }
+            MouseEventKind::Press(MouseButton::Other(8)) => {
+                self.history(true, now);
+                return true;
+            }
+            MouseEventKind::Press(MouseButton::Other(9)) => {
+                self.history(false, now);
+                return true;
+            }
+            _ => {}
+        }
         self.page_mouse(m, now) || hover_cleared
     }
 

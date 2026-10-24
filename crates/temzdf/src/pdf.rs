@@ -147,6 +147,41 @@ pub fn search_page(doc: &Doc, page: usize, bounds: PageBounds, needle: &str) -> 
         .collect())
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinkTarget {
+    Internal(Target),
+    External(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Link {
+    pub rect: PageRect,
+    pub target: LinkTarget,
+}
+
+/// Links on a page, with rectangles in page space.
+pub fn page_links(doc: &Doc, page: usize, bounds: PageBounds) -> Result<Vec<Link>> {
+    let p = doc.load_page(page as i32)?;
+    // mupdf-rs unwraps while resolving destinations; never let a malformed link
+    // take the document thread down.
+    let links = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.links().map(|it| it.collect::<Vec<_>>())))
+        .map_err(|_| anyhow::anyhow!("malformed link on page {}", page + 1))??;
+    Ok(links
+        .into_iter()
+        .filter_map(|l| {
+            let r = l.bounds;
+            let rect =
+                PageRect { x0: r.x0 - bounds.x0, y0: r.y0 - bounds.y0, x1: r.x1 - bounds.x0, y1: r.y1 - bounds.y0 };
+            let target = match l.dest {
+                Some(d) => LinkTarget::Internal(Target { page: d.loc.page_number as usize, y: dest_top(&d.kind) }),
+                None if !l.uri.is_empty() && !l.uri.starts_with('#') => LinkTarget::External(l.uri),
+                None => return None,
+            };
+            Some(Link { rect, target })
+        })
+        .collect())
+}
+
 pub fn display_list(doc: &Doc, page: usize) -> Result<Arc<DisplayList>> {
     let page = doc.load_page(page as i32)?;
     Ok(Arc::new(page.to_display_list(true)?))
@@ -239,6 +274,19 @@ mod tests {
         let hit = search_page(&doc, 0, bounds[0], "NEEDLE").unwrap()[0];
         assert!(hit.x1 > hit.x0 && hit.y1 > hit.y0 && hit.y1 < bounds[0].height(), "{hit:?}");
         assert!(search_page(&doc, 0, bounds[0], "  ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn links_internal_and_external() {
+        let doc = open(&fixture("sample.pdf")).unwrap();
+        let bounds = page_bounds(&doc).unwrap();
+        let links = page_links(&doc, 0, bounds[0]).unwrap();
+        assert!(links.iter().any(|l| l.target == LinkTarget::External("https://example.com/".into())), "{links:?}");
+        // The TOC and \ref links point inside the document; "Filler" is on page 2.
+        assert!(links.iter().any(|l| matches!(l.target, LinkTarget::Internal(Target { page: 1, .. }))), "{links:?}");
+        for l in &links {
+            assert!(l.rect.x1 > l.rect.x0 && l.rect.y1 > l.rect.y0);
+        }
     }
 
     #[test]

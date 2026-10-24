@@ -92,6 +92,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         session.key(&key, now);
         for req in session.take_requests() {
             match req {
+                Request::OpenUri(_) => {}
                 Request::Search { generation, query, start_page } => {
                     let n = session.info.bounds.len();
                     for i in 0..n {
@@ -122,7 +123,10 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         }
         for need in needs {
             match need {
-                Need::LoadPage(p) => session.viewer.page_loaded(p, pdf::display_list(&doc, p)?),
+                Need::LoadPage(p) => {
+                    session.viewer.page_loaded(p, pdf::display_list(&doc, p)?);
+                    session.page_links(p, pdf::page_links(&doc, p, session.info.bounds[p]).unwrap_or_default());
+                }
                 Need::Render(job) => {
                     let pixels = pdf::render(&job.list, job.bounds, job.scale, job.area)?;
                     let r = Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels };

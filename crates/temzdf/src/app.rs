@@ -10,7 +10,7 @@ use termpix::compositor::Compositor;
 use termpix::input::Event;
 use termpix::tty::{self, Modes, TermEvent, Tty};
 
-use crate::session::{Action, Request, Session};
+use crate::session::{Action, Pointer, Request, Session};
 use crate::viewer::Need;
 use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd};
 
@@ -70,6 +70,7 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
     let mut out = Vec::new();
     let mut title = String::new();
     let mut shown_cursor = None;
+    let mut shown_pointer = Pointer::Default;
     loop {
         if dirty {
             let (layers, needs) = session.frame(&mut comp);
@@ -107,6 +108,7 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
                     Request::Search { generation, query, start_page } => {
                         let _ = search.send(SearchCmd { generation, query, start_page });
                     }
+                    Request::OpenUri(uri) => open_uri(&uri),
                 }
             }
             dirty = false;
@@ -137,14 +139,25 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
                 Action::Redraw => dirty = true,
                 Action::None => {}
             },
-            Some(AppEvent::Term(TermEvent::Input(Event::Mouse(m)))) => dirty |= session.mouse(&m, now),
+            Some(AppEvent::Term(TermEvent::Input(Event::Mouse(m)))) => {
+                dirty |= session.mouse(&m, now);
+                if session.pointer() != shown_pointer {
+                    shown_pointer = session.pointer();
+                    let name = match shown_pointer {
+                        Pointer::Default => "default",
+                        Pointer::Link => "pointer",
+                    };
+                    tty.write_all(format!("\x1b]22;{name}\x1b\\").as_bytes())?;
+                }
+            }
             Some(AppEvent::Term(TermEvent::Input(Event::Paste(text)))) => {
                 dirty |= session.paste(&text) == Action::Redraw;
             }
             Some(AppEvent::Term(_)) => {}
             Some(AppEvent::Opened(_)) => {}
-            Some(AppEvent::PageLoaded(p, list)) => {
+            Some(AppEvent::PageLoaded(p, list, links)) => {
                 session.viewer.page_loaded(p, list);
+                session.page_links(p, links);
                 dirty = true;
             }
             Some(AppEvent::PageFailed(p, e)) => {
@@ -172,6 +185,17 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
         dirty |= session.viewer.tick(Instant::now());
     }
     Ok(())
+}
+
+/// Open a URI with the desktop's handler, detached from the terminal.
+fn open_uri(uri: &str) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let _ = std::process::Command::new(opener)
+        .arg(uri)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 fn dispatch(session: &mut Session, doc: &Sender<DocCmd>, pool: &RasterPool, needs: Vec<Need>) {
