@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# End-to-end harness: run a command inside a real terminal (kitty or Ghostty) on
-# a virtual X server, drive it with an actions script, and save screenshots.
+# End-to-end harness: run a command inside a real terminal (kitty, Ghostty or
+# WezTerm) on a virtual X server, drive it with an actions script, and save
+# screenshots.
 #
-# Usage: scripts/e2e.sh [-t kitty|ghostty] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
+# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
 #   -t TERM   terminal to run (default kitty)
 #   -s WxH    window/screen size in pixels (default 900x600)
-#   -o OUTDIR where screenshots and kitty.log go (default: target/e2e)
-#   ACTIONS   bash file sourced after kitty started; it can use the helpers below.
+#   -o OUTDIR where screenshots and terminal.log go (default: target/e2e)
+#   ACTIONS   bash file sourced after the terminal started; it can use the helpers below.
 #
 # Helpers available to ACTIONS (coordinates are window pixels):
 #   shot NAME          save OUTDIR/NAME.png
@@ -17,7 +18,7 @@
 #   type TEXT          type literal text
 #   pause SECONDS
 #
-# It waits 3 s for startup (6 s for Ghostty) and sends `q` at the end. It does not
+# It waits 3 s for startup (6 s for Ghostty and WezTerm) and sends `q` at the end. It does not
 # check results; inspect the screenshots (or compare pixels) afterwards. The
 # command runs without ZELLIJ/TMUX in its environment so a multiplexer around the
 # harness does not leak into terminal detection. If the terminal process died,
@@ -83,6 +84,10 @@ keys() { xdotool key "$@"; }
 type() { xdotool type -- "$1"; }
 pause() { sleep "$1"; }
 
+# Some terminals (WezTerm) look the program up only in PATH: make it absolute.
+if [[ "$1" == */* && -e "$1" ]]; then
+  set -- "$(realpath "$1")" "${@:2}"
+fi
 clean_env=(env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE)
 case $term in
   kitty)
@@ -97,6 +102,16 @@ case $term in
       "--window-width=$((width / 10))" "--window-height=$((height / 21))" -e "$@" >"$outdir/terminal.log" 2>&1 &
     startup=6
     ;;
+  wezterm)
+    # -n: ignore the user's wezterm config. The software renderer works on Xvfb.
+    # WezTerm sizes windows in cells; about 10x20 px cells at its defaults.
+    "${clean_env[@]}" wezterm -n --config 'front_end="Software"' --config enable_wayland=false \
+      --config 'window_decorations="NONE"' --config enable_tab_bar=false \
+      --config 'window_padding={left=0,right=0,top=0,bottom=0}' \
+      --config "initial_cols=$((width / 10))" --config "initial_rows=$((height / 20))" \
+      start --always-new-process --cwd "$PWD" -- "$@" >"$outdir/terminal.log" 2>&1 &
+    startup=6
+    ;;
   *)
     echo "unknown terminal: $term" >&2
     exit 2
@@ -104,6 +119,11 @@ case $term in
 esac
 term_pid=$!
 sleep "$startup"
+# Without a window manager WezTerm only gets mouse events once focused.
+if [[ $term == wezterm ]]; then
+  xdotool search --class wezterm windowfocus 2>/dev/null || true
+  sleep 0.3
+fi
 # shellcheck source=/dev/null
 source "$actions"
 crashed=0

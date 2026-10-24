@@ -128,3 +128,13 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
 - SGR-pixel (1016) coordinates are zero-based in kitty 0.49.2 and Ghostty 1.3.1
   (a click at window pixel 300 reports 300), unlike SGR cell coordinates, which
   are one-based. Check with `cargo run -p termpix --example events -- log`.
+- WezTerm 0-unstable-2026-10-10 (nightly, software renderer on Xvfb): the
+  Composited backend works for every scenario in `tests/e2e/` (scrolling, zoom,
+  pan, search highlights, selection + OSC 52, links). Detection reports shm and
+  temp files as usable; the kitty keyboard protocol is off by default
+  (`keyboard_flags: None`). The Layered backend (`TERMPIX_BACKEND=layered`) is
+  unusable: the screen turns into a grid of fragments and stops updating, which
+  confirms choosing Composited for WezTerm. Harness notes: WezTerm needs its
+  window focused (no window manager on Xvfb) to report mouse events, looks the
+  program up only in `PATH`, and pads the text area by default; `scripts/e2e.sh -t
+  wezterm` handles all three.
