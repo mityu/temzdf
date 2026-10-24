@@ -37,9 +37,17 @@ Skim (BSD-3, `SKFileUpdateChecker.m`, `SKMainDocument.m`,
 5. **Other state.** Keep sidebar visibility/selection, outline expansion (matched
    by title path) and navigation history (clamped). Keep the search query and
    re-run it on the new document. Clear the text selection.
-6. **Optional SyncTeX anchoring** (`reload.anchor = "synctex"`, default off):
-   before reload, map the viewport anchor back to a source location; after reload,
-   forward-search it. Off by default so the default behaviour matches Skim/Okular.
+6. **No SyncTeX anchoring.** Planned as an option (inverse-search the viewport
+   before the reload, forward-search the result after it) and tried on
+   2026-10-25 with a real latexmk rebuild. It was dropped. When text is inserted
+   above the anchor, which is exactly when position-based restore drifts, the
+   recorded line number points at different text in the edited source. Also,
+   pdfTeX finishes the PDF before it writes `.synctex.gz`, so the reload can see
+   stale SyncTeX data. Editor-driven forward search after each successful
+   compile (e.g. a vimtex compiler callback running `temzdf --forward`) solves
+   the real problem, because the editor knows the cursor in the *new* source. A
+   content-based anchor (find the text line at the anchor point again in the new
+   PDF) would work without SyncTeX; see `todo.md`.
 
 ## Tests to keep
 
