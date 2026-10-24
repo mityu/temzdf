@@ -273,8 +273,10 @@ fn write_chunked(out: &mut Vec<u8>, keys: &[u8], data: &[u8]) {
 }
 
 fn zlib(data: &[u8]) -> Vec<u8> {
-    // Level 1: transfer time dominates, and higher levels barely shrink rendered pages.
-    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(1));
+    // Level 2, not 1: zlib-rs level 1 uses the "deflate_quick" strategy, and
+    // Ghostty 1.3.1 crashes (SIGSEGV) inflating its output. See
+    // doc/terminal-compat.md. Level 2 is about as fast and compresses better.
+    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(2));
     enc.write_all(data).expect("writing to a Vec cannot fail");
     enc.finish().expect("writing to a Vec cannot fail")
 }

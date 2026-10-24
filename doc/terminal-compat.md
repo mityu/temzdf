@@ -55,8 +55,23 @@ Known problems:
 
 ## Verified in practice
 
-- kitty 0.49.2 (Xvfb, `scripts/e2e-kitty.sh`): Layered backend; one tall image
+- kitty 0.49.2 (Xvfb, `scripts/e2e.sh`): Layered backend; one tall image
   uploaded once and re-placed with `x,y,w,h` crops scrolls pixel-exactly
   (6 wheel steps = 360 px). SGR-pixel (1016) drag deltas are exact (100 px drag
   = 100 px scroll). kitty logs "Pending mode change to already current mode (0)"
   when we send `CSI ? 2026 l` on exit outside a synchronized update; harmless.
+- Ghostty 1.3.1 (Linux under Xvfb, and macOS over SSH as reported by the user):
+  **crashes with SIGSEGV when inflating zlib streams produced by zlib-rs at
+  level 1** (its "deflate_quick" strategy) in `o=z` transmissions. The same
+  pixels compressed by Python's zlib, by miniz_oxide, or by zlib-rs at levels
+  2, 3 or 6 are fine. termpix therefore compresses at level 2
+  (`crates/termpix/src/graphics.rs`). Reproduce with
+  `TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf tests/fixtures/sample.pdf`
+  after switching the level back to 1. Not yet reported upstream.
+- Ghostty 1.3.1 with kitty keyboard flags 31 reports Shift+letter as the base
+  key plus Shift (e.g. `CSI 103;2u` style with alternates); termpix maps it to the
+  produced character (`G`) using the alternate key or associated text.
+- Environment leaks: a terminal started from inside zellij or tmux inherits
+  `ZELLIJ`/`TMUX`, which makes detection think it runs inside a multiplexer.
+  `scripts/e2e.sh` clears them; real users may see this when launching a GUI
+  terminal from a multiplexer shell.
