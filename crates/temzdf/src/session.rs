@@ -40,6 +40,7 @@ pub enum Request {
         generation: u64,
         query: String,
         start_page: usize,
+        doc_generation: u32,
     },
     /// Open an external link with the system handler.
     OpenUri(String),
@@ -106,6 +107,10 @@ pub struct Session {
     selection: Option<Selection>,
     /// A left drag is extending the selection.
     selecting: bool,
+    /// Search hit to re-select once a re-run search (after reload) reaches it.
+    restore_hit: Option<(usize, usize)>,
+    /// The file changed and a reload is pending (shown in the status bar).
+    pub reloading: bool,
     /// Terminal cell for the text cursor (input caret), if shown.
     caret_cell: Option<(u16, u16)>,
     /// Links per page, filled as pages load.
@@ -138,6 +143,8 @@ impl Session {
             texts: vec![None; pages],
             selection: None,
             selecting: false,
+            restore_hit: None,
+            reloading: false,
             caret_cell: None,
             links: vec![None; pages],
             pointer_shape: Pointer::Default,
@@ -327,6 +334,9 @@ impl Session {
             if self.search.is_active() {
                 right = format!("/{} {}   {right}", self.search.query, self.search_hint());
             }
+            if self.reloading {
+                right = format!("reloading…   {right}");
+            }
             let status =
                 StatusBar { left: self.name.clone(), right, error: self.message.clone(), notice: self.notice.clone() };
             layers.push(self.widget(comp, KEY_STATUS, WidgetState::Status(status), bar));
@@ -459,8 +469,18 @@ impl Session {
         if !self.search.add(generation, page, rects) {
             return false;
         }
-        // Incremental search: move to the first match after where the search began.
-        if self.search.current.is_none() {
+        // After a reload, re-select the hit that was current if it still exists.
+        if let Some((p, i)) = self.restore_hit
+            && p == page
+        {
+            self.restore_hit = None;
+            if self.search.hits[p].get(i).is_some() {
+                self.search.current = Some((p, i));
+            }
+        }
+        // Incremental search (while typing): move to the first match after where
+        // the search began.
+        if self.input.is_some() && self.search.current.is_none() {
             let from = self.search_origin.map_or_else(|| self.viewer.top_position(), |o| o.0);
             if let Some(hit) = self.search.find_from(from, true)
                 && self.search.hits[hit.0].get(hit.1).is_some()
@@ -490,10 +510,50 @@ impl Session {
 
     fn start_search(&mut self) {
         let query = self.input.as_ref().map(|i| i.text.clone()).unwrap_or_default();
+        self.run_search(query);
+    }
+
+    fn run_search(&mut self, query: String) {
         let generation = self.search.start(&query);
         if !query.trim().is_empty() {
             let start_page = self.search_origin.map_or_else(|| self.viewer.top_position().page, |o| o.0.page);
-            self.requests.push(Request::Search { generation, query, start_page });
+            let doc_generation = self.viewer.generation();
+            self.requests.push(Request::Search { generation, query, start_page, doc_generation });
+        }
+    }
+
+    /// The file changed and the document thread has the new version. Keep the
+    /// reading position (see `Viewer::replace_pages`), sidebar state, outline
+    /// expansion and the search query (re-run on the new text); drop the text
+    /// selection and per-page caches. History entries are clamped to the new
+    /// page count. See doc/reload.md.
+    pub fn reload(&mut self, comp: &mut Compositor, info: DocInfo) {
+        let collapsed = self.outline.collapsed_paths(&self.info.outline);
+        let selected_title = self.outline.selected_entry().map(|i| self.info.outline[i].title.clone());
+        self.viewer.replace_pages(comp, info.bounds.clone());
+        let pages = info.bounds.len();
+        self.links = vec![None; pages];
+        self.texts = vec![None; pages];
+        self.selection = None;
+        self.selecting = false;
+        for (t, _) in self.back.iter_mut().chain(self.forward.iter_mut()) {
+            t.page = t.page.min(pages - 1);
+        }
+        self.outline = OutlinePanel::new(&info.outline, &info.labels);
+        self.outline.restore_collapsed(&info.outline, &info.labels, &collapsed);
+        self.info = info;
+        if let Some(title) = selected_title
+            && let Some(i) = self.info.outline.iter().position(|e| e.title == title)
+        {
+            self.outline.select_entry(i);
+        }
+        let query = self.search.query.clone();
+        let current = self.search.current;
+        self.search = SearchState::new(pages);
+        if !query.is_empty() {
+            self.run_search(query);
+            // Remember which hit was current; it is restored as results arrive.
+            self.restore_hit = current;
         }
     }
 
@@ -879,7 +939,7 @@ mod tests {
         let geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
         let mut s = Session::new("sample.pdf".into(), info, geometry);
         for p in 0..s.viewer.page_count() {
-            s.viewer.page_loaded(p, pdf::display_list(&doc, p).unwrap());
+            s.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
             s.page_links(p, pdf::page_links(&doc, p, s.info.bounds[p]).unwrap());
         }
         s
@@ -910,6 +970,67 @@ mod tests {
         mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), (b.0 + 4.0, b.1));
         mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (b.0 + 4.0, b.1));
         assert_eq!(s.take_requests(), vec![Request::Copy("temzdf sample document".into())]);
+    }
+
+    fn info(name: &str) -> DocInfo {
+        pdf::doc_info(&pdf::open(&pdf::fixture(name)).unwrap()).unwrap()
+    }
+
+    fn comp() -> Compositor {
+        let g = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
+        Compositor::new(termpix::compositor::Backend::Layered, termpix::graphics::Medium::Direct { compress: false }, g)
+    }
+
+    #[test]
+    fn reload_keeps_the_reading_position() {
+        let mut s = session();
+        let mut c = comp();
+        let b = s.viewer.layout.pages[1];
+        // Top of the screen 40% into page 2.
+        s.viewer.jump_to(0.0, (b.y + 0.4 * b.h) * s.viewer.view.scale);
+        let before = s.viewer.top_position();
+        s.reload(&mut c, info("sample.pdf"));
+        let after = s.viewer.top_position();
+        assert_eq!(after.page, before.page);
+        assert!((after.y.unwrap() - before.y.unwrap()).abs() < 0.5, "{before:?} {after:?}");
+        assert_eq!(s.viewer.generation(), 1);
+    }
+
+    #[test]
+    fn reload_clamps_to_the_last_page_and_keeps_the_fraction() {
+        let mut s = session();
+        let mut c = comp();
+        let b = s.viewer.layout.pages[2];
+        s.viewer.jump_to(0.0, (b.y + 0.25 * b.h) * s.viewer.view.scale);
+        s.reload(&mut c, info("sample-short.pdf"));
+        assert_eq!(s.viewer.page_count(), 2);
+        let after = s.viewer.top_position();
+        // Page 3 no longer exists: last page, same fraction (unless the view is
+        // clamped at the end of the document).
+        assert_eq!(after.page, 1);
+        let h = s.viewer.layout.pages[1].h;
+        let at_end = s.viewer.view.scroll_y >= s.viewer.view.max_scroll_y(&s.viewer.layout) - 0.5;
+        assert!(at_end || (after.y.unwrap() / h - 0.25).abs() < 0.01, "{after:?}");
+    }
+
+    #[test]
+    fn reload_reruns_the_search_and_keeps_the_sidebar() {
+        let mut s = session();
+        let mut c = comp();
+        let now = Instant::now();
+        s.key(&KeyEvent::new(KeyCode::Tab, Modifiers::NONE), now);
+        s.key(&KeyEvent::new(KeyCode::Char('/'), Modifiers::NONE), now);
+        for ch in "needle".chars() {
+            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
+        }
+        s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
+        s.take_requests();
+        s.reload(&mut c, info("sample-short.pdf"));
+        assert!(s.sidebar_open);
+        match s.take_requests().as_slice() {
+            [Request::Search { query, doc_generation: 1, .. }] => assert_eq!(query, "needle"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

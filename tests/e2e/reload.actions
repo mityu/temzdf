@@ -1,0 +1,25 @@
+# Used with:
+#   mkdir -p target/e2e-reload && cp tests/fixtures/sample.pdf target/e2e-reload/doc.pdf
+#   scripts/e2e.sh tests/e2e/reload.actions -- target/debug/temzdf target/e2e-reload/doc.pdf
+# Simulates how LaTeX tools write the PDF. Expected:
+#   before.png     page 2 ("3 Filler"), status 2 / 3
+#   truncated.png  same view; "reloading…" in the status bar, old document still shown
+#   short.png      after rename-over with the 2-page version: still page 2 (now
+#                  "3 Conclusion"), status 2 / 2, no "reloading…"
+#   recreated.png  after delete + recreate with the 3-page version: page 2 again, 2 / 3
+doc=target/e2e-reload/doc.pdf
+keys 2 shift+g
+pause 1.2
+shot before
+head -c 60000 tests/fixtures/sample.pdf >"$doc"
+pause 1.2
+shot truncated
+cp tests/fixtures/sample-short.pdf target/e2e-reload/.doc.pdf.tmp
+mv target/e2e-reload/.doc.pdf.tmp "$doc"
+pause 1.5
+shot short
+rm "$doc"
+pause 0.5
+cp tests/fixtures/sample.pdf "$doc"
+pause 1.5
+shot recreated

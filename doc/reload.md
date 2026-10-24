@@ -45,3 +45,24 @@ Skim (BSD-3, `SKFileUpdateChecker.m`, `SKMainDocument.m`,
 
 Truncated PDF (no `%%EOF`), rename-over, delete-then-recreate, page count
 shrinking. Each must keep the viewport and never show an empty view.
+
+## Implementation
+
+| Piece | Where |
+|---|---|
+| Watcher (parent dir + symlink target, filtered by file name) | `workers::spawn_watcher` |
+| `%%EOF` pre-check | `pdf::looks_complete` |
+| Debounce 200 ms, retry every 300 ms, give up after 100 attempts until the next change | `ReloadState` in `app.rs` |
+| Open-then-swap on the document thread (`DocCmd::Reload` -> `Reloaded` / `ReloadFailed`) | `workers::spawn_document` |
+| Position restore (page + fraction of page height, clamp to last page, keep zoom/fit mode/horizontal scroll) | `Viewer::replace_pages` |
+| Outline collapse state by title path, selected entry by title, search re-run (current hit restored), selection dropped, history clamped | `Session::reload` |
+
+Generations: the document thread and the viewer both count successful
+reloads. Display lists, links and tiles carry the generation they belong to
+(`TileKey::generation`, `AppEvent::PageLoaded`), so results computed from the
+old file can never be shown after a swap. The search worker reopens the file
+when a request carries a newer document generation.
+
+Tests: unit tests in `session.rs` (`reload_*`) and the end-to-end scenario
+`tests/e2e/reload.actions` (in-place truncation, rename-over with fewer pages,
+delete and recreate).

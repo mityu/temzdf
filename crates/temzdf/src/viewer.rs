@@ -48,6 +48,9 @@ pub enum TileKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TileKey {
+    /// Document generation (bumped on every reload), so tiles of an older
+    /// version of the file can never be mistaken for current ones.
+    pub generation: u32,
     pub page: u32,
     pub kind: TileKind,
 }
@@ -106,6 +109,7 @@ pub struct Viewer {
     origin_x: i32,
     /// Keep the zoom at fit-width when the page area changes.
     fit_mode: bool,
+    generation: u32,
 }
 
 impl Viewer {
@@ -137,6 +141,7 @@ impl Viewer {
             background: None,
             origin_x: 0,
             fit_mode: true,
+            generation: 0,
         };
         v.update_scroll_bounds();
         v
@@ -302,7 +307,16 @@ impl Viewer {
         }
     }
 
-    pub fn page_loaded(&mut self, page: usize, list: Arc<DisplayList>) {
+    /// Generation of the document being shown (see [`TileKey::generation`]).
+    pub fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    /// A display list arrived. Lists for an older generation are ignored.
+    pub fn page_loaded(&mut self, generation: u32, page: usize, list: Arc<DisplayList>) {
+        if generation != self.generation {
+            return;
+        }
         if let Some(slot) = self.lists.get_mut(page) {
             *slot = Some(list);
         }
@@ -310,8 +324,45 @@ impl Viewer {
     }
 
     /// A page failed to load; forget the request so it is retried later.
-    pub fn page_failed(&mut self, page: usize) {
-        self.lists_requested.remove(&page);
+    pub fn page_failed(&mut self, generation: u32, page: usize) {
+        if generation == self.generation {
+            self.lists_requested.remove(&page);
+        }
+    }
+
+    /// Show a new version of the document (after the file changed), keeping the
+    /// reading position: the page at the top of the screen and the position
+    /// within it as a fraction of the page height, so small layout changes still
+    /// land in the right place. If the page count shrank, the last page is used
+    /// with the same fraction. Zoom, fit-width mode and horizontal scroll stay.
+    pub fn replace_pages(&mut self, comp: &mut Compositor, bounds: Vec<PageBounds>) {
+        let top = self.top_position();
+        let fraction = top.y.unwrap_or(0.0) / self.layout.pages[top.page].h.max(1.0);
+        let scroll_x = self.view.scroll_x;
+
+        self.generation = self.generation.wrapping_add(1);
+        for (_, c) in self.tiles.drain() {
+            comp.remove_image(c.image);
+        }
+        self.used_bytes = 0;
+        self.in_flight.clear();
+        self.lists = vec![None; bounds.len()];
+        self.lists_requested.clear();
+        self.layout = Layout::new(&bounds.iter().map(|b| (b.width(), b.height())).collect::<Vec<_>>());
+        self.bounds = bounds;
+        if self.bounds.is_empty() {
+            return;
+        }
+        if self.fit_mode {
+            self.view.scale = View::fit_width_scale(&self.layout, self.view.screen_w).clamp(MIN_SCALE, MAX_SCALE);
+        }
+        let page = top.page.min(self.page_count() - 1);
+        let b = self.layout.pages[page];
+        self.view.scroll_x = scroll_x;
+        self.view.scroll_y = (b.y + fraction * b.h) * self.view.scale;
+        self.view.clamp(&self.layout);
+        self.update_scroll_bounds();
+        self.jump_to(self.view.scroll_x, self.view.scroll_y);
     }
 
     pub fn mark_requested(&mut self, need: &Need) {
@@ -332,7 +383,7 @@ impl Viewer {
 
     pub fn rendered(&mut self, comp: &mut Compositor, r: Rendered) {
         self.in_flight.remove(&r.key);
-        if self.tiles.contains_key(&r.key) {
+        if r.key.generation != self.generation || self.tiles.contains_key(&r.key) {
             return;
         }
         let bytes = r.pixels.len();
@@ -391,7 +442,7 @@ impl Viewer {
             let page_rect = Rect::new(sx, sy, pw, ph);
 
             // Thumbnail first: it is cheap and covers the page while tiles render.
-            let thumb_key = TileKey { page: page as u32, kind: TileKind::Thumb };
+            let thumb_key = TileKey { generation: self.generation, page: page as u32, kind: TileKind::Thumb };
             let thumb_scale = THUMB_WIDTH / bounds.width();
             let thumb_cached = self.touch(thumb_key);
             if thumb_cached.is_none() && !self.in_flight.contains(&thumb_key) {
@@ -418,7 +469,11 @@ impl Viewer {
                     if !on_screen && !near {
                         continue;
                     }
-                    let key = TileKey { page: page as u32, kind: TileKind::Tile { scale_q, tx, ty } };
+                    let key = TileKey {
+                        generation: self.generation,
+                        page: page as u32,
+                        kind: TileKind::Tile { scale_q, tx, ty },
+                    };
                     match self.touch(key) {
                         Some((image, layer)) => {
                             if on_screen {

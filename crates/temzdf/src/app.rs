@@ -11,11 +11,19 @@ use termpix::input::Event;
 use termpix::tty::{self, Modes, TermEvent, Tty};
 
 use crate::config::Config;
+use crate::pdf;
 use crate::session::{Action, Pointer, Request, Session};
 use crate::viewer::Need;
 use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd};
 
 const FRAME: Duration = Duration::from_millis(16);
+/// Wait this long after the last change before reloading (see doc/reload.md).
+const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
+/// Retry interval while the file is incomplete or fails to open.
+const RELOAD_RETRY: Duration = Duration::from_millis(300);
+/// Give up retrying after this many attempts (about 30 s); a new change event
+/// starts over.
+const RELOAD_MAX_ATTEMPTS: u32 = 100;
 
 pub struct Options {
     /// 0-based page to show first.
@@ -46,6 +54,9 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
     let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
     let pool = RasterPool::new(threads, tx.clone())?;
     let search = workers::spawn_search(path.to_owned(), tx.clone())?;
+    // Keep the watcher alive for the whole session. Without it the viewer still
+    // works, just without auto-reload.
+    let watcher = workers::spawn_watcher(path, tx.clone());
 
     // Wait for the document before drawing anything.
     let info = loop {
@@ -68,6 +79,10 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
     session.viewer.scroll_x.config = opts.config.scroll.to_termpix();
     session.viewer.scroll_y.config = opts.config.scroll.to_termpix();
     let open_command = opts.config.links.command();
+    if let Err(e) = &watcher {
+        session.message = Some(format!("auto-reload disabled: {e}"));
+    }
+    let mut reload = ReloadState::default();
     if let Some(scale) = opts.scale {
         session.viewer.set_scale(scale, (0.0, 0.0));
     }
@@ -114,8 +129,8 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
             }
             for req in session.take_requests() {
                 match req {
-                    Request::Search { generation, query, start_page } => {
-                        let _ = search.send(SearchCmd { generation, query, start_page });
+                    Request::Search { generation, query, start_page, doc_generation } => {
+                        let _ = search.send(SearchCmd { generation, query, start_page, doc_generation });
                     }
                     Request::OpenUri(uri) => open_uri(&open_command, &uri),
                     Request::Copy(text) => {
@@ -127,7 +142,10 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
             }
             dirty = false;
         }
-        let timeout = if session.viewer.is_animating() { FRAME } else { Duration::from_secs(3600) };
+        let mut timeout = if session.viewer.is_animating() { FRAME } else { Duration::from_secs(3600) };
+        if let Some(due) = reload.due {
+            timeout = timeout.min(due.saturating_duration_since(Instant::now()));
+        }
         let event = match rx.recv_timeout(timeout) {
             Ok(e) => Some(e),
             Err(RecvTimeoutError::Timeout) => None,
@@ -169,13 +187,15 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
             }
             Some(AppEvent::Term(_)) => {}
             Some(AppEvent::Opened(_)) => {}
-            Some(AppEvent::PageLoaded(p, list, links)) => {
-                session.viewer.page_loaded(p, list);
-                session.page_links(p, links);
-                dirty = true;
+            Some(AppEvent::PageLoaded(generation, p, list, links)) => {
+                if generation == session.viewer.generation() {
+                    session.viewer.page_loaded(generation, p, list);
+                    session.page_links(p, links);
+                    dirty = true;
+                }
             }
-            Some(AppEvent::PageFailed(p, e)) => {
-                session.viewer.page_failed(p);
+            Some(AppEvent::PageFailed(generation, p, e)) => {
+                session.viewer.page_failed(generation, p);
                 session.message = Some(format!("page {}: {e}", p + 1));
                 dirty = true;
             }
@@ -195,10 +215,74 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
                 session.message = Some(format!("render: {e}"));
                 dirty = true;
             }
+            Some(AppEvent::FileChanged) => {
+                reload.changed(now);
+                session.reloading = true;
+                dirty = true;
+            }
+            Some(AppEvent::Reloaded(info)) => {
+                reload.in_flight = false;
+                reload.attempts = 0;
+                session.reload(&mut comp, info);
+                session.reloading = reload.due.is_some();
+                dirty = true;
+            }
+            Some(AppEvent::ReloadFailed(e)) => {
+                reload.in_flight = false;
+                if !reload.retry(now) {
+                    session.reloading = false;
+                    session.message = Some(format!("reload failed: {e}"));
+                }
+                dirty = true;
+            }
+        }
+        // Start a due reload: only once the file looks completely written.
+        if let Some(due) = reload.due
+            && Instant::now() >= due
+            && !reload.in_flight
+        {
+            reload.due = None;
+            if pdf::looks_complete(path).unwrap_or(false) {
+                reload.in_flight = true;
+                let _ = doc.send(DocCmd::Reload);
+            } else if !reload.retry(Instant::now()) {
+                session.reloading = false;
+                session.message = Some("reload: the file stays incomplete or missing".into());
+                dirty = true;
+            }
         }
         dirty |= session.viewer.tick(Instant::now());
     }
     Ok(())
+}
+
+/// Auto-reload scheduling: a trailing debounce after change events, then
+/// retries while the file is incomplete or fails to open (as Okular does).
+#[derive(Default)]
+struct ReloadState {
+    /// When to try next.
+    due: Option<Instant>,
+    /// A reload request is with the document thread.
+    in_flight: bool,
+    attempts: u32,
+}
+
+impl ReloadState {
+    fn changed(&mut self, now: Instant) {
+        self.due = Some(now + RELOAD_DEBOUNCE);
+        self.attempts = 0;
+    }
+
+    /// Schedule another attempt; false once we give up.
+    fn retry(&mut self, now: Instant) -> bool {
+        self.attempts += 1;
+        if self.attempts >= RELOAD_MAX_ATTEMPTS {
+            self.due = None;
+            return false;
+        }
+        self.due = Some(now + RELOAD_RETRY);
+        true
+    }
 }
 
 /// Open a URI with the configured handler, detached from the terminal.

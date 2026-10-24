@@ -10,6 +10,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../tests/fixtures"
 command -v latexmk >/dev/null || { echo "latexmk not found on PATH" >&2; exit 1; }
 here=$(pwd)
+# Reproducible output: pdfTeX otherwise embeds the build time (and a time-based
+# /ID), so every rebuild would change the committed PDFs.
+export SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1
 for tex in *.tex; do
   base=${tex%.tex}
   latexmk -pdf -synctex=1 -interaction=nonstopmode -halt-on-error -quiet "$tex" >/dev/null 2>&1

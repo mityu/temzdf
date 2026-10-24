@@ -71,6 +71,13 @@ impl OutlinePanel {
         self.list.selected = Some(next.clamp(0, self.visible.len() as isize - 1) as usize);
     }
 
+    /// Select outline entry `index` if its row is visible.
+    pub fn select_entry(&mut self, index: usize) {
+        if let Some(row) = self.visible.iter().position(|&v| v == index) {
+            self.list.selected = Some(row);
+        }
+    }
+
     pub fn select_first(&mut self) {
         self.list.selected = (!self.visible.is_empty()).then_some(0);
     }
@@ -123,6 +130,37 @@ impl OutlinePanel {
     }
 }
 
+impl OutlinePanel {
+    /// Title paths (titles from the root down) of collapsed entries, to carry
+    /// the expansion state over to a reloaded document.
+    pub fn collapsed_paths(&self, entries: &[OutlineEntry]) -> Vec<Vec<String>> {
+        (0..entries.len())
+            .filter(|&i| entries[i].descendants > 0 && !self.expanded[i])
+            .map(|i| title_path(entries, i))
+            .collect()
+    }
+
+    /// Collapse exactly the entries whose title paths are in `collapsed`.
+    pub fn restore_collapsed(&mut self, entries: &[OutlineEntry], labels: &[String], collapsed: &[Vec<String>]) {
+        for i in 0..entries.len() {
+            if entries[i].descendants > 0 {
+                self.expanded[i] = !collapsed.contains(&title_path(entries, i));
+            }
+        }
+        self.rebuild(entries, labels);
+    }
+}
+
+fn title_path(entries: &[OutlineEntry], mut i: usize) -> Vec<String> {
+    let mut path = vec![entries[i].title.clone()];
+    while let Some(p) = parent(entries, i) {
+        path.push(entries[p].title.clone());
+        i = p;
+    }
+    path.reverse();
+    path
+}
+
 /// The parent entry of `index` in a flattened outline.
 pub fn parent(entries: &[OutlineEntry], index: usize) -> Option<usize> {
     let depth = entries[index].depth;
@@ -160,6 +198,11 @@ mod tests {
         p.select_position(&es, Target { page: 2, y: Some(500.0) });
         assert_eq!(p.selected_entry(), Some(1));
         assert_eq!(parent(&es, 3), Some(1));
+        let collapsed = p.collapsed_paths(&es);
+        assert_eq!(collapsed, vec![vec!["B".to_string()]]);
+        let mut fresh = OutlinePanel::new(&es, &labels);
+        fresh.restore_collapsed(&es, &labels, &collapsed);
+        assert_eq!(fresh.list.items.len(), 3);
         assert_eq!(parent(&es, 4), None);
     }
 }

@@ -45,6 +45,20 @@ pub fn open(path: &Path) -> Result<Doc> {
     PdfDocument::open(s).with_context(|| format!("cannot open {}", path.display()))
 }
 
+/// Whether a PDF file looks completely written: `%%EOF` appears within its last
+/// 1024 bytes (the PDF spec allows it anywhere there). This catches most files
+/// still being written by TeX, before trying to parse them. Learned from Skim.
+pub fn looks_complete(path: &Path) -> std::io::Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    let len = f.metadata()?.len();
+    let tail = len.min(1024);
+    f.seek(SeekFrom::Start(len - tail))?;
+    let mut buf = Vec::with_capacity(tail as usize);
+    f.read_to_end(&mut buf)?;
+    Ok(buf.windows(5).any(|w| w == b"%%EOF"))
+}
+
 /// A point to jump to: a page and an optional y in page space (points from the
 /// top of the page).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -287,6 +301,21 @@ mod tests {
         for l in &links {
             assert!(l.rect.x1 > l.rect.x0 && l.rect.y1 > l.rect.y0);
         }
+    }
+
+    #[test]
+    fn completeness_check() {
+        let dir = std::env::temp_dir().join(format!("temzdf-complete-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let full = std::fs::read(fixture("sample.pdf")).unwrap();
+        let p = dir.join("a.pdf");
+        std::fs::write(&p, &full).unwrap();
+        assert!(looks_complete(&p).unwrap());
+        std::fs::write(&p, &full[..full.len() / 2]).unwrap();
+        assert!(!looks_complete(&p).unwrap(), "truncated file");
+        std::fs::write(&p, b"").unwrap();
+        assert!(!looks_complete(&p).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

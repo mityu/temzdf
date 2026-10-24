@@ -1,0 +1,22 @@
+% A shorter version of sample.tex (two pages, same first sections) used to test
+% auto-reload when the page count shrinks. Rebuild with scripts/build-fixtures.sh.
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=25mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\title{temzdf sample document}
+\author{Fixture}
+\date{}
+\begin{document}
+\maketitle
+\tableofcontents
+\section{Introduction}\label{sec:intro}
+This shortened document exercises reloading. The word needle appears here.
+\section{Mathematics}\label{sec:math}
+\begin{equation}\label{eq:gauss}
+  \int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+\end{equation}
+\newpage
+\section{Conclusion}\label{sec:conclusion}
+The end, with a last needle.
+\end{document}

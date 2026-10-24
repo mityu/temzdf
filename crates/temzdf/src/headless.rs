@@ -93,7 +93,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         for req in session.take_requests() {
             match req {
                 Request::OpenUri(_) | Request::Copy(_) => {}
-                Request::Search { generation, query, start_page } => {
+                Request::Search { generation, query, start_page, .. } => {
                     let n = session.info.bounds.len();
                     for i in 0..n {
                         let p = (start_page + i) % n;
@@ -124,7 +124,8 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         for need in needs {
             match need {
                 Need::LoadPage(p) => {
-                    session.viewer.page_loaded(p, pdf::display_list(&doc, p)?);
+                    let generation = session.viewer.generation();
+                    session.viewer.page_loaded(generation, p, pdf::display_list(&doc, p)?);
                     session.page_links(p, pdf::page_links(&doc, p, session.info.bounds[p]).unwrap_or_default());
                 }
                 Need::Render(job) => {

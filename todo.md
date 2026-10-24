@@ -9,7 +9,7 @@ below them are deferred.
 - [x] M1: `termpix` (tty, probe, input, graphics, compositor Layered/Composited, scroll, mock, `scroll_demo` example)
 - [x] M2: minimal viewer (open PDF, continuous layout, tile cache, smooth scroll, zoom, page navigation); the window title stands in for the status bar
 - [x] M3: `termpix-ui` and viewer features (status bar, outline sidebar, search, links + history, text selection + OSC 52 copy, config file)
-- [ ] M4: auto-reload (see `doc/reload.md`)
+- [x] M4: auto-reload (see `doc/reload.md`)
 - [ ] M5: SyncTeX (vendored parser, IPC socket, forward/inverse search, `reload.anchor = "synctex"`)
 - [ ] M6: compatibility (Composited backend on WezTerm and zellij, terminal detection table modelled on yazi)
 

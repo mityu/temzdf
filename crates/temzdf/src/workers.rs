@@ -3,7 +3,7 @@
 //! tiles). Results come back to the main loop as [`AppEvent`]s.
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -16,12 +16,23 @@ use crate::viewer::{RenderJob, Rendered, TileKey};
 pub enum AppEvent {
     Term(TermEvent),
     Opened(Result<DocInfo, String>),
-    PageLoaded(usize, Arc<DisplayList>, Vec<Link>),
-    PageFailed(usize, String),
+    /// A display list (and the page's links) for document generation `.0`.
+    PageLoaded(u32, usize, Arc<DisplayList>, Vec<Link>),
+    PageFailed(u32, usize, String),
     Rendered(Rendered),
     RenderFailed(TileKey, String),
-    SearchHits { generation: u64, page: usize, rects: Vec<PageRect> },
+    SearchHits {
+        generation: u64,
+        page: usize,
+        rects: Vec<PageRect>,
+    },
     SearchFailed(String),
+    /// The watched file (or its directory entry) changed.
+    FileChanged,
+    /// The document thread now holds the reloaded document.
+    Reloaded(DocInfo),
+    /// Reloading failed (e.g. the file is still being written); retry later.
+    ReloadFailed(String),
 }
 
 /// A search request: find `query` on every page, starting at `start_page`.
@@ -29,6 +40,8 @@ pub struct SearchCmd {
     pub generation: u64,
     pub query: String,
     pub start_page: usize,
+    /// Document generation; the worker reopens the file when it changes.
+    pub doc_generation: u32,
 }
 
 /// The search worker opens its own copy of the document so long searches do not
@@ -36,14 +49,7 @@ pub struct SearchCmd {
 pub fn spawn_search(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<Sender<SearchCmd>> {
     let (tx, rx) = mpsc::channel::<SearchCmd>();
     std::thread::Builder::new().name("temzdf-search".into()).spawn(move || {
-        let doc = match pdf::open(&path).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))) {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = events.send(AppEvent::SearchFailed(format!("{e:#}")));
-                return;
-            }
-        };
-        let (doc, bounds) = doc;
+        let mut doc: Option<(u32, pdf::Doc, Vec<pdf::PageBounds>)> = None;
         let mut pending = None;
         loop {
             let cmd = match pending.take() {
@@ -53,6 +59,16 @@ pub fn spawn_search(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<
                     Err(_) => return,
                 },
             };
+            if doc.as_ref().is_none_or(|d| d.0 != cmd.doc_generation) {
+                match pdf::open(&path).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))) {
+                    Ok((d, b)) => doc = Some((cmd.doc_generation, d, b)),
+                    Err(e) => {
+                        let _ = events.send(AppEvent::SearchFailed(format!("{e:#}")));
+                        continue;
+                    }
+                }
+            }
+            let Some((_, doc, bounds)) = doc.as_ref() else { continue };
             let n = bounds.len();
             for i in 0..n {
                 // A newer query replaces this one.
@@ -61,7 +77,7 @@ pub fn spawn_search(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<
                     break;
                 }
                 let page = (cmd.start_page + i) % n;
-                let ev = match pdf::search_page(&doc, page, bounds[page], &cmd.query) {
+                let ev = match pdf::search_page(doc, page, bounds[page], &cmd.query) {
                     Ok(rects) => AppEvent::SearchHits { generation: cmd.generation, page, rects },
                     Err(e) => AppEvent::SearchFailed(format!("{e:#}")),
                 };
@@ -77,12 +93,14 @@ pub fn spawn_search(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<
 /// Requests for the document thread.
 pub enum DocCmd {
     LoadPage(usize),
+    /// Open the file again; on success the new document replaces the old one.
+    Reload,
 }
 
 pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<Sender<DocCmd>> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new().name("temzdf-doc".into()).spawn(move || {
-        let (doc, bounds) = match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
+        let (mut doc, mut bounds) = match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
             Ok((doc, info)) => {
                 let bounds = info.bounds.clone();
                 let _ = events.send(AppEvent::Opened(Ok(info)));
@@ -93,12 +111,31 @@ pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Resul
                 return;
             }
         };
+        // Counts successful reloads; the viewer counts the same way.
+        let mut generation = 0u32;
         for cmd in rx {
             let ev = match cmd {
+                DocCmd::LoadPage(p) if p >= bounds.len() => continue,
                 DocCmd::LoadPage(p) => match pdf::display_list(&doc, p) {
                     // A page whose links cannot be read still renders.
-                    Ok(list) => AppEvent::PageLoaded(p, list, pdf::page_links(&doc, p, bounds[p]).unwrap_or_default()),
-                    Err(e) => AppEvent::PageFailed(p, format!("{e:#}")),
+                    Ok(list) => AppEvent::PageLoaded(
+                        generation,
+                        p,
+                        list,
+                        pdf::page_links(&doc, p, bounds[p]).unwrap_or_default(),
+                    ),
+                    Err(e) => AppEvent::PageFailed(generation, p, format!("{e:#}")),
+                },
+                // The old document stays in use until the new one opened fine.
+                DocCmd::Reload => match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
+                    Ok((d, info)) if !info.bounds.is_empty() => {
+                        doc = d;
+                        bounds = info.bounds.clone();
+                        generation = generation.wrapping_add(1);
+                        AppEvent::Reloaded(info)
+                    }
+                    Ok(_) => AppEvent::ReloadFailed("the document has no pages".into()),
+                    Err(e) => AppEvent::ReloadFailed(format!("{e:#}")),
                 },
             };
             if events.send(ev).is_err() {
@@ -107,6 +144,39 @@ pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Resul
         }
     })?;
     Ok(tx)
+}
+
+/// Watch `path` for changes. LaTeX tools rewrite the file in place or replace it
+/// (write a new file, rename over the old one), so the parent directory is
+/// watched too and events are filtered by file name; that survives the inode
+/// changing. Symlinks are resolved and their target is watched as well. Keep
+/// the returned watcher alive.
+pub fn spawn_watcher(path: &Path, events: Sender<AppEvent>) -> notify::Result<notify::RecommendedWatcher> {
+    use notify::{RecursiveMode, Watcher};
+
+    let abs = std::path::absolute(path)?;
+    let mut targets = vec![abs.clone()];
+    if let Ok(real) = std::fs::canonicalize(&abs)
+        && real != abs
+    {
+        targets.push(real);
+    }
+    let names: Vec<_> = targets.iter().filter_map(|t| t.file_name().map(|n| n.to_owned())).collect();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let Ok(ev) = res else { return };
+        if ev.kind.is_access() {
+            return;
+        }
+        if ev.paths.iter().any(|p| p.file_name().is_some_and(|n| names.iter().any(|m| m == n))) {
+            let _ = events.send(AppEvent::FileChanged);
+        }
+    })?;
+    for t in &targets {
+        if let Some(dir) = t.parent() {
+            watcher.watch(dir, RecursiveMode::NonRecursive)?;
+        }
+    }
+    Ok(watcher)
 }
 
 /// Raster worker pool with a replaceable queue: each frame the main loop submits
