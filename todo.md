@@ -45,7 +45,10 @@ below them are deferred.
   terminal's padding/decorations, wait until tiles settled, a small tolerance
   for terminal-side scaling, and headless equivalents of mouse actions (wheel
   and drag go through the kinetic scroll, so drive it with the same steps).
-- Tune the raster worker pool and measure performance.
+- MuPDF's allocation lock makes text rendering slower with more threads (see
+  `doc/performance.md`). If rasterising ever becomes the bottleneck: a custom
+  allocator without the lock (`fz_alloc_context` is per base context), or
+  separate base contexts per worker.
 - Measure frame pacing over a real slow SSH link (fences and the writer thread
   are in place but were only tested locally, with a throttling pty proxy).
 - The page thumbnail is misplaced by up to half a cell with the Layered

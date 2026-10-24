@@ -214,7 +214,11 @@ pub struct PixelRect {
 /// returned as straight RGBA8.
 pub fn render(list: &DisplayList, bounds: PageBounds, scale: f32, area: PixelRect) -> Result<Vec<u8>> {
     let rect = IRect::new(area.x as i32, area.y as i32, (area.x + area.w) as i32, (area.y + area.h) as i32);
-    let mut pixmap = Pixmap::new_with_rect(&Colorspace::device_rgb(), rect, false)?;
+    // With alpha, so the samples are RGBA already: on an opaque white
+    // background premultiplied equals straight alpha, and the tile is copied
+    // out instead of converted pixel by pixel (that conversion was about half
+    // the time of a text tile).
+    let mut pixmap = Pixmap::new_with_rect(&Colorspace::device_rgb(), rect, true)?;
     pixmap.clear_with(255)?;
     {
         let device = Device::from_pixmap(&pixmap)?;
@@ -223,15 +227,15 @@ pub fn render(list: &DisplayList, bounds: PageBounds, scale: f32, area: PixelRec
         let clip = mupdf::Rect::new(rect.x0 as f32, rect.y0 as f32, rect.x1 as f32, rect.y1 as f32);
         list.run(&device, &ctm, clip)?;
     }
-    let n = pixmap.n() as usize;
+    let row = area.w as usize * 4;
     let stride = pixmap.stride() as usize;
     let samples = pixmap.samples();
-    let mut out = Vec::with_capacity(area.w as usize * area.h as usize * 4);
-    for row in 0..area.h as usize {
-        let line = &samples[row * stride..row * stride + area.w as usize * n];
-        for px in line.chunks_exact(n) {
-            out.extend_from_slice(&[px[0], px[1], px[2], 255]);
-        }
+    if stride == row {
+        return Ok(samples[..row * area.h as usize].to_vec());
+    }
+    let mut out = Vec::with_capacity(row * area.h as usize);
+    for y in 0..area.h as usize {
+        out.extend_from_slice(&samples[y * stride..y * stride + row]);
     }
     Ok(out)
 }

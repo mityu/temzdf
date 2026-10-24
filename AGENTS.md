@@ -116,3 +116,4 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/testing.md`: how to verify changes without a human.
 - `doc/synctex.md`: forward/inverse search, editor setup, vendored parser.
 - `doc/config.md`: the configuration file format (keep in sync with `crates/temzdf/src/config.rs`).
+- `doc/performance.md`: measurements (raster pool, display lists, transfer) and the benchmark to rerun.

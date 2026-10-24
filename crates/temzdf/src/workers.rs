@@ -297,3 +297,68 @@ impl RasterPool {
         dropped
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pdf::PixelRect;
+    use crate::viewer::{TILE, TileKind};
+
+    /// Raster throughput by pool size. Not a regular test (timing depends on
+    /// the machine); run it with
+    /// `cargo test --release -p temzdf raster_throughput -- --ignored --nocapture`
+    /// (`TEMZDF_BENCH_PDF=doc.pdf` for another document).
+    #[test]
+    #[ignore]
+    fn raster_throughput() {
+        let path = std::env::var_os("TEMZDF_BENCH_PDF").map_or_else(|| pdf::fixture("sample.pdf"), PathBuf::from);
+        let doc = pdf::open(&path).unwrap();
+        let bounds = pdf::doc_info(&doc).unwrap().bounds;
+        let pages = bounds.len().min(8);
+        let lists: Vec<_> = (0..pages).map(|p| pdf::display_list(&doc, p).unwrap()).collect();
+        // Fit width on a 1800 px wide (HiDPI) screen.
+        let scale = 1800.0 / bounds[0].width();
+        let jobs = || {
+            let mut jobs = Vec::new();
+            for (p, list) in lists.iter().enumerate() {
+                let (pw, ph) = bounds[p].pixel_size(scale);
+                for ty in 0..ph.div_ceil(TILE) {
+                    for tx in 0..pw.div_ceil(TILE) {
+                        let area = PixelRect {
+                            x: tx * TILE,
+                            y: ty * TILE,
+                            w: TILE.min(pw - tx * TILE),
+                            h: TILE.min(ph - ty * TILE),
+                        };
+                        let kind = TileKind::Tile { scale_q: 0, tx, ty };
+                        let key = TileKey { generation: 0, page: p as u32, kind };
+                        jobs.push(RenderJob { key, list: list.clone(), bounds: bounds[p], scale, area });
+                    }
+                }
+            }
+            jobs
+        };
+        let n = jobs().len();
+        // Warm up: the first render of a page decodes its images (MuPDF keeps
+        // them in its store), which would be charged to the first pool size.
+        for job in jobs() {
+            pdf::render(&job.list, job.bounds, job.scale, job.area).unwrap();
+        }
+        for threads in [1, 2, 4, 6, 8, 12] {
+            let (tx, rx) = mpsc::channel();
+            let pool = RasterPool::new(threads, tx).unwrap();
+            let start = std::time::Instant::now();
+            pool.replace(jobs());
+            for _ in 0..n {
+                assert!(matches!(rx.recv().unwrap(), AppEvent::Rendered(_)));
+            }
+            let dt = start.elapsed();
+            eprintln!(
+                "BENCH threads={threads:2} tiles={n} total={:7.1} ms  per tile={:6.2} ms  tiles/s={:6.0}",
+                dt.as_secs_f64() * 1e3,
+                dt.as_secs_f64() * 1e3 / n as f64,
+                n as f64 / dt.as_secs_f64()
+            );
+        }
+    }
+}
