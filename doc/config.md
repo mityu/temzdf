@@ -28,6 +28,10 @@ smoothness_ms = 60
 # Command for external links; the URI is appended. Default: xdg-open / open.
 open_command = ["xdg-open"]
 
+[reload]
+# Wait this long after the PDF last changed before reloading.
+debounce_ms = 200
+
 [synctex]
 # Inverse search (Ctrl+click), run with sh -c. %{input} (shell-quoted path),
 # %{line} and %{column} are substituted. See doc/synctex.md for editor setups.

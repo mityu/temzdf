@@ -16,6 +16,20 @@ pub struct Config {
     pub scroll: ScrollConfig,
     pub links: LinksConfig,
     pub synctex: SynctexConfig,
+    pub reload: ReloadConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReloadConfig {
+    /// Wait this long after the last change before reloading.
+    pub debounce_ms: u64,
+}
+
+impl Default for ReloadConfig {
+    fn default() -> Self {
+        Self { debounce_ms: 200 }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -199,6 +213,8 @@ mod tests {
             smoothness_ms = 90
             [links]
             open_command = ["firefox", "--new-tab"]
+            [reload]
+            debounce_ms = 500
             "#,
         )
         .unwrap();
@@ -208,6 +224,7 @@ mod tests {
         assert_eq!(c.terminal.zlib_level, 6);
         assert_eq!(c.scroll.to_termpix().step, 40.0);
         assert_eq!(c.links.command(), ["firefox", "--new-tab"]);
+        assert_eq!(c.reload, ReloadConfig { debounce_ms: 500 });
     }
 
     #[test]

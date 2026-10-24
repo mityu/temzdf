@@ -18,8 +18,6 @@ use crate::viewer::Need;
 use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd, SynctexCmd};
 
 const FRAME: Duration = Duration::from_millis(16);
-/// Wait this long after the last change before reloading (see doc/reload.md).
-const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 /// Retry interval while the file is incomplete or fails to open.
 const RELOAD_RETRY: Duration = Duration::from_millis(300);
 /// Give up retrying after this many attempts (about 30 s); a new change event
@@ -98,6 +96,8 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         session.message = Some(format!("auto-reload disabled: {e}"));
     }
     let mut reload = ReloadState::default();
+    // Wait this long after the last change before reloading (see doc/reload.md).
+    let debounce = Duration::from_millis(opts.config.reload.debounce_ms);
     if let Some(req) = opts.forward.take() {
         let _ = synctex.send(SynctexCmd::Forward { req, page_hint: session.viewer.current_page() });
     }
@@ -239,7 +239,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 dirty = true;
             }
             Some(AppEvent::FileChanged) => {
-                reload.changed(now);
+                reload.changed(now, debounce);
                 session.reloading = true;
                 dirty = true;
             }
@@ -338,8 +338,8 @@ struct ReloadState {
 }
 
 impl ReloadState {
-    fn changed(&mut self, now: Instant) {
-        self.due = Some(now + RELOAD_DEBOUNCE);
+    fn changed(&mut self, now: Instant, debounce: Duration) {
+        self.due = Some(now + debounce);
         self.attempts = 0;
     }
 
