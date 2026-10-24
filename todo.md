@@ -16,9 +16,11 @@ below them are deferred.
 ## Deferred
 
 - Multiplexers (do after the milestones): make the viewer work inside zellij and tmux.
-  In zellij nothing was displayed in a first manual test (inline transfer over SSH);
-  research is in progress, results go to `doc/terminal-compat.md`. tmux likely
-  needs Unicode placeholders (cell-granular scrolling only).
+  In zellij nothing was displayed in a first manual test (inline transfer over SSH).
+  Research and the plan are in `doc/terminal-compat.md` ("Multiplexers"): a
+  multiplexer profile (cell mouse, fewer keyboard flags, `t=d` only, feature
+  probes), Composited for zellij 0.45.1, Unicode placeholders via passthrough for
+  released tmux.
 - Expose the zlib level for inline images as a user option (CLI/config).
   `termpix::graphics::Encoder::set_zlib_level` exists; default is level 2 because
   level 1 crashes Ghostty 1.3.1.

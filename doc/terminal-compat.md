@@ -75,3 +75,51 @@ Known problems:
   `ZELLIJ`/`TMUX`, which makes detection think it runs inside a multiplexer.
   `scripts/e2e.sh` clears them; real users may see this when launching a GUI
   terminal from a multiplexer shell.
+
+## Multiplexers (research 2026-10-25, from zellij main ffb334a and tmux master acee541 sources)
+
+### zellij (latest release 0.45.1; kitty graphics since 0.45.0)
+
+zellij does **not** pass graphics through: it decodes images, keeps RGBA per pane,
+and re-emits its own placements to the host (`a=t,f=32,t=d` once per image, then
+`a=p` with crops and the app's `z`). It answers the app's `a=q` and commands
+itself; host replies never reach the app. Config: `support_kitty_graphics_protocol`
+(default true; enabled only if the host answers zellij's own probe).
+
+| Item | 0.45.1 | main |
+|---|---|---|
+| `t=d/f/t`, `o=z`, `f=24/32/100`, chunking | yes | yes |
+| `t=s` shm | ENOTSUPPORTED (#5626) | same |
+| Source rect `x,y` without `c,r` | ignored (#5567) | still broken (fix PR #5568 open) |
+| Explicit placement ids `p=` with `a=p` | broken (#5573) | fixed |
+| Unicode placeholders `U=1` | ENOTSUPPORTED (#5530) | same |
+| Forwarding to the host | raw RGBA, ~10x bytes (#5596) | compressed (PR #5608) |
+| SGR-pixel mouse 1016 | not supported (cells only) | same |
+| Kitty keyboard | flag 1 only | same |
+| XTVERSION | `Zellij(<ver>)` | same |
+| DA1 | `?62;52c` | same |
+
+Likely cause of "nothing displayed" in the user's test (0.45.1 over SSH):
+Layered placements hit #5573/#5567, and everything is forwarded uncompressed.
+
+### tmux
+
+- 3.8 (2026-09-09): no kitty graphics; only passthrough (`allow-passthrough on`,
+  DCS `ESC P tmux; <ESC doubled> ESC \`). Passthrough images ignore panes/scroll,
+  and outer-terminal replies do not reach the app.
+- master (after 2026-10-16, build with `--enable-images`): native kitty input
+  path. Only `t=d`; `x,y,w,h`, `c,r`, `X,Y` work; **`z` must be 0**; delete only
+  `a/A/i/I`; `U=1` and `I=` unsupported; tmux answers queries itself.
+- No SGR-pixel mouse and no kitty keyboard protocol in tmux (use
+  `extended-keys` with `csi-u`).
+- Unicode placeholders through passthrough (as yazi, ratatui-image do) are the
+  robust path on released tmux; cell-granular only.
+
+### Plan
+
+Detect `Zellij(`/`tmux` from XTVERSION (plus `$ZELLIJ`/`$TMUX`) and use a
+multiplexer profile: no 1016 (cell mouse), reduced keyboard flags, `t=d` only,
+probe the features we rely on (`p=`, crops, `z<0`) instead of assuming them.
+zellij 0.45.1: Composited full frames; zellij main: Layered with `c,r` on every
+crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
+`z=0` (Composited, or Layered without z-layering).
