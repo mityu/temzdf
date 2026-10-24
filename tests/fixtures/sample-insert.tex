@@ -1,0 +1,51 @@
+% sample.tex with paragraphs inserted before the introduction, so all later
+% text moves down: tests keeping the reading position by text on reload.
+% Built by scripts/build-fixtures.sh.
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=25mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\title{temzdf sample document}
+\author{Fixture}
+\date{}
+\begin{document}
+\maketitle
+\tableofcontents
+Inserted paragraph 0: text added above the introduction to shift everything below it.\par
+Inserted paragraph 1: text added above the introduction to shift everything below it.\par
+Inserted paragraph 2: text added above the introduction to shift everything below it.\par
+Inserted paragraph 3: text added above the introduction to shift everything below it.\par
+Inserted paragraph 4: text added above the introduction to shift everything below it.\par
+Inserted paragraph 5: text added above the introduction to shift everything below it.\par
+\section{Introduction}\label{sec:intro}
+This document exercises the viewer. The key result is Equation~\eqref{eq:gauss}
+in Section~\ref{sec:math}; see also \url{https://example.com/}.
+The word needle appears on several pages so that search has hits to find.
+\section{Mathematics}\label{sec:math}
+\begin{equation}\label{eq:gauss}
+  \int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+\end{equation}
+\begin{align}
+  \sum_{k=1}^{n} k &= \frac{n(n+1)}{2}, &
+  \prod_{p\ \text{prime}} \frac{1}{1-p^{-s}} &= \zeta(s).
+\end{align}
+A matrix and a needle:
+\[
+  A = \begin{pmatrix} a_{11} & a_{12} \\ a_{21} & a_{22} \end{pmatrix},\qquad
+  \det A = a_{11}a_{22} - a_{12}a_{21}.
+\]
+\newpage
+\section{Filler}\label{sec:filler}
+\subsection{First part}
+\newcount\i \i=0
+\loop\ifnum\i<12 \advance\i by 1
+Paragraph \the\i: Lorem ipsum dolor sit amet, consectetur adipiscing elit,
+sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.\par
+\repeat
+\subsection{Second part}
+Back to Section~\ref{sec:intro}. One more needle here.
+\newpage
+\section{Conclusion}\label{sec:conclusion}
+The end, with a last needle.
+\end{document}

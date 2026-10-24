@@ -39,6 +39,22 @@ const FLASH_DURATION: std::time::Duration = std::time::Duration::from_millis(150
 /// Selection auto-scroll: pixels per second per pixel of pointer depth into the
 /// edge zone (or beyond the edge).
 const AUTOSCROLL_GAIN: f32 = 25.0;
+/// How long a text reload anchor waits for the pages around it to load.
+const TEXT_ANCHOR_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// A line of text from before a reload (`[reload] anchor = "text"`), with its
+/// neighbours to tell repeated lines apart and its place on screen.
+#[derive(Clone, Debug)]
+struct TextAnchor {
+    line: String,
+    prev: String,
+    next: String,
+    page: usize,
+    /// Doc-space y (points) of the line in the old document.
+    doc_y: f32,
+    screen_y: f32,
+    deadline: Instant,
+}
 
 /// Work the session asks the caller to do (on a worker, or inline).
 #[derive(Clone, Debug, PartialEq)]
@@ -123,6 +139,10 @@ pub struct Session {
     /// Selection auto-scroll speed in pixels per second (0 when off).
     autoscroll: f32,
     autoscroll_at: Option<Instant>,
+    /// `[reload] anchor = "text"`: keep the line being read in place on reload.
+    pub anchor_by_text: bool,
+    /// A line from before the last reload, still to be found in the new text.
+    text_anchor: Option<TextAnchor>,
     /// Search hit to re-select once a re-run search (after reload) reaches it.
     restore_hit: Option<(usize, usize)>,
     /// The file changed and a reload is pending (shown in the status bar).
@@ -163,6 +183,8 @@ impl Session {
             selecting: false,
             autoscroll: 0.0,
             autoscroll_at: None,
+            anchor_by_text: false,
+            text_anchor: None,
             restore_hit: None,
             reloading: false,
             flash: None,
@@ -407,6 +429,80 @@ impl Session {
         }
     }
 
+    /// The line nearest a third of the way down the screen, with its neighbours,
+    /// as an anchor to find again after a reload.
+    fn capture_text_anchor(&mut self, now: Instant) -> Option<TextAnchor> {
+        let v = &self.viewer;
+        let (page, _, y) = v.screen_to_page_clamped(v.origin_x() as f32 + v.view.screen_w / 2.0, v.view.screen_h / 3.0);
+        let text = self.text_of_page(page)?.clone();
+        let line = |i: usize| -> String {
+            text.lines
+                .get(i)
+                .map(|l| text.chars[l.start..l.end].iter().map(|c| c.c).collect::<String>())
+                .unwrap_or_default()
+        };
+        // A line with enough letters to be recognisable, nearest the anchor point.
+        let i = (0..text.lines.len())
+            .filter(|&i| line(i).chars().filter(|c| c.is_alphanumeric()).count() >= 8)
+            .min_by(|&a, &b| (text.lines[a].rect.y0 - y).abs().total_cmp(&(text.lines[b].rect.y0 - y).abs()))?;
+        let y0 = text.lines[i].rect.y0;
+        let (_, screen_y) = self.viewer.page_to_screen(page, 0.0, y0);
+        Some(TextAnchor {
+            line: line(i),
+            prev: if i > 0 { line(i - 1) } else { String::new() },
+            next: line(i + 1),
+            page,
+            doc_y: self.viewer.layout.pages[page].y + y0,
+            screen_y,
+            deadline: now + TEXT_ANCHOR_WAIT,
+        })
+    }
+
+    /// Look for the remembered line in the pages around its old page once they
+    /// have all loaded (or, with `force`, in those loaded so far), and put it
+    /// back at the same height on screen. Returns true when the view moved.
+    fn resolve_text_anchor(&mut self, force: bool) -> bool {
+        let Some(a) = self.text_anchor.clone() else { return false };
+        let n = self.viewer.page_count();
+        let mut best: Option<(u32, f32, usize, f32)> = None; // (score, distance, page, y0)
+        let pages = a.page.saturating_sub(2)..(a.page + 3).min(n);
+        if !force && pages.clone().any(|p| self.viewer.display_list(p).is_none()) {
+            return false;
+        }
+        self.text_anchor = None;
+        for p in pages {
+            let Some(text) = self.text_of_page(p).cloned() else { continue };
+            let line = |i: usize| -> String {
+                text.lines
+                    .get(i)
+                    .map(|l| text.chars[l.start..l.end].iter().map(|c| c.c).collect::<String>())
+                    .unwrap_or_default()
+            };
+            for (i, l) in text.lines.iter().enumerate() {
+                if line(i) != a.line {
+                    continue;
+                }
+                let prev = if i > 0 { line(i - 1) } else { String::new() };
+                let score = u32::from(prev == a.prev) + u32::from(line(i + 1) == a.next);
+                let dist = (self.viewer.layout.pages[p].y + l.rect.y0 - a.doc_y).abs();
+                if best.is_none_or(|b| (score, -dist) > (b.0, -b.1)) {
+                    best = Some((score, dist, p, l.rect.y0));
+                }
+            }
+        }
+        let Some((_, _, p, y0)) = best else { return false };
+        let (_, sy) = self.viewer.page_to_screen(p, 0.0, y0);
+        let v = &mut self.viewer;
+        v.jump_to(v.view.scroll_x, v.view.scroll_y + (sy - a.screen_y));
+        true
+    }
+
+    /// A page of the current document finished loading. Returns true when the
+    /// view moved (a pending reload anchor was found).
+    pub fn page_ready(&mut self) -> bool {
+        self.resolve_text_anchor(false)
+    }
+
     pub fn page_links(&mut self, page: usize, links: Vec<Link>) {
         if let Some(slot) = self.links.get_mut(page) {
             *slot = Some(links);
@@ -578,6 +674,9 @@ impl Session {
     /// Advance animations to `now`. Returns true when the view changed.
     pub fn tick(&mut self, now: Instant) -> bool {
         let mut changed = self.viewer.tick(now);
+        if self.text_anchor.as_ref().is_some_and(|a| now >= a.deadline) {
+            changed |= self.resolve_text_anchor(true);
+        }
         if self.autoscroll != 0.0 {
             let dt = self.autoscroll_at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
             let v = &mut self.viewer;
@@ -593,7 +692,9 @@ impl Session {
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.flash.as_ref().map(|f| f.1)
+        let flash = self.flash.as_ref().map(|f| f.1);
+        let anchor = self.text_anchor.as_ref().map(|a| a.deadline);
+        flash.into_iter().chain(anchor).min()
     }
 
     /// The file changed and the document thread has the new version. Keep the
@@ -604,6 +705,8 @@ impl Session {
     pub fn reload(&mut self, comp: &mut Compositor, info: DocInfo) {
         let collapsed = self.outline.collapsed_paths(&self.info.outline);
         let selected_title = self.outline.selected_entry().map(|i| self.info.outline[i].title.clone());
+        // Remember the line being read while the old text is still there.
+        self.text_anchor = if self.anchor_by_text { self.capture_text_anchor(Instant::now()) } else { None };
         self.viewer.replace_pages(comp, info.bounds.clone());
         let pages = info.bounds.len();
         self.links = vec![None; pages];
@@ -811,6 +914,8 @@ impl Session {
             return Action::None;
         }
         self.message = None;
+        // The reader moved on; a pending reload anchor would pull them back.
+        self.text_anchor = None;
         self.notice = None;
         if self.input.is_some() {
             return self.input_key(k, now);
@@ -885,6 +990,9 @@ impl Session {
             CoordUnit::Cell => (c as f32 + 0.5) * size as f32,
         };
         self.pointer = (to_px(m.x, cell.width), to_px(m.y, cell.height));
+        if matches!(m.kind, MouseEventKind::Press(_) | MouseEventKind::Scroll(_)) {
+            self.text_anchor = None;
+        }
         let (x, y) = self.pointer;
         let over_sidebar = self.sidebar_open && self.drag.is_none() && self.sidebar_rect().contains(x as i32, y as i32);
         if over_sidebar {
@@ -1096,6 +1204,46 @@ mod tests {
         assert_eq!(after.page, before.page);
         assert!((after.y.unwrap() - before.y.unwrap()).abs() < 0.5, "{before:?} {after:?}");
         assert_eq!(s.viewer.generation(), 1);
+    }
+
+    #[test]
+    fn text_anchor_keeps_the_line_in_place_when_text_is_inserted_above() {
+        let mut s = session();
+        s.anchor_by_text = true;
+        let mut c = comp();
+        let b = s.viewer.layout.pages[0];
+        s.viewer.jump_to(0.0, (b.y + 0.3 * b.h) * s.viewer.view.scale);
+        s.reload(&mut c, info("sample-insert.pdf"));
+        let anchor = s.text_anchor.clone().expect("a line to anchor on");
+        assert!(anchor.line.contains("exercises"), "below the inserted text: {anchor:?}");
+        let position_based = s.viewer.view.scroll_y;
+        let doc = pdf::open(&pdf::fixture("sample-insert.pdf")).unwrap();
+        for p in 0..s.viewer.page_count() {
+            s.viewer.page_loaded(1, p, pdf::display_list(&doc, p).unwrap());
+            s.page_ready();
+        }
+        assert!(s.text_anchor.is_none());
+        assert_ne!(s.viewer.view.scroll_y, position_based, "the inserted text moved the line");
+        // The same line is back at the same height on screen.
+        let (page, _, y) = s.viewer.screen_to_page_clamped(450.0, anchor.screen_y + 1.0);
+        let text = s.text_of_page(page).unwrap().clone();
+        let line = text
+            .lines
+            .iter()
+            .find(|l| text.chars[l.start..l.end].iter().map(|c| c.c).collect::<String>() == anchor.line)
+            .expect("the line is on the page under its old height");
+        assert!((line.rect.y0 - y).abs() < 2.0, "{} vs {y}", line.rect.y0);
+    }
+
+    #[test]
+    fn input_cancels_a_pending_text_anchor() {
+        let mut s = session();
+        s.anchor_by_text = true;
+        let mut c = comp();
+        s.reload(&mut c, info("sample-insert.pdf"));
+        assert!(s.text_anchor.is_some());
+        mouse(&mut s, MouseEventKind::Scroll(ScrollDirection::Down), (450.0, 300.0));
+        assert!(s.text_anchor.is_none());
     }
 
     #[test]

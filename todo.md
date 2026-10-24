@@ -19,10 +19,6 @@ below them are deferred.
   through passthrough) work; see `doc/terminal-compat.md`. Left: zellij over SSH
   is still slow (zellij 0.45.1 forwards images uncompressed; a half-resolution
   mode could help), and tmux master's native kitty support (z=0 only) is untested.
-- Content-based reload anchor: remember the text of the line at the anchor
-  point and find it again in the reloaded PDF, so insertions above the reading
-  position do not shift the view (an alternative to SyncTeX anchoring, which was
-  dropped; see `doc/reload.md`).
 - Document a vimtex setup that forward-searches after every successful compile.
 - Configurable key bindings (the config file has no `[keys]` section yet).
 - Verify IME preedit placement in the search prompt on kitty and Ghostty (the

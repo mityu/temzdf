@@ -24,12 +24,24 @@ pub struct Config {
 pub struct ReloadConfig {
     /// Wait this long after the last change before reloading.
     pub debounce_ms: u64,
+    /// How the reading position is kept across a reload.
+    pub anchor: ReloadAnchor,
 }
 
 impl Default for ReloadConfig {
     fn default() -> Self {
-        Self { debounce_ms: 200 }
+        Self { debounce_ms: 200, anchor: ReloadAnchor::Position }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReloadAnchor {
+    /// Same page and place on the page (like Skim and Okular).
+    #[default]
+    Position,
+    /// The line of text being read, found again in the new version.
+    Text,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -215,6 +227,7 @@ mod tests {
             open_command = ["firefox", "--new-tab"]
             [reload]
             debounce_ms = 500
+            anchor = "text"
             "#,
         )
         .unwrap();
@@ -224,7 +237,7 @@ mod tests {
         assert_eq!(c.terminal.zlib_level, 6);
         assert_eq!(c.scroll.to_termpix().step, 40.0);
         assert_eq!(c.links.command(), ["firefox", "--new-tab"]);
-        assert_eq!(c.reload, ReloadConfig { debounce_ms: 500 });
+        assert_eq!(c.reload, ReloadConfig { debounce_ms: 500, anchor: ReloadAnchor::Text });
     }
 
     #[test]

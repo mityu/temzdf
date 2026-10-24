@@ -11,7 +11,7 @@ use termpix::graphics::Medium;
 use termpix::input::Event;
 use termpix::tty::{self, Modes, TermEvent, Tty};
 
-use crate::config::Config;
+use crate::config::{Config, ReloadAnchor};
 use crate::ipc::{self, ForwardRequest};
 use crate::pdf;
 use crate::session::{Action, Pointer, Request, Session};
@@ -110,6 +110,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     }
     let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
     let mut session = Session::new(name.clone(), info, caps.geometry);
+    session.anchor_by_text = opts.config.reload.anchor == ReloadAnchor::Text;
     session.viewer.scroll_x.config = opts.config.scroll.to_termpix();
     session.viewer.scroll_y.config = opts.config.scroll.to_termpix();
     let open_command = opts.config.links.command();
@@ -254,6 +255,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 if generation == session.viewer.generation() {
                     session.viewer.page_loaded(generation, p, list);
                     session.page_links(p, links);
+                    session.page_ready();
                     dirty = true;
                 }
             }

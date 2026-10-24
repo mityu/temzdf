@@ -45,9 +45,17 @@ Skim (BSD-3, `SKFileUpdateChecker.m`, `SKMainDocument.m`,
    pdfTeX finishes the PDF before it writes `.synctex.gz`, so the reload can see
    stale SyncTeX data. Editor-driven forward search after each successful
    compile (e.g. a vimtex compiler callback running `temzdf --forward`) solves
-   the real problem, because the editor knows the cursor in the *new* source. A
-   content-based anchor (find the text line at the anchor point again in the new
-   PDF) would work without SyncTeX; see `todo.md`.
+   the real problem, because the editor knows the cursor in the *new* source.
+7. **Text anchoring (opt-in, `[reload] anchor = "text"`).** Before the swap,
+   remember the line nearest a third of the way down the screen (at least 8
+   alphanumeric characters), its neighbouring lines, its doc y and its screen y.
+   The position-based restore happens first. Once the pages within two of the
+   old page have loaded (or after 2 s), look for lines with exactly that text,
+   prefer the one whose neighbours also match, then the one nearest the old doc
+   y, and scroll so it is back at its old screen y. No match keeps the
+   position-based restore. Any key, click or scroll before that cancels it, so
+   the view never jumps after the reader moved on. Not the default, because
+   Skim and Okular restore by position and a changed line silently falls back.
 
 ## Tests to keep
 

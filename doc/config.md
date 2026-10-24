@@ -31,6 +31,12 @@ open_command = ["xdg-open"]
 [reload]
 # Wait this long after the PDF last changed before reloading.
 debounce_ms = 200
+# How the reading position survives a reload: "position" keeps the same page
+# and place on it (like Skim and Okular); "text" finds the line a third of the
+# way down the screen again in the new PDF and keeps it at the same height, so
+# text inserted above it does not shift the view. "text" falls back to the
+# position when the line is gone (it searches two pages either side).
+anchor = "position"
 
 [synctex]
 # Inverse search (Ctrl+click), run with sh -c. %{input} (shell-quoted path),
