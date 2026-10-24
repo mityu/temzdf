@@ -83,7 +83,6 @@ come from the host profile. `nix develop .#alldeps` provides all of them.
   noticing. Commit the source plus a script that generates the output into
   `target/` instead, as `scripts/build-fixtures.sh` does. Exceptions: lock files
   (`Cargo.lock`, `flake.lock`), which pin dependencies and contain no paths.
-  (`tests/fixtures/*.pdf` and `*.synctex.gz` predate this rule and are unused.)
 - Paths written in docs, comments and commit messages are relative to the
   repository root. Never write absolute paths (home directories, scratch
   directories, `/nix/store/...`).
