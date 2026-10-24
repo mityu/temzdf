@@ -1,13 +1,13 @@
 # Used with: scripts/e2e.sh tests/e2e/links.actions -- target/debug/temzdf tests/fixtures/sample.pdf
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
 # Expected: clicking "3 Filler" in the table of contents jumps to section 3 on
-# page 2 (clicked.png); Ctrl-o returns to the table of contents (back.png);
+# page 2 (clicked.png); Backspace (or Ctrl-o) returns to the table of contents (back.png);
 # Alt+Right goes forward again (forward.png).
 pause 1
 click 160 412
 pause 1
 shot clicked
-keys ctrl+o
+keys BackSpace
 pause 1
 shot back
 keys alt+Right

@@ -138,3 +138,10 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   window focused (no window manager on Xvfb) to report mouse events, looks the
   program up only in `PATH`, and pads the text area by default; `scripts/e2e.sh -t
   wezterm` handles all three.
+- zellij 0.45.1 inside kitty 0.49.2 (`scripts/e2e.sh -m zellij`): with the
+  Composited backend (chosen from `$ZELLIJ` or the `Zellij(...)` XTVERSION
+  reply) every scenario works: scrolling, pan, search, selection and copy,
+  links. Detection inside zellij: no shm, temp files work, no SGR-pixel mouse
+  (cell coordinates), keyboard flags 1. zellij keeps some input for itself:
+  Ctrl+wheel never reaches the app (zoom with `+`/`-` instead), and Ctrl-o and
+  Alt+arrows are zellij bindings (temzdf also goes back with Backspace).

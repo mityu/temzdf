@@ -3,8 +3,10 @@
 # WezTerm) on a virtual X server, drive it with an actions script, and save
 # screenshots.
 #
-# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
+# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm] [-m zellij] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
 #   -t TERM   terminal to run (default kitty)
+#   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
+#             frames, a single pane; its config and layout go to OUTDIR/zellij)
 #   -s WxH    window/screen size in pixels (default 900x600)
 #   -o OUTDIR where screenshots and terminal.log go (default: target/e2e)
 #   ACTIONS   bash file sourced after the terminal started; it can use the helpers below.
@@ -18,8 +20,9 @@
 #   type TEXT          type literal text
 #   pause SECONDS
 #
-# It waits 3 s for startup (6 s for Ghostty and WezTerm) and sends `q` at the end. It does not
-# check results; inspect the screenshots (or compare pixels) afterwards. The
+# It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij) and
+# sends `q` at the end. It does not check results; inspect the screenshots (or
+# compare pixels) afterwards. The
 # command runs without ZELLIJ/TMUX in its environment so a multiplexer around the
 # harness does not leak into terminal detection. If the terminal process died,
 # it prints "TERMINAL CRASHED" and exits 3. Requires the dev shell (kitty,
@@ -33,18 +36,20 @@ fi
 
 size=900x600
 term=kitty
+mux=
 outdir=target/e2e
-while getopts "t:s:o:h" opt; do
+while getopts "t:m:s:o:h" opt; do
   case $opt in
     t) term=$OPTARG ;;
+    m) mux=$OPTARG ;;
     s) size=$OPTARG ;;
     o) outdir=$OPTARG ;;
-    *) sed -n '2,30p' "$0"; exit 2 ;;
+    *) sed -n '2,32p' "$0"; exit 2 ;;
   esac
 done
 shift $((OPTIND - 1))
 if [[ $# -lt 3 || $2 != "--" ]]; then
-  sed -n '2,30p' "$0"
+  sed -n '2,32p' "$0"
   exit 2
 fi
 actions=$(realpath "$1")
@@ -56,7 +61,7 @@ height=${size#*x}
 
 if [[ -z "${E2E_INNER:-}" ]]; then
   export E2E_INNER=1
-  exec xvfb-run -a -s "-screen 0 ${width}x${height}x24" "$0" -t "$term" -s "$size" -o "$outdir" "$actions" -- "$@"
+  exec xvfb-run -a -s "-screen 0 ${width}x${height}x24" "$0" -t "$term" ${mux:+-m "$mux"} -s "$size" -o "$outdir" "$actions" -- "$@"
 fi
 
 shot() { import -window root "$outdir/$1.png"; }
@@ -88,6 +93,32 @@ pause() { sleep "$1"; }
 if [[ "$1" == */* && -e "$1" ]]; then
   set -- "$(realpath "$1")" "${@:2}"
 fi
+mux_startup=0
+case $mux in
+  "") ;;
+  zellij)
+    # A single pane running COMMAND, no frames or tips; quit with the app.
+    kdl() { local v=${1//\\/\\\\}; printf '"%s"' "${v//\"/\\\"}"; }
+    zdir=$outdir/zellij
+    mkdir -p "$zdir"
+    printf 'pane_frames false\nshow_startup_tips false\nshow_release_notes false\n' >"$zdir/config.kdl"
+    {
+      printf 'layout {\n    pane command=%s cwd=%s close_on_exit=true {\n' "$(kdl "$1")" "$(kdl "$PWD")"
+      if (($# > 1)); then
+        printf '        args'
+        for a in "${@:2}"; do printf ' %s' "$(kdl "$a")"; done
+        printf '\n'
+      fi
+      printf '    }\n}\n'
+    } >"$zdir/layout.kdl"
+    set -- zellij --config "$zdir/config.kdl" --layout "$zdir/layout.kdl"
+    mux_startup=3
+    ;;
+  *)
+    echo "unknown multiplexer: $mux" >&2
+    exit 2
+    ;;
+esac
 clean_env=(env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE)
 case $term in
   kitty)
@@ -118,7 +149,7 @@ case $term in
     ;;
 esac
 term_pid=$!
-sleep "$startup"
+sleep "$((startup + mux_startup))"
 # Without a window manager WezTerm only gets mouse events once focused.
 if [[ $term == wezterm ]]; then
   xdotool search --class wezterm windowfocus 2>/dev/null || true
