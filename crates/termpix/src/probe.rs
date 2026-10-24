@@ -29,6 +29,9 @@ pub enum TerminalKind {
     Konsole,
     ITerm2,
     Foot,
+    /// Multiplexers answer XTVERSION themselves; the outer terminal is hidden.
+    Zellij,
+    Tmux,
     Other(String),
     Unknown,
 }
@@ -48,6 +51,10 @@ impl TerminalKind {
             Self::ITerm2
         } else if l.starts_with("foot") {
             Self::Foot
+        } else if l.starts_with("zellij") {
+            Self::Zellij
+        } else if l.starts_with("tmux") {
+            Self::Tmux
         } else {
             Self::Other(v.to_owned())
         }
@@ -243,6 +250,10 @@ pub fn interpret(env: &Env, replies: &[Event], kernel: Option<Geometry>, grid: (
             _ => {}
         }
     }
+    // The environment may not say (e.g. a multiplexer on the far side of SSH),
+    // but the multiplexer itself answers XTVERSION.
+    caps.in_zellij |= caps.terminal == TerminalKind::Zellij;
+    caps.in_tmux |= caps.terminal == TerminalKind::Tmux;
     // WezTerm answers DECRQM 2026 with "reset" although it implements it.
     if caps.terminal == TerminalKind::WezTerm {
         caps.sync_output = true;
@@ -298,6 +309,15 @@ mod tests {
         let caps = interpret(&Env::default(), &r, None, (80, 24));
         assert_eq!(caps.terminal, TerminalKind::WezTerm);
         assert!(caps.sync_output);
+        assert!(matches!(caps.backend(), Backend::Composited { .. }));
+    }
+
+    #[test]
+    fn zellij_is_recognised_from_xtversion_alone() {
+        let r = replies(b"\x1bP>|Zellij(4501)\x1b\\\x1b_Gi=8257537;OK\x1b\\\x1b[?2026;2$y\x1b[?1u\x1b[?62;52c");
+        let caps = interpret(&Env::default(), &r, None, (80, 24));
+        assert_eq!(caps.terminal, TerminalKind::Zellij);
+        assert!(caps.in_zellij && !caps.pixel_mouse);
         assert!(matches!(caps.backend(), Backend::Composited { .. }));
     }
 
