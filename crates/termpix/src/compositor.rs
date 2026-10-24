@@ -11,9 +11,10 @@
 //!   frame that is re-sent whenever it changes. For terminals whose placement
 //!   handling is unreliable (WezTerm, zellij).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::geom::{Geometry, Rect};
 use crate::graphics::{Delete, Encoder, Medium, PixelFormat, Pixels, Placement};
@@ -88,7 +89,17 @@ pub struct Compositor {
     /// Commands that must be emitted with the next frame (deletions).
     pending: Vec<u8>,
     last_frame: Option<RgbaImage>,
+    /// Unanswered fence queries (id, when sent); see [`Compositor::is_congested`].
+    fences: VecDeque<(u32, Instant)>,
+    next_fence: u32,
 }
+
+/// Image ids used for fence queries (never stored by the terminal).
+const FENCE_IDS: std::ops::Range<u32> = 0x7f_0000..0x7f_ffff;
+/// With this many frames unacknowledged, hold back new ones.
+const MAX_FENCES: usize = 2;
+/// A fence not answered within this time no longer counts (lost reply).
+const FENCE_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl Compositor {
     pub fn new(backend: Backend, medium: Medium, geometry: Geometry) -> Self {
@@ -101,6 +112,8 @@ impl Compositor {
             placed: HashMap::new(),
             pending: Vec::new(),
             last_frame: None,
+            fences: VecDeque::new(),
+            next_fence: FENCE_IDS.start,
         }
     }
 
@@ -164,6 +177,14 @@ impl Compositor {
     /// React to a graphics reply from the terminal. Returns true when the frame
     /// must be presented again (an image was evicted and will be re-uploaded).
     pub fn handle_reply(&mut self, reply: &GraphicsReply) -> bool {
+        if let Some(id) = reply.image_id
+            && FENCE_IDS.contains(&id)
+        {
+            let before = self.fences.len();
+            self.fences.retain(|(f, _)| *f != id);
+            // A frame was acknowledged: a held-back frame may go out now.
+            return self.fences.len() < before;
+        }
         if reply.error_code() != Some("ENOENT") {
             return false;
         }
@@ -184,6 +205,17 @@ impl Compositor {
         self.last_frame = None;
     }
 
+    /// True while the terminal has not yet processed recent inline frames. Do not
+    /// present new frames then; a reply ([`Compositor::handle_reply`] returns
+    /// true) or [`FENCE_TIMEOUT`] ends the congestion. Only inline (direct)
+    /// transfers are fenced; shared memory and files are read locally.
+    pub fn is_congested(&mut self, now: Instant) -> bool {
+        while self.fences.front().is_some_and(|(_, t)| now.duration_since(*t) > FENCE_TIMEOUT) {
+            self.fences.pop_front();
+        }
+        self.fences.len() >= MAX_FENCES
+    }
+
     /// Emit the commands that make the terminal show `layers`. Writes nothing when
     /// the screen would not change.
     pub fn present(&mut self, layers: &[Layer], out: &mut Vec<u8>) -> io::Result<()> {
@@ -196,6 +228,14 @@ impl Compositor {
             out.extend_from_slice(SYNC_BEGIN);
             out.extend_from_slice(&body);
             out.extend_from_slice(SYNC_END);
+            // Inline transfers can outpace a slow link (SSH): ask the terminal to
+            // acknowledge this frame, so callers can wait (see is_congested).
+            if matches!(self.encoder.medium(), Medium::Direct { .. }) {
+                let id = self.next_fence;
+                self.next_fence = if id + 1 >= FENCE_IDS.end { FENCE_IDS.start } else { id + 1 };
+                crate::graphics::query(out, id, Medium::Direct { compress: false })?;
+                self.fences.push_back((id, Instant::now()));
+            }
         }
         // Keep a few recent shm objects: the terminal may not have read them yet.
         self.encoder.cleanup_shm(8);
@@ -391,7 +431,13 @@ mod tests {
         c.present(&[layer(img, 10, 0)], &mut out).unwrap();
         term.feed(&out);
         let replies = crate::input::Parser::new().feed(&term.take_replies());
-        let crate::input::Event::Graphics(reply) = &replies[0] else { panic!("{replies:?}") };
+        let reply = replies
+            .iter()
+            .find_map(|e| match e {
+                crate::input::Event::Graphics(g) if g.error_code() == Some("ENOENT") => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{replies:?}"));
         assert!(c.handle_reply(reply));
         let mut out = Vec::new();
         c.present(&[layer(img, 10, 0)], &mut out).unwrap();
@@ -418,6 +464,45 @@ mod tests {
             screens.push(term.render());
         }
         assert_eq!(screens[0], screens[1]);
+    }
+
+    #[test]
+    fn inline_frames_are_fenced() {
+        let mut c = Compositor::new(Backend::Layered, Medium::Direct { compress: true }, geometry());
+        let img = c.add_image(30, 30, test_image());
+        let mut term = MockTerminal::new(geometry(), [0, 0, 0, 255]);
+        let now = Instant::now();
+        for x in [0, 10] {
+            let mut out = Vec::new();
+            c.present(&[layer(img, x, 0)], &mut out).unwrap();
+            term.feed(&out);
+        }
+        assert!(c.is_congested(now), "two frames unacknowledged");
+        let replies = crate::input::Parser::new().feed(&term.take_replies());
+        let mut released = false;
+        for r in &replies {
+            if let crate::input::Event::Graphics(g) = r {
+                released |= c.handle_reply(g);
+            }
+        }
+        assert!(released && !c.is_congested(now));
+        // Lost replies stop counting after the timeout.
+        let mut out = Vec::new();
+        c.present(&[layer(img, 20, 0)], &mut out).unwrap();
+        c.present(&[layer(img, 25, 0)], &mut out).unwrap();
+        assert!(c.is_congested(now));
+        assert!(!c.is_congested(now + FENCE_TIMEOUT + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn shared_memory_frames_are_not_fenced() {
+        let mut c = Compositor::new(Backend::Layered, Medium::SharedMemory, geometry());
+        let img = c.add_image(30, 30, test_image());
+        for x in [0, 10, 20] {
+            c.present(&[layer(img, x, 0)], &mut Vec::new()).unwrap();
+        }
+        assert!(!c.is_congested(Instant::now()));
+        c.encoder_mut().cleanup_shm(0);
     }
 
     #[test]
