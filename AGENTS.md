@@ -48,7 +48,9 @@ scripts/e2e-kitty.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scro
 
 Action files in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
 screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. See the
-script header for the helpers.
+script header for the helpers. `temzdf FILE --render-frame out.png` renders one
+screen headlessly. `scripts/build-fixtures.sh` rebuilds `tests/fixtures/`. The
+full testing approach is in `doc/testing.md`.
 
 The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` is in it for scratch scripts). TeX (`latexmk`,
 `pdflatex`, `synctex`) comes from the host profile, not the flake.
@@ -83,3 +85,4 @@ The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` 
 - `doc/terminal-compat.md`: per-terminal support matrix and known bugs.
 - `doc/input.md`: mouse/keyboard reporting modes and smooth scrolling.
 - `doc/reload.md`: auto-reload design (learned from Skim and Okular).
+- `doc/testing.md`: how to verify changes without a human.
