@@ -114,7 +114,10 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let mut shown_cursor = None;
     let mut shown_pointer = Pointer::Default;
     loop {
-        if dirty {
+        // On a slow link, wait until the terminal caught up with earlier frames;
+        // the frame drawn afterwards shows the latest state anyway.
+        let congested = dirty && comp.is_congested(Instant::now());
+        if dirty && !congested {
             let (layers, needs) = session.frame(&mut comp);
             dispatch(&mut session, &doc, &pool, needs);
             out.clear();
@@ -168,6 +171,10 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         let mut timeout = if session.viewer.is_animating() { FRAME } else { Duration::from_secs(3600) };
         for due in [reload.due, session.next_deadline()].into_iter().flatten() {
             timeout = timeout.min(due.saturating_duration_since(Instant::now()));
+        }
+        if congested {
+            // Re-check soon in case the acknowledgement never comes.
+            timeout = timeout.min(Duration::from_millis(50));
         }
         let event = match rx.recv_timeout(timeout) {
             Ok(e) => Some(e),
