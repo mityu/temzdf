@@ -1,0 +1,14 @@
+[package]
+name = "temzdf"
+description = "Terminal PDF viewer drawn with the kitty graphics protocol."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+termpix.workspace = true
+termpix-ui.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "termpix-ui"
+description = "Small widget kit that renders UI layers to RGBA images for termpix."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+termpix.workspace = true
+
+[lints]
+workspace = true
