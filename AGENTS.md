@@ -32,10 +32,12 @@ libraries depend on PDF, SyncTeX or viewer code.
 Everything runs inside the Nix dev shell (`flake.nix`):
 
 ```sh
+scripts/check.sh            # fmt check + clippy -D warnings + tests, terse output
+scripts/check.sh --fix      # same, but apply rustfmt
 nix develop -c cargo build --workspace
-nix develop -c cargo test --workspace
-nix develop -c cargo clippy --workspace --all-targets
 ```
+
+Run `scripts/check.sh` before every commit; it enters the dev shell by itself.
 
 The host has no `rustc` on `PATH` outside the dev shell. TeX (`latexmk`,
 `pdflatex`, `synctex`) comes from the host profile, not the flake.
