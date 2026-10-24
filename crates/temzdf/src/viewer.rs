@@ -24,6 +24,9 @@ pub const TILE: u32 = 512;
 const THUMB_WIDTH: f32 = 320.0;
 /// Memory budget for cached tiles (the terminal keeps its own copies).
 const TILE_BUDGET: usize = 192 << 20;
+/// Display lists kept at most (about 70 KiB each for a LaTeX text page, and
+/// 0.2 ms to load again); the ones farthest from the view go first.
+const MAX_LISTS: usize = 256;
 pub const MIN_SCALE: f32 = 0.1;
 pub const MAX_SCALE: f32 = 8.0;
 
@@ -120,6 +123,8 @@ pub struct Viewer {
     pub stand_in_mode: StandIn,
     /// `StandIn::Composed` images by page.
     composed: HashMap<usize, Composed>,
+    /// See [`MAX_LISTS`].
+    max_lists: usize,
 }
 
 /// What covers a page while its tiles at the current scale render (just after
@@ -178,6 +183,7 @@ impl Viewer {
             complete: false,
             stand_in_mode: StandIn::Thumbnail,
             composed: HashMap::new(),
+            max_lists: MAX_LISTS,
         };
         v.update_scroll_bounds();
         v
@@ -357,6 +363,23 @@ impl Viewer {
             *slot = Some(list);
         }
         self.lists_requested.remove(&page);
+        self.drop_far_lists();
+    }
+
+    /// Keep at most `max_lists` display lists: drop the ones farthest from the
+    /// page being read. They are loaded again when needed.
+    fn drop_far_lists(&mut self) {
+        let loaded: Vec<usize> = (0..self.lists.len()).filter(|&p| self.lists[p].is_some()).collect();
+        if loaded.len() <= self.max_lists {
+            return;
+        }
+        let current = self.current_page();
+        let mut by_distance = loaded;
+        by_distance.sort_by_key(|&p| std::cmp::Reverse(p.abs_diff(current)));
+        let excess = by_distance.len() - self.max_lists;
+        for p in by_distance.into_iter().take(excess) {
+            self.lists[p] = None;
+        }
     }
 
     /// A page failed to load; forget the request so it is retried later.
@@ -791,6 +814,27 @@ mod tests {
         comp.present(&layers, &mut out).unwrap();
         term.feed(&out);
         (early, term.render(), stand_ins)
+    }
+
+    #[test]
+    fn display_lists_far_from_the_view_are_dropped_and_reloaded() {
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let bounds = pdf::doc_info(&doc).unwrap().bounds;
+        let mut v = Viewer::new(bounds, GEOMETRY.width_px(), GEOMETRY.height_px());
+        v.max_lists = 2;
+        for p in 0..3 {
+            v.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
+        }
+        // Reading page 1: page 3 is the farthest.
+        assert!(v.display_list(0).is_some() && v.display_list(1).is_some());
+        assert!(v.display_list(2).is_none());
+        // Going there asks for it again (and drops page 1's).
+        v.goto_page(2, false, Instant::now());
+        let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, GEOMETRY);
+        let (_, needs) = v.frame(&mut comp);
+        assert!(needs.iter().any(|n| matches!(n, Need::LoadPage(2))));
+        v.page_loaded(0, 2, pdf::display_list(&doc, 2).unwrap());
+        assert!(v.display_list(2).is_some() && v.display_list(0).is_none());
     }
 
     #[test]

@@ -51,7 +51,6 @@ below them are deferred.
 - The page thumbnail is misplaced by up to half a cell with the Layered
   backend (terminals scale images to whole cells). It only shows briefly; the
   `StandIn::Composed` path could compose it too.
-- Keep display lists for all pages only while memory allows; add an LRU for huge documents.
 - Long text input through `$EDITOR` (do this last):
   1. Suspend the UI, run `$EDITOR` full screen, resume on exit.
   2. Later: split the screen and embed the editor (terminal emulation with e.g. `alacritty_terminal`).
