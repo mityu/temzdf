@@ -241,13 +241,14 @@ impl Compositor {
     pub fn upload_ahead(&mut self, out: &mut Vec<u8>, budget: usize) -> io::Result<bool> {
         let mut sent = 0;
         let mut body = Vec::new();
+        let mut scratch = Vec::new();
         while sent < budget {
             let Some(id) = self.not_uploaded.pop_front() else { break };
             let Some(img) = self.images.get_mut(&id) else { continue };
             if img.uploaded {
                 continue;
             }
-            let px = Pixels { width: img.width, height: img.height, format: PixelFormat::Rgba, data: &img.data };
+            let px = wire_pixels(img.width, img.height, &img.data, &mut scratch);
             self.encoder.transmit(&mut body, id, px, None)?;
             img.uploaded = true;
             sent += img.data.len();
@@ -398,7 +399,8 @@ impl Compositor {
             let placed = Placed { image: layer.image.0, col, row, placement };
 
             if !img.uploaded {
-                let px = Pixels { width: img.width, height: img.height, format: PixelFormat::Rgba, data: &img.data };
+                let mut scratch = Vec::new();
+                let px = wire_pixels(img.width, img.height, &img.data, &mut scratch);
                 self.encoder.transmit(out, layer.image.0, px, None)?;
                 self.images.get_mut(&layer.image.0).expect("present").uploaded = true;
             }
@@ -443,6 +445,7 @@ impl Compositor {
         let strip_h = if strip_rows == 0 { h } else { strip_rows * self.geometry.cell.height }.max(1);
         let count = h.div_ceil(strip_h);
         let row_bytes = w as usize * 4;
+        let mut scratch = Vec::new();
         for i in 0..count {
             let y0 = i * strip_h;
             let y1 = (y0 + strip_h).min(h);
@@ -453,7 +456,7 @@ impl Compositor {
             if unchanged {
                 continue;
             }
-            let px = Pixels { width: w, height: y1 - y0, format: PixelFormat::Rgba, data: &frame.data[range] };
+            let px = wire_pixels(w, y1 - y0, &frame.data[range], &mut scratch);
             let place = if virtual_placements {
                 // Shown by the placeholder text, one image cell per screen cell.
                 let rows = (y1 - y0).div_ceil(self.geometry.cell.height.max(1));
@@ -486,6 +489,20 @@ impl Compositor {
         self.strips = count;
         self.last_frame = Some(frame);
         Ok(())
+    }
+}
+
+/// Opaque RGBA goes out as RGB (`f=24`), a quarter fewer bytes to send; images
+/// with any transparency stay RGBA.
+fn wire_pixels<'a>(width: u32, height: u32, rgba: &'a [u8], scratch: &'a mut Vec<u8>) -> Pixels<'a> {
+    let (px, _) = rgba.as_chunks::<4>();
+    if px.iter().all(|p| p[3] == 255) {
+        scratch.clear();
+        scratch.reserve(px.len() * 3);
+        scratch.extend(px.iter().flat_map(|&[r, g, b, _]| [r, g, b]));
+        Pixels { width, height, format: PixelFormat::Rgb, data: scratch }
+    } else {
+        Pixels { width, height, format: PixelFormat::Rgba, data: rgba }
     }
 }
 
@@ -527,6 +544,26 @@ mod tests {
         assert_eq!(screen.pixel(13, 25), [255, 0, 0, 255]);
         assert_eq!(screen.pixel(13 + 15, 30), [0, 0, 255, 255]);
         assert_eq!(screen.pixel(13 + 30, 30), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn opaque_images_are_sent_as_rgb() {
+        let mut c = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, geometry());
+        let opaque = c.add_image(30, 30, test_image());
+        let mut translucent = test_image();
+        translucent[3] = 128;
+        let translucent = c.add_image(30, 30, translucent);
+        let mut out = Vec::new();
+        let mut second = layer(translucent, 40, 0);
+        second.key = 8;
+        c.present(&[layer(opaque, 0, 0), second], &mut out).unwrap();
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.contains(&format!("i={},f=24,", opaque.0)), "{text}");
+        assert!(text.contains(&format!("i={},f=32,", translucent.0)), "{text}");
+        // The pixels arrive intact.
+        let mut term = MockTerminal::new(geometry(), [0, 0, 0, 255]);
+        term.feed(&out);
+        assert_eq!(term.render().pixel(20, 10), [0, 0, 255, 255]);
     }
 
     #[test]

@@ -34,10 +34,8 @@ below them are deferred.
   clipboard text and exit codes; where a whole image must match, store only a
   hash, or render references from the previous build into `target/` and diff.
 - Tune the raster worker pool and measure performance.
-- Measure frame pacing over a real slow SSH link (fences are in place but were
-  only tested locally), and consider smaller frames for the Composited backend
-  (update only changed strips) since zellij 0.45.1 forwards raw RGBA.
-- Send RGB (`f=24`) instead of RGBA for opaque tiles: 25% fewer bytes; needs `Compositor` to accept RGB images.
+- Measure frame pacing over a real slow SSH link (fences and the writer thread
+  are in place but were only tested locally, with a throttling pty proxy).
 - While zooming, show old-scale tiles scaled instead of the blurry thumbnail (Layered backend can only scale to whole cells, so this needs care).
 - Keep display lists for all pages only while memory allows; add an LRU for huge documents.
 - Long text input through `$EDITOR` (do this last):
