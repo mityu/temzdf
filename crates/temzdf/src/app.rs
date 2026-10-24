@@ -49,7 +49,18 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let caps = termpix::probe::probe(&mut tty, Duration::from_secs(1))?;
     if !caps.kitty_graphics {
         drop(tty);
-        bail!("this terminal does not support the kitty graphics protocol");
+        match &caps.tmux {
+            Some(t) if !t.passthrough => {
+                bail!("inside tmux, graphics need passthrough: run `tmux set -g allow-passthrough on`")
+            }
+            Some(t) => bail!(
+                "inside tmux, graphics need an outer terminal with Unicode placeholder support \
+                 (kitty, Ghostty); tmux reports {:?}",
+                t.outer
+            ),
+            None if caps.in_tmux => bail!("inside tmux, but the `tmux` command could not be queried"),
+            None => bail!("this terminal does not support the kitty graphics protocol"),
+        }
     }
     if caps.pixel_mouse {
         tty.enable_pixel_mouse()?;
@@ -59,6 +70,10 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let medium = term.medium(caps.medium(), caps.has_medium_override());
     let mut comp = Compositor::new(backend, medium, caps.geometry);
     comp.encoder_mut().set_zlib_level(term.zlib_level);
+    if caps.in_tmux {
+        comp.set_tmux_passthrough(true);
+        tty.set_tmux_passthrough();
+    }
 
     let (tx, rx) = mpsc::channel::<AppEvent>();
     tty::spawn_input(tty.reader()?, caps.pixel_mouse, tx.clone(), AppEvent::Term)?;
@@ -123,8 +138,11 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     // Composited frames resend whole strips of the screen; multiplexers (zellij
     // 0.45 forwards them uncompressed) and inline links pay for every one, so
     // cap their rate. Layered frames are tiny placement updates.
-    let composited = matches!(comp.backend(), Backend::Composited { .. });
-    let slow_link = caps.in_zellij || caps.in_tmux || matches!(comp.encoder_mut().medium(), Medium::Direct { .. });
+    let composited = matches!(comp.backend(), Backend::Composited { .. } | Backend::Placeholders { .. });
+    // tmux passes our (compressed) bytes through as they are; zellij re-encodes
+    // every image uncompressed; inline transfers without a multiplexer usually
+    // mean SSH.
+    let slow_link = caps.in_zellij || (!caps.in_tmux && matches!(comp.encoder_mut().medium(), Medium::Direct { .. }));
     let min_interval = match (composited, slow_link) {
         (false, _) => Duration::ZERO,
         (true, false) => Duration::from_millis(33),
@@ -174,7 +192,11 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 Request::Copy(text) => {
                     use base64::Engine;
                     let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-                    tty.write_all(format!("\x1b]52;c;{b64}\x1b\\").as_bytes())?;
+                    let osc = format!("\x1b]52;c;{b64}\x1b\\").into_bytes();
+                    // tmux (default set-clipboard external) keeps OSC 52 from
+                    // applications to itself; send it straight to the terminal.
+                    let osc = if caps.in_tmux { termpix::placeholder::tmux_passthrough(&osc) } else { osc };
+                    tty.write_all(&osc)?;
                 }
             }
         }
