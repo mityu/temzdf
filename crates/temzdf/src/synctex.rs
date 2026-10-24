@@ -99,12 +99,11 @@ impl Scanner {
     /// first box is the best match. `page_hint` (0-based) breaks ties.
     pub fn forward(&mut self, source: &Path, line: u32, column: u32, page_hint: Option<usize>) -> Vec<PdfBox> {
         let mut out = Vec::new();
-        // Try the name as given, then just the file name (SyncTeX records names
-        // as TeX saw them, e.g. "./chapter.tex").
-        let mut names = vec![source.as_os_str().to_owned()];
-        if let Some(n) = source.file_name() {
-            names.push(n.to_owned());
-        }
+        // Query with the name exactly as SyncTeX recorded it (see resolve_input),
+        // falling back to the name as given.
+        let mut names = Vec::new();
+        names.extend(self.resolve_input(source));
+        names.push(source.as_os_str().to_owned());
         for name in names {
             let Ok(c) = CString::new(name.as_encoded_bytes()) else { continue };
             let hint = page_hint.map_or(-1, |p| p as c_int + 1);
@@ -140,6 +139,35 @@ impl Scanner {
             break;
         }
         out
+    }
+
+    /// Input file names recorded in the SyncTeX file (tags start at 1).
+    fn inputs(&self) -> Vec<String> {
+        (1..)
+            .map_while(|tag| {
+                // SAFETY: valid scanner; names are owned by it and NUL-terminated.
+                let p = unsafe { synctex_scanner_get_name(self.ptr, tag) };
+                (!p.is_null()).then(|| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned())
+            })
+            .collect()
+    }
+
+    /// The recorded input name that `source` refers to. Editors pass absolute
+    /// paths, users relative ones, and SyncTeX records names the way TeX opened
+    /// them (`./ch1.tex`, `/abs/dir/./main.tex`, ...). Prefer the same absolute
+    /// path, then a recorded name ending with the given path's components, then
+    /// the same file name.
+    fn resolve_input(&self, source: &Path) -> Option<std::ffi::OsString> {
+        let inputs = self.inputs();
+        let abs = |p: &Path| normalize(&if p.is_absolute() { p.to_owned() } else { self.base.join(p) });
+        let wanted = normalize(&std::path::absolute(source).unwrap_or_else(|_| source.to_owned()));
+        let given = normalize(source);
+        let pick = inputs
+            .iter()
+            .find(|n| abs(Path::new(n)) == wanted)
+            .or_else(|| inputs.iter().find(|n| abs(Path::new(n)).ends_with(&given)))
+            .or_else(|| inputs.iter().find(|n| Path::new(n).file_name() == source.file_name()));
+        pick.map(Into::into)
     }
 
     /// Inverse search: the source location that produced the point (`x`, `y`,
@@ -197,6 +225,11 @@ mod tests {
         let b = boxes[0];
         assert_eq!(b.page, 1, "{boxes:?}");
         assert!(b.rect.y0 > 0.0 && b.rect.y1 < 842.0 && b.rect.x1 > b.rect.x0, "{b:?}");
+
+        // The same line found through other spellings of the source path.
+        for name in [pdf::fixture("sample.tex"), "tests/fixtures/sample.tex".into(), "fixtures/sample.tex".into()] {
+            assert_eq!(s.forward(&name, line, 0, None).first().map(|b| b.page), Some(1), "{name:?}");
+        }
 
         // Inverse from the middle of that box leads back to the same line.
         let loc = s.inverse(b.page, (b.rect.x0 + b.rect.x1) / 2.0, (b.rect.y0 + b.rect.y1) / 2.0).unwrap();
