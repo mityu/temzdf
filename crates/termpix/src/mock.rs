@@ -42,6 +42,26 @@ pub struct MockTerminal {
     seq: u64,
     /// Partial escape sequence carried over between `feed` calls.
     buf: Vec<u8>,
+    /// Foreground colour as a 24-bit value (placeholder text encodes image ids).
+    fg_id: u32,
+    /// Screen cell -> (image id, image row, image column) from placeholder text.
+    placeholder_cells: HashMap<(u32, u32), (u32, u32, u32)>,
+    /// Virtual placements (`U=1`): image id -> size in cells.
+    virtual_sizes: HashMap<u32, (u32, u32)>,
+}
+
+fn utf8_len(first: u8) -> Option<usize> {
+    match first {
+        0x00..=0x7f => Some(1),
+        0xc0..=0xdf => Some(2),
+        0xe0..=0xef => Some(3),
+        0xf0..=0xf7 => Some(4),
+        _ => None,
+    }
+}
+
+fn diacritic_index(c: char) -> Option<u32> {
+    crate::placeholder::DIACRITICS.iter().position(|&d| d == c as u32).map(|n| n as u32)
 }
 
 impl MockTerminal {
@@ -56,6 +76,9 @@ impl MockTerminal {
             replies: Vec::new(),
             seq: 0,
             buf: Vec::new(),
+            fg_id: 0,
+            placeholder_cells: HashMap::new(),
+            virtual_sizes: HashMap::new(),
         }
     }
 
@@ -84,7 +107,35 @@ impl MockTerminal {
         let mut i = 0;
         while i < buf.len() {
             if buf[i] != 0x1b {
-                i += 1;
+                // Text: only Unicode placeholders matter (each takes one cell).
+                let Some(len) = utf8_len(buf[i]) else {
+                    i += 1;
+                    continue;
+                };
+                if i + len > buf.len() {
+                    break;
+                }
+                let c = std::str::from_utf8(&buf[i..i + len]).ok().and_then(|s| s.chars().next());
+                i += len;
+                if c == Some(crate::placeholder::PLACEHOLDER) {
+                    // The row and column diacritics follow.
+                    let mut marks = Vec::new();
+                    while marks.len() < 2 {
+                        let Some(l) = buf.get(i).and_then(|&b| utf8_len(b)) else { break };
+                        let next =
+                            buf.get(i..i + l).and_then(|s| std::str::from_utf8(s).ok()).and_then(|s| s.chars().next());
+                        let Some(n) = next.and_then(diacritic_index) else { break };
+                        marks.push(n);
+                        i += l;
+                    }
+                    if let [row, col] = marks[..] {
+                        let cell = (self.cursor.0, self.cursor.1);
+                        self.placeholder_cells.insert(cell, (self.fg_id, row, col));
+                    }
+                    self.cursor.0 += 1;
+                } else if c.is_some_and(|c| !c.is_control() && diacritic_index(c).is_none()) {
+                    self.cursor.0 += 1;
+                }
                 continue;
             }
             let Some(&kind) = buf.get(i + 1) else { break };
@@ -92,10 +143,40 @@ impl MockTerminal {
                 b'[' => {
                     let Some(len) = buf[i + 2..].iter().position(|b| (0x40..=0x7e).contains(b)) else { break };
                     let end = i + 2 + len;
-                    if buf[end] == b'H' {
-                        self.cursor_position(&buf[i + 2..end]);
+                    match buf[end] {
+                        b'H' => self.cursor_position(&buf[i + 2..end]),
+                        b'm' => self.sgr(&buf[i + 2..end]),
+                        _ => {}
                     }
                     i = end + 1;
+                }
+                // tmux passthrough: `ESC P tmux; <inner with ESC doubled> ESC \`.
+                b'P' if buf[i..].starts_with(b"\x1bPtmux;") => {
+                    let mut j = i + 7;
+                    let mut inner = Vec::new();
+                    let mut done = false;
+                    while j + 1 < buf.len() {
+                        match (buf[j], buf[j + 1]) {
+                            (0x1b, 0x1b) => {
+                                inner.push(0x1b);
+                                j += 2;
+                            }
+                            (0x1b, b'\\') => {
+                                done = true;
+                                j += 2;
+                                break;
+                            }
+                            (c, _) => {
+                                inner.push(c);
+                                j += 1;
+                            }
+                        }
+                    }
+                    if !done {
+                        break;
+                    }
+                    self.feed(&inner);
+                    i = j;
                 }
                 b'_' => {
                     let Some(len) = buf[i + 2..].windows(2).position(|w| w == b"\x1b\\") else { break };
@@ -109,6 +190,17 @@ impl MockTerminal {
             }
         }
         self.buf = buf[i..].to_vec();
+    }
+
+    /// SGR: only true-colour foreground (`38;2;r;g;b`) and its reset matter.
+    fn sgr(&mut self, params: &[u8]) {
+        let s = String::from_utf8_lossy(params);
+        let n: Vec<u32> = s.split(';').map(|v| v.parse().unwrap_or(0)).collect();
+        match n.as_slice() {
+            [38, 2, r, g, b] => self.fg_id = (r << 16) | (g << 8) | b,
+            [39] | [0] | [] => self.fg_id = 0,
+            _ => {}
+        }
     }
 
     fn cursor_position(&mut self, params: &[u8]) {
@@ -227,6 +319,11 @@ impl MockTerminal {
 
     fn place(&mut self, keys: &HashMap<char, String>, image: u32) {
         let num = |k: char| keys.get(&k).and_then(|v| v.parse::<i64>().ok());
+        if num('U') == Some(1) {
+            let (c, r) = (num('c').unwrap_or(1) as u32, num('r').unwrap_or(1) as u32);
+            self.virtual_sizes.insert(image, (c.max(1), r.max(1)));
+            return;
+        }
         let id = num('p').unwrap_or(0) as u32;
         let src = match (num('x'), num('y'), num('w'), num('h')) {
             (None, None, None, None) => None,
@@ -316,6 +413,14 @@ impl MockTerminal {
                 RgbaRef { width: img.width, height: img.height, data: &img.data },
                 src,
             );
+        }
+        // Placeholder cells show one cell of their image's virtual placement.
+        for (&(col, row), &(id, img_row, img_col)) in &self.placeholder_cells {
+            let (Some(img), Some(&(c, r))) = (self.images.get(&id), self.virtual_sizes.get(&id)) else { continue };
+            let (cw, ch) = (img.width / c, img.height / r);
+            let src = Rect::new((img_col * cw) as i32, (img_row * ch) as i32, cw, ch);
+            let dst = Rect::new((col * cell.width) as i32, (row * cell.height) as i32, cell.width, cell.height);
+            raster::blit(&mut screen, dst, RgbaRef { width: img.width, height: img.height, data: &img.data }, src);
         }
         screen
     }

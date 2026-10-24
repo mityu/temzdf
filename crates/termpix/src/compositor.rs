@@ -62,6 +62,13 @@ impl Backend {
         Self::Composited { background: [0, 0, 0, 0], strip_rows: 0 }
     }
 
+    /// Composited strips shown through Unicode placeholders: the screen is
+    /// filled with placeholder text once, and frames only re-send changed strip
+    /// images. Works inside tmux (with passthrough), which keeps the text.
+    pub const fn placeholders(rows: u32) -> Self {
+        Self::Placeholders { background: [0, 0, 0, 0], strip_rows: rows }
+    }
+
     /// Composited as strips of `rows` cell rows; only changed strips are sent.
     /// Much less traffic for small updates, but needs a terminal that handles
     /// many images placed side by side (zellij does; WezTerm does not).
@@ -76,6 +83,12 @@ pub enum Backend {
     /// `strip_rows`: send the frame as horizontal strips of this many cell rows,
     /// re-sending only strips that changed; 0 sends one whole-screen image.
     Composited {
+        background: [u8; 4],
+        strip_rows: u32,
+    },
+    /// Like `Composited` with strips, but shown through Unicode placeholders
+    /// (`U=1`); see [`Backend::placeholders`].
+    Placeholders {
         background: [u8; 4],
         strip_rows: u32,
     },
@@ -110,6 +123,10 @@ pub struct Compositor {
     last_frame: Option<RgbaImage>,
     /// Number of composited strips currently shown.
     strips: u32,
+    /// The placeholder text for the current geometry is on screen.
+    placeholder_text: bool,
+    /// Wrap graphics commands for tmux passthrough.
+    tmux_passthrough: bool,
     /// Images added but maybe not uploaded yet, oldest first (Layered only).
     not_uploaded: VecDeque<u32>,
     /// Unanswered fence queries (id, when sent); see [`Compositor::is_congested`].
@@ -136,6 +153,8 @@ impl Compositor {
             pending: Vec::new(),
             last_frame: None,
             strips: 0,
+            placeholder_text: false,
+            tmux_passthrough: false,
             not_uploaded: VecDeque::new(),
             fences: VecDeque::new(),
             next_fence: FENCE_IDS.start,
@@ -148,6 +167,13 @@ impl Compositor {
 
     pub fn geometry(&self) -> Geometry {
         self.geometry
+    }
+
+    /// Send graphics commands through tmux (passthrough); see
+    /// [`crate::placeholder::wrap_for_tmux`]. Fences are disabled, since tmux
+    /// does not route the terminal's answers back.
+    pub fn set_tmux_passthrough(&mut self, on: bool) {
+        self.tmux_passthrough = on;
     }
 
     pub fn encoder_mut(&mut self) -> &mut Encoder {
@@ -273,6 +299,8 @@ impl Compositor {
         }
         self.placed.clear();
         self.last_frame = None;
+        // The screen may have been cleared or resized: write placeholder text again.
+        self.placeholder_text = false;
     }
 
     /// True while the terminal has not yet processed recent inline frames. Do not
@@ -293,8 +321,14 @@ impl Compositor {
         match self.backend {
             Backend::Layered => self.present_layered(layers, &mut body)?,
             Backend::Composited { background, strip_rows } => {
-                self.present_composited(layers, background, strip_rows, &mut body)?
+                self.present_composited(layers, background, strip_rows, false, &mut body)?
             }
+            Backend::Placeholders { background, strip_rows } => {
+                self.present_composited(layers, background, strip_rows.max(1), true, &mut body)?
+            }
+        }
+        if self.tmux_passthrough {
+            body = crate::placeholder::wrap_for_tmux(&body);
         }
         if !body.is_empty() {
             out.extend_from_slice(SYNC_BEGIN);
@@ -302,7 +336,10 @@ impl Compositor {
             out.extend_from_slice(SYNC_END);
             // Inline transfers can outpace a slow link (SSH): ask the terminal to
             // acknowledge this frame, so callers can wait (see is_congested).
-            self.fence(out)?;
+            // Through tmux the answer never comes back, so do not wait for one.
+            if !self.tmux_passthrough {
+                self.fence(out)?;
+            }
         }
         // Keep a few recent shm objects: the terminal may not have read them yet.
         self.encoder.cleanup_shm(8);
@@ -345,13 +382,18 @@ impl Compositor {
                         cells: Some((c, r)),
                         offset: (0, 0),
                         z: layer.z,
+                        virtual_placement: false,
                     },
                 )
             } else {
                 let col = vis.x as u32 / cell.width;
                 let row = vis.y as u32 / cell.height;
                 let offset = (vis.x as u32 - col * cell.width, vis.y as u32 - row * cell.height);
-                (col, row, Placement { placement_id: layer.key, src: Some(crop), cells: None, offset, z: layer.z })
+                (
+                    col,
+                    row,
+                    Placement { placement_id: layer.key, src: Some(crop), offset, z: layer.z, ..Default::default() },
+                )
             };
             let placed = Placed { image: layer.image.0, col, row, placement };
 
@@ -384,6 +426,7 @@ impl Compositor {
         layers: &[Layer],
         background: [u8; 4],
         strip_rows: u32,
+        virtual_placements: bool,
         out: &mut Vec<u8>,
     ) -> io::Result<()> {
         let (w, h) = (self.geometry.width_px(), self.geometry.height_px());
@@ -410,11 +453,31 @@ impl Compositor {
             if unchanged {
                 continue;
             }
-            write!(out, "\x1b[{};1H", i * strip_h / self.geometry.cell.height.max(1) + 1)?;
             let px = Pixels { width: w, height: y1 - y0, format: PixelFormat::Rgba, data: &frame.data[range] };
-            // Re-transmitting an id replaces the image and its placement in place.
-            let place = Placement { placement_id: 1, ..Default::default() };
+            let place = if virtual_placements {
+                // Shown by the placeholder text, one image cell per screen cell.
+                let rows = (y1 - y0).div_ceil(self.geometry.cell.height.max(1));
+                Placement {
+                    cells: Some((self.geometry.cols as u32, rows)),
+                    virtual_placement: true,
+                    ..Default::default()
+                }
+            } else {
+                write!(out, "\x1b[{};1H", i * strip_h / self.geometry.cell.height.max(1) + 1)?;
+                // Re-transmitting an id replaces the image and its placement in place.
+                Placement { placement_id: 1, ..Default::default() }
+            };
             self.encoder.transmit(out, STRIP_IDS + i, px, Some(&place))?;
+        }
+        // The placeholder text only changes with the screen size.
+        if virtual_placements && !self.placeholder_text {
+            let rows_per_strip = strip_h / self.geometry.cell.height.max(1);
+            for i in 0..count {
+                let row = i * rows_per_strip;
+                let rows = rows_per_strip.min((self.geometry.rows as u32).saturating_sub(row));
+                crate::placeholder::write_cells(out, STRIP_IDS + i, 0, row, 0, rows, self.geometry.cols as u32);
+            }
+            self.placeholder_text = true;
         }
         // Strips that no longer exist (the screen got shorter).
         for i in count..self.strips {
@@ -547,8 +610,16 @@ mod tests {
             ]
         };
         let mut screens = Vec::new();
-        for backend in [Backend::Layered, Backend::composited(), Backend::composited_strips(2)] {
+        let backends = [
+            (Backend::Layered, false),
+            (Backend::composited(), false),
+            (Backend::composited_strips(2), false),
+            (Backend::placeholders(2), false),
+            (Backend::placeholders(2), true),
+        ];
+        for (backend, tmux) in backends {
             let mut c = Compositor::new(backend, Medium::Direct { compress: true }, geometry());
+            c.set_tmux_passthrough(tmux);
             let img = c.add_image(30, 30, test_image());
             let mut out = Vec::new();
             c.present(&layers_for(img), &mut out).unwrap();
@@ -556,7 +627,34 @@ mod tests {
             term.feed(&out);
             screens.push(term.render());
         }
-        assert_eq!(screens[0], screens[1]);
+        for (i, s) in screens.iter().enumerate().skip(1) {
+            assert!(*s == screens[0], "backend {i} differs from Layered");
+        }
+    }
+
+    #[test]
+    fn placeholder_text_is_written_once_and_frames_resend_strips() {
+        let g = geometry();
+        let mut c = Compositor::new(Backend::placeholders(2), Medium::Direct { compress: false }, g);
+        c.set_tmux_passthrough(true);
+        let img = c.add_image(30, 30, test_image());
+        let mut first = Vec::new();
+        c.present(&[layer(img, 0, 0)], &mut first).unwrap();
+        let ph = |out: &[u8]| String::from_utf8_lossy(out).matches(crate::placeholder::PLACEHOLDER).count();
+        assert_eq!(ph(&first), 8 * 4, "one placeholder per cell");
+        assert!(String::from_utf8_lossy(&first).contains("\x1bPtmux;"), "wrapped for tmux");
+        let mut term = MockTerminal::new(g, [0, 0, 0, 255]);
+        term.feed(&first);
+        let mut second = Vec::new();
+        c.present(&[layer(img, 5, 0)], &mut second).unwrap();
+        assert_eq!(ph(&second), 0, "text stays; only images change");
+        term.feed(&second);
+        assert_eq!(term.render().pixel(5, 0), [255, 0, 0, 255]);
+        // A resize writes the text again.
+        c.set_geometry(Geometry { cols: 6, ..g });
+        let mut third = Vec::new();
+        c.present(&[layer(img, 5, 0)], &mut third).unwrap();
+        assert_eq!(ph(&third), 6 * 4);
     }
 
     #[test]

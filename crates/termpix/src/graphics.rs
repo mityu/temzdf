@@ -85,6 +85,9 @@ pub struct Placement {
     /// Pixel offset inside the first cell (`X,Y`); must be smaller than a cell.
     pub offset: (u32, u32),
     pub z: i32,
+    /// A virtual placement (`U=1`), shown where Unicode placeholder text refers
+    /// to it (see [`crate::placeholder`]); `cells` gives its size.
+    pub virtual_placement: bool,
 }
 
 impl Placement {
@@ -106,6 +109,9 @@ impl Placement {
         }
         if self.z != 0 {
             write!(out, ",z={}", self.z).unwrap();
+        }
+        if self.virtual_placement {
+            out.extend_from_slice(b",U=1");
         }
         // Never move the cursor: the caller positions it explicitly for every placement.
         out.extend_from_slice(b",C=1");
@@ -381,6 +387,7 @@ mod tests {
             cells: None,
             offset: (4, 7),
             z: -1073741825,
+            virtual_placement: false,
         };
         enc.place(&mut out, 9, &p);
         assert_eq!(s(&out), "\x1b_Ga=p,i=9,q=1,p=3,x=10,y=20,w=100,h=50,X=4,Y=7,z=-1073741825,C=1\x1b\\");
