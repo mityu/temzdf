@@ -1,0 +1,987 @@
+//! Terminal input parser: raw bytes from the tty to [`Event`]s.
+//!
+//! Handles SGR mouse reports (cell or pixel coordinates), the kitty keyboard
+//! protocol and legacy key encodings, bracketed paste, focus, in-band resize
+//! (mode 2048), kitty graphics replies (APC `_G`) and the query replies we send
+//! during probing (DA1, DECRPM, XTVERSION, window/cell size, kitty keyboard flags).
+//!
+//! The parser is a pure state machine: feed it bytes with [`Parser::feed`], and
+//! call [`Parser::flush`] when no more bytes arrived for a short while so a lone
+//! `ESC` is reported as the Escape key.
+
+use std::fmt;
+
+/// Keyboard modifiers, using the kitty keyboard protocol bit layout.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Modifiers(u8);
+
+impl Modifiers {
+    pub const NONE: Self = Self(0);
+    pub const SHIFT: Self = Self(1);
+    pub const ALT: Self = Self(2);
+    pub const CTRL: Self = Self(4);
+    pub const SUPER: Self = Self(8);
+    pub const HYPER: Self = Self(16);
+    pub const META: Self = Self(32);
+    pub const CAPS_LOCK: Self = Self(64);
+    pub const NUM_LOCK: Self = Self(128);
+
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The modifiers that matter for shortcuts (lock keys stripped).
+    pub const fn without_locks(self) -> Self {
+        Self(self.0 & !(Self::CAPS_LOCK.0 | Self::NUM_LOCK.0))
+    }
+}
+
+impl std::ops::BitOr for Modifiers {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitOrAssign for Modifiers {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+impl fmt::Debug for Modifiers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const NAMES: [&str; 8] = ["Shift", "Alt", "Ctrl", "Super", "Hyper", "Meta", "CapsLock", "NumLock"];
+        let mut first = true;
+        write!(f, "Modifiers(")?;
+        for (i, name) in NAMES.iter().enumerate() {
+            if self.0 & (1 << i) != 0 {
+                if !first {
+                    write!(f, "|")?;
+                }
+                write!(f, "{name}")?;
+                first = false;
+            }
+        }
+        write!(f, ")")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ModifierKey {
+    LeftShift,
+    LeftCtrl,
+    LeftAlt,
+    LeftSuper,
+    LeftHyper,
+    LeftMeta,
+    RightShift,
+    RightCtrl,
+    RightAlt,
+    RightSuper,
+    RightHyper,
+    RightMeta,
+    IsoLevel3Shift,
+    IsoLevel5Shift,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KeyCode {
+    Char(char),
+    Enter,
+    Tab,
+    Backspace,
+    Escape,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Insert,
+    Delete,
+    /// Keypad centre key (`CSI E`).
+    Begin,
+    F(u8),
+    CapsLock,
+    ScrollLock,
+    NumLock,
+    PrintScreen,
+    Pause,
+    Menu,
+    Modifier(ModifierKey),
+    /// A kitty functional key we do not name (keypad, media keys, ...): the raw code.
+    Other(u32),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum KeyEventKind {
+    #[default]
+    Press,
+    Repeat,
+    Release,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyEvent {
+    pub code: KeyCode,
+    pub modifiers: Modifiers,
+    pub kind: KeyEventKind,
+    /// Text the key produces (kitty "associated text"), when the terminal reports it.
+    pub text: Option<String>,
+}
+
+impl KeyEvent {
+    pub fn new(code: KeyCode, modifiers: Modifiers) -> Self {
+        Self { code, modifiers, kind: KeyEventKind::Press, text: None }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
+    /// Buttons 8-11 ("back", "forward", ...): the SGR button number.
+    Other(u8),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ScrollDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MouseEventKind {
+    Press(MouseButton),
+    Release(MouseButton),
+    /// Motion with a button held.
+    Drag(MouseButton),
+    /// Motion with no button held (needs mode 1003).
+    Move,
+    Scroll(ScrollDirection),
+    /// The pointer left the window (kitty extension to mode 1016).
+    Leave,
+}
+
+/// Unit of mouse coordinates, decided by whether mode 1016 is active.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CoordUnit {
+    #[default]
+    Cell,
+    Pixel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MouseEvent {
+    pub kind: MouseEventKind,
+    /// Zero-based column (cells) or x (pixels), see `unit`.
+    pub x: i32,
+    /// Zero-based row (cells) or y (pixels), see `unit`.
+    pub y: i32,
+    pub unit: CoordUnit,
+    pub modifiers: Modifiers,
+}
+
+/// Terminal size from an in-band resize report (mode 2048).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResizeReport {
+    pub rows: u16,
+    pub cols: u16,
+    pub height_px: u32,
+    pub width_px: u32,
+}
+
+/// A kitty graphics protocol reply: `ESC _G <keys> ; <message> ESC \`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GraphicsReply {
+    pub image_id: Option<u32>,
+    pub image_number: Option<u32>,
+    pub placement_id: Option<u32>,
+    /// `OK`, or an error such as `ENOENT:...`.
+    pub message: String,
+}
+
+impl GraphicsReply {
+    pub fn is_ok(&self) -> bool {
+        self.message == "OK"
+    }
+
+    /// The error code (`ENOENT`, `EINVAL`, ...) if this is an error reply.
+    pub fn error_code(&self) -> Option<&str> {
+        if self.is_ok() { None } else { Some(self.message.split(':').next().unwrap_or("")) }
+    }
+}
+
+/// DECRPM mode state (`CSI ? mode ; state $ y`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModeState {
+    NotRecognized,
+    Set,
+    Reset,
+    PermanentlySet,
+    PermanentlyReset,
+}
+
+impl ModeState {
+    pub fn is_supported(self) -> bool {
+        !matches!(self, Self::NotRecognized | Self::PermanentlyReset)
+    }
+}
+
+/// Replies to queries sent by the application.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// Primary device attributes (`CSI ? ... c`): the parameters.
+    DeviceAttributes(Vec<u32>),
+    /// DECRPM for a private mode.
+    Mode { mode: u32, state: ModeState },
+    /// XTVERSION (`DCS > | text ST`).
+    Version(String),
+    /// `CSI 16 t` reply: cell size in pixels.
+    CellSize { width: u32, height: u32 },
+    /// `CSI 14 t` reply: text area size in pixels.
+    WindowSize { width: u32, height: u32 },
+    /// `CSI ? u` reply: active kitty keyboard flags.
+    KeyboardFlags(u32),
+    /// An OSC reply (e.g. colour queries), without the introducer and terminator.
+    Osc(Vec<u8>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Event {
+    Key(KeyEvent),
+    Mouse(MouseEvent),
+    Paste(String),
+    Focus(bool),
+    Resize(ResizeReport),
+    Graphics(GraphicsReply),
+    Reply(Reply),
+    /// A complete escape sequence we did not recognise.
+    Unknown(Vec<u8>),
+}
+
+const ESC: u8 = 0x1b;
+const PASTE_END: &[u8] = b"\x1b[201~";
+
+/// Incremental input parser. See the module documentation.
+#[derive(Debug, Default)]
+pub struct Parser {
+    buf: Vec<u8>,
+    pixel_mouse: bool,
+    paste: Option<Vec<u8>>,
+}
+
+enum Step {
+    /// Consumed `n` bytes, maybe producing an event.
+    Done(usize, Option<Event>),
+    /// Need more bytes to decide.
+    Incomplete,
+}
+
+impl Parser {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether SGR mouse coordinates are pixels (mode 1016 enabled).
+    pub fn set_pixel_mouse(&mut self, enabled: bool) {
+        self.pixel_mouse = enabled;
+    }
+
+    /// Whether bytes are buffered waiting for the rest of a sequence.
+    pub fn has_pending(&self) -> bool {
+        !self.buf.is_empty() || self.paste.is_some()
+    }
+
+    /// Feed bytes and return every event that is complete.
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<Event> {
+        let mut buf = std::mem::take(&mut self.buf);
+        buf.extend_from_slice(bytes);
+        let mut events = Vec::new();
+        let mut pos = 0;
+        while pos < buf.len() {
+            if let Some(paste) = &mut self.paste {
+                match find(&buf[pos..], PASTE_END) {
+                    Some(end) => {
+                        paste.extend_from_slice(&buf[pos..pos + end]);
+                        let text = String::from_utf8_lossy(paste).into_owned();
+                        self.paste = None;
+                        events.push(Event::Paste(text));
+                        pos += end + PASTE_END.len();
+                    }
+                    None => {
+                        // Keep a tail that may be the start of the terminator.
+                        let rest = &buf[pos..];
+                        let keep = partial_suffix(rest, PASTE_END);
+                        paste.extend_from_slice(&rest[..rest.len() - keep]);
+                        pos = buf.len() - keep;
+                        break;
+                    }
+                }
+                continue;
+            }
+            match self.step(&buf[pos..]) {
+                Step::Done(n, event) => {
+                    pos += n;
+                    if let Some(event) = event {
+                        events.push(event);
+                    }
+                }
+                Step::Incomplete => break,
+            }
+        }
+        buf.drain(..pos);
+        self.buf = buf;
+        events
+    }
+
+    /// Interpret whatever is buffered as complete input. Call this when no bytes
+    /// arrived for a short while (e.g. 25 ms): a lone `ESC` becomes the Escape key
+    /// and `ESC x` becomes Alt+x.
+    pub fn flush(&mut self) -> Vec<Event> {
+        let mut events = Vec::new();
+        if self.paste.is_some() {
+            // An unterminated paste: keep waiting, pastes can be large and slow.
+            return events;
+        }
+        let buf = std::mem::take(&mut self.buf);
+        let mut pos = 0;
+        while pos < buf.len() {
+            if buf[pos] == ESC {
+                if pos + 1 == buf.len() {
+                    events.push(key(KeyCode::Escape, Modifiers::NONE));
+                    pos += 1;
+                    continue;
+                }
+                let mut rest = self.feed(&buf[pos + 1..]);
+                if let Some(Event::Key(k)) = rest.first_mut() {
+                    k.modifiers |= Modifiers::ALT;
+                } else {
+                    events.push(key(KeyCode::Escape, Modifiers::NONE));
+                }
+                events.append(&mut rest);
+                events.append(&mut self.flush());
+                return events;
+            }
+            let mut rest = self.feed(&buf[pos..]);
+            events.append(&mut rest);
+            // Anything still buffered is an incomplete sequence or UTF-8 char.
+            let leftover = std::mem::take(&mut self.buf);
+            if !leftover.is_empty() {
+                events.push(Event::Unknown(leftover));
+            }
+            return events;
+        }
+        events
+    }
+
+    fn step(&mut self, b: &[u8]) -> Step {
+        if b[0] != ESC {
+            return text_key(b);
+        }
+        if b.len() < 2 {
+            return Step::Incomplete;
+        }
+        match b[1] {
+            b'[' => self.csi(b),
+            b'O' => ss3(b),
+            b'_' => string_seq(b, 2).map(|(n, body)| Step::Done(n, Some(apc(body)))).unwrap_or(Step::Incomplete),
+            b']' => string_seq(b, 2)
+                .map(|(n, body)| Step::Done(n, Some(Event::Reply(Reply::Osc(body.to_vec())))))
+                .unwrap_or(Step::Incomplete),
+            b'P' => string_seq(b, 2).map(|(n, body)| Step::Done(n, Some(dcs(body)))).unwrap_or(Step::Incomplete),
+            ESC => Step::Done(1, Some(key(KeyCode::Escape, Modifiers::NONE))),
+            _ => match text_key(&b[1..]) {
+                Step::Done(n, Some(Event::Key(mut k))) => {
+                    k.modifiers |= Modifiers::ALT;
+                    Step::Done(n + 1, Some(Event::Key(k)))
+                }
+                Step::Done(n, other) => Step::Done(n + 1, other),
+                Step::Incomplete => Step::Incomplete,
+            },
+        }
+    }
+
+    fn csi(&mut self, b: &[u8]) -> Step {
+        // ESC [ <params 0x30-0x3f>* <intermediates 0x20-0x2f>* <final 0x40-0x7e>
+        let mut i = 2;
+        while i < b.len() && (0x30..=0x3f).contains(&b[i]) {
+            i += 1;
+        }
+        let params_end = i;
+        while i < b.len() && (0x20..=0x2f).contains(&b[i]) {
+            i += 1;
+        }
+        if i >= b.len() {
+            return Step::Incomplete;
+        }
+        let fin = b[i];
+        if !(0x40..=0x7e).contains(&fin) {
+            // Malformed: drop the introducer and resynchronise.
+            return Step::Done(2, Some(Event::Unknown(b[..2].to_vec())));
+        }
+        let params = &b[2..params_end];
+        let inter = &b[params_end..i];
+        let len = i + 1;
+        if params == b"200" && fin == b'~' {
+            self.paste = Some(Vec::new());
+            return Step::Done(len, None);
+        }
+        let event = self.csi_event(params, inter, fin).unwrap_or_else(|| Event::Unknown(b[..len].to_vec()));
+        Step::Done(len, Some(event))
+    }
+
+    fn csi_event(&self, params: &[u8], inter: &[u8], fin: u8) -> Option<Event> {
+        let s = std::str::from_utf8(params).ok()?;
+        if let Some(rest) = s.strip_prefix('<') {
+            if inter.is_empty() && (fin == b'M' || fin == b'm') {
+                return self.sgr_mouse(rest, fin == b'm');
+            }
+            return None;
+        }
+        if let Some(rest) = s.strip_prefix('?') {
+            return match (inter, fin) {
+                (b"", b'c') => Some(Event::Reply(Reply::DeviceAttributes(numbers(rest)))),
+                (b"", b'u') => Some(Event::Reply(Reply::KeyboardFlags(rest.parse().ok()?))),
+                (b"$", b'y') => {
+                    let n = numbers(rest);
+                    let state = match n.get(1)? {
+                        0 => ModeState::NotRecognized,
+                        1 => ModeState::Set,
+                        2 => ModeState::Reset,
+                        3 => ModeState::PermanentlySet,
+                        4 => ModeState::PermanentlyReset,
+                        _ => return None,
+                    };
+                    Some(Event::Reply(Reply::Mode { mode: *n.first()?, state }))
+                }
+                _ => None,
+            };
+        }
+        if !inter.is_empty() || s.starts_with(['<', '=', '>']) {
+            return None;
+        }
+        let fields: Vec<&str> = s.split(';').collect();
+        match fin {
+            b'u' => kitty_key(&fields),
+            b'~' => tilde_key(&fields),
+            b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'H' | b'P' | b'Q' | b'S' => {
+                let code = match fin {
+                    b'A' => KeyCode::Up,
+                    b'B' => KeyCode::Down,
+                    b'C' => KeyCode::Right,
+                    b'D' => KeyCode::Left,
+                    b'E' => KeyCode::Begin,
+                    b'F' => KeyCode::End,
+                    b'H' => KeyCode::Home,
+                    b'P' => KeyCode::F(1),
+                    b'Q' => KeyCode::F(2),
+                    _ => KeyCode::F(4),
+                };
+                let (modifiers, kind) = mods_and_kind(fields.get(1).copied());
+                Some(Event::Key(KeyEvent { code, modifiers, kind, text: None }))
+            }
+            // `CSI R` is F3 only in the unambiguous forms; `CSI row;col R` is a cursor report.
+            b'R' if s.is_empty() || s.starts_with("1;") => {
+                let (modifiers, kind) = mods_and_kind(fields.get(1).copied());
+                Some(Event::Key(KeyEvent { code: KeyCode::F(3), modifiers, kind, text: None }))
+            }
+            b'Z' => Some(key(KeyCode::Tab, Modifiers::SHIFT)),
+            b'I' if s.is_empty() => Some(Event::Focus(true)),
+            b'O' if s.is_empty() => Some(Event::Focus(false)),
+            b't' => {
+                let n = numbers(s);
+                match n.as_slice() {
+                    [48, rows, cols, h, w] => Some(Event::Resize(ResizeReport {
+                        rows: (*rows).try_into().ok()?,
+                        cols: (*cols).try_into().ok()?,
+                        height_px: *h,
+                        width_px: *w,
+                    })),
+                    [6, h, w] => Some(Event::Reply(Reply::CellSize { width: *w, height: *h })),
+                    [4, h, w] => Some(Event::Reply(Reply::WindowSize { width: *w, height: *h })),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn sgr_mouse(&self, s: &str, release: bool) -> Option<Event> {
+        let mut it = s.split(';');
+        let b: u32 = it.next()?.parse().ok()?;
+        // Pixel coordinates can be negative in some terminals when the pointer is
+        // outside the window during a drag.
+        let x: i32 = it.next()?.parse().ok()?;
+        let y: i32 = it.next()?.parse().ok()?;
+        let mut modifiers = Modifiers::NONE;
+        if b & 4 != 0 {
+            modifiers |= Modifiers::SHIFT;
+        }
+        if b & 8 != 0 {
+            modifiers |= Modifiers::ALT;
+        }
+        if b & 16 != 0 {
+            modifiers |= Modifiers::CTRL;
+        }
+        let motion = b & 32 != 0;
+        let button_bits = (b & 3) | ((b >> 6) << 2);
+        let kind = if b & 256 != 0 {
+            MouseEventKind::Leave
+        } else if b & 64 != 0 && b & 128 == 0 {
+            MouseEventKind::Scroll(match b & 3 {
+                0 => ScrollDirection::Up,
+                1 => ScrollDirection::Down,
+                2 => ScrollDirection::Left,
+                _ => ScrollDirection::Right,
+            })
+        } else {
+            let button = match button_bits {
+                0 => Some(MouseButton::Left),
+                1 => Some(MouseButton::Middle),
+                2 => Some(MouseButton::Right),
+                3 => None,
+                n => Some(MouseButton::Other(n as u8 + 4)),
+            };
+            match (motion, release, button) {
+                (true, _, Some(btn)) => MouseEventKind::Drag(btn),
+                (true, _, None) => MouseEventKind::Move,
+                (false, true, Some(btn)) => MouseEventKind::Release(btn),
+                (false, false, Some(btn)) => MouseEventKind::Press(btn),
+                (false, _, None) => return None,
+            }
+        };
+        let unit = if self.pixel_mouse { CoordUnit::Pixel } else { CoordUnit::Cell };
+        // SGR reports are one-based in both units.
+        Some(Event::Mouse(MouseEvent { kind, x: x - 1, y: y - 1, unit, modifiers }))
+    }
+}
+
+fn key(code: KeyCode, modifiers: Modifiers) -> Event {
+    Event::Key(KeyEvent::new(code, modifiers))
+}
+
+/// A plain byte or UTF-8 character (legacy encoding).
+fn text_key(b: &[u8]) -> Step {
+    let c = b[0];
+    let ev = match c {
+        b'\r' | b'\n' => key(KeyCode::Enter, Modifiers::NONE),
+        b'\t' => key(KeyCode::Tab, Modifiers::NONE),
+        0x7f | 0x08 => key(KeyCode::Backspace, Modifiers::NONE),
+        0x00 => key(KeyCode::Char(' '), Modifiers::CTRL),
+        0x01..=0x1a => key(KeyCode::Char((b'a' + c - 1) as char), Modifiers::CTRL),
+        0x1c..=0x1f => key(KeyCode::Char((b'4' + c - 0x1c) as char), Modifiers::CTRL),
+        0x20..=0x7e => {
+            let ch = c as char;
+            let mods = if ch.is_ascii_uppercase() { Modifiers::SHIFT } else { Modifiers::NONE };
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(ch),
+                modifiers: mods,
+                kind: KeyEventKind::Press,
+                text: Some(ch.to_string()),
+            })
+        }
+        _ => {
+            let need = match c {
+                0xc0..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf7 => 4,
+                _ => return Step::Done(1, Some(Event::Unknown(vec![c]))),
+            };
+            if b.len() < need {
+                return Step::Incomplete;
+            }
+            return match std::str::from_utf8(&b[..need]) {
+                Ok(s) => {
+                    let ch = s.chars().next().unwrap_or('\u{fffd}');
+                    Step::Done(
+                        need,
+                        Some(Event::Key(KeyEvent {
+                            code: KeyCode::Char(ch),
+                            modifiers: Modifiers::NONE,
+                            kind: KeyEventKind::Press,
+                            text: Some(s.to_owned()),
+                        })),
+                    )
+                }
+                Err(_) => Step::Done(1, Some(Event::Unknown(vec![c]))),
+            };
+        }
+    };
+    Step::Done(1, Some(ev))
+}
+
+fn ss3(b: &[u8]) -> Step {
+    if b.len() < 3 {
+        return Step::Incomplete;
+    }
+    let code = match b[2] {
+        b'A' => KeyCode::Up,
+        b'B' => KeyCode::Down,
+        b'C' => KeyCode::Right,
+        b'D' => KeyCode::Left,
+        b'H' => KeyCode::Home,
+        b'F' => KeyCode::End,
+        b'P' => KeyCode::F(1),
+        b'Q' => KeyCode::F(2),
+        b'R' => KeyCode::F(3),
+        b'S' => KeyCode::F(4),
+        _ => return Step::Done(3, Some(Event::Unknown(b[..3].to_vec()))),
+    };
+    Step::Done(3, Some(key(code, Modifiers::NONE)))
+}
+
+/// A string sequence (APC, OSC, DCS) terminated by ST (`ESC \`) or BEL.
+/// Returns the total length and the body.
+fn string_seq(b: &[u8], start: usize) -> Option<(usize, &[u8])> {
+    let mut i = start;
+    while i < b.len() {
+        match b[i] {
+            0x07 => return Some((i + 1, &b[start..i])),
+            ESC if i + 1 < b.len() && b[i + 1] == b'\\' => return Some((i + 2, &b[start..i])),
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+fn apc(body: &[u8]) -> Event {
+    let Some(rest) = body.strip_prefix(b"G") else {
+        return Event::Unknown(body.to_vec());
+    };
+    let text = String::from_utf8_lossy(rest);
+    let (keys, message) = text.split_once(';').unwrap_or((&text, ""));
+    let mut reply =
+        GraphicsReply { image_id: None, image_number: None, placement_id: None, message: message.to_owned() };
+    for kv in keys.split(',') {
+        let Some((k, v)) = kv.split_once('=') else { continue };
+        let v = v.parse().ok();
+        match k {
+            "i" => reply.image_id = v,
+            "I" => reply.image_number = v,
+            "p" => reply.placement_id = v,
+            _ => {}
+        }
+    }
+    Event::Graphics(reply)
+}
+
+fn dcs(body: &[u8]) -> Event {
+    match body.strip_prefix(b">|") {
+        Some(v) => Event::Reply(Reply::Version(String::from_utf8_lossy(v).into_owned())),
+        None => Event::Unknown(body.to_vec()),
+    }
+}
+
+/// Parse `a;b;c` into numbers, treating empty or sub-parameter fields leniently.
+fn numbers(s: &str) -> Vec<u32> {
+    if s.is_empty() {
+        return Vec::new();
+    }
+    s.split(';').map(|f| f.split(':').next().unwrap_or("").parse().unwrap_or(0)).collect()
+}
+
+/// The `mods[:event]` field of kitty/xterm key sequences.
+fn mods_and_kind(field: Option<&str>) -> (Modifiers, KeyEventKind) {
+    let Some(field) = field else { return (Modifiers::NONE, KeyEventKind::Press) };
+    let mut it = field.split(':');
+    let m: u32 = it.next().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let modifiers = Modifiers::from_bits(m.saturating_sub(1) as u8);
+    let kind = match it.next().and_then(|v| v.parse::<u32>().ok()) {
+        Some(2) => KeyEventKind::Repeat,
+        Some(3) => KeyEventKind::Release,
+        _ => KeyEventKind::Press,
+    };
+    (modifiers, kind)
+}
+
+/// `CSI code[:shifted[:base]] ; mods[:event] ; text u`
+fn kitty_key(fields: &[&str]) -> Option<Event> {
+    let code: u32 = fields.first()?.split(':').next()?.parse().ok()?;
+    let (modifiers, kind) = mods_and_kind(fields.get(1).copied());
+    let text = fields
+        .get(2)
+        .and_then(|t| t.split(':').map(|c| c.parse::<u32>().ok().and_then(char::from_u32)).collect::<Option<String>>());
+    let code = match code {
+        13 => KeyCode::Enter,
+        9 => KeyCode::Tab,
+        127 | 8 => KeyCode::Backspace,
+        27 => KeyCode::Escape,
+        57358 => KeyCode::CapsLock,
+        57359 => KeyCode::ScrollLock,
+        57360 => KeyCode::NumLock,
+        57361 => KeyCode::PrintScreen,
+        57362 => KeyCode::Pause,
+        57363 => KeyCode::Menu,
+        57376..=57398 => KeyCode::F((code - 57376 + 13) as u8),
+        57441..=57454 => KeyCode::Modifier(match code {
+            57441 => ModifierKey::LeftShift,
+            57442 => ModifierKey::LeftCtrl,
+            57443 => ModifierKey::LeftAlt,
+            57444 => ModifierKey::LeftSuper,
+            57445 => ModifierKey::LeftHyper,
+            57446 => ModifierKey::LeftMeta,
+            57447 => ModifierKey::RightShift,
+            57448 => ModifierKey::RightCtrl,
+            57449 => ModifierKey::RightAlt,
+            57450 => ModifierKey::RightSuper,
+            57451 => ModifierKey::RightHyper,
+            57452 => ModifierKey::RightMeta,
+            57453 => ModifierKey::IsoLevel3Shift,
+            _ => ModifierKey::IsoLevel5Shift,
+        }),
+        57344..=63743 => KeyCode::Other(code),
+        _ => KeyCode::Char(char::from_u32(code)?),
+    };
+    Some(Event::Key(KeyEvent { code, modifiers, kind, text }))
+}
+
+/// `CSI number ; mods[:event] ~`
+fn tilde_key(fields: &[&str]) -> Option<Event> {
+    let n: u32 = fields.first()?.parse().ok()?;
+    let code = match n {
+        1 | 7 => KeyCode::Home,
+        2 => KeyCode::Insert,
+        3 => KeyCode::Delete,
+        4 | 8 => KeyCode::End,
+        5 => KeyCode::PageUp,
+        6 => KeyCode::PageDown,
+        11..=15 => KeyCode::F((n - 10) as u8),
+        17..=21 => KeyCode::F((n - 11) as u8),
+        23 | 24 => KeyCode::F((n - 12) as u8),
+        57427 => KeyCode::Begin,
+        _ => return None,
+    };
+    let (modifiers, kind) = mods_and_kind(fields.get(1).copied());
+    Some(Event::Key(KeyEvent { code, modifiers, kind, text: None }))
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Length of the longest suffix of `hay` that is a proper prefix of `needle`.
+fn partial_suffix(hay: &[u8], needle: &[u8]) -> usize {
+    (1..needle.len().min(hay.len() + 1)).rev().find(|&n| hay.ends_with(&needle[..n])).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(bytes: &[u8]) -> Vec<Event> {
+        Parser::new().feed(bytes)
+    }
+
+    fn k(code: KeyCode, modifiers: Modifiers) -> Event {
+        key(code, modifiers)
+    }
+
+    #[test]
+    fn plain_and_utf8_text() {
+        let ev = parse("aあ".as_bytes());
+        assert_eq!(ev.len(), 2);
+        assert!(matches!(&ev[1], Event::Key(KeyEvent { code: KeyCode::Char('あ'), .. })));
+    }
+
+    #[test]
+    fn utf8_split_across_feeds() {
+        let mut p = Parser::new();
+        let bytes = "あ".as_bytes();
+        assert!(p.feed(&bytes[..2]).is_empty());
+        assert!(p.has_pending());
+        let ev = p.feed(&bytes[2..]);
+        assert!(matches!(&ev[0], Event::Key(KeyEvent { code: KeyCode::Char('あ'), .. })));
+    }
+
+    #[test]
+    fn legacy_controls() {
+        assert_eq!(parse(b"\x01"), vec![k(KeyCode::Char('a'), Modifiers::CTRL)]);
+        assert_eq!(parse(b"\r"), vec![k(KeyCode::Enter, Modifiers::NONE)]);
+        assert_eq!(parse(b"\x7f"), vec![k(KeyCode::Backspace, Modifiers::NONE)]);
+        assert_eq!(parse(b"\x1b[A"), vec![k(KeyCode::Up, Modifiers::NONE)]);
+        assert_eq!(parse(b"\x1bOP"), vec![k(KeyCode::F(1), Modifiers::NONE)]);
+        assert_eq!(parse(b"\x1b[1;5C"), vec![k(KeyCode::Right, Modifiers::CTRL)]);
+        assert_eq!(parse(b"\x1b[5~"), vec![k(KeyCode::PageUp, Modifiers::NONE)]);
+        assert_eq!(parse(b"\x1b[Z"), vec![k(KeyCode::Tab, Modifiers::SHIFT)]);
+    }
+
+    #[test]
+    fn lone_escape_needs_flush() {
+        let mut p = Parser::new();
+        assert!(p.feed(b"\x1b").is_empty());
+        assert_eq!(p.flush(), vec![k(KeyCode::Escape, Modifiers::NONE)]);
+        assert!(!p.has_pending());
+    }
+
+    #[test]
+    fn alt_prefix() {
+        let ev = parse(b"\x1bx");
+        assert!(
+            matches!(&ev[0], Event::Key(KeyEvent { code: KeyCode::Char('x'), modifiers, .. }) if *modifiers == Modifiers::ALT)
+        );
+    }
+
+    #[test]
+    fn kitty_keys() {
+        // Ctrl+a press, with flags 8 (all keys as escapes)
+        assert_eq!(parse(b"\x1b[97;5u"), vec![k(KeyCode::Char('a'), Modifiers::CTRL)]);
+        // Escape and Enter as CSI u
+        assert_eq!(parse(b"\x1b[27u"), vec![k(KeyCode::Escape, Modifiers::NONE)]);
+        assert_eq!(parse(b"\x1b[13u"), vec![k(KeyCode::Enter, Modifiers::NONE)]);
+        // Release of left control (modifier-only key), ctrl bit set while it is down
+        let ev = parse(b"\x1b[57442;5:3u");
+        assert_eq!(
+            ev,
+            vec![Event::Key(KeyEvent {
+                code: KeyCode::Modifier(ModifierKey::LeftCtrl),
+                modifiers: Modifiers::CTRL,
+                kind: KeyEventKind::Release,
+                text: None
+            })]
+        );
+        // Shifted key with alternate codes and associated text
+        let ev = parse(b"\x1b[97:65;2;65u");
+        assert_eq!(
+            ev,
+            vec![Event::Key(KeyEvent {
+                code: KeyCode::Char('a'),
+                modifiers: Modifiers::SHIFT,
+                kind: KeyEventKind::Press,
+                text: Some("A".into())
+            })]
+        );
+        // Repeat of an arrow key
+        let ev = parse(b"\x1b[1;1:2A");
+        assert!(matches!(&ev[0], Event::Key(KeyEvent { code: KeyCode::Up, kind: KeyEventKind::Repeat, .. })));
+    }
+
+    #[test]
+    fn sgr_mouse_cells_and_pixels() {
+        let ev = parse(b"\x1b[<0;10;5M");
+        assert_eq!(
+            ev,
+            vec![Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Press(MouseButton::Left),
+                x: 9,
+                y: 4,
+                unit: CoordUnit::Cell,
+                modifiers: Modifiers::NONE
+            })]
+        );
+        let mut p = Parser::new();
+        p.set_pixel_mouse(true);
+        let ev = p.feed(b"\x1b[<32;301;120M\x1b[<0;301;120m\x1b[<35;1;1M");
+        assert_eq!(ev.len(), 3);
+        assert!(matches!(
+            ev[0],
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                x: 300,
+                y: 119,
+                unit: CoordUnit::Pixel,
+                ..
+            })
+        ));
+        assert!(matches!(ev[1], Event::Mouse(MouseEvent { kind: MouseEventKind::Release(MouseButton::Left), .. })));
+        assert!(matches!(ev[2], Event::Mouse(MouseEvent { kind: MouseEventKind::Move, .. })));
+    }
+
+    #[test]
+    fn sgr_scroll_with_ctrl() {
+        let ev = parse(b"\x1b[<80;3;3M");
+        assert!(matches!(
+            ev[0],
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Scroll(ScrollDirection::Up),
+                modifiers: Modifiers::CTRL,
+                ..
+            })
+        ));
+        let ev = parse(b"\x1b[<67;3;3M");
+        assert!(matches!(ev[0], Event::Mouse(MouseEvent { kind: MouseEventKind::Scroll(ScrollDirection::Right), .. })));
+    }
+
+    #[test]
+    fn bracketed_paste_split() {
+        let mut p = Parser::new();
+        assert!(p.feed(b"\x1b[200~hello \x1b[A wor").is_empty());
+        assert!(p.feed(b"ld\x1b[20").is_empty());
+        let ev = p.feed(b"1~x");
+        assert_eq!(ev[0], Event::Paste("hello \x1b[A world".into()));
+        assert!(matches!(&ev[1], Event::Key(KeyEvent { code: KeyCode::Char('x'), .. })));
+    }
+
+    #[test]
+    fn focus_and_resize() {
+        assert_eq!(parse(b"\x1b[I\x1b[O"), vec![Event::Focus(true), Event::Focus(false)]);
+        assert_eq!(
+            parse(b"\x1b[48;40;120;800;1200t"),
+            vec![Event::Resize(ResizeReport { rows: 40, cols: 120, height_px: 800, width_px: 1200 })]
+        );
+    }
+
+    #[test]
+    fn graphics_replies() {
+        let ev = parse(b"\x1b_Gi=31;OK\x1b\\\x1b_Gi=2,p=7;ENOENT:image not found\x1b\\");
+        let Event::Graphics(ok) = &ev[0] else { panic!() };
+        assert!(ok.is_ok());
+        assert_eq!(ok.image_id, Some(31));
+        let Event::Graphics(err) = &ev[1] else { panic!() };
+        assert_eq!(err.error_code(), Some("ENOENT"));
+        assert_eq!(err.placement_id, Some(7));
+    }
+
+    #[test]
+    fn graphics_reply_split() {
+        let mut p = Parser::new();
+        assert!(p.feed(b"\x1b_Gi=1;O").is_empty());
+        assert!(p.feed(b"K\x1b").is_empty());
+        assert!(matches!(&p.feed(b"\\")[0], Event::Graphics(r) if r.is_ok()));
+    }
+
+    #[test]
+    fn query_replies() {
+        assert_eq!(parse(b"\x1b[?62;22;52c"), vec![Event::Reply(Reply::DeviceAttributes(vec![62, 22, 52]))]);
+        assert_eq!(parse(b"\x1b[?2026;2$y"), vec![Event::Reply(Reply::Mode { mode: 2026, state: ModeState::Reset })]);
+        assert_eq!(parse(b"\x1bP>|kitty(0.49.2)\x1b\\"), vec![Event::Reply(Reply::Version("kitty(0.49.2)".into()))]);
+        assert_eq!(parse(b"\x1b[6;20;10t"), vec![Event::Reply(Reply::CellSize { width: 10, height: 20 })]);
+        assert_eq!(parse(b"\x1b[4;800;1200t"), vec![Event::Reply(Reply::WindowSize { width: 1200, height: 800 })]);
+        assert_eq!(parse(b"\x1b[?31u"), vec![Event::Reply(Reply::KeyboardFlags(31))]);
+        assert_eq!(
+            parse(b"\x1b]11;rgb:0000/0000/0000\x07"),
+            vec![Event::Reply(Reply::Osc(b"11;rgb:0000/0000/0000".to_vec()))]
+        );
+    }
+
+    #[test]
+    fn cursor_report_is_not_f3() {
+        assert!(matches!(&parse(b"\x1b[12;40R")[0], Event::Unknown(_)));
+        assert_eq!(parse(b"\x1b[1;2R"), vec![k(KeyCode::F(3), Modifiers::SHIFT)]);
+    }
+
+    #[test]
+    fn incomplete_csi_waits() {
+        let mut p = Parser::new();
+        assert!(p.feed(b"\x1b[<0;1").is_empty());
+        assert_eq!(p.feed(b";1M").len(), 1);
+    }
+}
