@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use mupdf::DisplayList;
 use termpix::compositor::{Compositor, ImageId, Layer};
-use termpix::geom::{Geometry, Rect};
+use termpix::geom::Rect;
 use termpix::scroll::KineticScroll;
 
 use crate::layout::{Layout, View};
@@ -32,6 +32,8 @@ const Z_THUMB: i32 = -1_073_741_890;
 const Z_TILE: i32 = -1_073_741_880;
 const BACKGROUND: [u8; 4] = [0x3a, 0x3a, 0x3a, 0xff];
 const LAYER_BACKGROUND: u32 = 1;
+/// Layer keys at or above this are reserved for UI chrome (see `session.rs`).
+pub const LAYER_KEYS_END: u32 = 0xf000_0000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TileKind {
@@ -103,15 +105,16 @@ pub struct Viewer {
 }
 
 impl Viewer {
-    pub fn new(bounds: Vec<PageBounds>, geometry: Geometry) -> Self {
+    /// `width` x `height` is the pixel size of the page area (the screen minus UI bars).
+    pub fn new(bounds: Vec<PageBounds>, width: u32, height: u32) -> Self {
         let layout = Layout::new(&bounds.iter().map(|b| (b.width(), b.height())).collect::<Vec<_>>());
-        let screen_w = geometry.width_px() as f32;
+        let screen_w = width as f32;
         let view = View {
             scale: View::fit_width_scale(&layout, screen_w).clamp(MIN_SCALE, MAX_SCALE),
             scroll_x: 0.0,
             scroll_y: 0.0,
             screen_w,
-            screen_h: geometry.height_px() as f32,
+            screen_h: height as f32,
         };
         let n = bounds.len();
         let mut v = Self {
@@ -203,11 +206,11 @@ impl Viewer {
         self.set_scale(scale, (self.view.screen_w / 2.0, 0.0));
     }
 
-    /// The terminal was resized: keep the doc point at the top-left in place.
-    pub fn resize(&mut self, geometry: Geometry) {
+    /// The page area was resized: keep the doc point at the top-left in place.
+    pub fn resize(&mut self, width: u32, height: u32) {
         let (dx, dy) = self.view.screen_to_doc(&self.layout, 0.0, 0.0);
-        self.view.screen_w = geometry.width_px() as f32;
-        self.view.screen_h = geometry.height_px() as f32;
+        self.view.screen_w = width as f32;
+        self.view.screen_h = height as f32;
         let (sx, sy) = self.view.doc_to_screen(&self.layout, dx, dy);
         self.view.scroll_x += sx;
         self.view.scroll_y += sy;
@@ -252,7 +255,8 @@ impl Viewer {
         let bytes = r.pixels.len();
         let image = comp.add_image(r.width, r.height, r.pixels);
         let layer = self.next_layer;
-        self.next_layer = self.next_layer.checked_add(1).unwrap_or(LAYER_BACKGROUND + 1);
+        self.next_layer =
+            if self.next_layer + 1 >= LAYER_KEYS_END { LAYER_BACKGROUND + 1 } else { self.next_layer + 1 };
         self.used_bytes += bytes;
         self.tiles.insert(r.key, Cached { image, layer, bytes, last_used: self.frame_no });
     }

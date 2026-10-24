@@ -10,12 +10,12 @@ use std::sync::{Arc, Condvar, Mutex};
 use mupdf::DisplayList;
 use termpix::tty::TermEvent;
 
-use crate::pdf::{self, PageBounds};
+use crate::pdf::{self, DocInfo};
 use crate::viewer::{RenderJob, Rendered, TileKey};
 
 pub enum AppEvent {
     Term(TermEvent),
-    Opened(Result<Vec<PageBounds>, String>),
+    Opened(Result<DocInfo, String>),
     PageLoaded(usize, Arc<DisplayList>),
     PageFailed(usize, String),
     Rendered(Rendered),
@@ -30,9 +30,9 @@ pub enum DocCmd {
 pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<Sender<DocCmd>> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new().name("temzdf-doc".into()).spawn(move || {
-        let doc = match pdf::open(&path).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))) {
-            Ok((doc, bounds)) => {
-                let _ = events.send(AppEvent::Opened(Ok(bounds)));
+        let doc = match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
+            Ok((doc, info)) => {
+                let _ = events.send(AppEvent::Opened(Ok(info)));
                 doc
             }
             Err(e) => {

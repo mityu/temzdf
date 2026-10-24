@@ -2,6 +2,7 @@ mod app;
 mod headless;
 mod layout;
 mod pdf;
+mod session;
 mod viewer;
 mod workers;
 

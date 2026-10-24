@@ -9,7 +9,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use mupdf::{Colorspace, Device, DisplayList, Document, IRect, Matrix, Pixmap};
+use mupdf::pdf::PdfDocument;
+use mupdf::{Colorspace, DestinationKind, Device, DisplayList, IRect, Matrix, Pixmap};
 
 /// Page bounds in PDF points (MuPDF page space, y down).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -35,12 +36,73 @@ impl PageBounds {
     }
 }
 
-pub fn open(path: &Path) -> Result<Document> {
+/// The document type we work with. `PdfDocument` derefs to `mupdf::Document`
+/// and adds PDF-only features (page labels).
+pub type Doc = PdfDocument;
+
+pub fn open(path: &Path) -> Result<Doc> {
     let s = path.to_str().context("path is not valid UTF-8")?;
-    Document::open(s).with_context(|| format!("cannot open {}", path.display()))
+    PdfDocument::open(s).with_context(|| format!("cannot open {}", path.display()))
 }
 
-pub fn page_bounds(doc: &Document) -> Result<Vec<PageBounds>> {
+/// A point to jump to: a page and an optional y in page space (points from the
+/// top of the page).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Target {
+    pub page: usize,
+    pub y: Option<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutlineEntry {
+    pub title: String,
+    pub depth: usize,
+    pub target: Option<Target>,
+    /// Number of entries nested below this one (they follow it directly).
+    pub descendants: usize,
+}
+
+/// Static information about a document, gathered once when it is opened.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocInfo {
+    pub bounds: Vec<PageBounds>,
+    /// Page labels (e.g. "iv", "12"); the 1-based number when the PDF has none.
+    pub labels: Vec<String>,
+    /// Outline flattened in document order.
+    pub outline: Vec<OutlineEntry>,
+}
+
+pub fn doc_info(doc: &Doc) -> Result<DocInfo> {
+    let bounds = page_bounds(doc)?;
+    let labels = (0..bounds.len())
+        .map(|i| doc.page_label(i).ok().filter(|l| !l.is_empty()).unwrap_or_else(|| (i + 1).to_string()))
+        .collect();
+    let mut outline = Vec::new();
+    flatten_outline(&doc.outlines()?, 0, &mut outline);
+    Ok(DocInfo { bounds, labels, outline })
+}
+
+fn flatten_outline(items: &[mupdf::Outline], depth: usize, out: &mut Vec<OutlineEntry>) {
+    for item in items {
+        let index = out.len();
+        let target = item.dest.map(|d| Target { page: d.loc.page_number as usize, y: dest_top(&d.kind) });
+        out.push(OutlineEntry { title: item.title.trim().to_owned(), depth, target, descendants: 0 });
+        flatten_outline(&item.down, depth + 1, out);
+        out[index].descendants = out.len() - index - 1;
+    }
+}
+
+/// The vertical position a destination asks for, in page space, if any.
+pub fn dest_top(kind: &DestinationKind) -> Option<f32> {
+    match *kind {
+        DestinationKind::XYZ { top, .. } => top,
+        DestinationKind::FitH { top } | DestinationKind::FitBH { top } => top,
+        DestinationKind::FitR { top, bottom, .. } => Some(top.min(bottom)),
+        _ => None,
+    }
+}
+
+pub fn page_bounds(doc: &Doc) -> Result<Vec<PageBounds>> {
     let n = doc.page_count()?;
     (0..n)
         .map(|i| {
@@ -50,7 +112,7 @@ pub fn page_bounds(doc: &Document) -> Result<Vec<PageBounds>> {
         .collect()
 }
 
-pub fn display_list(doc: &Document, page: usize) -> Result<Arc<DisplayList>> {
+pub fn display_list(doc: &Doc, page: usize) -> Result<Arc<DisplayList>> {
     let page = doc.load_page(page as i32)?;
     Ok(Arc::new(page.to_display_list(true)?))
 }
@@ -106,6 +168,30 @@ mod tests {
         assert!(pages.len() >= 3, "{} pages", pages.len());
         assert!((pages[0].width() - 595.3).abs() < 1.0);
         assert!((pages[0].height() - 841.9).abs() < 1.0);
+    }
+
+    #[test]
+    fn outline_and_labels() {
+        let doc = open(&fixture("sample.pdf")).unwrap();
+        let info = doc_info(&doc).unwrap();
+        assert_eq!(info.labels, ["1", "2", "3"]);
+        let titles: Vec<_> = info.outline.iter().map(|e| (e.title.as_str(), e.depth)).collect();
+        assert_eq!(
+            titles,
+            [
+                ("Introduction", 0),
+                ("Mathematics", 0),
+                ("Filler", 0),
+                ("First part", 1),
+                ("Second part", 1),
+                ("Conclusion", 0)
+            ]
+        );
+        assert_eq!(info.outline[2].descendants, 2);
+        let filler = info.outline[2].target.unwrap();
+        assert_eq!(filler.page, 1);
+        let y = filler.y.expect("hyperref outline entries carry a position");
+        assert!(y > 0.0 && y < 300.0, "Section 3 starts near the top of page 2, y={y}");
     }
 
     #[test]

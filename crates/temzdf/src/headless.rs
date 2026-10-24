@@ -13,7 +13,8 @@ use termpix::graphics::Medium;
 use termpix::mock::MockTerminal;
 
 use crate::pdf;
-use crate::viewer::{Need, Rendered, Viewer};
+use crate::session::Session;
+use crate::viewer::{Need, Rendered};
 
 pub struct FrameOptions {
     pub geometry: Geometry,
@@ -25,16 +26,18 @@ pub struct FrameOptions {
 
 pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<()> {
     let doc = pdf::open(pdf_path)?;
-    let mut viewer = Viewer::new(pdf::page_bounds(&doc)?, opts.geometry);
+    let name =
+        pdf_path.file_name().map_or_else(|| pdf_path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let mut session = Session::new(name, pdf::doc_info(&doc)?, opts.geometry);
     let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, opts.geometry);
     if let Some(scale) = opts.scale {
-        viewer.set_scale(scale, (0.0, 0.0));
+        session.viewer.set_scale(scale, (0.0, 0.0));
     }
     if let Some(page) = opts.page {
-        viewer.goto_page(page, false, Instant::now());
+        session.viewer.goto_page(page, false, Instant::now());
     }
     loop {
-        let (layers, needs) = viewer.frame(&mut comp);
+        let (layers, needs) = session.frame(&mut comp);
         if needs.is_empty() {
             let mut bytes = Vec::new();
             comp.present(&layers, &mut bytes)?;
@@ -45,11 +48,11 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         }
         for need in needs {
             match need {
-                Need::LoadPage(p) => viewer.page_loaded(p, pdf::display_list(&doc, p)?),
+                Need::LoadPage(p) => session.viewer.page_loaded(p, pdf::display_list(&doc, p)?),
                 Need::Render(job) => {
                     let pixels = pdf::render(&job.list, job.bounds, job.scale, job.area)?;
                     let r = Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels };
-                    viewer.rendered(&mut comp, r);
+                    session.viewer.rendered(&mut comp, r);
                 }
             }
         }
