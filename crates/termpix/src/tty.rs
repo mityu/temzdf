@@ -156,6 +156,14 @@ impl Tty {
         Ok(tty)
     }
 
+    /// Inside tmux: send the graphics cleanup done on exit through passthrough
+    /// too (see [`crate::placeholder::wrap_for_tmux`]).
+    pub fn set_tmux_passthrough(&mut self) {
+        if let Some(state) = RESTORE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            state.reset = crate::placeholder::wrap_for_tmux(&state.reset);
+        }
+    }
+
     /// Turn SGR-pixel mouse coordinates (1016) on, typically after [`crate::probe`]
     /// confirmed support. Restoration on exit is updated accordingly.
     pub fn enable_pixel_mouse(&mut self) -> io::Result<()> {

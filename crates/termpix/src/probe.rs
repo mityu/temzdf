@@ -117,8 +117,55 @@ pub struct Capabilities {
     pub geometry: Geometry,
     pub in_tmux: bool,
     pub in_zellij: bool,
+    /// What tmux reports about itself and the outer terminal, when inside tmux.
+    pub tmux: Option<Tmux>,
     backend_override: Option<Backend>,
     medium_override: Option<Medium>,
+}
+
+/// tmux settings that decide whether graphics can work through it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tmux {
+    /// `allow-passthrough` is `on` or `all` (pane value, else global).
+    pub passthrough: bool,
+    /// The outer terminal as tmux sees it (`client_termtype`, else
+    /// `client_termname`).
+    pub outer: String,
+}
+
+impl Tmux {
+    /// Graphics through tmux need passthrough and an outer terminal with
+    /// Unicode placeholder support (kitty, Ghostty; not WezTerm).
+    pub fn outer_supports_placeholders(&self) -> bool {
+        let o = self.outer.to_ascii_lowercase();
+        o.contains("kitty") || o.contains("ghostty")
+    }
+
+    /// From the outputs of `tmux show-options -pv/-gv allow-passthrough` and
+    /// `tmux display -p '#{client_termtype}'` / `'#{client_termname}'`.
+    pub fn from_outputs(pane: &str, global: &str, termtype: &str, termname: &str) -> Self {
+        let value = if pane.trim().is_empty() { global.trim() } else { pane.trim() };
+        let outer = if termtype.trim().is_empty() { termname.trim() } else { termtype.trim() };
+        Self { passthrough: matches!(value, "on" | "all"), outer: outer.to_owned() }
+    }
+
+    /// Ask the tmux server (via the `tmux` command) about this client and pane.
+    pub fn query() -> Option<Self> {
+        let run = |args: &[&str]| {
+            std::process::Command::new("tmux")
+                .args(args)
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        };
+        let global = run(&["show-options", "-gqv", "allow-passthrough"])?;
+        let pane = run(&["show-options", "-pqv", "allow-passthrough"]).unwrap_or_default();
+        let termtype = run(&["display-message", "-p", "#{client_termtype}"]).unwrap_or_default();
+        let termname = run(&["display-message", "-p", "#{client_termname}"]).unwrap_or_default();
+        Some(Self::from_outputs(&pane, &global, &termtype, &termname))
+    }
 }
 
 impl Capabilities {
@@ -136,6 +183,11 @@ impl Capabilities {
     pub fn backend(&self) -> Backend {
         if let Some(b) = self.backend_override {
             return b;
+        }
+        // tmux shows images only through Unicode placeholders, which it keeps
+        // and redraws as ordinary text.
+        if self.in_tmux {
+            return Backend::placeholders(2);
         }
         // WezTerm and zellij mishandle placements (moves, z-order, crops).
         if self.terminal == TerminalKind::WezTerm || self.in_zellij {
@@ -192,7 +244,14 @@ pub fn probe(tty: &mut Tty, timeout: Duration) -> io::Result<Capabilities> {
         }
     }
     let winsize = tty.winsize()?;
-    Ok(interpret(&env, &replies, winsize.geometry(), (winsize.cols, winsize.rows)))
+    let mut caps = interpret(&env, &replies, winsize.geometry(), (winsize.cols, winsize.rows));
+    if caps.in_tmux {
+        // tmux answers graphics queries itself (or not at all), so ask tmux
+        // what is on the other side instead.
+        caps.tmux = Tmux::query();
+        caps.kitty_graphics = caps.tmux.as_ref().is_some_and(|t| t.passthrough && t.outer_supports_placeholders());
+    }
+    Ok(caps)
 }
 
 /// Turn probe replies into capabilities. Pure, for tests.
@@ -209,6 +268,7 @@ pub fn interpret(env: &Env, replies: &[Event], kernel: Option<Geometry>, grid: (
         geometry: Geometry { cols: grid.0.max(1), rows: grid.1.max(1), cell: FALLBACK_CELL },
         in_tmux: env.tmux,
         in_zellij: env.zellij,
+        tmux: None,
         backend_override: match env.backend_override.as_deref() {
             Some("layered") => Some(Backend::Layered),
             Some("composited") => Some(Backend::composited()),
@@ -312,6 +372,19 @@ mod tests {
         assert_eq!(caps.terminal, TerminalKind::WezTerm);
         assert!(caps.sync_output);
         assert!(matches!(caps.backend(), Backend::Composited { .. }));
+    }
+
+    #[test]
+    fn tmux_settings() {
+        let t = Tmux::from_outputs("", "on\n", "kitty(0.49.2)\n", "xterm-kitty\n");
+        assert!(t.passthrough && t.outer_supports_placeholders());
+        assert_eq!(t.outer, "kitty(0.49.2)");
+        // The pane value wins over the global one; termname is the fallback.
+        let t = Tmux::from_outputs("off", "all", "", "xterm-ghostty");
+        assert!(!t.passthrough && t.outer_supports_placeholders());
+        assert!(!Tmux::from_outputs("", "on", "WezTerm 2024", "").outer_supports_placeholders());
+        let caps = interpret(&Env { tmux: true, ..Default::default() }, &replies(b"\x1b[?1;2c"), None, (80, 24));
+        assert_eq!(caps.backend(), Backend::placeholders(2));
     }
 
     #[test]
