@@ -25,7 +25,6 @@ below them are deferred.
   dropped; see `doc/reload.md`).
 - Document a vimtex setup that forward-searches after every successful compile.
 - Configurable key bindings (the config file has no `[keys]` section yet).
-- Auto-scroll while drag-selecting past the top or bottom edge.
 - Verify IME preedit placement in the search prompt on kitty and Ghostty (the
   terminal cursor is shown at the caret while the prompt is open).
 - macOS support (shm quirks, `select()` instead of `poll()` on `/dev/tty`).

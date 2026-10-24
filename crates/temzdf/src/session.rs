@@ -36,6 +36,9 @@ const SELECTION_COLOR: Color = Color::rgba(70, 130, 255, 90);
 /// Forward-search target, shown briefly.
 const FLASH_COLOR: Color = Color::rgba(255, 70, 70, 80);
 const FLASH_DURATION: std::time::Duration = std::time::Duration::from_millis(1500);
+/// Selection auto-scroll: pixels per second per pixel of pointer depth into the
+/// edge zone (or beyond the edge).
+const AUTOSCROLL_GAIN: f32 = 25.0;
 
 /// Work the session asks the caller to do (on a worker, or inline).
 #[derive(Clone, Debug, PartialEq)]
@@ -117,6 +120,9 @@ pub struct Session {
     selection: Option<Selection>,
     /// A left drag is extending the selection.
     selecting: bool,
+    /// Selection auto-scroll speed in pixels per second (0 when off).
+    autoscroll: f32,
+    autoscroll_at: Option<Instant>,
     /// Search hit to re-select once a re-run search (after reload) reaches it.
     restore_hit: Option<(usize, usize)>,
     /// The file changed and a reload is pending (shown in the status bar).
@@ -155,6 +161,8 @@ impl Session {
             texts: vec![None; pages],
             selection: None,
             selecting: false,
+            autoscroll: 0.0,
+            autoscroll_at: None,
             restore_hit: None,
             reloading: false,
             flash: None,
@@ -551,6 +559,39 @@ impl Session {
 
     /// When the screen next needs redrawing without any input (a highlight
     /// expiring), if ever.
+    /// Move the selection head to the caret under the pointer.
+    fn extend_selection(&mut self) -> bool {
+        let (sx, sy) = self.pointer;
+        let Some(head) = self.caret_at(sx, sy) else { return false };
+        let Some(sel) = self.selection.as_mut() else { return false };
+        let changed = sel.head != head;
+        sel.head = head;
+        changed
+    }
+
+    /// Whether anything is moving on its own (scroll animation, selection
+    /// auto-scroll), so the caller should keep ticking.
+    pub fn is_animating(&self) -> bool {
+        self.viewer.is_animating() || self.autoscroll != 0.0
+    }
+
+    /// Advance animations to `now`. Returns true when the view changed.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        let mut changed = self.viewer.tick(now);
+        if self.autoscroll != 0.0 {
+            let dt = self.autoscroll_at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
+            let v = &mut self.viewer;
+            let before = v.view.scroll_y;
+            v.jump_to(v.view.scroll_x, before + self.autoscroll * dt);
+            changed |= self.viewer.view.scroll_y != before;
+            changed |= self.extend_selection();
+            self.autoscroll_at = Some(now);
+        } else {
+            self.autoscroll_at = None;
+        }
+        changed
+    }
+
     pub fn next_deadline(&self) -> Option<Instant> {
         self.flash.as_ref().map(|f| f.1)
     }
@@ -938,12 +979,19 @@ impl Session {
                 return false;
             }
             MouseEventKind::Drag(MouseButton::Left) if self.selecting => {
-                let (sx, sy) = self.pointer;
-                let Some(head) = self.caret_at(sx, sy) else { return false };
-                let Some(sel) = self.selection.as_mut() else { return false };
-                let changed = sel.head != head;
-                sel.head = head;
-                return changed;
+                // Near (or past) the top or bottom edge, keep scrolling while the
+                // button is held; the speed grows with the distance into the zone.
+                let h = self.viewer.view.screen_h;
+                let zone = self.geometry.cell.height as f32 * 1.5;
+                let y = self.pointer.1;
+                self.autoscroll = if y < zone {
+                    -(zone - y) * AUTOSCROLL_GAIN
+                } else if y > h - zone {
+                    (y - (h - zone)) * AUTOSCROLL_GAIN
+                } else {
+                    0.0
+                };
+                return self.extend_selection();
             }
             MouseEventKind::Drag(_) => {
                 let Some((p0, s0)) = self.drag else { return false };
@@ -951,6 +999,7 @@ impl Session {
             }
             MouseEventKind::Release(_) => {
                 self.drag = None;
+                self.autoscroll = 0.0;
                 if std::mem::take(&mut self.selecting) {
                     if self.selection.is_some_and(|s| s.is_empty()) {
                         self.selection = None;
@@ -1084,6 +1133,27 @@ mod tests {
             [Request::Search { query, doc_generation: 1, .. }] => assert_eq!(query, "needle"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn selection_drag_at_the_edge_scrolls_by_itself() {
+        let mut s = session();
+        let a = char_pos(&mut s, "temzdf sample", 0);
+        mouse(&mut s, MouseEventKind::Press(MouseButton::Left), (a.0, a.1));
+        // Into the bottom edge zone, then hold still.
+        let bottom = s.viewer.view.screen_h - 5.0;
+        mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), (a.0, bottom));
+        assert!(s.is_animating(), "auto-scroll started");
+        let before = s.viewer.view.scroll_y;
+        let head_before = s.selection.unwrap().head;
+        let t0 = Instant::now();
+        for i in 1..=30 {
+            s.tick(t0 + std::time::Duration::from_millis(16 * i));
+        }
+        assert!(s.viewer.view.scroll_y > before + 100.0, "scrolled {}", s.viewer.view.scroll_y - before);
+        assert!(s.selection.unwrap().head > head_before, "selection grew with the scroll");
+        mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (a.0, bottom));
+        assert!(!s.is_animating());
     }
 
     #[test]

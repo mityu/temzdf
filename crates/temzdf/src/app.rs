@@ -200,7 +200,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 }
             }
         }
-        let mut timeout = if session.viewer.is_animating() { FRAME } else { Duration::from_secs(3600) };
+        let mut timeout = if session.is_animating() { FRAME } else { Duration::from_secs(3600) };
         for due in [reload.due, session.next_deadline()].into_iter().flatten() {
             timeout = timeout.min(due.saturating_duration_since(Instant::now()));
         }
@@ -339,7 +339,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 dirty = true;
             }
         }
-        dirty |= session.viewer.tick(Instant::now());
+        dirty |= session.tick(Instant::now());
         // A highlight expired.
         dirty |= session.next_deadline().is_some_and(|d| Instant::now() >= d);
     }

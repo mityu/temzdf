@@ -1,0 +1,14 @@
+# Used with: scripts/e2e.sh tests/e2e/select-autoscroll.actions -- target/debug/temzdf target/fixtures/sample.pdf
+# Coordinates assume the default 900x600 window (fit width, page 1 at the top).
+# Expected: dragging from the title into the bottom edge and holding scrolls the
+# page by itself while the selection grows (held.png: blue selection over many
+# lines, the view moved down); releasing copies it (clipboard.txt starts with
+# "temzdf sample document").
+pause 1
+xdotool mousemove 318 188 mousedown 1
+for y in 260 360 460 560 575; do xdotool mousemove 450 $y; sleep 0.05; done
+pause 1
+shot held
+xdotool mouseup 1
+pause 0.5
+xclip -selection clipboard -o >"$outdir/clipboard.txt" 2>/dev/null || true
