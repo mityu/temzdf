@@ -327,3 +327,37 @@ pub fn spawn_input<T: Send + 'static>(
     })?;
     Ok(())
 }
+
+/// Redirects the process's stdout and stderr (file descriptors 1 and 2) to a
+/// file while alive, and restores them when dropped.
+///
+/// A full-screen UI drawn through `/dev/tty` would be corrupted by anything a
+/// library prints to stdout/stderr (C libraries often do); with this guard such
+/// output lands in the log file instead.
+pub struct StdioRedirect {
+    saved_out: rustix::fd::OwnedFd,
+    saved_err: rustix::fd::OwnedFd,
+}
+
+impl StdioRedirect {
+    /// Append stdout and stderr to `log` (created if missing).
+    pub fn to_file(log: &std::path::Path) -> io::Result<Self> {
+        if let Some(dir) = log.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let file = OpenOptions::new().create(true).append(true).open(log)?;
+        let saved_out = rustix::io::dup(rustix::stdio::stdout())?;
+        let saved_err = rustix::io::dup(rustix::stdio::stderr())?;
+        rustix::stdio::dup2_stdout(&file)?;
+        rustix::stdio::dup2_stderr(&file)?;
+        Ok(Self { saved_out, saved_err })
+    }
+}
+
+impl Drop for StdioRedirect {
+    fn drop(&mut self) {
+        let _ = io::stdout().flush();
+        let _ = rustix::stdio::dup2_stdout(&self.saved_out);
+        let _ = rustix::stdio::dup2_stderr(&self.saved_err);
+    }
+}
