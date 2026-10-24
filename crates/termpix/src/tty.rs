@@ -134,6 +134,8 @@ fn install_panic_hook() {
 /// The controlling terminal in raw mode. Dropping it restores the terminal.
 pub struct Tty {
     file: File,
+    /// `TERMPIX_TRACE=<path>`: copy of every byte written, for debugging.
+    trace: Option<File>,
 }
 
 impl Tty {
@@ -148,7 +150,8 @@ impl Tty {
         *RESTORE.lock().unwrap_or_else(|e| e.into_inner()) =
             Some(RestoreState { fd: restore_fd, termios: original, reset: modes.disable_sequence() });
         install_panic_hook();
-        let mut tty = Self { file };
+        let trace = std::env::var_os("TERMPIX_TRACE").and_then(|p| File::create(p).ok());
+        let mut tty = Self { file, trace };
         tty.write_all(&modes.enable_sequence())?;
         Ok(tty)
     }
@@ -165,6 +168,9 @@ impl Tty {
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if let Some(t) = &mut self.trace {
+            let _ = t.write_all(bytes);
+        }
         self.file.write_all(bytes)?;
         self.file.flush()
     }
@@ -195,7 +201,11 @@ impl Drop for Tty {
 
 impl Write for Tty {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.file.write(buf)
+        let n = self.file.write(buf)?;
+        if let Some(t) = &mut self.trace {
+            let _ = t.write_all(&buf[..n]);
+        }
+        Ok(n)
     }
 
     fn flush(&mut self) -> io::Result<()> {
