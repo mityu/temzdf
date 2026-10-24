@@ -11,7 +11,7 @@ below them are deferred.
 - [x] M3: `termpix-ui` and viewer features (status bar, outline sidebar, search, links + history, text selection + OSC 52 copy, config file)
 - [x] M4: auto-reload (see `doc/reload.md`)
 - [x] M5: SyncTeX (vendored parser, IPC socket, forward/inverse search). SyncTeX anchoring on reload was dropped, see `doc/reload.md`
-- [ ] M6: compatibility (Composited backend on WezTerm and zellij, terminal detection table modelled on yazi)
+- [x] M6: compatibility (Composited backend verified on WezTerm and in zellij; zellij/tmux recognised from XTVERSION; inline frames fenced for slow links)
 
 ## Deferred
 
@@ -38,6 +38,9 @@ below them are deferred.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
 - CI: GitHub Actions running `cargo test` and `cargo clippy`.
 - Tune the raster worker pool and measure performance.
+- Measure frame pacing over a real slow SSH link (fences are in place but were
+  only tested locally), and consider smaller frames for the Composited backend
+  (update only changed strips) since zellij 0.45.1 forwards raw RGBA.
 - Send RGB (`f=24`) instead of RGBA for opaque tiles: 25% fewer bytes; needs `Compositor` to accept RGB images.
 - While zooming, show old-scale tiles scaled instead of the blurry thumbnail (Layered backend can only scale to whole cells, so this needs care).
 - Keep display lists for all pages only while memory allows; add an LRU for huge documents.
