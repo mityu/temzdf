@@ -21,8 +21,9 @@ Tiles per second by pool size, 2026-10-25:
 | 12 | 2322 | 5287 |
 
 - Text pages get *slower* with more threads. MuPDF takes a global lock
-  (`FZ_LOCK_ALLOC`) around every allocation and text rendering allocates a lot;
-  the locks themselves are plain pthread mutexes (`mupdf-sys` `wrapper/context.c`).
+  (`FZ_LOCK_ALLOC`) around every `fz_malloc`/`fz_free` (`source/fitz/memory.c`)
+  and text rendering allocates a lot; the locks are static pthread mutexes
+  shared by every context (`mupdf-sys` `wrapper/context.c`).
   Allocating and converting tile buffers in Rust alone scales fine (checked
   separately), so the contention is inside MuPDF.
 - Image-heavy pages scale almost linearly (decoding and scaling images dominate).

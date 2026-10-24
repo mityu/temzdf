@@ -46,9 +46,11 @@ below them are deferred.
   for terminal-side scaling, and headless equivalents of mouse actions (wheel
   and drag go through the kinetic scroll, so drive it with the same steps).
 - MuPDF's allocation lock makes text rendering slower with more threads (see
-  `doc/performance.md`). If rasterising ever becomes the bottleneck: a custom
-  allocator without the lock (`fz_alloc_context` is per base context), or
-  separate base contexts per worker.
+  `doc/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the
+  allocator itself, and `mupdf-sys` backs every context with the same static
+  mutexes, so neither a custom allocator nor separate base contexts help. Only
+  matters if rasterising ever becomes the bottleneck; then: patch the
+  `mupdf-sys` lock wrapper, or render text-heavy tiles on fewer threads.
 - Measure frame pacing over a real slow SSH link (fences and the writer thread
   are in place but were only tested locally, with a throttling pty proxy).
 - The page thumbnail is misplaced by up to half a cell with the Layered
