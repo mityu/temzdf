@@ -46,8 +46,13 @@ input widget moves the terminal cursor to its caret; we only receive committed t
   thread; the main loop. Channels in between.
 - Display: continuous vertical layout. Pages are rendered as tiles into an LRU
   cache; uploaded images are kept by the terminal; neighbours are pre-rendered.
-  After a zoom, a low-resolution thumbnail of each page (scaled to the new size)
-  stands in until tiles at the new scale arrive.
+  After a zoom, the tiles of the previous scale stand in until tiles at the new
+  scale arrive (`viewer::StandIn`): as scaled layers with Composited backends,
+  composed into one unscaled image per page with Layered over shm/files
+  (terminals scale images to whole cells only, which would misplace tiles by up
+  to half a cell), and not at all over inline transfers, where each zoom step
+  would cost an upload. A low-resolution thumbnail of each page covers what
+  remains.
 - Search hits and selections are separate translucent overlay layers, never baked
   into page pixels.
 - Frame pacing (`app.rs`): the first frame waits (up to 1.5 s) until the visible

@@ -15,7 +15,7 @@ use crate::config::{Config, ReloadAnchor};
 use crate::ipc::{self, ForwardRequest};
 use crate::pdf;
 use crate::session::{Action, Pointer, Request, Session};
-use crate::viewer::Need;
+use crate::viewer::{Need, StandIn};
 use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd, SynctexCmd};
 
 const FRAME: Duration = Duration::from_millis(16);
@@ -114,6 +114,11 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let mut session = Session::new(name.clone(), info, caps.geometry);
     session.anchor_by_text = opts.config.reload.anchor == ReloadAnchor::Text;
     session.keymap = opts.config.keymap()?;
+    session.viewer.stand_in_mode = match (comp.backend(), comp.encoder_mut().medium()) {
+        (Backend::Layered, Medium::Direct { .. }) => StandIn::Thumbnail,
+        (Backend::Layered, _) => StandIn::Composed,
+        _ => StandIn::ScaledTiles,
+    };
     session.viewer.scroll_x.config = opts.config.scroll.to_termpix();
     session.viewer.scroll_y.config = opts.config.scroll.to_termpix();
     let open_command = opts.config.links.command();

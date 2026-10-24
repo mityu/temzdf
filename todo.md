@@ -48,7 +48,9 @@ below them are deferred.
 - Tune the raster worker pool and measure performance.
 - Measure frame pacing over a real slow SSH link (fences and the writer thread
   are in place but were only tested locally, with a throttling pty proxy).
-- While zooming, show old-scale tiles scaled instead of the blurry thumbnail (Layered backend can only scale to whole cells, so this needs care).
+- The page thumbnail is misplaced by up to half a cell with the Layered
+  backend (terminals scale images to whole cells). It only shows briefly; the
+  `StandIn::Composed` path could compose it too.
 - Keep display lists for all pages only while memory allows; add an LRU for huge documents.
 - Long text input through `$EDITOR` (do this last):
   1. Suspend the UI, run `$EDITOR` full screen, resume on exit.

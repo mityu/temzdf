@@ -11,6 +11,7 @@ use std::time::Instant;
 use mupdf::DisplayList;
 use termpix::compositor::{Compositor, ImageId, Layer};
 use termpix::geom::Rect;
+use termpix::raster::{RgbaImage, blit};
 use termpix::scroll::KineticScroll;
 
 use crate::layout::{Layout, View};
@@ -18,7 +19,8 @@ use crate::pdf::{PageBounds, PixelRect, Target};
 
 /// Tile edge in pixels.
 pub const TILE: u32 = 512;
-/// Thumbnail width in pixels, shown scaled while sharp tiles are missing.
+/// Thumbnail width in pixels, shown scaled while sharp tiles are missing (and
+/// no tiles of an earlier scale cover them).
 const THUMB_WIDTH: f32 = 320.0;
 /// Memory budget for cached tiles (the terminal keeps its own copies).
 const TILE_BUDGET: usize = 192 << 20;
@@ -29,6 +31,8 @@ pub const MAX_SCALE: f32 = 8.0;
 // so UI drawn in terminal cells would cover it.
 const Z_BACKGROUND: i32 = -1_073_741_900;
 const Z_THUMB: i32 = -1_073_741_890;
+/// Tiles of an earlier scale, scaled, while tiles at the current scale render.
+const Z_STAND_IN: i32 = -1_073_741_885;
 const Z_TILE: i32 = -1_073_741_880;
 const BACKGROUND: [u8; 4] = [0x3a, 0x3a, 0x3a, 0xff];
 const LAYER_BACKGROUND: u32 = 1;
@@ -112,6 +116,33 @@ pub struct Viewer {
     generation: u32,
     /// See [`Viewer::is_complete`].
     complete: bool,
+    /// How pages are covered right after a zoom (see [`StandIn`]).
+    pub stand_in_mode: StandIn,
+    /// `StandIn::Composed` images by page.
+    composed: HashMap<usize, Composed>,
+}
+
+/// What covers a page while its tiles at the current scale render (just after
+/// a zoom), on top of the page thumbnail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StandIn {
+    /// Only the thumbnail.
+    Thumbnail,
+    /// The tiles of the previous scale, as scaled layers. Exact where the
+    /// compositor scales (Composited backends); the Layered backend rounds
+    /// scaled placements to whole cells, which misplaces them by up to half a cell.
+    ScaledTiles,
+    /// One image per page composed from the previous scale's tiles. Costs an
+    /// upload per zoom step, so only for fast transports (shm, files).
+    Composed,
+}
+
+struct Composed {
+    /// Current scale, old scale, screen rect.
+    id: (u32, u32, Rect),
+    image: ImageId,
+    layer: u32,
+    used: u64,
 }
 
 impl Viewer {
@@ -145,6 +176,8 @@ impl Viewer {
             fit_mode: true,
             generation: 0,
             complete: false,
+            stand_in_mode: StandIn::Thumbnail,
+            composed: HashMap::new(),
         };
         v.update_scroll_bounds();
         v
@@ -347,6 +380,9 @@ impl Viewer {
         for (_, c) in self.tiles.drain() {
             comp.remove_image(c.image);
         }
+        for (_, c) in self.composed.drain() {
+            comp.remove_image(c.image);
+        }
         self.used_bytes = 0;
         self.in_flight.clear();
         self.lists = vec![None; bounds.len()];
@@ -391,9 +427,7 @@ impl Viewer {
         }
         let bytes = r.pixels.len();
         let image = comp.add_image(r.width, r.height, r.pixels);
-        let layer = self.next_layer;
-        self.next_layer =
-            if self.next_layer + 1 >= LAYER_KEYS_END { LAYER_BACKGROUND + 1 } else { self.next_layer + 1 };
+        let layer = self.alloc_layer();
         self.used_bytes += bytes;
         self.tiles.insert(r.key, Cached { image, layer, bytes, last_used: self.frame_no });
     }
@@ -505,6 +539,9 @@ impl Viewer {
                 }
             }
             complete &= !missing_on_screen;
+            if missing_on_screen {
+                self.stand_in(comp, page, scale_q, (sx, sy), &screen, &mut layers);
+            }
             if missing_on_screen && let Some((image, layer)) = thumb_cached {
                 let (tw, th) = bounds.pixel_size(thumb_scale);
                 layers.push(Layer { key: layer, image, src: Rect::new(0, 0, tw, th), dst: page_rect, z: Z_THUMB });
@@ -515,6 +552,15 @@ impl Viewer {
         urgent.sort_by(|a, b| a.0.total_cmp(&b.0));
         later.sort_by(|a, b| a.0.total_cmp(&b.0));
         let needs = urgent.into_iter().chain(later).map(|(_, n)| n).collect();
+        // Composed stand-ins not shown this frame are done with.
+        let frame = self.frame_no;
+        self.composed.retain(|_, c| {
+            let keep = c.used == frame;
+            if !keep {
+                comp.remove_image(c.image);
+            }
+            keep
+        });
         self.evict(comp);
         (layers, needs)
     }
@@ -523,6 +569,116 @@ impl Viewer {
     /// (no missing tiles, no placeholder thumbnails).
     pub fn is_complete(&self) -> bool {
         self.complete
+    }
+
+    /// While tiles at the current scale are missing (just after a zoom), show
+    /// the page's tiles from the scale it was last shown at, scaled to the
+    /// current one: much sharper than the thumbnail. Current tiles cover them as
+    /// they arrive. `origin` is the page's top-left on screen.
+    fn stand_in(
+        &mut self,
+        comp: &mut Compositor,
+        page: usize,
+        scale_q: u32,
+        origin: (i32, i32),
+        screen: &Rect,
+        layers: &mut Vec<Layer>,
+    ) {
+        let generation = self.generation;
+        // The other scale used most recently for this page.
+        let Some(old_q) = self
+            .tiles
+            .iter()
+            .filter_map(|(k, c)| match k.kind {
+                TileKind::Tile { scale_q: q, .. }
+                    if k.generation == generation && k.page == page as u32 && q != scale_q =>
+                {
+                    Some((c.last_used, q))
+                }
+                _ => None,
+            })
+            .max()
+            .map(|(_, q)| q)
+        else {
+            return;
+        };
+        let bounds = self.bounds[page];
+        let (opw, oph) = bounds.pixel_size(dequantize(old_q));
+        let f = dequantize(scale_q) as f64 / dequantize(old_q) as f64;
+        let at = |v: u32| (v as f64 * f).round() as i32;
+        // Old tiles on screen: (image, source size, destination).
+        let mut parts = Vec::new();
+        for ty in 0..oph.div_ceil(TILE) {
+            for tx in 0..opw.div_ceil(TILE) {
+                let (x0, y0) = (tx * TILE, ty * TILE);
+                let (x1, y1) = ((x0 + TILE).min(opw), (y0 + TILE).min(oph));
+                let dst = Rect::new(
+                    origin.0 + at(x0),
+                    origin.1 + at(y0),
+                    (at(x1) - at(x0)).max(1) as u32,
+                    (at(y1) - at(y0)).max(1) as u32,
+                );
+                if dst.intersect(screen).is_none() {
+                    continue;
+                }
+                let key = TileKey { generation, page: page as u32, kind: TileKind::Tile { scale_q: old_q, tx, ty } };
+                if let Some((image, layer)) = self.touch(key) {
+                    parts.push((image, layer, Rect::new(0, 0, x1 - x0, y1 - y0), dst));
+                }
+            }
+        }
+        if parts.is_empty() {
+            return;
+        }
+        match self.stand_in_mode {
+            StandIn::Thumbnail => {}
+            StandIn::ScaledTiles => {
+                for (image, layer, src, dst) in parts {
+                    layers.push(Layer { key: layer, image, src, dst, z: Z_STAND_IN });
+                }
+            }
+            StandIn::Composed => {
+                // One unscaled image of the page's visible part, composed here:
+                // terminals scaling images themselves (Layered) snap to cells.
+                let page_rect = Rect::new(origin.0, origin.1, at(opw).max(1) as u32, at(oph).max(1) as u32);
+                let Some(vis) = page_rect.intersect(screen) else { return };
+                let id = (scale_q, old_q, vis);
+                let frame = self.frame_no;
+                if let Some(c) = self.composed.get_mut(&page)
+                    && c.id == id
+                {
+                    c.used = frame;
+                    layers.push(Layer {
+                        key: c.layer,
+                        image: c.image,
+                        src: Rect::new(0, 0, vis.w, vis.h),
+                        dst: vis,
+                        z: Z_STAND_IN,
+                    });
+                    return;
+                }
+                let mut img = RgbaImage::new(vis.w, vis.h, [0, 0, 0, 0]);
+                for (image, _, src, dst) in &parts {
+                    if let Some(px) = comp.image_pixels(*image) {
+                        let at = Rect::new(dst.x - vis.x, dst.y - vis.y, dst.w, dst.h);
+                        blit(&mut img, at, px, *src);
+                    }
+                }
+                let image = comp.add_image(vis.w, vis.h, img.data);
+                let layer = self.alloc_layer();
+                if let Some(old) = self.composed.insert(page, Composed { id, image, layer, used: frame }) {
+                    comp.remove_image(old.image);
+                }
+                layers.push(Layer { key: layer, image, src: Rect::new(0, 0, vis.w, vis.h), dst: vis, z: Z_STAND_IN });
+            }
+        }
+    }
+
+    fn alloc_layer(&mut self) -> u32 {
+        let layer = self.next_layer;
+        self.next_layer =
+            if self.next_layer + 1 >= LAYER_KEYS_END { LAYER_BACKGROUND + 1 } else { self.next_layer + 1 };
+        layer
     }
 
     fn touch(&mut self, key: TileKey) -> Option<(ImageId, u32)> {
@@ -549,6 +705,104 @@ impl Viewer {
                 comp.remove_image(c.image);
                 self.used_bytes -= c.bytes;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pdf;
+    use termpix::compositor::Backend;
+    use termpix::geom::{CellSize, Geometry};
+    use termpix::graphics::Medium;
+    use termpix::mock::MockTerminal;
+
+    const GEOMETRY: Geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
+
+    /// Do the viewer's work inline until it needs nothing more.
+    fn settle(v: &mut Viewer, comp: &mut Compositor, doc: &pdf::Doc) {
+        loop {
+            let (_, needs) = v.frame(comp);
+            if needs.is_empty() {
+                return;
+            }
+            for need in needs {
+                match need {
+                    Need::LoadPage(p) => v.page_loaded(v.generation(), p, pdf::display_list(doc, p).unwrap()),
+                    Need::Render(job) => {
+                        let pixels = pdf::render(&job.list, job.bounds, job.scale, job.area).unwrap();
+                        v.rendered(comp, Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Mean absolute difference per channel after averaging 4x4 blocks: how far
+    /// the content is from where it should be, mostly regardless of how sharp it
+    /// is (the mock terminal scales with nearest neighbour, so scaled tiles are
+    /// jagged and the blurry thumbnail would win a per-pixel comparison).
+    fn diff(a: &termpix::raster::RgbaImage, b: &termpix::raster::RgbaImage) -> f64 {
+        let block = |img: &termpix::raster::RgbaImage, bx: u32, by: u32, ch: usize| -> f64 {
+            let mut sum = 0u32;
+            for y in by * 4..by * 4 + 4 {
+                for x in bx * 4..bx * 4 + 4 {
+                    sum += img.pixel(x, y)[ch] as u32;
+                }
+            }
+            sum as f64 / 16.0
+        };
+        let (bw, bh) = (a.width / 4, a.height / 4);
+        let mut total = 0.0;
+        for by in 0..bh {
+            for bx in 0..bw {
+                for ch in 0..3 {
+                    total += (block(a, bx, by, ch) - block(b, bx, by, ch)).abs();
+                }
+            }
+        }
+        total / (bw * bh * 3) as f64
+    }
+
+    /// The screen right after zooming in (before any new tile arrives), and once
+    /// everything is rendered, and how many stand-in layers the first one had.
+    fn zoom_frames(backend: Backend, mode: StandIn) -> (termpix::raster::RgbaImage, termpix::raster::RgbaImage, usize) {
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let bounds = pdf::doc_info(&doc).unwrap().bounds;
+        let mut v = Viewer::new(bounds, GEOMETRY.width_px(), GEOMETRY.height_px());
+        v.stand_in_mode = mode;
+        let mut comp = Compositor::new(backend, Medium::Direct { compress: false }, GEOMETRY);
+        let mut term = MockTerminal::new(GEOMETRY, [0, 0, 0, 255]);
+        let mut out = Vec::new();
+        settle(&mut v, &mut comp, &doc);
+        let (layers, _) = v.frame(&mut comp);
+        comp.present(&layers, &mut out).unwrap();
+        v.zoom(1.7, (300.0, 200.0));
+        let (layers, _) = v.frame(&mut comp);
+        let stand_ins = layers.iter().filter(|l| l.z == Z_STAND_IN).count();
+        comp.present(&layers, &mut out).unwrap();
+        term.feed(&out);
+        let early = term.render();
+        settle(&mut v, &mut comp, &doc);
+        let (layers, _) = v.frame(&mut comp);
+        assert!(!layers.iter().any(|l| l.z == Z_STAND_IN), "stand-ins go once tiles are in");
+        out.clear();
+        comp.present(&layers, &mut out).unwrap();
+        term.feed(&out);
+        (early, term.render(), stand_ins)
+    }
+
+    #[test]
+    fn zooming_shows_old_tiles_scaled_until_new_ones_arrive() {
+        for (backend, mode) in [(Backend::composited(), StandIn::ScaledTiles), (Backend::Layered, StandIn::Composed)] {
+            let (early, done, count) = zoom_frames(backend, mode);
+            assert!(count > 0, "{mode:?}: old-scale tiles stand in");
+            let (thumb_early, thumb_done, _) = zoom_frames(backend, StandIn::Thumbnail);
+            assert_eq!(diff(&done, &thumb_done), 0.0, "the final frames agree");
+            let with = diff(&early, &done);
+            let without = diff(&thumb_early, &done);
+            assert!(with < without * 0.5, "{mode:?}: stand-ins {with:.3} vs thumbnail {without:.3}");
         }
     }
 }

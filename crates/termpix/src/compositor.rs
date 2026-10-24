@@ -216,6 +216,11 @@ impl Compositor {
         self.placed.retain(|_, p| p.image != id.0);
     }
 
+    /// The pixels of an image (e.g. to compose a new one from it).
+    pub fn image_pixels(&self, id: ImageId) -> Option<crate::raster::RgbaRef<'_>> {
+        self.images.get(&id.0).map(|i| crate::raster::RgbaRef { width: i.width, height: i.height, data: &i.data })
+    }
+
     pub fn image_size(&self, id: ImageId) -> Option<(u32, u32)> {
         self.images.get(&id.0).map(|i| (i.width, i.height))
     }
@@ -358,35 +363,53 @@ impl Compositor {
             let (Some(src), Some(vis)) = (src, layer.dst.intersect(&screen)) else { continue };
             seen.insert(layer.key);
 
-            // Map the visible part of dst back to the source.
+            // Map a part of dst back to the source.
             let sx = src.w as f64 / layer.dst.w as f64;
             let sy = src.h as f64 / layer.dst.h as f64;
-            let crop = Rect::new(
-                src.x + ((vis.x - layer.dst.x) as f64 * sx).round() as i32,
-                src.y + ((vis.y - layer.dst.y) as f64 * sy).round() as i32,
-                ((vis.w as f64 * sx).round() as u32).max(1),
-                ((vis.h as f64 * sy).round() as u32).max(1),
-            );
+            let crop_of = |part: Rect| {
+                let x0 = (src.x as f64 + (part.x - layer.dst.x) as f64 * sx).round().max(src.x as f64);
+                let y0 = (src.y as f64 + (part.y - layer.dst.y) as f64 * sy).round().max(src.y as f64);
+                let x1 =
+                    (src.x as f64 + (part.right() - layer.dst.x as i64) as f64 * sx).round().min(src.right() as f64);
+                let y1 =
+                    (src.y as f64 + (part.bottom() - layer.dst.y as i64) as f64 * sy).round().min(src.bottom() as f64);
+                Rect::new(x0 as i32, y0 as i32, ((x1 - x0) as u32).max(1), ((y1 - y0) as u32).max(1))
+            };
             let scaled = layer.dst.w != src.w || layer.dst.h != src.h;
             let (col, row, placement) = if scaled {
-                // kitty scales into whole cells only.
-                let col = (vis.x as f64 / cell.width as f64).round() as u32;
-                let row = (vis.y as f64 / cell.height as f64).round() as u32;
-                let c = ((vis.w as f64 / cell.width as f64).round() as u32).max(1);
-                let r = ((vis.h as f64 / cell.height as f64).round() as u32).max(1);
+                // kitty scales into whole cells only. Snap the visible part to the
+                // cell grid first and show the source matching the snapped area,
+                // so neighbouring scaled images (tiles) meet without gaps or
+                // overlaps and the content stays where it belongs.
+                let snap = |v: i64, size: u32| ((v as f64 / size as f64).round() as i64).max(0) as u32;
+                let (c0, c1) = (snap(vis.x as i64, cell.width), snap(vis.right(), cell.width));
+                let (r0, r1) = (snap(vis.y as i64, cell.height), snap(vis.bottom(), cell.height));
+                if c1 <= c0 || r1 <= r0 {
+                    // Less than half a cell visible: rounds away (and an
+                    // earlier placement of it is deleted below).
+                    seen.remove(&layer.key);
+                    continue;
+                }
+                let snapped = Rect::new(
+                    (c0 * cell.width) as i32,
+                    (r0 * cell.height) as i32,
+                    (c1 - c0) * cell.width,
+                    (r1 - r0) * cell.height,
+                );
                 (
-                    col,
-                    row,
+                    c0,
+                    r0,
                     Placement {
                         placement_id: layer.key,
-                        src: Some(crop),
-                        cells: Some((c, r)),
+                        src: Some(crop_of(snapped)),
+                        cells: Some((c1 - c0, r1 - r0)),
                         offset: (0, 0),
                         z: layer.z,
                         virtual_placement: false,
                     },
                 )
             } else {
+                let crop = crop_of(vis);
                 let col = vis.x as u32 / cell.width;
                 let row = vis.y as u32 / cell.height;
                 let offset = (vis.x as u32 - col * cell.width, vis.y as u32 - row * cell.height);
@@ -544,6 +567,27 @@ mod tests {
         assert_eq!(screen.pixel(13, 25), [255, 0, 0, 255]);
         assert_eq!(screen.pixel(13 + 15, 30), [0, 0, 255, 255]);
         assert_eq!(screen.pixel(13 + 30, 30), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn layered_scaled_neighbours_snap_to_shared_cell_edges() {
+        let mut c = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, geometry());
+        let red = c.add_image(10, 10, [255, 0, 0, 255].repeat(100));
+        let blue = c.add_image(10, 10, [0, 0, 255, 255].repeat(100));
+        // Scaled 2.5x, edges off the 10x20 cell grid: 3..28 and 28..53.
+        let a = Layer { key: 1, image: red, src: Rect::new(0, 0, 10, 10), dst: Rect::new(3, 0, 25, 40), z: 0 };
+        let b = Layer { key: 2, image: blue, src: Rect::new(0, 0, 10, 10), dst: Rect::new(28, 0, 25, 40), z: 0 };
+        let mut out = Vec::new();
+        c.present(&[a, b], &mut out).unwrap();
+        let mut term = MockTerminal::new(geometry(), [0, 0, 0, 255]);
+        term.feed(&out);
+        let screen = term.render();
+        // Both meet at x=30 (28 rounded to a cell edge), and b ends at 50, not
+        // a whole number of its own cells further.
+        assert_eq!(screen.pixel(29, 10), [255, 0, 0, 255]);
+        assert_eq!(screen.pixel(30, 10), [0, 0, 255, 255]);
+        assert_eq!(screen.pixel(49, 10), [0, 0, 255, 255]);
+        assert_eq!(screen.pixel(50, 10), [0, 0, 0, 255]);
     }
 
     #[test]
