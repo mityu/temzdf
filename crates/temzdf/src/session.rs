@@ -822,7 +822,9 @@ impl Session {
                     None => self.viewer.scroll_y.scroll_by(f64::INFINITY, now),
                 }
             }
+            // Backspace too: multiplexers (zellij) take Ctrl-o and Alt+arrows.
             KeyCode::Char('o') if ctrl => self.history(true, now),
+            KeyCode::Backspace => self.history(true, now),
             KeyCode::Char('+' | '=') => v.zoom(ZOOM_STEP, centre),
             KeyCode::Char('-') => v.zoom(1.0 / ZOOM_STEP, centre),
             KeyCode::Char('0') | KeyCode::Char('w') => v.fit_width(),
