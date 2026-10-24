@@ -57,6 +57,8 @@ pub struct StatusBar {
     pub right: String,
     /// Shown instead of `left` in the error colour when set.
     pub error: Option<String>,
+    /// Shown instead of `left` in the accent colour when set (and no error).
+    pub notice: Option<String>,
 }
 
 impl StatusBar {
@@ -66,9 +68,10 @@ impl StatusBar {
         let mut c = Canvas::new(width, height);
         c.fill_rect(0.0, 0.0, w, h, theme.bar_bg);
         let right = text.line(&self.right, &theme.style(h, theme.bar_dim, false), w / 2.0);
-        let (left_text, left_color) = match &self.error {
-            Some(e) => (e.as_str(), theme.error),
-            None => (self.left.as_str(), theme.bar_fg),
+        let (left_text, left_color) = match (&self.error, &self.notice) {
+            (Some(e), _) => (e.as_str(), theme.error),
+            (None, Some(n)) => (n.as_str(), theme.accent),
+            (None, None) => (self.left.as_str(), theme.bar_fg),
         };
         let left = text.line(left_text, &theme.style(h, left_color, false), (w - right.width() - 3.0 * pad).max(0.0));
         c.text(&left, pad, (h - left.height()) / 2.0);
@@ -344,7 +347,7 @@ mod tests {
     fn widgets_render() {
         let mut text = Text::new();
         let theme = Theme::dark();
-        let bar = StatusBar { left: "sample.pdf".into(), right: "3 / 12  125%".into(), error: None };
+        let bar = StatusBar { left: "sample.pdf".into(), right: "3 / 12  125%".into(), error: None, notice: None };
         let px = bar.render(&mut text, &theme, 400, 20);
         assert_eq!(px.len(), 400 * 20 * 4);
         save("status.png", 400, 20, px);

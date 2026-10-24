@@ -4,6 +4,7 @@ mod layout;
 mod outline;
 mod pdf;
 mod search;
+mod selection;
 mod session;
 mod viewer;
 mod workers;

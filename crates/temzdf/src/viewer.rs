@@ -220,6 +220,19 @@ impl Viewer {
         (x >= 0.0 && y >= 0.0 && x <= b.w && y <= b.h).then_some((page, x, y))
     }
 
+    /// Like [`Viewer::screen_to_page`], but points off any page map to the
+    /// nearest page, clamped into it (for dragging selections past edges).
+    pub fn screen_to_page_clamped(&self, sx: f32, sy: f32) -> (usize, f32, f32) {
+        let (dx, dy) = self.view.screen_to_doc(&self.layout, sx - self.origin_x as f32, sy);
+        let page = self.layout.page_at(dy);
+        let b = self.layout.pages[page];
+        (page, (dx - b.x).clamp(0.0, b.w), (dy - b.y).clamp(0.0, b.h))
+    }
+
+    pub fn display_list(&self, page: usize) -> Option<Arc<DisplayList>> {
+        self.lists.get(page)?.clone()
+    }
+
     /// Pages intersecting the page area.
     pub fn visible_pages(&self) -> std::ops::Range<usize> {
         let top = self.view.scroll_y / self.view.scale;

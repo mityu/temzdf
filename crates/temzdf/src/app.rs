@@ -109,6 +109,11 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
                         let _ = search.send(SearchCmd { generation, query, start_page });
                     }
                     Request::OpenUri(uri) => open_uri(&uri),
+                    Request::Copy(text) => {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+                        tty.write_all(format!("\x1b]52;c;{b64}\x1b\\").as_bytes())?;
+                    }
                 }
             }
             dirty = false;

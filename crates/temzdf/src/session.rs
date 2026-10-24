@@ -16,6 +16,7 @@ use termpix_ui::{Canvas, Color, EditResult, LineInput, ListView, StatusBar, Text
 use crate::outline::{self, OutlinePanel};
 use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, Target};
 use crate::search::SearchState;
+use crate::selection::{Caret, PageText, Selection};
 use crate::viewer::{LAYER_KEYS_END, Need, Viewer};
 
 pub const ZOOM_STEP: f32 = 1.1;
@@ -24,12 +25,13 @@ const Z_UI: i32 = -1_073_741_800;
 const KEY_STATUS: u32 = LAYER_KEYS_END;
 const KEY_SIDEBAR: u32 = LAYER_KEYS_END + 1;
 const KEY_INPUT: u32 = LAYER_KEYS_END + 2;
-/// Search hit highlights use keys from here on (one per visible hit).
-const KEY_HITS: u32 = LAYER_KEYS_END + 0x1000;
-/// Hit highlights: above page tiles, below UI.
-const Z_HITS: i32 = -1_073_741_850;
+/// Overlays (search hits, selection) use keys from here on, one per rectangle.
+const KEY_OVERLAYS: u32 = LAYER_KEYS_END + 0x1000;
+/// Overlays: above page tiles, below UI.
+const Z_OVERLAY: i32 = -1_073_741_850;
 const HIT_COLOR: Color = Color::rgba(255, 210, 0, 96);
 const CURRENT_HIT_COLOR: Color = Color::rgba(255, 120, 0, 150);
+const SELECTION_COLOR: Color = Color::rgba(70, 130, 255, 90);
 
 /// Work the session asks the caller to do (on a worker, or inline).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,6 +43,8 @@ pub enum Request {
     },
     /// Open an external link with the system handler.
     OpenUri(String),
+    /// Put text on the clipboard (OSC 52).
+    Copy(String),
 }
 
 /// Mouse pointer shapes (OSC 22 names).
@@ -83,8 +87,10 @@ pub struct Session {
     text: Text,
     theme: Theme,
     widgets: HashMap<u32, WidgetImage>,
-    /// Error or notice shown in the status bar until the next key press.
+    /// Error shown in the status bar until the next key press.
     pub message: Option<String>,
+    /// Informational message, shown the same way in a calmer colour.
+    notice: Option<String>,
     outline: OutlinePanel,
     sidebar_open: bool,
     pub search: SearchState,
@@ -93,8 +99,13 @@ pub struct Session {
     /// Where the view was when the prompt opened (restored on Esc).
     search_origin: Option<(Target, f32, f32)>,
     requests: Vec<Request>,
-    /// Solid highlight images by (width, height, is current).
-    hit_images: HashMap<(u32, u32, bool), ImageId>,
+    /// Solid overlay images by (width, height, colour).
+    overlay_images: HashMap<(u32, u32, [u8; 4]), ImageId>,
+    /// Page text for selection, extracted on demand.
+    texts: Vec<Option<PageText>>,
+    selection: Option<Selection>,
+    /// A left drag is extending the selection.
+    selecting: bool,
     /// Terminal cell for the text cursor (input caret), if shown.
     caret_cell: Option<(u16, u16)>,
     /// Links per page, filled as pages load.
@@ -123,7 +134,10 @@ impl Session {
             input: None,
             search_origin: None,
             requests: Vec::new(),
-            hit_images: HashMap::new(),
+            overlay_images: HashMap::new(),
+            texts: vec![None; pages],
+            selection: None,
+            selecting: false,
             caret_cell: None,
             links: vec![None; pages],
             pointer_shape: Pointer::Default,
@@ -138,6 +152,7 @@ impl Session {
             theme: Theme::dark(),
             widgets: HashMap::new(),
             message: None,
+            notice: None,
             count: None,
             pointer: (0.0, 0.0),
             drag: None,
@@ -312,10 +327,11 @@ impl Session {
             if self.search.is_active() {
                 right = format!("/{} {}   {right}", self.search.query, self.search_hint());
             }
-            let status = StatusBar { left: self.name.clone(), right, error: self.message.clone() };
+            let status =
+                StatusBar { left: self.name.clone(), right, error: self.message.clone(), notice: self.notice.clone() };
             layers.push(self.widget(comp, KEY_STATUS, WidgetState::Status(status), bar));
         }
-        self.hit_layers(comp, &mut layers);
+        self.overlay_layers(comp, &mut layers);
         if self.sidebar_open {
             let r = self.sidebar_rect();
             let state = WidgetState::List(self.outline.list.clone(), self.row_height());
@@ -401,7 +417,7 @@ impl Session {
         let (from, to) =
             if backwards { (&mut self.back, &mut self.forward) } else { (&mut self.forward, &mut self.back) };
         let Some((pos, sx)) = from.pop() else {
-            self.message = Some(
+            self.notice = Some(
                 if backwards { "Already at the oldest position" } else { "Already at the newest position" }.into(),
             );
             return;
@@ -422,7 +438,7 @@ impl Session {
                 self.viewer.goto(t, true, now);
             }
             LinkTarget::External(uri) => {
-                self.message = Some(format!("Opening {uri}"));
+                self.notice = Some(format!("Opening {uri}"));
                 self.requests.push(Request::OpenUri(uri));
             }
         }
@@ -578,39 +594,74 @@ impl Session {
         }
     }
 
-    /// Highlight layers for the hits on visible pages.
-    fn hit_layers(&mut self, comp: &mut Compositor, layers: &mut Vec<Layer>) {
-        if !self.search.is_active() {
-            return;
+    /// Overlay layers on visible pages: search hits and the text selection.
+    fn overlay_layers(&mut self, comp: &mut Compositor, layers: &mut Vec<Layer>) {
+        let mut rects: Vec<(usize, PageRect, Color)> = Vec::new();
+        for page in self.viewer.visible_pages() {
+            if self.search.is_active() {
+                for (i, r) in self.search.hits[page].iter().enumerate() {
+                    let current = self.search.current == Some((page, i));
+                    rects.push((page, *r, if current { CURRENT_HIT_COLOR } else { HIT_COLOR }));
+                }
+            }
+            if let Some(sel) = self.selection
+                && let Some(Some(text)) = self.texts.get(page)
+            {
+                rects.extend(sel.rects(page, text).into_iter().map(|r| (page, r, SELECTION_COLOR)));
+            }
         }
         let scale = self.viewer.view.scale;
         let area =
             Rect::new(self.viewer.origin_x(), 0, self.viewer.view.screen_w as u32, self.viewer.view.screen_h as u32);
-        let mut key = KEY_HITS;
-        for page in self.viewer.visible_pages() {
-            for (i, r) in self.search.hits[page].iter().enumerate() {
-                let (x0, y0) = self.viewer.page_to_screen(page, r.x0, r.y0);
-                let w = ((r.x1 - r.x0) * scale).round().max(1.0) as u32;
-                let h = ((r.y1 - r.y0) * scale).round().max(1.0) as u32;
-                let dst = Rect::new(x0.round() as i32, y0.round() as i32, w, h);
-                // Clip to the page area so highlights never cover the UI.
-                let Some(vis) = dst.intersect(&area) else { continue };
-                let current = self.search.current == Some((page, i));
-                let image = *self.hit_images.entry((w, h, current)).or_insert_with(|| {
-                    let mut c = Canvas::new(w, h);
-                    c.fill_rect(0.0, 0.0, w as f32, h as f32, if current { CURRENT_HIT_COLOR } else { HIT_COLOR });
-                    comp.add_image(w, h, c.finish())
-                });
-                let src = Rect::new(vis.x - dst.x, vis.y - dst.y, vis.w, vis.h);
-                layers.push(Layer { key, image, src, dst: vis, z: Z_HITS });
-                key += 1;
-            }
+        for (key, (page, r, color)) in (KEY_OVERLAYS..).zip(rects) {
+            let (x0, y0) = self.viewer.page_to_screen(page, r.x0, r.y0);
+            let w = ((r.x1 - r.x0) * scale).round().max(1.0) as u32;
+            let h = ((r.y1 - r.y0) * scale).round().max(1.0) as u32;
+            let dst = Rect::new(x0.round() as i32, y0.round() as i32, w, h);
+            // Clip to the page area so overlays never cover the UI.
+            let Some(vis) = dst.intersect(&area) else { continue };
+            let image = *self.overlay_images.entry((w, h, color.0)).or_insert_with(|| {
+                let mut c = Canvas::new(w, h);
+                c.fill_rect(0.0, 0.0, w as f32, h as f32, color);
+                comp.add_image(w, h, c.finish())
+            });
+            let src = Rect::new(vis.x - dst.x, vis.y - dst.y, vis.w, vis.h);
+            layers.push(Layer { key, image, src, dst: vis, z: Z_OVERLAY });
         }
-        // Bound the highlight image cache (sizes change with zoom).
-        if self.hit_images.len() > 256 {
-            for (_, id) in self.hit_images.drain() {
+        // Bound the overlay image cache (sizes change with zoom).
+        if self.overlay_images.len() > 256 {
+            for (_, id) in self.overlay_images.drain() {
                 comp.remove_image(id);
             }
+        }
+    }
+
+    /// Text of a page, extracted on first use from its display list.
+    fn text_of_page(&mut self, page: usize) -> Option<&PageText> {
+        if self.texts.get(page)?.is_none() {
+            let list = self.viewer.display_list(page)?;
+            let text = PageText::extract(&list, self.info.bounds[page]).unwrap_or_default();
+            self.texts[page] = Some(text);
+        }
+        self.texts[page].as_ref()
+    }
+
+    /// The caret nearest a screen point, on the page under it (or the nearest page).
+    fn caret_at(&mut self, sx: f32, sy: f32) -> Option<Caret> {
+        let (page, x, y) = self.viewer.screen_to_page_clamped(sx, sy);
+        Some((page, self.text_of_page(page)?.caret_at(x, y)))
+    }
+
+    fn copy_selection(&mut self) {
+        let Some(sel) = self.selection.filter(|s| !s.is_empty()) else { return };
+        let (p0, p1) = (sel.ordered().0.0, sel.ordered().1.0);
+        for p in p0..=p1 {
+            self.text_of_page(p);
+        }
+        let text = sel.text(&self.texts);
+        if !text.is_empty() {
+            self.notice = Some(format!("Copied {} characters", text.chars().count()));
+            self.requests.push(Request::Copy(text));
         }
     }
 
@@ -619,6 +670,7 @@ impl Session {
             return Action::None;
         }
         self.message = None;
+        self.notice = None;
         if self.input.is_some() {
             return self.input_key(k, now);
         }
@@ -643,7 +695,9 @@ impl Session {
                 self.count = Some(count.unwrap_or(0).saturating_mul(10).saturating_add(c as usize - '0' as usize));
                 return Action::None;
             }
+            KeyCode::Escape if self.selection.is_some() => self.selection = None,
             KeyCode::Escape if self.search.is_active() => self.search.clear(),
+            KeyCode::Char('y') => self.copy_selection(),
             KeyCode::Char('q') | KeyCode::Escape => return Action::Quit,
             KeyCode::Char('c') if ctrl => return Action::Quit,
             KeyCode::Char('j') | KeyCode::Down => wheel_n(v, 1.0, count, now),
@@ -745,16 +799,53 @@ impl Session {
                     (ScrollDirection::Left, _) | (ScrollDirection::Up, true) => v.scroll_x.wheel(-1.0, now),
                 }
             }
+            // Left drag over text selects; elsewhere (and with the middle or
+            // right button) it pans. Pressing on a link does neither (it is a click).
             MouseEventKind::Press(MouseButton::Left) => {
+                let (sx, sy) = self.pointer;
+                let had_selection = self.selection.take().is_some();
+                if self.link_at(sx, sy).is_some() {
+                    return had_selection;
+                }
+                let over_text = self
+                    .viewer
+                    .screen_to_page(sx, sy)
+                    .is_some_and(|(page, x, y)| self.text_of_page(page).is_some_and(|t| t.has_text_at(x, y)));
+                if over_text && let Some(caret) = self.caret_at(sx, sy) {
+                    self.selection = Some(Selection { anchor: caret, head: caret });
+                    self.selecting = true;
+                    return true;
+                }
+                let v = &self.viewer;
+                self.drag = Some((self.pointer, (v.view.scroll_x, v.view.scroll_y)));
+                return had_selection;
+            }
+            MouseEventKind::Press(MouseButton::Middle | MouseButton::Right) => {
                 self.drag = Some((self.pointer, (v.view.scroll_x, v.view.scroll_y)));
                 return false;
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
+            MouseEventKind::Drag(MouseButton::Left) if self.selecting => {
+                let (sx, sy) = self.pointer;
+                let Some(head) = self.caret_at(sx, sy) else { return false };
+                let Some(sel) = self.selection.as_mut() else { return false };
+                let changed = sel.head != head;
+                sel.head = head;
+                return changed;
+            }
+            MouseEventKind::Drag(_) => {
                 let Some((p0, s0)) = self.drag else { return false };
                 v.jump_to(s0.0 - (self.pointer.0 - p0.0), s0.1 - (self.pointer.1 - p0.1));
             }
             MouseEventKind::Release(_) => {
                 self.drag = None;
+                if std::mem::take(&mut self.selecting) {
+                    if self.selection.is_some_and(|s| s.is_empty()) {
+                        self.selection = None;
+                    } else {
+                        self.copy_selection();
+                    }
+                    return true;
+                }
                 return false;
             }
             _ => return false,
@@ -771,5 +862,64 @@ fn page_area(g: Geometry) -> (u32, u32) {
 fn wheel_n(v: &mut Viewer, dir: f64, count: Option<usize>, now: Instant) {
     for _ in 0..count.unwrap_or(1).min(100) {
         v.scroll_y.wheel(dir, now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pdf;
+    use termpix::geom::CellSize;
+    use termpix::input::{CoordUnit, MouseEvent, MouseEventKind};
+
+    /// A session on the fixture with every page loaded, at 900x600 pixels.
+    fn session() -> Session {
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let info = pdf::doc_info(&doc).unwrap();
+        let geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
+        let mut s = Session::new("sample.pdf".into(), info, geometry);
+        for p in 0..s.viewer.page_count() {
+            s.viewer.page_loaded(p, pdf::display_list(&doc, p).unwrap());
+            s.page_links(p, pdf::page_links(&doc, p, s.info.bounds[p]).unwrap());
+        }
+        s
+    }
+
+    fn mouse(s: &mut Session, kind: MouseEventKind, (x, y): (f32, f32)) -> bool {
+        let ev = MouseEvent { kind, x: x as i32, y: y as i32, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
+        s.mouse(&ev, Instant::now())
+    }
+
+    /// Screen position of the middle of the first character of `needle` on page 0.
+    fn char_pos(s: &mut Session, needle: &str, offset: usize) -> (f32, f32) {
+        let text = s.text_of_page(0).unwrap().clone();
+        let all: String = text.chars.iter().map(|c| c.c).collect();
+        let i = all[..all.find(needle).unwrap()].chars().count() + offset;
+        let r = text.chars[i].rect;
+        s.viewer.page_to_screen(0, (r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0)
+    }
+
+    #[test]
+    fn drag_over_text_selects_and_copies() {
+        let mut s = session();
+        let a = char_pos(&mut s, "temzdf sample", 0);
+        let b = char_pos(&mut s, "temzdf sample document", "temzdf sample document".len() - 1);
+        // Pressing a few pixels left of the text still selects (the e2e case).
+        mouse(&mut s, MouseEventKind::Press(MouseButton::Left), (a.0 - 8.0, a.1));
+        mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), ((a.0 + b.0) / 2.0, a.1));
+        mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), (b.0 + 4.0, b.1));
+        mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (b.0 + 4.0, b.1));
+        assert_eq!(s.take_requests(), vec![Request::Copy("temzdf sample document".into())]);
+    }
+
+    #[test]
+    fn drag_in_margin_pans() {
+        let mut s = session();
+        let before = s.viewer.view.scroll_y;
+        mouse(&mut s, MouseEventKind::Press(MouseButton::Left), (20.0, 400.0));
+        mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), (20.0, 300.0));
+        mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (20.0, 300.0));
+        assert_eq!(s.viewer.view.scroll_y, before + 100.0);
+        assert!(s.take_requests().is_empty());
     }
 }

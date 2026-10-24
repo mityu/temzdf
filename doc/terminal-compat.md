@@ -123,3 +123,5 @@ probe the features we rely on (`p=`, crops, `z<0`) instead of assuming them.
 zellij 0.45.1: Composited full frames; zellij main: Layered with `c,r` on every
 crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
 `z=0` (Composited, or Layered without z-layering).
+- kitty 0.49.2: OSC 52 clipboard writes work (verified with `xclip` in
+  `tests/e2e/select.actions`); OSC 22 pointer shapes are accepted.

@@ -42,6 +42,7 @@
                 xvfb-run
                 xdotool
                 imagemagick
+                xclip
               ];
             # mupdf-sys runs bindgen, which needs libclang.
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
