@@ -43,7 +43,7 @@ End-to-end checks in a real kitty (virtual X server, no display needed):
 
 ```sh
 nix develop -c cargo build --example scroll_demo
-scripts/e2e-kitty.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
+scripts/e2e.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
 ```
 
 Action files in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
@@ -51,6 +51,16 @@ screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. See the
 script header for the helpers. `temzdf FILE --render-frame out.png` renders one
 screen headlessly. `scripts/build-fixtures.sh` rebuilds `tests/fixtures/`. The
 full testing approach is in `doc/testing.md`.
+
+Debugging terminal problems:
+
+- `cargo run -p termpix --example probe` prints what detection found.
+- `TERMPIX_TRACE=out.bin <app>` records every byte written to the terminal;
+  replay prefixes of it into a terminal (`cat out.bin`) to bisect crashes.
+- `TERMPIX_BACKEND=layered|composited` and `TERMPIX_MEDIUM=direct|shm|file`
+  override detection (e.g. `direct` mimics SSH).
+- `scripts/e2e.sh -t ghostty ...` runs the same scenarios in Ghostty; it exits
+  with 3 when the terminal crashed.
 
 The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` is in it for scratch scripts). TeX (`latexmk`,
 `pdflatex`, `synctex`) comes from the host profile, not the flake.

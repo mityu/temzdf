@@ -1,0 +1,18 @@
+# Used with: TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf tests/fixtures/sample.pdf
+# Sends many compressed tiles inline (like over SSH): scroll the whole document,
+# zoom in and out at several points. Pass = the terminal survives (exit code 0)
+# and the last screenshot shows the document.
+wheel 30
+pause 0.5
+wheel -30
+for i in 1 2 3; do
+  xdotool mousemove $((200 * i)) 250 keydown ctrl click 4 click 4 keyup ctrl
+  pause 0.7
+done
+wheel 15
+pause 0.7
+xdotool mousemove 400 300 keydown ctrl click 5 click 5 click 5 click 5 click 5 click 5 keyup ctrl
+pause 1
+keys shift+g
+pause 1.5
+shot stress-end

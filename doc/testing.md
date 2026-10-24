@@ -6,7 +6,7 @@ Layers of verification, cheapest first. All of them run without a human.
 |---|---|---|
 | Unit tests | `scripts/check.sh` | Input parsing, kitty command encoding, compositor diffing (replayed through `termpix::mock`), layout maths, tile rendering vs full-page rendering |
 | Headless frames | `target/debug/temzdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S]` | What a screen looks like: runs the real `Viewer` and compositor, replays the bytes through the mock terminal. Read the PNG to check it. |
-| Real terminal | `scripts/e2e-kitty.sh ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm), pixel mouse, kitty's actual placement semantics. Screenshots land in `target/e2e/`. |
+| Real terminal | `scripts/e2e.sh [-t kitty\|ghostty] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
 | User | Ghostty / WezTerm on a real desktop | The feel of scrolling and zooming. |
 
 Action files live in `tests/e2e/`; each starts with a comment saying how to run it
