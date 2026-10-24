@@ -111,7 +111,10 @@ pub struct Viewer {
     used_bytes: usize,
     frame_no: u64,
     next_layer: u32,
-    background: Option<ImageId>,
+    /// Page-area-sized background image and its size. Not a scaled 1x1 image:
+    /// terminals filter scaled images against a transparent border (kitty
+    /// darkens half a source pixel along each edge, i.e. half the screen).
+    background: Option<(ImageId, u32, u32)>,
     /// Left edge of the page area on screen (pixels), e.g. right of a sidebar.
     origin_x: i32,
     /// Keep the zoom at fit-width when the page area changes.
@@ -464,11 +467,22 @@ impl Viewer {
         let screen = Rect::new(ox, 0, view.screen_w as u32, view.screen_h as u32);
         let mut layers = Vec::new();
 
-        let bg = *self.background.get_or_insert_with(|| comp.add_image(1, 1, BACKGROUND.to_vec()));
+        let (sw, sh) = (screen.w.max(1), screen.h.max(1));
+        let bg = match self.background {
+            Some((id, w, h)) if (w, h) == (sw, sh) => id,
+            old => {
+                if let Some((id, ..)) = old {
+                    comp.remove_image(id);
+                }
+                let id = comp.add_image(sw, sh, BACKGROUND.repeat(sw as usize * sh as usize));
+                self.background = Some((id, sw, sh));
+                id
+            }
+        };
         layers.push(Layer {
             key: LAYER_BACKGROUND,
             image: bg,
-            src: Rect::new(0, 0, 1, 1),
+            src: Rect::new(0, 0, sw, sh),
             dst: screen,
             z: Z_BACKGROUND,
         });
