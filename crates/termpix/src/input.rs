@@ -570,8 +570,11 @@ impl Parser {
             }
         };
         let unit = if self.pixel_mouse { CoordUnit::Pixel } else { CoordUnit::Cell };
-        // SGR reports are one-based in both units.
-        Some(Event::Mouse(MouseEvent { kind, x: x - 1, y: y - 1, unit, modifiers }))
+        // Cell coordinates are one-based; SGR-pixel coordinates are zero-based
+        // (verified in kitty 0.49 and Ghostty 1.3: a click at window pixel 300
+        // reports 300).
+        let base = if self.pixel_mouse { 0 } else { 1 };
+        Some(Event::Mouse(MouseEvent { kind, x: x - base, y: y - base, unit, modifiers }))
     }
 }
 
@@ -912,7 +915,7 @@ mod tests {
         );
         let mut p = Parser::new();
         p.set_pixel_mouse(true);
-        let ev = p.feed(b"\x1b[<32;301;120M\x1b[<0;301;120m\x1b[<35;1;1M");
+        let ev = p.feed(b"\x1b[<32;300;119M\x1b[<0;300;119m\x1b[<35;1;1M");
         assert_eq!(ev.len(), 3);
         assert!(matches!(
             ev[0],
