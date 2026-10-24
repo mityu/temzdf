@@ -18,6 +18,10 @@ once the document is shown.
 
 `FILE` is matched the way SyncTeX does it: as given, then by its file name.
 
+A request that arrives while a reload is pending or running (the PDF just
+changed) waits until the new version is open and its SyncTeX data is re-read,
+so a forward search sent right after a compile lands in the new version.
+
 ## Inverse search (viewer -> editor)
 
 Ctrl+click on the page. The viewer looks up the source location and runs the
@@ -65,6 +69,21 @@ let g:vimtex_view_general_options = '--forward @line:@tex @pdf'
 When no viewer is running, that command would try to open one inside vimtex's
 background job, which has no terminal and fails; open the viewer first.
 
+To follow the cursor after every successful compile (the editor knows where you
+are in the *new* source, so this keeps the view on what you are editing even
+when text was inserted above it):
+
+```vim
+augroup temzdf
+  autocmd!
+  autocmd User VimtexEventCompileSuccess VimtexView
+augroup END
+```
+
+vimtex runs the forward search right after latexmk finishes; temzdf holds it
+until its auto-reload has picked up the new PDF (see above). Without vimtex,
+any compile hook can do the same with `temzdf --forward LINE:FILE doc.pdf`.
+
 ## Implementation
 
 - Vendored SyncTeX parser 1.21 (`crates/temzdf/vendor/synctex/`, MIT-style),
@@ -77,4 +96,6 @@ background job, which has no terminal and fails; open the viewer first.
   screen (`termpix::tty::StdioRedirect`).
 - Tests: `synctex::tests` (forward and inverse on the fixture) and
   `tests/e2e/synctex.actions` (a second process sends a forward search to a
-  running viewer; Ctrl+click runs the editor command).
+  running viewer; Ctrl+click runs the editor command) and
+  `tests/e2e/synctex-reload.actions` (a forward search sent right after the
+  PDF and SyncTeX data were replaced lands in the new version).

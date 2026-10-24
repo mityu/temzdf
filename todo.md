@@ -19,7 +19,6 @@ below them are deferred.
   through passthrough) work; see `doc/terminal-compat.md`. Left: zellij over SSH
   is still slow (zellij 0.45.1 forwards images uncompressed; a half-resolution
   mode could help), and tmux master's native kitty support (z=0 only) is untested.
-- Document a vimtex setup that forward-searches after every successful compile.
 - Configurable key bindings (the config file has no `[keys]` section yet).
 - Verify IME preedit placement in the search prompt on kitty and Ghostty (the
   terminal cursor is shown at the caret while the prompt is open).

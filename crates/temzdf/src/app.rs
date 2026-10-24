@@ -120,6 +120,10 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         session.message = Some(format!("auto-reload disabled: {e}"));
     }
     let mut reload = ReloadState::default();
+    // A forward search that arrived while a reload was pending: an editor's
+    // compile callback (vimtex) sends it right after the PDF changed, and the
+    // old document or SyncTeX data would put it in the wrong place.
+    let mut deferred_forward: Option<ForwardRequest> = None;
     // Wait this long after the last change before reloading (see doc/reload.md).
     let debounce = Duration::from_millis(opts.config.reload.debounce_ms);
     if let Some(req) = opts.forward.take() {
@@ -295,7 +299,11 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 dirty = true;
             }
             Some(AppEvent::ForwardRequest(req)) => {
-                let _ = synctex.send(SynctexCmd::Forward { req, page_hint: session.viewer.current_page() });
+                if reload.due.is_some() || reload.in_flight {
+                    deferred_forward = Some(req);
+                } else {
+                    let _ = synctex.send(SynctexCmd::Forward { req, page_hint: session.viewer.current_page() });
+                }
             }
             Some(AppEvent::ForwardResult(boxes)) => {
                 session.forward_result(boxes, now);
@@ -349,6 +357,9 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 session.message = Some("reload: the file stays incomplete or missing".into());
                 dirty = true;
             }
+        }
+        if let Some(req) = deferred_forward.take_if(|_| reload.due.is_none() && !reload.in_flight) {
+            let _ = synctex.send(SynctexCmd::Forward { req, page_hint: session.viewer.current_page() });
         }
         dirty |= session.tick(Instant::now());
         // A highlight expired.

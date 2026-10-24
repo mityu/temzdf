@@ -643,6 +643,8 @@ impl Session {
     /// comfortably visible) and highlight the boxes briefly.
     pub fn forward_result(&mut self, boxes: Vec<PdfBox>, now: Instant) {
         let Some(first) = boxes.first().copied() else { return };
+        // The editor's position wins over a reload anchor still waiting for pages.
+        self.text_anchor = None;
         let (_, sy) = self.viewer.page_to_screen(first.page, 0.0, first.rect.y0);
         let h = self.viewer.view.screen_h;
         if sy < h * 0.1 || sy > h * 0.8 {
