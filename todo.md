@@ -35,6 +35,12 @@ below them are deferred.
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
 - CI: GitHub Actions running `cargo test` and `cargo clippy`.
+- Decide how to judge e2e scenarios automatically (later, once behaviour settles;
+  today Claude reads the screenshots). Avoid committing many reference images.
+  Candidates: pixel probes at known coordinates (e.g. a band edge moved 360 px),
+  assertions on `TERMPIX_TRACE` output (no page re-upload, one strip sent),
+  clipboard text and exit codes; where a whole image must match, store only a
+  hash, or render references from the previous build into `target/` and diff.
 - Tune the raster worker pool and measure performance.
 - Measure frame pacing over a real slow SSH link (fences are in place but were
   only tested locally), and consider smaller frames for the Composited backend
