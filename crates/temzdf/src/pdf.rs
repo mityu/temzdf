@@ -336,3 +336,28 @@ mod tests {
         }
     }
 }
+
+/// Bytes on the wire for one rendered tile at different zlib levels and pixel
+/// formats. Run with `cargo test -p temzdf tile_wire_size -- --ignored --nocapture`.
+#[cfg(test)]
+#[test]
+#[ignore = "measurement, prints a table"]
+fn tile_wire_size() {
+    use std::io::Write;
+    use std::time::Instant;
+    let doc = open(&fixture("sample.pdf")).unwrap();
+    let bounds = page_bounds(&doc).unwrap();
+    let list = display_list(&doc, 1).unwrap();
+    let rgba = render(&list, bounds[1], 1.5, PixelRect { x: 0, y: 0, w: 512, h: 512 }).unwrap();
+    let rgb: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
+    println!("raw rgba {} rgb {}", rgba.len(), rgb.len());
+    for level in [1, 2, 4, 6, 9] {
+        for (name, data) in [("rgba", &rgba), ("rgb", &rgb)] {
+            let t = Instant::now();
+            let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(level));
+            e.write_all(data).unwrap();
+            let z = e.finish().unwrap();
+            println!("level {level} {name:4} {:>7} bytes  {:>5.1} ms", z.len(), t.elapsed().as_secs_f64() * 1e3);
+        }
+    }
+}

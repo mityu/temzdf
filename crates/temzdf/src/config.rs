@@ -101,7 +101,7 @@ impl TerminalConfig {
         match (env_override, self.backend) {
             (true, _) | (false, BackendChoice::Auto) => detected,
             (false, BackendChoice::Layered) => Backend::Layered,
-            (false, BackendChoice::Composited) => Backend::Composited { background: [0, 0, 0, 0] },
+            (false, BackendChoice::Composited) => Backend::composited(),
         }
     }
 

@@ -110,6 +110,8 @@ pub struct Viewer {
     /// Keep the zoom at fit-width when the page area changes.
     fit_mode: bool,
     generation: u32,
+    /// See [`Viewer::is_complete`].
+    complete: bool,
 }
 
 impl Viewer {
@@ -142,6 +144,7 @@ impl Viewer {
             origin_x: 0,
             fit_mode: true,
             generation: 0,
+            complete: false,
         };
         v.update_scroll_bounds();
         v
@@ -425,10 +428,12 @@ impl Viewer {
         let mut later = Vec::new();
         let centre = (view.screen_w / 2.0, view.screen_h / 2.0);
 
+        let mut complete = true;
         for page in prefetch.clone() {
             let is_visible = visible.contains(&page);
             let queue = if is_visible { &mut urgent } else { &mut later };
             let Some(list) = self.lists[page].clone() else {
+                complete &= !is_visible;
                 if !self.lists_requested.contains(&page) {
                     queue.push((0.0, Need::LoadPage(page)));
                 }
@@ -499,17 +504,25 @@ impl Viewer {
                     }
                 }
             }
+            complete &= !missing_on_screen;
             if missing_on_screen && let Some((image, layer)) = thumb_cached {
                 let (tw, th) = bounds.pixel_size(thumb_scale);
                 layers.push(Layer { key: layer, image, src: Rect::new(0, 0, tw, th), dst: page_rect, z: Z_THUMB });
             }
         }
+        self.complete = complete;
 
         urgent.sort_by(|a, b| a.0.total_cmp(&b.0));
         later.sort_by(|a, b| a.0.total_cmp(&b.0));
         let needs = urgent.into_iter().chain(later).map(|(_, n)| n).collect();
         self.evict(comp);
         (layers, needs)
+    }
+
+    /// Whether the last frame showed every visible page at full resolution
+    /// (no missing tiles, no placeholder thumbnails).
+    pub fn is_complete(&self) -> bool {
+        self.complete
     }
 
     fn touch(&mut self, key: TileKey) -> Option<(ImageId, u32)> {

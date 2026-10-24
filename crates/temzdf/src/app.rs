@@ -6,7 +6,8 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use termpix::compositor::Compositor;
+use termpix::compositor::{Backend, Compositor, Layer};
+use termpix::graphics::Medium;
 use termpix::input::Event;
 use termpix::tty::{self, Modes, TermEvent, Tty};
 
@@ -18,6 +19,8 @@ use crate::viewer::Need;
 use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd, SynctexCmd};
 
 const FRAME: Duration = Duration::from_millis(16);
+/// Longest wait for the visible pages before showing the first frame.
+const FIRST_FRAME_WAIT: Duration = Duration::from_millis(1500);
 /// Retry interval while the file is incomplete or fails to open.
 const RELOAD_RETRY: Duration = Duration::from_millis(300);
 /// Give up retrying after this many attempts (about 30 s); a new change event
@@ -109,46 +112,40 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     }
 
     let mut dirty = true;
-    let mut out = Vec::new();
-    let mut title = String::new();
-    let mut shown_cursor = None;
+    let mut screen = Screen { name: name.clone(), out: Vec::new(), title: String::new(), cursor: None };
     let mut shown_pointer = Pointer::Default;
+    let started = Instant::now();
+    let mut first_shown = false;
+    let mut last_present: Option<Instant> = None;
+    // Composited frames resend whole strips of the screen; multiplexers (zellij
+    // 0.45 forwards them uncompressed) and inline links pay for every one, so
+    // cap their rate. Layered frames are tiny placement updates.
+    let composited = matches!(comp.backend(), Backend::Composited { .. });
+    let slow_link = caps.in_zellij || caps.in_tmux || matches!(comp.encoder_mut().medium(), Medium::Direct { .. });
+    let min_interval = match (composited, slow_link) {
+        (false, _) => Duration::ZERO,
+        (true, false) => Duration::from_millis(33),
+        (true, true) => Duration::from_millis(200),
+    };
     loop {
         // On a slow link, wait until the terminal caught up with earlier frames;
         // the frame drawn afterwards shows the latest state anyway.
         let congested = dirty && comp.is_congested(Instant::now());
+        let mut held = false;
         if dirty && !congested {
             let (layers, needs) = session.frame(&mut comp);
             dispatch(&mut session, &doc, &pool, needs);
-            out.clear();
-            let t = format!("{name} — {}", session.page_text());
-            if t != title {
-                // Control characters would end the OSC early.
-                let clean: String = t.chars().filter(|c| !c.is_control()).collect();
-                out.extend_from_slice(format!("\x1b]2;{clean}\x1b\\").as_bytes());
-                title = t;
+            // Do not show half-rendered first frames (each costs a full upload in
+            // Composited mode), and respect the frame-rate cap.
+            let hold_first = !first_shown && !session.viewer.is_complete() && started.elapsed() < FIRST_FRAME_WAIT;
+            let too_soon = last_present.is_some_and(|t| t.elapsed() < min_interval);
+            held = hold_first || too_soon;
+            if !held {
+                screen.present(&session, &mut comp, &mut tty, &layers)?;
+                first_shown = true;
+                last_present = Some(Instant::now());
+                dirty = false;
             }
-            comp.present(&layers, &mut out)?;
-            // Show the text cursor only at an input caret (IME preedit follows it).
-            let cursor = session.cursor();
-            if cursor != shown_cursor {
-                match cursor {
-                    Some((col, row)) => {
-                        out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", row + 1, col + 1).as_bytes())
-                    }
-                    None => out.extend_from_slice(b"\x1b[?25l"),
-                }
-                shown_cursor = cursor;
-            } else if let Some((col, row)) = cursor
-                && !out.is_empty()
-            {
-                // Placing images moves the cursor; put it back.
-                out.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
-            }
-            if !out.is_empty() {
-                tty.write_all(&out)?;
-            }
-            dirty = false;
         }
         // Requests are dispatched every iteration: some (Ctrl+click inverse search)
         // do not change the screen, so they must not wait for a redraw.
@@ -172,9 +169,10 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         for due in [reload.due, session.next_deadline()].into_iter().flatten() {
             timeout = timeout.min(due.saturating_duration_since(Instant::now()));
         }
-        if congested {
-            // Re-check soon in case the acknowledgement never comes.
-            timeout = timeout.min(Duration::from_millis(50));
+        if congested || held {
+            // Re-check soon: the acknowledgement may never come, the frame-rate
+            // interval passes, or the first frame stops waiting.
+            timeout = timeout.min(Duration::from_millis(30));
         }
         let event = match rx.recv_timeout(timeout) {
             Ok(e) => Some(e),
@@ -311,6 +309,48 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         dirty |= session.next_deadline().is_some_and(|d| Instant::now() >= d);
     }
     Ok(())
+}
+
+/// What was last written to the terminal besides images.
+struct Screen {
+    name: String,
+    out: Vec<u8>,
+    title: String,
+    cursor: Option<(u16, u16)>,
+}
+
+impl Screen {
+    /// Write one frame: window title, the compositor's commands, and the text
+    /// cursor (shown only at an input caret, where IME preedit follows it).
+    fn present(&mut self, session: &Session, comp: &mut Compositor, tty: &mut Tty, layers: &[Layer]) -> Result<()> {
+        let out = &mut self.out;
+        out.clear();
+        let t = format!("{} — {}", self.name, session.page_text());
+        if t != self.title {
+            // Control characters would end the OSC early.
+            let clean: String = t.chars().filter(|c| !c.is_control()).collect();
+            out.extend_from_slice(format!("\x1b]2;{clean}\x1b\\").as_bytes());
+            self.title = t;
+        }
+        comp.present(layers, out)?;
+        let cursor = session.cursor();
+        if cursor != self.cursor {
+            match cursor {
+                Some((col, row)) => out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", row + 1, col + 1).as_bytes()),
+                None => out.extend_from_slice(b"\x1b[?25l"),
+            }
+            self.cursor = cursor;
+        } else if let Some((col, row)) = cursor
+            && !out.is_empty()
+        {
+            // Placing images moves the cursor; put it back.
+            out.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
+        }
+        if !out.is_empty() {
+            tty.write_all(out)?;
+        }
+        Ok(())
+    }
 }
 
 /// `$XDG_STATE_HOME/temzdf/temzdf.log` (falling back to `~/.local/state`).
