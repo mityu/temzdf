@@ -126,12 +126,21 @@ pub enum Delete {
 #[derive(Debug)]
 pub struct Encoder {
     medium: Medium,
+    zlib_level: u32,
     shm: ShmTracker,
 }
 
+/// Default zlib level for `o=z` payloads.
+///
+/// Level 2, not 1: zlib-rs level 1 ("deflate_quick") emits fixed-Huffman blocks,
+/// and Ghostty 1.3.1 crashes (SIGSEGV) inflating fixed-Huffman streams larger
+/// than 64 KiB. See doc/terminal-compat.md. Level 2 is about as fast and
+/// compresses better.
+pub const DEFAULT_ZLIB_LEVEL: u32 = 2;
+
 impl Encoder {
     pub fn new(medium: Medium) -> Self {
-        Self { medium, shm: ShmTracker::default() }
+        Self { medium, zlib_level: DEFAULT_ZLIB_LEVEL, shm: ShmTracker::default() }
     }
 
     pub fn medium(&self) -> Medium {
@@ -140,6 +149,16 @@ impl Encoder {
 
     pub fn set_medium(&mut self, medium: Medium) {
         self.medium = medium;
+    }
+
+    pub fn zlib_level(&self) -> u32 {
+        self.zlib_level
+    }
+
+    /// zlib level (0-9) for compressed direct transmissions. Level 1 crashes
+    /// Ghostty 1.3.1; see [`DEFAULT_ZLIB_LEVEL`].
+    pub fn set_zlib_level(&mut self, level: u32) {
+        self.zlib_level = level.min(9);
     }
 
     /// Transmit an image (`a=t`), or transmit and place it (`a=T`) when `place` is set.
@@ -162,7 +181,7 @@ impl Encoder {
             Medium::Direct { compress } => {
                 let payload = if compress {
                     keys.extend_from_slice(b",o=z");
-                    zlib(px.data)
+                    zlib(px.data, self.zlib_level)
                 } else {
                     px.data.to_vec()
                 };
@@ -272,11 +291,8 @@ fn write_chunked(out: &mut Vec<u8>, keys: &[u8], data: &[u8]) {
     }
 }
 
-fn zlib(data: &[u8]) -> Vec<u8> {
-    // Level 2, not 1: zlib-rs level 1 uses the "deflate_quick" strategy, and
-    // Ghostty 1.3.1 crashes (SIGSEGV) inflating its output. See
-    // doc/terminal-compat.md. Level 2 is about as fast and compresses better.
-    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(2));
+fn zlib(data: &[u8], level: u32) -> Vec<u8> {
+    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(level));
     enc.write_all(data).expect("writing to a Vec cannot fail");
     enc.finish().expect("writing to a Vec cannot fail")
 }
@@ -422,6 +438,31 @@ mod tests {
         let mut back = Vec::new();
         io::Read::read_to_end(&mut dec, &mut back).unwrap();
         assert_eq!(back, data);
+    }
+
+    #[test]
+    fn zlib_level_is_configurable() {
+        let data = vec![255u8; 129 * 128 * 4];
+        let px = Pixels { width: 129, height: 128, format: PixelFormat::Rgba, data: &data };
+        let mut payloads = Vec::new();
+        for level in [1, DEFAULT_ZLIB_LEVEL, 6] {
+            let mut enc = Encoder::new(Medium::Direct { compress: true });
+            enc.set_zlib_level(level);
+            assert_eq!(enc.zlib_level(), level);
+            let mut out = Vec::new();
+            enc.transmit(&mut out, 1, px, None).unwrap();
+            let text = s(&out);
+            let payload: String = text.split("\x1b\\").filter_map(|c| c.split_once(';')).map(|(_, p)| p).collect();
+            let compressed = B64.decode(payload).unwrap();
+            let mut back = Vec::new();
+            io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(&compressed[..]), &mut back).unwrap();
+            assert_eq!(back, data);
+            payloads.push(compressed);
+        }
+        // Level 1 is a different encoding (fixed-Huffman blocks: BTYPE=01 in the
+        // first deflate byte after the 2-byte zlib header).
+        assert_eq!((payloads[0][2] >> 1) & 3, 1);
+        assert_ne!((payloads[1][2] >> 1) & 3, 1);
     }
 
     #[test]

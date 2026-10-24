@@ -15,7 +15,13 @@ below them are deferred.
 
 ## Deferred
 
-- tmux support via Unicode placeholders (cell-granular scrolling only).
+- Multiplexers (do after the milestones): make the viewer work inside zellij and tmux.
+  In zellij nothing was displayed in a first manual test (inline transfer over SSH);
+  research is in progress, results go to `doc/terminal-compat.md`. tmux likely
+  needs Unicode placeholders (cell-granular scrolling only).
+- Expose the zlib level for inline images as a user option (CLI/config).
+  `termpix::graphics::Encoder::set_zlib_level` exists; default is level 2 because
+  level 1 crashes Ghostty 1.3.1.
 - macOS support (shm quirks, `select()` instead of `poll()` on `/dev/tty`).
 - GPU rasterisation experiment with `vello_gpu` (measure readback + transfer cost).
 - Two-page (spread) layout.
