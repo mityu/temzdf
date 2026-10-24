@@ -52,3 +52,11 @@ Known problems:
   one button event per step. Ghostty and Konsole behave similarly.
 - Shift+click bypasses application mouse reporting in most terminals.
 - tmux: 1016 passthrough unverified; fall back to cell coordinates.
+
+## Verified in practice
+
+- kitty 0.49.2 (Xvfb, `scripts/e2e-kitty.sh`): Layered backend; one tall image
+  uploaded once and re-placed with `x,y,w,h` crops scrolls pixel-exactly
+  (6 wheel steps = 360 px). SGR-pixel (1016) drag deltas are exact (100 px drag
+  = 100 px scroll). kitty logs "Pending mode change to already current mode (0)"
+  when we send `CSI ? 2026 l` on exit outside a synchronized update; harmless.

@@ -6,7 +6,7 @@ below them are deferred.
 ## Milestones
 
 - [x] M0: scaffolding (flake, workspace, docs, this file)
-- [ ] M1: `termpix` (tty, probe, input, graphics, compositor Layered/Composited, scroll, mock, `scroll_demo` example)
+- [x] M1: `termpix` (tty, probe, input, graphics, compositor Layered/Composited, scroll, mock, `scroll_demo` example)
 - [ ] M2: minimal viewer (open PDF, continuous layout, tile cache, smooth scroll, zoom, page navigation, status bar)
 - [ ] M3: `termpix-ui` and viewer features (outline sidebar, search, links + history, text selection + OSC 52 copy, config file)
 - [ ] M4: auto-reload (see `doc/reload.md`)

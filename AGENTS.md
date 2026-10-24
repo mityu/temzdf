@@ -39,6 +39,17 @@ nix develop -c cargo build --workspace
 
 Run `scripts/check.sh` before every commit; it enters the dev shell by itself.
 
+End-to-end checks in a real kitty (virtual X server, no display needed):
+
+```sh
+nix develop -c cargo build --example scroll_demo
+scripts/e2e-kitty.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
+```
+
+Action files in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
+screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. See the
+script header for the helpers.
+
 The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` is in it for scratch scripts). TeX (`latexmk`,
 `pdflatex`, `synctex`) comes from the host profile, not the flake.
 

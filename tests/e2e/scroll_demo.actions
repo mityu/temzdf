@@ -1,0 +1,9 @@
+# Used with: scripts/e2e-kitty.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
+# Expected: wheel6 shows the first band boundary 360 px from the top (6 steps x 60 px);
+# drag100 shows a further 100 px scroll.
+wheel 6
+pause 1
+shot wheel6
+drag 450 300 200
+pause 0.5
+shot drag100

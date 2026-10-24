@@ -153,6 +153,17 @@ impl Tty {
         Ok(tty)
     }
 
+    /// Turn SGR-pixel mouse coordinates (1016) on, typically after [`crate::probe`]
+    /// confirmed support. Restoration on exit is updated accordingly.
+    pub fn enable_pixel_mouse(&mut self) -> io::Result<()> {
+        if let Some(state) = RESTORE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            let mut reset = b"\x1b[?1016l".to_vec();
+            reset.extend_from_slice(&state.reset);
+            state.reset = reset;
+        }
+        self.write_all(b"\x1b[?1016h")
+    }
+
     pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.file.write_all(bytes)?;
         self.file.flush()
