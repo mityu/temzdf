@@ -96,3 +96,4 @@ The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` 
 - `doc/input.md`: mouse/keyboard reporting modes and smooth scrolling.
 - `doc/reload.md`: auto-reload design (learned from Skim and Okular).
 - `doc/testing.md`: how to verify changes without a human.
+- `doc/config.md`: the configuration file format (keep in sync with `crates/temzdf/src/config.rs`).

@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod headless;
 mod layout;
 mod outline;
@@ -36,6 +37,9 @@ struct Cli {
     /// Zoom in pixels per PDF point (default: fit width).
     #[arg(long)]
     scale: Option<f32>,
+    /// Configuration file (default: $XDG_CONFIG_HOME/temzdf/config.toml).
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
     /// For --render-frame: keys to press first, e.g. "Tab j Enter" (see headless.rs).
     #[arg(long, value_name = "KEYS")]
     keys: Option<String>,
@@ -56,5 +60,6 @@ fn main() -> Result<()> {
         let opts = headless::FrameOptions { geometry, page, scale: cli.scale, keys: cli.keys.clone() };
         return headless::render_frame(&cli.file, out, &opts);
     }
-    app::run(&cli.file, app::Options { page, scale: cli.scale })
+    let config = config::Config::load(cli.config.as_deref())?;
+    app::run(&cli.file, app::Options { page, scale: cli.scale, config })
 }

@@ -10,6 +10,7 @@ use termpix::compositor::Compositor;
 use termpix::input::Event;
 use termpix::tty::{self, Modes, TermEvent, Tty};
 
+use crate::config::Config;
 use crate::session::{Action, Pointer, Request, Session};
 use crate::viewer::Need;
 use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd};
@@ -20,6 +21,7 @@ pub struct Options {
     /// 0-based page to show first.
     pub page: Option<usize>,
     pub scale: Option<f32>,
+    pub config: Config,
 }
 
 pub fn run(path: &Path, opts: Options) -> Result<()> {
@@ -32,7 +34,11 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
     if caps.pixel_mouse {
         tty.enable_pixel_mouse()?;
     }
-    let mut comp = Compositor::new(caps.backend(), caps.medium(), caps.geometry);
+    let term = &opts.config.terminal;
+    let backend = term.backend(caps.backend(), caps.has_backend_override());
+    let medium = term.medium(caps.medium(), caps.has_medium_override());
+    let mut comp = Compositor::new(backend, medium, caps.geometry);
+    comp.encoder_mut().set_zlib_level(term.zlib_level);
 
     let (tx, rx) = mpsc::channel::<AppEvent>();
     tty::spawn_input(tty.reader()?, caps.pixel_mouse, tx.clone(), AppEvent::Term)?;
@@ -59,6 +65,9 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
     }
     let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
     let mut session = Session::new(name.clone(), info, caps.geometry);
+    session.viewer.scroll_x.config = opts.config.scroll.to_termpix();
+    session.viewer.scroll_y.config = opts.config.scroll.to_termpix();
+    let open_command = opts.config.links.command();
     if let Some(scale) = opts.scale {
         session.viewer.set_scale(scale, (0.0, 0.0));
     }
@@ -108,7 +117,7 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
                     Request::Search { generation, query, start_page } => {
                         let _ = search.send(SearchCmd { generation, query, start_page });
                     }
-                    Request::OpenUri(uri) => open_uri(&uri),
+                    Request::OpenUri(uri) => open_uri(&open_command, &uri),
                     Request::Copy(text) => {
                         use base64::Engine;
                         let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
@@ -192,10 +201,11 @@ pub fn run(path: &Path, opts: Options) -> Result<()> {
     Ok(())
 }
 
-/// Open a URI with the desktop's handler, detached from the terminal.
-fn open_uri(uri: &str) {
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-    let _ = std::process::Command::new(opener)
+/// Open a URI with the configured handler, detached from the terminal.
+fn open_uri(command: &[String], uri: &str) {
+    let Some((program, args)) = command.split_first() else { return };
+    let _ = std::process::Command::new(program)
+        .args(args)
         .arg(uri)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

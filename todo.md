@@ -8,7 +8,7 @@ below them are deferred.
 - [x] M0: scaffolding (flake, workspace, docs, this file)
 - [x] M1: `termpix` (tty, probe, input, graphics, compositor Layered/Composited, scroll, mock, `scroll_demo` example)
 - [x] M2: minimal viewer (open PDF, continuous layout, tile cache, smooth scroll, zoom, page navigation); the window title stands in for the status bar
-- [ ] M3: `termpix-ui` and viewer features (status bar, outline sidebar, search, links + history, text selection + OSC 52 copy, config file)
+- [x] M3: `termpix-ui` and viewer features (status bar, outline sidebar, search, links + history, text selection + OSC 52 copy, config file)
 - [ ] M4: auto-reload (see `doc/reload.md`)
 - [ ] M5: SyncTeX (vendored parser, IPC socket, forward/inverse search, `reload.anchor = "synctex"`)
 - [ ] M6: compatibility (Composited backend on WezTerm and zellij, terminal detection table modelled on yazi)
@@ -21,9 +21,10 @@ below them are deferred.
   multiplexer profile (cell mouse, fewer keyboard flags, `t=d` only, feature
   probes), Composited for zellij 0.45.1, Unicode placeholders via passthrough for
   released tmux.
-- Expose the zlib level for inline images as a user option (CLI/config).
-  `termpix::graphics::Encoder::set_zlib_level` exists; default is level 2 because
-  level 1 crashes Ghostty 1.3.1.
+- Configurable key bindings (the config file has no `[keys]` section yet).
+- Auto-scroll while drag-selecting past the top or bottom edge.
+- Verify IME preedit placement in the search prompt on kitty and Ghostty (the
+  terminal cursor is shown at the caret while the prompt is open).
 - macOS support (shm quirks, `select()` instead of `poll()` on `/dev/tty`).
 - GPU rasterisation experiment with `vello_gpu` (measure readback + transfer cost).
 - Two-page (spread) layout.

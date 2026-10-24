@@ -115,6 +115,16 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    /// Whether `TERMPIX_BACKEND` forced the backend.
+    pub fn has_backend_override(&self) -> bool {
+        self.backend_override.is_some()
+    }
+
+    /// Whether `TERMPIX_MEDIUM` forced the medium.
+    pub fn has_medium_override(&self) -> bool {
+        self.medium_override.is_some()
+    }
+
     /// Compositing backend to use.
     pub fn backend(&self) -> Backend {
         if let Some(b) = self.backend_override {
