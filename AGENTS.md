@@ -72,6 +72,10 @@ dev shell leaves out large tools that are usually installed globally: TeX
 (`latexmk`, `pdflatex`, `synctex`, needed for the fixtures) and the extra
 terminals/multiplexers for e2e (Ghostty, WezTerm, zellij). On this machine they
 come from the host profile. `nix develop .#alldeps` provides all of them.
+`nix develop .#ci` is the minimal shell CI uses (toolchain, TeX, DejaVu fonts
+only); `nix build` builds the `temzdf` package (`nix run . -- FILE` runs it).
+CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
+`nix build` on Linux and macOS.
 
 ## Conventions
 

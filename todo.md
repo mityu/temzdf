@@ -29,7 +29,6 @@ below them are deferred.
 - Markdown viewer reusing `termpix` (webview rendered offscreen).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
-- CI: GitHub Actions running `cargo test` and `cargo clippy`.
 - Decide how to judge e2e scenarios automatically (later, once behaviour settles;
   today Claude reads the screenshots). Avoid committing many reference images.
   Candidates: pixel probes at known coordinates (e.g. a band edge moved 360 px),
@@ -47,4 +46,5 @@ below them are deferred.
   1. Suspend the UI, run `$EDITOR` full screen, resume on exit.
   2. Later: split the screen and embed the editor (terminal emulation with e.g. `alacritty_terminal`).
   Short inputs (search, page number, commands) use the built-in one-line input.
-- Make `nix build` build temzdf (a package output in flake.nix: crane or rustPlatform, with the vendored SyncTeX/MuPDF C builds).
+- CI has not run on GitHub yet (written and linted locally); check the first run,
+  especially the macOS `nix build` job.
