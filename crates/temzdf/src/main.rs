@@ -1,6 +1,7 @@
 mod app;
 mod headless;
 mod layout;
+mod outline;
 mod pdf;
 mod session;
 mod viewer;
@@ -33,6 +34,9 @@ struct Cli {
     /// Zoom in pixels per PDF point (default: fit width).
     #[arg(long)]
     scale: Option<f32>,
+    /// For --render-frame: keys to press first, e.g. "Tab j Enter" (see headless.rs).
+    #[arg(long, value_name = "KEYS")]
+    keys: Option<String>,
 }
 
 fn parse_pair(s: &str) -> Result<(u32, u32)> {
@@ -47,7 +51,7 @@ fn main() -> Result<()> {
         let (cols, rows) = parse_pair(&cli.size)?;
         let (cw, ch) = parse_pair(&cli.cell)?;
         let geometry = Geometry { cols: cols as u16, rows: rows as u16, cell: CellSize { width: cw, height: ch } };
-        let opts = headless::FrameOptions { geometry, page, scale: cli.scale };
+        let opts = headless::FrameOptions { geometry, page, scale: cli.scale, keys: cli.keys.clone() };
         return headless::render_frame(&cli.file, out, &opts);
     }
     app::run(&cli.file, app::Options { page, scale: cli.scale })

@@ -11,8 +11,9 @@ use termpix::geom::{Geometry, Rect};
 use termpix::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
 };
-use termpix_ui::{StatusBar, Text, Theme};
+use termpix_ui::{ListView, StatusBar, Text, Theme};
 
+use crate::outline::{self, OutlinePanel};
 use crate::pdf::DocInfo;
 use crate::viewer::{LAYER_KEYS_END, Need, Viewer};
 
@@ -20,6 +21,7 @@ pub const ZOOM_STEP: f32 = 1.1;
 /// UI layers sit above page tiles but, like them, below terminal text.
 const Z_UI: i32 = -1_073_741_800;
 const KEY_STATUS: u32 = LAYER_KEYS_END;
+const KEY_SIDEBAR: u32 = LAYER_KEYS_END + 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -32,6 +34,7 @@ pub enum Action {
 #[derive(Clone, Debug, PartialEq)]
 enum WidgetState {
     Status(StatusBar),
+    List(ListView, u32),
 }
 
 struct WidgetImage {
@@ -50,6 +53,8 @@ pub struct Session {
     widgets: HashMap<u32, WidgetImage>,
     /// Error or notice shown in the status bar until the next key press.
     pub message: Option<String>,
+    outline: OutlinePanel,
+    sidebar_open: bool,
     // Input state
     count: Option<usize>,
     pointer: (f32, f32),
@@ -59,7 +64,10 @@ pub struct Session {
 impl Session {
     pub fn new(name: String, info: DocInfo, geometry: Geometry) -> Self {
         let (w, h) = page_area(geometry);
+        let outline = OutlinePanel::new(&info.outline, &info.labels);
         Self {
+            outline,
+            sidebar_open: false,
             viewer: Viewer::new(info.bounds.clone(), w, h),
             info,
             name,
@@ -80,12 +88,136 @@ impl Session {
 
     pub fn resize(&mut self, geometry: Geometry) {
         self.geometry = geometry;
-        let (w, h) = page_area(geometry);
-        self.viewer.resize(w, h);
+        self.apply_area();
+    }
+
+    /// Fit the page area to the screen, right of the sidebar when it is open.
+    fn apply_area(&mut self) {
+        let (w, h) = page_area(self.geometry);
+        let side = if self.sidebar_open { self.sidebar_width() } else { 0 };
+        self.viewer.set_area(side as i32, w.saturating_sub(side).max(1), h);
     }
 
     fn bar_height(&self) -> u32 {
         self.geometry.cell.height
+    }
+
+    fn row_height(&self) -> u32 {
+        (self.geometry.cell.height as f32 * 1.3).round() as u32
+    }
+
+    fn sidebar_width(&self) -> u32 {
+        let w = self.geometry.width_px();
+        (w as f32 * 0.3).clamp(180.0_f32.min(w as f32 / 2.0), 420.0) as u32
+    }
+
+    /// Where the outline sidebar is drawn when open: the left side, with the
+    /// page area pushed to its right.
+    fn sidebar_rect(&self) -> Rect {
+        Rect::new(0, 0, self.sidebar_width(), self.viewer.view.screen_h as u32)
+    }
+
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar_open = !self.sidebar_open;
+        self.apply_area();
+        if self.sidebar_open {
+            self.outline.select_position(&self.info.outline, self.viewer.top_position());
+            let r = self.sidebar_rect();
+            let rh = self.row_height();
+            self.outline.list.reveal_selected(r.h, rh);
+        }
+    }
+
+    /// Jump to the selected outline entry.
+    fn open_selected_entry(&mut self, now: Instant) {
+        if let Some(t) = self.outline.selected_entry().and_then(|i| self.info.outline[i].target) {
+            self.viewer.goto(t, true, now);
+        }
+    }
+
+    fn sidebar_key(&mut self, k: &KeyEvent, now: Instant) -> Option<Action> {
+        let entries = &self.info.outline;
+        let labels = &self.info.labels;
+        let r = self.sidebar_rect();
+        let rh = self.row_height();
+        let p = &mut self.outline;
+        match k.code {
+            KeyCode::Tab | KeyCode::Escape => {
+                self.toggle_sidebar();
+                return Some(Action::Redraw);
+            }
+            KeyCode::Char('j') | KeyCode::Down => p.move_selection(1),
+            KeyCode::Char('k') | KeyCode::Up => p.move_selection(-1),
+            KeyCode::Char('g') | KeyCode::Home => p.select_first(),
+            KeyCode::Char('G') | KeyCode::End => p.select_last(),
+            KeyCode::PageDown => p.move_selection(p.list.visible_rows(r.h, rh) as isize),
+            KeyCode::PageUp => p.move_selection(-(p.list.visible_rows(r.h, rh) as isize)),
+            KeyCode::Char('l') | KeyCode::Right => {
+                if let Some(i) = p.selected_entry() {
+                    p.set_expanded(entries, labels, i, true);
+                }
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                if let Some(i) = p.selected_entry() {
+                    if p.is_expanded(i) && entries[i].descendants > 0 {
+                        p.set_expanded(entries, labels, i, false);
+                    } else if let Some(parent) = outline::parent(entries, i) {
+                        let row = p.list.items.len();
+                        p.move_selection(-(row as isize));
+                        while p.selected_entry() != Some(parent) && p.list.selected < Some(row) {
+                            p.move_selection(1);
+                        }
+                    }
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                self.open_selected_entry(now);
+                return Some(Action::Redraw);
+            }
+            KeyCode::Char('q') => return Some(Action::Quit),
+            _ => return None,
+        }
+        self.outline.list.reveal_selected(r.h, rh);
+        Some(Action::Redraw)
+    }
+
+    /// Mouse over the open sidebar. Returns true when it needs redrawing.
+    fn sidebar_mouse(&mut self, m: &MouseEvent, now: Instant) -> Option<bool> {
+        let r = self.sidebar_rect();
+        let (x, y) = self.pointer;
+        let rh = self.row_height();
+        let row = self.outline.list.hit(y - r.y as f32, rh);
+        Some(match m.kind {
+            MouseEventKind::Move => {
+                let changed = self.outline.list.hover != row;
+                self.outline.list.hover = row;
+                changed
+            }
+            MouseEventKind::Scroll(ScrollDirection::Down) => {
+                self.outline.list.scroll_by(3, r.h, rh);
+                true
+            }
+            MouseEventKind::Scroll(ScrollDirection::Up) => {
+                self.outline.list.scroll_by(-3, r.h, rh);
+                true
+            }
+            MouseEventKind::Press(MouseButton::Left) => {
+                let Some(row) = row else { return Some(false) };
+                let Some(i) = self.outline.entry_at_row(row) else { return Some(false) };
+                let e = &self.info.outline[i];
+                // Clicking the arrow toggles; clicking the title jumps.
+                let arrow_end = r.x as f32 + rh as f32 * (0.5 + e.depth as f32 * 0.9 + 0.9);
+                if e.descendants > 0 && x < arrow_end {
+                    let open = !self.outline.is_expanded(i);
+                    self.outline.set_expanded(&self.info.outline, &self.info.labels, i, open);
+                } else {
+                    self.outline.list.selected = Some(row);
+                    self.open_selected_entry(now);
+                }
+                true
+            }
+            _ => false,
+        })
     }
 
     /// Current page as "label (n/N)".
@@ -109,6 +241,11 @@ impl Session {
         let (w, h) = (self.geometry.width_px(), self.bar_height());
         let y = self.geometry.height_px().saturating_sub(h) as i32;
         layers.push(self.widget(comp, KEY_STATUS, WidgetState::Status(status), Rect::new(0, y, w, h)));
+        if self.sidebar_open {
+            let r = self.sidebar_rect();
+            let state = WidgetState::List(self.outline.list.clone(), self.row_height());
+            layers.push(self.widget(comp, KEY_SIDEBAR, state, r));
+        }
         (layers, needs)
     }
 
@@ -118,6 +255,7 @@ impl Session {
         if !fresh {
             let px = match &state {
                 WidgetState::Status(s) => s.render(&mut self.text, &self.theme, rect.w, rect.h),
+                WidgetState::List(l, rh) => l.render(&mut self.text, &self.theme, rect.w, rect.h, *rh),
             };
             let image = match self.widgets.get(&key) {
                 Some(w) => {
@@ -137,6 +275,15 @@ impl Session {
             return Action::None;
         }
         self.message = None;
+        if self.sidebar_open
+            && let Some(action) = self.sidebar_key(k, now)
+        {
+            return action;
+        }
+        if k.code == KeyCode::Tab {
+            self.toggle_sidebar();
+            return Action::Redraw;
+        }
         let v = &mut self.viewer;
         let mods = k.modifiers.without_locks();
         let ctrl = mods.contains(Modifiers::CTRL);
@@ -181,7 +328,20 @@ impl Session {
             CoordUnit::Cell => (c as f32 + 0.5) * size as f32,
         };
         self.pointer = (to_px(m.x, cell.width), to_px(m.y, cell.height));
+        let (x, y) = self.pointer;
+        let over_sidebar = self.sidebar_open && self.drag.is_none() && self.sidebar_rect().contains(x as i32, y as i32);
+        if over_sidebar {
+            return self.sidebar_mouse(m, now).unwrap_or(false);
+        }
+        // Leaving the sidebar clears its hover highlight.
+        let hover_cleared = self.outline.list.hover.take().is_some();
+        self.page_mouse(m, now) || hover_cleared
+    }
+
+    fn page_mouse(&mut self, m: &MouseEvent, now: Instant) -> bool {
         let v = &mut self.viewer;
+        // Pointer in page-area coordinates.
+        let pointer = (self.pointer.0 - v.origin_x() as f32, self.pointer.1);
         let mods = m.modifiers;
         match m.kind {
             MouseEventKind::Scroll(dir) if mods.contains(Modifiers::CTRL) => {
@@ -190,7 +350,7 @@ impl Session {
                     ScrollDirection::Down => 1.0 / ZOOM_STEP,
                     _ => return false,
                 };
-                v.zoom(f, self.pointer);
+                v.zoom(f, pointer);
             }
             MouseEventKind::Scroll(dir) => {
                 let shift = mods.contains(Modifiers::SHIFT);

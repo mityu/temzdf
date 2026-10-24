@@ -4,12 +4,13 @@
 //! the image is what a kitty-compatible terminal would show.
 
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use termpix::compositor::{Backend, Compositor};
 use termpix::geom::Geometry;
 use termpix::graphics::Medium;
+use termpix::input::{KeyCode, KeyEvent, Modifiers};
 use termpix::mock::MockTerminal;
 
 use crate::pdf;
@@ -22,6 +23,55 @@ pub struct FrameOptions {
     pub page: Option<usize>,
     /// Zoom (pixels per point); fit width when `None`.
     pub scale: Option<f32>,
+    /// Keys to press before rendering, space separated (see [`parse_keys`]).
+    pub keys: Option<String>,
+}
+
+/// Parse a key list like `"Tab j j Enter C-f 3 G"`: single characters, names
+/// (Tab, Enter, Esc, Up, Down, Left, Right, PageUp, PageDown, Home, End,
+/// Backspace, Space) and `C-` (Ctrl) / `M-` (Alt) prefixes.
+pub fn parse_keys(spec: &str) -> Result<Vec<KeyEvent>> {
+    spec.split_whitespace()
+        .map(|tok| {
+            let mut mods = Modifiers::NONE;
+            let mut rest = tok;
+            loop {
+                if let Some(r) = rest.strip_prefix("C-") {
+                    mods |= Modifiers::CTRL;
+                    rest = r;
+                } else if let Some(r) = rest.strip_prefix("M-") {
+                    mods |= Modifiers::ALT;
+                    rest = r;
+                } else {
+                    break;
+                }
+            }
+            let code = match rest {
+                "Tab" => KeyCode::Tab,
+                "Enter" => KeyCode::Enter,
+                "Esc" => KeyCode::Escape,
+                "Up" => KeyCode::Up,
+                "Down" => KeyCode::Down,
+                "Left" => KeyCode::Left,
+                "Right" => KeyCode::Right,
+                "PageUp" => KeyCode::PageUp,
+                "PageDown" => KeyCode::PageDown,
+                "Home" => KeyCode::Home,
+                "End" => KeyCode::End,
+                "Backspace" => KeyCode::Backspace,
+                "Space" => KeyCode::Char(' '),
+                s if s.chars().count() == 1 => KeyCode::Char(s.chars().next().unwrap_or(' ')),
+                other => bail!("unknown key {other:?}"),
+            };
+            let mut ev = KeyEvent::new(code, mods);
+            if let KeyCode::Char(c) = code
+                && !mods.contains(Modifiers::CTRL)
+            {
+                ev.text = Some(c.to_string());
+            }
+            Ok(ev)
+        })
+        .collect()
 }
 
 pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<()> {
@@ -35,6 +85,18 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     }
     if let Some(page) = opts.page {
         session.viewer.goto_page(page, false, Instant::now());
+    }
+    // Simulated clock, so animations started by keys settle deterministically.
+    let mut now = Instant::now();
+    for key in parse_keys(opts.keys.as_deref().unwrap_or(""))? {
+        session.key(&key, now);
+        for _ in 0..200 {
+            if !session.viewer.is_animating() {
+                break;
+            }
+            now += Duration::from_millis(16);
+            session.viewer.tick(now);
+        }
     }
     loop {
         let (layers, needs) = session.frame(&mut comp);

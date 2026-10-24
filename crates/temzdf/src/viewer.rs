@@ -14,7 +14,7 @@ use termpix::geom::Rect;
 use termpix::scroll::KineticScroll;
 
 use crate::layout::{Layout, View};
-use crate::pdf::{PageBounds, PixelRect};
+use crate::pdf::{PageBounds, PixelRect, Target};
 
 /// Tile edge in pixels.
 pub const TILE: u32 = 512;
@@ -102,6 +102,10 @@ pub struct Viewer {
     frame_no: u64,
     next_layer: u32,
     background: Option<ImageId>,
+    /// Left edge of the page area on screen (pixels), e.g. right of a sidebar.
+    origin_x: i32,
+    /// Keep the zoom at fit-width when the page area changes.
+    fit_mode: bool,
 }
 
 impl Viewer {
@@ -131,6 +135,8 @@ impl Viewer {
             frame_no: 0,
             next_layer: LAYER_BACKGROUND + 1,
             background: None,
+            origin_x: 0,
+            fit_mode: true,
         };
         v.update_scroll_bounds();
         v
@@ -178,14 +184,32 @@ impl Viewer {
 
     /// Scroll so the top of `page` (0-based) is at the top of the screen.
     pub fn goto_page(&mut self, page: usize, animate: bool, now: Instant) {
-        let Some(b) = self.layout.pages.get(page.min(self.page_count().saturating_sub(1))) else { return };
-        let target = (b.y - crate::layout::GAP_PT) * self.view.scale;
+        self.goto(Target { page, y: None }, animate, now);
+    }
+
+    /// Scroll to a target: the page top, or a position inside the page (placed a
+    /// little below the top of the screen so the context above stays visible).
+    pub fn goto(&mut self, target: Target, animate: bool, now: Instant) {
+        let Some(b) = self.layout.pages.get(target.page.min(self.page_count().saturating_sub(1))) else { return };
+        let y_pt = match target.y {
+            Some(y) => b.y + y.clamp(0.0, b.h) - 4.0 * crate::layout::GAP_PT,
+            None => b.y - crate::layout::GAP_PT,
+        };
+        let px = (y_pt * self.view.scale) as f64;
         if animate {
-            self.scroll_y.scroll_by(target as f64 - self.scroll_y.target(), now);
+            self.scroll_y.scroll_by(px - self.scroll_y.target(), now);
         } else {
-            self.scroll_y.jump_to(target as f64);
+            self.scroll_y.jump_to(px);
             self.sync_view();
         }
+    }
+
+    /// The page and page-space y at the top of the screen.
+    pub fn top_position(&self) -> Target {
+        let (_, y) = self.view.screen_to_doc(&self.layout, 0.0, 0.0);
+        let page = self.layout.page_at(y);
+        let b = self.layout.pages[page];
+        Target { page, y: Some((y - b.y).clamp(0.0, b.h)) }
     }
 
     /// Multiply the zoom by `factor`, keeping the screen point `anchor` fixed.
@@ -193,7 +217,13 @@ impl Viewer {
         self.set_scale(self.view.scale * factor, anchor);
     }
 
+    /// Set an explicit zoom; this leaves fit-width mode.
     pub fn set_scale(&mut self, scale: f32, anchor: (f32, f32)) {
+        self.fit_mode = false;
+        self.apply_scale(scale, anchor);
+    }
+
+    fn apply_scale(&mut self, scale: f32, anchor: (f32, f32)) {
         // Settle any animation first so the anchor maths uses the displayed position.
         self.jump_to(self.view.scroll_x, self.view.scroll_y);
         self.view.zoom_at(&self.layout, scale.clamp(MIN_SCALE, MAX_SCALE), anchor.0, anchor.1);
@@ -201,12 +231,26 @@ impl Viewer {
         self.jump_to(self.view.scroll_x, self.view.scroll_y);
     }
 
+    /// Zoom so the widest page fills the page area, and keep doing so when the
+    /// area changes size, until the zoom is set explicitly.
     pub fn fit_width(&mut self) {
+        self.fit_mode = true;
         let scale = View::fit_width_scale(&self.layout, self.view.screen_w);
-        self.set_scale(scale, (self.view.screen_w / 2.0, 0.0));
+        self.apply_scale(scale, (self.view.screen_w / 2.0, 0.0));
     }
 
-    /// The page area was resized: keep the doc point at the top-left in place.
+    /// Place the page area at `x` with the given size (see [`Viewer::resize`]).
+    pub fn set_area(&mut self, x: i32, width: u32, height: u32) {
+        self.origin_x = x;
+        self.resize(width, height);
+    }
+
+    pub fn origin_x(&self) -> i32 {
+        self.origin_x
+    }
+
+    /// The page area was resized: keep the doc point at the top-left in place
+    /// (and re-fit the width in fit-width mode).
     pub fn resize(&mut self, width: u32, height: u32) {
         let (dx, dy) = self.view.screen_to_doc(&self.layout, 0.0, 0.0);
         self.view.screen_w = width as f32;
@@ -217,6 +261,10 @@ impl Viewer {
         self.view.clamp(&self.layout);
         self.update_scroll_bounds();
         self.jump_to(self.view.scroll_x, self.view.scroll_y);
+        if self.fit_mode {
+            let scale = View::fit_width_scale(&self.layout, self.view.screen_w);
+            self.apply_scale(scale, (0.0, 0.0));
+        }
     }
 
     pub fn page_loaded(&mut self, page: usize, list: Arc<DisplayList>) {
@@ -266,7 +314,8 @@ impl Viewer {
         self.frame_no += 1;
         self.sync_view();
         let view = self.view;
-        let screen = Rect::new(0, 0, view.screen_w as u32, view.screen_h as u32);
+        let ox = self.origin_x;
+        let screen = Rect::new(ox, 0, view.screen_w as u32, view.screen_h as u32);
         let mut layers = Vec::new();
 
         let bg = *self.background.get_or_insert_with(|| comp.add_image(1, 1, BACKGROUND.to_vec()));
@@ -302,7 +351,7 @@ impl Viewer {
             let bounds = self.bounds[page];
             let pb = self.layout.pages[page];
             let (sx, sy) = view.doc_to_screen(&self.layout, pb.x, pb.y);
-            let (sx, sy) = (sx.round() as i32, sy.round() as i32);
+            let (sx, sy) = (sx.round() as i32 + ox, sy.round() as i32);
             let (pw, ph) = bounds.pixel_size(scale);
             let page_rect = Rect::new(sx, sy, pw, ph);
 
