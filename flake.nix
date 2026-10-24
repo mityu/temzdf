@@ -76,6 +76,7 @@
                     ghostty
                     wezterm
                     zellij
+                    tmux
                   ]
                 );
             }
