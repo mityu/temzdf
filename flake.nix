@@ -33,6 +33,8 @@
                 pkg-config
                 clang
                 fontconfig
+                # Scratch scripts during development (not needed by the build).
+                python3
               ]
               ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
                 # End-to-end testing: run kitty on a virtual X server and drive it.

@@ -39,7 +39,7 @@ nix develop -c cargo build --workspace
 
 Run `scripts/check.sh` before every commit; it enters the dev shell by itself.
 
-The host has no `rustc` on `PATH` outside the dev shell. TeX (`latexmk`,
+The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` is in it for scratch scripts). TeX (`latexmk`,
 `pdflatex`, `synctex`) comes from the host profile, not the flake.
 
 ## Conventions
