@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod headless;
 mod ipc;
+mod keys;
 mod layout;
 mod outline;
 mod pdf;

@@ -13,6 +13,7 @@ use termpix::input::{
 };
 use termpix_ui::{Canvas, Color, EditResult, LineInput, ListView, StatusBar, Text, Theme};
 
+use crate::keys::{Command, Key, Keymap};
 use crate::outline::{self, OutlinePanel};
 use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, Target};
 use crate::search::SearchState;
@@ -141,6 +142,8 @@ pub struct Session {
     autoscroll_at: Option<Instant>,
     /// `[reload] anchor = "text"`: keep the line being read in place on reload.
     pub anchor_by_text: bool,
+    /// Page-view key bindings (`[keys]` in the config).
+    pub keymap: Keymap,
     /// A line from before the last reload, still to be found in the new text.
     text_anchor: Option<TextAnchor>,
     /// Search hit to re-select once a re-run search (after reload) reaches it.
@@ -184,6 +187,7 @@ impl Session {
             autoscroll: 0.0,
             autoscroll_at: None,
             anchor_by_text: false,
+            keymap: Keymap::default(),
             text_anchor: None,
             restore_hit: None,
             reloading: false,
@@ -927,59 +931,59 @@ impl Session {
         {
             return action;
         }
-        if k.code == KeyCode::Tab {
-            self.toggle_sidebar();
-            return Action::Redraw;
+        let count = self.count.take();
+        // Digits are counts (`3G`); 0 only after another digit (alone it is a key).
+        if let KeyCode::Char(c @ '0'..='9') = k.code
+            && Key::of(k).mods.is_empty()
+            && (c != '0' || count.is_some())
+        {
+            self.count = Some(count.unwrap_or(0).saturating_mul(10).saturating_add(c as usize - '0' as usize));
+            return Action::None;
         }
+        let Some(cmd) = self.keymap.get(k) else { return Action::None };
+        self.command(cmd, count, now)
+    }
+
+    /// Run a page-view command (see `keys::Command`), with an optional count.
+    fn command(&mut self, cmd: Command, count: Option<usize>, now: Instant) -> Action {
         let v = &mut self.viewer;
-        let mods = k.modifiers.without_locks();
-        let ctrl = mods.contains(Modifiers::CTRL);
         let page = v.view.screen_h as f64 * 0.9;
         let half = v.view.screen_h as f64 * 0.5;
-        let count = self.count.take();
         let centre = (v.view.screen_w / 2.0, v.view.screen_h / 2.0);
-        match k.code {
-            KeyCode::Char(c @ '0'..='9') if !ctrl && (c != '0' || count.is_some()) => {
-                self.count = Some(count.unwrap_or(0).saturating_mul(10).saturating_add(c as usize - '0' as usize));
-                return Action::None;
-            }
-            KeyCode::Escape if self.selection.is_some() => self.selection = None,
-            KeyCode::Escape if self.search.is_active() => self.search.clear(),
-            KeyCode::Char('y') => self.copy_selection(),
-            KeyCode::Char('q') | KeyCode::Escape => return Action::Quit,
-            KeyCode::Char('c') if ctrl => return Action::Quit,
-            KeyCode::Char('j') | KeyCode::Down => wheel_n(v, 1.0, count, now),
-            KeyCode::Char('k') | KeyCode::Up => wheel_n(v, -1.0, count, now),
-            KeyCode::Left if k.modifiers.contains(Modifiers::ALT) => self.history(true, now),
-            KeyCode::Right if k.modifiers.contains(Modifiers::ALT) => self.history(false, now),
-            KeyCode::Char('l') | KeyCode::Right => v.scroll_x.wheel(1.0, now),
-            KeyCode::Char('h') | KeyCode::Left => v.scroll_x.wheel(-1.0, now),
-            KeyCode::Char(' ') | KeyCode::PageDown => v.scroll_y.scroll_by(page, now),
-            KeyCode::Char('f') if ctrl => v.scroll_y.scroll_by(page, now),
-            KeyCode::Char('b') | KeyCode::PageUp => v.scroll_y.scroll_by(-page, now),
-            KeyCode::Char('d') => v.scroll_y.scroll_by(half, now),
-            KeyCode::Char('u') => v.scroll_y.scroll_by(-half, now),
-            KeyCode::Char('g') | KeyCode::Home => {
+        match cmd {
+            Command::Quit => return Action::Quit,
+            Command::Cancel if self.selection.is_some() => self.selection = None,
+            Command::Cancel if self.search.is_active() => self.search.clear(),
+            Command::Cancel => return Action::Quit,
+            Command::Copy => self.copy_selection(),
+            Command::ToggleSidebar => self.toggle_sidebar(),
+            Command::ScrollDown => wheel_n(v, 1.0, count, now),
+            Command::ScrollUp => wheel_n(v, -1.0, count, now),
+            Command::ScrollRight => v.scroll_x.wheel(1.0, now),
+            Command::ScrollLeft => v.scroll_x.wheel(-1.0, now),
+            Command::PageDown => v.scroll_y.scroll_by(page, now),
+            Command::PageUp => v.scroll_y.scroll_by(-page, now),
+            Command::HalfPageDown => v.scroll_y.scroll_by(half, now),
+            Command::HalfPageUp => v.scroll_y.scroll_by(-half, now),
+            Command::FirstPage => {
                 self.push_history();
                 self.viewer.goto_page(count.map_or(0, |c| c.saturating_sub(1)), true, now);
             }
-            KeyCode::Char('G') | KeyCode::End => {
+            Command::LastPage => {
                 self.push_history();
                 match count {
                     Some(c) => self.viewer.goto_page(c.saturating_sub(1), true, now),
                     None => self.viewer.scroll_y.scroll_by(f64::INFINITY, now),
                 }
             }
-            // Backspace too: multiplexers (zellij) take Ctrl-o and Alt+arrows.
-            KeyCode::Char('o') if ctrl => self.history(true, now),
-            KeyCode::Backspace => self.history(true, now),
-            KeyCode::Char('+' | '=') => v.zoom(ZOOM_STEP, centre),
-            KeyCode::Char('-') => v.zoom(1.0 / ZOOM_STEP, centre),
-            KeyCode::Char('0') | KeyCode::Char('w') => v.fit_width(),
-            KeyCode::Char('/') => self.open_search(),
-            KeyCode::Char('n') => self.step_search(true, now),
-            KeyCode::Char('N') => self.step_search(false, now),
-            _ => return Action::None,
+            Command::Back => self.history(true, now),
+            Command::Forward => self.history(false, now),
+            Command::ZoomIn => v.zoom(ZOOM_STEP, centre),
+            Command::ZoomOut => v.zoom(1.0 / ZOOM_STEP, centre),
+            Command::FitWidth => v.fit_width(),
+            Command::Search => self.open_search(),
+            Command::NextMatch => self.step_search(true, now),
+            Command::PrevMatch => self.step_search(false, now),
         }
         Action::Redraw
     }

@@ -2,12 +2,15 @@
 //! Every field is optional; unknown keys are errors so typos are noticed. See
 //! `doc/config.md` for the documented format.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use termpix::compositor::Backend;
 use termpix::graphics::{DEFAULT_ZLIB_LEVEL, Medium};
+
+use crate::keys::{Command, Keymap};
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
@@ -17,6 +20,8 @@ pub struct Config {
     pub links: LinksConfig,
     pub synctex: SynctexConfig,
     pub reload: ReloadConfig,
+    /// Command -> keys, replacing that command's default keys (see `keys.rs`).
+    pub keys: HashMap<Command, Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -181,7 +186,13 @@ pub fn default_path() -> Option<PathBuf> {
 
 impl Config {
     pub fn parse(text: &str) -> Result<Self> {
-        Ok(toml::from_str(text)?)
+        let config: Self = toml::from_str(text)?;
+        config.keymap().context("[keys]")?;
+        Ok(config)
+    }
+
+    pub fn keymap(&self) -> Result<Keymap> {
+        Keymap::new(&self.keys)
     }
 
     /// Load `path`, or the default location. A missing default file is fine; a
@@ -238,6 +249,20 @@ mod tests {
         assert_eq!(c.scroll.to_termpix().step, 40.0);
         assert_eq!(c.links.command(), ["firefox", "--new-tab"]);
         assert_eq!(c.reload, ReloadConfig { debounce_ms: 500, anchor: ReloadAnchor::Text });
+    }
+
+    #[test]
+    fn keys_section_rebinds_and_reports_mistakes() {
+        use termpix::input::{KeyCode, KeyEvent, Modifiers};
+        let c = Config::parse("[keys]\nquit = [\"Q\", \"C-q\"]\nnext_match = []\n").unwrap();
+        let m = c.keymap().unwrap();
+        assert_eq!(m.get(&KeyEvent::new(KeyCode::Char('q'), Modifiers::CTRL)), Some(Command::Quit));
+        assert_eq!(m.get(&KeyEvent::new(KeyCode::Char('q'), Modifiers::NONE)), None);
+        assert_eq!(m.get(&KeyEvent::new(KeyCode::Char('n'), Modifiers::NONE)), None);
+        let unknown_command = Config::parse("[keys]\nexplode = [\"x\"]\n").unwrap_err();
+        assert!(format!("{unknown_command:#}").contains("explode"), "{unknown_command:#}");
+        let bad_key = Config::parse("[keys]\nquit = [\"C-Nope\"]\n").unwrap_err();
+        assert!(format!("{bad_key:#}").contains("Nope"), "{bad_key:#}");
     }
 
     #[test]

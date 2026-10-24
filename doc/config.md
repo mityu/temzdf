@@ -46,3 +46,45 @@ editor = "vim --servername VIM --remote-silent +%{line} %{input}"
 
 Precedence: environment variables (`TERMPIX_BACKEND`, `TERMPIX_MEDIUM`) override
 the file, which overrides detection.
+
+## Key bindings
+
+`[keys]` maps a command to a list of keys. Listing a command replaces all of its
+default keys; an empty list unbinds it; commands not listed keep their
+defaults. A key listed for a command is taken away from whatever command it had
+by default. Binding one key to two commands is an error.
+
+```toml
+[keys]
+quit = ["q", "C-q"]
+page_down = ["Space", "C-d"]
+copy = []
+```
+
+Key notation (shared with `--keys`): a single character (`j`, `G`, `+`, `/`)
+or a name (`Tab`, `Enter`, `Esc`, `Space`, `Backspace`, `Delete`, `Insert`,
+`Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `F1`-`F35`),
+after any of the prefixes `C-` (Ctrl), `M-` (Alt), `S-` (Shift) and `D-`
+(Super). Shifted characters are written as the character (`G`, not `S-g`); `S-`
+is for named keys (`S-Tab`).
+
+| Command | Default keys | |
+|---|---|---|
+| `quit` | `q` `C-c` | |
+| `cancel` | `Esc` | clear the selection, else the search, else quit |
+| `scroll_down` / `scroll_up` | `j` `Down` / `k` `Up` | takes a count |
+| `scroll_left` / `scroll_right` | `h` `Left` / `l` `Right` | |
+| `page_down` / `page_up` | `Space` `PageDown` `C-f` / `b` `PageUp` | |
+| `half_page_down` / `half_page_up` | `d` / `u` | |
+| `first_page` | `g` `Home` | page N with a count (`3g`) |
+| `last_page` | `G` `End` | page N with a count (`3G`) |
+| `back` / `forward` | `C-o` `Backspace` `M-Left` / `M-Right` | link history |
+| `zoom_in` / `zoom_out` / `fit_width` | `+` `=` / `-` / `0` `w` | |
+| `search` / `next_match` / `prev_match` | `/` / `n` / `N` | |
+| `copy` | `y` | copy the selection |
+| `toggle_sidebar` | `Tab` | outline |
+
+Fixed, not configurable: digits before a command are a count (`0` only after
+another digit), the outline sidebar's own keys while it has focus, and the
+one-line input (search prompt). Mouse bindings are fixed too. Defaults live in
+`crates/temzdf/src/keys.rs`; keep this table in sync.

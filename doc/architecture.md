@@ -56,6 +56,8 @@ input widget moves the terminal cursor to its caret; we only receive committed t
   multiplexer, where every strip is forwarded uncompressed by zellij 0.45).
 - Auto-reload: see `reload.md`. SyncTeX: vendored `synctex_parser.c` via `cc`,
   forward search over a Unix socket, inverse search via a configurable command.
+- Keys: `keys.rs` maps key presses to `Command`s (defaults plus `[keys]` from
+  the config, see `config.md`); `Session::command` runs them.
 
 ## Invariants
 

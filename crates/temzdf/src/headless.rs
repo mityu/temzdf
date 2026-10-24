@@ -6,13 +6,14 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use termpix::compositor::{Backend, Compositor};
 use termpix::geom::Geometry;
 use termpix::graphics::Medium;
-use termpix::input::{KeyCode, KeyEvent, Modifiers};
+use termpix::input::KeyEvent;
 use termpix::mock::MockTerminal;
 
+use crate::keys::Key;
 use crate::pdf;
 use crate::session::{Request, Session};
 use crate::viewer::{Need, Rendered};
@@ -27,51 +28,10 @@ pub struct FrameOptions {
     pub keys: Option<String>,
 }
 
-/// Parse a key list like `"Tab j j Enter C-f 3 G"`: single characters, names
-/// (Tab, Enter, Esc, Up, Down, Left, Right, PageUp, PageDown, Home, End,
-/// Backspace, Space) and `C-` (Ctrl) / `M-` (Alt) prefixes.
+/// Parse a key list like `"Tab j j Enter C-f 3 G"`, in the notation of
+/// [`Key::parse`].
 pub fn parse_keys(spec: &str) -> Result<Vec<KeyEvent>> {
-    spec.split_whitespace()
-        .map(|tok| {
-            let mut mods = Modifiers::NONE;
-            let mut rest = tok;
-            loop {
-                if let Some(r) = rest.strip_prefix("C-") {
-                    mods |= Modifiers::CTRL;
-                    rest = r;
-                } else if let Some(r) = rest.strip_prefix("M-") {
-                    mods |= Modifiers::ALT;
-                    rest = r;
-                } else {
-                    break;
-                }
-            }
-            let code = match rest {
-                "Tab" => KeyCode::Tab,
-                "Enter" => KeyCode::Enter,
-                "Esc" => KeyCode::Escape,
-                "Up" => KeyCode::Up,
-                "Down" => KeyCode::Down,
-                "Left" => KeyCode::Left,
-                "Right" => KeyCode::Right,
-                "PageUp" => KeyCode::PageUp,
-                "PageDown" => KeyCode::PageDown,
-                "Home" => KeyCode::Home,
-                "End" => KeyCode::End,
-                "Backspace" => KeyCode::Backspace,
-                "Space" => KeyCode::Char(' '),
-                s if s.chars().count() == 1 => KeyCode::Char(s.chars().next().unwrap_or(' ')),
-                other => bail!("unknown key {other:?}"),
-            };
-            let mut ev = KeyEvent::new(code, mods);
-            if let KeyCode::Char(c) = code
-                && !mods.contains(Modifiers::CTRL)
-            {
-                ev.text = Some(c.to_string());
-            }
-            Ok(ev)
-        })
-        .collect()
+    spec.split_whitespace().map(|tok| Ok(Key::parse(tok)?.event())).collect()
 }
 
 pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<()> {
