@@ -129,6 +129,9 @@ pub struct Session {
     input: Option<LineInput>,
     /// Where the view was when the prompt opened (restored on Esc).
     search_origin: Option<(Target, f32, f32)>,
+    /// Enter was pressed before any hit was selected (results arrive from a
+    /// worker): select the first one after this position once it is found.
+    pending_first_hit: Option<Target>,
     requests: Vec<Request>,
     /// Solid overlay images by (width, height, colour).
     overlay_images: HashMap<(u32, u32, [u8; 4]), ImageId>,
@@ -179,6 +182,7 @@ impl Session {
             search: SearchState::new(pages),
             input: None,
             search_origin: None,
+            pending_first_hit: None,
             requests: Vec::new(),
             overlay_images: HashMap::new(),
             texts: vec![None; pages],
@@ -600,14 +604,19 @@ impl Session {
             }
         }
         // Incremental search (while typing): move to the first match after where
-        // the search began.
-        if self.input.is_some() && self.search.current.is_none() {
-            let from = self.search_origin.map_or_else(|| self.viewer.top_position(), |o| o.0);
-            if let Some(hit) = self.search.find_from(from, true)
+        // the search began. Also after Enter if no match was selected yet.
+        if self.search.current.is_none() {
+            let from = match (&self.input, self.pending_first_hit) {
+                (Some(_), _) => Some(self.search_origin.map_or_else(|| self.viewer.top_position(), |o| o.0)),
+                (None, pending) => pending,
+            };
+            if let Some(from) = from
+                && let Some(hit) = self.search.find_from(from, true)
                 && self.search.hits[hit.0].get(hit.1).is_some()
                 && (self.search.is_complete() || hit.0 == page)
             {
                 self.search.current = Some(hit);
+                self.pending_first_hit = None;
                 self.reveal_hit(hit, now);
             }
         }
@@ -756,9 +765,13 @@ impl Session {
             }
             KeyCode::Enter => {
                 self.input = None;
-                if let Some((pos, sx, _)) = self.search_origin.take() {
+                let origin = self.search_origin.take();
+                if let Some((pos, sx, _)) = origin {
                     self.back.push((pos, sx));
                     self.forward.clear();
+                }
+                if self.search.is_active() && self.search.current.is_none() {
+                    self.pending_first_hit = Some(origin.map_or_else(|| self.viewer.top_position(), |o| o.0));
                 }
                 if self.search.is_active() && self.search.total() == 0 && self.search.is_complete() {
                     self.message = Some(format!("Pattern not found: {}", self.search.query));
@@ -817,6 +830,7 @@ impl Session {
         self.search_origin = Some((v.top_position(), v.view.scroll_x, v.view.scroll_y));
         self.input = Some(LineInput { prompt: "/".into(), ..Default::default() });
         self.search.clear();
+        self.pending_first_hit = None;
     }
 
     fn step_search(&mut self, forward: bool, now: Instant) {
@@ -1287,6 +1301,26 @@ mod tests {
             [Request::Search { query, doc_generation: 1, .. }] => assert_eq!(query, "needle"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn enter_before_the_results_arrive_still_selects_the_first_hit() {
+        let mut s = session();
+        let now = Instant::now();
+        s.key(&KeyEvent::new(KeyCode::Char('/'), Modifiers::NONE), now);
+        for ch in "needle".chars() {
+            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
+        }
+        // Typed quickly (or through a slow link): Enter comes before any hit.
+        s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
+        let Some(Request::Search { generation, query, .. }) = s.take_requests().pop() else { panic!("a search") };
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        for p in 0..s.viewer.page_count() {
+            let rects = pdf::search_page(&doc, p, s.info.bounds[p], &query).unwrap();
+            s.search_hits(generation, p, rects, now);
+        }
+        assert_eq!(s.search.current, Some((0, 0)));
+        assert!(s.search_hint().contains("1/4"), "{}", s.search_hint());
     }
 
     #[test]
