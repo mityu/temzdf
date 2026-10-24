@@ -57,6 +57,9 @@ The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` 
 
 - Everything written into the repository (docs, comments, `todo.md`, skills,
   commit messages) is in English.
+- Paths written in docs, comments and commit messages are relative to the
+  repository root. Never write absolute paths (home directories, scratch
+  directories, `/nix/store/...`).
 - Commit at natural checkpoints (a coherent, self-contained change), only when
   `cargo test` and `cargo clippy` pass. Use Conventional Commits:
   `type(scope): summary`, types `feat|fix|refactor|test|docs|build|chore`,
