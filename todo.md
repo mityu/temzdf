@@ -48,3 +48,4 @@ below them are deferred.
   1. Suspend the UI, run `$EDITOR` full screen, resume on exit.
   2. Later: split the screen and embed the editor (terminal emulation with e.g. `alacritty_terminal`).
   Short inputs (search, page number, commands) use the built-in one-line input.
+- Make `nix build` build temzdf (a package output in flake.nix: crane or rustPlatform, with the vendored SyncTeX/MuPDF C builds).
