@@ -1,0 +1,353 @@
+//! Terminal output written by a background thread.
+//!
+//! Writing a frame can block for a long time when the terminal reads slowly
+//! (over SSH, through zellij): a whole-screen image is megabytes. Done on the
+//! main thread, that also delays input handling, so even `q` waits until the
+//! frame is out. Here callers only queue bytes; a writer thread sends them in
+//! small chunks, and on exit the rest can be dropped at a chunk boundary. A
+//! string sequence (APC, DCS, OSC) cut in the middle is then terminated, so the
+//! bytes that follow (the terminal reset) are not swallowed as its payload.
+
+use std::collections::VecDeque;
+use std::io::{self, Write};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+/// Bytes per write call: the longest stretch that has to finish before queued
+/// output can be dropped.
+const CHUNK: usize = 16 * 1024;
+
+/// Where escape-sequence parsing stands after the bytes written so far.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Seq {
+    #[default]
+    Ground,
+    Esc,
+    /// Inside a string sequence; `nested` is an APC inside a tmux passthrough
+    /// DCS (written with doubled escapes).
+    Str {
+        osc: bool,
+        nested: bool,
+    },
+    StrEsc {
+        nested: bool,
+    },
+    /// `ESC ESC` inside a DCS: an escaped ESC of the wrapped sequence.
+    StrEscEsc {
+        nested: bool,
+    },
+}
+
+impl Seq {
+    fn feed(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            *self = match (*self, b) {
+                (Seq::Ground, 0x1b) => Seq::Esc,
+                (Seq::Ground, _) => Seq::Ground,
+                (Seq::Esc, b'_' | b'P' | b'^' | b'X') => Seq::Str { osc: false, nested: false },
+                (Seq::Esc, b']') => Seq::Str { osc: true, nested: false },
+                (Seq::Esc, 0x1b) => Seq::Esc,
+                (Seq::Esc, _) => Seq::Ground,
+                (Seq::Str { osc: true, .. }, 0x07) => Seq::Ground,
+                (Seq::Str { nested, .. }, 0x1b) => Seq::StrEsc { nested },
+                (s @ Seq::Str { .. }, _) => s,
+                (Seq::StrEsc { nested }, 0x1b) => Seq::StrEscEsc { nested },
+                (Seq::StrEsc { .. }, b'\\') => Seq::Ground,
+                (Seq::StrEsc { nested }, _) => Seq::Str { osc: false, nested },
+                (Seq::StrEscEsc { .. }, b'_') => Seq::Str { osc: false, nested: true },
+                (Seq::StrEscEsc { .. }, b'\\') => Seq::Str { osc: false, nested: false },
+                (Seq::StrEscEsc { nested }, _) => Seq::Str { osc: false, nested },
+            };
+        }
+    }
+
+    /// Bytes that end whatever sequence was cut off.
+    fn terminator(self) -> &'static [u8] {
+        match self {
+            Seq::Ground => b"",
+            // A lone ESC: complete it harmlessly (ESC \ is a no-op ST).
+            Seq::Esc => b"\\",
+            Seq::Str { nested: false, .. } => b"\x1b\\",
+            Seq::Str { nested: true, .. } => b"\x1b\x1b\\\x1b\\",
+            Seq::StrEsc { nested: false } => b"\\",
+            Seq::StrEsc { nested: true } => b"\x1b\\\x1b\\",
+            Seq::StrEscEsc { nested: false } => b"\\\x1b\\",
+            Seq::StrEscEsc { nested: true } => b"\\\x1b\\",
+        }
+    }
+}
+
+struct Queue {
+    bufs: VecDeque<Vec<u8>>,
+    /// Bytes queued or being written.
+    pending: usize,
+    /// Drop everything queued and stop.
+    closed: bool,
+    error: Option<io::ErrorKind>,
+}
+
+struct Sink<W> {
+    out: W,
+    seq: Seq,
+    trace: Option<std::fs::File>,
+}
+
+struct Shared<W> {
+    queue: Mutex<Queue>,
+    /// Signalled when bytes are queued and when the queue drains.
+    changed: Condvar,
+    sink: Mutex<Sink<W>>,
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A queue of bytes for `W` and the thread writing them.
+pub struct Output<W> {
+    shared: Arc<Shared<W>>,
+}
+
+impl<W> Clone for Output<W> {
+    fn clone(&self) -> Self {
+        Self { shared: self.shared.clone() }
+    }
+}
+
+impl<W: Write + Send + 'static> Output<W> {
+    /// Start the writer thread. `trace` gets a copy of every byte written.
+    pub fn spawn(out: W, trace: Option<std::fs::File>) -> io::Result<Self> {
+        let shared = Arc::new(Shared {
+            queue: Mutex::new(Queue { bufs: VecDeque::new(), pending: 0, closed: false, error: None }),
+            changed: Condvar::new(),
+            sink: Mutex::new(Sink { out, seq: Seq::Ground, trace }),
+        });
+        let s = shared.clone();
+        std::thread::Builder::new().name("termpix-output".into()).spawn(move || writer(&s))?;
+        Ok(Self { shared })
+    }
+}
+
+impl<W> Output<W> {
+    /// Queue `bytes`; returns at once. Fails once a write has failed.
+    pub fn write(&self, bytes: &[u8]) -> io::Result<()> {
+        let mut q = lock(&self.shared.queue);
+        if let Some(kind) = q.error {
+            return Err(io::Error::new(kind, "terminal write failed"));
+        }
+        if q.closed || bytes.is_empty() {
+            return Ok(());
+        }
+        q.pending += bytes.len();
+        q.bufs.push_back(bytes.to_vec());
+        self.shared.changed.notify_all();
+        Ok(())
+    }
+
+    /// Bytes not yet written to the terminal.
+    pub fn pending(&self) -> usize {
+        lock(&self.shared.queue).pending
+    }
+
+    /// Wait until everything queued was written (or will never be: closed or
+    /// failed), at most `timeout`. Returns whether the wait ended that way.
+    pub fn drain(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut q = lock(&self.shared.queue);
+        while q.pending > 0 && q.error.is_none() && !q.closed {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            q = self.shared.changed.wait_timeout(q, left).unwrap_or_else(|e| e.into_inner()).0;
+        }
+        q.pending == 0 || q.error.is_some() || q.closed
+    }
+}
+
+impl<W: Write> Output<W> {
+    /// Drop whatever is still queued, end a sequence cut off mid-way, then
+    /// write `last` directly (the terminal reset). Waits at most `timeout` for
+    /// the chunk being written; later writes are ignored.
+    pub fn close(&self, last: &[u8], timeout: Duration) {
+        {
+            let mut q = lock(&self.shared.queue);
+            q.closed = true;
+            q.bufs.clear();
+            self.shared.changed.notify_all();
+        }
+        let deadline = Instant::now() + timeout;
+        let mut sink = loop {
+            match self.shared.sink.try_lock() {
+                Ok(s) => break s,
+                Err(std::sync::TryLockError::Poisoned(e)) => break e.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                // The terminal is not reading at all: nothing would get through.
+                Err(std::sync::TryLockError::WouldBlock) => return,
+            }
+        };
+        let end = sink.seq.terminator();
+        let _ = sink.out.write_all(end);
+        let _ = sink.out.write_all(last);
+        let _ = sink.out.flush();
+        sink.seq = Seq::Ground;
+    }
+}
+
+fn writer<W: Write>(s: &Shared<W>) {
+    loop {
+        let buf = {
+            let mut q = lock(&s.queue);
+            loop {
+                if q.closed {
+                    q.pending = 0;
+                    s.changed.notify_all();
+                    return;
+                }
+                if let Some(b) = q.bufs.pop_front() {
+                    break b;
+                }
+                q = s.changed.wait(q).unwrap_or_else(|e| e.into_inner());
+            }
+        };
+        for chunk in buf.chunks(CHUNK) {
+            if lock(&s.queue).closed {
+                break;
+            }
+            let mut sink = lock(&s.sink);
+            let res = sink.out.write_all(chunk).and_then(|()| sink.out.flush());
+            sink.seq.feed(chunk);
+            if let Some(t) = &mut sink.trace {
+                let _ = t.write_all(chunk);
+            }
+            drop(sink);
+            let mut q = lock(&s.queue);
+            if let Err(e) = res {
+                q.error = Some(e.kind());
+                q.closed = true;
+            }
+            q.pending = q.pending.saturating_sub(chunk.len());
+            s.changed.notify_all();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct Buf(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Buf {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            lock(&self.0).extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Writes stall until the gate opens (a terminal that stopped reading).
+    struct Gated {
+        inner: Buf,
+        gate: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl Write for Gated {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            let (m, cv) = &*self.gate;
+            let mut open = lock(m);
+            while !*open {
+                open = cv.wait(open).unwrap();
+            }
+            self.inner.write(b)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn after(seq: &[u8]) -> Seq {
+        let mut s = Seq::Ground;
+        s.feed(seq);
+        s
+    }
+
+    #[test]
+    fn tracks_string_sequences() {
+        assert_eq!(after(b"\x1b[2J\x1b_Ga=T;AAAA\x1b\\x"), Seq::Ground);
+        assert_eq!(after(b"\x1b_Ga=T;AA"), Seq::Str { osc: false, nested: false });
+        assert_eq!(after(b"\x1b]2;title\x07"), Seq::Ground);
+        assert_eq!(after(b"\x1bPtmux;\x1b\x1b_Ga=T;AA"), Seq::Str { osc: false, nested: true });
+        assert_eq!(after(b"\x1bPtmux;\x1b\x1b_Ga=T;AA\x1b\x1b\\"), Seq::Str { osc: false, nested: false });
+        assert_eq!(after(b"\x1bPtmux;\x1b\x1b_Ga=T;AA\x1b\x1b\\\x1b\\"), Seq::Ground);
+    }
+
+    #[test]
+    fn terminators_return_to_ground() {
+        for cut in [
+            &b"\x1b"[..],
+            b"\x1b_Ga=T;AA",
+            b"\x1b_Ga=T;AA\x1b",
+            b"\x1bPtmux;\x1b\x1b_Ga=T;AA",
+            b"\x1bPtmux;\x1b\x1b_Ga=T;AA\x1b",
+            b"\x1bPtmux;\x1b\x1b_Ga=T;AA\x1b\x1b",
+            b"\x1bPtmux;\x1b\x1b",
+        ] {
+            let mut s = after(cut);
+            s.feed(s.terminator());
+            assert_eq!(s, Seq::Ground, "{cut:?}");
+        }
+    }
+
+    #[test]
+    fn writes_in_order_and_drains() {
+        let sink = Buf::default();
+        let out = Output::spawn(sink.clone(), None).unwrap();
+        out.write(b"abc").unwrap();
+        out.write(&vec![b'x'; 3 * CHUNK]).unwrap();
+        assert!(out.drain(Duration::from_secs(5)));
+        assert_eq!(out.pending(), 0);
+        let got = lock(&sink.0).clone();
+        assert_eq!(&got[..3], b"abc");
+        assert_eq!(got.len(), 3 + 3 * CHUNK);
+    }
+
+    #[test]
+    fn close_drops_the_backlog_and_terminates_the_cut_sequence() {
+        let inner = Buf::default();
+        let gate = Arc::new((Mutex::new(true), Condvar::new()));
+        let out = Output::spawn(Gated { inner: inner.clone(), gate: gate.clone() }, None).unwrap();
+        // The first chunk goes out, then the terminal stops reading.
+        let mut frame = b"\x1b_Ga=T;".to_vec();
+        frame.resize(10 * CHUNK, b'A');
+        frame.extend_from_slice(b"\x1b\\");
+        out.write(&frame).unwrap();
+        while lock(&inner.0).len() < CHUNK {
+            std::thread::yield_now();
+        }
+        *lock(&gate.0) = false;
+        // Let the writer block on its next chunk.
+        std::thread::sleep(Duration::from_millis(20));
+        let start = Instant::now();
+        // The terminal resumes reading shortly after the user quit.
+        let g = gate.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            *lock(&g.0) = true;
+            g.1.notify_all();
+        });
+        out.close(b"RESET", Duration::from_secs(2));
+        assert!(start.elapsed() < Duration::from_secs(1));
+        let got = lock(&inner.0).clone();
+        assert!(got.len() <= 2 * CHUNK + 16, "the backlog was dropped: {}", got.len());
+        assert!(got.ends_with(b"\x1b\\RESET"), "{:?}", &got[got.len() - 12..]);
+        assert_eq!(after(&got[..got.len() - 5]), Seq::Ground);
+        out.write(b"late").unwrap();
+        assert!(!lock(&inner.0).ends_with(b"late"));
+    }
+}

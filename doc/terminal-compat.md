@@ -152,6 +152,15 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   Now only changed strips are sent, the first frame waits for the visible tiles,
   and Composited frames are rate-limited; startup inside zellij sends exactly one
   screen of strips (measured: 15 strips of 900x40 at 900x600).
+- zellij over SSH (user report, 2026-10-25): `q` did nothing until the screen
+  had finished drawing. Writes to `/dev/tty` block while the terminal side
+  reads slowly, and the main loop did them itself, so input waited behind each
+  frame. Output now goes through a writer thread (`termpix::output`); exiting
+  drops what is still queued at a 16 KiB chunk boundary and terminates a cut
+  APC/DCS before the reset. Reproduced locally with a pty proxy relaying output
+  at 100 KB/s (uncompressed frames, `zlib_level = 0`): `q` took over 15 s before,
+  0.12 s after, and the shell came back clean. zellij may still hold input
+  back while it is busy itself; that part is out of our hands.
 - WezTerm nightly garbles Composited output sent as several strip images (black
   gaps, strips from older frames left behind), while one whole-screen image per
   frame works. Probe therefore picks `Backend::composited()` (whole frame) for

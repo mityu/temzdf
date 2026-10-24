@@ -19,7 +19,7 @@ temzdf (bin) ──> termpix-ui ──> termpix
 
 | Module | Responsibility |
 |---|---|
-| `tty` | Open `/dev/tty`, raw mode, enable modes (1003, 1006, 1016, 2004, 1004, 2048, kitty keyboard `CSI >31u`), restore on drop and on panic, SIGWINCH. |
+| `tty` | Open `/dev/tty`, raw mode, enable modes (1003, 1006, 1016, 2004, 1004, 2048, kitty keyboard `CSI >31u`), restore on drop and on panic, SIGWINCH. Writes are queued for a writer thread (`output`), so a slow terminal never blocks input handling; on exit the backlog is dropped and a cut string sequence terminated before the reset. |
 | `probe` | Kitty graphics support (`a=q` + DA1), shm/file transmission support, XTVERSION, DECRQM for 1016/2026, cell size (`TIOCGWINSZ` -> `CSI 16 t` -> `CSI 14 t`), env hints, user override. |
 | `input` | Hand-written parser: bytes -> `Event` (pure, unit-tested). SGR mouse in cell or pixel coordinates, kitty keyboard / CSI u, bracketed paste, focus, in-band resize (2048), APC `_G` replies. crossterm is not used: it does not parse 1016 and mishandles APC replies. |
 | `graphics` | Kitty graphics transport: `t=s` (POSIX shm), `t=f`, `t=d` (zlib + base64, 4096-byte chunks). Image id management, re-upload on `ENOENT` (eviction), fences for inline transfers, shm cleanup. |

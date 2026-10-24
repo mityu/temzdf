@@ -22,6 +22,8 @@ const FRAME: Duration = Duration::from_millis(16);
 /// Raw bytes of not-yet-shown images sent per idle iteration (about four
 /// 512 px tiles); small enough that input is never kept waiting.
 const UPLOAD_AHEAD_BATCH: usize = 4 << 20;
+/// How often to look whether queued output was written, while it is.
+const OUTPUT_POLL: Duration = Duration::from_millis(5);
 /// Longest wait for the visible pages before showing the first frame.
 const FIRST_FRAME_WAIT: Duration = Duration::from_millis(1500);
 /// Retry interval while the file is incomplete or fails to open.
@@ -151,8 +153,11 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     };
     loop {
         // On a slow link, wait until the terminal caught up with earlier frames;
-        // the frame drawn afterwards shows the latest state anyway.
-        let congested = dirty && comp.is_congested(Instant::now());
+        // the frame drawn afterwards shows the latest state anyway. Output is
+        // written by a background thread (input stays responsive meanwhile);
+        // frames queued behind it would only pile up.
+        let writing = tty.pending_output() > 0;
+        let congested = dirty && (writing || comp.is_congested(Instant::now()));
         let mut held = false;
         if dirty && !congested {
             let (layers, needs) = session.frame(&mut comp);
@@ -172,7 +177,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         // Idle and the link is free: send pre-rendered neighbour tiles now, so
         // scrolling to them later costs only a placement (matters over SSH).
         let mut uploading = false;
-        if !dirty && !comp.is_congested(Instant::now()) && comp.has_pending_uploads() {
+        if !dirty && !writing && !comp.is_congested(Instant::now()) && comp.has_pending_uploads() {
             let mut ahead = Vec::new();
             uploading = comp.upload_ahead(&mut ahead, UPLOAD_AHEAD_BATCH)?;
             if !ahead.is_empty() {
@@ -209,6 +214,10 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
             // Re-check soon: the acknowledgement may never come, the frame-rate
             // interval passes, or the first frame stops waiting.
             timeout = timeout.min(Duration::from_millis(30));
+        }
+        if tty.pending_output() > 0 {
+            // Nothing signals the end of a write; poll for it.
+            timeout = timeout.min(OUTPUT_POLL);
         }
         let event = match rx.recv_timeout(timeout) {
             Ok(e) => Some(e),

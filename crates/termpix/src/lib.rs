@@ -7,6 +7,7 @@ pub mod geom;
 pub mod graphics;
 pub mod input;
 pub mod mock;
+pub mod output;
 pub mod placeholder;
 pub mod probe;
 pub mod raster;

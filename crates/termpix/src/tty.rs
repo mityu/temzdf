@@ -14,6 +14,11 @@ use rustix::termios::{self, OptionalActions, Termios};
 
 use crate::geom::{CellSize, Geometry};
 use crate::input::{Event, Parser};
+use crate::output::Output;
+
+/// How long exiting waits for the chunk being written before giving up on a
+/// terminal that stopped reading.
+const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Which terminal modes to enable. Defaults enable everything termpix uses.
 #[derive(Clone, Copy, Debug)]
@@ -107,6 +112,8 @@ struct RestoreState {
     fd: rustix::fd::OwnedFd,
     termios: Termios,
     reset: Vec<u8>,
+    /// Queued output, dropped before the reset is written.
+    out: Option<Output<File>>,
 }
 
 static RESTORE: Mutex<Option<RestoreState>> = Mutex::new(None);
@@ -115,7 +122,12 @@ static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 fn restore_now() {
     let Ok(mut guard) = RESTORE.lock() else { return };
     if let Some(state) = guard.take() {
-        let _ = rustix::io::write(&state.fd, &state.reset);
+        match &state.out {
+            Some(out) => out.close(&state.reset, CLOSE_TIMEOUT),
+            None => {
+                let _ = rustix::io::write(&state.fd, &state.reset);
+            }
+        }
         let _ = termios::tcsetattr(&state.fd, OptionalActions::Now, &state.termios);
     }
 }
@@ -131,11 +143,14 @@ fn install_panic_hook() {
     }));
 }
 
-/// The controlling terminal in raw mode. Dropping it restores the terminal.
+/// The controlling terminal in raw mode. Dropping it restores the terminal,
+/// dropping output still queued (see [`crate::output`]).
+///
+/// Writes are queued and sent by a background thread, so they never block on a
+/// slow terminal; [`Tty::pending_output`] tells how much is still on its way.
 pub struct Tty {
     file: File,
-    /// `TERMPIX_TRACE=<path>`: copy of every byte written, for debugging.
-    trace: Option<File>,
+    out: Output<File>,
 }
 
 impl Tty {
@@ -147,11 +162,17 @@ impl Tty {
         raw.make_raw();
         termios::tcsetattr(&file, OptionalActions::Flush, &raw)?;
         let restore_fd = file.as_fd().try_clone_to_owned()?;
-        *RESTORE.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(RestoreState { fd: restore_fd, termios: original, reset: modes.disable_sequence() });
-        install_panic_hook();
+        // `TERMPIX_TRACE=<path>`: copy of every byte written, for debugging.
         let trace = std::env::var_os("TERMPIX_TRACE").and_then(|p| File::create(p).ok());
-        let mut tty = Self { file, trace };
+        let out = Output::spawn(file.try_clone()?, trace)?;
+        *RESTORE.lock().unwrap_or_else(|e| e.into_inner()) = Some(RestoreState {
+            fd: restore_fd,
+            termios: original,
+            reset: modes.disable_sequence(),
+            out: Some(out.clone()),
+        });
+        install_panic_hook();
+        let mut tty = Self { file, out };
         tty.write_all(&modes.enable_sequence())?;
         Ok(tty)
     }
@@ -175,12 +196,19 @@ impl Tty {
         self.write_all(b"\x1b[?1016h")
     }
 
+    /// Queue `bytes` for the terminal; returns without waiting for them.
     pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
-        if let Some(t) = &mut self.trace {
-            let _ = t.write_all(bytes);
-        }
-        self.file.write_all(bytes)?;
-        self.file.flush()
+        self.out.write(bytes)
+    }
+
+    /// Bytes queued but not yet written to the terminal.
+    pub fn pending_output(&self) -> usize {
+        self.out.pending()
+    }
+
+    /// Wait at most `timeout` until all queued output was written.
+    pub fn drain(&self, timeout: Duration) -> bool {
+        self.out.drain(timeout)
     }
 
     /// Read available bytes, waiting at most `timeout` (`None` = forever).
@@ -209,15 +237,15 @@ impl Drop for Tty {
 
 impl Write for Tty {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let n = self.file.write(buf)?;
-        if let Some(t) = &mut self.trace {
-            let _ = t.write_all(&buf[..n]);
-        }
-        Ok(n)
+        self.out.write(buf)?;
+        Ok(buf.len())
     }
 
+    /// Wait until everything queued was written.
     fn flush(&mut self) -> io::Result<()> {
-        self.file.flush()
+        while !self.out.drain(Duration::from_secs(1)) {}
+        // Reports a failed write.
+        self.out.write(b"")
     }
 }
 
