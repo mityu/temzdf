@@ -36,8 +36,12 @@ below them are deferred.
   Promising (user idea, 2026-10-25): render each scenario's expected screen
   with `--render-frame` (same geometry, cell size, `--keys` for the same
   actions; the mock terminal shows what a kitty-compatible terminal should) and
-  compare it with the e2e screenshot. Fits view-state checks such as zoom, page
-  jumps and search highlights, and needs no stored images. Needs: crop the
+  compare it with the e2e screenshot. Both sides use the same MuPDF rendering,
+  so this cannot tell whether the PDF is rendered correctly; it tests the path
+  from viewer state to the terminal's screen (placements, crops, strip updates,
+  stale images left behind, what the terminal does with our commands). Fits
+  view-state checks such as zoom, page jumps and search highlights, and needs
+  no stored images. Needs: crop the
   terminal's padding/decorations, wait until tiles settled, a small tolerance
   for terminal-side scaling, and headless equivalents of mouse actions (wheel
   and drag go through the kinetic scroll, so drive it with the same steps).
