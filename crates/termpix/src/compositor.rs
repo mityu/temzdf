@@ -110,6 +110,8 @@ pub struct Compositor {
     last_frame: Option<RgbaImage>,
     /// Number of composited strips currently shown.
     strips: u32,
+    /// Images added but maybe not uploaded yet, oldest first (Layered only).
+    not_uploaded: VecDeque<u32>,
     /// Unanswered fence queries (id, when sent); see [`Compositor::is_congested`].
     fences: VecDeque<(u32, Instant)>,
     next_fence: u32,
@@ -134,6 +136,7 @@ impl Compositor {
             pending: Vec::new(),
             last_frame: None,
             strips: 0,
+            not_uploaded: VecDeque::new(),
             fences: VecDeque::new(),
             next_fence: FENCE_IDS.start,
         }
@@ -194,6 +197,51 @@ impl Compositor {
     fn insert_image(&mut self, id: u32, width: u32, height: u32, data: Arc<[u8]>) {
         assert_eq!(data.len(), width as usize * height as usize * 4, "image data must be RGBA8");
         self.images.insert(id, StoredImage { width, height, data, uploaded: false });
+        if matches!(self.backend, Backend::Layered) {
+            self.not_uploaded.push_back(id);
+        }
+    }
+
+    /// Whether some images were added but not sent to the terminal yet.
+    pub fn has_pending_uploads(&self) -> bool {
+        self.not_uploaded.iter().any(|id| self.images.get(id).is_some_and(|i| !i.uploaded))
+    }
+
+    /// Send images that are not shown yet (e.g. pre-rendered neighbours), oldest
+    /// first, up to about `budget` raw bytes. Call this when idle and not
+    /// congested: on a slow link the transfer then happens before the images are
+    /// scrolled into view, and showing them later is only a placement. Returns
+    /// whether more remain. Layered backend only.
+    pub fn upload_ahead(&mut self, out: &mut Vec<u8>, budget: usize) -> io::Result<bool> {
+        let mut sent = 0;
+        let mut body = Vec::new();
+        while sent < budget {
+            let Some(id) = self.not_uploaded.pop_front() else { break };
+            let Some(img) = self.images.get_mut(&id) else { continue };
+            if img.uploaded {
+                continue;
+            }
+            let px = Pixels { width: img.width, height: img.height, format: PixelFormat::Rgba, data: &img.data };
+            self.encoder.transmit(&mut body, id, px, None)?;
+            img.uploaded = true;
+            sent += img.data.len();
+        }
+        if !body.is_empty() {
+            out.extend_from_slice(&body);
+            self.fence(out)?;
+        }
+        Ok(self.has_pending_uploads())
+    }
+
+    /// Append a fence query for inline transfers (see `is_congested`).
+    fn fence(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
+        if matches!(self.encoder.medium(), Medium::Direct { .. }) {
+            let id = self.next_fence;
+            self.next_fence = if id + 1 >= FENCE_IDS.end { FENCE_IDS.start } else { id + 1 };
+            crate::graphics::query(out, id, Medium::Direct { compress: false })?;
+            self.fences.push_back((id, Instant::now()));
+        }
+        Ok(())
     }
 
     /// React to a graphics reply from the terminal. Returns true when the frame
@@ -254,12 +302,7 @@ impl Compositor {
             out.extend_from_slice(SYNC_END);
             // Inline transfers can outpace a slow link (SSH): ask the terminal to
             // acknowledge this frame, so callers can wait (see is_congested).
-            if matches!(self.encoder.medium(), Medium::Direct { .. }) {
-                let id = self.next_fence;
-                self.next_fence = if id + 1 >= FENCE_IDS.end { FENCE_IDS.start } else { id + 1 };
-                crate::graphics::query(out, id, Medium::Direct { compress: false })?;
-                self.fences.push_back((id, Instant::now()));
-            }
+            self.fence(out)?;
         }
         // Keep a few recent shm objects: the terminal may not have read them yet.
         self.encoder.cleanup_shm(8);
@@ -543,6 +586,26 @@ mod tests {
         let after = Instant::now();
         assert!(c.is_congested(after));
         assert!(!c.is_congested(after + FENCE_TIMEOUT + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn images_can_be_uploaded_ahead_of_use() {
+        let mut c = Compositor::new(Backend::Layered, Medium::Direct { compress: true }, geometry());
+        let a = c.add_image(30, 30, test_image());
+        let _b = c.add_image(30, 30, test_image());
+        assert!(c.has_pending_uploads());
+        let mut out = Vec::new();
+        // A budget smaller than one image still sends one.
+        assert!(c.upload_ahead(&mut out, 1).unwrap(), "one image left");
+        assert!(c.upload_ahead(&mut out, 1 << 20).is_ok_and(|more| !more));
+        let mut term = MockTerminal::new(geometry(), [0, 0, 0, 255]);
+        term.feed(&out);
+        assert_eq!(term.image_count(), 2);
+        // Showing an uploaded image now is only a placement.
+        let mut frame = Vec::new();
+        c.present(&[layer(a, 0, 0)], &mut frame).unwrap();
+        let text = String::from_utf8_lossy(&frame);
+        assert!(text.contains("a=p,") && !text.contains("a=t,"), "{text}");
     }
 
     #[test]
