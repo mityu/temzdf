@@ -3,10 +3,11 @@
 # WezTerm) on a virtual X server, drive it with an actions script, and save
 # screenshots.
 #
-# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm] [-m zellij] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
+# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm] [-m zellij|tmux] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
 #   -t TERM   terminal to run (default kitty)
 #   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
-#             frames, a single pane; its config and layout go to OUTDIR/zellij)
+#             frames, a single pane; its config and layout go to OUTDIR/zellij;
+#             tmux: a private server with passthrough and mouse on, no status)
 #   -s WxH    window/screen size in pixels (default 900x600)
 #   -o OUTDIR where screenshots and terminal.log go (default: target/e2e)
 #   ACTIONS   bash file sourced after the terminal started; it can use the helpers below.
@@ -113,6 +114,15 @@ case $mux in
     } >"$zdir/layout.kdl"
     set -- zellij --config "$zdir/config.kdl" --layout "$zdir/layout.kdl"
     mux_startup=3
+    ;;
+  tmux)
+    # A private server, no status line, passthrough and mouse on.
+    tdir=$outdir/tmux
+    mkdir -p "$tdir"
+    printf 'set -g allow-passthrough on\nset -g mouse on\nset -g status off\nset -g escape-time 0\n' >"$tdir/tmux.conf"
+    cmd=$(printf '%q ' "$@")
+    set -- tmux -f "$tdir/tmux.conf" -L "e2e-$$" new-session -c "$PWD" "$cmd"
+    mux_startup=1
     ;;
   *)
     echo "unknown multiplexer: $mux" >&2

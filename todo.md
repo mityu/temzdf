@@ -15,12 +15,10 @@ below them are deferred.
 
 ## Deferred
 
-- Multiplexers (do after the milestones): make the viewer work inside zellij and tmux.
-  In zellij nothing was displayed in a first manual test (inline transfer over SSH).
-  Research and the plan are in `doc/terminal-compat.md` ("Multiplexers"): a
-  multiplexer profile (cell mouse, fewer keyboard flags, `t=d` only, feature
-  probes), Composited for zellij 0.45.1, Unicode placeholders via passthrough for
-  released tmux.
+- Multiplexers: zellij (Composited strips) and tmux 3.8 (Unicode placeholders
+  through passthrough) work; see `doc/terminal-compat.md`. Left: zellij over SSH
+  is still slow (zellij 0.45.1 forwards images uncompressed; a half-resolution
+  mode could help), and tmux master's native kitty support (z=0 only) is untested.
 - Content-based reload anchor: remember the text of the line at the anchor
   point and find it again in the reloaded PDF, so insertions above the reading
   position do not shift the view (an alternative to SyncTeX anchoring, which was

@@ -156,3 +156,19 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   gaps, strips from older frames left behind), while one whole-screen image per
   frame works. Probe therefore picks `Backend::composited()` (whole frame) for
   WezTerm and `Backend::composited_strips(2)` for zellij.
+- tmux 3.8 inside kitty 0.49.2 (`scripts/e2e.sh -m tmux`, passthrough on, mouse
+  on): works with the Placeholders backend. Frames are composited as strips
+  and sent as `U=1` virtual images through passthrough (`ESC P tmux; ...`), and
+  the screen is filled with placeholder text once, which tmux keeps and redraws
+  like any text. Scrolling stays pixel-smooth because pixels are composited by
+  us; only the text-to-image mapping is per cell. Every scenario passes,
+  including Ctrl+wheel zoom (tmux forwards it). Notes:
+  - tmux never returns the outer terminal's graphics replies, so detection asks
+    tmux instead (`show-options allow-passthrough`, `display -p
+    '#{client_termtype}'`/`'#{client_termname}'`) and fences are off.
+  - OSC 52 from applications is dropped with tmux's default
+    `set-clipboard external`; temzdf sends it through passthrough.
+  - SGR-pixel mouse and the kitty keyboard protocol do not exist in tmux: cell
+    mouse coordinates and legacy keys.
+  - The outer terminal must support Unicode placeholders (kitty, Ghostty; not
+    WezTerm).
