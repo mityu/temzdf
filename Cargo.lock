@@ -1449,6 +1449,7 @@ dependencies = [
  "base64",
  "cc",
  "clap",
+ "flate2",
  "libz-sys",
  "mupdf",
  "notify",

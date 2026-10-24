@@ -145,3 +145,14 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   (cell coordinates), keyboard flags 1. zellij keeps some input for itself:
   Ctrl+wheel never reaches the app (zoom with `+`/`-` instead), and Ctrl-o and
   Alt+arrows are zellij bindings (temzdf also goes back with Backspace).
+- zellij 0.45.1 over SSH (user report, 2026-10-25): the first page took minutes to
+  appear. Cause: every Composited frame was a full-screen image, the first screen
+  was sent several times as tiles arrived, and zellij forwards each image
+  uncompressed (#5596); fences do not help because zellij answers them itself.
+  Now only changed strips are sent, the first frame waits for the visible tiles,
+  and Composited frames are rate-limited; startup inside zellij sends exactly one
+  screen of strips (measured: 15 strips of 900x40 at 900x600).
+- WezTerm nightly garbles Composited output sent as several strip images (black
+  gaps, strips from older frames left behind), while one whole-screen image per
+  frame works. Probe therefore picks `Backend::composited()` (whole frame) for
+  WezTerm and `Backend::composited_strips(2)` for zellij.

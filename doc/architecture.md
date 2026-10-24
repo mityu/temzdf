@@ -23,7 +23,7 @@ temzdf (bin) ──> termpix-ui ──> termpix
 | `probe` | Kitty graphics support (`a=q` + DA1), shm/file transmission support, XTVERSION, DECRQM for 1016/2026, cell size (`TIOCGWINSZ` -> `CSI 16 t` -> `CSI 14 t`), env hints, user override. |
 | `input` | Hand-written parser: bytes -> `Event` (pure, unit-tested). SGR mouse in cell or pixel coordinates, kitty keyboard / CSI u, bracketed paste, focus, in-band resize (2048), APC `_G` replies. crossterm is not used: it does not parse 1016 and mishandles APC replies. |
 | `graphics` | Kitty graphics transport: `t=s` (POSIX shm), `t=f`, `t=d` (zlib + base64, 4096-byte chunks). Image id management, re-upload on `ENOENT` (eviction), fences for inline transfers, shm cleanup. |
-| `compositor` | The app submits a list of `Layer { image, src_rect, dst_px, z }` per frame. The compositor diffs against the previous frame and emits placements/deletions/uploads wrapped in synchronized output (2026). Two backends: `Layered` (kitty, Ghostty; images uploaded once, re-placed per frame) and `Composited` (WezTerm, zellij; CPU-composite one full frame and send it). |
+| `compositor` | The app submits a list of `Layer { image, src_rect, dst_px, z }` per frame. The compositor diffs against the previous frame and emits placements/deletions/uploads wrapped in synchronized output (2026). Two backends: `Layered` (kitty, Ghostty; images uploaded once, re-placed per frame) and `Composited` (WezTerm, zellij; CPU-composite the screen and send it as one image (WezTerm) or as horizontal strips of N cell rows, re-sending only strips whose pixels changed (zellij)). Inline (direct) frames are fenced with an `a=q` query so callers can wait for slow links (`is_congested`). |
 | `scroll` | Kinetic scrolling: wheel ticks are impulses on a target offset, eased with exponential decay; flick acceleration; emits ticks only while animating. |
 | `mock` | Interprets emitted kitty commands and reconstructs the screen as an image, for tests. |
 
@@ -46,10 +46,14 @@ input widget moves the terminal cursor to its caret; we only receive committed t
   thread; the main loop. Channels in between.
 - Display: continuous vertical layout. Pages are rendered as tiles into an LRU
   cache; uploaded images are kept by the terminal; neighbours are pre-rendered.
-  While zooming, already-uploaded images are scaled by the terminal (`c,r`); after
-  the gesture settles, tiles are re-rendered at the new scale and swapped in.
+  After a zoom, a low-resolution thumbnail of each page (scaled to the new size)
+  stands in until tiles at the new scale arrive.
 - Search hits and selections are separate translucent overlay layers, never baked
   into page pixels.
+- Frame pacing (`app.rs`): the first frame waits (up to 1.5 s) until the visible
+  pages are fully rendered, frames wait while inline transfers are unacknowledged,
+  and Composited frames are capped at ~30 fps (5 fps over inline links or inside a
+  multiplexer, where every strip is forwarded uncompressed by zellij 0.45).
 - Auto-reload: see `reload.md`. SyncTeX: vendored `synctex_parser.c` via `cc`,
   forward search over a Unix socket, inverse search via a configurable command.
 
