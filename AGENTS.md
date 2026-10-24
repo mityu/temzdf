@@ -50,7 +50,8 @@ The host has no `rustc` on `PATH` outside the dev shell. TeX (`latexmk`,
   `cargo test` and `cargo clippy` pass. Use Conventional Commits:
   `type(scope): summary`, types `feat|fix|refactor|test|docs|build|chore`,
   scope = crate or area (`termpix`, `termpix-ui`, `temzdf`, `synctex`, `nix`, ...).
-  Do not push unless asked.
+  Do not push unless asked. Never put session URLs (e.g. `Claude-Session:`
+  trailers) in commit messages; a `Co-Authored-By` trailer is fine.
 - Prefer designs that can be verified without a human: deterministic CPU
   rendering, PNG snapshots (inspect them by reading the image), the `termpix`
   mock terminal, and automated tests. Only the "feel" of scrolling in a real
