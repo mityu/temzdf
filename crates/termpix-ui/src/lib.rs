@@ -4,8 +4,10 @@
 //! into their own images so the compositor only re-uploads what changed.
 
 pub mod canvas;
+pub mod widgets;
 
 pub use canvas::{Canvas, Color, Text, TextLayout, TextStyle};
+pub use widgets::{EditResult, LineInput, ListItem, ListView, StatusBar, Theme};
 
 #[cfg(test)]
 mod tests {
