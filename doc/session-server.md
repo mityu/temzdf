@@ -36,7 +36,9 @@ What exists:
   CLI adds `--cwd` with its own directory). Splitting a PDF pane shows the same
   document again; splitting a terminal starts another shell in the directory
   the shell reported (OSC 7). `C-s C-s` sends `C-s` to the pane. One server process per session; its
-  output goes to `$XDG_STATE_HOME/temzdf/NAME.log`.
+  output goes to `NAME.log` in the log directory (`$TEMZDF_LOG_DIR`, `log_dir`
+  in the config, or `$XDG_STATE_HOME/temzdf`); `temzdf ls -v` shows it.
+  Sessions whose server speaks another protocol version are listed as such.
 - Terminal panes: palette colours stay palette indices (the outer terminal's
   theme applies), wide characters, SGR attributes, cursor shape, keys through
   libghostty's encoder (legacy or kitty keyboard protocol, as the program

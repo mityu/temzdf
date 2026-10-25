@@ -84,7 +84,9 @@ Debugging terminal problems:
 - `cargo run -p termpix --example events -- events.log` logs every parsed input
   event (what the terminal really sends).
 - In interactive mode `temzdf` sends stdout/stderr (MuPDF and SyncTeX warnings)
-  to `$XDG_STATE_HOME/temzdf/temzdf.log`.
+  to `temzdf.log`, and session servers theirs to `NAME.log`, in the log
+  directory: `$TEMZDF_LOG_DIR`, else `log_dir` in the config, else
+  `$XDG_STATE_HOME/temzdf`. `temzdf ls -v` shows each session's log file.
 - `TERMPIX_TRACE=out.bin <app>` records every byte written to the terminal;
   replay prefixes of it into a terminal (`cat out.bin`) to bisect crashes.
 - `TERMPIX_BACKEND=layered|composited` and `TERMPIX_MEDIUM=direct|shm|file`

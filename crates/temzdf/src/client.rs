@@ -55,7 +55,13 @@ pub fn first_pane(file: Option<&Path>) -> Result<Vec<String>> {
 /// Start a server for session `name` whose first pane shows `pane` (see
 /// [`first_pane`]), in the background, and wait until it listens. Its output
 /// goes to `$XDG_STATE_HOME/temzdf/<name>.log`.
-pub fn spawn_server(name: &str, pane: &[String], config: Option<&Path>, editor: Option<&str>) -> Result<()> {
+pub fn spawn_server(
+    name: &str,
+    pane: &[String],
+    config: &Config,
+    config_path: Option<&Path>,
+    editor: Option<&str>,
+) -> Result<()> {
     if !proto::valid_name(name) {
         bail!("invalid session name {name:?} (letters, digits, '.', '_' and '-')");
     }
@@ -63,7 +69,7 @@ pub fn spawn_server(name: &str, pane: &[String], config: Option<&Path>, editor: 
     if daemon::probe(&socket).is_some() {
         bail!("session {name:?} already exists (attach with `temzdf attach {name}`)");
     }
-    let log = crate::app::state_dir().map(|d| d.join(format!("{name}.log")));
+    let log = crate::app::log_dir(config).map(|d| d.join(format!("{name}.log")));
     let out = match &log {
         Some(p) => {
             if let Some(dir) = p.parent() {
@@ -79,7 +85,10 @@ pub fn spawn_server(name: &str, pane: &[String], config: Option<&Path>, editor: 
     };
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
     cmd.arg("server");
-    if let Some(c) = config {
+    if let Some(p) = &log {
+        cmd.arg("--log").arg(std::path::absolute(p)?);
+    }
+    if let Some(c) = config_path {
         cmd.arg("--config").arg(c);
     }
     if let Some(e) = editor {
@@ -121,7 +130,7 @@ pub fn resolve(name: Option<&str>) -> Result<String> {
 pub fn attach(name: &str, config: &Config) -> Result<String> {
     let socket = proto::socket_path(name)?;
     let stream = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
-    let _stdio = crate::app::log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
+    let _stdio = crate::app::log_path(config).and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
     let term = config.terminal.clone();
     let mut front = TtyFrontend::open(|caps| {
         let backend = term.backend(caps.backend(), caps.has_backend_override());
@@ -230,15 +239,24 @@ fn request(name: &str, msg: ClientMsg) -> Result<ServerMsg> {
     proto::recv(&mut s)?.context("no answer from the session")
 }
 
-pub fn list_sessions() -> Result<()> {
-    let sessions = daemon::list()?;
-    if sessions.is_empty() {
+pub fn list_sessions(verbose: bool) -> Result<()> {
+    let (sessions, other) = daemon::list_all()?;
+    if sessions.is_empty() && other.is_empty() {
         println!("no sessions");
     }
     for s in sessions {
         let files: Vec<String> = s.files.iter().map(|f| f.display().to_string()).collect();
         let clients = if s.clients == 0 { "detached".to_owned() } else { format!("{} attached", s.clients) };
         println!("{}  ({} panes, {clients})  {}", s.name, s.panes, files.join(" "));
+        if verbose {
+            println!("    pid: {}", s.pid);
+            if let Some(log) = &s.log {
+                println!("    log: {}", log.display());
+            }
+        }
+    }
+    for name in other {
+        println!("{name}  (another temzdf version; end it with `temzdf kill-session {name}`)");
     }
     Ok(())
 }

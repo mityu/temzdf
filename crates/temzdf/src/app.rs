@@ -62,7 +62,7 @@ pub fn sink<E: Send + 'static>(tx: &Sender<E>, wrap: fn(SessionEvent) -> E) -> E
 pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     // Libraries (MuPDF, SyncTeX) print warnings to stdout/stderr, which would
     // scribble over the screen; send them to a log file while the UI runs.
-    let _stdio = log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
+    let _stdio = log_path(&opts.config).and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
     let term = opts.config.terminal.clone();
     let mut front = TtyFrontend::open(|caps| {
         let backend = term.backend(caps.backend(), caps.has_backend_override());
@@ -191,7 +191,47 @@ pub fn state_dir() -> Option<std::path::PathBuf> {
     Some(base.join("temzdf"))
 }
 
-/// Where the viewer's own output goes while it runs: `<state dir>/temzdf.log`.
-pub fn log_path() -> Option<std::path::PathBuf> {
-    Some(state_dir()?.join("temzdf.log"))
+/// Where logs go: `$TEMZDF_LOG_DIR`, else `log_dir` from the configuration,
+/// else the state directory.
+pub fn log_dir(config: &Config) -> Option<std::path::PathBuf> {
+    log_dir_from(std::env::var_os("TEMZDF_LOG_DIR"), config.log_dir.as_deref(), std::env::var_os("HOME"))
+        .or_else(state_dir)
+}
+
+fn log_dir_from(
+    env: Option<std::ffi::OsString>,
+    config: Option<&Path>,
+    home: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    if let Some(dir) = env.filter(|d| !d.is_empty()) {
+        return Some(dir.into());
+    }
+    let dir = config?;
+    match (dir.strip_prefix("~"), home) {
+        (Ok(rest), Some(home)) => Some(std::path::PathBuf::from(home).join(rest)),
+        _ => Some(dir.to_owned()),
+    }
+}
+
+/// Where the viewer's (or a client's) own output goes while it runs:
+/// `<log dir>/temzdf.log`.
+pub fn log_path(config: &Config) -> Option<std::path::PathBuf> {
+    let dir = log_dir(config)?;
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir.join("temzdf.log"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_dir_precedence() {
+        let home = Some("/home/u".into());
+        let cfg = Some(Path::new("~/logs"));
+        assert_eq!(log_dir_from(Some("/env".into()), cfg, home.clone()), Some("/env".into()));
+        assert_eq!(log_dir_from(Some("".into()), cfg, home.clone()), Some("/home/u/logs".into()));
+        assert_eq!(log_dir_from(None, Some(Path::new("/abs")), home.clone()), Some("/abs".into()));
+        assert_eq!(log_dir_from(None, None, home), None, "then the state directory");
+    }
 }

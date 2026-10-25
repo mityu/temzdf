@@ -78,7 +78,11 @@ enum Cmd {
     },
     /// List the sessions.
     #[command(alias = "ls")]
-    ListSessions,
+    ListSessions {
+        /// Also show each server's pid and log file.
+        #[arg(short, long)]
+        verbose: bool,
+    },
     /// End a session.
     #[command(alias = "k")]
     KillSession { name: String },
@@ -99,6 +103,9 @@ enum Cmd {
     #[command(hide = true)]
     Server {
         name: String,
+        /// Where the server's output goes (for `temzdf ls`).
+        #[arg(long, value_name = "FILE")]
+        log: Option<PathBuf>,
         /// What the first pane shows, as `new-pane` takes it.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         pane: Vec<String>,
@@ -113,7 +120,7 @@ fn parse_pair(s: &str) -> Result<(u32, u32)> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Some(Cmd::ListSessions) => return client::list_sessions(),
+        Some(Cmd::ListSessions { verbose }) => return client::list_sessions(verbose),
         Some(Cmd::KillSession { name }) => return client::kill_session(&name),
         Some(Cmd::KillAllSessions) => return client::kill_all_sessions(),
         Some(Cmd::Action { session, action }) => return client::action(&client::resolve(session.as_deref())?, action),
@@ -124,6 +131,7 @@ fn main() -> Result<()> {
                     client::spawn_server(
                         &n,
                         &client::first_pane(file.as_deref())?,
+                        &config,
                         cli.config.as_deref(),
                         cli.editor.as_deref(),
                     )?;
@@ -134,7 +142,7 @@ fn main() -> Result<()> {
             println!("{}", client::attach(&name, &config)?);
             return Ok(());
         }
-        Some(Cmd::Server { name, pane }) => {
+        Some(Cmd::Server { name, log, pane }) => {
             // Leave the terminal's session, so closing it does not end ours.
             let _ = rustix::process::setsid();
             let mut config = config::Config::load(cli.config.as_deref())?;
@@ -146,7 +154,7 @@ fn main() -> Result<()> {
             else {
                 unreachable!("parsed as new-pane")
             };
-            return temzdf_server::daemon::run(&name, &spec, app::settings(&config, true)?);
+            return temzdf_server::daemon::run(&name, &spec, log, app::settings(&config, true)?);
         }
         None => {}
     }
@@ -162,7 +170,7 @@ fn main() -> Result<()> {
         };
         let config = config::Config::load(cli.config.as_deref())?;
         let pane = client::first_pane(file.as_deref())?;
-        client::spawn_server(&name, &pane, cli.config.as_deref(), cli.editor.as_deref())?;
+        client::spawn_server(&name, &pane, &config, cli.config.as_deref(), cli.editor.as_deref())?;
         println!("{}", client::attach(&name, &config)?);
         return Ok(());
     }

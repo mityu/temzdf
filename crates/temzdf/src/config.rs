@@ -22,6 +22,9 @@ pub struct Config {
     pub reload: ReloadConfig,
     /// Command -> keys, replacing that command's default keys (see `keys.rs`).
     pub keys: HashMap<Command, Vec<String>>,
+    /// Where logs go (`~/` is the home directory); `TEMZDF_LOG_DIR` overrides
+    /// it, the default is `$XDG_STATE_HOME/temzdf`.
+    pub log_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -217,6 +220,12 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_dir() {
+        let c = Config::parse("log_dir = \"/var/tmp/tz\"").unwrap();
+        assert_eq!(c.log_dir, Some(PathBuf::from("/var/tmp/tz")));
+    }
 
     #[test]
     fn empty_config_is_default() {

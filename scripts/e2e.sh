@@ -185,7 +185,7 @@ case $mux in
     exit 2
     ;;
 esac
-clean_env=(env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state")
+clean_env=(env -u TEMZDF_LOG_DIR -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state")
 case $term in
   kitty)
     "${clean_env[@]}" kitty --config NONE -o font_size=12 -o "initial_window_width=$width" \

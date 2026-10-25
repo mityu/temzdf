@@ -7,6 +7,12 @@ Every key is optional. Unknown keys are errors, so typos do not go unnoticed.
 The parser lives in `crates/temzdf/src/config.rs`; keep this file in sync.
 
 ```toml
+# Where logs go (MuPDF and SyncTeX warnings, session servers' output):
+# temzdf.log for the viewer and clients, NAME.log for session NAME. "~/" is the
+# home directory. The environment variable TEMZDF_LOG_DIR overrides this; the
+# default is $XDG_STATE_HOME/temzdf (~/.local/state/temzdf).
+# log_dir = "~/.cache/temzdf"
+
 [terminal]
 # How frames reach the terminal: "auto" (detect), "layered" (upload images once,
 # re-place them; kitty/Ghostty) or "composited" (send whole frames; WezTerm/zellij).

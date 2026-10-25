@@ -93,7 +93,7 @@ any compile hook can do the same with `temzdf --forward LINE:FILE doc.pdf`.
 - Queries run on a worker thread (`workers::spawn_synctex`); the `.synctex.gz`
   is parsed lazily and again after every reload.
 - The parser prints errors to stderr; in interactive mode stdout/stderr are
-  redirected to `$XDG_STATE_HOME/temzdf/temzdf.log` so nothing scribbles over the
+  redirected to `temzdf.log` in the log directory (`doc/config.md`) so nothing scribbles over the
   screen (`termpix::tty::StdioRedirect`).
 - Tests: `synctex::tests` (forward and inverse on the fixture) and
   `tests/e2e/synctex.actions` (a second process sends a forward search to a

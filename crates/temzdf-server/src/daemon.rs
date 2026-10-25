@@ -76,23 +76,38 @@ pub fn probe(socket: &Path) -> Option<SessionInfo> {
 
 /// Every live session, by name.
 pub fn list() -> Result<Vec<SessionInfo>> {
+    Ok(list_all()?.0)
+}
+
+/// Every live session, and the names of live sessions that did not answer in
+/// a form this version understands (servers of another temzdf version).
+pub fn list_all() -> Result<(Vec<SessionInfo>, Vec<String>)> {
     let dir = proto::sessions_dir()?;
     let mut out = Vec::new();
+    let mut other = Vec::new();
     for entry in std::fs::read_dir(&dir)? {
         let path = entry?.path();
-        if path.extension().is_some_and(|e| e == "sock")
-            && let Some(info) = probe(&path)
-        {
-            out.push(info);
+        if path.extension().is_none_or(|e| e != "sock") {
+            continue;
+        }
+        match probe(&path) {
+            Some(info) => out.push(info),
+            // probe removed it if nothing listens.
+            None if path.exists() => {
+                other.extend(path.file_stem().map(|n| n.to_string_lossy().into_owned()));
+            }
+            None => {}
         }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
+    other.sort();
+    Ok((out, other))
 }
 
 /// Run the session `name`, starting with a pane showing `first`, until it
 /// ends. Returns once the last pane closed or the session was killed.
-pub fn run(name: &str, first: &PaneSpec, settings: Settings) -> Result<()> {
+/// `log` is where the server's output goes (reported to `temzdf ls`).
+pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Settings) -> Result<()> {
     if !proto::valid_name(name) {
         bail!("invalid session name {name:?}");
     }
@@ -245,6 +260,7 @@ pub fn run(name: &str, first: &PaneSpec, settings: Settings) -> Result<()> {
                             panes: session.pane_count(),
                             clients: clients.values().filter(|c| c.attached).count(),
                             files: session.files(),
+                            log: log.clone(),
                         };
                         let _ = c.tx.send(ServerMsg::Info(info));
                     }
