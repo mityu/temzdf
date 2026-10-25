@@ -9,6 +9,8 @@
 //! show the session) or a single request ([`ClientMsg::Info`],
 //! [`ClientMsg::Kill`], [`ClientMsg::Action`]) answered once.
 
+pub mod script;
+
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
