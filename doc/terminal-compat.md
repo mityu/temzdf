@@ -160,7 +160,19 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   APC/DCS before the reset. Reproduced locally with a pty proxy relaying output
   at 100 KB/s (uncompressed frames, `zlib_level = 0`): `q` took over 15 s before,
   0.12 s after, and the shell came back clean. zellij may still hold input
-  back while it is busy itself; that part is out of our hands.
+  back while it is busy itself; that part is out of our hands. Confirmed by the
+  user: Ghostty and WezTerm over SSH now quit at once, through zellij `q` still
+  waits, and so do zellij's own prefix commands while a frame is drawn.
+- Ghostty and WezTerm over SSH (user report, 2026-10-25): after quitting
+  mid-frame the shell showed `Gi=8323307;OK`, the terminal's reply to a
+  graphics fence that arrived after exit (link latency). Exiting now stops the
+  input thread, sends DA1 (`CSI c`) after the reset and swallows input until
+  its reply (at most 2 s), then flushes input. The writer uses its own
+  non-blocking `/dev/tty` handle, so a stalled write can no longer keep the
+  reset back (previously it gave up after 0.5 s and left mouse reporting on).
+  Reproduced locally with a pty proxy adding 150 ms each way.
+- Ghostty keeps the window title temzdf set after exit; the title is saved and
+  restored with XTWINOPS 22/23, which Ghostty seems to ignore.
 - kitty 0.49 blends translucent images in linear light: the current search
   hit colour (255,120,0, alpha 150) over white shows as (255,191,172), not the
   sRGB source-over (255,176,105). Scaled images are filtered against a

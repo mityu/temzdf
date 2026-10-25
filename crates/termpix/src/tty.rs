@@ -16,9 +16,16 @@ use crate::geom::{CellSize, Geometry};
 use crate::input::{Event, Parser};
 use crate::output::Output;
 
-/// How long exiting waits for the chunk being written before giving up on a
-/// terminal that stopped reading.
-const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
+/// How long exiting waits for the terminal to take the reset sequence.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long exiting waits for replies to earlier queries (see [`drain_replies`]).
+const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+/// Primary device attributes: every terminal answers, in order with earlier replies.
+const DA1: &[u8] = b"\x1b[c";
+
+/// Set to stop the input thread (on exit), and whether it still runs.
+static INPUT_STOP: AtomicBool = AtomicBool::new(false);
+static INPUT_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// Which terminal modes to enable. Defaults enable everything termpix uses.
 #[derive(Clone, Copy, Debug)]
@@ -56,7 +63,8 @@ impl Modes {
         if self.alternate_screen {
             s.extend_from_slice(b"\x1b[?1049h");
         }
-        s.extend_from_slice(b"\x1b[?25l\x1b[2J");
+        // Save the window title (XTWINOPS 22); applications retitle the window.
+        s.extend_from_slice(b"\x1b[22;0t\x1b[?25l\x1b[2J");
         if self.mouse {
             s.extend_from_slice(b"\x1b[?1003h\x1b[?1006h");
         }
@@ -103,6 +111,8 @@ impl Modes {
         if self.alternate_screen {
             s.extend_from_slice(b"\x1b[?1049l");
         }
+        // Restore the saved window title.
+        s.extend_from_slice(b"\x1b[23;0t");
         s
     }
 }
@@ -119,17 +129,62 @@ struct RestoreState {
 static RESTORE: Mutex<Option<RestoreState>> = Mutex::new(None);
 static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
-fn restore_now() {
+/// Put the terminal back. With `drain_input`, also swallow replies to queries
+/// still on their way (graphics fences, probes): otherwise they arrive after
+/// exit and the shell shows them as typed text (`Gi=8323307;OK`).
+fn restore_now(drain_input: bool) {
     let Ok(mut guard) = RESTORE.lock() else { return };
     if let Some(state) = guard.take() {
+        let mut last = state.reset.clone();
+        if drain_input {
+            last.extend_from_slice(DA1);
+        }
         match &state.out {
-            Some(out) => out.close(&state.reset, CLOSE_TIMEOUT),
+            Some(out) => out.close(&last, CLOSE_TIMEOUT),
             None => {
-                let _ = rustix::io::write(&state.fd, &state.reset);
+                let _ = rustix::io::write(&state.fd, &last);
             }
+        }
+        if drain_input {
+            drain_replies(state.fd.as_fd());
+            let _ = termios::tcflush(&state.fd, termios::QueueSelector::IFlush);
         }
         let _ = termios::tcsetattr(&state.fd, OptionalActions::Now, &state.termios);
     }
+}
+
+/// Read and discard input until the reply to the DA1 query sent last (at most
+/// [`REPLY_TIMEOUT`]). Terminals answer in order, so every earlier reply has
+/// arrived by then.
+fn drain_replies(fd: BorrowedFd<'_>) {
+    let deadline = std::time::Instant::now() + REPLY_TIMEOUT;
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        match read_timeout(fd, &mut buf, Some(left)) {
+            Ok(Some(n)) if n > 0 => seen.extend_from_slice(&buf[..n]),
+            Ok(None) => continue,
+            _ => return,
+        }
+        if has_da1_reply(&seen) {
+            return;
+        }
+    }
+}
+
+/// Whether `bytes` contain a DA1 reply, `ESC [ ? <digits and ;> c`.
+fn has_da1_reply(bytes: &[u8]) -> bool {
+    bytes.windows(3).enumerate().any(|(i, w)| {
+        w == b"\x1b[?" && {
+            let rest = &bytes[i + 3..];
+            let end = rest.iter().position(|b| !(b.is_ascii_digit() || *b == b';'));
+            end.is_some_and(|e| rest[e] == b'c')
+        }
+    })
 }
 
 fn install_panic_hook() {
@@ -138,7 +193,7 @@ fn install_panic_hook() {
     }
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        restore_now();
+        restore_now(false);
         previous(info);
     }));
 }
@@ -164,7 +219,12 @@ impl Tty {
         let restore_fd = file.as_fd().try_clone_to_owned()?;
         // `TERMPIX_TRACE=<path>`: copy of every byte written, for debugging.
         let trace = std::env::var_os("TERMPIX_TRACE").and_then(|p| File::create(p).ok());
-        let out = Output::spawn(file.try_clone()?, trace)?;
+        // A separate, non-blocking handle for writing (its own open file
+        // description, so reads stay blocking): the writer never gets stuck in
+        // a write, and exiting can always get the reset out.
+        let writer = OpenOptions::new().write(true).open("/dev/tty")?;
+        rustix::fs::fcntl_setfl(&writer, rustix::fs::OFlags::NONBLOCK)?;
+        let out = Output::spawn(writer, trace)?;
         *RESTORE.lock().unwrap_or_else(|e| e.into_inner()) = Some(RestoreState {
             fd: restore_fd,
             termios: original,
@@ -231,7 +291,13 @@ impl Tty {
 
 impl Drop for Tty {
     fn drop(&mut self) {
-        restore_now();
+        // Stop the input thread first: the replies drained below are not input.
+        INPUT_STOP.store(true, Ordering::SeqCst);
+        let deadline = std::time::Instant::now() + Duration::from_millis(300);
+        while INPUT_RUNNING.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        restore_now(true);
     }
 }
 
@@ -342,24 +408,31 @@ pub fn spawn_input<T: Send + 'static>(
             }
         })?;
     }
+    INPUT_STOP.store(false, Ordering::SeqCst);
+    INPUT_RUNNING.store(true, Ordering::SeqCst);
     std::thread::Builder::new().name("termpix-input".into()).spawn(move || {
         let mut parser = Parser::new();
         parser.set_pixel_mouse(pixel_mouse);
         let mut buf = [0u8; 4096];
-        loop {
-            let timeout = parser.has_pending().then_some(ESC_TIMEOUT);
-            let events = match read_timeout(reader.file.as_fd(), &mut buf, timeout) {
-                Ok(None) if timeout.is_some() => parser.flush(),
+        // Wake up now and then to notice INPUT_STOP.
+        let idle = Duration::from_millis(50);
+        while !INPUT_STOP.load(Ordering::SeqCst) {
+            let pending = parser.has_pending();
+            let timeout = if pending { ESC_TIMEOUT } else { idle };
+            let events = match read_timeout(reader.file.as_fd(), &mut buf, Some(timeout)) {
+                Ok(None) if pending => parser.flush(),
                 Ok(None) => continue,
                 Ok(Some(0)) | Err(_) => break,
                 Ok(Some(n)) => parser.feed(&buf[..n]),
             };
             for ev in events {
                 if tx.send(map(TermEvent::Input(ev))).is_err() {
+                    INPUT_RUNNING.store(false, Ordering::SeqCst);
                     return;
                 }
             }
         }
+        INPUT_RUNNING.store(false, Ordering::SeqCst);
     })?;
     Ok(())
 }
@@ -395,5 +468,18 @@ impl Drop for StdioRedirect {
         let _ = io::stdout().flush();
         let _ = rustix::stdio::dup2_stdout(&self.saved_out);
         let _ = rustix::stdio::dup2_stderr(&self.saved_err);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_the_da1_reply_behind_other_replies() {
+        assert!(has_da1_reply(b"\x1b_Gi=8323307;OK\x1b\\\x1b[?62;22;52c"));
+        assert!(has_da1_reply(b"\x1b[?1c"));
+        assert!(!has_da1_reply(b"\x1b_Gi=8323307;OK\x1b\\\x1b[?62;22"));
+        assert!(!has_da1_reply(b"\x1b[?2026;2$y"));
     }
 }

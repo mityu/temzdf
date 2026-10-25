@@ -15,6 +15,9 @@ below them are deferred.
 
 ## Deferred
 
+- zellij delays keyboard input (even its own prefix commands) while it
+  processes a frame, so `q` waits there; sending less data per frame is the
+  only lever we have (user agreed to defer, 2026-10-25).
 - Multiplexers: zellij (Composited strips) and tmux 3.8 (Unicode placeholders
   through passthrough) work; see `doc/terminal-compat.md`. Left: zellij over SSH
   is still slow (zellij 0.45.1 forwards images uncompressed; a half-resolution

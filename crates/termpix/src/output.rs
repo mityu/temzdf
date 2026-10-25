@@ -3,19 +3,40 @@
 //! Writing a frame can block for a long time when the terminal reads slowly
 //! (over SSH, through zellij): a whole-screen image is megabytes. Done on the
 //! main thread, that also delays input handling, so even `q` waits until the
-//! frame is out. Here callers only queue bytes; a writer thread sends them in
-//! small chunks, and on exit the rest can be dropped at a chunk boundary. A
-//! string sequence (APC, DCS, OSC) cut in the middle is then terminated, so the
-//! bytes that follow (the terminal reset) are not swallowed as its payload.
+//! frame is out. Here callers only queue bytes; a writer thread sends them with
+//! non-blocking writes, so it never sits in a write the terminal does not
+//! drain and exiting can always take over: it drops the rest, terminates a
+//! string sequence (APC, DCS, OSC) cut in the middle, so the bytes that follow
+//! are not swallowed as its payload, and writes the terminal reset.
 
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-/// Bytes per write call: the longest stretch that has to finish before queued
-/// output can be dropped.
+/// Bytes per write call.
 const CHUNK: usize = 16 * 1024;
+/// Longest wait for the terminal to accept more bytes before looking whether
+/// output was closed (the writer holds the sink this long at most).
+const WAIT_SLICE: Duration = Duration::from_millis(20);
+
+/// Where output goes. Writes may fail with `WouldBlock` (a non-blocking file
+/// descriptor); [`OutputSink::wait_writable`] then waits until they can go on.
+pub trait OutputSink: Write + Send + 'static {
+    /// Wait at most `timeout` until a write would make progress.
+    fn wait_writable(&self, timeout: Duration) {
+        std::thread::sleep(timeout.min(Duration::from_millis(1)));
+    }
+}
+
+impl OutputSink for std::fs::File {
+    fn wait_writable(&self, timeout: Duration) {
+        use rustix::event::{PollFd, PollFlags, Timespec};
+        let mut fds = [PollFd::new(self, PollFlags::OUT)];
+        let ts = Timespec { tv_sec: timeout.as_secs() as _, tv_nsec: timeout.subsec_nanos() as _ };
+        let _ = rustix::event::poll(&mut fds, Some(&ts));
+    }
+}
 
 /// Where escape-sequence parsing stands after the bytes written so far.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -114,7 +135,7 @@ impl<W> Clone for Output<W> {
     }
 }
 
-impl<W: Write + Send + 'static> Output<W> {
+impl<W: OutputSink> Output<W> {
     /// Start the writer thread. `trace` gets a copy of every byte written.
     pub fn spawn(out: W, trace: Option<std::fs::File>) -> io::Result<Self> {
         let shared = Arc::new(Shared {
@@ -165,10 +186,10 @@ impl<W> Output<W> {
     }
 }
 
-impl<W: Write> Output<W> {
+impl<W: OutputSink> Output<W> {
     /// Drop whatever is still queued, end a sequence cut off mid-way, then
-    /// write `last` directly (the terminal reset). Waits at most `timeout` for
-    /// the chunk being written; later writes are ignored.
+    /// write `last` (the terminal reset), waiting at most `timeout` for the
+    /// terminal to take it. Later writes are ignored.
     pub fn close(&self, last: &[u8], timeout: Duration) {
         {
             let mut q = lock(&self.shared.queue);
@@ -176,27 +197,30 @@ impl<W: Write> Output<W> {
             q.bufs.clear();
             self.shared.changed.notify_all();
         }
+        // The writer holds the sink for one write or one WAIT_SLICE at most.
+        let mut sink = lock(&self.shared.sink);
         let deadline = Instant::now() + timeout;
-        let mut sink = loop {
-            match self.shared.sink.try_lock() {
-                Ok(s) => break s,
-                Err(std::sync::TryLockError::Poisoned(e)) => break e.into_inner(),
-                Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-                // The terminal is not reading at all: nothing would get through.
-                Err(std::sync::TryLockError::WouldBlock) => return,
-            }
-        };
         let end = sink.seq.terminator();
-        let _ = sink.out.write_all(end);
-        let _ = sink.out.write_all(last);
+        let mut bytes = end.to_vec();
+        bytes.extend_from_slice(last);
+        let mut off = 0;
+        while off < bytes.len() && Instant::now() < deadline {
+            match sink.out.write(&bytes[off..]) {
+                Ok(0) => break,
+                Ok(n) => off += n,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    sink.out.wait_writable(deadline.saturating_duration_since(Instant::now()).min(WAIT_SLICE));
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
         let _ = sink.out.flush();
         sink.seq = Seq::Ground;
     }
 }
 
-fn writer<W: Write>(s: &Shared<W>) {
+fn writer<W: OutputSink>(s: &Shared<W>) {
     loop {
         let buf = {
             let mut q = lock(&s.queue);
@@ -212,23 +236,43 @@ fn writer<W: Write>(s: &Shared<W>) {
                 q = s.changed.wait(q).unwrap_or_else(|e| e.into_inner());
             }
         };
-        for chunk in buf.chunks(CHUNK) {
+        let mut off = 0;
+        while off < buf.len() {
             if lock(&s.queue).closed {
                 break;
             }
+            let chunk = &buf[off..(off + CHUNK).min(buf.len())];
             let mut sink = lock(&s.sink);
-            let res = sink.out.write_all(chunk).and_then(|()| sink.out.flush());
-            sink.seq.feed(chunk);
+            let res = sink.out.write(chunk);
+            let written = match res {
+                Ok(n) => n,
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    sink.out.wait_writable(WAIT_SLICE);
+                    0
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => 0,
+                Err(_) => 0,
+            };
+            // Only what the terminal actually took counts.
+            sink.seq.feed(&chunk[..written]);
             if let Some(t) = &mut sink.trace {
-                let _ = t.write_all(chunk);
+                let _ = t.write_all(&chunk[..written]);
             }
             drop(sink);
+            off += written;
             let mut q = lock(&s.queue);
-            if let Err(e) = res {
-                q.error = Some(e.kind());
-                q.closed = true;
+            match res {
+                Ok(0) => {
+                    q.error = Some(io::ErrorKind::WriteZero);
+                    q.closed = true;
+                }
+                Err(e) if !matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => {
+                    q.error = Some(e.kind());
+                    q.closed = true;
+                }
+                _ => {}
             }
-            q.pending = q.pending.saturating_sub(chunk.len());
+            q.pending = q.pending.saturating_sub(written);
             s.changed.notify_all();
         }
     }
@@ -251,11 +295,39 @@ mod tests {
         }
     }
 
+    impl OutputSink for Buf {}
+
+    /// A non-blocking terminal that stopped reading: takes `room` more bytes
+    /// (possibly part of a write), then answers `WouldBlock` until `room` grows.
+    struct Stalled {
+        inner: Buf,
+        room: Arc<Mutex<usize>>,
+    }
+
+    impl Write for Stalled {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            let mut room = lock(&self.room);
+            if *room == 0 {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            let n = b.len().min(*room);
+            *room -= n;
+            self.inner.write(&b[..n])
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl OutputSink for Stalled {}
+
     /// Writes stall until the gate opens (a terminal that stopped reading).
     struct Gated {
         inner: Buf,
         gate: Arc<(Mutex<bool>, Condvar)>,
     }
+
+    impl OutputSink for Gated {}
 
     impl Write for Gated {
         fn write(&mut self, b: &[u8]) -> io::Result<usize> {
@@ -349,5 +421,44 @@ mod tests {
         assert_eq!(after(&got[..got.len() - 5]), Seq::Ground);
         out.write(b"late").unwrap();
         assert!(!lock(&inner.0).ends_with(b"late"));
+    }
+
+    #[test]
+    fn a_stalled_terminal_never_keeps_the_reset_back() {
+        let inner = Buf::default();
+        let room = Arc::new(Mutex::new(CHUNK + 100));
+        let out = Output::spawn(Stalled { inner: inner.clone(), room: room.clone() }, None).unwrap();
+        // The terminal takes a chunk and a bit of the next, then stops reading
+        // in the middle of an image transfer.
+        let mut frame = b"\x1b_Ga=T;".to_vec();
+        frame.resize(10 * CHUNK, b'A');
+        frame.extend_from_slice(b"\x1b\\");
+        out.write(&frame).unwrap();
+        while lock(&inner.0).len() < CHUNK + 100 {
+            std::thread::yield_now();
+        }
+        // It reads again a little later; quitting must not have given up.
+        let r = room.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            *lock(&r) = usize::MAX;
+        });
+        let start = Instant::now();
+        out.close(b"RESET", Duration::from_secs(2));
+        assert!(start.elapsed() < Duration::from_secs(1));
+        let got = lock(&inner.0).clone();
+        assert_eq!(got.len(), CHUNK + 100 + 2 + 5, "exactly what was taken, the terminator and the reset");
+        assert!(got.ends_with(b"\x1b\\RESET"));
+    }
+
+    #[test]
+    fn closing_gives_up_on_a_terminal_that_never_reads() {
+        let room = Arc::new(Mutex::new(0));
+        let out = Output::spawn(Stalled { inner: Buf::default(), room }, None).unwrap();
+        out.write(b"stuck").unwrap();
+        let start = Instant::now();
+        out.close(b"RESET", Duration::from_millis(200));
+        let took = start.elapsed();
+        assert!(took >= Duration::from_millis(150) && took < Duration::from_secs(1), "{took:?}");
     }
 }
