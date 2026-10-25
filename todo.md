@@ -52,5 +52,3 @@ below them are deferred.
   1. Suspend the UI, run `$EDITOR` full screen, resume on exit.
   2. Later: split the screen and embed the editor (terminal emulation with e.g. `alacritty_terminal`).
   Short inputs (search, page number, commands) use the built-in one-line input.
-- CI has not run on GitHub yet (written and linted locally); check the first run,
-  especially the macOS `nix build` job.
