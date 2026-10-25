@@ -1,0 +1,16 @@
+[package]
+name = "tuitest"
+description = "Test harness: run a program on a pty behind Ghostty's terminal emulation (libghostty-vt), drive it with keys and read its screen."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+libghostty-vt = "0.2.2"
+libghostty-vt-sys = { version = "0.2.2", features = ["pkg-config"] }
+portable-pty = "0.9.0"
+
+[lints]
+workspace = true

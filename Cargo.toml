@@ -12,6 +12,7 @@ members = [
     "crates/temzdf-protocol",
     "crates/temzdf-server",
     "crates/temzdf",
+    "crates/tuitest",
 ]
 
 [workspace.package]
@@ -31,6 +32,7 @@ temzdf-term = { path = "crates/temzdf-term" }
 temzdf-tty = { path = "crates/temzdf-tty" }
 temzdf-server = { path = "crates/temzdf-server" }
 temzdf-protocol = { path = "crates/temzdf-protocol" }
+tuitest = { path = "crates/tuitest" }
 anyhow = "1.0.104"
 mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "system-fonts"] }
 

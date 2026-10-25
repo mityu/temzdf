@@ -86,6 +86,8 @@
                 fontconfig
                 # Scratch scripts during development (not needed by the build).
                 python3
+                # Tests inside tmux (crates/tuitest, crates/temzdf/tests/tui.rs).
+                tmux
               ]
               ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
                 # End-to-end testing: run kitty on a virtual X server and drive it.
@@ -127,13 +129,14 @@
               clang
               fontconfig
               tex
+              tmux
             ];
             inherit (base) buildInputs LIBCLANG_PATH;
             FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
           };
           # `nix develop .#alldeps`: every tool development of this CLI uses,
-          # including TeX for the fixtures and the other terminals and the
-          # multiplexer that scripts/e2e.sh can drive.
+          # including TeX for the fixtures and the other terminals and
+          # multiplexers that scripts/e2e.sh can drive (tmux is in `base`).
           alldeps = pkgs.mkShell (
             base
             // {
@@ -146,7 +149,6 @@
                     ghostty
                     wezterm
                     zellij
-                    tmux
                   ]
                 );
             }
