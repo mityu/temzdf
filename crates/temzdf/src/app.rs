@@ -6,6 +6,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
+use temzdf_scene::Images;
 use termpix::compositor::{Backend, Compositor, Layer};
 use termpix::graphics::Medium;
 use termpix::input::Event;
@@ -14,6 +15,7 @@ use termpix::tty::{self, Modes, TermEvent, Tty};
 use crate::config::{Config, ReloadAnchor};
 use crate::ipc::{self, ForwardRequest};
 use crate::pdf;
+use crate::present::Presenter;
 use crate::session::{Action, Pointer, Request, Session};
 use crate::viewer::{Need, StandIn};
 use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd, SynctexCmd};
@@ -71,6 +73,8 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let backend = term.backend(caps.backend(), caps.has_backend_override());
     let medium = term.medium(caps.medium(), caps.has_medium_override());
     let mut comp = Compositor::new(backend, medium, caps.geometry);
+    let mut images = Images::new();
+    let mut presenter = Presenter::new();
     // In the log (stderr is redirected): scripts/e2e.sh reads the geometry to
     // render the expected screen headlessly.
     eprintln!("temzdf: {} with {backend:?} over {medium:?}", geometry_line(caps.geometry));
@@ -174,7 +178,9 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         let congested = dirty && (writing || comp.is_congested(Instant::now()));
         let mut held = false;
         if dirty && !congested {
-            let (layers, needs) = session.frame(&mut comp);
+            let (layers, needs) = session.frame(&mut images);
+            presenter.sync(&mut comp, &mut images);
+            let layers = presenter.layers(&layers);
             dispatch(&mut session, &doc, &pool, needs);
             // Do not show half-rendered first frames (each costs a full upload in
             // Composited mode), and respect the frame-rate cap.
@@ -289,7 +295,8 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 dirty = true;
             }
             Some(AppEvent::Rendered(r)) => {
-                session.viewer.rendered(&mut comp, r);
+                session.viewer.rendered(&mut images, r);
+                presenter.sync(&mut comp, &mut images);
                 dirty = true;
             }
             Some(AppEvent::SearchHits { generation, page, rects }) => {
@@ -345,7 +352,8 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 let _ = synctex.send(SynctexCmd::Reload);
                 reload.in_flight = false;
                 reload.attempts = 0;
-                session.reload(&mut comp, info);
+                session.reload(&mut images, info);
+                presenter.sync(&mut comp, &mut images);
                 session.reloading = reload.due.is_some();
                 dirty = true;
             }

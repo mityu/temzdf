@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use termpix::compositor::{Compositor, ImageId, Layer};
+use temzdf_scene::{ImageKey, Images, Layer};
 use termpix::geom::{Geometry, Rect};
 use termpix::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
@@ -139,7 +139,7 @@ enum WidgetState {
 }
 
 struct WidgetImage {
-    image: ImageId,
+    image: ImageKey,
     state: WidgetState,
     size: (u32, u32),
 }
@@ -168,7 +168,7 @@ pub struct Session {
     pending_first_hit: Option<Target>,
     requests: Vec<Request>,
     /// Solid overlay images by (width, height, colour).
-    overlay_images: HashMap<(u32, u32, [u8; 4]), ImageId>,
+    overlay_images: HashMap<(u32, u32, [u8; 4]), ImageKey>,
     /// Page text for selection, extracted on demand.
     texts: Vec<Option<PageText>>,
     selection: Option<Selection>,
@@ -412,9 +412,9 @@ impl Session {
     }
 
     /// Layers for this frame and the work still needed.
-    pub fn frame(&mut self, comp: &mut Compositor) -> (Vec<Layer>, Vec<Need>) {
+    pub fn frame(&mut self, images: &mut Images) -> (Vec<Layer>, Vec<Need>) {
         self.viewer.peek = self.preview.as_ref().map(|p| p.peek);
-        let (mut layers, needs) = self.viewer.frame(comp);
+        let (mut layers, needs) = self.viewer.frame(images);
         // Zoom as a percentage of 96 dpi ("100%" = actual size on a typical screen).
         let zoom = (self.viewer.view.scale * 72.0 / 96.0 * 100.0).round();
         let (w, h) = (self.geometry.width_px(), self.bar_height());
@@ -423,7 +423,7 @@ impl Session {
         self.caret_cell = None;
         if let Some(mut input) = self.input.clone() {
             input.hint = self.search_hint();
-            layers.push(self.widget(comp, KEY_INPUT, WidgetState::Input(input.clone()), bar));
+            layers.push(self.widget(images, KEY_INPUT, WidgetState::Input(input.clone()), bar));
             // Put the terminal cursor at the caret so IME preedit shows there:
             // in the first cell starting at or after it, since the cursor
             // covers a whole cell and would hide the last character typed.
@@ -442,23 +442,23 @@ impl Session {
             }
             let notice = self.hover_uri.clone().or_else(|| self.notice.clone());
             let status = StatusBar { left: self.name.clone(), right, error: self.message.clone(), notice };
-            layers.push(self.widget(comp, KEY_STATUS, WidgetState::Status(status), bar));
+            layers.push(self.widget(images, KEY_STATUS, WidgetState::Status(status), bar));
         }
-        self.overlay_layers(comp, &mut layers);
+        self.overlay_layers(images, &mut layers);
         if self.sidebar_open {
             let r = self.sidebar_rect();
             let state = WidgetState::List(self.outline.list.clone(), self.row_height());
-            layers.push(self.widget(comp, KEY_SIDEBAR, state, r));
+            layers.push(self.widget(images, KEY_SIDEBAR, state, r));
         }
         if let Some(r) = self.preview.as_ref().map(|p| p.peek.rect) {
             let b = PREVIEW_BORDER;
             let outer = Rect::new(r.x - b as i32, r.y - b as i32, r.w + 2 * b, r.h + 2 * b);
-            layers.push(Layer { z: Z_PREVIEW, ..self.widget(comp, KEY_PREVIEW, WidgetState::Frame, outer) });
+            layers.push(Layer { z: Z_PREVIEW, ..self.widget(images, KEY_PREVIEW, WidgetState::Frame, outer) });
         }
         (layers, needs)
     }
 
-    fn widget(&mut self, comp: &mut Compositor, key: u32, state: WidgetState, rect: Rect) -> Layer {
+    fn widget(&mut self, images: &mut Images, key: u32, state: WidgetState, rect: Rect) -> Layer {
         let size = (rect.w, rect.h);
         let fresh = self.widgets.get(&key).is_some_and(|w| w.state == state && w.size == size);
         if !fresh {
@@ -474,10 +474,10 @@ impl Session {
             };
             let image = match self.widgets.get(&key) {
                 Some(w) => {
-                    comp.replace_image(w.image, rect.w, rect.h, px);
+                    images.replace(w.image, rect.w, rect.h, px);
                     w.image
                 }
-                None => comp.add_image(rect.w, rect.h, px),
+                None => images.add(rect.w, rect.h, px),
             };
             self.widgets.insert(key, WidgetImage { image, state, size });
         }
@@ -945,14 +945,14 @@ impl Session {
     /// expansion and the search query (re-run on the new text); drop the text
     /// selection and per-page caches. History entries are clamped to the new
     /// page count. See doc/reload.md.
-    pub fn reload(&mut self, comp: &mut Compositor, info: DocInfo) {
+    pub fn reload(&mut self, images: &mut Images, info: DocInfo) {
         let collapsed = self.outline.collapsed_paths(&self.info.outline);
         let selected_title = self.outline.selected_entry().map(|i| self.info.outline[i].title.clone());
         // Remember the line being read while the old text is still there.
         self.text_anchor = if self.anchor_by_text { self.capture_text_anchor(Instant::now()) } else { None };
         self.close_preview();
         self.hover_uri = None;
-        self.viewer.replace_pages(comp, info.bounds.clone());
+        self.viewer.replace_pages(images, info.bounds.clone());
         let pages = info.bounds.len();
         self.links = vec![None; pages];
         self.texts = vec![None; pages];
@@ -1082,7 +1082,7 @@ impl Session {
     }
 
     /// Overlay layers on visible pages: search hits and the text selection.
-    fn overlay_layers(&mut self, comp: &mut Compositor, layers: &mut Vec<Layer>) {
+    fn overlay_layers(&mut self, images: &mut Images, layers: &mut Vec<Layer>) {
         let mut rects: Vec<(usize, PageRect, Color)> = Vec::new();
         for page in self.viewer.visible_pages() {
             if self.search.is_active() {
@@ -1117,7 +1117,7 @@ impl Session {
             let image = *self.overlay_images.entry((w, h, color.0)).or_insert_with(|| {
                 let mut c = Canvas::new(w, h);
                 c.fill_rect(0.0, 0.0, w as f32, h as f32, color);
-                comp.add_image(w, h, c.finish())
+                images.add(w, h, c.finish())
             });
             let src = Rect::new(vis.x - dst.x, vis.y - dst.y, vis.w, vis.h);
             layers.push(Layer { key, image, src, dst: vis, z: Z_OVERLAY });
@@ -1125,7 +1125,7 @@ impl Session {
         // Bound the overlay image cache (sizes change with zoom).
         if self.overlay_images.len() > 256 {
             for (_, id) in self.overlay_images.drain() {
-                comp.remove_image(id);
+                images.remove(id);
             }
         }
     }
@@ -1464,9 +1464,8 @@ mod tests {
         pdf::doc_info(&pdf::open(&pdf::fixture(name)).unwrap()).unwrap()
     }
 
-    fn comp() -> Compositor {
-        let g = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
-        Compositor::new(termpix::compositor::Backend::Layered, termpix::graphics::Medium::Direct { compress: false }, g)
+    fn comp() -> Images {
+        Images::new()
     }
 
     #[test]

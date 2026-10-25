@@ -6,6 +6,7 @@ mod keys;
 mod layout;
 mod outline;
 mod pdf;
+mod present;
 mod search;
 mod selection;
 mod session;

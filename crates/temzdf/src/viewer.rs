@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use mupdf::DisplayList;
-use termpix::compositor::{Compositor, ImageId, Layer};
+use temzdf_scene::{ImageKey, Images, Layer};
 use termpix::geom::Rect;
-use termpix::raster::{RgbaImage, blit};
+use termpix::raster::{RgbaImage, RgbaRef, blit};
 use termpix::scroll::KineticScroll;
 
 use crate::layout::{Layout, View};
@@ -101,7 +101,7 @@ pub enum Need {
 }
 
 struct Cached {
-    image: ImageId,
+    image: ImageKey,
     layer: u32,
     bytes: usize,
     last_used: u64,
@@ -131,7 +131,7 @@ pub struct Viewer {
     /// Page-area-sized background image and its size. Not a scaled 1x1 image:
     /// terminals filter scaled images against a transparent border (kitty
     /// darkens half a source pixel along each edge, i.e. half the screen).
-    background: Option<(ImageId, u32, u32)>,
+    background: Option<(ImageKey, u32, u32)>,
     /// Left edge of the page area on screen (pixels), e.g. right of a sidebar.
     origin_x: i32,
     /// Keep the zoom at fit-width when the page area changes.
@@ -167,7 +167,7 @@ pub enum StandIn {
 struct Composed {
     /// Current scale, old scale, screen rect.
     id: (u32, u32, Rect),
-    image: ImageId,
+    image: ImageKey,
     layer: u32,
     used: u64,
 }
@@ -431,17 +431,17 @@ impl Viewer {
     /// within it as a fraction of the page height, so small layout changes still
     /// land in the right place. If the page count shrank, the last page is used
     /// with the same fraction. Zoom, fit-width mode and horizontal scroll stay.
-    pub fn replace_pages(&mut self, comp: &mut Compositor, bounds: Vec<PageBounds>) {
+    pub fn replace_pages(&mut self, images: &mut Images, bounds: Vec<PageBounds>) {
         let top = self.top_position();
         let fraction = top.y.unwrap_or(0.0) / self.layout.pages[top.page].h.max(1.0);
         let scroll_x = self.view.scroll_x;
 
         self.generation = self.generation.wrapping_add(1);
         for (_, c) in self.tiles.drain() {
-            comp.remove_image(c.image);
+            images.remove(c.image);
         }
         for (_, c) in self.composed.drain() {
-            comp.remove_image(c.image);
+            images.remove(c.image);
         }
         self.used_bytes = 0;
         self.in_flight.clear();
@@ -479,20 +479,20 @@ impl Viewer {
         self.in_flight.remove(&key);
     }
 
-    pub fn rendered(&mut self, comp: &mut Compositor, r: Rendered) {
+    pub fn rendered(&mut self, images: &mut Images, r: Rendered) {
         self.in_flight.remove(&r.key);
         if r.key.generation != self.generation || self.tiles.contains_key(&r.key) {
             return;
         }
         let bytes = r.pixels.len();
-        let image = comp.add_image(r.width, r.height, r.pixels);
+        let image = images.add(r.width, r.height, r.pixels);
         let layer = self.alloc_layer();
         self.used_bytes += bytes;
         self.tiles.insert(r.key, Cached { image, layer, bytes, last_used: self.frame_no });
     }
 
     /// Build this frame's layers and the outstanding work, most urgent first.
-    pub fn frame(&mut self, comp: &mut Compositor) -> (Vec<Layer>, Vec<Need>) {
+    pub fn frame(&mut self, images: &mut Images) -> (Vec<Layer>, Vec<Need>) {
         self.frame_no += 1;
         self.sync_view();
         let view = self.view;
@@ -505,9 +505,9 @@ impl Viewer {
             Some((id, w, h)) if (w, h) == (sw, sh) => id,
             old => {
                 if let Some((id, ..)) = old {
-                    comp.remove_image(id);
+                    images.remove(id);
                 }
-                let id = comp.add_image(sw, sh, BACKGROUND.repeat(sw as usize * sh as usize));
+                let id = images.add(sw, sh, BACKGROUND.repeat(sw as usize * sh as usize));
                 self.background = Some((id, sw, sh));
                 id
             }
@@ -610,7 +610,7 @@ impl Viewer {
             }
             complete &= !missing_on_screen;
             if missing_on_screen {
-                self.stand_in(comp, page, scale_q, (sx, sy), &screen, &mut layers);
+                self.stand_in(images, page, scale_q, (sx, sy), &screen, &mut layers);
             }
             if missing_on_screen && let Some((image, layer)) = thumb_cached {
                 let (tw, th) = bounds.pixel_size(thumb_scale);
@@ -641,11 +641,11 @@ impl Viewer {
         self.composed.retain(|_, c| {
             let keep = c.used == frame;
             if !keep {
-                comp.remove_image(c.image);
+                images.remove(c.image);
             }
             keep
         });
-        self.evict(comp);
+        self.evict(images);
         (layers, needs)
     }
 
@@ -674,7 +674,7 @@ impl Viewer {
     fn peek_frame(
         &mut self,
         p: &Peek,
-        bg: ImageId,
+        bg: ImageKey,
         bg_size: (u32, u32),
         scale_q: u32,
         layers: &mut Vec<Layer>,
@@ -746,7 +746,7 @@ impl Viewer {
     /// they arrive. `origin` is the page's top-left on screen.
     fn stand_in(
         &mut self,
-        comp: &mut Compositor,
+        images: &mut Images,
         page: usize,
         scale_q: u32,
         origin: (i32, i32),
@@ -828,15 +828,16 @@ impl Viewer {
                 }
                 let mut img = RgbaImage::new(vis.w, vis.h, [0, 0, 0, 0]);
                 for (image, _, src, dst) in &parts {
-                    if let Some(px) = comp.image_pixels(*image) {
+                    if let Some(px) = images.get(*image) {
+                        let px = RgbaRef { width: px.width, height: px.height, data: &px.pixels };
                         let at = Rect::new(dst.x - vis.x, dst.y - vis.y, dst.w, dst.h);
                         blit(&mut img, at, px, *src);
                     }
                 }
-                let image = comp.add_image(vis.w, vis.h, img.data);
+                let image = images.add(vis.w, vis.h, img.data);
                 let layer = self.alloc_layer();
                 if let Some(old) = self.composed.insert(page, Composed { id, image, layer, used: frame }) {
-                    comp.remove_image(old.image);
+                    images.remove(old.image);
                 }
                 layers.push(Layer { key: layer, image, src: Rect::new(0, 0, vis.w, vis.h), dst: vis, z: Z_STAND_IN });
             }
@@ -850,7 +851,7 @@ impl Viewer {
         layer
     }
 
-    fn touch(&mut self, key: TileKey) -> Option<(ImageId, u32)> {
+    fn touch(&mut self, key: TileKey) -> Option<(ImageKey, u32)> {
         let frame = self.frame_no;
         self.tiles.get_mut(&key).map(|c| {
             c.last_used = frame;
@@ -859,7 +860,7 @@ impl Viewer {
     }
 
     /// Drop least recently used tiles over budget, never ones used this frame.
-    fn evict(&mut self, comp: &mut Compositor) {
+    fn evict(&mut self, images: &mut Images) {
         if self.used_bytes <= TILE_BUDGET {
             return;
         }
@@ -871,7 +872,7 @@ impl Viewer {
                 break;
             }
             if let Some(c) = self.tiles.remove(&key) {
-                comp.remove_image(c.image);
+                images.remove(c.image);
                 self.used_bytes -= c.bytes;
             }
         }
@@ -882,7 +883,8 @@ impl Viewer {
 mod tests {
     use super::*;
     use crate::pdf;
-    use termpix::compositor::Backend;
+    use crate::present::Presenter;
+    use termpix::compositor::{Backend, Compositor};
     use termpix::geom::{CellSize, Geometry};
     use termpix::graphics::Medium;
     use termpix::mock::MockTerminal;
@@ -890,9 +892,9 @@ mod tests {
     const GEOMETRY: Geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
 
     /// Do the viewer's work inline until it needs nothing more.
-    fn settle(v: &mut Viewer, comp: &mut Compositor, doc: &pdf::Doc) {
+    fn settle(v: &mut Viewer, images: &mut Images, doc: &pdf::Doc) {
         loop {
-            let (_, needs) = v.frame(comp);
+            let (_, needs) = v.frame(images);
             if needs.is_empty() {
                 return;
             }
@@ -901,7 +903,7 @@ mod tests {
                     Need::LoadPage(p) => v.page_loaded(v.generation(), p, pdf::display_list(doc, p).unwrap()),
                     Need::Render(job) => {
                         let pixels = pdf::render(&job.list, job.bounds, job.scale, job.area).unwrap();
-                        v.rendered(comp, Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels });
+                        v.rendered(images, Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels });
                     }
                 }
             }
@@ -942,22 +944,28 @@ mod tests {
         let mut v = Viewer::new(bounds, GEOMETRY.width_px(), GEOMETRY.height_px());
         v.stand_in_mode = mode;
         let mut comp = Compositor::new(backend, Medium::Direct { compress: false }, GEOMETRY);
+        let mut images = Images::new();
+        let mut presenter = Presenter::new();
         let mut term = MockTerminal::new(GEOMETRY, [0, 0, 0, 255]);
         let mut out = Vec::new();
-        settle(&mut v, &mut comp, &doc);
-        let (layers, _) = v.frame(&mut comp);
-        comp.present(&layers, &mut out).unwrap();
+        let mut present = |layers: &[Layer], images: &mut Images, out: &mut Vec<u8>| {
+            presenter.sync(&mut comp, images);
+            comp.present(&presenter.layers(layers), out).unwrap();
+        };
+        settle(&mut v, &mut images, &doc);
+        let (layers, _) = v.frame(&mut images);
+        present(&layers, &mut images, &mut out);
         v.zoom(1.7, (300.0, 200.0));
-        let (layers, _) = v.frame(&mut comp);
+        let (layers, _) = v.frame(&mut images);
         let stand_ins = layers.iter().filter(|l| l.z == Z_STAND_IN).count();
-        comp.present(&layers, &mut out).unwrap();
+        present(&layers, &mut images, &mut out);
         term.feed(&out);
         let early = term.render();
-        settle(&mut v, &mut comp, &doc);
-        let (layers, _) = v.frame(&mut comp);
+        settle(&mut v, &mut images, &doc);
+        let (layers, _) = v.frame(&mut images);
         assert!(!layers.iter().any(|l| l.z == Z_STAND_IN), "stand-ins go once tiles are in");
         out.clear();
-        comp.present(&layers, &mut out).unwrap();
+        present(&layers, &mut images, &mut out);
         term.feed(&out);
         (early, term.render(), stand_ins)
     }
@@ -989,8 +997,7 @@ mod tests {
         assert!(v.display_list(2).is_none());
         // Going there asks for it again (and drops page 1's).
         v.goto_page(2, false, Instant::now());
-        let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, GEOMETRY);
-        let (_, needs) = v.frame(&mut comp);
+        let (_, needs) = v.frame(&mut Images::new());
         assert!(needs.iter().any(|n| matches!(n, Need::LoadPage(2))));
         v.page_loaded(0, 2, pdf::display_list(&doc, 2).unwrap());
         assert!(v.display_list(2).is_some() && v.display_list(0).is_none());

@@ -7,6 +7,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use temzdf_scene::Images;
 use termpix::compositor::{Backend, Compositor};
 use termpix::geom::Geometry;
 use termpix::graphics::Medium;
@@ -15,6 +16,7 @@ use termpix::mock::MockTerminal;
 
 use crate::keys::Key;
 use crate::pdf;
+use crate::present::Presenter;
 use crate::session::{Request, Session};
 use crate::viewer::{Need, Rendered};
 
@@ -42,6 +44,8 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         pdf_path.file_name().map_or_else(|| pdf_path.display().to_string(), |n| n.to_string_lossy().into_owned());
     let mut session = Session::new(name, pdf::doc_info(&doc)?, opts.geometry);
     let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, opts.geometry);
+    let mut images = Images::new();
+    let mut presenter = Presenter::new();
     if let Some(scale) = opts.scale {
         session.viewer.set_scale(scale, (0.0, 0.0));
     }
@@ -74,10 +78,11 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         }
     }
     loop {
-        let (layers, needs) = session.frame(&mut comp);
+        let (layers, needs) = session.frame(&mut images);
+        presenter.sync(&mut comp, &mut images);
         if needs.is_empty() {
             let mut bytes = Vec::new();
-            comp.present(&layers, &mut bytes)?;
+            comp.present(&presenter.layers(&layers), &mut bytes)?;
             let mut term = MockTerminal::new(opts.geometry, [0, 0, 0, 255]);
             if opts.linear_blending {
                 term.set_blending(termpix::raster::Blending::Linear);
@@ -96,7 +101,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
                 Need::Render(job) => {
                     let pixels = pdf::render(&job.list, job.bounds, job.scale, job.area)?;
                     let r = Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels };
-                    session.viewer.rendered(&mut comp, r);
+                    session.viewer.rendered(&mut images, r);
                 }
             }
         }
