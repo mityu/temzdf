@@ -1,0 +1,13 @@
+[package]
+name = "temzdf-scene"
+description = "Frontend-independent description of what a temzdf pane shows: images and layers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+termpix-core.workspace = true
+
+[lints]
+workspace = true

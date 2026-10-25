@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/termpix-core", "crates/termpix", "crates/termpix-ui", "crates/temzdf"]
+members = ["crates/termpix-core", "crates/termpix", "crates/termpix-ui", "crates/temzdf-scene", "crates/temzdf"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,7 @@ repository = "https://github.com/mityu/temzdf-cli"
 termpix = { path = "crates/termpix" }
 termpix-core = { path = "crates/termpix-core" }
 termpix-ui = { path = "crates/termpix-ui" }
+temzdf-scene = { path = "crates/temzdf-scene" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

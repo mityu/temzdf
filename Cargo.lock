@@ -1462,6 +1462,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "temzdf-scene"
+version = "0.1.0"
+dependencies = [
+ "termpix-core",
+]
+
+[[package]]
 name = "termpix"
 version = "0.1.0"
 dependencies = [
