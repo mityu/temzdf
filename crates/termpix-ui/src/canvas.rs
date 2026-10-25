@@ -3,7 +3,7 @@
 //! works out of the box).
 
 use parley::{Alignment, AlignmentOptions, FontContext, FontWeight, Layout, LayoutContext, PositionedLayoutItem};
-use vello_cpu::kurbo::{Affine, Rect, RoundedRect, Shape};
+use vello_cpu::kurbo::{Affine, BezPath, Rect, RoundedRect, Shape};
 use vello_cpu::peniko::color::{AlphaColor, Srgb};
 use vello_cpu::{Glyph, Pixmap, RenderContext, Resources};
 
@@ -142,6 +142,18 @@ impl Canvas {
         self.ctx.set_paint(color.to_vello());
         let r = RoundedRect::new(x as f64, y as f64, (x + w) as f64, (y + h) as f64, radius as f64);
         self.ctx.fill_path(&r.to_path(0.1));
+    }
+
+    /// Fill the closed polygon through `points`.
+    pub fn fill_polygon(&mut self, points: &[(f32, f32)], color: Color) {
+        let mut path = BezPath::new();
+        for (i, &(x, y)) in points.iter().enumerate() {
+            let p = (x as f64, y as f64);
+            if i == 0 { path.move_to(p) } else { path.line_to(p) }
+        }
+        path.close_path();
+        self.ctx.set_paint(color.to_vello());
+        self.ctx.fill_path(&path);
     }
 
     /// Draw a text layout with its top-left at `(x, y)`.

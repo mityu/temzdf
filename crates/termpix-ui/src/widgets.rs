@@ -162,8 +162,15 @@ impl ListView {
             }
             let indent = pad + item.depth as f32 * rh * 0.9;
             if let Some(open) = item.expanded {
-                let arrow = text.line(if open { "▾" } else { "▸" }, &theme.style(rh, theme.panel_dim, false), rh);
-                c.text(&arrow, indent, y + (rh - arrow.height()) / 2.0);
+                // Drawn, not a glyph: macOS's sans-serif (Helvetica) has no ▸/▾
+                // and font fallback does not find one.
+                let (cx, cy, s) = (indent + rh * 0.3, y + rh / 2.0, rh * 0.16);
+                let arrow = if open {
+                    [(cx - s, cy - s * 0.6), (cx + s, cy - s * 0.6), (cx, cy + s * 0.8)]
+                } else {
+                    [(cx - s * 0.6, cy - s), (cx + s * 0.8, cy), (cx - s * 0.6, cy + s)]
+                };
+                c.fill_polygon(&arrow, theme.panel_dim);
             }
             let label_x = indent + rh * 0.9;
             let detail = text.line(&item.detail, &theme.style(rh, theme.panel_dim, false), w / 3.0);
