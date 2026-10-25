@@ -1,6 +1,8 @@
 //! Background threads: the document thread (owns the non-`Send` MuPDF
-//! `Document`, loads display lists) and the raster pool (turns display lists into
-//! tiles). Results come back to the main loop as [`AppEvent`]s.
+//! `Document`, loads display lists), the raster pool (turns display lists into
+//! tiles), search, file watching and SyncTeX. Results come back as
+//! [`DocEvent`]s, sent into the caller's event channel (any event type that
+//! converts from `DocEvent`).
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -8,15 +10,12 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 
 use mupdf::DisplayList;
-use termpix::tty::TermEvent;
 
-use crate::ipc::ForwardRequest;
 use crate::pdf::{self, DocInfo, Link, PageRect};
 use crate::synctex::{PdfBox, Scanner, SourceLocation};
 use crate::viewer::{RenderJob, Rendered, TileKey};
 
-pub enum AppEvent {
-    Term(TermEvent),
+pub enum DocEvent {
     Opened(Result<DocInfo, String>),
     /// A display list (and the page's links) for document generation `.0`.
     PageLoaded(u32, usize, Arc<DisplayList>, Vec<Link>),
@@ -35,18 +34,17 @@ pub enum AppEvent {
     Reloaded(DocInfo),
     /// Reloading failed (e.g. the file is still being written); retry later.
     ReloadFailed(String),
-    /// Another process asked for a forward search (`temzdf --forward`).
-    ForwardRequest(ForwardRequest),
     ForwardResult(Vec<PdfBox>),
     InverseResult(SourceLocation),
     SynctexFailed(String),
-    /// Opening an external link failed.
-    OpenFailed(String),
 }
 
 pub enum SynctexCmd {
+    /// Where `line` (and `column`, 0 if unknown) of `file` ended up.
     Forward {
-        req: ForwardRequest,
+        file: PathBuf,
+        line: u32,
+        column: u32,
         page_hint: usize,
     },
     Inverse {
@@ -61,7 +59,10 @@ pub enum SynctexCmd {
 /// SyncTeX queries run here: parsing a big `.synctex.gz` takes a while and must
 /// not stall drawing. The file is (re)read lazily on the first query after
 /// start-up or a reload.
-pub fn spawn_synctex(pdf: PathBuf, events: Sender<AppEvent>) -> std::io::Result<Sender<SynctexCmd>> {
+pub fn spawn_synctex<E: From<DocEvent> + Send + 'static>(
+    pdf: PathBuf,
+    events: Sender<E>,
+) -> std::io::Result<Sender<SynctexCmd>> {
     let (tx, rx) = mpsc::channel::<SynctexCmd>();
     std::thread::Builder::new().name("temzdf-synctex".into()).spawn(move || {
         let mut scanner: Option<Scanner> = None;
@@ -76,27 +77,27 @@ pub fn spawn_synctex(pdf: PathBuf, events: Sender<AppEvent>) -> std::io::Result<
             let Some(s) = scanner.as_mut() else {
                 let name = pdf.with_extension("synctex.gz");
                 let msg = format!("no SyncTeX data ({} missing; compile with -synctex=1)", name.display());
-                if events.send(AppEvent::SynctexFailed(msg)).is_err() {
+                if events.send(DocEvent::SynctexFailed(msg).into()).is_err() {
                     return;
                 }
                 continue;
             };
             let ev = match cmd {
-                SynctexCmd::Forward { req, page_hint } => {
-                    let boxes = s.forward(&req.file, req.line, req.column, Some(page_hint));
+                SynctexCmd::Forward { file, line, column, page_hint } => {
+                    let boxes = s.forward(&file, line, column, Some(page_hint));
                     if boxes.is_empty() {
-                        AppEvent::SynctexFailed(format!("{}:{} is not in the PDF", req.file.display(), req.line))
+                        DocEvent::SynctexFailed(format!("{}:{} is not in the PDF", file.display(), line))
                     } else {
-                        AppEvent::ForwardResult(boxes)
+                        DocEvent::ForwardResult(boxes)
                     }
                 }
                 SynctexCmd::Inverse { page, x, y } => match s.inverse(page, x, y) {
-                    Some(loc) => AppEvent::InverseResult(loc),
-                    None => AppEvent::SynctexFailed("no source location here".into()),
+                    Some(loc) => DocEvent::InverseResult(loc),
+                    None => DocEvent::SynctexFailed("no source location here".into()),
                 },
                 SynctexCmd::Reload => continue,
             };
-            if events.send(ev).is_err() {
+            if events.send(ev.into()).is_err() {
                 return;
             }
         }
@@ -115,7 +116,10 @@ pub struct SearchCmd {
 
 /// The search worker opens its own copy of the document so long searches do not
 /// delay page loading. A newer command interrupts the current search.
-pub fn spawn_search(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<Sender<SearchCmd>> {
+pub fn spawn_search<E: From<DocEvent> + Send + 'static>(
+    path: PathBuf,
+    events: Sender<E>,
+) -> std::io::Result<Sender<SearchCmd>> {
     let (tx, rx) = mpsc::channel::<SearchCmd>();
     std::thread::Builder::new().name("temzdf-search".into()).spawn(move || {
         let mut doc: Option<(u32, pdf::Doc, Vec<pdf::PageBounds>)> = None;
@@ -132,7 +136,7 @@ pub fn spawn_search(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<
                 match pdf::open(&path).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))) {
                     Ok((d, b)) => doc = Some((cmd.doc_generation, d, b)),
                     Err(e) => {
-                        let _ = events.send(AppEvent::SearchFailed(format!("{e:#}")));
+                        let _ = events.send(DocEvent::SearchFailed(format!("{e:#}")).into());
                         continue;
                     }
                 }
@@ -147,10 +151,10 @@ pub fn spawn_search(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<
                 }
                 let page = (cmd.start_page + i) % n;
                 let ev = match pdf::search_page(doc, page, bounds[page], &cmd.query) {
-                    Ok(rects) => AppEvent::SearchHits { generation: cmd.generation, page, rects },
-                    Err(e) => AppEvent::SearchFailed(format!("{e:#}")),
+                    Ok(rects) => DocEvent::SearchHits { generation: cmd.generation, page, rects },
+                    Err(e) => DocEvent::SearchFailed(format!("{e:#}")),
                 };
-                if events.send(ev).is_err() {
+                if events.send(ev.into()).is_err() {
                     return;
                 }
             }
@@ -166,17 +170,20 @@ pub enum DocCmd {
     Reload,
 }
 
-pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Result<Sender<DocCmd>> {
+pub fn spawn_document<E: From<DocEvent> + Send + 'static>(
+    path: PathBuf,
+    events: Sender<E>,
+) -> std::io::Result<Sender<DocCmd>> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new().name("temzdf-doc".into()).spawn(move || {
         let (mut doc, mut bounds) = match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
             Ok((doc, info)) => {
                 let bounds = info.bounds.clone();
-                let _ = events.send(AppEvent::Opened(Ok(info)));
+                let _ = events.send(DocEvent::Opened(Ok(info)).into());
                 (doc, bounds)
             }
             Err(e) => {
-                let _ = events.send(AppEvent::Opened(Err(format!("{e:#}"))));
+                let _ = events.send(DocEvent::Opened(Err(format!("{e:#}"))).into());
                 return;
             }
         };
@@ -187,13 +194,13 @@ pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Resul
                 DocCmd::LoadPage(p) if p >= bounds.len() => continue,
                 DocCmd::LoadPage(p) => match pdf::display_list(&doc, p) {
                     // A page whose links cannot be read still renders.
-                    Ok(list) => AppEvent::PageLoaded(
+                    Ok(list) => DocEvent::PageLoaded(
                         generation,
                         p,
                         list,
                         pdf::page_links(&doc, p, bounds[p]).unwrap_or_default(),
                     ),
-                    Err(e) => AppEvent::PageFailed(generation, p, format!("{e:#}")),
+                    Err(e) => DocEvent::PageFailed(generation, p, format!("{e:#}")),
                 },
                 // The old document stays in use until the new one opened fine.
                 DocCmd::Reload => match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
@@ -201,13 +208,13 @@ pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Resul
                         doc = d;
                         bounds = info.bounds.clone();
                         generation = generation.wrapping_add(1);
-                        AppEvent::Reloaded(info)
+                        DocEvent::Reloaded(info)
                     }
-                    Ok(_) => AppEvent::ReloadFailed("the document has no pages".into()),
-                    Err(e) => AppEvent::ReloadFailed(format!("{e:#}")),
+                    Ok(_) => DocEvent::ReloadFailed("the document has no pages".into()),
+                    Err(e) => DocEvent::ReloadFailed(format!("{e:#}")),
                 },
             };
-            if events.send(ev).is_err() {
+            if events.send(ev.into()).is_err() {
                 break;
             }
         }
@@ -220,7 +227,10 @@ pub fn spawn_document(path: PathBuf, events: Sender<AppEvent>) -> std::io::Resul
 /// watched too and events are filtered by file name; that survives the inode
 /// changing. Symlinks are resolved and their target is watched as well. Keep
 /// the returned watcher alive.
-pub fn spawn_watcher(path: &Path, events: Sender<AppEvent>) -> notify::Result<notify::RecommendedWatcher> {
+pub fn spawn_watcher<E: From<DocEvent> + Send + 'static>(
+    path: &Path,
+    events: Sender<E>,
+) -> notify::Result<notify::RecommendedWatcher> {
     use notify::{RecursiveMode, Watcher};
 
     let abs = std::path::absolute(path)?;
@@ -237,7 +247,7 @@ pub fn spawn_watcher(path: &Path, events: Sender<AppEvent>) -> notify::Result<no
             return;
         }
         if ev.paths.iter().any(|p| p.file_name().is_some_and(|n| names.iter().any(|m| m == n))) {
-            let _ = events.send(AppEvent::FileChanged);
+            let _ = events.send(DocEvent::FileChanged.into());
         }
     })?;
     for t in &targets {
@@ -256,7 +266,7 @@ pub struct RasterPool {
 }
 
 impl RasterPool {
-    pub fn new(threads: usize, events: Sender<AppEvent>) -> std::io::Result<Self> {
+    pub fn new<E: From<DocEvent> + Send + 'static>(threads: usize, events: Sender<E>) -> std::io::Result<Self> {
         let shared = Arc::new((Mutex::new(VecDeque::<RenderJob>::new()), Condvar::new()));
         for i in 0..threads.max(1) {
             let shared = shared.clone();
@@ -275,11 +285,11 @@ impl RasterPool {
                     };
                     let ev = match pdf::render(&job.list, job.bounds, job.scale, job.area) {
                         Ok(pixels) => {
-                            AppEvent::Rendered(Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels })
+                            DocEvent::Rendered(Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels })
                         }
-                        Err(e) => AppEvent::RenderFailed(job.key, format!("{e:#}")),
+                        Err(e) => DocEvent::RenderFailed(job.key, format!("{e:#}")),
                     };
-                    if events.send(ev).is_err() {
+                    if events.send(ev.into()).is_err() {
                         break;
                     }
                 }
@@ -347,12 +357,12 @@ mod tests {
             pdf::render(&job.list, job.bounds, job.scale, job.area).unwrap();
         }
         for threads in [1, 2, 4, 6, 8, 12] {
-            let (tx, rx) = mpsc::channel();
+            let (tx, rx) = mpsc::channel::<DocEvent>();
             let pool = RasterPool::new(threads, tx).unwrap();
             let start = std::time::Instant::now();
             pool.replace(jobs());
             for _ in 0..n {
-                assert!(matches!(rx.recv().unwrap(), AppEvent::Rendered(_)));
+                assert!(matches!(rx.recv().unwrap(), DocEvent::Rendered(_)));
             }
             let dt = start.elapsed();
             eprintln!(

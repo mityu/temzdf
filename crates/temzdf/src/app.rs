@@ -18,7 +18,7 @@ use crate::pdf;
 use crate::present::Presenter;
 use crate::session::{Action, Pointer, Request, Session};
 use crate::viewer::{Need, StandIn};
-use crate::workers::{self, AppEvent, DocCmd, RasterPool, SearchCmd, SynctexCmd};
+use crate::workers::{self, DocCmd, DocEvent, RasterPool, SearchCmd, SynctexCmd};
 
 const FRAME: Duration = Duration::from_millis(16);
 /// Raw bytes of not-yet-shown images sent per idle iteration (about four
@@ -43,6 +43,26 @@ pub struct Options {
     pub forward: Option<ForwardRequest>,
     /// Inverse search command (overrides the config file).
     pub editor: Option<String>,
+}
+
+/// Everything the main loop waits for.
+pub enum AppEvent {
+    Term(TermEvent),
+    Doc(DocEvent),
+    /// Another process asked for a forward search (`temzdf --forward`).
+    ForwardRequest(ForwardRequest),
+    /// Opening an external link failed.
+    OpenFailed(String),
+}
+
+impl From<DocEvent> for AppEvent {
+    fn from(e: DocEvent) -> Self {
+        Self::Doc(e)
+    }
+}
+
+fn forward_cmd(req: ForwardRequest, page_hint: usize) -> SynctexCmd {
+    SynctexCmd::Forward { file: req.file, line: req.line, column: req.column, page_hint }
 }
 
 pub fn run(path: &Path, mut opts: Options) -> Result<()> {
@@ -104,8 +124,8 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     // Wait for the document before drawing anything.
     let info = loop {
         match rx.recv()? {
-            AppEvent::Opened(Ok(info)) => break info,
-            AppEvent::Opened(Err(e)) => {
+            AppEvent::Doc(DocEvent::Opened(Ok(info))) => break info,
+            AppEvent::Doc(DocEvent::Opened(Err(e))) => {
                 drop(tty);
                 bail!("{e}");
             }
@@ -141,7 +161,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     // Wait this long after the last change before reloading (see doc/reload.md).
     let debounce = Duration::from_millis(opts.config.reload.debounce_ms);
     if let Some(req) = opts.forward.take() {
-        let _ = synctex.send(SynctexCmd::Forward { req, page_hint: session.viewer.current_page() });
+        let _ = synctex.send(forward_cmd(req, session.viewer.current_page()));
     }
     if let Some(scale) = opts.scale {
         session.viewer.set_scale(scale, (0.0, 0.0));
@@ -280,8 +300,8 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 dirty |= session.paste(&text) == Action::Redraw;
             }
             Some(AppEvent::Term(_)) => {}
-            Some(AppEvent::Opened(_)) => {}
-            Some(AppEvent::PageLoaded(generation, p, list, links)) => {
+            Some(AppEvent::Doc(DocEvent::Opened(_))) => {}
+            Some(AppEvent::Doc(DocEvent::PageLoaded(generation, p, list, links))) => {
                 if generation == session.viewer.generation() {
                     session.viewer.page_loaded(generation, p, list);
                     session.page_links(p, links);
@@ -289,29 +309,29 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                     dirty = true;
                 }
             }
-            Some(AppEvent::PageFailed(generation, p, e)) => {
+            Some(AppEvent::Doc(DocEvent::PageFailed(generation, p, e))) => {
                 session.viewer.page_failed(generation, p);
                 session.message = Some(format!("page {}: {e}", p + 1));
                 dirty = true;
             }
-            Some(AppEvent::Rendered(r)) => {
+            Some(AppEvent::Doc(DocEvent::Rendered(r))) => {
                 session.viewer.rendered(&mut images, r);
                 presenter.sync(&mut comp, &mut images);
                 dirty = true;
             }
-            Some(AppEvent::SearchHits { generation, page, rects }) => {
+            Some(AppEvent::Doc(DocEvent::SearchHits { generation, page, rects })) => {
                 dirty |= session.search_hits(generation, page, rects, now);
             }
-            Some(AppEvent::SearchFailed(e)) => {
+            Some(AppEvent::Doc(DocEvent::SearchFailed(e))) => {
                 session.message = Some(format!("search: {e}"));
                 dirty = true;
             }
-            Some(AppEvent::RenderFailed(key, e)) => {
+            Some(AppEvent::Doc(DocEvent::RenderFailed(key, e))) => {
                 session.viewer.render_cancelled(key);
                 session.message = Some(format!("render: {e}"));
                 dirty = true;
             }
-            Some(AppEvent::FileChanged) => {
+            Some(AppEvent::Doc(DocEvent::FileChanged)) => {
                 reload.changed(now, debounce);
                 session.reloading = true;
                 dirty = true;
@@ -320,14 +340,14 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 if reload.due.is_some() || reload.in_flight {
                     deferred_forward = Some(req);
                 } else {
-                    let _ = synctex.send(SynctexCmd::Forward { req, page_hint: session.viewer.current_page() });
+                    let _ = synctex.send(forward_cmd(req, session.viewer.current_page()));
                 }
             }
-            Some(AppEvent::ForwardResult(boxes)) => {
+            Some(AppEvent::Doc(DocEvent::ForwardResult(boxes))) => {
                 session.forward_result(boxes, now);
                 dirty = true;
             }
-            Some(AppEvent::InverseResult(loc)) => {
+            Some(AppEvent::Doc(DocEvent::InverseResult(loc))) => {
                 match opts.config.synctex.command(&loc.file, loc.line, loc.column) {
                     Some(cmd) => run_shell(&cmd),
                     None => {
@@ -344,11 +364,11 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 session.message = Some(e);
                 dirty = true;
             }
-            Some(AppEvent::SynctexFailed(e)) => {
+            Some(AppEvent::Doc(DocEvent::SynctexFailed(e))) => {
                 session.message = Some(format!("SyncTeX: {e}"));
                 dirty = true;
             }
-            Some(AppEvent::Reloaded(info)) => {
+            Some(AppEvent::Doc(DocEvent::Reloaded(info))) => {
                 let _ = synctex.send(SynctexCmd::Reload);
                 reload.in_flight = false;
                 reload.attempts = 0;
@@ -357,7 +377,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 session.reloading = reload.due.is_some();
                 dirty = true;
             }
-            Some(AppEvent::ReloadFailed(e)) => {
+            Some(AppEvent::Doc(DocEvent::ReloadFailed(e))) => {
                 reload.in_flight = false;
                 if !reload.retry(now) {
                     session.reloading = false;
@@ -382,7 +402,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
             }
         }
         if let Some(req) = deferred_forward.take_if(|_| reload.due.is_none() && !reload.in_flight) {
-            let _ = synctex.send(SynctexCmd::Forward { req, page_hint: session.viewer.current_page() });
+            let _ = synctex.send(forward_cmd(req, session.viewer.current_page()));
         }
         dirty |= session.tick(Instant::now());
         // A highlight expired.
