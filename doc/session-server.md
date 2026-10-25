@@ -187,6 +187,44 @@ offscreen in the server, every pane kind reduces to cell grids plus image
 layers, so both clients stay small and identical in behaviour, and the GUI
 needs no platform webview at all.
 
+## Crate layout
+
+Two ways to run must share one code path:
+
+- **Session mode**: `temzdf` starts or attaches to the server; panes live in
+  the server, clients attach and detach.
+- **Standalone mode**: `temzdf standalone-pdf-viewer FILE` (name to be
+  decided) behaves like today's temzdf: one PDF in the current terminal, using
+  the same PDF backend and pane logic, but not registered in the session list
+  and gone when it exits.
+
+Standalone mode is not a second implementation: it links the same pane logic
+and TTY renderer in one process and connects them with an in-process channel
+instead of the socket protocol. Both modes therefore exercise the same code,
+and standalone stays the easy way to test it.
+
+| Crate | Contents | Depends on |
+|---|---|---|
+| `termpix` | terminal I/O, probing, input parsing, kitty transport, compositor, mock terminal (unchanged) | - |
+| `termpix-ui` | pixel widgets (unchanged; cell widgets may follow) | `termpix` |
+| `temzdf-scene` | the protocol vocabulary: cell grids, image layers, image data references, input events, client capabilities and geometry; pure data with serde | - |
+| `temzdf-pdf` | the PDF backend as a document service: MuPDF wrapper, display lists, prioritised raster pool and per-document tile cache, text, links, outline, search, SyncTeX, file watching and reload; message-passing API so it can later run in a child process | (no termpix) |
+| `temzdf-pdfview` | a PDF pane: per-view state (layout, scroll, zoom, peek window, selection, history, link preview, search UI, key bindings) that consumes input events and produces a scene | `temzdf-pdf`, `temzdf-scene` |
+| `temzdf-tty` | TTY frontend: renders a scene with `termpix`, turns terminal input into scene input events; used by the TTY client and by standalone mode | `temzdf-scene`, `termpix`, `termpix-ui` |
+| `temzdf-server` | sessions, layout tree, panes, focus, client registry and per-client state, socket protocol, session discovery | `temzdf-scene`, pane crates |
+| `temzdf-term` (later) | terminal pane: `portable-pty` + `libghostty-vt` | `temzdf-scene` |
+| `temzdf-web` (later) | web pane: headless Chromium over CDP | `temzdf-scene` |
+| `temzdf-gui` (later) | GUI client: winit + wgpu renderer of the scene | `temzdf-scene` |
+| `temzdf` (binary) | subcommands: session (start/attach/list/kill), `standalone-pdf-viewer`, `--forward` for SyncTeX, `--render-frame` | all of the above |
+
+Rules, extending today's dependency direction (`temzdf -> termpix-ui ->
+termpix`): `termpix` and `termpix-ui` stay ignorant of PDF and sessions;
+backends (`temzdf-pdf`, later `temzdf-term`, `temzdf-web`) know nothing about
+terminals or clients; only frontends (`temzdf-tty`, `temzdf-gui`) know how to
+draw; panes speak only `temzdf-scene`. SyncTeX forward search keeps working in
+both modes: standalone listens on its per-PDF socket as today; in session mode
+the server receives the request and routes it to the panes showing that PDF.
+
 ## Decisions (2026-10-25, with the user)
 
 - **Size**: the latest active client's size wins (tmux `latest`). Other
@@ -215,9 +253,11 @@ needs no platform webview at all.
 
 ## Incremental plan
 
-1. **Core split**: extract the PDF engine into a library crate; split
-   `Viewer` into a shared document part and per-pane views; define the scene
-   types (cell grids + image layers). The current viewer keeps working.
+1. **Core split**: create `temzdf-scene`, `temzdf-pdf`, `temzdf-pdfview` and
+   `temzdf-tty` from today's code (splitting `Viewer` into the document part
+   and the view part on the way); the binary's current behaviour becomes
+   `standalone-pdf-viewer` (and stays the default until session mode exists).
+   Nothing user-visible changes; existing tests and e2e keep passing.
 2. **Server/client for the PDF viewer alone**: `temzdf --server`, a TTY client
    that attaches and detaches; several panes on one document. Validates the
    protocol, sharing and resync with existing features; testable with the
