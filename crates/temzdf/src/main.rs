@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod doc_cache;
 mod headless;
 mod ipc;
 mod keys;

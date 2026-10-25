@@ -4,7 +4,7 @@
 //! performs that work (on threads interactively, inline in headless mode) and
 //! feeds results back.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,19 +14,14 @@ use termpix::geom::Rect;
 use termpix::raster::{RgbaImage, RgbaRef, blit};
 use termpix::scroll::KineticScroll;
 
+use crate::doc_cache::{DocCache, LAYER_BACKGROUND, dequantize, quantize};
+pub use crate::doc_cache::{LAYER_KEYS_END, Need, RenderJob, Rendered, TILE, TileKey, TileKind};
 use crate::layout::{Layout, View};
 use crate::pdf::{PageBounds, PixelRect, Target};
 
-/// Tile edge in pixels.
-pub const TILE: u32 = 512;
 /// Thumbnail width in pixels, shown scaled while sharp tiles are missing (and
 /// no tiles of an earlier scale cover them).
 const THUMB_WIDTH: f32 = 320.0;
-/// Memory budget for cached tiles (the terminal keeps its own copies).
-const TILE_BUDGET: usize = 192 << 20;
-/// Display lists kept at most (about 70 KiB each for a LaTeX text page, and
-/// 0.2 ms to load again); the ones farthest from the view go first.
-const MAX_LISTS: usize = 256;
 /// Points kept above a jump target, so the context above it stays visible.
 pub const TARGET_MARGIN: f32 = 4.0 * crate::layout::GAP_PT;
 pub const MIN_SCALE: f32 = 0.1;
@@ -40,9 +35,6 @@ const Z_THUMB: i32 = -1_073_741_890;
 const Z_STAND_IN: i32 = -1_073_741_885;
 const Z_TILE: i32 = -1_073_741_880;
 const BACKGROUND: [u8; 4] = [0x3a, 0x3a, 0x3a, 0xff];
-const LAYER_BACKGROUND: u32 = 1;
-/// Layer keys at or above this are reserved for UI chrome (see `session.rs`).
-pub const LAYER_KEYS_END: u32 = 0xf000_0000;
 /// Layers of the [`Peek`] window: a tile shown there and in the page view
 /// needs a second layer key.
 const LAYER_PEEK: u32 = 0xf800_0000;
@@ -59,75 +51,15 @@ pub struct Peek {
     pub z: i32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TileKind {
-    /// A `TILE`-sized cell of the page grid at a quantised scale (`scale * 1024`).
-    Tile {
-        scale_q: u32,
-        tx: u32,
-        ty: u32,
-    },
-    Thumb,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TileKey {
-    /// Document generation (bumped on every reload), so tiles of an older
-    /// version of the file can never be mistaken for current ones.
-    pub generation: u32,
-    pub page: u32,
-    pub kind: TileKind,
-}
-
-pub struct RenderJob {
-    pub key: TileKey,
-    pub list: Arc<DisplayList>,
-    pub bounds: PageBounds,
-    pub scale: f32,
-    pub area: PixelRect,
-}
-
-pub struct Rendered {
-    pub key: TileKey,
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<u8>,
-}
-
-/// Work the viewer needs done, most urgent first.
-pub enum Need {
-    LoadPage(usize),
-    Render(RenderJob),
-}
-
-struct Cached {
-    image: ImageKey,
-    layer: u32,
-    bytes: usize,
-    last_used: u64,
-}
-
-fn quantize(scale: f32) -> u32 {
-    (scale * 1024.0).round().max(1.0) as u32
-}
-
-fn dequantize(q: u32) -> f32 {
-    q as f32 / 1024.0
-}
-
 pub struct Viewer {
-    pub bounds: Vec<PageBounds>,
+    /// Display lists and tiles (shareable between views of one document).
+    pub doc: DocCache,
     pub layout: Layout,
     pub view: View,
     pub scroll_x: KineticScroll,
     pub scroll_y: KineticScroll,
-    lists: Vec<Option<Arc<DisplayList>>>,
-    lists_requested: HashSet<usize>,
-    tiles: HashMap<TileKey, Cached>,
-    in_flight: HashSet<TileKey>,
-    used_bytes: usize,
+    /// Frames built so far (stand-ins not shown in the latest one are dropped).
     frame_no: u64,
-    next_layer: u32,
     /// Page-area-sized background image and its size. Not a scaled 1x1 image:
     /// terminals filter scaled images against a transparent border (kitty
     /// darkens half a source pixel along each edge, i.e. half the screen).
@@ -136,15 +68,12 @@ pub struct Viewer {
     origin_x: i32,
     /// Keep the zoom at fit-width when the page area changes.
     fit_mode: bool,
-    generation: u32,
     /// See [`Viewer::is_complete`].
     complete: bool,
     /// How pages are covered right after a zoom (see [`StandIn`]).
     pub stand_in_mode: StandIn,
     /// `StandIn::Composed` images by page.
     composed: HashMap<usize, Composed>,
-    /// See [`MAX_LISTS`].
-    max_lists: usize,
     /// Shown above the page view while set; its tiles are rendered first.
     pub peek: Option<Peek>,
 }
@@ -184,28 +113,19 @@ impl Viewer {
             screen_w,
             screen_h: height as f32,
         };
-        let n = bounds.len();
         let mut v = Self {
-            bounds,
+            doc: DocCache::new(bounds),
             layout,
             view,
             scroll_x: KineticScroll::default(),
             scroll_y: KineticScroll::default(),
-            lists: vec![None; n],
-            lists_requested: HashSet::new(),
-            tiles: HashMap::new(),
-            in_flight: HashSet::new(),
-            used_bytes: 0,
             frame_no: 0,
-            next_layer: LAYER_BACKGROUND + 1,
             background: None,
             origin_x: 0,
             fit_mode: true,
-            generation: 0,
             complete: false,
             stand_in_mode: StandIn::Thumbnail,
             composed: HashMap::new(),
-            max_lists: MAX_LISTS,
             peek: None,
         };
         v.update_scroll_bounds();
@@ -213,7 +133,7 @@ impl Viewer {
     }
 
     pub fn page_count(&self) -> usize {
-        self.bounds.len()
+        self.doc.page_count()
     }
 
     /// The page at the vertical centre of the screen.
@@ -314,7 +234,7 @@ impl Viewer {
     }
 
     pub fn display_list(&self, page: usize) -> Option<Arc<DisplayList>> {
-        self.lists.get(page)?.clone()
+        self.doc.display_list(page)
     }
 
     /// Pages intersecting the page area.
@@ -386,44 +306,20 @@ impl Viewer {
 
     /// Generation of the document being shown (see [`TileKey::generation`]).
     pub fn generation(&self) -> u32 {
-        self.generation
+        self.doc.generation()
     }
 
-    /// A display list arrived. Lists for an older generation are ignored.
+    /// A display list arrived (see [`DocCache::page_loaded`]); pages in the
+    /// peek window are in use however far away they are.
     pub fn page_loaded(&mut self, generation: u32, page: usize, list: Arc<DisplayList>) {
-        if generation != self.generation {
-            return;
-        }
-        if let Some(slot) = self.lists.get_mut(page) {
-            *slot = Some(list);
-        }
-        self.lists_requested.remove(&page);
-        self.drop_far_lists();
-    }
-
-    /// Keep at most `max_lists` display lists: drop the ones farthest from the
-    /// page being read. They are loaded again when needed.
-    fn drop_far_lists(&mut self) {
-        let loaded: Vec<usize> = (0..self.lists.len()).filter(|&p| self.lists[p].is_some()).collect();
-        if loaded.len() <= self.max_lists {
-            return;
-        }
         let current = self.current_page();
-        // Pages in the peek window are in use however far away they are.
         let peeked = self.peek.map_or(0..0, |p| self.peek_pages(&p));
-        let mut by_distance: Vec<usize> = loaded.into_iter().filter(|p| !peeked.contains(p)).collect();
-        by_distance.sort_by_key(|&p| std::cmp::Reverse(p.abs_diff(current)));
-        let excess = by_distance.len().saturating_sub(self.max_lists.saturating_sub(peeked.len()));
-        for p in by_distance.into_iter().take(excess) {
-            self.lists[p] = None;
-        }
+        self.doc.page_loaded(generation, page, list, current, peeked);
     }
 
     /// A page failed to load; forget the request so it is retried later.
     pub fn page_failed(&mut self, generation: u32, page: usize) {
-        if generation == self.generation {
-            self.lists_requested.remove(&page);
-        }
+        self.doc.page_failed(generation, page);
     }
 
     /// Show a new version of the document (after the file changed), keeping the
@@ -436,20 +332,12 @@ impl Viewer {
         let fraction = top.y.unwrap_or(0.0) / self.layout.pages[top.page].h.max(1.0);
         let scroll_x = self.view.scroll_x;
 
-        self.generation = self.generation.wrapping_add(1);
-        for (_, c) in self.tiles.drain() {
-            images.remove(c.image);
-        }
+        self.layout = Layout::new(&bounds.iter().map(|b| (b.width(), b.height())).collect::<Vec<_>>());
+        self.doc.replace(images, bounds);
         for (_, c) in self.composed.drain() {
             images.remove(c.image);
         }
-        self.used_bytes = 0;
-        self.in_flight.clear();
-        self.lists = vec![None; bounds.len()];
-        self.lists_requested.clear();
-        self.layout = Layout::new(&bounds.iter().map(|b| (b.width(), b.height())).collect::<Vec<_>>());
-        self.bounds = bounds;
-        if self.bounds.is_empty() {
+        if self.doc.bounds.is_empty() {
             return;
         }
         if self.fit_mode {
@@ -464,36 +352,22 @@ impl Viewer {
     }
 
     pub fn mark_requested(&mut self, need: &Need) {
-        match need {
-            Need::LoadPage(p) => {
-                self.lists_requested.insert(*p);
-            }
-            Need::Render(job) => {
-                self.in_flight.insert(job.key);
-            }
-        }
+        self.doc.mark_requested(need);
     }
 
     /// A render job was dropped before it ran.
     pub fn render_cancelled(&mut self, key: TileKey) {
-        self.in_flight.remove(&key);
+        self.doc.render_cancelled(key);
     }
 
     pub fn rendered(&mut self, images: &mut Images, r: Rendered) {
-        self.in_flight.remove(&r.key);
-        if r.key.generation != self.generation || self.tiles.contains_key(&r.key) {
-            return;
-        }
-        let bytes = r.pixels.len();
-        let image = images.add(r.width, r.height, r.pixels);
-        let layer = self.alloc_layer();
-        self.used_bytes += bytes;
-        self.tiles.insert(r.key, Cached { image, layer, bytes, last_used: self.frame_no });
+        self.doc.rendered(images, r);
     }
 
     /// Build this frame's layers and the outstanding work, most urgent first.
     pub fn frame(&mut self, images: &mut Images) -> (Vec<Layer>, Vec<Need>) {
         self.frame_no += 1;
+        self.doc.begin_frame();
         self.sync_view();
         let view = self.view;
         let ox = self.origin_x;
@@ -536,14 +410,14 @@ impl Viewer {
         for page in prefetch.clone() {
             let is_visible = visible.contains(&page);
             let queue = if is_visible { &mut urgent } else { &mut later };
-            let Some(list) = self.lists[page].clone() else {
+            let Some(list) = self.doc.display_list(page) else {
                 complete &= !is_visible;
-                if !self.lists_requested.contains(&page) {
+                if !self.doc.is_requested(page) {
                     queue.push((0.0, Need::LoadPage(page)));
                 }
                 continue;
             };
-            let bounds = self.bounds[page];
+            let bounds = self.doc.bounds[page];
             let pb = self.layout.pages[page];
             let (sx, sy) = view.doc_to_screen(&self.layout, pb.x, pb.y);
             let (sx, sy) = (sx.round() as i32 + ox, sy.round() as i32);
@@ -551,10 +425,10 @@ impl Viewer {
             let page_rect = Rect::new(sx, sy, pw, ph);
 
             // Thumbnail first: it is cheap and covers the page while tiles render.
-            let thumb_key = TileKey { generation: self.generation, page: page as u32, kind: TileKind::Thumb };
+            let thumb_key = TileKey { generation: self.doc.generation(), page: page as u32, kind: TileKind::Thumb };
             let thumb_scale = THUMB_WIDTH / bounds.width();
-            let thumb_cached = self.touch(thumb_key);
-            if thumb_cached.is_none() && !self.in_flight.contains(&thumb_key) {
+            let thumb_cached = self.doc.touch(thumb_key);
+            if thumb_cached.is_none() && !self.doc.is_in_flight(thumb_key) {
                 let (tw, th) = bounds.pixel_size(thumb_scale);
                 let area = PixelRect { x: 0, y: 0, w: tw, h: th };
                 queue.push((
@@ -579,11 +453,11 @@ impl Viewer {
                         continue;
                     }
                     let key = TileKey {
-                        generation: self.generation,
+                        generation: self.doc.generation(),
                         page: page as u32,
                         kind: TileKind::Tile { scale_q, tx, ty },
                     };
-                    match self.touch(key) {
+                    match self.doc.touch(key) {
                         Some((image, layer)) => {
                             if on_screen {
                                 layers.push(Layer {
@@ -597,7 +471,7 @@ impl Viewer {
                         }
                         None => {
                             missing_on_screen |= on_screen;
-                            if !self.in_flight.contains(&key) {
+                            if !self.doc.is_in_flight(key) {
                                 let cx = dst.x as f32 + dst.w as f32 / 2.0 - centre.0;
                                 let cy = dst.y as f32 + dst.h as f32 / 2.0 - centre.1;
                                 let job = RenderJob { key, list: list.clone(), bounds, scale, area };
@@ -645,7 +519,7 @@ impl Viewer {
             }
             keep
         });
-        self.evict(images);
+        self.doc.evict(images);
         (layers, needs)
     }
 
@@ -686,13 +560,13 @@ impl Viewer {
         let scale = dequantize(scale_q);
         let mut key = LAYER_PEEK + 1;
         for page in self.peek_pages(p) {
-            let Some(list) = self.lists[page].clone() else {
-                if !self.lists_requested.contains(&page) {
+            let Some(list) = self.doc.display_list(page) else {
+                if !self.doc.is_requested(page) {
                     needs.push(Need::LoadPage(page));
                 }
                 continue;
             };
-            let bounds = self.bounds[page];
+            let bounds = self.doc.bounds[page];
             let pb = self.layout.pages[page];
             let ox = r.x + (pb.x * scale - p.scroll_x).round() as i32;
             let oy = r.y + (pb.y * scale - p.scroll_y).round() as i32;
@@ -714,17 +588,17 @@ impl Viewer {
                     let dst = Rect::new(ox + area.x as i32, oy + area.y as i32, area.w, area.h);
                     let Some(vis) = dst.intersect(&r) else { continue };
                     let tile = TileKey {
-                        generation: self.generation,
+                        generation: self.doc.generation(),
                         page: page as u32,
                         kind: TileKind::Tile { scale_q, tx, ty },
                     };
-                    match self.touch(tile) {
+                    match self.doc.touch(tile) {
                         Some((image, _)) => {
                             let src = Rect::new(vis.x - dst.x, vis.y - dst.y, vis.w, vis.h);
                             layers.push(Layer { key, image, src, dst: vis, z: p.z + 1 });
                             key += 1;
                         }
-                        None if !self.in_flight.contains(&tile) => {
+                        None if !self.doc.is_in_flight(tile) => {
                             needs.push(Need::Render(RenderJob { key: tile, list: list.clone(), bounds, scale, area }));
                         }
                         None => {}
@@ -753,25 +627,10 @@ impl Viewer {
         screen: &Rect,
         layers: &mut Vec<Layer>,
     ) {
-        let generation = self.generation;
+        let generation = self.doc.generation();
         // The other scale used most recently for this page.
-        let Some(old_q) = self
-            .tiles
-            .iter()
-            .filter_map(|(k, c)| match k.kind {
-                TileKind::Tile { scale_q: q, .. }
-                    if k.generation == generation && k.page == page as u32 && q != scale_q =>
-                {
-                    Some((c.last_used, q))
-                }
-                _ => None,
-            })
-            .max()
-            .map(|(_, q)| q)
-        else {
-            return;
-        };
-        let bounds = self.bounds[page];
+        let Some(old_q) = self.doc.latest_other_scale(page, scale_q) else { return };
+        let bounds = self.doc.bounds[page];
         let (opw, oph) = bounds.pixel_size(dequantize(old_q));
         let f = dequantize(scale_q) as f64 / dequantize(old_q) as f64;
         let at = |v: u32| (v as f64 * f).round() as i32;
@@ -791,7 +650,7 @@ impl Viewer {
                     continue;
                 }
                 let key = TileKey { generation, page: page as u32, kind: TileKind::Tile { scale_q: old_q, tx, ty } };
-                if let Some((image, layer)) = self.touch(key) {
+                if let Some((image, layer)) = self.doc.touch(key) {
                     parts.push((image, layer, Rect::new(0, 0, x1 - x0, y1 - y0), dst));
                 }
             }
@@ -835,45 +694,11 @@ impl Viewer {
                     }
                 }
                 let image = images.add(vis.w, vis.h, img.data);
-                let layer = self.alloc_layer();
+                let layer = self.doc.alloc_layer();
                 if let Some(old) = self.composed.insert(page, Composed { id, image, layer, used: frame }) {
                     images.remove(old.image);
                 }
                 layers.push(Layer { key: layer, image, src: Rect::new(0, 0, vis.w, vis.h), dst: vis, z: Z_STAND_IN });
-            }
-        }
-    }
-
-    fn alloc_layer(&mut self) -> u32 {
-        let layer = self.next_layer;
-        self.next_layer =
-            if self.next_layer + 1 >= LAYER_KEYS_END { LAYER_BACKGROUND + 1 } else { self.next_layer + 1 };
-        layer
-    }
-
-    fn touch(&mut self, key: TileKey) -> Option<(ImageKey, u32)> {
-        let frame = self.frame_no;
-        self.tiles.get_mut(&key).map(|c| {
-            c.last_used = frame;
-            (c.image, c.layer)
-        })
-    }
-
-    /// Drop least recently used tiles over budget, never ones used this frame.
-    fn evict(&mut self, images: &mut Images) {
-        if self.used_bytes <= TILE_BUDGET {
-            return;
-        }
-        let mut old: Vec<(u64, TileKey)> =
-            self.tiles.iter().filter(|(_, c)| c.last_used < self.frame_no).map(|(k, c)| (c.last_used, *k)).collect();
-        old.sort_by_key(|(t, _)| *t);
-        for (_, key) in old {
-            if self.used_bytes <= TILE_BUDGET {
-                break;
-            }
-            if let Some(c) = self.tiles.remove(&key) {
-                images.remove(c.image);
-                self.used_bytes -= c.bytes;
             }
         }
     }
@@ -988,7 +813,7 @@ mod tests {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::doc_info(&doc).unwrap().bounds;
         let mut v = Viewer::new(bounds, GEOMETRY.width_px(), GEOMETRY.height_px());
-        v.max_lists = 2;
+        v.doc.max_lists = 2;
         for p in 0..3 {
             v.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
         }
