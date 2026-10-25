@@ -19,15 +19,11 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use temzdf_pdfview::keys::Key;
-use temzdf_protocol::script::{
-    CallId, CommandSpec, FromHost, FuncId, HostOp, ScriptError, ScriptValue, TaskId, ToHost, Token,
-};
+use temzdf_protocol::script::{CallId, FromHost, FuncId, HostOp, ScriptError, ScriptValue, TaskId, ToHost, Token};
 use termpix_core::input::{KeyCode, KeyEvent, Modifiers, MouseEvent, MouseEventKind};
 
-use super::{Kind, Outcome, PaneId, Session, SessionEvent};
-use crate::action::{Action, PaneSpec};
-use crate::layout::{Direction, Split};
+use super::{Outcome, PaneId, Session, SessionEvent};
+use crate::action::PaneSpec;
 
 /// How to start the script host, and the configuration it loads.
 #[derive(Clone, Debug)]
@@ -46,7 +42,7 @@ const MAX_HOOK_DEPTH: usize = 10;
 
 /// Events scripts can hook (`on(name, fn)`).
 pub const EVENTS: &[&str] =
-    &["SessionReady", "PaneOpened", "PaneClosePre", "PaneClosed", "PaneFocused", "DocumentReloaded"];
+    &["SessionReady", "PaneOpened", "PaneClosePre", "PaneClosed", "PaneFocused", "DocumentReloaded", "ModeChanged"];
 
 /// Input that arrived while a script ran.
 enum Held {
@@ -106,7 +102,6 @@ pub struct Bridge {
     tasks: HashSet<TaskId>,
     atomic: Option<Token>,
     hooks: HashMap<String, Vec<Hook>>,
-    prefix: HashMap<Key, FuncId>,
     held: VecDeque<Held>,
     /// Events that happened while a script ran, for after it.
     deferred_events: Vec<(String, Vec<ScriptValue>)>,
@@ -117,7 +112,7 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    fn busy(&self) -> bool {
+    pub(super) fn busy(&self) -> bool {
         self.loading.is_some() || !self.frames.is_empty() || self.atomic.is_some()
     }
 
@@ -140,27 +135,6 @@ impl Bridge {
     fn hook_depth(&self) -> usize {
         self.frames.iter().filter(|f| matches!(f, Frame::Call { hook: true, .. })).count()
     }
-}
-
-/// The commands scripts get (`temzdf.cmd.*`), with their arguments.
-fn commands() -> Vec<CommandSpec> {
-    [
-        ("split", "split(\"right\" | \"down\"): another pane like the focused one"),
-        ("new-pane", "newPane(...): as `temzdf action new-pane` (a file, or \"--\" and a command)"),
-        ("move-focus", "moveFocus(\"left\" | \"right\" | \"up\" | \"down\")"),
-        ("focus-next-pane", "focusNextPane()"),
-        ("close-pane", "closePane()"),
-        ("detach", "detach(): the operating client detaches"),
-        ("message", "message(text): show text in the status bar"),
-        ("send-text", "sendText(text): type text into the focused terminal pane"),
-        ("pdf", "pdf(command, count?): a page-view command in the focused PDF pane (\"scroll-down\", ...)"),
-        ("panes", "panes(): [{ id, kind, focused }]"),
-        ("focused-pane", "focusedPane(): the focused pane's id"),
-        ("session-name", "sessionName()"),
-    ]
-    .into_iter()
-    .map(|(name, doc)| CommandSpec { name: name.into(), doc: doc.into() })
-    .collect()
 }
 
 impl Session {
@@ -214,7 +188,7 @@ impl Session {
         self.script.host = Some(Host { child, stdin });
         self.script.loading = Some(Instant::now() + LOAD_TIMEOUT);
         self.script.busy_since = Some(Instant::now());
-        self.script.send(&ToHost::Load { config: s.config.clone(), commands: commands() })
+        self.script.send(&ToHost::Load { config: s.config.clone(), commands: super::commands::command_specs() })
     }
 
     /// `reload-config`: a new host, every mapping and hook registered again.
@@ -222,7 +196,8 @@ impl Session {
         let Some(s) = self.settings.script.clone() else { anyhow::bail!("no configuration script") };
         let mut out = self.drop_host();
         self.script.hooks.clear();
-        self.script.prefix.clear();
+        // Mappings start over too (the configuration registers them again).
+        self.modes = super::default_modes(&self.settings.keymap);
         if !self.spawn_host(&s) {
             let e = self.script.startup_error.take().unwrap_or_else(|| "cannot start the script host".into());
             anyhow::bail!(e);
@@ -264,7 +239,7 @@ impl Session {
         }
         if k.code == KeyCode::Char('c') && k.modifiers == Modifiers::CTRL {
             // As Vim's CTRL-C: typeahead is dropped too.
-            self.prefix = false;
+            self.matcher.cancel();
             self.script.held.clear();
             if !self.script.send(&ToHost::Interrupt) && self.script.loading.is_some() {
                 self.finish_loading(Err(ScriptError::new("interrupted")));
@@ -294,18 +269,8 @@ impl Session {
         true
     }
 
-    /// Run a prefix mapping registered by a script, if `k` has one.
-    pub(super) fn prefix_mapping(&mut self, k: &KeyEvent) -> bool {
-        let Some(&func) = self.script.prefix.get(&Key::of(k)) else { return false };
-        if self.script.host.is_none() {
-            return false;
-        }
-        self.call(func, vec![ScriptValue::Num(self.focus as f64)], false);
-        true
-    }
-
     /// Send a call to the host and wait for it on the frame stack.
-    fn call(&mut self, func: FuncId, args: Vec<ScriptValue>, hook: bool) {
+    pub(super) fn call(&mut self, func: FuncId, args: Vec<ScriptValue>, hook: bool) {
         let id = self.script.next_call;
         self.script.next_call += 1;
         if self.script.frames.is_empty() && self.script.atomic.is_none() {
@@ -445,6 +410,8 @@ impl Session {
             }
         }
         let now = Instant::now();
+        // Keys the matcher still holds came before the held ones.
+        out = out.merge(self.drive(now));
         while !self.script.busy()
             && let Some(h) = self.script.held.pop_front()
         {
@@ -633,115 +600,18 @@ impl Session {
                 self.script.hooks.entry(event).or_default().push(Hook { func, nested });
                 (Ok(ScriptValue::Null), Outcome::None)
             }
-            HostOp::PrefixMap { key, func } => match Key::parse(&key) {
+            // Provisional: keys after the prefix are keys of the `normal` mode.
+            HostOp::PrefixMap { key, func } => match crate::keymap::notation::parse(&key) {
                 Ok(k) => {
-                    self.script.prefix.insert(k, func);
+                    self.modes.map("normal", k, crate::keymap::Target::Func(func), false, None);
                     (Ok(ScriptValue::Null), Outcome::None)
                 }
                 Err(e) => (Err(format!("{e:#}")), Outcome::None),
             },
-            HostOp::Command { name, args } => match self.command(&name, &args) {
+            HostOp::Command { name, args } => match self.run_command(&name, &args, None, Instant::now()) {
                 Ok((v, o)) => (Ok(v), o),
                 Err(e) => (Err(e), Outcome::None),
             },
         }
     }
-
-    /// The command registry ([`commands`]).
-    fn command(&mut self, name: &str, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
-        let text = |i: usize| args.get(i).and_then(ScriptValue::as_str).map(str::to_owned);
-        let now = Instant::now();
-        let ok = |o: Outcome| Ok((ScriptValue::Null, o));
-        let act = |s: &mut Self, a: Action| {
-            s.action_inner(a, now).map(|o| (ScriptValue::Null, o)).map_err(|e| format!("{e:#}"))
-        };
-        match name {
-            "split" => {
-                let split = match text(0).as_deref() {
-                    Some("right") | None => Split::Horizontal,
-                    Some("down") => Split::Vertical,
-                    Some(d) => return Err(format!("split: {d:?} is not right or down")),
-                };
-                act(self, Action::Split(split))
-            }
-            "new-pane" => {
-                let mut words = vec!["new-pane".to_owned()];
-                words.extend(args.iter().filter_map(|a| a.as_str().map(str::to_owned)));
-                let a = Action::parse(&words).map_err(|e| format!("{e:#}"))?;
-                act(self, a)
-            }
-            "move-focus" => {
-                let dir = match text(0).as_deref() {
-                    Some("left") => Direction::Left,
-                    Some("right") => Direction::Right,
-                    Some("up") => Direction::Up,
-                    Some("down") => Direction::Down,
-                    other => return Err(format!("moveFocus: {other:?} is not left, right, up or down")),
-                };
-                act(self, Action::MoveFocus(dir))
-            }
-            "focus-next-pane" => act(self, Action::FocusNextPane),
-            "close-pane" => ok(self.request_close(self.focus)),
-            "detach" => ok(Outcome::Detach),
-            "message" => {
-                self.message(&text(0).unwrap_or_default());
-                ok(Outcome::Redraw)
-            }
-            "send-text" => match self.panes.get_mut(&self.focus).map(|e| &mut e.kind) {
-                Some(Kind::Term(t)) => ok(Outcome::None.or(t.send_text(&text(0).unwrap_or_default()))),
-                _ => Err("sendText: the focused pane is not a terminal".into()),
-            },
-            "pdf" => {
-                let name = text(0).ok_or("pdf: which command?")?;
-                let cmd = pdf_command(&name)?;
-                let count = args.get(1).and_then(ScriptValue::as_num).map(|n| n.max(0.0) as usize);
-                let Some(pane) = self.panes.get_mut(&self.focus).and_then(super::PaneEntry::pdf) else {
-                    return Err("pdf: the focused pane is not a PDF".into());
-                };
-                match pane.command(cmd, count, now) {
-                    temzdf_pdfview::pane::Action::Quit => ok(self.request_close(self.focus)),
-                    temzdf_pdfview::pane::Action::Redraw => ok(Outcome::Redraw),
-                    temzdf_pdfview::pane::Action::None => ok(Outcome::None),
-                }
-            }
-            "panes" => {
-                let mut ids: Vec<_> = self.panes.keys().copied().collect();
-                ids.sort();
-                let list = ids
-                    .into_iter()
-                    .map(|id| {
-                        let kind = match self.panes[&id].kind {
-                            Kind::Pdf { .. } => "pdf",
-                            Kind::Term(_) => "terminal",
-                        };
-                        ScriptValue::map([
-                            ("id", ScriptValue::Num(id as f64)),
-                            ("kind", ScriptValue::Str(kind.into())),
-                            ("focused", ScriptValue::Bool(id == self.focus)),
-                        ])
-                    })
-                    .collect();
-                Ok((ScriptValue::List(list), Outcome::None))
-            }
-            "focused-pane" => Ok((
-                if self.panes.contains_key(&self.focus) {
-                    ScriptValue::Num(self.focus as f64)
-                } else {
-                    ScriptValue::Null
-                },
-                Outcome::None,
-            )),
-            "session-name" => Ok((ScriptValue::Str(self.name.clone()), Outcome::None)),
-            other => Err(format!("no command {other:?}")),
-        }
-    }
-}
-
-/// A page-view command by its kebab-case name (`scroll-down`).
-fn pdf_command(name: &str) -> Result<temzdf_pdfview::keys::Command, String> {
-    use serde::Deserialize;
-    use serde::de::IntoDeserializer;
-    let snake = name.replace('-', "_");
-    let d: serde::de::value::StrDeserializer<'_, serde::de::value::Error> = snake.as_str().into_deserializer();
-    temzdf_pdfview::keys::Command::deserialize(d).map_err(|_| format!("pdf: no command {name:?}"))
 }

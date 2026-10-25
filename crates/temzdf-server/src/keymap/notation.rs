@@ -1,11 +1,19 @@
 //! Keys in Neovim's notation (`j`, `G`, `<C-h>`, `<S-Tab>`, `<CR>`, `<lt>`)
 //! and the normal form both mappings and typed keys are compared in.
 //!
-//! Normal form, as Neovim: printable characters carry Shift in the character
-//! (`<S-a>` is `A`); with Ctrl, Alt or Super a letter is lower case and Shift
-//! is a modifier (`<M-A>` is `<M-S-a>`), except that `<C-A>` is `<C-a>`, as
-//! in Neovim, since legacy terminals cannot tell them apart. Lock keys never
+//! Normal form: printable characters carry Shift in the character (`%`, `A`),
+//! except for letters typed with Shift, which are `<S-a>`; with Ctrl, Alt or
+//! Super a letter is lower case and Shift is a modifier (`<M-A>` is
+//! `<M-S-a>`), except that `<C-A>` is `<C-a>`, as in Neovim. Lock keys never
 //! count.
+//!
+//! Keys the kitty keyboard protocol tells apart but legacy terminals do not
+//! have a fallback ([`Stroke::fallback`]): `<S-a>` falls back to `A`,
+//! `<C-i>` to `<Tab>`, `<C-m>` to `<CR>`, `<C-[>` to `<Esc>`, `<C-h>` to
+//! `<BS>`. A mapping can use either; a typed key matches its own form first,
+//! then the fallback (see `modes::Matcher`), so `<C-i>` can be mapped apart
+//! from `<Tab>` where the terminal reports it, and does what `<Tab>` does
+//! otherwise.
 
 use anyhow::{Result, bail};
 use termpix_core::input::{KeyCode, KeyEvent, Modifiers};
@@ -44,9 +52,12 @@ impl Stroke {
         let KeyCode::Char(c) = code else { return Self { code, mods } };
         let chord = has(mods, Modifiers::CTRL) || has(mods, Modifiers::ALT) || has(mods, Modifiers::SUPER);
         if !chord {
-            // `<S-a>` is `A` (a typed key already carries the shifted character).
-            let c = if has(mods, Modifiers::SHIFT) { c.to_uppercase().next().unwrap_or(c) } else { c };
-            return Self { code: KeyCode::Char(c), mods: without(mods, Modifiers::SHIFT) };
+            // A letter with Shift keeps it (`<S-a>`, falling back to `A`);
+            // other characters already carry it (`%`).
+            if has(mods, Modifiers::SHIFT) && c.is_ascii_alphabetic() {
+                return Self { code: KeyCode::Char(c.to_ascii_lowercase()), mods: Modifiers::SHIFT };
+            }
+            return Self { code, mods: without(mods, Modifiers::SHIFT) };
         }
         if c.is_ascii_alphabetic() {
             let ctrl_only = has(mods, Modifiers::CTRL) && !has(mods, Modifiers::ALT) && !has(mods, Modifiers::SUPER);
@@ -55,6 +66,21 @@ impl Stroke {
             return Self { code: KeyCode::Char(c.to_ascii_lowercase()), mods };
         }
         Self { code, mods: without(mods, Modifiers::SHIFT) }
+    }
+
+    /// What this key is on terminals that cannot tell it apart.
+    pub fn fallback(&self) -> Option<Stroke> {
+        let plain = |code| Some(Stroke { code, mods: Modifiers::NONE });
+        match (self.code, self.mods) {
+            (KeyCode::Char(c), Modifiers::SHIFT) if c.is_ascii_lowercase() => {
+                plain(KeyCode::Char(c.to_ascii_uppercase()))
+            }
+            (KeyCode::Char('i'), Modifiers::CTRL) => plain(KeyCode::Tab),
+            (KeyCode::Char('m'), Modifiers::CTRL) => plain(KeyCode::Enter),
+            (KeyCode::Char('['), Modifiers::CTRL) => plain(KeyCode::Escape),
+            (KeyCode::Char('h'), Modifiers::CTRL) => plain(KeyCode::Backspace),
+            _ => None,
+        }
     }
 
     /// A press of this key, with the text a terminal would report for it.
@@ -226,13 +252,18 @@ mod tests {
 
     #[test]
     fn shift_is_folded_like_neovim() {
-        assert_eq!(one("<S-a>"), one("A"), "<S-a> is A");
+        assert_ne!(one("<S-a>"), one("A"), "told apart where the terminal can");
+        assert_eq!(one("<S-a>").fallback(), Some(one("A")));
+        assert_eq!(one("<C-i>").fallback(), Some(one("<Tab>")));
+        assert_eq!(one("<C-m>").fallback(), Some(one("<CR>")));
+        assert_eq!(one("A").fallback(), None);
         assert_eq!(one("<C-A>"), one("<C-a>"), "<C-A> is <C-a>");
         assert_eq!(one("<M-A>"), one("<M-S-a>"), "with Alt, case is Shift");
         assert_ne!(one("<C-S-a>"), one("<C-a>"));
         // Typed keys: the character carries Shift; with Ctrl an upper-case
         // letter was typed with Shift.
-        assert_eq!(typed(KeyCode::Char('A'), Modifiers::SHIFT), one("A"));
+        assert_eq!(typed(KeyCode::Char('A'), Modifiers::SHIFT), one("<S-a>"), "Shift+a (legacy terminals report A so)");
+        assert_eq!(typed(KeyCode::Char('A'), Modifiers::NONE), one("A"), "A with Caps Lock (kitty protocol)");
         assert_eq!(typed(KeyCode::Char('%'), Modifiers::SHIFT), one("%"));
         assert_eq!(typed(KeyCode::Char('a'), Modifiers::CTRL), one("<C-a>"));
         assert_eq!(typed(KeyCode::Char('A'), Modifiers::CTRL), one("<C-S-a>"));
@@ -243,11 +274,12 @@ mod tests {
 
     #[test]
     fn strokes_turn_back_into_events() {
-        for s in ["j", "G", "<C-h>", "<CR>", "<S-Tab>", "<M-x>", "%"] {
+        for s in ["j", "G", "<S-g>", "<C-h>", "<CR>", "<S-Tab>", "<M-x>", "%"] {
             let k = one(s);
             assert_eq!(Stroke::of(&k.event()), k, "{s}");
         }
         assert_eq!(one("G").event().text.as_deref(), Some("G"));
+        assert_eq!(one("<S-g>").event().text.as_deref(), Some("G"));
         assert_eq!(one("<C-h>").event().text, None);
     }
 }

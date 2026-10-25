@@ -41,6 +41,47 @@ pub enum Command {
     ToggleSidebar,
 }
 
+impl Command {
+    /// Every command, with its name in commands and scripts (`scroll-down`).
+    pub const NAMES: &[(Command, &str)] = &[
+        (Command::Quit, "quit"),
+        (Command::Cancel, "cancel"),
+        (Command::ScrollDown, "scroll-down"),
+        (Command::ScrollUp, "scroll-up"),
+        (Command::ScrollLeft, "scroll-left"),
+        (Command::ScrollRight, "scroll-right"),
+        (Command::PageDown, "page-down"),
+        (Command::PageUp, "page-up"),
+        (Command::HalfPageDown, "half-page-down"),
+        (Command::HalfPageUp, "half-page-up"),
+        (Command::FirstPage, "first-page"),
+        (Command::LastPage, "last-page"),
+        (Command::Back, "back"),
+        (Command::Forward, "forward"),
+        (Command::ZoomIn, "zoom-in"),
+        (Command::ZoomOut, "zoom-out"),
+        (Command::FitWidth, "fit-width"),
+        (Command::Search, "search"),
+        (Command::NextMatch, "next-match"),
+        (Command::PrevMatch, "prev-match"),
+        (Command::Copy, "copy"),
+        (Command::ToggleSidebar, "toggle-sidebar"),
+    ];
+
+    pub fn name(self) -> &'static str {
+        Self::NAMES.iter().find(|(c, _)| *c == self).map_or("?", |(_, n)| n)
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::NAMES.iter().find(|(_, n)| *n == name).map(|(c, _)| *c)
+    }
+
+    /// The default keys of every command, in the notation of [`Key::parse`].
+    pub fn defaults() -> &'static [(Command, &'static [&'static str])] {
+        DEFAULTS
+    }
+}
+
 /// Default bindings, in the notation of [`Key::parse`].
 const DEFAULTS: &[(Command, &[&str])] = &[
     (Command::Quit, &["q", "C-c"]),
@@ -189,11 +230,26 @@ impl Keymap {
     pub fn get(&self, ev: &KeyEvent) -> Option<Command> {
         self.map.get(&Key::of(ev)).copied()
     }
+
+    /// Every binding (for building mappings from it).
+    pub fn bindings(&self) -> Vec<(Key, Command)> {
+        let mut v: Vec<(Key, Command)> = self.map.iter().map(|(k, c)| (*k, *c)).collect();
+        v.sort_by_key(|(_, c)| c.name());
+        v
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_command_has_a_name() {
+        for (c, _) in DEFAULTS {
+            assert_eq!(Command::from_name(c.name()), Some(*c));
+        }
+        assert_eq!(Command::NAMES.len(), DEFAULTS.len());
+    }
 
     fn press(code: KeyCode, mods: Modifiers) -> KeyEvent {
         KeyEvent::new(code, mods)

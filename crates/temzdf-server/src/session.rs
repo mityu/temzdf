@@ -13,7 +13,7 @@ use temzdf_pdfcore::doc_cache::Need;
 use temzdf_pdfcore::workers::DocEvent;
 use temzdf_pdfview::document::Document;
 use temzdf_pdfview::host::{DocumentHost, Forward, HostOptions, Opening};
-use temzdf_pdfview::keys::{Key, Keymap};
+use temzdf_pdfview::keys::Keymap;
 use temzdf_pdfview::pane::{self, PdfPane};
 use temzdf_pdfview::viewer::StandIn;
 use temzdf_scene::{CursorShape, Effect, Frame, Hints, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
@@ -24,10 +24,14 @@ use termpix_core::scroll::ScrollConfig;
 
 use crate::action::{Action, PaneSpec};
 use crate::forward::{self, ForwardRequest};
-use crate::layout::{Direction, Layout, PaneId, Split};
+use crate::keymap::{Act, Entry, History, Matcher, Modes, Step, Stroke, Target, Unmapped, notation};
+use crate::layout::{Layout, PaneId, Split};
 use temzdf_protocol::script::{FromHost, ScriptValue};
 
+mod commands;
 mod script;
+
+pub use commands::command_specs;
 
 pub use script::{EVENTS as SCRIPT_EVENTS, ScriptSettings};
 
@@ -93,8 +97,10 @@ impl Outcome {
     }
 }
 
-/// The prefix key for session commands (fixed for now).
-const PREFIX: &str = "C-s";
+/// How long a key that starts a longer mapping waits (Vim's `timeoutlen`).
+const TIMEOUTLEN: Duration = Duration::from_millis(1000);
+/// How many modes the history keeps.
+const MODE_HISTORY: usize = 100;
 /// Session layers: the background below every pane, borders above them.
 const Z_SESSION_BACKGROUND: i32 = -1_073_741_950;
 const Z_BORDER: i32 = -1_073_741_700;
@@ -111,8 +117,9 @@ const OWNER_SESSION: u32 = u32::MAX;
 enum Spot {
     /// The first pane of the session.
     First,
-    /// Beside or below this pane.
-    SplitOf(PaneId, Split),
+    /// Next to `target` (the whole layout for `None`), before (left/above)
+    /// or after it.
+    Split { target: Option<PaneId>, split: Split, before: bool },
 }
 
 struct DocEntry {
@@ -186,7 +193,9 @@ pub struct Session {
     layout: Option<Layout>,
     focus: PaneId,
     next_id: u32,
-    prefix: bool,
+    modes: Modes<Target>,
+    matcher: Matcher,
+    history: History,
     keys: Keys,
     effects: Vec<Effect>,
     /// The pane under the pointer, and the one holding a pressed button.
@@ -206,6 +215,7 @@ pub struct Session {
 
 impl Session {
     pub fn new(name: String, geometry: Geometry, hints: Hints, settings: Settings, events: EventSink) -> Self {
+        let modes = default_modes(&settings.keymap);
         Self {
             name,
             images: Images::new(),
@@ -218,7 +228,9 @@ impl Session {
             layout: None,
             focus: 0,
             next_id: 1,
-            prefix: false,
+            modes,
+            matcher: Matcher::default(),
+            history: History::new("normal", MODE_HISTORY),
             keys: Keys::default(),
             effects: Vec::new(),
             hovered: None,
@@ -252,7 +264,11 @@ impl Session {
 
     /// Where a new pane goes: the first one, or beside the focused pane.
     fn next_spot(&self) -> Spot {
-        if self.layout.is_some() { Spot::SplitOf(self.focus, Split::Horizontal) } else { Spot::First }
+        if self.layout.is_some() {
+            Spot::Split { target: Some(self.focus), split: Split::Horizontal, before: false }
+        } else {
+            Spot::First
+        }
     }
 
     /// Open a new pane: the first one, or beside the focused pane.
@@ -322,19 +338,19 @@ impl Session {
     /// Put pane `id` into the layout at `spot`. Returns its rectangle.
     fn place(&mut self, id: PaneId, spot: Spot) -> Result<Rect> {
         let area = self.area();
-        let target = match spot {
-            Spot::SplitOf(target, split) if self.panes.contains_key(&target) => Some((target, split)),
+        let (target, split, before) = match spot {
+            Spot::Split { target: Some(t), split, before } if self.panes.contains_key(&t) => (Some(t), split, before),
+            Spot::Split { target: None, split, before } => (None, split, before),
             // The target went away meanwhile: split the focused pane instead.
-            _ => Some((self.focus, Split::Horizontal)),
+            _ => (Some(self.focus), Split::Horizontal, false),
         };
-        match (self.layout.as_mut(), target) {
-            (None, _) => self.layout = Some(Layout::new(id)),
-            (Some(layout), Some((target, split))) => {
-                if !layout.split(target, id, split, area) {
+        match self.layout.as_mut() {
+            None => self.layout = Some(Layout::new(id)),
+            Some(layout) => {
+                if !layout.split_at(target, id, split, before, area) {
                     bail!("no room for another pane");
                 }
             }
-            (Some(_), None) => unreachable!(),
         }
         let layout = self.layout.as_ref().expect("placed");
         Ok(layout.rects(area).into_iter().find(|(p, _)| *p == id).map_or(area, |(_, r)| r))
@@ -412,6 +428,11 @@ impl Session {
         }
         self.focus = id;
         self.event("PaneFocused", vec![ScriptValue::Num(id as f64)]);
+        // The history starts again from the pane's own mode.
+        let old = self.history.current().to_owned();
+        let mode = self.pane_mode(id);
+        self.history.reset(mode);
+        self.mode_changed(&old);
     }
 
     /// Show a message in the focused pane's status bar (or another PDF pane's:
@@ -564,48 +585,110 @@ impl Session {
     }
 
     fn key_inner(&mut self, k: &KeyEvent, now: Instant) -> Outcome {
-        let is_prefix = Key::parse(PREFIX).is_ok_and(|p| p == Key::of(k));
-        if std::mem::take(&mut self.prefix) {
-            if !is_prefix && self.prefix_mapping(k) {
-                return Outcome::None;
-            }
-            let action = match k.code {
-                // The prefix twice sends it to the pane.
-                _ if is_prefix => None,
-                KeyCode::Char('%') => Some(Action::Split(Split::Horizontal)),
-                KeyCode::Char('"') => Some(Action::Split(Split::Vertical)),
-                KeyCode::Char('h') | KeyCode::Left => Some(Action::MoveFocus(Direction::Left)),
-                KeyCode::Char('j') | KeyCode::Down => Some(Action::MoveFocus(Direction::Down)),
-                KeyCode::Char('k') | KeyCode::Up => Some(Action::MoveFocus(Direction::Up)),
-                KeyCode::Char('l') | KeyCode::Right => Some(Action::MoveFocus(Direction::Right)),
-                KeyCode::Char('o') => Some(Action::FocusNextPane),
-                KeyCode::Char('x') => Some(Action::ClosePane),
-                KeyCode::Char('d') => Some(Action::Detach),
-                _ => return Outcome::None,
-            };
-            if let Some(action) = action {
-                return match self.action_inner(action, now) {
-                    Ok(o) => o,
-                    Err(e) => {
-                        self.message(&format!("{e:#}"));
-                        Outcome::Redraw
-                    }
-                };
-            }
-        } else if is_prefix {
-            self.prefix = true;
+        // <C-c> cancels pending keys and the count; otherwise it is an
+        // ordinary (unmappable) key.
+        let ctrl_c =
+            k.code == KeyCode::Char('c') && k.modifiers.without_locks() == termpix_core::input::Modifiers::CTRL;
+        if ctrl_c && (!self.matcher.pending().is_empty() || self.matcher.count().is_some()) {
+            self.matcher.cancel();
             return Outcome::None;
         }
+        let mut out = Outcome::None;
+        // A PDF pane's own keys (its search prompt, outline, link preview)
+        // come before mappings, unless a key sequence is under way.
         let focus = self.focus;
-        let Some(e) = self.panes.get_mut(&focus) else { return Outcome::None };
-        match &mut e.kind {
-            Kind::Pdf { pane, .. } => match pane.key(k, now) {
-                pane::Action::Quit => self.request_close(focus),
-                pane::Action::Redraw => Outcome::Redraw,
-                pane::Action::None => Outcome::None,
-            },
-            Kind::Term(t) => Outcome::None.or(t.key(k)),
+        if self.matcher.pending().is_empty()
+            && !self.matcher.has_input()
+            && let Some(Kind::Pdf { pane, .. }) = self.panes.get_mut(&focus).map(|e| &mut e.kind)
+        {
+            let mut redraw = false;
+            if let Some(action) = pane.key_first(k, now, &mut redraw) {
+                return match action {
+                    pane::Action::Quit => self.request_close(focus),
+                    pane::Action::Redraw => Outcome::Redraw,
+                    pane::Action::None => Outcome::None,
+                };
+            }
+            out = out.or(redraw);
         }
+        self.matcher.push(k);
+        out.merge(self.drive(now))
+    }
+
+    /// Let the matcher decide what queued keys do, until it waits (for more
+    /// keys, or while a script function runs).
+    fn drive(&mut self, now: Instant) -> Outcome {
+        let mut out = Outcome::None;
+        while !self.script.busy() {
+            let mode = self.history.current().to_owned();
+            match self.matcher.step(&self.modes, &mode, TIMEOUTLEN, now) {
+                Step::Wait(_) => break,
+                Step::Run { target, count, .. } => out = out.merge(self.run_target(target, count, now)),
+                Step::Unmapped(stroke, ev) => {
+                    if self.modes.unmapped(&mode) == Unmapped::Passthrough {
+                        let ev = ev.unwrap_or_else(|| stroke.event());
+                        out = out.merge(self.send_to_pane(&ev));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// What a mapping runs: commands right here, or a script function.
+    fn run_target(&mut self, target: Target, count: Option<usize>, now: Instant) -> Outcome {
+        match target {
+            Target::Actions(acts) => {
+                let mut out = Outcome::None;
+                for a in acts {
+                    match self.run_command(&a.name, &a.args, count, now) {
+                        Ok((_, o)) => out = out.merge(o),
+                        Err(e) => {
+                            self.message(&e);
+                            out = out.merge(Outcome::Redraw);
+                            break;
+                        }
+                    }
+                }
+                out
+            }
+            Target::Func(func) => {
+                let count = count.map_or(ScriptValue::Null, |c| ScriptValue::Num(c as f64));
+                let ctx = ScriptValue::map([("count", count), ("pane", ScriptValue::Num(self.focus as f64))]);
+                self.call(func, vec![ctx], false);
+                Outcome::None
+            }
+        }
+    }
+
+    /// An unmapped key in a pass-through mode goes to the focused pane.
+    fn send_to_pane(&mut self, k: &KeyEvent) -> Outcome {
+        match self.panes.get_mut(&self.focus).map(|e| &mut e.kind) {
+            Some(Kind::Term(t)) => Outcome::None.or(t.key(k)),
+            _ => Outcome::None,
+        }
+    }
+
+    /// The mode of a pane kind (its default mode).
+    fn pane_mode(&self, id: PaneId) -> &'static str {
+        match self.panes.get(&id).map(|e| &e.kind) {
+            Some(Kind::Pdf { .. }) => "pdf",
+            Some(Kind::Term(_)) => "terminal",
+            None => "normal",
+        }
+    }
+
+    /// Announce a mode change (if `old` differs from the current mode).
+    fn mode_changed(&mut self, old: &str) {
+        let new = self.history.current().to_owned();
+        if new != old {
+            self.event("ModeChanged", vec![ScriptValue::Str(old.to_owned()), ScriptValue::Str(new)]);
+        }
+    }
+
+    /// The current mode's name.
+    pub fn current_mode(&self) -> &str {
+        self.history.current()
     }
 
     pub fn paste(&mut self, text: &str) -> Outcome {
@@ -633,8 +716,8 @@ impl Session {
 
     fn action_inner(&mut self, action: Action, _now: Instant) -> Result<Outcome> {
         match action {
-            Action::Split(split) => {
-                let spot = Spot::SplitOf(self.focus, split);
+            Action::Split { split, before, root } => {
+                let spot = Spot::Split { target: if root { None } else { Some(self.focus) }, split, before };
                 match self.panes.get(&self.focus).map(|e| &e.kind) {
                     Some(Kind::Pdf { doc, .. }) => {
                         let doc = *doc;
@@ -973,7 +1056,10 @@ impl Session {
     /// [`Session::tick`], plus scripting's timers (the configuration's load
     /// timeout, the "running a script" notice). For event loops.
     pub fn poll(&mut self, now: Instant) -> Outcome {
-        let out = self.script_tick(now).or(self.tick(now));
+        let mut out = self.script_tick(now).or(self.tick(now));
+        if self.matcher.deadline(TIMEOUTLEN).is_some_and(|d| now >= d) {
+            out = out.merge(self.drive(now));
+        }
         out.merge(self.flush_events())
     }
 
@@ -983,7 +1069,7 @@ impl Session {
             Kind::Term(_) => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
-        panes.chain(docs).chain(self.script_deadline()).min()
+        panes.chain(docs).chain(self.script_deadline()).chain(self.matcher.deadline(TIMEOUTLEN)).min()
     }
 
     pub fn focus(&self) -> PaneId {
@@ -1013,6 +1099,62 @@ impl Session {
             self.handle(SessionEvent::Forward(doc, req), Instant::now());
         }
     }
+}
+
+/// The built-in modes and, until the shipped JavaScript defaults take over,
+/// their default mappings: `normal` (operating), `terminal` (pass-through)
+/// and `pdf` (`keymap`'s page-view keys). `<C-s>` enters `normal`.
+fn default_modes(keymap: &Keymap) -> Modes<Target> {
+    let mut m = Modes::default();
+    for (name, unmapped, count) in
+        [("normal", Unmapped::Drop, true), ("terminal", Unmapped::Passthrough, false), ("pdf", Unmapped::Drop, true)]
+    {
+        let d = m.define(name);
+        d.unmapped = Some(unmapped);
+        d.count = Some(count);
+    }
+    let keys = |s: &str| notation::parse(s).expect("default keys");
+    let acts = |v: &[(&str, &[&str])]| {
+        Target::Actions(
+            v.iter().map(|(n, a)| Act::new(n, a.iter().map(|s| ScriptValue::Str((*s).into())).collect())).collect(),
+        )
+    };
+    for (lhs, target) in [
+        ("%", acts(&[("split", &["right"])])),
+        ("\"", acts(&[("split", &["bottom"])])),
+        ("h", acts(&[("move-focus", &["left"])])),
+        ("<Left>", acts(&[("move-focus", &["left"])])),
+        ("j", acts(&[("move-focus", &["down"])])),
+        ("<Down>", acts(&[("move-focus", &["down"])])),
+        ("k", acts(&[("move-focus", &["up"])])),
+        ("<Up>", acts(&[("move-focus", &["up"])])),
+        ("l", acts(&[("move-focus", &["right"])])),
+        ("<Right>", acts(&[("move-focus", &["right"])])),
+        ("o", acts(&[("focus-next-pane", &[])])),
+        ("x", acts(&[("close-pane", &[])])),
+        ("d", acts(&[("detach", &[]), ("exit-mode", &[])])),
+        // The prefix twice sends it to the pane.
+        ("<C-s>", acts(&[("exit-mode", &[]), ("feedkeys", &["<C-s>"])])),
+        ("<Esc>", acts(&[("exit-mode", &[])])),
+    ] {
+        m.map("normal", keys(lhs), target, false, None);
+    }
+    // feedkeys from <C-s><C-s> must not map again.
+    if let Some(Entry::Map { target: Target::Actions(a), .. }) = m.define("normal").maps.get_mut(&keys("<C-s>")) {
+        a[1].args.push(ScriptValue::Bool(false));
+    }
+    for mode in ["terminal", "pdf"] {
+        m.map(mode, keys("<C-s>"), acts(&[("switch-mode", &["normal"])]), false, None);
+    }
+    for (key, cmd) in keymap.bindings() {
+        let stroke = Stroke::of(&key.event());
+        // <C-c> is reserved (it cancels and interrupts).
+        if stroke == keys("<C-c>")[0] {
+            continue;
+        }
+        m.map("pdf", vec![stroke], Target::Actions(vec![Act::new(cmd.name(), vec![])]), false, None);
+    }
+    m
 }
 
 #[cfg(test)]
@@ -1067,7 +1209,11 @@ mod tests {
     }
 
     fn key(s: &mut Session, spec: &str) -> Outcome {
-        s.key(&Key::parse(spec).unwrap().event(), Instant::now())
+        let mut out = Outcome::None;
+        for k in notation::parse(spec).unwrap() {
+            out = out.merge(s.key(&k.event(), Instant::now()));
+        }
+        out
     }
 
     fn click(s: &mut Session, x: i32, y: i32) {
@@ -1082,21 +1228,22 @@ mod tests {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
         let first = s.focus();
-        assert_eq!(key(&mut s, "C-s"), Outcome::None, "waits for the command");
+        assert_eq!(key(&mut s, "<C-s>"), Outcome::Redraw, "the normal mode");
+        assert_eq!(s.current_mode(), "normal");
         assert_eq!(key(&mut s, "%"), Outcome::Redraw);
         assert_eq!(s.pane_count(), 2);
         let second = s.focus();
         assert_ne!(first, second, "the new pane has the focus");
-        key(&mut s, "C-s");
+        key(&mut s, "<C-s>");
         key(&mut s, "h");
         assert_eq!(s.focus(), first);
         // A click on the right half focuses the pane there.
         click(&mut s, 700, 200);
         assert_eq!(s.focus(), second);
-        key(&mut s, "C-s");
+        key(&mut s, "<C-s>");
         assert_eq!(key(&mut s, "x"), Outcome::Redraw);
         assert_eq!((s.pane_count(), s.focus()), (1, first));
-        key(&mut s, "C-s");
+        key(&mut s, "<C-s>");
         assert_eq!(key(&mut s, "d"), Outcome::Detach);
         assert_eq!(key(&mut s, "q"), Outcome::Quit, "quitting the last pane ends the session");
     }
@@ -1104,7 +1251,7 @@ mod tests {
     #[test]
     fn panes_are_composed_inside_their_rectangles_with_unique_keys() {
         let (mut s, rx) = session();
-        s.action(Action::Split(Split::Horizontal), Instant::now()).unwrap();
+        s.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
         let (frame, _) = settle(&mut s, &rx);
         let mut keys = HashSet::new();
         for l in &frame.layers {
@@ -1126,7 +1273,7 @@ mod tests {
         // Stacked panes have the same width, so the same zoom and tiles; both
         // ask for them in the first frame. (The deduplication itself is
         // tested deterministically in temzdf-pdfview's host.rs.)
-        s.action(Action::Split(Split::Vertical), Instant::now()).unwrap();
+        s.action(Action::Split { split: Split::Vertical, before: false, root: false }, Instant::now()).unwrap();
         let (_, rendered) = settle(&mut s, &rx);
         assert!(!rendered.is_empty());
         let unique: HashSet<_> = rendered.iter().collect();
@@ -1195,8 +1342,8 @@ mod tests {
         use termpix::mock::MockTerminal;
         let big = Geometry { cols: 100, rows: 34, ..GEOMETRY };
         let (mut s, rx) = session();
-        s.action(Action::Split(Split::Horizontal), Instant::now()).unwrap();
-        s.action(Action::Split(Split::Vertical), Instant::now()).unwrap();
+        s.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
+        s.action(Action::Split { split: Split::Vertical, before: false, root: false }, Instant::now()).unwrap();
         let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, GEOMETRY);
         let mut presenter = temzdf_tty::Presenter::new();
         let mut out = Vec::new();
@@ -1214,8 +1361,8 @@ mod tests {
 
         let (mut fresh, rx2) = session();
         fresh.resize(big);
-        fresh.action(Action::Split(Split::Horizontal), Instant::now()).unwrap();
-        fresh.action(Action::Split(Split::Vertical), Instant::now()).unwrap();
+        fresh.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
+        fresh.action(Action::Split { split: Split::Vertical, before: false, root: false }, Instant::now()).unwrap();
         let mut comp2 = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, big);
         let (frame2, _) = settle(&mut fresh, &rx2);
         let mut out2 = Vec::new();
@@ -1292,15 +1439,13 @@ mod tests {
             terminal_session(&["sh", "-c", "stty -echo -ixon; echo ready; read l; echo \"got:$l\"; read l"]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
         // C-s C-s sends C-s itself (with flow control off, a plain character).
-        key(&mut s, "C-s");
-        key(&mut s, "C-s");
-        for k in ["a", "Enter"] {
-            key(&mut s, k);
-        }
+        key(&mut s, "<C-s>");
+        key(&mut s, "<C-s>");
+        key(&mut s, "a<CR>");
         let (_, rows) = wait_text(&mut s, &rx, |r| r[1].starts_with("got:"));
         assert_eq!(rows[1], "got:\u{13}a");
         assert!(s.frame().cursor.is_some());
-        key(&mut s, "Enter");
+        key(&mut s, "<CR>");
         let (outcome, _) = wait_text(&mut s, &rx, |_| false);
         assert_eq!(outcome, Outcome::Quit, "the last pane's program exited");
     }
@@ -1312,20 +1457,20 @@ mod tests {
         // SHELL decides what the split runs.
         // SAFETY: tests in this module do not read SHELL concurrently.
         unsafe { std::env::set_var("SHELL", "/bin/sh") };
-        key(&mut s, "C-s");
+        key(&mut s, "<C-s>");
         assert_eq!(key(&mut s, "%"), Outcome::Redraw);
         assert_eq!(s.pane_count(), 2);
         for c in "echo right-$((40+2))".chars() {
             s.key(&KeyEvent::new(KeyCode::Char(c), Modifiers::NONE), Instant::now());
         }
-        key(&mut s, "Enter");
+        key(&mut s, "<CR>");
         let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("right-42")));
         // The left pane keeps its text in its half; the new shell is in the right one.
         assert!(rows[0].starts_with("left"), "{rows:?}");
         let line = rows.iter().find(|l| l.contains("right-42")).unwrap();
         assert!(line.find("right-42").unwrap() >= 45, "{line:?}");
         // Closing it gives the first pane the whole screen again.
-        key(&mut s, "C-s");
+        key(&mut s, "<C-s>");
         key(&mut s, "x");
         assert_eq!(s.pane_count(), 1);
         // A bigger window: the pane (and its program's pty) grows with it.

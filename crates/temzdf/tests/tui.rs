@@ -312,6 +312,8 @@ fn ctrl_c_interrupts_a_runaway_mapping() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("within 1.0 s"), "{}", String::from_utf8_lossy(&out.stderr));
     t.key("C-c");
     env.wait_log("i", "the interrupt", |l| l.contains("script error"));
+    // The mapping ran in the normal mode (the prefix enters it); back to the shell's.
+    t.key("Esc");
     // Typeahead was dropped with the interrupt (as Vim's CTRL-C); input works again.
     t.type_text("echo after-$((1+1))\n");
     let s = t.wait_text("after-2");
@@ -366,6 +368,7 @@ fn reload_config_registers_again_and_the_session_survives_the_host() {
     env.wait_log("r", "the second load", |l| l.matches("[log]: loaded").count() == 2);
     t.keys(&["C-s", "e"]);
     t.wait_text("mapped");
+    t.key("Esc");
     // Kill the host: the session goes on without scripts.
     let ls = env.run(&["ls", "-v"]);
     let pid = ls.lines().find_map(|l| l.trim().strip_prefix("pid: ")).unwrap().trim().to_owned();

@@ -18,7 +18,7 @@ use temzdf_protocol::{self as proto, ClientMsg, ExitReason, ServerMsg, SessionIn
 use temzdf_scene::{Frame, Hints, ImageKey, ImageUpdate, Pointer};
 use termpix_core::geom::{CellSize, Geometry};
 
-use crate::action::{Action, PaneSpec};
+use crate::action::PaneSpec;
 use crate::session::{EventSink, Outcome, Session, SessionEvent, Settings};
 
 const FRAME: Duration = Duration::from_millis(16);
@@ -331,7 +331,8 @@ fn run_action(
     words: &[String],
     now: Instant,
 ) -> Outcome {
-    let result = Action::parse(words).and_then(|a| session.action(a, now));
+    let _ = now;
+    let result = session.run_cli(words);
     let action_outcome = *result.as_ref().unwrap_or(&Outcome::Redraw);
     let result = result.map(|_| ()).map_err(|e| format!("{e:#}"));
     if let Some(c) = clients.remove(&id) {

@@ -20,9 +20,14 @@ pub enum PaneSpec {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
-    /// Another pane like the focused one, beside or below it: the same
-    /// document again, or a new shell.
-    Split(Split),
+    /// Another pane like the focused one: the same document again, or a new
+    /// shell. `before`: left of or above it; `root`: at that edge of the
+    /// whole screen (Vim's `:topleft`/`:botright`) instead of the pane's.
+    Split {
+        split: Split,
+        before: bool,
+        root: bool,
+    },
     /// A new pane beside the focused one. Terminals start in `cwd` (the
     /// server's directory when `None`).
     NewPane {
@@ -38,6 +43,19 @@ pub enum Action {
 }
 
 impl Action {
+    /// A split towards `side` (`right`, `left`, `bottom` or `down`, `top` or
+    /// `up`), of the focused pane or (`root`) of the whole screen.
+    pub fn split(side: &str, root: bool) -> Result<Self> {
+        let (split, before) = match side {
+            "right" => (Split::Horizontal, false),
+            "left" => (Split::Horizontal, true),
+            "bottom" | "down" => (Split::Vertical, false),
+            "top" | "up" => (Split::Vertical, true),
+            other => bail!("split: {other:?} is not right, left, bottom or top"),
+        };
+        Ok(Action::Split { split, before, root })
+    }
+
     /// Parse `new-pane [--cwd DIR] [FILE | -- COMMAND...]`, `split right|down`,
     /// `move-focus left|right|up|down`, `focus-next-pane`, `close-pane` or
     /// `detach`.
@@ -59,8 +77,8 @@ impl Action {
                 };
                 Action::NewPane { spec, cwd }
             }
-            ["split", "right"] => Action::Split(Split::Horizontal),
-            ["split", "down"] => Action::Split(Split::Vertical),
+            ["split", side] => Action::split(side, false)?,
+            ["split", side, "screen"] => Action::split(side, true)?,
             ["move-focus", d] => Action::MoveFocus(match *d {
                 "left" => Direction::Left,
                 "right" => Direction::Right,
@@ -103,7 +121,11 @@ mod tests {
             new_pane(PaneSpec::Command(vec!["vim".into(), "-u".into(), "NONE".into()]), Some("/w"))
         );
         assert!(parse("new-pane --").is_err() && parse("new-pane --bogus").is_err());
-        assert_eq!(parse("split down").unwrap(), Action::Split(Split::Vertical));
+        assert_eq!(parse("split down").unwrap(), Action::Split { split: Split::Vertical, before: false, root: false });
+        assert_eq!(
+            parse("split left screen").unwrap(),
+            Action::Split { split: Split::Horizontal, before: true, root: true }
+        );
         assert_eq!(parse("move-focus up").unwrap(), Action::MoveFocus(Direction::Up));
         assert!(parse("move-focus sideways").unwrap_err().to_string().contains("sideways"));
         assert_eq!(parse("detach").unwrap(), Action::Detach);

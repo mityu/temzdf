@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-use termpix_core::input::KeyCode;
+use termpix_core::input::{KeyCode, KeyEvent};
 
 use super::notation::Stroke;
 
@@ -179,16 +179,58 @@ pub enum Step<T> {
         count: Option<usize>,
         keys: Vec<Stroke>,
     },
-    /// A key without a mapping, for the mode's unmapped behaviour.
-    Unmapped(Stroke),
+    /// A key without a mapping, for the mode's unmapped behaviour, with the
+    /// event as typed (when it was typed rather than fed).
+    Unmapped(Stroke, Option<KeyEvent>),
+}
+
+/// The ways to read typed `keys` (each key as itself or as its fallback),
+/// in the order mappings are tried: fewest fallbacks first, then keys
+/// earlier in the sequence kept as typed. Long runs of keys with fallbacks
+/// try only all-typed and all-fallback.
+pub fn readings(keys: &[Stroke]) -> Vec<Vec<Stroke>> {
+    let alts: Vec<usize> = (0..keys.len()).filter(|&i| keys[i].fallback().is_some()).collect();
+    if alts.is_empty() {
+        return vec![keys.to_vec()];
+    }
+    let masks: Vec<u32> =
+        if alts.len() > 8 { vec![0, (1u32 << alts.len()) - 1] } else { (0..(1u32 << alts.len())).collect() };
+    let mut out: Vec<(u32, u32, Vec<Stroke>)> = masks
+        .into_iter()
+        .map(|mask| {
+            let mut v = keys.to_vec();
+            for (bit, &i) in alts.iter().enumerate() {
+                if mask & (1 << bit) != 0 {
+                    v[i] = keys[i].fallback().expect("has a fallback");
+                }
+            }
+            (mask.count_ones(), mask, v)
+        })
+        .collect();
+    // Bit i is the i-th key with a fallback: among equal counts a larger mask
+    // has its fallbacks later, keeping earlier keys as typed.
+    out.sort_by_key(|(n, mask, _)| (*n, std::cmp::Reverse(*mask)));
+    out.into_iter().map(|(_, _, v)| v).collect()
+}
+
+impl<T: Clone> Modes<T> {
+    /// The mapping for the typed `keys`, trying their [`readings`].
+    pub fn lookup_typed(&self, mode: &str, keys: &[Stroke]) -> Option<(T, bool, Vec<Stroke>)> {
+        readings(keys).into_iter().find_map(|r| self.lookup(mode, &r).map(|(t, n)| (t, n, r)))
+    }
+
+    /// Whether any reading of `keys` starts a longer mapping.
+    pub fn has_longer_typed(&self, mode: &str, keys: &[Stroke]) -> bool {
+        readings(keys).iter().any(|r| self.has_longer(mode, r))
+    }
 }
 
 /// Typed keys on their way to mappings.
 #[derive(Debug, Default)]
 pub struct Matcher {
-    /// Keys not looked at yet; `false`: fed without mappings.
-    input: VecDeque<(Stroke, bool)>,
-    pending: Vec<Stroke>,
+    /// Keys not looked at yet, as typed, and whether mappings apply.
+    input: VecDeque<(Stroke, Option<KeyEvent>, bool)>,
+    pending: Vec<(Stroke, Option<KeyEvent>)>,
     since: Option<Instant>,
     count: Option<usize>,
     /// The pending keys timed out: resolve them with what they match.
@@ -196,16 +238,27 @@ pub struct Matcher {
 }
 
 impl Matcher {
-    /// A typed key (or one fed with `remap`).
-    pub fn push(&mut self, k: Stroke, remap: bool) {
-        self.input.push_back((k, remap));
+    /// A typed key.
+    pub fn push(&mut self, ev: &KeyEvent) {
+        self.input.push_back((Stroke::of(ev), Some(ev.clone()), true));
     }
 
-    /// Keys fed ahead of what is queued (feedkeys inserts as typeahead).
+    /// Keys fed ahead of what is queued, as Vim's `feedkeys` inserts
+    /// typeahead.
     pub fn feed_front(&mut self, keys: &[Stroke], remap: bool) {
         for k in keys.iter().rev() {
-            self.input.push_front((*k, remap));
+            self.input.push_front((*k, None, remap));
         }
+    }
+
+    fn requeue(&mut self, keys: Vec<(Stroke, Option<KeyEvent>)>) {
+        for (k, ev) in keys.into_iter().rev() {
+            self.input.push_front((k, ev, true));
+        }
+    }
+
+    pub fn has_input(&self) -> bool {
+        !self.input.is_empty()
     }
 
     /// Drop pending keys, the count and queued input (`<C-c>`).
@@ -217,8 +270,8 @@ impl Matcher {
         self.expired = false;
     }
 
-    pub fn pending(&self) -> &[Stroke] {
-        &self.pending
+    pub fn pending(&self) -> Vec<Stroke> {
+        self.pending.iter().map(|(k, _)| *k).collect()
     }
 
     pub fn count(&self) -> Option<usize> {
@@ -244,18 +297,18 @@ impl Matcher {
                 }
                 continue;
             }
-            let Some((k, remap)) = self.input.pop_front() else {
+            let Some((k, ev, remap)) = self.input.pop_front() else {
                 return Step::Wait(self.deadline(timeout));
             };
             if !remap {
                 // Fed without mappings: settle what is pending first.
                 if !self.pending.is_empty() {
-                    self.input.push_front((k, remap));
+                    self.input.push_front((k, ev, remap));
                     self.expired = true;
                     continue;
                 }
                 self.count = None;
-                return Step::Unmapped(k);
+                return Step::Unmapped(k, ev);
             }
             // Counts: digits, `0` only after another digit, unless mapped.
             if self.pending.is_empty()
@@ -263,20 +316,23 @@ impl Matcher {
                 && let KeyCode::Char(c @ '0'..='9') = k.code
                 && k.mods == termpix_core::input::Modifiers::NONE
                 && (c != '0' || self.count.is_some())
-                && (self.count.is_some() || (modes.lookup(mode, &[k]).is_none() && !modes.has_longer(mode, &[k])))
+                && (self.count.is_some()
+                    || (modes.lookup_typed(mode, &[k]).is_none() && !modes.has_longer_typed(mode, &[k])))
             {
                 let d = c as usize - '0' as usize;
                 self.count = Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(d));
                 continue;
             }
-            self.pending.push(k);
-            let exact = modes.lookup(mode, &self.pending);
-            let longer = modes.has_longer(mode, &self.pending);
-            if let Some((target, nowait)) = exact
+            self.pending.push((k, ev));
+            let keys = self.pending();
+            let exact = modes.lookup_typed(mode, &keys);
+            let longer = modes.has_longer_typed(mode, &keys);
+            if let Some((target, nowait, keys)) = exact
                 && (!longer || nowait)
             {
                 self.since = None;
-                return Step::Run { target, count: self.count.take(), keys: std::mem::take(&mut self.pending) };
+                self.pending.clear();
+                return Step::Run { target, count: self.count.take(), keys };
             }
             if longer {
                 self.since.get_or_insert(now);
@@ -295,16 +351,20 @@ impl Matcher {
         if self.pending.is_empty() {
             return None;
         }
-        let keys = std::mem::take(&mut self.pending);
+        let mut items = std::mem::take(&mut self.pending);
+        let keys: Vec<Stroke> = items.iter().map(|(k, _)| *k).collect();
         for n in (1..=keys.len()).rev() {
-            if let Some((target, _)) = modes.lookup(mode, &keys[..n]) {
-                self.feed_front(&keys[n..], true);
-                return Some(Step::Run { target, count: self.count.take(), keys: keys[..n].to_vec() });
+            if let Some((target, _, read)) = modes.lookup_typed(mode, &keys[..n]) {
+                let rest = items.split_off(n);
+                self.requeue(rest);
+                return Some(Step::Run { target, count: self.count.take(), keys: read });
             }
         }
-        self.feed_front(&keys[1..], true);
+        let rest = items.split_off(1);
+        self.requeue(rest);
         self.count = None;
-        Some(Step::Unmapped(keys[0]))
+        let (k, ev) = items.pop().expect("one pending key");
+        Some(Step::Unmapped(k, ev))
     }
 }
 
@@ -391,13 +451,13 @@ mod tests {
                         Some(c) => format!("{c}{target}"),
                         None => target.to_owned(),
                     }),
-                    Step::Unmapped(k) => out.push(format!("unmapped {}", k.notation())),
+                    Step::Unmapped(k, _) => out.push(format!("unmapped {}", k.notation())),
                 }
             }
         };
         for (s, ms) in keys {
             for k in parse(s).unwrap() {
-                matcher.push(k, true);
+                matcher.push(&k.event());
             }
             drain(&mut matcher, t0 + Duration::from_millis(*ms), &mut out);
         }
@@ -456,9 +516,9 @@ mod tests {
         let mut matcher = Matcher::default();
         let now = Instant::now();
         matcher.feed_front(&parse("j").unwrap(), false);
-        assert_eq!(matcher.step(&m, "base", T, now), Step::Unmapped(parse("j").unwrap()[0]));
-        matcher.push(parse("3").unwrap()[0], true);
-        matcher.push(parse("g").unwrap()[0], true);
+        assert_eq!(matcher.step(&m, "base", T, now), Step::Unmapped(parse("j").unwrap()[0], None));
+        matcher.push(&parse("3").unwrap()[0].event());
+        matcher.push(&parse("g").unwrap()[0].event());
         assert!(matches!(matcher.step(&m, "base", T, now), Step::Wait(Some(_))));
         assert_eq!((matcher.count(), matcher.pending().len()), (Some(3), 1));
         matcher.cancel();
@@ -476,6 +536,28 @@ mod tests {
         assert!(p.iter().any(|s| s.contains("\"c\" inherits unknown mode \"nope\"")), "{p:?}");
         assert!(p.iter().any(|s| s.contains("inherits itself")), "{p:?}");
         assert_eq!(m.unmapped("a"), Unmapped::Drop, "a cycle still resolves");
+    }
+
+    #[test]
+    fn typed_keys_try_their_own_form_then_the_fallback() {
+        let mut m: Modes<&str> = Modes::default();
+        let k = |s| parse(s).unwrap();
+        m.map("m", k("<Tab>"), "tab", false, None);
+        m.map("m", k("A"), "big-a", false, None);
+        let typed = |m: &Modes<&'static str>, s: &str| run(m, "m", &[(s, 0)], 10);
+        assert_eq!(typed(&m, "<C-i>"), ["tab"], "<C-i> does what <Tab> does");
+        assert_eq!(typed(&m, "<S-a>"), ["big-a"], "Shift+a does what A does");
+        m.map("m", k("<C-i>"), "ctrl-i", false, None);
+        m.map("m", k("<S-a>"), "shift-a", false, None);
+        assert_eq!(typed(&m, "<C-i>"), ["ctrl-i"], "unless mapped itself");
+        assert_eq!(typed(&m, "<Tab>"), ["tab"]);
+        assert_eq!(typed(&m, "<S-a>"), ["shift-a"]);
+        assert_eq!(typed(&m, "A"), ["big-a"], "Caps Lock A stays A");
+        // Sequences: the reading with the fewest fallbacks wins.
+        m.map("m", k("<Tab>x"), "tab-x", false, None);
+        assert_eq!(typed(&m, "<C-i>x"), ["tab-x"]);
+        assert_eq!(readings(&k("<S-a><C-i>"))[0], k("<S-a><C-i>"));
+        assert_eq!(readings(&k("<S-a><C-i>"))[1], k("<S-a><Tab>"), "keep earlier keys as typed");
     }
 
     #[test]

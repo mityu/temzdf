@@ -79,24 +79,46 @@ impl Layout {
     /// Split `pane`'s area in two, `new` going right of or below it. Refused
     /// (false) when a half would be too small.
     pub fn split(&mut self, pane: PaneId, new: PaneId, split: Split, area: Rect) -> bool {
-        let Some(r) = self.rects(area).into_iter().find(|(p, _)| *p == pane).map(|(_, r)| r) else { return false };
+        self.split_at(Some(pane), new, split, false, area)
+    }
+
+    /// Split `target`'s area (the whole layout for `None`: the new pane gets
+    /// the full width or height at that edge, as Vim's `:topleft` and
+    /// `:botright`), `new` going before (left/above) or after it.
+    pub fn split_at(&mut self, target: Option<PaneId>, new: PaneId, split: Split, before: bool, area: Rect) -> bool {
+        let r = match target {
+            Some(pane) => match self.rects(area).into_iter().find(|(p, _)| *p == pane) {
+                Some((_, r)) => r,
+                None => return false,
+            },
+            None => area,
+        };
         let (a, b) = halves(split, r);
         let fits = |r: Rect| r.w >= MIN_COLS && r.h >= MIN_ROWS;
         if !fits(a) || !fits(b) {
             return false;
         }
-        fn walk(n: &mut Node, pane: PaneId, new: PaneId, split: Split) -> bool {
+        let join = |old: Node| {
+            let (a, b) = if before { (Node::Leaf(new), old) } else { (old, Node::Leaf(new)) };
+            Node::Split { split, a: Box::new(a), b: Box::new(b) }
+        };
+        let Some(pane) = target else {
+            let old = std::mem::replace(&mut self.root, Node::Leaf(new));
+            self.root = join(old);
+            return true;
+        };
+        fn walk(n: &mut Node, pane: PaneId, join: &dyn Fn(Node) -> Node) -> bool {
             match n {
                 Node::Leaf(p) if *p == pane => {
                     let old = std::mem::replace(n, Node::Leaf(pane));
-                    *n = Node::Split { split, a: Box::new(old), b: Box::new(Node::Leaf(new)) };
+                    *n = join(old);
                     true
                 }
                 Node::Leaf(_) => false,
-                Node::Split { a, b, .. } => walk(a, pane, new, split) || walk(b, pane, new, split),
+                Node::Split { a, b, .. } => walk(a, pane, join) || walk(b, pane, join),
             }
         }
-        walk(&mut self.root, pane, new, split)
+        walk(&mut self.root, pane, &join)
     }
 
     /// Remove a pane; its sibling takes the space. False for the last pane.
@@ -176,6 +198,22 @@ fn halves(split: Split, r: Rect) -> (Rect, Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn splits_before_and_at_the_screen_edge() {
+        let area = Rect::new(0, 0, 81, 41);
+        let mut l = Layout::new(1);
+        assert!(l.split_at(Some(1), 2, Split::Horizontal, true, area));
+        assert_eq!(l.panes(), [2, 1], "left of it");
+        assert!(l.split_at(None, 3, Split::Vertical, false, area));
+        assert_eq!(l.panes(), [2, 1, 3]);
+        let rects = l.rects(area);
+        let r3 = rects.iter().find(|(p, _)| *p == 3).unwrap().1;
+        assert_eq!((r3.x, r3.w), (0, 81), "full width at the bottom");
+        assert!(l.split_at(None, 4, Split::Horizontal, true, area));
+        let r4 = l.rects(area).into_iter().find(|(p, _)| *p == 4).unwrap().1;
+        assert_eq!((r4.x, r4.y, r4.h), (0, 0, 41), "full height at the left");
+    }
 
     const AREA: Rect = Rect::new(0, 0, 81, 31);
 

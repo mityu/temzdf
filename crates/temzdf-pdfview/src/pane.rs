@@ -1188,6 +1188,35 @@ impl PdfPane {
         }
     }
 
+    /// The keys the pane handles itself, before mappings: any key closes a
+    /// link preview, the search prompt takes all keys, the outline its own.
+    /// `None`: the key is for mappings (and the pane may need a redraw if
+    /// `redraw` became true).
+    pub fn key_first(&mut self, k: &KeyEvent, now: Instant, redraw: &mut bool) -> Option<Action> {
+        if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
+            return Some(Action::None);
+        }
+        if self.close_preview() {
+            if k.code == KeyCode::Escape {
+                return Some(Action::Redraw);
+            }
+            *redraw = true;
+        }
+        self.message = None;
+        // The reader moved on; a pending reload anchor would pull them back.
+        self.text_anchor = None;
+        self.notice = None;
+        if self.input.is_some() {
+            return Some(self.input_key(k, now));
+        }
+        if self.sidebar_open
+            && let Some(action) = self.sidebar_key(k, now)
+        {
+            return Some(action);
+        }
+        None
+    }
+
     pub fn key(&mut self, k: &KeyEvent, now: Instant) -> Action {
         if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
             return Action::None;
