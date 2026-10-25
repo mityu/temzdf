@@ -26,6 +26,13 @@ Steps 1-2 are done (PDF panes, standalone viewer and session server on one
 - [ ] Shared memory instead of the socket for local clients' pixels (measure
   the socket first).
 - [ ] Windows/tabs; a Vim-like command line on the `Action` text form.
+- [ ] User report (2026-10-26, deferred): after resizing the terminal window
+  with split panes, the bottom-right pane's status bar (file name) stayed where
+  it was. Not reproduced in kitty or WezTerm (standalone and session) nor
+  through the mock terminal (`resizing_split_panes_redraws_like_a_fresh_start`).
+  Suspect: the cell size derived from the kernel's pixel size after a resize
+  (`Winsize::geometry` divides by rows/cols; padding would skew it, worst at the
+  bottom). Needs the terminal, mode and the `resized to geometry` log line.
 - [ ] Step 3: terminal panes (`portable-pty` + `libghostty-vt`, images
   re-emitted per client).
 - [ ] Step 4: GUI client (winit + wgpu). Step 5: web panes (headless
