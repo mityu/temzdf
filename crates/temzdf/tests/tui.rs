@@ -163,7 +163,7 @@ fn detaching_and_attaching_again_keeps_the_shell() {
     assert_eq!(t.wait_exit(), 0);
 
     let ls = env.run(&["ls"]);
-    assert!(ls.contains("d  (1 panes, detached)"), "{ls}");
+    assert!(ls.contains("d  (1 panes, 1 buffers, detached)"), "{ls}");
     assert!(!ls.contains("log:"), "the log only with -v: {ls}");
     let ls = env.run(&["ls", "-v"]);
     assert!(ls.contains(&format!("log: {}", env.path("log/d.log").display())), "{ls}");
@@ -198,7 +198,7 @@ fn splitting_a_terminal_and_opening_a_pdf_beside_it() {
     let stray: Vec<_> = s.images.iter().filter(|p| p.col < 75 && p.cols > 1).collect();
     assert!(stray.is_empty(), "the PDF is in the rightmost pane: {stray:?}");
     let ls = env.run(&["ls"]);
-    assert!(ls.contains("p  (3 panes, 1 attached)") && ls.contains("sample.pdf"), "{ls}");
+    assert!(ls.contains("p  (3 panes, 3 buffers, 1 attached)") && ls.contains("sample.pdf"), "{ls}");
 }
 
 #[test]
@@ -283,13 +283,14 @@ on("PaneClosed", (id) => console.log(`closed ${id}`));
     t.wait_for("the prompt", prompt);
     env.wait_log("h", "ready", |l| l.contains("[log]: ready"));
     t.keys(&["C-b", "%"]);
-    env.wait_log("h", "the second pane", |l| l.contains("opened 2"));
+    // Pane and buffer ids share one counter: the shell's buffer is 2.
+    env.wait_log("h", "the second pane", |l| l.contains("opened 3"));
     // Closing it: the "before" hook runs first; the pane its split creates
     // fires no PaneOpened (events inside hooks only reach nested hooks).
     t.keys(&["C-b", "x"]);
-    env.wait_log("h", "the close", |l| l.contains("closed 2"));
+    env.wait_log("h", "the close", |l| l.contains("closed 3"));
     let lines = env.script_lines("h");
-    assert_eq!(lines, ["opened 1 terminal", "ready", "opened 2 terminal", "pre 2", "closed 2"], "{lines:?}");
+    assert_eq!(lines, ["opened 1 terminal", "ready", "opened 3 terminal", "pre 3", "closed 3"], "{lines:?}");
     let ls = env.run(&["ls"]);
     assert!(ls.contains("h  (2 panes"), "the hook's split happened: {ls}");
 }

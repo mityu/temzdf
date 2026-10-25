@@ -1,10 +1,15 @@
-//! Terminal panes: a program on a pty, its output interpreted by Ghostty's
+//! Terminals: a program on a pty, its output interpreted by Ghostty's
 //! terminal emulation (`libghostty-vt`) and shown as text in a
 //! `temzdf-scene` frame. See doc/session-server.md (step 3).
 //!
+//! A [`TermBuffer`] is the program and its screen; a [`TermView`] is one
+//! pane showing it (several panes can show one terminal, as Vim's windows
+//! show one buffer). The terminal is as large as the largest view (as in
+//! Neovim); smaller views show its bottom left part.
+//!
 //! The pty is read on a thread that hands the bytes to the caller's [`Sink`];
 //! everything else (libghostty's handles are `!Send`) happens on the caller's
-//! thread: [`TermPane::feed`] the bytes, then build a [`TermPane::frame`].
+//! thread: [`TermBuffer::feed`] the bytes, then build a [`TermView::frame`].
 
 pub mod keys;
 
@@ -44,12 +49,12 @@ pub struct Spawn {
     pub env: Vec<(String, String)>,
 }
 
-/// Lines of scrollback kept per pane.
+/// Lines of scrollback kept per terminal.
 const SCROLLBACK: usize = 10_000;
 /// Rows the wheel scrolls through history per step.
 const WHEEL_ROWS: isize = 3;
 
-pub struct TermPane {
+pub struct TermBuffer {
     terminal: Terminal<'static, 'static>,
     render: RenderState<'static>,
     rows_it: RowIterator<'static>,
@@ -68,7 +73,7 @@ pub struct TermPane {
     exited: bool,
 }
 
-impl TermPane {
+impl TermBuffer {
     /// Start `spawn` on a new pty of `geometry`'s size.
     pub fn spawn(spawn: &Spawn, geometry: Geometry, sink: Sink) -> io::Result<Self> {
         let pair = native_pty_system().openpty(pty_size(geometry)).map_err(io::Error::other)?;
@@ -224,7 +229,7 @@ impl TermPane {
         Some(PathBuf::from(path))
     }
 
-    /// A key typed while this pane has the focus.
+    /// A key typed while a pane showing it has the focus.
     pub fn key(&mut self, k: &KeyEvent) -> bool {
         let redraw = self.scroll_to_bottom();
         let out = keys::encode(&mut self.key_encoder, &self.terminal, k);
@@ -232,7 +237,8 @@ impl TermPane {
         redraw
     }
 
-    fn scroll_to_bottom(&mut self) -> bool {
+    /// Leave the history for the live screen. Returns whether it moved.
+    pub fn scroll_to_bottom(&mut self) -> bool {
         if std::mem::take(&mut self.scrolled) {
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
             return true;
@@ -252,7 +258,7 @@ impl TermPane {
         redraw
     }
 
-    /// The pane gained or lost the focus (reported when the program asked).
+    /// A pane showing it gained or lost the focus (reported when the program asked).
     pub fn focus(&mut self, gained: bool) {
         if self.terminal.mode(Mode::FOCUS_EVENT).unwrap_or(false) {
             let mut buf = [0u8; 8];
@@ -263,8 +269,8 @@ impl TermPane {
         }
     }
 
-    /// A mouse event in pane coordinates. Programs that track the mouse get
-    /// it; otherwise the wheel scrolls through history.
+    /// A mouse event in terminal coordinates. Programs that track the mouse
+    /// get it; otherwise the wheel scrolls through history.
     pub fn mouse(&mut self, m: &MouseEvent) -> bool {
         let cell = self.geometry.cell;
         if self.terminal.is_mouse_tracking().unwrap_or(false) {
@@ -324,7 +330,7 @@ impl TermPane {
         }
     }
 
-    /// What the pane shows now.
+    /// The whole screen now.
     pub fn frame(&mut self) -> Frame {
         let mut cursor = None;
         let mut cursor_shape = CursorShape::Default;
@@ -377,11 +383,61 @@ impl TermPane {
     }
 }
 
-impl Drop for TermPane {
+impl Drop for TermBuffer {
     fn drop(&mut self) {
-        // Closing the pane ends its program (as a closing terminal window does).
+        // Deleting the terminal ends its program (as a closing terminal window does).
         let _ = self.child.kill();
         let _ = self.child.try_wait();
+    }
+}
+
+/// One pane showing a [`TermBuffer`].
+#[derive(Clone, Copy, Debug)]
+pub struct TermView {
+    pub geometry: Geometry,
+}
+
+impl TermView {
+    pub fn new(geometry: Geometry) -> Self {
+        Self { geometry }
+    }
+
+    /// Rows of the terminal above the view (it shows the bottom).
+    fn top(&self, term: &TermBuffer) -> u16 {
+        term.geometry.rows.saturating_sub(self.geometry.rows)
+    }
+
+    /// What the view shows: the terminal's bottom left part of the view's size.
+    pub fn frame(&self, term: &mut TermBuffer) -> Frame {
+        let mut frame = term.frame();
+        let top = self.top(term) as usize;
+        let (cols, rows) = (self.geometry.cols as usize, self.geometry.rows as usize);
+        if let Some(grid) = frame.text.first_mut()
+            && (top > 0 || grid.rows.len() != rows || grid.rows.first().is_some_and(|r| r.len() != cols))
+        {
+            let mut out: Vec<Vec<Cell>> = grid.rows.drain(..).skip(top).take(rows).collect();
+            out.resize_with(rows, Vec::new);
+            for row in &mut out {
+                row.truncate(cols);
+                row.resize_with(cols, Cell::blank);
+            }
+            grid.rows = out;
+        }
+        frame.cursor = frame.cursor.and_then(|(c, r)| {
+            let r = r.checked_sub(top as u16)?;
+            (c < self.geometry.cols && r < self.geometry.rows).then_some((c, r))
+        });
+        frame
+    }
+
+    /// A mouse event in view coordinates.
+    pub fn mouse(&self, term: &mut TermBuffer, m: &MouseEvent) -> bool {
+        let top = self.top(term) as i32;
+        let dy = match m.unit {
+            CoordUnit::Pixel => top * term.geometry.cell.height as i32,
+            CoordUnit::Cell => top,
+        };
+        term.mouse(&MouseEvent { y: m.y + dy, ..*m })
     }
 }
 
@@ -463,14 +519,14 @@ mod tests {
     /// the program exits). Returns the pane and its rows.
     fn run(
         argv: &[&str],
-        mut input: impl FnMut(&mut TermPane),
+        mut input: impl FnMut(&mut TermBuffer),
         done: impl Fn(&[String]) -> bool,
-    ) -> (TermPane, Vec<String>) {
+    ) -> (TermBuffer, Vec<String>) {
         let (tx, rx) = mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
         let sink: Sink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
         let spawn = Spawn { argv: Some(argv.iter().map(|s| s.to_string()).collect()), ..Default::default() };
-        let mut pane = TermPane::spawn(&spawn, GEOMETRY, sink).unwrap();
+        let mut pane = TermBuffer::spawn(&spawn, GEOMETRY, sink).unwrap();
         input(&mut pane);
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
@@ -486,7 +542,7 @@ mod tests {
         }
     }
 
-    fn text(pane: &mut TermPane) -> Vec<String> {
+    fn text(pane: &mut TermBuffer) -> Vec<String> {
         let frame = pane.frame();
         frame.text[0]
             .rows
@@ -529,6 +585,21 @@ mod tests {
             |r| r.iter().any(|l| l.contains("got:")),
         );
         assert!(rows.iter().any(|l| l == "got:hi"), "{rows:?}");
+    }
+
+    #[test]
+    fn smaller_views_show_the_bottom_left() {
+        let (mut term, _) = run(&["sh", "-c", "printf 'a\\nb\\nc\\nd\\ne\\nf'; sleep 5"], |_| {}, |r| r[5] == "f");
+        let small = TermView::new(Geometry { cols: 3, rows: 2, ..GEOMETRY });
+        let frame = small.frame(&mut term);
+        let rows: Vec<String> =
+            frame.text[0].rows.iter().map(|r| r.iter().map(|c| c.text.as_str()).collect()).collect();
+        assert_eq!(rows, ["e", "f"]);
+        assert_eq!(frame.text[0].rows[0].len(), 3);
+        // The cursor is right of f (when libghostty shows it).
+        assert!(matches!(frame.cursor, None | Some((1, 1))), "{:?}", frame.cursor);
+        let narrow = TermView::new(Geometry { cols: 1, rows: 2, ..GEOMETRY }).frame(&mut term);
+        assert_eq!(narrow.cursor, None, "outside the view");
     }
 
     #[test]

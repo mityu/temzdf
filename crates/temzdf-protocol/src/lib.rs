@@ -20,7 +20,7 @@ use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 /// Larger messages are refused (a frame with every image of a full cache is
 /// about 200 MB).
 const MAX_MESSAGE: usize = 512 << 20;
@@ -85,6 +85,8 @@ pub struct SessionInfo {
     pub name: String,
     pub pid: u32,
     pub panes: usize,
+    /// Documents and terminals, shown or hidden.
+    pub buffers: usize,
     pub clients: usize,
     /// The files open in the session.
     pub files: Vec<PathBuf>,

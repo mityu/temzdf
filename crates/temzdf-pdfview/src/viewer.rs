@@ -27,6 +27,17 @@ const THUMB_WIDTH: f32 = 320.0;
 /// Points kept above a jump target, so the context above it stays visible.
 pub const TARGET_MARGIN: f32 = 4.0 * crate::layout::GAP_PT;
 pub const MIN_SCALE: f32 = 0.1;
+
+/// A view's position and zoom, independent of the pane's size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewState {
+    /// The page and page-space y at the top of the screen.
+    pub top: Target,
+    /// Doc-space x (points) at the left edge.
+    pub left: f32,
+    /// The zoom relative to fitting the width; `None` fits the width.
+    pub zoom: Option<f32>,
+}
 pub const MAX_SCALE: f32 = 8.0;
 
 // Everything we draw sits below text (and below cells with a background colour),
@@ -283,6 +294,32 @@ impl Viewer {
         let page = self.layout.page_at(y);
         let b = self.layout.pages[page];
         Target { page, y: Some((y - b.y).clamp(0.0, b.h)) }
+    }
+
+    /// Where the view is, to show the document the same way in another pane
+    /// later (see [`Viewer::restore`]).
+    pub fn view_state(&self) -> ViewState {
+        let fit = View::fit_width_scale(&self.layout, self.view.screen_w);
+        ViewState {
+            top: self.top_position(),
+            left: self.view.scroll_x / self.view.scale,
+            zoom: (!self.fit_mode).then(|| self.view.scale / fit),
+        }
+    }
+
+    /// Show `state` (in a pane of perhaps another size): the same zoom relative
+    /// to the width, the same point at the top.
+    pub fn restore(&mut self, state: &ViewState) {
+        if self.layout.pages.is_empty() {
+            return;
+        }
+        match state.zoom {
+            None => self.fit_width(),
+            Some(z) => self.set_scale(z * View::fit_width_scale(&self.layout, self.view.screen_w), (0.0, 0.0)),
+        }
+        let b = self.layout.pages[state.top.page.min(self.page_count() - 1)];
+        let y = b.y + state.top.y.unwrap_or(0.0);
+        self.jump_to(state.left * self.view.scale, y * self.view.scale);
     }
 
     /// Multiply the zoom by `factor`, keeping the screen point `anchor` fixed.
@@ -849,6 +886,30 @@ mod tests {
         v.resize(700, 400);
         let after = v.view.screen_to_doc(&v.layout, 0.0, 0.0);
         assert!((before.0 - after.0).abs() < 0.01 && (before.1 - after.1).abs() < 0.01, "{before:?} {after:?}");
+    }
+
+    #[test]
+    fn a_view_state_restores_in_a_pane_of_another_width() {
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let bounds = pdf::doc_info(&doc).unwrap().bounds;
+        let mut v = Viewer::new(bounds.clone(), 900, 560);
+        v.goto(Target { page: 1, y: Some(200.0) }, false, Instant::now());
+        let fitted = v.view_state();
+        assert_eq!(fitted.zoom, None);
+        let mut w = Viewer::new(bounds.clone(), 450, 560);
+        w.restore(&fitted);
+        assert_eq!(w.top_position().page, 1);
+        let (got, want) = (w.top_position(), fitted.top);
+        assert!((got.y.unwrap() - want.y.unwrap()).abs() < 0.5, "{got:?} {want:?} pages {}", w.page_count());
+        assert!((w.view.scale - v.view.scale / 2.0).abs() < 1e-4, "still fits the width");
+
+        v.set_scale(v.view.scale * 2.0, (0.0, 0.0));
+        let zoomed = v.view_state();
+        assert!((zoomed.zoom.unwrap() - 2.0).abs() < 1e-3);
+        let mut w = Viewer::new(bounds, 450, 560);
+        w.restore(&zoomed);
+        assert!((w.view.scale - v.view.scale / 2.0).abs() < 1e-4, "twice the width-fitting zoom");
+        assert_eq!(w.top_position().page, zoomed.top.page);
     }
 
     #[test]

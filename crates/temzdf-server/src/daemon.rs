@@ -264,6 +264,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                             name: name.to_owned(),
                             pid: std::process::id(),
                             panes: session.pane_count(),
+                            buffers: session.buffer_count(),
                             clients: clients.values().filter(|c| c.attached).count(),
                             files: session.files(),
                             log: log.clone(),

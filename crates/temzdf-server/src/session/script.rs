@@ -42,8 +42,17 @@ const BUSY_NOTICE: Duration = Duration::from_secs(1);
 const MAX_HOOK_DEPTH: usize = 10;
 
 /// Events scripts can hook (`on(name, fn)`).
-pub const EVENTS: &[&str] =
-    &["SessionReady", "PaneOpened", "PaneClosePre", "PaneClosed", "PaneFocused", "DocumentReloaded", "ModeChanged"];
+pub const EVENTS: &[&str] = &[
+    "SessionReady",
+    "PaneOpened",
+    "PaneClosePre",
+    "PaneClosed",
+    "PaneFocused",
+    "DocumentReloaded",
+    "ModeChanged",
+    "BufferCreated",
+    "BufferDeleted",
+];
 
 /// Input that arrived while a script ran.
 enum Held {
@@ -769,6 +778,7 @@ impl Session {
                 }
             }
             "synctexeditor" => o.synctexeditor = text()?,
+            "remainonexit" => o.remainonexit = flag()?,
             other => return Err(format!("no option {other:?}")),
         }
         self.apply_options();
@@ -793,6 +803,7 @@ impl Session {
             "reloaddebounce" => ms(o.reloaddebounce),
             "reloadanchor" => ScriptValue::Str(if o.reloadanchor_text { "text" } else { "position" }.into()),
             "synctexeditor" => o.synctexeditor.clone().map_or(ScriptValue::Null, ScriptValue::Str),
+            "remainonexit" => ScriptValue::Bool(o.remainonexit),
             other => return Err(format!("no option {other:?}")),
         })
     }

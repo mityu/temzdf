@@ -6,7 +6,7 @@ use std::time::Instant;
 use temzdf_pdfview::keys::Command;
 use temzdf_protocol::script::{CommandSpec, ScriptValue};
 
-use super::{Kind, Outcome, PaneEntry, Session};
+use super::{Kind, Outcome, PaneEntry, Session, Spot};
 use crate::action::Action;
 use crate::keymap::notation;
 use crate::layout::Direction;
@@ -22,7 +22,24 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("new-pane", "(...words: string[]): void", "As `temzdf action new-pane`: a file, or \"--\" and a command"),
     ("move-focus", "(dir: \"left\" | \"right\" | \"up\" | \"down\"): void", "Focus the pane in that direction"),
     ("focus-next-pane", "(): void", "Focus the next pane"),
-    ("close-pane", "(): void", "Close the focused pane"),
+    ("close-pane", "(): void", "Close the focused pane (its buffer stays, hidden)"),
+    (
+        "buffers",
+        "(): { id: number; kind: \"pdf\" | \"terminal\"; name: string; panes: number[]; exited: boolean }[]",
+        "The buffers (documents and terminals), shown or hidden",
+    ),
+    (
+        "show-buffer",
+        "(buffer: number, pane?: number): void",
+        "Show a buffer in a pane (the focused one), as Vim's :buffer",
+    ),
+    ("edit", "(path: string): void", "Open a PDF in the focused pane, as Vim's :edit"),
+    (
+        "delete-buffer",
+        "(buffer?: number): void",
+        "Delete a buffer (the focused pane's): end its program or close its document, and close its panes",
+    ),
+    ("kill-session", "(): void", "End the session"),
     ("detach", "(): void", "The operating client detaches"),
     ("reload-config", "(): void", "Restart the script host and load the configuration again"),
     ("message", "(text: string): void", "Show a message"),
@@ -35,7 +52,7 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("switch-mode", "(mode: string): void", "Enter a mode (pushed on the mode history)"),
     ("exit-mode", "(): void", "Back to the previous mode"),
     ("current-mode", "(): string", "The current mode's name"),
-    ("panes", "(): { id: number; kind: \"pdf\" | \"terminal\"; focused: boolean }[]", "The panes"),
+    ("panes", "(): { id: number; kind: \"pdf\" | \"terminal\"; buffer: number; focused: boolean }[]", "The panes"),
     ("focused-pane", "(): number | null", "The focused pane's id"),
     ("session-name", "(): string", "The session's name"),
 ];
@@ -65,6 +82,12 @@ impl Session {
         now: Instant,
     ) -> Result<(ScriptValue, Outcome), String> {
         let text = |i: usize| args.get(i).and_then(ScriptValue::as_str).map(str::to_owned);
+        // Numbers come as strings from `temzdf action`.
+        let id = |i: usize| match args.get(i) {
+            Some(ScriptValue::Num(n)) => Some(*n as u32),
+            Some(ScriptValue::Str(s)) => s.parse().ok(),
+            _ => None,
+        };
         let ok = |o: Outcome| Ok((ScriptValue::Null, o));
         let act = |s: &mut Self, a: Action| {
             s.action_inner(a, now).map(|o| (ScriptValue::Null, o)).map_err(|e| format!("{e:#}"))
@@ -120,15 +143,35 @@ impl Session {
             }
             "focus-next-pane" => act(self, Action::FocusNextPane),
             "close-pane" => ok(self.request_close(self.focus)),
+            "buffers" => Ok((self.buffer_list(), Outcome::None)),
+            "show-buffer" => {
+                let buf = id(0).ok_or("showBuffer: which buffer?")?;
+                let pane = id(1).unwrap_or(self.focus);
+                ok(self.show_in(pane, buf).map_err(|e| format!("showBuffer: {e}"))?)
+            }
+            "edit" => {
+                let path = text(0).ok_or("edit: which file?")?;
+                self.open_at(std::path::Path::new(&path), Spot::Replace(self.focus))
+                    .map_err(|e| format!("edit: {e:#}"))?;
+                ok(Outcome::Redraw)
+            }
+            "delete-buffer" => {
+                let buf = match id(0) {
+                    Some(b) => b,
+                    None => self.panes.get(&self.focus).map(PaneEntry::buffer).ok_or("deleteBuffer: which buffer?")?,
+                };
+                ok(self.delete_buffer(buf).map_err(|e| format!("deleteBuffer: {e}"))?)
+            }
+            "kill-session" => ok(Outcome::Quit),
             "detach" => ok(Outcome::Detach),
             "reload-config" => act(self, Action::ReloadConfig),
             "message" => {
                 self.notify(super::notices::Kind::Info, &text(0).unwrap_or_default());
                 ok(Outcome::Redraw)
             }
-            "send-text" => match self.panes.get_mut(&self.focus).map(|e| &mut e.kind) {
-                Some(Kind::Term(t)) => ok(Outcome::None.or(t.send_text(&text(0).unwrap_or_default()))),
-                _ => Err("sendText: the focused pane is not a terminal".into()),
+            "send-text" => match self.focused_term() {
+                Some(t) => ok(Outcome::None.or(t.send_text(&text(0).unwrap_or_default()))),
+                None => Err("sendText: the focused pane is not a terminal".into()),
             },
             "feedkeys" => {
                 let keys = notation::parse(&text(0).unwrap_or_default()).map_err(|e| format!("feedkeys: {e:#}"))?;
@@ -159,13 +202,15 @@ impl Session {
                 let list = ids
                     .into_iter()
                     .map(|id| {
-                        let kind = match self.panes[&id].kind {
+                        let e = &self.panes[&id];
+                        let kind = match e.kind {
                             Kind::Pdf { .. } => "pdf",
-                            Kind::Term(_) => "terminal",
+                            Kind::Term { .. } => "terminal",
                         };
                         ScriptValue::map([
                             ("id", ScriptValue::Num(id as f64)),
                             ("kind", ScriptValue::Str(kind.into())),
+                            ("buffer", ScriptValue::Num(e.buffer() as f64)),
                             ("focused", ScriptValue::Bool(id == self.focus)),
                         ])
                     })

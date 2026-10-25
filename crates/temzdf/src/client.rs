@@ -278,7 +278,7 @@ pub fn list_sessions(verbose: bool) -> Result<()> {
     for s in sessions {
         let files: Vec<String> = s.files.iter().map(|f| f.display().to_string()).collect();
         let clients = if s.clients == 0 { "detached".to_owned() } else { format!("{} attached", s.clients) };
-        println!("{}  ({} panes, {clients})  {}", s.name, s.panes, files.join(" "));
+        println!("{}  ({} panes, {} buffers, {clients})  {}", s.name, s.panes, s.buffers, files.join(" "));
         if verbose {
             println!("    pid: {}", s.pid);
             if let Some(log) = &s.log {

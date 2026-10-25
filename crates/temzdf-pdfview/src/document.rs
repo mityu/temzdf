@@ -55,6 +55,13 @@ impl Document {
         self.replace(images, Vec::new());
     }
 
+    /// No pane shows the document (it stays open, hidden): drop what is
+    /// cheap to make again, tiles, display lists and page text.
+    pub fn forget(&mut self, images: &mut Images) {
+        self.cache.forget(images);
+        self.texts.iter_mut().for_each(|t| *t = None);
+    }
+
     /// A new version of the file: forget tiles, lists, links and text.
     pub fn replace(&mut self, images: &mut Images, bounds: Vec<PageBounds>) {
         let pages = bounds.len();

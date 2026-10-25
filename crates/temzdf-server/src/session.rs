@@ -14,9 +14,9 @@ use temzdf_pdfcore::workers::DocEvent;
 use temzdf_pdfview::document::Document;
 use temzdf_pdfview::host::{DocumentHost, Forward, HostOptions, Opening};
 use temzdf_pdfview::pane::{self, PdfPane};
-use temzdf_pdfview::viewer::StandIn;
+use temzdf_pdfview::viewer::{StandIn, ViewState};
 use temzdf_scene::{CursorShape, Effect, Frame, Hints, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
-use temzdf_term::{Spawn, TermEvent, TermPane};
+use temzdf_term::{Spawn, TermBuffer, TermEvent, TermView};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{CoordUnit, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use termpix_core::scroll::ScrollConfig;
@@ -36,13 +36,18 @@ pub use commands::command_specs;
 pub use script::{EVENTS as SCRIPT_EVENTS, ScriptSettings};
 
 pub type DocId = u32;
+/// A buffer is what a pane shows, as in Vim: a document (its id is the
+/// [`DocId`]) or a terminal. Buffers outlive their panes: closing a pane
+/// hides its buffer. Ids are unique in the session and never reused (panes
+/// and buffers take them from one counter).
+pub type BufferId = u32;
 
 /// Events for the session from its documents' and terminals' threads and
 /// from other processes (forward search).
 pub enum SessionEvent {
     Doc(DocId, DocEvent),
     Forward(DocId, ForwardRequest),
-    Term(PaneId, TermEvent),
+    Term(BufferId, TermEvent),
     /// A message from the script host (of this generation: hosts are
     /// replaced on reload, and an old one's last words must not count).
     Script(u32, FromHost),
@@ -121,6 +126,9 @@ pub struct Options {
     pub reloadanchor_text: bool,
     /// The inverse-search command (`%{input}`, `%{line}`, `%{column}`).
     pub synctexeditor: Option<String>,
+    /// A shown terminal whose program ended keeps its panes (tmux's
+    /// `remain-on-exit`).
+    pub remainonexit: bool,
 }
 
 impl Default for Options {
@@ -139,6 +147,7 @@ impl Default for Options {
             reloaddebounce: Duration::from_millis(200),
             reloadanchor_text: false,
             synctexeditor: None,
+            remainonexit: false,
         }
     }
 }
@@ -179,6 +188,8 @@ enum Spot {
     /// Next to `target` (the whole layout for `None`), before (left/above)
     /// or after it.
     Split { target: Option<PaneId>, split: Split, before: bool },
+    /// Instead of what this pane shows (Vim's `:edit`).
+    Replace(PaneId),
 }
 
 struct DocEntry {
@@ -189,11 +200,22 @@ struct DocEntry {
     /// Panes to create once it opened.
     waiting: Vec<Spot>,
     _forward: Option<forward::Server>,
+    /// How the last pane showed it, for the next one.
+    view: Option<ViewState>,
+    /// When it was last hidden (for the most recently shown hidden buffer).
+    hidden_at: u64,
+}
+
+struct TermEntry {
+    term: Box<TermBuffer>,
+    /// The program ended; the screen stays until the buffer is deleted.
+    exited: bool,
+    hidden_at: u64,
 }
 
 enum Kind {
     Pdf { pane: Box<PdfPane>, doc: DocId },
-    Term(Box<TermPane>),
+    Term { buf: BufferId, view: TermView },
 }
 
 struct PaneEntry {
@@ -206,14 +228,28 @@ impl PaneEntry {
     fn pdf(&mut self) -> Option<&mut PdfPane> {
         match &mut self.kind {
             Kind::Pdf { pane, .. } => Some(pane),
-            Kind::Term(_) => None,
+            Kind::Term { .. } => None,
         }
     }
 
     fn doc(&self) -> Option<DocId> {
         match &self.kind {
             Kind::Pdf { doc, .. } => Some(*doc),
-            Kind::Term(_) => None,
+            Kind::Term { .. } => None,
+        }
+    }
+
+    fn term(&self) -> Option<BufferId> {
+        match &self.kind {
+            Kind::Term { buf, .. } => Some(*buf),
+            Kind::Pdf { .. } => None,
+        }
+    }
+
+    fn buffer(&self) -> BufferId {
+        match &self.kind {
+            Kind::Pdf { doc, .. } => *doc,
+            Kind::Term { buf, .. } => *buf,
         }
     }
 }
@@ -248,6 +284,9 @@ pub struct Session {
     settings: Settings,
     events: EventSink,
     docs: HashMap<DocId, DocEntry>,
+    terms: HashMap<BufferId, TermEntry>,
+    /// Advanced whenever a buffer is hidden.
+    clock: u64,
     panes: HashMap<PaneId, PaneEntry>,
     layout: Option<Layout>,
     focus: PaneId,
@@ -287,6 +326,8 @@ impl Session {
             settings,
             events,
             docs: HashMap::new(),
+            terms: HashMap::new(),
+            clock: 0,
             panes: HashMap::new(),
             layout: None,
             focus: 0,
@@ -355,7 +396,10 @@ impl Session {
     /// Open `path` in a new pane: the first one, or beside the focused pane.
     /// A file already open is shared, not opened again.
     pub fn open(&mut self, path: &Path) -> Result<()> {
-        let spot = self.next_spot();
+        self.open_at(path, self.next_spot())
+    }
+
+    fn open_at(&mut self, path: &Path, spot: Spot) -> Result<()> {
         let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
         if let Some((&id, entry)) = self.docs.iter_mut().find(|(_, d)| d.path == canonical) {
             if entry.host.is_some() {
@@ -386,6 +430,8 @@ impl Session {
                 opening: Some(opening),
                 waiting: vec![spot],
                 _forward: forward_server,
+                view: None,
+                hidden_at: 0,
             },
         );
         Ok(())
@@ -431,14 +477,34 @@ impl Session {
         }
     }
 
-    /// Create a pane on an open document.
+    /// Create a pane on an open document (or show it in a pane).
     fn add_pdf_pane(&mut self, doc: DocId, spot: Spot) -> Option<PaneId> {
         self.docs.get(&doc)?.host.as_ref()?;
+        if let Spot::Replace(p) = spot {
+            if let Err(e) = self.show_in(p, doc) {
+                self.message(&e);
+            }
+            return Some(p);
+        }
         let id = self.alloc_id();
         if let Err(e) = self.place(id, spot) {
             self.message(&e.to_string());
             return None;
         }
+        let restore = !self.shown(doc);
+        let kind = self.pdf_kind(id, doc)?;
+        self.panes.insert(id, PaneEntry { kind, rect: self.area() });
+        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
+        self.set_focus(id);
+        self.relayout();
+        if restore {
+            self.restore_view(id);
+        }
+        Some(id)
+    }
+
+    /// A page view of `doc` for pane `id`.
+    fn pdf_kind(&mut self, id: PaneId, doc: DocId) -> Option<Kind> {
         let entry = self.docs.get_mut(&doc)?;
         let host = entry.host.as_mut()?;
         let mut pane = PdfPane::with_document(entry.name.clone(), host.info.clone(), host.doc.clone(), self.geometry);
@@ -451,30 +517,222 @@ impl Session {
         if let Some(e) = host.watcher_error.take() {
             pane.message = Some(e);
         }
-        self.panes.insert(id, PaneEntry { kind: Kind::Pdf { pane: Box::new(pane), doc }, rect: self.area() });
-        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
-        self.set_focus(id);
+        Some(Kind::Pdf { pane: Box::new(pane), doc })
+    }
+
+    /// Show the document the way its last pane did (it was hidden).
+    fn restore_view(&mut self, id: PaneId) {
+        let Some(e) = self.panes.get_mut(&id) else { return };
+        if let Kind::Pdf { pane, doc } = &mut e.kind
+            && let Some(state) = self.docs.get(doc).and_then(|d| d.view)
+        {
+            pane.viewer.restore(&state);
+        }
+    }
+
+    /// Whether a pane shows buffer `buf`.
+    fn shown(&self, buf: BufferId) -> bool {
+        self.panes.values().any(|e| e.buffer() == buf)
+    }
+
+    /// The panes showing `buf`.
+    fn panes_showing(&self, buf: BufferId) -> Vec<PaneId> {
+        let mut v: Vec<PaneId> = self.panes.iter().filter(|(_, e)| e.buffer() == buf).map(|(id, _)| *id).collect();
+        v.sort();
+        v
+    }
+
+    /// Show buffer `buf` in pane `pane` instead of what it shows (Vim's
+    /// `:buffer`). A document still opening shows once it opened.
+    fn show_in(&mut self, pane: PaneId, buf: BufferId) -> Result<Outcome, String> {
+        let Some(e) = self.panes.get(&pane) else { return Err(format!("no pane {pane}")) };
+        if e.buffer() == buf {
+            return Ok(Outcome::None);
+        }
+        let g = Geometry { cols: e.rect.w as u16, rows: e.rect.h as u16, cell: self.geometry.cell };
+        let kind = if let Some(t) = self.terms.get_mut(&buf) {
+            t.term.scroll_to_bottom();
+            Kind::Term { buf, view: TermView::new(g) }
+        } else if let Some(d) = self.docs.get_mut(&buf) {
+            if d.host.is_none() {
+                d.waiting.push(Spot::Replace(pane));
+                return Ok(Outcome::None);
+            }
+            self.pdf_kind(pane, buf).ok_or("the document is not open")?
+        } else {
+            return Err(format!("no buffer {buf}"));
+        };
+        let restore = matches!(kind, Kind::Pdf { .. }) && !self.shown(buf);
+        let focused = pane == self.focus;
+        if focused && let Some(t) = self.panes.get(&pane).and_then(PaneEntry::term).and_then(|b| self.terms.get_mut(&b))
+        {
+            t.term.focus(false);
+        }
+        let old = std::mem::replace(&mut self.panes.get_mut(&pane).expect("checked").kind, kind);
+        self.hide(old);
         self.relayout();
-        Some(id)
+        if restore {
+            self.restore_view(pane);
+        }
+        if focused {
+            if let Some(t) = self.terms.get_mut(&buf) {
+                t.term.focus(true);
+            }
+            let old = self.history.current().to_owned();
+            let mode = self.pane_mode(pane);
+            self.history.reset(mode);
+            self.mode_changed(&old);
+        }
+        Ok(Outcome::Redraw)
+    }
+
+    /// What a pane showed is no longer shown there. A buffer no pane shows
+    /// stays, hidden: a document keeps its position (and drops its tiles), a
+    /// terminal keeps running; an ended terminal goes.
+    fn hide(&mut self, kind: Kind) {
+        self.clock += 1;
+        match kind {
+            Kind::Pdf { mut pane, doc } => {
+                let state = pane.viewer.view_state();
+                pane.release(&mut self.images);
+                if !self.shown(doc)
+                    && let Some(d) = self.docs.get_mut(&doc)
+                {
+                    d.view = Some(state);
+                    d.hidden_at = self.clock;
+                    if let Some(h) = &d.host {
+                        h.doc.borrow_mut().forget(&mut self.images);
+                    }
+                }
+            }
+            Kind::Term { buf, .. } => {
+                if !self.shown(buf)
+                    && let Some(t) = self.terms.get_mut(&buf)
+                {
+                    t.hidden_at = self.clock;
+                    if t.exited {
+                        self.remove_buffer(buf);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The most recently shown hidden buffer other than `except`.
+    fn last_hidden(&self, except: Option<BufferId>) -> Option<BufferId> {
+        let docs = self.docs.iter().filter(|(_, d)| d.host.is_some()).map(|(id, d)| (*id, d.hidden_at));
+        let terms = self.terms.iter().map(|(id, t)| (*id, t.hidden_at));
+        docs.chain(terms)
+            .filter(|(id, _)| Some(*id) != except && !self.shown(*id))
+            .max_by_key(|(id, at)| (*at, *id))
+            .map(|(id, _)| id)
+    }
+
+    /// A terminal's program ended. A shown one closes its panes (unless
+    /// `remainonexit`); a hidden one stays to be looked at, as ended.
+    fn term_exited(&mut self, buf: BufferId) -> Outcome {
+        let Some(t) = self.terms.get_mut(&buf) else { return Outcome::None };
+        t.term.set_exited();
+        t.exited = true;
+        let panes = self.panes_showing(buf);
+        if panes.is_empty() || self.options.remainonexit {
+            return Outcome::Redraw;
+        }
+        let mut out = Outcome::None;
+        for p in panes {
+            out = out.merge(self.request_close(p));
+        }
+        out
+    }
+
+    /// Delete a buffer: end its program or close its document, and close the
+    /// panes showing it (the last pane shows another buffer instead).
+    fn delete_buffer(&mut self, buf: BufferId) -> Result<Outcome, String> {
+        if !self.terms.contains_key(&buf) && !self.docs.contains_key(&buf) {
+            return Err(format!("no buffer {buf}"));
+        }
+        for p in self.panes_showing(buf) {
+            if self.close(p) == Outcome::Quit {
+                return Ok(Outcome::Quit);
+            }
+        }
+        self.remove_buffer(buf);
+        Ok(Outcome::Redraw)
+    }
+
+    /// Forget a buffer no pane shows.
+    fn remove_buffer(&mut self, buf: BufferId) {
+        if let Some(d) = self.docs.remove(&buf) {
+            if let Some(host) = d.host {
+                host.doc.borrow_mut().release(&mut self.images);
+            }
+        } else if self.terms.remove(&buf).is_none() {
+            return;
+        }
+        self.event("BufferDeleted", vec![ScriptValue::Num(buf as f64)]);
+    }
+
+    /// The buffers, for `buffers()`.
+    fn buffer_list(&self) -> ScriptValue {
+        let mut list: Vec<(BufferId, &str, String, bool)> = self
+            .docs
+            .iter()
+            .filter(|(_, d)| d.host.is_some())
+            .map(|(id, d)| (*id, "pdf", d.name.clone(), false))
+            .chain(
+                self.terms
+                    .iter()
+                    .map(|(id, t)| (*id, "terminal", t.term.title().unwrap_or_else(|| "shell".into()), t.exited)),
+            )
+            .collect();
+        list.sort_by_key(|b| b.0);
+        ScriptValue::List(
+            list.into_iter()
+                .map(|(id, kind, name, exited)| {
+                    let panes = self.panes_showing(id).into_iter().map(|p| ScriptValue::Num(p as f64)).collect();
+                    ScriptValue::map([
+                        ("id", ScriptValue::Num(id as f64)),
+                        ("kind", ScriptValue::Str(kind.into())),
+                        ("name", ScriptValue::Str(name)),
+                        ("panes", ScriptValue::List(panes)),
+                        ("exited", ScriptValue::Bool(exited)),
+                    ])
+                })
+                .collect(),
+        )
+    }
+
+    /// The number of buffers (for `temzdf ls`).
+    pub fn buffer_count(&self) -> usize {
+        self.docs.values().filter(|d| d.host.is_some()).count() + self.terms.len()
+    }
+
+    /// The focused pane's terminal.
+    fn focused_term(&mut self) -> Option<&mut TermBuffer> {
+        let buf = self.panes.get(&self.focus)?.term()?;
+        self.terms.get_mut(&buf).map(|t| &mut *t.term)
     }
 
     /// Start a program in a new terminal pane.
     fn open_terminal(&mut self, spawn: &Spawn, spot: Spot) -> Result<()> {
         let id = self.alloc_id();
         let rect = self.place(id, spot)?;
+        let buf = self.alloc_id();
         let events = self.events.clone();
-        let sink: temzdf_term::Sink = Arc::new(move |e| events(SessionEvent::Term(id, e)));
+        let sink: temzdf_term::Sink = Arc::new(move |e| events(SessionEvent::Term(buf, e)));
         let mut spawn = spawn.clone();
         spawn.env.push(("TEMZDF_SESSION_NAME".into(), self.name.clone()));
         let geometry = Geometry { cols: rect.w as u16, rows: rect.h as u16, cell: self.geometry.cell };
-        let term = match TermPane::spawn(&spawn, geometry, sink) {
+        let term = match TermBuffer::spawn(&spawn, geometry, sink) {
             Ok(t) => t,
             Err(e) => {
                 self.unplace(id);
                 bail!("cannot start {}: {e}", spawn.argv.as_ref().map_or("the shell".into(), |a| a.join(" ")));
             }
         };
-        self.panes.insert(id, PaneEntry { kind: Kind::Term(Box::new(term)), rect });
+        self.terms.insert(buf, TermEntry { term: Box::new(term), exited: false, hidden_at: 0 });
+        self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str("terminal".into())]);
+        self.panes.insert(id, PaneEntry { kind: Kind::Term { buf, view: TermView::new(geometry) }, rect });
         self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("terminal".into())]);
         self.set_focus(id);
         self.relayout();
@@ -487,8 +745,8 @@ impl Session {
             return;
         }
         for (p, gained) in [(self.focus, false), (id, true)] {
-            if let Some(PaneEntry { kind: Kind::Term(t), .. }) = self.panes.get_mut(&p) {
-                t.focus(gained);
+            if let Some(t) = self.panes.get(&p).and_then(PaneEntry::term).and_then(|b| self.terms.get_mut(&b)) {
+                t.term.focus(gained);
             }
         }
         self.focus = id;
@@ -518,8 +776,26 @@ impl Session {
                 match &mut e.kind {
                     Kind::Pdf { pane, .. } if g != pane.geometry() => pane.resize(g),
                     Kind::Pdf { .. } => {}
-                    Kind::Term(t) => t.resize(g),
+                    Kind::Term { view, .. } => view.geometry = g,
                 }
+            }
+        }
+        self.fit_terms();
+    }
+
+    /// A terminal is as large as the largest pane showing it (as in Neovim);
+    /// a hidden one keeps its size.
+    fn fit_terms(&mut self) {
+        let mut sizes: HashMap<BufferId, (u16, u16)> = HashMap::new();
+        for e in self.panes.values() {
+            if let Kind::Term { buf, view } = &e.kind {
+                let s = sizes.entry(*buf).or_default();
+                *s = (s.0.max(view.geometry.cols), s.1.max(view.geometry.rows));
+            }
+        }
+        for (buf, (cols, rows)) in sizes {
+            if let Some(t) = self.terms.get_mut(&buf) {
+                t.term.resize(Geometry { cols, rows, cell: self.geometry.cell });
             }
         }
     }
@@ -573,6 +849,8 @@ impl Session {
                     Ok(info) if !info.bounds.is_empty() => {
                         let doc = Document::shared(info.bounds.clone());
                         entry.host = Some(opening.finish(info, doc, self.options.host()));
+                        self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
+                        let Some(entry) = self.docs.get_mut(&id) else { return Outcome::Redraw };
                         for spot in std::mem::take(&mut entry.waiting) {
                             self.add_pdf_pane(id, spot);
                         }
@@ -614,21 +892,14 @@ impl Session {
                 }
                 Outcome::None
             }
-            SessionEvent::Term(id, TermEvent::Output(bytes)) => match self.panes.get_mut(&id) {
-                Some(PaneEntry { kind: Kind::Term(t), .. }) => {
-                    t.feed(&bytes);
-                    Outcome::Redraw
+            SessionEvent::Term(buf, TermEvent::Output(bytes)) => match self.terms.get_mut(&buf) {
+                Some(t) => {
+                    t.term.feed(&bytes);
+                    Outcome::None.or(self.shown(buf))
                 }
-                _ => Outcome::None,
+                None => Outcome::None,
             },
-            // The program ended: so does its pane (unless it is gone already).
-            SessionEvent::Term(id, TermEvent::Exited) => match self.panes.get_mut(&id) {
-                Some(PaneEntry { kind: Kind::Term(t), .. }) => {
-                    t.set_exited();
-                    self.request_close(id)
-                }
-                _ => Outcome::None,
-            },
+            SessionEvent::Term(buf, TermEvent::Exited) => self.term_exited(buf),
         }
     }
 
@@ -707,9 +978,12 @@ impl Session {
             self.escape_prefix = true;
             return Outcome::None;
         }
+        if let Some(t) = self.focused_term() {
+            return Outcome::None.or(t.key(k));
+        }
         let focus = self.focus;
         match self.panes.get_mut(&focus).map(|e| &mut e.kind) {
-            Some(Kind::Term(t)) => Outcome::None.or(t.key(k)),
+            Some(Kind::Term { .. }) => Outcome::None,
             // The pane's own page-view keys still work.
             Some(Kind::Pdf { pane, .. }) => match pane.key(k, now) {
                 pane::Action::Quit => self.close(focus),
@@ -768,9 +1042,9 @@ impl Session {
 
     /// An unmapped key in a pass-through mode goes to the focused pane.
     fn send_to_pane(&mut self, k: &KeyEvent) -> Outcome {
-        match self.panes.get_mut(&self.focus).map(|e| &mut e.kind) {
-            Some(Kind::Term(t)) => Outcome::None.or(t.key(k)),
-            _ => Outcome::None,
+        match self.focused_term() {
+            Some(t) => Outcome::None.or(t.key(k)),
+            None => Outcome::None,
         }
     }
 
@@ -778,7 +1052,7 @@ impl Session {
     fn pane_mode(&self, id: PaneId) -> &'static str {
         match self.panes.get(&id).map(|e| &e.kind) {
             Some(Kind::Pdf { .. }) => "pdf",
-            Some(Kind::Term(_)) => "terminal",
+            Some(Kind::Term { .. }) => "terminal",
             None => "normal",
         }
     }
@@ -821,10 +1095,12 @@ impl Session {
     }
 
     fn paste_inner(&mut self, text: &str) -> Outcome {
-        let Some(e) = self.panes.get_mut(&self.focus) else { return Outcome::None };
-        match &mut e.kind {
-            Kind::Pdf { pane, .. } => Outcome::None.or(pane.paste(text) == pane::Action::Redraw),
-            Kind::Term(t) => Outcome::None.or(t.paste(text)),
+        if let Some(t) = self.focused_term() {
+            return Outcome::None.or(t.paste(text));
+        }
+        match self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf) {
+            Some(pane) => Outcome::None.or(pane.paste(text) == pane::Action::Redraw),
+            None => Outcome::None,
         }
     }
 
@@ -845,8 +1121,8 @@ impl Session {
                         self.add_pdf_pane(doc, spot);
                     }
                     // A new shell where the focused one is.
-                    Some(Kind::Term(t)) => {
-                        let cwd = t.pwd().filter(|d| d.is_dir());
+                    Some(Kind::Term { buf, .. }) => {
+                        let cwd = self.terms.get(buf).and_then(|t| t.term.pwd()).filter(|d| d.is_dir());
                         self.open_terminal(&Spawn { argv: None, cwd, env: Vec::new() }, spot)?;
                     }
                     None => {}
@@ -870,24 +1146,27 @@ impl Session {
         Ok(Outcome::Redraw)
     }
 
-    /// Close a pane, and its document when no other pane shows it.
+    /// Close a pane; its buffer stays, hidden, if no other pane shows it.
+    /// The last pane shows the most recently shown hidden buffer instead; with
+    /// none, the session is over.
     fn close(&mut self, id: PaneId) -> Outcome {
         let Some(layout) = self.layout.as_mut() else { return Outcome::Quit };
-        let next = layout.next(id);
-        if !layout.remove(id) {
-            // The last pane.
-            return Outcome::Quit;
+        if layout.panes().len() <= 1 {
+            let current = self.panes.get(&id).map(PaneEntry::buffer);
+            return match self.last_hidden(current) {
+                Some(buf) => self.show_in(id, buf).unwrap_or(Outcome::Quit),
+                None => Outcome::Quit,
+            };
         }
-        if let Some(e) = self.panes.remove(&id)
-            && let Kind::Pdf { mut pane, doc } = e.kind
-        {
-            pane.release(&mut self.images);
-            if !self.panes.values().any(|p| p.doc() == Some(doc))
-                && let Some(d) = self.docs.remove(&doc)
-                && let Some(host) = d.host
+        let next = layout.next(id);
+        layout.remove(id);
+        if let Some(e) = self.panes.remove(&id) {
+            if id == self.focus
+                && let Some(t) = e.term().and_then(|b| self.terms.get_mut(&b))
             {
-                host.doc.borrow_mut().release(&mut self.images);
+                t.term.focus(false);
             }
+            self.hide(e.kind);
         }
         self.event("PaneClosed", vec![ScriptValue::Num(id as f64)]);
         if self.focus == id {
@@ -974,7 +1253,10 @@ impl Session {
         let local = MouseEvent { x: m.x - dx, y: m.y - dy, ..*m };
         match &mut e.kind {
             Kind::Pdf { pane, .. } => out.or(pane.mouse(&local, now)),
-            Kind::Term(t) => out.or(t.mouse(&local)),
+            Kind::Term { buf, view } => match self.terms.get_mut(buf) {
+                Some(t) => out.or(view.mouse(&mut t.term, &local)),
+                None => out,
+            },
         }
     }
 
@@ -992,8 +1274,11 @@ impl Session {
                         }
                     }
                 }
-                Kind::Term(t) => self.effects.extend(t.take_effects()),
+                Kind::Term { .. } => {}
             }
+        }
+        for t in self.terms.values_mut() {
+            self.effects.extend(t.term.take_effects());
         }
         // Links open with the configured command, in the client.
         for e in &mut self.effects {
@@ -1045,7 +1330,10 @@ impl Session {
                     complete &= pane.viewer.is_complete();
                     frame
                 }
-                Kind::Term(t) => t.frame(),
+                Kind::Term { buf, view } => match self.terms.get_mut(buf) {
+                    Some(t) => view.frame(&mut t.term),
+                    None => Frame::default(),
+                },
             };
             let (ox, oy) = (e.rect.x * cell.width as i32, e.rect.y * cell.height as i32);
             let clip = Rect::new(ox, oy, e.rect.w * cell.width, e.rect.h * cell.height);
@@ -1159,7 +1447,7 @@ impl Session {
         self.docs.values().all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle()))
             && self.panes.values().all(|e| match &e.kind {
                 Kind::Pdf { pane, .. } => !pane.search.is_active() || pane.search.is_complete(),
-                Kind::Term(_) => true,
+                Kind::Term { .. } => true,
             })
     }
 
@@ -1197,7 +1485,7 @@ impl Session {
     pub fn next_deadline(&self) -> Option<Instant> {
         let panes = self.panes.values().filter_map(|e| match &e.kind {
             Kind::Pdf { pane, .. } => pane.next_deadline(),
-            Kind::Term(_) => None,
+            Kind::Term { .. } => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
         panes
@@ -1404,10 +1692,10 @@ mod tests {
     }
 
     #[test]
-    fn closing_a_pane_releases_its_document() {
+    fn closing_a_pane_hides_its_document_until_it_is_shown_again() {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
-        let before = s.images().len();
+        let first = s.panes[&s.focus].buffer();
         s.action(Action::NewPane { spec: PaneSpec::Pdf(pdf::fixture("sample-short.pdf")), cwd: None }, Instant::now())
             .unwrap();
         while s.pane_count() < 2 {
@@ -1415,14 +1703,31 @@ mod tests {
             s.handle(ev, Instant::now());
         }
         settle(&mut s, &rx);
-        assert!(s.images().len() > before);
+        let pane = s.focus;
+        let doc = s.panes[&pane].buffer();
+        s.panes.get_mut(&pane).unwrap().pdf().unwrap().viewer.jump_to(0.0, 700.0);
+        let before = s.panes.get_mut(&pane).unwrap().pdf().unwrap().viewer.view_state();
         s.action(Action::ClosePane, Instant::now()).unwrap();
-        // The remaining pane is wider again: its new tiles replace the old ones
-        // over time, but the closed document's tiles and the pane's own images
-        // are gone at once.
-        assert_eq!(s.docs.len(), 1);
-        let (_, _) = settle(&mut s, &rx);
-        assert!(s.panes.values().all(|e| e.doc() != Some(0)));
+        assert_eq!((s.pane_count(), s.buffer_count()), (1, 2), "the document stays, hidden");
+        {
+            let host = s.docs[&doc].host.as_ref().unwrap();
+            let d = host.doc.borrow();
+            assert!((0..d.cache.page_count()).all(|p| d.cache.display_list(p).is_none()), "its display lists went");
+        }
+        // Shown again (in the other pane), where it was.
+        assert_eq!(s.show_in(s.focus, doc), Ok(Outcome::Redraw));
+        settle(&mut s, &rx);
+        let focus = s.focus;
+        let after = s.panes.get_mut(&focus).unwrap().pdf().unwrap().viewer.view_state();
+        assert_eq!(after.top.page, before.top.page);
+        assert!((after.top.y.unwrap() - before.top.y.unwrap()).abs() < 1.0, "{after:?} {before:?}");
+        // The last pane, closed, shows the most recently shown hidden buffer.
+        assert_eq!(s.close(focus), Outcome::Redraw);
+        assert_eq!(s.panes[&focus].buffer(), first);
+        // Deleting it shows the other; deleting that one ends the session.
+        assert_eq!(s.run_command("delete-buffer", &[], None, Instant::now()).map(|r| r.1), Ok(Outcome::Redraw));
+        assert_eq!((s.buffer_count(), s.panes[&focus].buffer()), (1, doc));
+        assert_eq!(s.run_command("delete-buffer", &[], None, Instant::now()).map(|r| r.1), Ok(Outcome::Quit));
     }
 
     #[test]
@@ -1588,5 +1893,92 @@ mod tests {
         s.resize(Geometry { cols: 100, rows: 34, ..GEOMETRY });
         let frame = s.frame();
         assert_eq!((frame.text[0].rows.len(), frame.text[0].rows[0].len()), (34, 100));
+    }
+
+    /// Handle events until `done` holds (or ten seconds pass); returns the
+    /// strongest outcome meanwhile.
+    fn pump(s: &mut Session, rx: &Receiver<SessionEvent>, done: impl Fn(&Session) -> bool) -> Outcome {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut out = Outcome::None;
+        while !done(s) && Instant::now() < deadline {
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(100)) {
+                out = out.merge(s.handle(ev, Instant::now()));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn closed_terminals_keep_running_hidden() {
+        // SAFETY: tests in this module do not read SHELL concurrently.
+        unsafe { std::env::set_var("SHELL", "/bin/sh") };
+        let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo first; read l; echo \"got:$l\"; read l"]);
+        wait_text(&mut s, &rx, |r| r[0] == "first");
+        let first = s.panes[&s.focus].buffer();
+        key(&mut s, "<C-b>%");
+        let second = s.panes[&s.focus].buffer();
+        key(&mut s, "<C-b>h<C-b>x");
+        assert_eq!((s.pane_count(), s.buffer_count()), (1, 2));
+        assert_eq!(s.panes[&s.focus].buffer(), second);
+        // Shown again, it takes input.
+        assert_eq!(s.show_in(s.focus, first), Ok(Outcome::Redraw));
+        assert_eq!(s.current_mode(), "terminal");
+        key(&mut s, "hi<CR>");
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "got:hi"));
+        assert_eq!(rows[0], "first", "{rows:?}");
+        // Its program ends: the buffer goes, and the last pane shows the
+        // hidden shell instead of ending the session.
+        key(&mut s, "<CR>");
+        let out = pump(&mut s, &rx, |s| !s.terms.contains_key(&first));
+        assert_ne!(out, Outcome::Quit);
+        assert_eq!((s.pane_count(), s.panes[&s.focus].buffer()), (1, second));
+    }
+
+    #[test]
+    fn a_hidden_terminal_that_ended_stays_until_it_was_shown() {
+        // SAFETY: tests in this module do not read SHELL concurrently.
+        unsafe { std::env::set_var("SHELL", "/bin/sh") };
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo started; sleep 1; echo bye"]);
+        wait_text(&mut s, &rx, |r| r[0] == "started");
+        let first = s.panes[&s.focus].buffer();
+        key(&mut s, "<C-b>%<C-b>h<C-b>x");
+        pump(&mut s, &rx, |s| s.terms[&first].exited);
+        assert_eq!((s.pane_count(), s.buffer_count()), (1, 2));
+        let list = s.buffer_list();
+        let ScriptValue::List(items) = &list else { panic!() };
+        let entry = items.iter().find(|b| b.get("id") == Some(&ScriptValue::Num(first as f64))).unwrap();
+        assert_eq!(entry.get("exited"), Some(&ScriptValue::Bool(true)));
+        s.show_in(s.focus, first).unwrap();
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.get(1).is_some_and(|l| l == "bye"));
+        assert_eq!(&rows[..2], ["started", "bye"]);
+        // Hidden again, it goes.
+        assert_eq!(s.close(s.focus), Outcome::Redraw);
+        assert!(!s.terms.contains_key(&first));
+        assert_eq!(s.buffer_count(), 1);
+    }
+
+    #[test]
+    fn a_terminal_in_two_panes_is_as_large_as_the_larger() {
+        // SAFETY: tests in this module do not read SHELL concurrently.
+        unsafe { std::env::set_var("SHELL", "/bin/sh") };
+        let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo ready; while read l; do stty size; done"]);
+        wait_text(&mut s, &rx, |r| r[0] == "ready");
+        let first = s.panes[&s.focus].buffer();
+        key(&mut s, "<CR>");
+        wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "30 90"));
+        key(&mut s, "<C-b>%");
+        let right = s.focus;
+        s.show_in(right, first).unwrap();
+        let widest = s.panes.values().map(|e| e.rect.w).max().unwrap();
+        assert!(widest < 90);
+        key(&mut s, "<CR>");
+        let want = format!("30 {widest}");
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains(&want)));
+        assert!(rows.iter().any(|l| l.contains(&want)), "{rows:?}");
+        // One pane left: the whole width again.
+        s.close(right);
+        key(&mut s, "<CR>");
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().filter(|l| *l == "30 90").count() == 2);
+        assert_eq!(rows.iter().filter(|l| *l == "30 90").count(), 2, "{rows:?}");
     }
 }

@@ -170,6 +170,16 @@ impl DocCache {
         }
     }
 
+    /// Nothing shows the document for now: drop its tiles and display lists
+    /// (they load again when it is shown). Work in flight still arrives.
+    pub fn forget(&mut self, images: &mut Images) {
+        for (_, c) in self.tiles.drain() {
+            images.remove(c.image);
+        }
+        self.used_bytes = 0;
+        self.lists.iter_mut().for_each(|l| *l = None);
+    }
+
     /// A new version of the document: forget every list and tile.
     pub fn replace(&mut self, images: &mut Images, bounds: Vec<PageBounds>) {
         self.generation = self.generation.wrapping_add(1);

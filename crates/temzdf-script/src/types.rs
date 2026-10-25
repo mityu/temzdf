@@ -13,6 +13,8 @@ const EVENTS: &[(&str, &str)] = &[
     ("PaneFocused", "[pane: number]"),
     ("DocumentReloaded", "[path: string]"),
     ("ModeChanged", "[old: string, new: string]"),
+    ("BufferCreated", "[buffer: number, kind: \"pdf\" | \"terminal\"]"),
+    ("BufferDeleted", "[buffer: number]"),
 ];
 
 fn camel(name: &str) -> String {
@@ -98,6 +100,24 @@ declare module "temzdf" {{
     splitbelow: boolean;
     /** How many modes the mode history keeps. */
     modehistory: number;
+    /** Pixels per wheel step in PDF panes. */
+    scrollstep: number;
+    /** Milliseconds of the scrolling animation's easing. */
+    scrollsmoothness: number;
+    /** The command opening external links (the URI appended); null: the system's. */
+    linkopener: string[] | null;
+    /** Preview internal links when the pointer rests on one. */
+    linkpreview: boolean;
+    /** Milliseconds the pointer rests before a preview. */
+    linkpreviewdelay: number;
+    /** Milliseconds to wait after the PDF changed before reloading. */
+    reloaddebounce: number;
+    /** What a reload keeps in place: the position or the line being read. */
+    reloadanchor: "position" | "text";
+    /** The inverse-search command (`%{{input}}`, `%{{line}}`, `%{{column}}`). */
+    synctexeditor: string | null;
+    /** A shown terminal whose program ended keeps its panes. */
+    remainonexit: boolean;
   }}
   export const o: Options;
 
