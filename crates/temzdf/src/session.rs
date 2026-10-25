@@ -424,10 +424,14 @@ impl Session {
         if let Some(mut input) = self.input.clone() {
             input.hint = self.search_hint();
             layers.push(self.widget(comp, KEY_INPUT, WidgetState::Input(input.clone()), bar));
-            // Put the terminal cursor at the caret so IME preedit shows there.
+            // Put the terminal cursor at the caret so IME preedit shows there:
+            // in the first cell starting at or after it, since the cursor
+            // covers a whole cell and would hide the last character typed.
             let caret_x = input.caret_x(&mut self.text, &self.theme, h);
             let cell = self.geometry.cell;
-            self.caret_cell = Some(((caret_x as u32 / cell.width) as u16, (y as u32 / cell.height) as u16));
+            let col = (caret_x / cell.width as f32).ceil() as u32;
+            let col = col.min(self.geometry.cols.saturating_sub(1) as u32);
+            self.caret_cell = Some((col as u16, (y as u32 / cell.height) as u16));
         } else {
             let mut right = format!("{}   {zoom}%", self.page_text());
             if self.search.is_active() {
@@ -1773,5 +1777,26 @@ mod tests {
         s.preview_delay = None;
         mouse(&mut s, MouseEventKind::Move, at);
         assert!(s.next_deadline().is_none());
+    }
+
+    #[test]
+    fn the_terminal_cursor_never_covers_typed_text() {
+        let mut s = session();
+        let mut c = comp();
+        let now = Instant::now();
+        s.key(&KeyEvent::new(KeyCode::Char('/'), Modifiers::NONE), now);
+        for ch in "needle".chars() {
+            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
+            s.frame(&mut c);
+            let input = s.input.clone().unwrap();
+            let h = s.bar_height();
+            let caret_x = input.caret_x(&mut s.text, &s.theme, h);
+            let (col, _) = s.cursor().unwrap();
+            assert!(
+                col as f32 * 10.0 >= caret_x,
+                "after {:?}: cell {col} starts left of the caret at {caret_x}",
+                input.text
+            );
+        }
     }
 }
