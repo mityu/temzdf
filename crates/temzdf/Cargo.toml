@@ -19,5 +19,9 @@ temzdf-server.workspace = true
 temzdf-tty.workspace = true
 toml = "1.1.8"
 
+[dev-dependencies]
+temzdf-pdfcore = { workspace = true, features = ["test-support"] }
+tuitest.workspace = true
+
 [lints]
 workspace = true

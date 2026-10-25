@@ -27,6 +27,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-term` | Library. The terminal pane: a program on a pty (`portable-pty`), its output interpreted by `libghostty-vt` (from Nix: `nix/libghostty-vt.nix`), the screen as scene text cells. No `termpix`. |
 | `crates/temzdf-tty` | Library. Terminal frontend (`TtyFrontend`): shows scene frames through `termpix`, frame pacing, effects. |
 | `crates/temzdf-server` | Library. `Session` (panes, layout, focus, prefix keys `C-s`, actions, composed frame), the session server process, forward-search sockets. No terminal code. |
+| `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
 | `crates/temzdf` | The binary: standalone viewer, session commands and client (zellij names: `-s`, `attach`, `ls`, `kill-session`, `action`), config, headless `--render-frame`. |
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
@@ -54,6 +55,12 @@ nix develop -c cargo build --workspace
 ```
 
 Run `scripts/check.sh` before every commit; it enters the dev shell by itself.
+
+Behaviour visible on screen (terminal panes, sessions, CLI, keys) is best
+tested in `crates/temzdf/tests/tui.rs`: the real binary behind a simulated
+terminal (`crates/tuitest`), checked by text, cells and image placements, also
+inside tmux, without an X server. See "Simulated terminal tests" in
+`doc/testing.md`.
 
 End-to-end checks in a real kitty (virtual X server, no display needed):
 
@@ -125,7 +132,7 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
   trailers) in commit messages; a `Co-Authored-By` trailer is fine.
 - Prefer designs that can be verified without a human: deterministic CPU
   rendering, PNG snapshots (inspect them by reading the image), the `termpix`
-  mock terminal, and automated tests. Only the "feel" of scrolling in a real
+  mock terminal, the simulated terminal (`crates/tuitest`), and automated tests. Only the "feel" of scrolling in a real
   terminal needs the user.
 - When you learn something new about terminal behaviour, record it in
   `doc/terminal-compat.md`.

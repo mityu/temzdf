@@ -22,6 +22,7 @@
 | `temzdf-tty` | `temzdf-scene`, `termpix` |
 | `temzdf-server` | `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf` (bin) | `temzdf-server`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-tty`, `temzdf-scene`, `termpix` |
+| `tuitest` (tests only) | `libghostty-vt`, `portable-pty` (none of ours; `temzdf` uses it in `tests/tui.rs`) |
 
 - `termpix-core`: frontend-independent primitives (geometry, raster helpers,
   kinetic scroll, key/mouse events).
