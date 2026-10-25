@@ -4,7 +4,7 @@
 
 use std::fmt::Write as _;
 
-use temzdf_scene::{Attrs, Cell, TextGrid, Underline};
+use temzdf_scene::{Attrs, Cell, Color, TextGrid, Underline};
 
 /// What we last wrote to each cell. `None`: nothing of ours (the cell shows
 /// the images below, or tmux placeholder text).
@@ -18,8 +18,8 @@ pub struct TextScreen {
 /// The pen: the SGR state the terminal is in while writing a run.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Pen {
-    fg: Option<[u8; 3]>,
-    bg: Option<[u8; 3]>,
+    fg: Color,
+    bg: Color,
     attrs: Attrs,
 }
 
@@ -100,7 +100,7 @@ impl TextScreen {
                 }
                 let (fg, bg, attrs, text, width) = match &cell {
                     // Our text goes away: blank with the default pen.
-                    None => (None, None, Attrs::default(), " ", 1),
+                    None => (Color::Default, Color::Default, Attrs::default(), " ", 1),
                     Some(c) if c.width == 0 => (c.fg, c.bg, c.attrs, " ", 1),
                     Some(c) => {
                         (c.fg, c.bg, c.attrs, if c.text.is_empty() { " " } else { c.text.as_str() }, c.width.max(1))
@@ -157,13 +157,30 @@ fn sgr(out: &mut String, p: &Pen) {
         Underline::Dotted => out.push_str(";4:4"),
         Underline::Dashed => out.push_str(";4:5"),
     }
-    if let Some([r, g, b]) = p.fg {
-        let _ = write!(out, ";38;2;{r};{g};{b}");
-    }
-    if let Some([r, g, b]) = p.bg {
-        let _ = write!(out, ";48;2;{r};{g};{b}");
-    }
+    color(out, p.fg, 30, 90, 38);
+    color(out, p.bg, 40, 100, 48);
     out.push('m');
+}
+
+/// SGR parameters for a colour: the 8 basic and 8 bright palette colours
+/// with their short codes (`base`, `bright`), the rest of the palette and RGB
+/// with the extended code (`ext`).
+fn color(out: &mut String, c: Color, base: u8, bright: u8, ext: u8) {
+    match c {
+        Color::Default => {}
+        Color::Indexed(n @ 0..8) => {
+            let _ = write!(out, ";{}", base + n);
+        }
+        Color::Indexed(n @ 8..16) => {
+            let _ = write!(out, ";{}", bright + n - 8);
+        }
+        Color::Indexed(n) => {
+            let _ = write!(out, ";{ext};5;{n}");
+        }
+        Color::Rgb([r, g, b]) => {
+            let _ = write!(out, ";{ext};2;{r};{g};{b}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -208,17 +225,19 @@ mod tests {
         let spacer = Cell { width: 0, ..Cell::default() };
         let red = Cell {
             text: "x".into(),
-            fg: Some([255, 0, 0]),
+            fg: Color::Rgb([255, 0, 0]),
+            bg: Color::Indexed(4),
             attrs: Attrs { bold: true, ..Attrs::default() },
             ..Cell::blank()
         };
-        let g = TextGrid { col: 0, row: 1, rows: vec![vec![wide, spacer, red, cell("y")]] };
+        let bright = Cell { text: "z".into(), fg: Color::Indexed(9), bg: Color::Indexed(200), ..Cell::blank() };
+        let g = TextGrid { col: 0, row: 1, rows: vec![vec![wide, spacer, red, cell("y"), bright]] };
         let out = String::from_utf8(t.render(std::slice::from_ref(&g))).unwrap();
         // The cursor is placed again after the wide character, the pen changes
         // only where the style does, and is reset at the end.
-        assert_eq!(out, "\x1b[2;1H\x1b[0m数\x1b[2;3H\x1b[0;1;38;2;255;0;0mx\x1b[0my\x1b[0m");
+        assert_eq!(out, "\x1b[2;1H\x1b[0m数\x1b[2;3H\x1b[0;1;38;2;255;0;0;44mx\x1b[0my\x1b[0;91;48;5;200mz\x1b[0m");
         let mut term = mock();
         term.feed(out.as_bytes());
-        assert_eq!(term.text_rows()[1], "数 xy");
+        assert_eq!(term.text_rows()[1], "数 xyz");
     }
 }

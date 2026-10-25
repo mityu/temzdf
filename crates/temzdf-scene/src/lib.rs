@@ -212,10 +212,22 @@ pub struct Cell {
     pub text: String,
     /// 1, 2 for a wide character, 0 for the spacer after one.
     pub width: u8,
-    /// `None`: the terminal's default colour.
-    pub fg: Option<[u8; 3]>,
-    pub bg: Option<[u8; 3]>,
+    pub fg: Color,
+    pub bg: Color,
     pub attrs: Attrs,
+}
+
+/// A text colour. Palette colours stay indices, so the user's terminal shows
+/// them in its own theme.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Color {
+    /// The terminal's default foreground or background.
+    #[default]
+    Default,
+    /// An index into the 256-colour palette.
+    Indexed(u8),
+    Rgb([u8; 3]),
 }
 
 impl Cell {

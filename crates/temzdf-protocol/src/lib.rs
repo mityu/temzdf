@@ -198,7 +198,7 @@ mod tests {
                 col: 3,
                 row: 1,
                 rows: vec![vec![
-                    Cell { text: "数".into(), width: 2, fg: Some([1, 2, 3]), ..Cell::blank() },
+                    Cell { text: "数".into(), width: 2, fg: temzdf_scene::Color::Rgb([1, 2, 3]), ..Cell::blank() },
                     Cell::default(),
                 ]],
             }],
