@@ -165,8 +165,8 @@ pub fn attach(name: &str, config: &Config) -> Result<String> {
         {
             match front.present(frame, *complete)? {
                 Presented::Shown => {
-                    if *seq > 0 {
-                        send(ClientMsg::FrameAck(*seq))?;
+                    if *seq > 0 && send(ClientMsg::FrameAck(*seq)).is_err() {
+                        break ended(&rx);
                     }
                     last = pending.take().map(|p| p.1);
                 }
@@ -174,7 +174,9 @@ pub fn attach(name: &str, config: &Config) -> Result<String> {
                 // sends one once this one is acknowledged, and only newer
                 // frames have the pages this one waits for.
                 Presented::Waiting if *seq > 0 => {
-                    send(ClientMsg::FrameAck(*seq))?;
+                    if send(ClientMsg::FrameAck(*seq)).is_err() {
+                        break ended(&rx);
+                    }
                     *seq = 0;
                 }
                 Presented::Waiting | Presented::Held => {}
@@ -194,10 +196,18 @@ pub fn attach(name: &str, config: &Config) -> Result<String> {
                     let _ = send(ClientMsg::Detach);
                     break Some(ExitReason::Detached);
                 }
-                Input::Resized(g) => send(ClientMsg::Resize(g))?,
-                Input::Key(k) => send(ClientMsg::Key(k))?,
-                Input::Mouse(m) => send(ClientMsg::Mouse(m))?,
-                Input::Paste(text) => send(ClientMsg::Paste(text))?,
+                input @ (Input::Resized(_) | Input::Key(_) | Input::Mouse(_) | Input::Paste(_)) => {
+                    let msg = match input {
+                        Input::Resized(g) => ClientMsg::Resize(g),
+                        Input::Key(k) => ClientMsg::Key(k),
+                        Input::Mouse(m) => ClientMsg::Mouse(m),
+                        Input::Paste(text) => ClientMsg::Paste(text),
+                        _ => unreachable!(),
+                    };
+                    if send(msg).is_err() {
+                        break ended(&rx);
+                    }
+                }
                 Input::Handled(true) => {
                     if pending.is_none() {
                         pending = last.clone().map(|f| (0, f, true));
@@ -228,6 +238,20 @@ pub fn attach(name: &str, config: &Config) -> Result<String> {
         Some(ExitReason::Error(e)) => format!("[session {name}: {e}]"),
         None => format!("[lost session {name}]"),
     })
+}
+
+/// Sending failed: the server closed the connection. It usually said why
+/// just before (the session ended, or was killed, while this client was
+/// sending input or an acknowledgement); wait a moment for that message.
+fn ended(rx: &mpsc::Receiver<Event>) -> Option<ExitReason> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        match rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            Ok(Event::Server(ServerMsg::Exit(reason))) => return Some(reason),
+            Ok(Event::Gone) | Err(_) => return None,
+            Ok(_) => {}
+        }
+    }
 }
 
 /// Send a one-shot request and wait for the answer.
