@@ -1,0 +1,20 @@
+[package]
+name = "gpu-raster"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "system-fonts"] }
+vello_cpu = { version = "0.3.0", features = ["multithreading"] }
+vello = "0.11.0"
+vello_hybrid = "0.2.0"
+vello_common = "0.2.0"
+wgpu29 = { package = "wgpu", version = "29.0.3" }
+pollster = "0.4"
+png = "0.18"
+
+[profile.release]
+debug = false
+
+# Not part of the temzdf workspace (it pulls in two wgpu versions).
+[workspace]

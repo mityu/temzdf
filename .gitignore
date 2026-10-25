@@ -1,4 +1,5 @@
 /target
+/experiments/*/target
 # Generated files never belong in the repository (see AGENTS.md): build them
 # into target/ from their sources instead.
 *.pdf

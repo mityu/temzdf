@@ -23,6 +23,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
 | `todo.md` | Long-running tasks and deferred work. |
+| `experiments/` | Standalone experiment crates outside the workspace (see the matching doc). |
 
 Dependency direction is strictly `temzdf -> termpix-ui -> termpix`. Never make the
 libraries depend on PDF, SyncTeX or viewer code.
@@ -119,3 +120,4 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/synctex.md`: forward/inverse search, editor setup, vendored parser.
 - `doc/config.md`: the configuration file format (keep in sync with `crates/temzdf/src/config.rs`).
 - `doc/performance.md`: measurements (raster pool, display lists, transfer) and the benchmark to rerun.
+- `doc/gpu.md`: GPU rasterisation experiment (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.
