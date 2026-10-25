@@ -20,7 +20,7 @@ What exists:
   pane on it: one tile cache, links, text, workers, reload), PDF panes in a
   terminal panes (`crates/temzdf-term`: a pty from `portable-pty`, Ghostty's
   terminal emulation from `libghostty-vt`, the screen as scene text cells),
-  all in a binary layout of splits with one-cell borders, focus, the prefix key `C-s`,
+  all in a binary layout of splits with one-cell borders, focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
   `Action`s with a text form, and one composed frame (pane layers moved into
   their rectangles, clipped, placement keys made unique and stable).
 - Three ways to run share it: `temzdf FILE` (standalone: the session and the
@@ -35,9 +35,10 @@ What exists:
   focus-next-pane | close-pane | detach` (`new-pane` alone opens a shell; the
   CLI adds `--cwd` with its own directory). Splitting a PDF pane shows the same
   document again; splitting a terminal starts another shell in the directory
-  the shell reported (OSC 7). `C-s C-s` sends `C-s` to the pane. One server process per session; its
-  output goes to `NAME.log` in the log directory (`$TEMZDF_LOG_DIR`, `log_dir`
-  in the config, or `$XDG_STATE_HOME/temzdf`); `temzdf ls -v` shows it.
+  the shell reported (OSC 7). `<C-b><C-b>` sends `<C-b>` to the pane. One server process per session; its
+  output goes to `NAME.log` in the log directory (`$TEMZDF_LOG_DIR`, or
+  `$XDG_STATE_HOME/temzdf`); `temzdf ls -v` shows it. Any command of the
+  registry runs from the CLI too (`temzdf action NAME ARGS...`).
   Sessions whose server speaks another protocol version are listed as such.
 - Terminal panes: palette colours stay palette indices (the outer terminal's
   theme applies), wide characters, SGR attributes, cursor shape, keys through
@@ -63,9 +64,7 @@ Not yet (in order of the plan, or found on the way):
   pane width, are not done (fit-width does follow the pane width).
 - Pixels go through the socket; shared memory for local clients would save
   copies (measure first).
-- One window per session (no tabs); prefix and session keys are fixed
-  (configurable later, default to become `C-b`). zellij takes `C-s` for
-  itself (scroll mode), so session keys do not reach temzdf inside zellij yet.
+- One window per session (no tabs).
 - Terminal panes: kitty graphics from programs inside them, a scrollback
   indicator, selection and copy with the mouse, a status line of their own
   (messages for the session go to a PDF pane's status bar, else the log).

@@ -26,7 +26,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings; `Document`/`DocumentHost` shared by the panes on one file (workers, reload, SyncTeX routing). No terminal code. |
 | `crates/temzdf-term` | Library. The terminal pane: a program on a pty (`portable-pty`), its output interpreted by `libghostty-vt` (from Nix: `nix/libghostty-vt.nix`), the screen as scene text cells. No `termpix`. |
 | `crates/temzdf-tty` | Library. Terminal frontend (`TtyFrontend`): shows scene frames through `termpix`, frame pacing, effects. |
-| `crates/temzdf-server` | Library. `Session` (panes, layout, focus, prefix keys `C-s`, actions, composed frame), the session server process, forward-search sockets. No terminal code. |
+| `crates/temzdf-server` | Library. `Session` (panes, layout, focus, modes and key mappings, the command registry, composed frame), the session server process, forward-search sockets. No terminal code. |
 | `crates/temzdf-script` | Library. The script host (`temzdf script-host`): runs `config.ts`/`config.js` in QuickJS (`rquickjs`, TypeScript stripped with swc) and talks to the session over `temzdf-protocol`. The server never links it (child process). |
 | `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
 | `crates/temzdf` | The binary: standalone viewer, session commands and client (zellij names: `-s`, `attach`, `ls`, `kill-session`, `action`), config, headless `--render-frame`. |
@@ -93,8 +93,7 @@ Debugging terminal problems:
   event (what the terminal really sends).
 - In interactive mode `temzdf` sends stdout/stderr (MuPDF and SyncTeX warnings)
   to `temzdf.log`, and session servers theirs to `NAME.log`, in the log
-  directory: `$TEMZDF_LOG_DIR`, else `log_dir` in the config, else
-  `$XDG_STATE_HOME/temzdf`. `temzdf ls -v` shows each session's log file.
+  directory: `$TEMZDF_LOG_DIR`, else `$XDG_STATE_HOME/temzdf`. `temzdf ls -v` shows each session's log file.
 - `TERMPIX_TRACE=out.bin <app>` records every byte written to the terminal;
   replay prefixes of it into a terminal (`cat out.bin`) to bisect crashes.
 - `TERMPIX_BACKEND=layered|composited` and `TERMPIX_MEDIUM=direct|shm|file`
@@ -150,7 +149,7 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/reload.md`: auto-reload design (learned from Skim and Okular).
 - `doc/testing.md`: how to verify changes without a human.
 - `doc/synctex.md`: forward/inverse search, editor setup, vendored parser.
-- `doc/config.md`: the configuration file format (keep in sync with `crates/temzdf/src/config.rs`).
+- `doc/config.md`: the configuration (JavaScript/TypeScript): modes, key notation, default mappings, options, commands, environment variables (keep in sync with `crates/temzdf-script/runtime/defaults.ts` and the registry in `crates/temzdf-server/src/session/commands.rs`).
 - `doc/performance.md`: measurements (raster pool, display lists, transfer) and the benchmark to rerun.
 - `doc/macos.md`: macOS specifics, verification results, and how to drive GUI terminals there.
 - `doc/session-server.md`: the session server design, what is implemented and what comes next.

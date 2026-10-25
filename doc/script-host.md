@@ -8,10 +8,11 @@ questions are in `doc/scripting.md` on the `research/notes` branch (temzdf
 is meant to feel like Vim/Neovim without editing buffers, with a vimrc-like
 configuration).
 
-Status (2026-10-26): the execution model works end to end with a first set of
-commands and hooks. Not yet: modes and real key mappings (`prefixMap` stands
-in), the shipped default configuration in JavaScript, removing the TOML
-configuration, generated type definitions, the floating message window.
+Status (2026-10-26): implemented: the execution model, modes and key
+mappings, the shipped defaults, options, generated type definitions,
+floating messages and the escape keys; the TOML configuration is gone. How
+to write a configuration is in `doc/config.md`. Not yet: pane sizes kept on
+resize, buffers separated from panes (see `todo.md`).
 
 ## Pieces
 
@@ -19,8 +20,13 @@ configuration, generated type definitions, the floating message window.
 |---|---|
 | `crates/temzdf-protocol/src/script.rs` | Messages between session and host (`ToHost`, `FromHost`, `ScriptValue`), framed like the session protocol (length prefix and postcard), over the host's stdin and stdout. |
 | `crates/temzdf-script` | The host: QuickJS through `rquickjs`, TypeScript type stripping (`swc_ts_fast_strip`), module loading, the event loop, the native half of the API (`src/host.rs`) and its JavaScript half (`src/prelude.js`). |
-| `crates/temzdf-server/src/session/script.rs` | The session's side: starting the host, holding input while scripts run, the frame stack that runs hooks nested, the command registry. |
-| `crates/temzdf` | `temzdf script-host` (hidden subcommand the session starts), `--clean`, finding `config.ts`/`config.js`. |
+| `crates/temzdf-script/runtime/defaults.ts` | The shipped default configuration (embedded; loaded before the user's). |
+| `crates/temzdf-script/src/types.rs` | `temzdf.d.ts` for `temzdf print-types`, from the command registry. |
+| `crates/temzdf-server/src/session/script.rs` | The session's side: starting the host, holding input while scripts run, the frame stack that runs hooks nested, options, mapping and mode operations. |
+| `crates/temzdf-server/src/session/commands.rs` | The command registry (`cmd.*`, `action.*`, `temzdf action`). |
+| `crates/temzdf-server/src/keymap/` | Key notation (Neovim's, with fallbacks for keys legacy terminals cannot tell apart), modes, the sequence matcher, the mode history. |
+| `crates/temzdf-server/src/session/notices.rs` | Floating messages; `session.rs` has the escape keymap used while the host is down. |
+| `crates/temzdf` | `temzdf script-host` and `temzdf print-types` (hidden), `--clean`, `--config`, finding `config.ts`/`config.js`. |
 
 The server crates never link QuickJS: the host is a child process (the same
 `temzdf` binary), so a runaway or crashing script cannot take the session
@@ -28,8 +34,10 @@ down.
 
 ## Execution model
 
-- **Startup**: the session starts the host and sends it the configuration's
-  path and the command list. The configuration's top level should only
+- **Startup**: the session always starts the host (the default mappings are
+  JavaScript) and sends it the configuration's path (none with `--clean`) and
+  the command list; the host evaluates the shipped defaults, then the
+  configuration. The configuration's top level should only
   register things; a top-level `await` that does not settle at once is an
   error ("use dispatch"). The session waits up to 5 s for the host to finish,
   then opens its first pane and fires `SessionReady`. A configuration that
@@ -72,43 +80,37 @@ down.
 - `temzdf action` gives up after `--timeout SECONDS` (default 10), e.g. while
   a script holds the session.
 
-## API (first version)
+## API
 
-```ts
-import { cmd, on, prefixMap, dispatch, atomic } from "temzdf";
+`doc/config.md` describes it for users; `temzdf print-types` gives the exact
+declarations. In short, `import { ... } from "temzdf"`:
 
-prefixMap("t", () => {            // C-s t (provisional, until real mappings)
-  cmd.split("right");
-  cmd.sendText("make\n");
-});
-on("PaneClosePre", (id) => console.log(`closing ${id}`));
-on("PaneOpened", (id, kind) => {}, { nested: true });
-dispatch(async (ctx) => {
-  await new Promise((r) => setTimeout(r, 1000));
-  ctx.cmd.message("a second later");
-});
-```
+- `cmd.*` runs registry commands now (synchronous requests); `action.*`
+  describes them as data for mappings.
+- `map(modes, lhs, rhs, { nowait, desc })`, `unmap`, `defineMode(name, {
+  inherit, unmapped, count })`, `feedkeys(keys, { remap })`, `currentMode()`.
+- `o.<option>` reads and sets options.
+- `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,
+  `PaneClosePre(id)`, `PaneClosed(id)`, `PaneFocused(id)`,
+  `DocumentReloaded(path)`, `ModeChanged(old, new)`.
+- `dispatch(async (ctx) => ...)` with `ctx.cmd` and `ctx.atomic(fn)`;
+  `atomic(fn)`.
+- Globals: `setTimeout`, `clearTimeout`, `console`.
 
-Commands (`cmd.*`, from the registry in `session/script.rs`): `split(dir)`,
-`newPane(...)` (as `temzdf action new-pane`), `moveFocus(dir)`,
-`focusNextPane()`, `closePane()`, `detach()`, `message(text)`,
-`sendText(text)` (to the focused terminal pane, like Vim's `chansend()`),
-`pdf(command, count?)` (a page-view command such as `"scroll-down"` in the
-focused PDF pane), `panes()`, `focusedPane()`, `sessionName()`.
-
-Events (`on(name, fn, { nested })`): `SessionReady`, `PaneOpened(id, kind)`,
-`PaneClosePre(id)`, `PaneClosed(id)`, `PaneFocused(id)`,
-`DocumentReloaded(path)`.
-
-Imports: `"temzdf"` and paths relative to the importing file (`.ts` files are
-type-stripped; only erasable syntax, so no `enum` or `namespace` with values).
-No npm packages, no Node APIs. Globals: `setTimeout`, `clearTimeout`,
-`console`.
+Mapped functions get `{ count, pane }`. A mapping whose actions are data runs
+entirely in the session (no RPC); only function mappings and hooks call the
+host.
 
 ## Tests
 
 - `crates/temzdf-script/tests/host.rs`: the host against a fake session
   (loading, imports, nested hooks, interrupts, tasks, atomic, tokens).
 - `crates/temzdf/tests/tui.rs`: the real binary with a `config.ts` in a test
-  configuration directory (mappings, hook order, interrupts with held input,
-  broken configurations, dispatched tasks, reload, a killed host).
+  configuration directory (mappings, modes, options, hook order, interrupts
+  with held input, broken configurations, dispatched tasks, reload, a killed
+  host and the escape keys, floating messages).
+- `crates/temzdf/tests/types.rs`: the shipped defaults and a sample
+  configuration type check with `tsc` against `temzdf print-types`; mistakes
+  do not.
+- `crates/temzdf-server/src/keymap/`: the matcher and notation, with time
+  injected.

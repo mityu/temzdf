@@ -77,8 +77,8 @@ Known problems:
   to their keys (`crates/temzdf-term/src/keys.rs`).
 - In a terminal pane's pty `C-s` is XOFF while the program leaves flow control
   on (`stty ixon`, the default; interactive shells' line editors usually turn
-  it off), as in any terminal: `C-s C-s` then pauses the pane's output until
-  `C-q`.
+  it off), as in any terminal: sending `C-s` then pauses the pane's output
+  until `C-q`.
 - Environment leaks: a terminal started from inside zellij or tmux inherits
   `ZELLIJ`/`TMUX`, which makes detection think it runs inside a multiplexer.
   `scripts/e2e.sh` clears them; real users may see this when launching a GUI
@@ -223,7 +223,7 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
     mouse coordinates and legacy keys.
   - The outer terminal must support Unicode placeholders (kitty, Ghostty; not
     WezTerm).
-- Session prefix `C-s` (2026-10-25): reaches temzdf in kitty, WezTerm and
-  tmux (raw mode clears IXON, so it is no flow control). zellij keeps `C-s`
-  for its own scroll mode, so session keys do not work inside zellij until the
-  prefix is configurable.
+- Session prefix: `C-s` (until 2026-10-26) reached temzdf in kitty, WezTerm
+  and tmux (raw mode clears IXON, so it is no flow control) but not zellij,
+  which keeps `C-s` for its scroll mode. The default is now `<C-b>`, which is
+  tmux's own prefix: inside tmux map another key (or press it twice).

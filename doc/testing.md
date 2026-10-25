@@ -5,7 +5,7 @@ Layers of verification, cheapest first. All of them run without a human.
 | Layer | How | What it catches |
 |---|---|---|
 | Unit tests | `scripts/check.sh` | Input parsing, kitty command encoding, compositor diffing (replayed through `termpix::mock`), layout maths, tile rendering vs full-page rendering |
-| Headless frames | `target/debug/temzdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` (keys may include session keys, `C-s %`) and compositor, replays the bytes through the mock terminal. Read the PNG to check it. `scripts/frames.sh` renders a fixed set and compares two sets pixel by pixel (for refactorings). |
+| Headless frames | `target/debug/temzdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal. Read the PNG to check it. `scripts/frames.sh` renders a fixed set and compares two sets pixel by pixel (for refactorings). |
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
 | Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `scripts/check.sh`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
 | Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
@@ -25,9 +25,10 @@ terminal emulation, kitty graphics included), answers its startup queries
 gives tests:
 
 - `Term::spawn(argv, &Options)`, or `Term::inside_tmux(...)` to put a private
-  tmux server (passthrough on, no status line) in between; `capture_pane()`
+  tmux server (passthrough on, no status line, no prefix key) in between; `capture_pane()`
   then shows what tmux itself holds.
-- Input: `key("C-h")`, `keys(&["C-s", "%"])`, `type_text("ls\n")`, `paste`,
+- Input: `key("C-h")`, `keys(&["C-b", "%"])`, `click(col, row)`,
+  `type_text("ls\n")`, `paste`,
   `resize(cols, rows)`. Keys are encoded the way the program asked for (legacy
   or the kitty keyboard protocol) by the harness's own translation (a US
   layout, as Ghostty's frontend does), not by the code under test.

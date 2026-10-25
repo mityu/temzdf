@@ -1,116 +1,157 @@
 # Configuration
 
-A configuration script, `$XDG_CONFIG_HOME/temzdf/config.ts` or `config.js`,
-can register hooks and (for now) prefix mappings; see `doc/script-host.md`.
-It is to replace this TOML file. `--clean` skips it.
+temzdf is configured with a JavaScript or TypeScript program, as Vim is with
+a vimrc: `$XDG_CONFIG_HOME/temzdf/config.ts` or `config.js` (falling back to
+`~/.config/temzdf/`; both at once is an error), or the file given with
+`--config FILE`. It runs in the script host, a separate process
+(`doc/script-host.md` has the execution model). The shipped defaults
+(`crates/temzdf-script/runtime/defaults.ts`) run first; the configuration can
+map over or unmap anything in them. `--clean` runs only the defaults.
 
-`temzdf` reads `$XDG_CONFIG_HOME/temzdf/config.toml` (falling back to
-`~/.config/temzdf/config.toml`), or the file given with `--config FILE`. A
-missing default file is fine; an explicitly given missing file is an error.
-Every key is optional. Unknown keys are errors, so typos do not go unnoticed.
-The parser lives in `crates/temzdf/src/config.rs`; keep this file in sync.
+A broken configuration (a syntax error, an exception, a top-level `await`,
+taking longer than 5 s) is reported in a floating message and the log, and
+temzdf runs with what was registered before the problem (at least the
+defaults).
 
-```toml
-# Where logs go (MuPDF and SyncTeX warnings, session servers' output):
-# temzdf.log for the viewer and clients, NAME.log for session NAME. "~/" is the
-# home directory. The environment variable TEMZDF_LOG_DIR overrides this; the
-# default is $XDG_STATE_HOME/temzdf (~/.local/state/temzdf).
-# log_dir = "~/.cache/temzdf"
+```ts
+import { action, cmd, defineMode, map, o, on, unmap } from "temzdf";
 
-[terminal]
-# How frames reach the terminal: "auto" (detect), "layered" (upload images once,
-# re-place them; kitty/Ghostty) or "composited" (send whole frames; WezTerm/zellij).
-backend = "auto"
-# How pixels are transferred: "auto", "direct" (inline, works over SSH),
-# "shm" (POSIX shared memory) or "file" (temporary files).
-medium = "auto"
-# zlib level (0-9) for inline transfers. Do not use 1 with Ghostty 1.3.1: it
-# crashes on fixed-Huffman streams (see doc/terminal-compat.md).
-zlib_level = 2
+o.timeoutlen = 500;
+o.synctexeditor = "nvim --server /tmp/nvim.sock --remote-send ':e %{input}<CR>%{line}G'";
 
-[scroll]
-# Pixels per wheel step, before flick acceleration.
-step = 60
-# Easing time constant in milliseconds (smaller = snappier).
-smoothness_ms = 60
-
-[links]
-# Command for external links; the URI is appended. Default: xdg-open / open.
-# If it cannot start or exits with an error (e.g. xdg-open over SSH without a
-# display), the status bar says so.
-open_command = ["xdg-open"]
-# Preview internal links (references, citations, the table of contents) when
-# the pointer rests on one for preview_delay_ms. In the preview the wheel
-# scrolls, clicking a link follows it (external ones open and the preview
-# stays), and clicking elsewhere jumps there. Hovering an external link shows
-# its URI in the status bar.
-preview = true
-preview_delay_ms = 300
-
-[reload]
-# Wait this long after the PDF last changed before reloading.
-debounce_ms = 200
-# How the reading position survives a reload: "position" keeps the same page
-# and place on it (like Skim and Okular); "text" finds the line a third of the
-# way down the screen again in the new PDF and keeps it at the same height, so
-# text inserted above it does not shift the view. "text" falls back to the
-# position when the line is gone (it searches two pages either side).
-anchor = "position"
-
-[synctex]
-# Inverse search (Ctrl+click), run with sh -c. %{input} (shell-quoted path),
-# %{line} and %{column} are substituted. See doc/synctex.md for editor setups.
-editor = "vim --servername VIM --remote-silent +%{line} %{input}"
+// Page view: J scrolls down (a count still multiplies).
+map("pdf", "J", action.scrollDown(), { desc: "scroll" });
+// A window mode entered from the normal mode.
+defineMode("window", { inherit: "normal", unmapped: "drop" });
+map("normal", "w", action.switchMode("window"));
+map("window", "v", [action.split("right"), action.exitMode()]);
+// A script function (synchronous; dispatch() for asynchronous work).
+map("terminal", "<C-b>m", (ctx) => cmd.sendText(`make -j${ctx.count ?? 4}\n`));
+unmap("normal", "x");
+on("ModeChanged", (old, now) => console.log(`${old} -> ${now}`));
 ```
 
-Precedence: environment variables (`TERMPIX_BACKEND`, `TERMPIX_MEDIUM`) override
-the file, which overrides detection.
+`temzdf print-types > temzdf.d.ts` writes the API's TypeScript declarations
+(generated from the command registry, so always current); point the editor's
+TypeScript at it (`"paths": { "temzdf": ["./temzdf.d.ts"] }`). TypeScript is
+type-stripped, so only erasable syntax works (no `enum`, no `namespace` with
+values); errors report positions in the source as written. Imports: relative
+paths and `"temzdf"`; no npm packages or Node APIs. `console.log` goes to the
+log.
 
-## Key bindings
+## Modes and keys
 
-`[keys]` maps a command to a list of keys. Listing a command replaces all of its
-default keys; an empty list unbinds it; commands not listed keep their
-defaults. A key listed for a command is taken away from whatever command it had
-by default. Binding one key to two commands is an error.
+Like Vim, temzdf is always in a mode. Built in:
 
-```toml
-[keys]
-quit = ["q", "C-q"]
-page_down = ["Space", "C-d"]
-copy = []
-```
+| Mode | Unmapped keys | Counts | |
+|---|---|---|---|
+| `normal` | dropped | yes | operating mode: panes and the session |
+| `terminal` | to the pane | no | terminal panes (pass-through, like Neovim's Terminal mode) |
+| `pdf` | dropped | yes | PDF panes |
 
-Key notation (shared with `--keys`): a single character (`j`, `G`, `+`, `/`)
-or a name (`Tab`, `Enter`, `Esc`, `Space`, `Backspace`, `Delete`, `Insert`,
-`Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `F1`-`F35`),
-after any of the prefixes `C-` (Ctrl), `M-` (Alt), `S-` (Shift) and `D-`
-(Super). Shifted characters are written as the character (`G`, not `S-g`); `S-`
-is for named keys (`S-Tab`).
+Focusing a pane puts temzdf in that pane's mode. `defineMode(name, {
+inherit, unmapped, count })` makes new modes (or changes built-in ones):
+`inherit` takes another mode's mappings and properties, live, and the mode
+overrides them; `unmap` hides an inherited key. `switchMode` enters a mode on
+the mode history (at most `modehistory` entries), `exitMode` returns to the
+previous one, and below the history there is always `normal`.
 
-| Command | Default keys | |
+Mappings go from a key sequence to an action, an array of actions (run in
+order by temzdf itself, without the script host, so they are fast and cannot
+race the next key), or a synchronous function. `action.<command>(...)`
+describes a command as data; `cmd.<command>(...)` runs one now. Sequences
+work as in Vim: a key that starts a longer mapping waits `timeoutlen`
+milliseconds (unless the shorter mapping has `nowait`); in a pass-through
+mode keys that time out go to the pane.
+
+Key notation follows Neovim: `j`, `G`, `%`, `<C-h>`, `<M-x>`, `<D-k>`,
+`<S-Tab>`, `<CR>`, `<Esc>`, `<Space>`, `<BS>`, `<Tab>`, `<lt>`, `<Bar>`,
+`<Bslash>`, `<F1>`..`<F35>`, `<Up>`, `<PageDown>`, ... Keys the kitty keyboard
+protocol tells apart can be mapped apart: `<S-a>` (Shift and a) and `A`
+(Caps Lock), `<C-i>` and `<Tab>`, `<C-m>` and `<CR>`, `<C-[>` and `<Esc>`,
+`<C-h>` and `<BS>`. A typed key matches its own form first and then the form
+legacy terminals send, so mapping `A` or `<Tab>` covers both everywhere.
+`<C-c>` cannot be mapped: it interrupts a running script function and
+cancels pending keys and counts.
+
+`feedkeys(keys, { remap })` feeds keys as if typed (after the running
+mapping); `cmd.sendText(text)` writes straight to the terminal pane.
+
+### Default mappings
+
+| Mode | Keys | Action |
 |---|---|---|
-| `quit` | `q` `C-c` | |
-| `cancel` | `Esc` | clear the selection, else the search, else quit |
-| `scroll_down` / `scroll_up` | `j` `Down` / `k` `Up` | takes a count |
-| `scroll_left` / `scroll_right` | `h` `Left` / `l` `Right` | |
-| `page_down` / `page_up` | `Space` `PageDown` `C-f` / `b` `PageUp` | |
-| `half_page_down` / `half_page_up` | `d` / `u` | |
-| `first_page` | `g` `Home` | page N with a count (`3g`) |
-| `last_page` | `G` `End` | page N with a count (`3G`) |
-| `back` / `forward` | `C-o` `Backspace` `M-Left` / `M-Right` | link history |
-| `zoom_in` / `zoom_out` / `fit_width` | `+` `=` / `-` / `0` `w` | |
-| `search` / `next_match` / `prev_match` | `/` / `n` / `N` | |
-| `copy` | `y` | copy the selection |
-| `toggle_sidebar` | `Tab` | outline |
+| `terminal`, `pdf` | `<C-b>` | enter the `normal` mode (the prefix) |
+| `normal` | `%` / `"` | split right / below (the same document, or a new shell) |
+| `normal` | `h` `j` `k` `l`, arrows | move the focus (back to that pane's mode) |
+| `normal` | `o` | next pane |
+| `normal` | `x` | close the pane |
+| `normal` | `d` | detach (`temzdf -s`) |
+| `normal` | `<C-b>` | send `<C-b>` to the pane |
+| `normal` | `<Esc>` | back to the pane's mode |
+| `pdf` | `q` | close the pane (the last one quits) |
+| `pdf` | `<Esc>` | clear the selection, else the search, else quit |
+| `pdf` | `j` `k` / `<Down>` `<Up>` | scroll (counts) |
+| `pdf` | `h` `l` / `<Left>` `<Right>` | scroll sideways |
+| `pdf` | `<Space>` `<PageDown>` `<C-f>` / `b` `<PageUp>` | page down / up |
+| `pdf` | `d` / `u` | half a page down / up |
+| `pdf` | `g` `<Home>` / `G` `<End>` | first page / end (or page N with a count) |
+| `pdf` | `<C-o>` `<BS>` `<M-Left>` / `<M-Right>` | link history back / forward |
+| `pdf` | `+` `=` / `-` / `0` `w` | zoom in / out / fit width |
+| `pdf` | `/` / `n` / `N` | search / next / previous match |
+| `pdf` | `y` | copy the selection |
+| `pdf` | `<Tab>` | outline |
 
-Session keys follow the prefix `C-s` (fixed for now; it is to become
-configurable, with `C-b` as the default): `%` splits side by side and `"`
-stacked (another view of the same PDF, or another shell beside a terminal),
-`C-s` again sends `C-s` to the pane, `h`/`j`/`k`/`l` or arrows move the
-focus, `o` goes to the next pane, `x` closes the pane, `d` detaches from a
-session (`temzdf -s`). Clicking a pane focuses it.
+Inside tmux, `<C-b>` is tmux's own prefix: map another key for temzdf (or
+press it twice there).
 
-Fixed, not configurable: digits before a command are a count (`0` only after
-another digit), the outline sidebar's own keys while it has focus, and the
-one-line input (search prompt). Mouse bindings are fixed too. Defaults live in
-`crates/temzdf-pdfview/src/keys.rs`; keep this table in sync.
+While a PDF pane's search prompt is open or its outline has the focus, keys
+go to them directly (fixed keys). Mouse handling is built in.
+
+When the script host is down (it exited, or the configuration never finished
+loading), mappings are off and a fixed keymap works: `<C-b>d` detaches,
+`<C-b>q` ends the session, `<C-b>r` restarts the host; other keys go to the
+pane. A floating message says so.
+
+## Options
+
+Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
+
+| Option | Default | |
+|---|---|---|
+| `timeoutlen` | `1000` | milliseconds a key that starts a longer mapping waits |
+| `splitright` | `true` | `split()` without a side goes right (else left) |
+| `splitbelow` | `true` | splits towards the bottom go below (else above) |
+| `modehistory` | `100` | modes the history keeps |
+| `scrollstep` | `60` | pixels per wheel step, before flick acceleration |
+| `scrollsmoothness` | `60` | easing time constant in milliseconds (smaller is snappier) |
+| `linkopener` | `null` | command opening external links, the URI appended (`["firefox"]`); `null`: `xdg-open` / `open`. Runs in the client; a failure shows as a message |
+| `linkpreview` | `true` | preview internal links (references, citations, the outline) when the pointer rests on one |
+| `linkpreviewdelay` | `300` | milliseconds before the preview |
+| `reloaddebounce` | `200` | milliseconds after the PDF last changed before reloading |
+| `reloadanchor` | `"position"` | `"position"` keeps the page and place on it (as Skim, Okular); `"text"` finds the line read a third down the screen in the new PDF (falling back to the position) |
+| `synctexeditor` | `null` | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/synctex.md. `--editor` overrides it |
+
+## Commands
+
+`cmd.*` and `action.*` share the command registry
+(`crates/temzdf-server/src/session/commands.rs`; `temzdf print-types` lists
+them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
+`focusNextPane`, `closePane`, `detach`, `reloadConfig`, `message`,
+`sendText`, `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
+`focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
+`search`, ...: every action of the PDF table above, taking the count).
+`temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
+action split right`).
+
+## Environment
+
+Settings a client needs before it talks to a session are environment
+variables:
+
+| Variable | |
+|---|---|
+| `TERMPIX_BACKEND` | `layered` or `composited`: how frames reach the terminal (default: detected) |
+| `TERMPIX_MEDIUM` | `direct`, `shm` or `file`: how pixels are transferred (default: detected; `direct` mimics SSH) |
+| `TEMZDF_ZLIB_LEVEL` | zlib level (0-9) of inline transfers, default 2 (do not use 1 with Ghostty 1.3.1, see doc/terminal-compat.md) |
+| `TEMZDF_LOG_DIR` | where logs go (default `$XDG_STATE_HOME/temzdf`): `temzdf.log` for viewers and clients, `NAME.log` for session NAME |

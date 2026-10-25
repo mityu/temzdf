@@ -28,11 +28,11 @@ so a forward search sent right after a compile lands in the new version.
 Ctrl+click on the page. The viewer looks up the source location and runs the
 configured command with `sh -c`, replacing `%{input}` (shell-quoted absolute
 path), `%{line}` and `%{column}` (1-based; usually 0, TeX rarely records
-columns). Configure it in `config.toml`:
+columns). Configure it in the configuration (`doc/config.md`):
 
-```toml
-[synctex]
-editor = "..."
+```ts
+import { o } from "temzdf";
+o.synctexeditor = "...";
 ```
 
 or per invocation with `--editor '...'`. Without a command, the location is
@@ -40,9 +40,8 @@ shown in the status bar.
 
 ### Vim (with `+clientserver`)
 
-```toml
-[synctex]
-editor = "vim --servername VIM --remote-silent +%{line} %{input}"
+```ts
+o.synctexeditor = "vim --servername VIM --remote-silent +%{line} %{input}";
 ```
 
 Start Vim with `vim --servername VIM`.
@@ -51,9 +50,8 @@ Start Vim with `vim --servername VIM`.
 
 Start Neovim with a server socket (`nvim --listen /tmp/nvim-tex.sock`), then:
 
-```toml
-[synctex]
-editor = "nvim --server /tmp/nvim-tex.sock --remote %{input} && nvim --server /tmp/nvim-tex.sock --remote-send '<C-\\><C-n>:%{line}<CR>'"
+```ts
+o.synctexeditor = "nvim --server /tmp/nvim-tex.sock --remote %{input} && nvim --server /tmp/nvim-tex.sock --remote-send '<C-\\><C-n>:%{line}<CR>'";
 ```
 
 ### vimtex

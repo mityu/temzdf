@@ -46,7 +46,7 @@ Skim (BSD-3, `SKFileUpdateChecker.m`, `SKMainDocument.m`,
    stale SyncTeX data. Editor-driven forward search after each successful
    compile (e.g. a vimtex compiler callback running `temzdf --forward`) solves
    the real problem, because the editor knows the cursor in the *new* source.
-7. **Text anchoring (opt-in, `[reload] anchor = "text"`).** Before the swap,
+7. **Text anchoring (opt-in, `o.reloadanchor = "text"`).** Before the swap,
    remember the line nearest a third of the way down the screen (at least 8
    alphanumeric characters), its neighbouring lines, its doc y and its screen y.
    The position-based restore happens first. Once the pages within two of the

@@ -18,8 +18,6 @@ below them are deferred.
 Steps 1-3 are done (PDF and terminal panes, standalone viewer and session
 server on one `Session`). Next and open:
 
-- [ ] Configurable prefix and session keys (default `C-b`; `C-s` is fixed for
-  now and taken by zellij, see `doc/terminal-compat.md`).
 - [ ] UI chrome as cell grids in the scene instead of pixels.
 - [ ] Per-client pixel density (every client now gets frames for the latest
   client's geometry and cell size) and zoom stored relative to the pane width.
@@ -40,10 +38,11 @@ server on one `Session`). Next and open:
 - [ ] Scripting and configuration (JavaScript/TypeScript in a script-host
   process, replacing the TOML file): design in `doc/scripting.md` on the
   `research/notes` branch; the host and execution model are implemented
-  (`doc/script-host.md`). Next: modes and key mappings (replacing
-  `prefixMap` and the Rust keymaps), the default configuration in
-  JavaScript, removing TOML, generated `.d.ts`, the floating message window,
-  pane sizes kept on resize (the last pane absorbs changes, decided). The
+  (`doc/script-host.md`), and so are modes and key mappings, the shipped
+  defaults in JavaScript, options, `print-types`, floating messages and the
+  escape keys (TOML is gone). Next: pane sizes kept on resize (the last pane
+  absorbs changes, decided), buffers separated from panes, the rest of
+  terminal panes. The
   questions under "Open questions, to decide later" there (modes and
   mappings, escape hatches, message area, mouse, defaults, layout details,
   hidden buffers, client-side settings, reload, CLI scripting,

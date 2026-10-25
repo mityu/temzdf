@@ -99,8 +99,11 @@ input widget moves the terminal cursor to its caret; we only receive committed t
   multiplexer, where every strip is forwarded uncompressed by zellij 0.45).
 - Auto-reload: see `reload.md`. SyncTeX: vendored `synctex_parser.c` via `cc`,
   forward search over a Unix socket, inverse search via a configurable command.
-- Keys: `keys.rs` maps key presses to `Command`s (defaults plus `[keys]` from
-  the config, see `config.md`); `PdfPane::command` runs them.
+- Keys: modes and mappings live in the session (`crates/temzdf-server/src/keymap/`:
+  Neovim notation, modes with inheritance, the Vim-like sequence matcher,
+  the mode history); the shipped JavaScript defaults map the page-view
+  `Command`s (`temzdf-pdfview/src/keys.rs`), which `PdfPane::command` runs.
+  See `config.md` and `script-host.md`.
 - Images: panes register images in a `temzdf_scene::Images` store and return
   layers referencing them; `temzdf_tty::Presenter` mirrors the store into the
   compositor (pixels are shared, not copied) and maps the layers.
