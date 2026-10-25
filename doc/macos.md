@@ -1,53 +1,77 @@
 # macOS support
 
-Status (2026-10-25): prepared on Linux, not yet run on a Mac. Work on macOS
-continues on the user's Mac; this page is the starting point there.
+Status (2026-10-25): verified on an Apple Silicon Mac (macOS 26, M1) in kitty
+0.49.2, Ghostty 1.3.1 and WezTerm 20260117. Everything in the checklist below
+works; what is left is listed under "Open" and in `todo.md`.
 
-## Done on Linux
+## Platform specifics
 
 - Waiting on `/dev/tty` uses `select()` everywhere (`termpix::tty::wait_fd`):
-  macOS's `poll()` reports `POLLNVAL` for terminal devices. The same code runs
-  on Linux, so it is exercised by every local test and e2e run.
-- `termpix` and `termpix-ui` (with tests) pass `cargo check` for
-  `aarch64-apple-darwin` and `x86_64-apple-darwin` (cross-checked with a fenix
-  toolchain). `temzdf` itself was not cross-checked: MuPDF's C build needs the
-  macOS SDK.
-- Platform switches already in place: `open` instead of `xdg-open` for links
-  (`config.rs`), `ftruncate` instead of `fallocate` for shared memory
-  (`graphics.rs`), the Linux-only shm test is `cfg`-gated.
-- CI (`.github/workflows/ci.yml`) has a `macos-latest` `nix build` job; it has
-  not run yet.
+  macOS's `poll()` reports `POLLNVAL` for terminal devices.
+- Shared memory: macOS rounds a shm object up to whole pages (16 KiB), so the
+  mapping is longer than the image; we write only the image's bytes and `S=`
+  gives the terminal the real length. Names are limited to 31 characters (ours:
+  `/termpix-<pid>-<n>`), and an object can be sized only once (`ftruncate`, not
+  `fallocate`).
+- SyncTeX socket: there is no `$XDG_RUNTIME_DIR`, and `$TMPDIR` is not stable
+  (`nix develop` sets a per-shell directory), so the socket lives in the
+  per-user directory from `confstr(_CS_DARWIN_USER_TEMP_DIR)`:
+  `/var/folders/<..>/T/temzdf/<hash>.sock`, 77 bytes (the limit is 104).
+- UI font: `sans-serif` resolves to Helvetica, which lacks some symbols (▸, ▾)
+  that font fallback does not find either. Draw such marks as shapes. CJK
+  fallback works.
+- Links open with `open` instead of `xdg-open` (`config.rs`).
+- Auto-reload: notify uses FSEvents. Opening the PDF through a symlinked path
+  (`/tmp` -> `/private/tmp`) still reloads, since events are matched by name.
 
-## To check on the Mac, in order
+## Checklist and results
 
-1. Build: `nix develop -c cargo build --workspace` (or `nix build`). Expect
-   problems first in `mupdf-sys` (bindgen needs libclang: `LIBCLANG_PATH` is set
-   by the dev shell), `libz-sys` and `font-kit`/`yeslogic-fontconfig-sys`
-   (pulled in by mupdf's `system-fonts`; on macOS font-kit should use Core Text).
-2. `scripts/check.sh`. Fixtures need `latexmk` (MacTeX, or `nix develop .#alldeps`).
-3. Run the viewer in kitty, Ghostty and WezTerm on macOS:
-   `cargo run -p temzdf -- target/fixtures/sample.pdf`. Check startup (probe),
-   wheel scrolling, Ctrl+wheel zoom at the pointer, drag, selection and copy
-   (OSC 52), search, links, the sidebar, `q`. `cargo run -p termpix --example probe`
-   prints what detection found (shm support, cell size, pixel mouse).
-4. Transports: shared memory (`t=s`) is the default where the probe says it
-   works; macOS limits shm names to 31 characters (ours: `/termpix-<pid>-<n>`)
-   and allows sizing a shm object once. Compare with `TERMPIX_MEDIUM=file` and
-   `TERMPIX_MEDIUM=direct` if images do not appear.
-5. Auto-reload: notify uses FSEvents on macOS. Rebuild a document with latexmk
-   while it is open; events are filtered by file name, so `/private/var` vs
-   `/var` path differences should not matter.
-6. SyncTeX: `temzdf --forward LINE:FILE doc.pdf` against a running viewer. The
-   socket lives under `$TMPDIR/temzdf-<uid>/temzdf/` (no `$XDG_RUNTIME_DIR` on
-   macOS); the path must stay under 104 bytes (about 90 expected).
-7. Ctrl+click inverse search with an editor command (doc/synctex.md).
-8. Quitting mid-frame leaves the shell clean (no `Gi=...;OK`, mouse reporting off).
+1. Build: `nix develop -c cargo build --workspace` works. The temzdf build
+   script prints a harmless cc-wrapper warning about `--target
+   arm64-apple-macosx`.
+2. `scripts/check.sh` passes (fixtures need `latexmk`: MacTeX, or `nix develop .#alldeps`).
+3. Viewer in kitty, Ghostty and WezTerm: startup, wheel scrolling, Ctrl+wheel
+   zoom at the pointer, drag (pan and selection), OSC 52 copy to the macOS
+   clipboard, search, sidebar, internal links and history, `q`: all work.
+   Detection picks Layered + shm for kitty and Ghostty, Composited + temp files
+   for WezTerm (its shm is broken on macOS and the probe notices).
+4. Transports: `TERMPIX_MEDIUM=file` and `direct` also work in kitty; kitty
+   deletes the temp files.
+5. Auto-reload after a latexmk rebuild keeps the position.
+6. Forward search finds the viewer even when the editor side has a different
+   `$TMPDIR` or spells the path through a symlink.
+7. Ctrl+click inverse search runs the editor command with the right line.
+8. Quitting mid-frame (direct and shm) leaves the shell clean in kitty,
+   Ghostty and WezTerm.
 
-Record findings in `doc/terminal-compat.md` (per terminal) and here; move what
-remains to `todo.md`.
+## Open
 
-## e2e on macOS
+- Opening an external URL (`open`) was not clicked in the test run.
+- IME preedit placement on macOS.
 
-`scripts/e2e.sh` is Linux-only (Xvfb, xdotool, ImageMagick `import`). On macOS
-check by hand, or render headless frames (`--render-frame`), which are
-platform-independent.
+## Checking GUI terminals on a Mac without a human
+
+`scripts/e2e.sh` is Linux-only (Xvfb, xdotool). On macOS the same checks were
+driven with small Swift helpers using public and private system APIs; they are
+not in the repository yet (see `todo.md`). What worked:
+
+- Screenshots: `screencapture -l <window id>` (needs the screen recording
+  permission for the terminal Claude runs in). Window ids, owners and titles
+  come from `CGWindowListCopyWindowInfo`; the title shows temzdf's page number.
+- kitty redraws nothing while its window is covered, so a window behind others
+  screenshots stale. A virtual display (`CGVirtualDisplay`, a private API also
+  used by DeskPad) next to the real screen solves it: launch the terminal in the
+  background (`open -g -na <App> --args ...`), move its window there with the
+  accessibility API (`kAXPositionAttribute`), and it renders without focus.
+- Keys: kitty takes `kitty @ send-text`/`send-key` over its remote-control
+  socket (keep the socket path under 104 bytes). Ghostty accepts key events
+  posted to its process (`CGEvent.postToPid`) even in the background, but only
+  with real key codes; events that carry just a Unicode string are ignored.
+  WezTerm ignores per-process events: activate it and post globally, checking
+  first that it is the frontmost app so nothing reaches another window.
+- Mouse: CGEvents at global coordinates go to the topmost window there, so the
+  target must be active. A click on an inactive Ghostty window only focuses it.
+  Wait for kinetic scrolling and WezTerm's lazy redraw (over 1.5 s while the
+  window is not focused) before measuring a screenshot.
+- `kitty @ send-key shift+g` sends `CSI 103;2u` without the shifted key, which
+  real typing includes; use `send-text G`.

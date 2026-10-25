@@ -75,6 +75,18 @@ Known problems:
   `ZELLIJ`/`TMUX`, which makes detection think it runs inside a multiplexer.
   `scripts/e2e.sh` clears them; real users may see this when launching a GUI
   terminal from a multiplexer shell.
+- macOS 26 on Apple Silicon (2026-10-25, see `doc/macos.md`):
+  - kitty 0.49.2: shm, temp files and direct all work (Layered over shm by
+    default); OSC 52 reaches the macOS clipboard. A window covered by other
+    windows is not redrawn at all.
+  - Ghostty 1.3.1: shm works and the temp-file probe fails (cause not
+    investigated), so Layered over shm. Keeps the window title temzdf set after exit, as on Linux.
+  - WezTerm 20260117: the probe finds shm unusable (#7631) and picks
+    Composited over temp files, which works. At startup it reports 8x16 px
+    cells for an instant before the window settles; the resize that follows
+    corrects it. Redraws lazily while its window is not focused.
+  - SGR-pixel coordinates are exact in all three (WezTerm's origin is below
+    its tab bar).
 
 ## Multiplexers (research 2026-10-25, from zellij main ffb334a and tmux master acee541 sources)
 

@@ -10,7 +10,8 @@ temzdf --forward LINE[:COLUMN]:FILE doc.pdf
 ```
 
 If a viewer already has `doc.pdf` open, the request goes to it over a Unix
-socket (`$XDG_RUNTIME_DIR/temzdf/<hash>.sock`, see `crates/temzdf/src/ipc.rs`)
+socket (`$XDG_RUNTIME_DIR/temzdf/<hash>.sock`; on macOS under the per-user
+`/var/folders/.../T/`; see `crates/temzdf/src/ipc.rs`)
 and the command exits immediately. The viewer scrolls to the matching place
 (unless it is already comfortably visible) and highlights it in red for 1.5 s.
 Otherwise `temzdf` starts a viewer in the current terminal and does the search

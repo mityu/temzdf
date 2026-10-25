@@ -24,8 +24,10 @@ below them are deferred.
   mode could help), and tmux master's native kitty support (z=0 only) is untested.
 - Verify IME preedit placement in the search prompt on kitty and Ghostty (the
   terminal cursor is shown at the caret while the prompt is open).
-- macOS support: prepared on Linux (`select()` on `/dev/tty`, cross-checked
-  `termpix`); run and verify on a Mac following `doc/macos.md`.
+- macOS: verified in kitty, Ghostty and WezTerm (`doc/macos.md`). Left: open
+  an external URL, IME preedit placement, and turning the Swift helpers used
+  for the check (virtual display, window moves, PID-targeted keys,
+  screenshots) into a `scripts/` tool like `scripts/e2e.sh`.
 - Vector-heavy pages: MuPDF's anti-aliased rasteriser is slow there and
   `vello_cpu` about 20x faster (`doc/gpu.md`; GPU rendering does not pay off).
   Measure real TikZ/pgfplots documents first; then maybe render such pages
