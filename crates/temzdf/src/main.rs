@@ -56,6 +56,10 @@ struct Cli {
     /// Configuration file (default: $XDG_CONFIG_HOME/temzdf/config.toml).
     #[arg(long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
+    /// Do not run the configuration script ($XDG_CONFIG_HOME/temzdf/config.ts
+    /// or config.js).
+    #[arg(long, global = true)]
+    clean: bool,
     /// For --render-frame: keys to press first, e.g. "Tab j Enter" (see headless.rs).
     #[arg(long, value_name = "KEYS")]
     keys: Option<String>,
@@ -96,9 +100,15 @@ enum Cmd {
         /// The session (the only one when left out).
         #[arg(short, long, value_name = "NAME")]
         session: Option<String>,
+        /// Give up waiting for the session after this long.
+        #[arg(long, value_name = "SECONDS", default_value_t = 10.0)]
+        timeout: f64,
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         action: Vec<String>,
     },
+    /// Run the configuration script for a session (started by the session).
+    #[command(hide = true)]
+    ScriptHost,
     /// Run a session server (started by `temzdf -s`).
     #[command(hide = true)]
     Server {
@@ -123,7 +133,13 @@ fn main() -> Result<()> {
         Some(Cmd::ListSessions { verbose }) => return client::list_sessions(verbose),
         Some(Cmd::KillSession { name }) => return client::kill_session(&name),
         Some(Cmd::KillAllSessions) => return client::kill_all_sessions(),
-        Some(Cmd::Action { session, action }) => return client::action(&client::resolve(session.as_deref())?, action),
+        Some(Cmd::Action { session, timeout, action }) => {
+            let timeout = std::time::Duration::from_secs_f64(timeout.max(0.001));
+            return client::action(&client::resolve(session.as_deref())?, action, timeout);
+        }
+        Some(Cmd::ScriptHost) => {
+            return temzdf_script::run(std::io::stdin(), std::io::stdout()).map_err(anyhow::Error::msg);
+        }
         Some(Cmd::Attach { name, create, file }) => {
             let config = config::Config::load(cli.config.as_deref())?;
             let name = match (name, create, file) {
@@ -134,6 +150,7 @@ fn main() -> Result<()> {
                         &config,
                         cli.config.as_deref(),
                         cli.editor.as_deref(),
+                        cli.clean,
                     )?;
                     n
                 }
@@ -154,7 +171,8 @@ fn main() -> Result<()> {
             else {
                 unreachable!("parsed as new-pane")
             };
-            return temzdf_server::daemon::run(&name, &spec, log, app::settings(&config, true)?);
+            let script = app::script_settings(cli.clean)?;
+            return temzdf_server::daemon::run(&name, &spec, log, app::settings(&config, true, script)?);
         }
         None => {}
     }
@@ -170,7 +188,7 @@ fn main() -> Result<()> {
         };
         let config = config::Config::load(cli.config.as_deref())?;
         let pane = client::first_pane(file.as_deref())?;
-        client::spawn_server(&name, &pane, &config, cli.config.as_deref(), cli.editor.as_deref())?;
+        client::spawn_server(&name, &pane, &config, cli.config.as_deref(), cli.editor.as_deref(), cli.clean)?;
         println!("{}", client::attach(&name, &config)?);
         return Ok(());
     }
@@ -199,5 +217,8 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let config = config::Config::load(cli.config.as_deref())?;
-    app::run(&file, app::Options { page, scale: cli.scale, config, forward, editor: cli.editor.clone() })
+    app::run(
+        &file,
+        app::Options { page, scale: cli.scale, config, forward, editor: cli.editor.clone(), clean: cli.clean },
+    )
 }

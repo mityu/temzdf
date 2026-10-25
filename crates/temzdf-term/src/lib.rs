@@ -183,6 +183,14 @@ impl TermPane {
         }
     }
 
+    /// Write `text` to the program as if typed (for scripts, like Vim's
+    /// `chansend()`).
+    pub fn send_text(&mut self, text: &str) -> bool {
+        let redraw = self.scroll_to_bottom();
+        self.write(text.as_bytes());
+        redraw
+    }
+
     pub fn geometry(&self) -> Geometry {
         self.geometry
     }

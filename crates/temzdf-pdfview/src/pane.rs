@@ -1232,7 +1232,7 @@ impl PdfPane {
     }
 
     /// Run a page-view command (see `keys::Command`), with an optional count.
-    fn command(&mut self, cmd: Command, count: Option<usize>, now: Instant) -> Action {
+    pub fn command(&mut self, cmd: Command, count: Option<usize>, now: Instant) -> Action {
         let v = &mut self.viewer;
         let page = v.view.screen_h as f64 * 0.9;
         let half = v.view.screen_h as f64 * 0.5;

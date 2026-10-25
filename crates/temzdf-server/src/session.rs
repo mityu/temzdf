@@ -25,6 +25,11 @@ use termpix_core::scroll::ScrollConfig;
 use crate::action::{Action, PaneSpec};
 use crate::forward::{self, ForwardRequest};
 use crate::layout::{Direction, Layout, PaneId, Split};
+use temzdf_protocol::script::{FromHost, ScriptValue};
+
+mod script;
+
+pub use script::{EVENTS as SCRIPT_EVENTS, ScriptSettings};
 
 pub type DocId = u32;
 
@@ -34,6 +39,11 @@ pub enum SessionEvent {
     Doc(DocId, DocEvent),
     Forward(DocId, ForwardRequest),
     Term(PaneId, TermEvent),
+    /// A message from the script host (of this generation: hosts are
+    /// replaced on reload, and an old one's last words must not count).
+    Script(u32, FromHost),
+    /// The script host process of this generation ended.
+    ScriptExited(u32),
 }
 
 /// Where a session's events go (returns false once nobody listens).
@@ -50,6 +60,9 @@ pub struct Settings {
     /// Listen for `temzdf --forward` on each document's socket (not for
     /// headless rendering, which must not take a running viewer's socket).
     pub serve_forward: bool,
+    /// The configuration script and how to run the script host; `None`
+    /// runs no scripts.
+    pub script: Option<ScriptSettings>,
 }
 
 /// What the caller should do after an event.
@@ -66,6 +79,17 @@ pub enum Outcome {
 impl Outcome {
     fn or(self, redraw: bool) -> Self {
         if self == Outcome::None && redraw { Outcome::Redraw } else { self }
+    }
+
+    /// The stronger of two outcomes (quit, detach, redraw, nothing).
+    pub fn merge(self, other: Self) -> Self {
+        let rank = |o: Self| match o {
+            Outcome::None => 0,
+            Outcome::Redraw => 1,
+            Outcome::Detach => 2,
+            Outcome::Quit => 3,
+        };
+        if rank(other) > rank(self) { other } else { self }
     }
 }
 
@@ -173,6 +197,9 @@ pub struct Session {
     complete: bool,
     /// Why the first pane could not be opened.
     error: Option<String>,
+    script: script::Bridge,
+    /// Events for script hooks, collected while an operation runs.
+    script_events: Vec<(String, Vec<ScriptValue>)>,
 }
 
 impl Session {
@@ -197,6 +224,8 @@ impl Session {
             solids: HashMap::new(),
             complete: false,
             error: None,
+            script: script::Bridge::default(),
+            script_events: Vec::new(),
         }
     }
 
@@ -339,6 +368,7 @@ impl Session {
             pane.message = Some(e);
         }
         self.panes.insert(id, PaneEntry { kind: Kind::Pdf { pane: Box::new(pane), doc }, rect: self.area() });
+        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
         self.set_focus(id);
         self.relayout();
         Some(id)
@@ -361,6 +391,7 @@ impl Session {
             }
         };
         self.panes.insert(id, PaneEntry { kind: Kind::Term(Box::new(term)), rect });
+        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("terminal".into())]);
         self.set_focus(id);
         self.relayout();
         Ok(())
@@ -377,6 +408,7 @@ impl Session {
             }
         }
         self.focus = id;
+        self.event("PaneFocused", vec![ScriptValue::Num(id as f64)]);
     }
 
     /// Show a message in the focused pane's status bar (or another PDF pane's:
@@ -436,7 +468,21 @@ impl Session {
     }
 
     pub fn handle(&mut self, ev: SessionEvent, now: Instant) -> Outcome {
+        let out = match ev {
+            SessionEvent::Script(generation, msg) => {
+                return if generation == self.script.generation { self.handle_script(msg) } else { Outcome::None };
+            }
+            SessionEvent::ScriptExited(generation) => {
+                return if generation == self.script.generation { self.script_exited() } else { Outcome::None };
+            }
+            ev => self.handle_inner(ev, now),
+        };
+        out.merge(self.flush_events())
+    }
+
+    fn handle_inner(&mut self, ev: SessionEvent, now: Instant) -> Outcome {
         match ev {
+            SessionEvent::Script(..) | SessionEvent::ScriptExited(_) => Outcome::None,
             SessionEvent::Doc(id, DocEvent::Opened(result)) => {
                 let Some(entry) = self.docs.get_mut(&id) else { return Outcome::None };
                 let Some(opening) = entry.opening.take() else { return Outcome::None };
@@ -465,6 +511,12 @@ impl Session {
                 Outcome::Redraw
             }
             SessionEvent::Doc(id, ev) => {
+                if matches!(ev, DocEvent::Reloaded(_))
+                    && let Some(d) = self.docs.get(&id)
+                {
+                    let path = d.path.display().to_string();
+                    self.event("DocumentReloaded", vec![ScriptValue::Str(path)]);
+                }
                 let Some(host) = self.docs.get_mut(&id).and_then(|d| d.host.as_mut()) else { return Outcome::None };
                 let mut panes = Self::panes_of(&mut self.panes, id, self.focus);
                 let (changed, effect) = host.handle(ev, &mut panes, &mut self.images, now);
@@ -490,7 +542,7 @@ impl Session {
             SessionEvent::Term(id, TermEvent::Exited) => match self.panes.get_mut(&id) {
                 Some(PaneEntry { kind: Kind::Term(t), .. }) => {
                     t.set_exited();
-                    self.close(id)
+                    self.request_close(id)
                 }
                 _ => Outcome::None,
             },
@@ -501,8 +553,19 @@ impl Session {
         if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
             return Outcome::None;
         }
+        if self.hold_key(k) {
+            return Outcome::None;
+        }
+        let out = self.key_inner(k, now);
+        out.merge(self.flush_events())
+    }
+
+    fn key_inner(&mut self, k: &KeyEvent, now: Instant) -> Outcome {
         let is_prefix = Key::parse(PREFIX).is_ok_and(|p| p == Key::of(k));
         if std::mem::take(&mut self.prefix) {
+            if !is_prefix && self.prefix_mapping(k) {
+                return Outcome::None;
+            }
             let action = match k.code {
                 // The prefix twice sends it to the pane.
                 _ if is_prefix => None,
@@ -518,7 +581,7 @@ impl Session {
                 _ => return Outcome::None,
             };
             if let Some(action) = action {
-                return match self.action(action, now) {
+                return match self.action_inner(action, now) {
                     Ok(o) => o,
                     Err(e) => {
                         self.message(&format!("{e:#}"));
@@ -534,7 +597,7 @@ impl Session {
         let Some(e) = self.panes.get_mut(&focus) else { return Outcome::None };
         match &mut e.kind {
             Kind::Pdf { pane, .. } => match pane.key(k, now) {
-                pane::Action::Quit => self.close(focus),
+                pane::Action::Quit => self.request_close(focus),
                 pane::Action::Redraw => Outcome::Redraw,
                 pane::Action::None => Outcome::None,
             },
@@ -543,6 +606,14 @@ impl Session {
     }
 
     pub fn paste(&mut self, text: &str) -> Outcome {
+        if self.hold_paste(text) {
+            return Outcome::None;
+        }
+        let out = self.paste_inner(text);
+        out.merge(self.flush_events())
+    }
+
+    fn paste_inner(&mut self, text: &str) -> Outcome {
         let Some(e) = self.panes.get_mut(&self.focus) else { return Outcome::None };
         match &mut e.kind {
             Kind::Pdf { pane, .. } => Outcome::None.or(pane.paste(text) == pane::Action::Redraw),
@@ -552,7 +623,12 @@ impl Session {
 
     /// Run an action. Errors (a file that cannot be opened, no room for a
     /// pane) are for whoever asked.
-    pub fn action(&mut self, action: Action, _now: Instant) -> Result<Outcome> {
+    pub fn action(&mut self, action: Action, now: Instant) -> Result<Outcome> {
+        let out = self.action_inner(action, now)?;
+        Ok(out.merge(self.flush_events()))
+    }
+
+    fn action_inner(&mut self, action: Action, _now: Instant) -> Result<Outcome> {
         match action {
             Action::Split(split) => {
                 let spot = Spot::SplitOf(self.focus, split);
@@ -580,8 +656,9 @@ impl Session {
                     self.set_focus(next);
                 }
             }
-            Action::ClosePane => return Ok(self.close(self.focus)),
+            Action::ClosePane => return Ok(self.request_close(self.focus)),
             Action::Detach => return Ok(Outcome::Detach),
+            Action::ReloadConfig => return self.reload_scripts(),
         }
         Ok(Outcome::Redraw)
     }
@@ -605,6 +682,7 @@ impl Session {
                 host.doc.borrow_mut().release(&mut self.images);
             }
         }
+        self.event("PaneClosed", vec![ScriptValue::Num(id as f64)]);
         if self.focus == id {
             self.set_focus(next);
         }
@@ -631,6 +709,14 @@ impl Session {
     }
 
     pub fn mouse(&mut self, m: &MouseEvent, now: Instant) -> Outcome {
+        if self.hold_mouse(m) {
+            return Outcome::None;
+        }
+        let out = self.mouse_inner(m, now);
+        out.merge(self.flush_events())
+    }
+
+    fn mouse_inner(&mut self, m: &MouseEvent, now: Instant) -> Outcome {
         let cell = self.geometry.cell;
         let (px, py) = match m.unit {
             CoordUnit::Pixel => (m.x as f32, m.y as f32),
@@ -871,13 +957,20 @@ impl Session {
         changed
     }
 
+    /// [`Session::tick`], plus scripting's timers (the configuration's load
+    /// timeout, the "running a script" notice). For event loops.
+    pub fn poll(&mut self, now: Instant) -> Outcome {
+        let out = self.script_tick(now).or(self.tick(now));
+        out.merge(self.flush_events())
+    }
+
     pub fn next_deadline(&self) -> Option<Instant> {
         let panes = self.panes.values().filter_map(|e| match &e.kind {
             Kind::Pdf { pane, .. } => pane.next_deadline(),
             Kind::Term(_) => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
-        panes.chain(docs).min()
+        panes.chain(docs).chain(self.script_deadline()).min()
     }
 
     pub fn focus(&self) -> PaneId {
@@ -931,6 +1024,7 @@ mod tests {
             scroll: ScrollConfig::default(),
             host: HostOptions::default(),
             serve_forward: false,
+            script: None,
         };
         let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
         s.open(&pdf::fixture("sample.pdf")).unwrap();
@@ -1060,6 +1154,7 @@ mod tests {
             scroll: ScrollConfig::default(),
             host: HostOptions::default(),
             serve_forward: false,
+            script: None,
         };
         let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
         s.open(Path::new("/nonexistent/x.pdf")).unwrap();
@@ -1134,6 +1229,7 @@ mod tests {
             scroll: ScrollConfig::default(),
             host: HostOptions::default(),
             serve_forward: false,
+            script: None,
         };
         let mut s = Session::new("term".into(), GEOMETRY, Hints::default(), settings, sink);
         let spec = PaneSpec::Command(argv.iter().map(|a| a.to_string()).collect());

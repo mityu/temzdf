@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use temzdf_pdfview::host::HostOptions;
+use temzdf_server::action::PaneSpec;
 use temzdf_server::forward::ForwardRequest;
-use temzdf_server::session::{EventSink, Outcome, Session, SessionEvent, Settings};
+use temzdf_server::session::{EventSink, Outcome, ScriptSettings, Session, SessionEvent, Settings};
 use temzdf_tty::{Input, Presented, TtyFrontend};
 use termpix::tty::TermEvent;
 
@@ -27,6 +28,8 @@ pub struct Options {
     pub forward: Option<ForwardRequest>,
     /// Inverse search command (overrides the config file).
     pub editor: Option<String>,
+    /// Do not run the configuration script.
+    pub clean: bool,
 }
 
 /// Everything the main loop waits for.
@@ -38,7 +41,18 @@ pub enum AppEvent {
 }
 
 /// Session settings from the configuration.
-pub fn settings(config: &Config, serve_forward: bool) -> Result<Settings> {
+/// How the session runs the configuration script: none with `--clean` or
+/// when there is no `config.ts`/`config.js`.
+pub fn script_settings(clean: bool) -> Result<Option<ScriptSettings>> {
+    if clean {
+        return Ok(None);
+    }
+    let Some(config) = crate::config::script_path()? else { return Ok(None) };
+    let exe = std::env::current_exe()?.display().to_string();
+    Ok(Some(ScriptSettings { command: vec![exe, "script-host".into()], config }))
+}
+
+pub fn settings(config: &Config, serve_forward: bool, script: Option<ScriptSettings>) -> Result<Settings> {
     Ok(Settings {
         keymap: config.keymap()?,
         preview_delay: config.links.preview_delay(),
@@ -50,6 +64,7 @@ pub fn settings(config: &Config, serve_forward: bool) -> Result<Settings> {
             editor: config.synctex.editor.clone(),
         },
         serve_forward,
+        script,
     })
 }
 
@@ -75,9 +90,9 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let (tx, rx) = mpsc::channel::<AppEvent>();
     front.spawn_input(tx.clone(), AppEvent::Term)?;
     let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-    let settings = settings(&opts.config, true)?;
+    let settings = settings(&opts.config, true, script_settings(opts.clean)?)?;
     let mut session = Session::new(name, front.geometry(), front.hints(), settings, sink(&tx, AppEvent::Session));
-    session.open(path)?;
+    session.start(PaneSpec::Pdf(path.to_owned()), None)?;
 
     // Wait for the document before drawing anything.
     while session.is_starting() {
@@ -115,7 +130,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
 
     let mut dirty = true;
     loop {
-        if dirty && front.ready() {
+        if dirty && front.ready() && !session.holds_frames() {
             let frame = session.frame();
             front.sync(session.images());
             if front.present(&frame, session.is_complete())? == Presented::Shown {
@@ -168,6 +183,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 Outcome::Redraw
             }
         };
+        let outcome = outcome.merge(session.poll(Instant::now()));
         match outcome {
             Outcome::Quit => break,
             Outcome::Detach => {
@@ -177,7 +193,6 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
             Outcome::Redraw => dirty = true,
             Outcome::None => {}
         }
-        dirty |= session.tick(Instant::now());
     }
     Ok(())
 }

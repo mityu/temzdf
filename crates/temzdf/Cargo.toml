@@ -15,6 +15,7 @@ termpix.workspace = true
 temzdf-pdfview.workspace = true
 temzdf-protocol.workspace = true
 temzdf-scene.workspace = true
+temzdf-script.workspace = true
 temzdf-server.workspace = true
 temzdf-tty.workspace = true
 toml = "1.1.8"

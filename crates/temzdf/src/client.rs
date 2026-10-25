@@ -61,6 +61,7 @@ pub fn spawn_server(
     config: &Config,
     config_path: Option<&Path>,
     editor: Option<&str>,
+    clean: bool,
 ) -> Result<()> {
     if !proto::valid_name(name) {
         bail!("invalid session name {name:?} (letters, digits, '.', '_' and '-')");
@@ -93,6 +94,9 @@ pub fn spawn_server(
     }
     if let Some(e) = editor {
         cmd.arg("--editor").arg(e);
+    }
+    if clean {
+        cmd.arg("--clean");
     }
     cmd.arg(name).arg("--").args(pane);
     let mut child = cmd.stdin(std::process::Stdio::null()).stdout(out).stderr(err).spawn()?;
@@ -255,12 +259,24 @@ fn ended(rx: &mpsc::Receiver<Event>) -> Option<ExitReason> {
 }
 
 /// Send a one-shot request and wait for the answer.
-fn request(name: &str, msg: ClientMsg) -> Result<ServerMsg> {
+/// How long one-shot requests wait for the session by default.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn request(name: &str, msg: ClientMsg, timeout: Duration) -> Result<ServerMsg> {
     let socket = proto::socket_path(name)?;
     let mut s = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
-    s.set_read_timeout(Some(Duration::from_secs(5)))?;
+    s.set_read_timeout(Some(timeout))?;
     proto::send(&mut s, &msg)?;
-    proto::recv(&mut s)?.context("no answer from the session")
+    match proto::recv(&mut s) {
+        Ok(answer) => answer.context("no answer from the session"),
+        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+            bail!(
+                "no answer from session {name:?} within {:.1} s (a script may be running there)",
+                timeout.as_secs_f64()
+            )
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub fn list_sessions(verbose: bool) -> Result<()> {
@@ -286,7 +302,7 @@ pub fn list_sessions(verbose: bool) -> Result<()> {
 }
 
 pub fn kill_session(name: &str) -> Result<()> {
-    match request(name, ClientMsg::Kill)? {
+    match request(name, ClientMsg::Kill, REQUEST_TIMEOUT)? {
         ServerMsg::Done(Ok(())) => Ok(()),
         other => bail!("unexpected answer {other:?}"),
     }
@@ -301,7 +317,7 @@ pub fn kill_all_sessions() -> Result<()> {
 
 /// Run an action in session `name`. The server runs elsewhere: a new pane's
 /// file is made absolute, and its terminal starts in this directory.
-pub fn action(name: &str, mut words: Vec<String>) -> Result<()> {
+pub fn action(name: &str, mut words: Vec<String>, timeout: Duration) -> Result<()> {
     if words.first().is_some_and(|w| w == "new-pane") {
         if words.get(1).is_none_or(|w| w != "--cwd") {
             let cwd = std::env::current_dir()?.display().to_string();
@@ -313,7 +329,7 @@ pub fn action(name: &str, mut words: Vec<String>) -> Result<()> {
             *file = std::path::absolute(PathBuf::from(&*file))?.display().to_string();
         }
     }
-    match request(name, ClientMsg::Action(words))? {
+    match request(name, ClientMsg::Action(words), timeout)? {
         ServerMsg::Done(Ok(())) => Ok(()),
         ServerMsg::Done(Err(e)) => bail!("{e}"),
         other => bail!("unexpected answer {other:?}"),

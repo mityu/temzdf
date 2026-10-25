@@ -33,6 +33,8 @@ pub enum Action {
     FocusNextPane,
     ClosePane,
     Detach,
+    /// Restart the script host and load the configuration again.
+    ReloadConfig,
 }
 
 impl Action {
@@ -69,9 +71,10 @@ impl Action {
             ["focus-next-pane"] => Action::FocusNextPane,
             ["close-pane"] => Action::ClosePane,
             ["detach"] => Action::Detach,
+            ["reload-config"] => Action::ReloadConfig,
             _ => bail!(
                 "unknown action {:?}; known: new-pane [--cwd DIR] [FILE | -- COMMAND...], split right|down, \
-                 move-focus DIRECTION, focus-next-pane, close-pane, detach",
+                 move-focus DIRECTION, focus-next-pane, close-pane, detach, reload-config",
                 words.join(" ")
             ),
         })

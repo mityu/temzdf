@@ -2621,6 +2621,7 @@ dependencies = [
  "temzdf-pdfview",
  "temzdf-protocol",
  "temzdf-scene",
+ "temzdf-script",
  "temzdf-server",
  "temzdf-tty",
  "termpix",
@@ -2695,6 +2696,7 @@ name = "temzdf-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde",
  "temzdf-pdfcore",
  "temzdf-pdfview",
  "temzdf-protocol",

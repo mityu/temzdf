@@ -5,7 +5,7 @@
 //! image changes queued per client (latest wins) so a slow client never holds
 //! up the others and catches up with the current state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::BufReader;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -136,7 +136,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         })?;
     }
     let mut session = Session::new(name.to_owned(), DEFAULT_GEOMETRY, Hints::default(), settings, events);
-    session.new_pane(first, None)?;
+    session.start(first.clone(), None)?;
     let mut clients: HashMap<ClientId, Client> = HashMap::new();
     let mut next_client: ClientId = 1;
     let mut latest: Option<ClientId> = None;
@@ -144,6 +144,8 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     let mut seq = 0u64;
     let mut dirty = true;
     let mut shown_pointer = Pointer::Default;
+    // `temzdf action` requests that arrived while a script ran.
+    let mut queued: VecDeque<(ClientId, Vec<String>)> = VecDeque::new();
     // When the last frame was made: busy terminals get at most one per FRAME.
     let mut made = Instant::now() - FRAME;
 
@@ -151,7 +153,11 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         // A new frame when something changed and a client can take it; clients
         // still busy with an earlier one get the latest when they acknowledge.
         if !session.is_starting() && session.error().is_none() {
-            if dirty && made.elapsed() >= FRAME && clients.values().any(|c| c.attached && !c.awaiting) {
+            if dirty
+                && made.elapsed() >= FRAME
+                && !session.holds_frames()
+                && clients.values().any(|c| c.attached && !c.awaiting)
+            {
                 made = Instant::now();
                 let frame = session.frame();
                 let updates = session.images().take_updates();
@@ -275,25 +281,21 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     break;
                 }
                 ClientMsg::Action(words) => {
-                    let result = Action::parse(&words).and_then(|a| session.action(a, now));
-                    let action_outcome = *result.as_ref().unwrap_or(&Outcome::Redraw);
-                    let result = result.map(|_| ()).map_err(|e| format!("{e:#}"));
-                    if let Some(c) = clients.remove(&id) {
-                        let _ = c.tx.send(ServerMsg::Done(result));
+                    // Scripts run synchronously: actions wait, like input.
+                    if session.holds_input() {
+                        queued.push_back((id, words));
+                    } else {
+                        outcome = run_action(&mut session, &mut clients, id, &words, now);
                     }
-                    outcome = match action_outcome {
-                        Outcome::Detach => {
-                            for c in clients.values() {
-                                let _ = c.tx.send(ServerMsg::Exit(ExitReason::Detached));
-                            }
-                            clients.clear();
-                            Outcome::Redraw
-                        }
-                        o => o,
-                    };
                 }
             },
         }
+        while !session.holds_input()
+            && let Some((id, words)) = queued.pop_front()
+        {
+            outcome = outcome.merge(run_action(&mut session, &mut clients, id, &words, Instant::now()));
+        }
+        outcome = outcome.merge(session.poll(Instant::now()));
         match outcome {
             Outcome::Quit => {
                 if let Some(e) = session.error() {
@@ -304,15 +306,47 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 }
                 break;
             }
-            Outcome::Redraw | Outcome::Detach => dirty = true,
+            // A script asked to detach: the operating client goes.
+            Outcome::Detach => {
+                if let Some(id) = latest {
+                    detach(&mut clients, id);
+                }
+                dirty = true;
+            }
+            Outcome::Redraw => dirty = true,
             Outcome::None => {}
         }
-        dirty |= session.tick(Instant::now());
     }
     // Let writer threads deliver the last messages.
     drop(clients);
     std::thread::sleep(Duration::from_millis(100));
     Ok(())
+}
+
+/// Run `temzdf action` words for client `id` and answer it.
+fn run_action(
+    session: &mut Session,
+    clients: &mut HashMap<ClientId, Client>,
+    id: ClientId,
+    words: &[String],
+    now: Instant,
+) -> Outcome {
+    let result = Action::parse(words).and_then(|a| session.action(a, now));
+    let action_outcome = *result.as_ref().unwrap_or(&Outcome::Redraw);
+    let result = result.map(|_| ()).map_err(|e| format!("{e:#}"));
+    if let Some(c) = clients.remove(&id) {
+        let _ = c.tx.send(ServerMsg::Done(result));
+    }
+    match action_outcome {
+        Outcome::Detach => {
+            for c in clients.values() {
+                let _ = c.tx.send(ServerMsg::Exit(ExitReason::Detached));
+            }
+            clients.clear();
+            Outcome::Redraw
+        }
+        o => o,
+    }
 }
 
 /// Input or a new size makes a client the latest: the session follows its

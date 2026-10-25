@@ -56,6 +56,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         scroll: Default::default(),
         host: HostOptions::default(),
         serve_forward: false,
+        script: None,
     };
     // A Layered terminal over inline transfers, like the mock terminal.
     let mut session = Session::new(name, opts.geometry, Hints::default(), settings, sink);

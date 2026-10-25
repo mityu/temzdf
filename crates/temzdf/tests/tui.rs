@@ -59,6 +59,36 @@ impl Env {
         o
     }
 
+    /// Write the configuration script (`config.ts` or `config.js`).
+    fn config(&self, name: &str, text: &str) {
+        let dir = self.path("config/temzdf");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+
+    /// The session server's log (where scripts' `console.log` goes).
+    fn log(&self, session: &str) -> String {
+        std::fs::read_to_string(self.path(&format!("log/{session}.log"))).unwrap_or_default()
+    }
+
+    /// Wait until the session's log satisfies `done`; returns the log.
+    fn wait_log(&self, session: &str, what: &str, done: impl Fn(&str) -> bool) -> String {
+        let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
+        loop {
+            let log = self.log(session);
+            if done(&log) {
+                return log;
+            }
+            assert!(std::time::Instant::now() < deadline, "waiting for {what} in the log:\n{log}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// Script output lines (`console.log`) in the session's log.
+    fn script_lines(&self, session: &str) -> Vec<String> {
+        self.log(session).lines().filter_map(|l| l.strip_prefix("temzdf script [log]: ")).map(str::to_owned).collect()
+    }
+
     /// Run a temzdf command (not attached to a terminal) and return its output.
     fn run(&self, args: &[&str]) -> String {
         let out = Command::new(BIN).args(args).envs(self.vars()).output().unwrap();
@@ -213,4 +243,135 @@ fn inside_tmux() {
     // tmux shows images only through Unicode placeholder cells.
     let s = t.wait_for("pages (through Unicode placeholders)", |s| s.placeholder_cells().iter().any(|(x, _)| *x >= 76));
     assert!(s.images.is_empty(), "no direct placements inside tmux: {:?}", s.images);
+}
+
+#[test]
+fn a_prefix_mapping_from_a_typescript_configuration() {
+    let env = Env::new("script-map");
+    env.config(
+        "config.ts",
+        r#"import { cmd, prefixMap } from "temzdf";
+const label: string = "mapped";
+prefixMap("t", (): void => {
+  cmd.split("right");
+  cmd.sendText(`echo ${label}-$((40+2))\n`);
+});
+"#,
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "m"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.keys(&["C-s", "t"]);
+    t.wait_for("the mapping's command in the new pane", |s| {
+        (0..s.cells.len() as u16).any(|r| s.row_from(r, 50) == "mapped-42")
+    });
+}
+
+#[test]
+fn hooks_run_like_vim_autocmds() {
+    let env = Env::new("script-hooks");
+    env.config(
+        "config.js",
+        r#"import { cmd, on } from "temzdf";
+on("SessionReady", () => console.log("ready"));
+on("PaneOpened", (id, kind) => console.log(`opened ${id} ${kind}`));
+on("PaneClosePre", (id) => { console.log(`pre ${id}`); cmd.split("down"); });
+on("PaneClosed", (id) => console.log(`closed ${id}`));
+"#,
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "h"], &env.options());
+    t.wait_for("the prompt", prompt);
+    env.wait_log("h", "ready", |l| l.contains("[log]: ready"));
+    t.keys(&["C-s", "%"]);
+    env.wait_log("h", "the second pane", |l| l.contains("opened 2"));
+    // Closing it: the "before" hook runs first; the pane its split creates
+    // fires no PaneOpened (events inside hooks only reach nested hooks).
+    t.keys(&["C-s", "x"]);
+    env.wait_log("h", "the close", |l| l.contains("closed 2"));
+    let lines = env.script_lines("h");
+    assert_eq!(lines, ["opened 1 terminal", "ready", "opened 2 terminal", "pre 2", "closed 2"], "{lines:?}");
+    let ls = env.run(&["ls"]);
+    assert!(ls.contains("h  (2 panes"), "the hook's split happened: {ls}");
+}
+
+#[test]
+fn ctrl_c_interrupts_a_runaway_mapping() {
+    let env = Env::new("script-interrupt");
+    env.config("config.js", "import { prefixMap } from \"temzdf\";\nprefixMap(\"l\", () => { for (;;) {} });\n");
+    let mut t = Term::spawn(&[BIN, "-s", "i"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.keys(&["C-s", "l"]);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    // While it runs, input is held; `temzdf action` waits too and times out.
+    t.type_text("echo lost\n");
+    let out = Command::new(BIN)
+        .args(["action", "-s", "i", "--timeout", "1", "focus-next-pane"])
+        .envs(env.vars())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("within 1.0 s"), "{}", String::from_utf8_lossy(&out.stderr));
+    t.key("C-c");
+    env.wait_log("i", "the interrupt", |l| l.contains("script error"));
+    // Typeahead was dropped with the interrupt (as Vim's CTRL-C); input works again.
+    t.type_text("echo after-$((1+1))\n");
+    let s = t.wait_text("after-2");
+    assert!(!s.contains("lost"), "{}", s.text());
+}
+
+#[test]
+fn a_broken_configuration_still_starts_the_session() {
+    for (label, file, text, expect) in [
+        ("tla", "config.js", "await new Promise(() => {});\n", "dispatch"),
+        ("enum", "config.ts", "const a = 1;\nenum E { A }\n", "config.ts:2:"),
+    ] {
+        let env = Env::new(label);
+        env.config(file, text);
+        let mut t = Term::spawn(&[BIN, "-s", "b"], &env.options());
+        t.wait_for("the prompt", prompt);
+        let log = env.wait_log("b", "the error", |l| l.contains("configuration:"));
+        assert!(log.contains(expect), "{log}");
+        t.type_text("echo works\n");
+        t.wait_text("works");
+    }
+}
+
+#[test]
+fn dispatched_tasks_act_later_through_their_ctx() {
+    let env = Env::new("script-task");
+    env.config(
+        "config.js",
+        r#"import { cmd, dispatch } from "temzdf";
+dispatch(async (ctx) => {
+  await new Promise((r) => setTimeout(r, 200));
+  ctx.cmd.sendText("echo from-task\n");
+  try { cmd.sendText("x"); } catch (e) { console.log(`refused: ${e.message.split(":")[0]}`); }
+});
+"#,
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "d"], &env.options());
+    env.wait_log("d", "the refusal", |l| l.contains("refused: no context"));
+    t.wait_text("from-task");
+}
+
+#[test]
+fn reload_config_registers_again_and_the_session_survives_the_host() {
+    let env = Env::new("script-reload");
+    env.config(
+        "config.js",
+        "import { cmd, prefixMap } from \"temzdf\";\nconsole.log(\"loaded\");\nprefixMap(\"e\", () => cmd.sendText(\"echo mapped\\n\"));\n",
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "r"], &env.options());
+    t.wait_for("the prompt", prompt);
+    env.run(&["action", "-s", "r", "reload-config"]);
+    env.wait_log("r", "the second load", |l| l.matches("[log]: loaded").count() == 2);
+    t.keys(&["C-s", "e"]);
+    t.wait_text("mapped");
+    // Kill the host: the session goes on without scripts.
+    let ls = env.run(&["ls", "-v"]);
+    let pid = ls.lines().find_map(|l| l.trim().strip_prefix("pid: ")).unwrap().trim().to_owned();
+    let killed = Command::new("pkill").args(["-P", &pid, "-f", "script-host"]).status().unwrap();
+    assert!(killed.success());
+    env.wait_log("r", "the host's exit", |l| l.contains("the script host exited"));
+    t.type_text("clear; echo still-$((2+2))\n");
+    t.wait_text("still-4");
 }
