@@ -24,6 +24,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-protocol` | Library. Session protocol: client/server messages, framing, socket locations. |
 | `crates/temzdf-pdfcore` | Library. PDF backend: MuPDF (`mupdf` crate), display list and tile cache, text, SyncTeX, background workers, reload. No terminal code. |
 | `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings; `Document`/`DocumentHost` shared by the panes on one file (workers, reload, SyncTeX routing). No terminal code. |
+| `crates/temzdf-term` | Library. The terminal pane: a program on a pty (`portable-pty`), its output interpreted by `libghostty-vt` (from Nix: `nix/libghostty-vt.nix`), the screen as scene text cells. No `termpix`. |
 | `crates/temzdf-tty` | Library. Terminal frontend (`TtyFrontend`): shows scene frames through `termpix`, frame pacing, effects. |
 | `crates/temzdf-server` | Library. `Session` (panes, layout, focus, prefix keys `C-s`, actions, composed frame), the session server process, forward-search sockets. No terminal code. |
 | `crates/temzdf` | The binary: standalone viewer, session commands and client (zellij names: `-s`, `attach`, `ls`, `kill-session`, `action`), config, headless `--render-frame`. |
@@ -34,9 +35,10 @@ The terminal plumbing is a separate, reusable library so that other viewers
 
 Dependency direction: `termpix-core <- termpix <- temzdf-tty <- temzdf` and
 `temzdf-scene <- temzdf-pdfcore <- temzdf-pdfview <- temzdf-server <- temzdf`
+(and `temzdf-scene <- temzdf-term <- temzdf-server`)
 (details in `doc/architecture.md`). Never make `termpix*` depend on PDF,
-SyncTeX or viewer code, and never make `temzdf-pdfcore`, `temzdf-pdfview` or
-`temzdf-server` depend on `termpix` (tests excepted): backends, panes and the
+SyncTeX or viewer code, and never make `temzdf-pdfcore`, `temzdf-pdfview`,
+`temzdf-term` or `temzdf-server` depend on `termpix` (tests excepted): backends, panes and the
 session produce scenes, only frontends draw. The direction the project is
 heading (a tmux-like session server with terminal, PDF and web panes) is in
 `doc/session-server.md`.

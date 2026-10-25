@@ -15,8 +15,8 @@ below them are deferred.
 
 ## Session server (`doc/session-server.md`)
 
-Steps 1-2 are done (PDF panes, standalone viewer and session server on one
-`Session`). Next and open:
+Steps 1-3 are done (PDF and terminal panes, standalone viewer and session
+server on one `Session`). Next and open:
 
 - [ ] Configurable prefix and session keys (default `C-b`; `C-s` is fixed for
   now and taken by zellij, see `doc/terminal-compat.md`).
@@ -33,8 +33,10 @@ Steps 1-2 are done (PDF panes, standalone viewer and session server on one
   Suspect: the cell size derived from the kernel's pixel size after a resize
   (`Winsize::geometry` divides by rows/cols; padding would skew it, worst at the
   bottom). Needs the terminal, mode and the `resized to geometry` log line.
-- [ ] Step 3: terminal panes (`portable-pty` + `libghostty-vt`, images
-  re-emitted per client).
+- [ ] Terminal panes, the rest: kitty graphics from programs inside them
+  (images re-emitted per client), a scrollback indicator, mouse selection and
+  copy, a place for session messages when no PDF pane is open (they go to the
+  server log now).
 - [ ] Step 4: GUI client (winit + wgpu). Step 5: web panes (headless
   Chromium). Step 6: programmable configuration.
 

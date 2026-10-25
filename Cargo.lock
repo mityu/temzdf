@@ -1750,6 +1750,7 @@ dependencies = [
  "temzdf-pdfview",
  "temzdf-protocol",
  "temzdf-scene",
+ "temzdf-term",
  "temzdf-tty",
  "termpix",
  "termpix-core",

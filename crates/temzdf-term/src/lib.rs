@@ -548,5 +548,9 @@ mod tests {
         assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('%'), Modifiers::SHIFT)).unwrap().0, key::Key::Digit5);
         assert_eq!(keys::translate(&KeyEvent::new(KeyCode::F(5), Modifiers::NONE)).unwrap().0, key::Key::F5);
         assert!(keys::translate(&KeyEvent::new(KeyCode::Other(1), Modifiers::NONE)).is_none());
+        // Control characters some terminals report as code points (kitty: the
+        // Linefeed keysym xdotool types for "\n").
+        assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('\n'), Modifiers::NONE)).unwrap().0, key::Key::Enter);
+        assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('\t'), Modifiers::NONE)).unwrap().0, key::Key::Tab);
     }
 }

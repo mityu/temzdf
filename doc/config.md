@@ -95,7 +95,8 @@ is for named keys (`S-Tab`).
 
 Session keys follow the prefix `C-s` (fixed for now; it is to become
 configurable, with `C-b` as the default): `%` splits side by side and `"`
-stacked (another view of the same PDF), `h`/`j`/`k`/`l` or arrows move the
+stacked (another view of the same PDF, or another shell beside a terminal),
+`C-s` again sends `C-s` to the pane, `h`/`j`/`k`/`l` or arrows move the
 focus, `o` goes to the next pane, `x` closes the pane, `d` detaches from a
 session (`temzdf -s`). Clicking a pane focuses it.
 

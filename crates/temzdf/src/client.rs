@@ -43,9 +43,19 @@ pub fn name_for(file: &Path) -> Result<String> {
     Ok(name)
 }
 
-/// Start a server for session `name` showing `file`, in the background, and
-/// wait until it listens. Its output goes to `$XDG_STATE_HOME/temzdf/<name>.log`.
-pub fn spawn_server(name: &str, file: &Path, config: Option<&Path>, editor: Option<&str>) -> Result<()> {
+/// What a new session's first pane shows, as `new-pane` takes it: `file`
+/// (made absolute), or a shell.
+pub fn first_pane(file: Option<&Path>) -> Result<Vec<String>> {
+    Ok(match file {
+        Some(f) => vec![std::path::absolute(f)?.display().to_string()],
+        None => Vec::new(),
+    })
+}
+
+/// Start a server for session `name` whose first pane shows `pane` (see
+/// [`first_pane`]), in the background, and wait until it listens. Its output
+/// goes to `$XDG_STATE_HOME/temzdf/<name>.log`.
+pub fn spawn_server(name: &str, pane: &[String], config: Option<&Path>, editor: Option<&str>) -> Result<()> {
     if !proto::valid_name(name) {
         bail!("invalid session name {name:?} (letters, digits, '.', '_' and '-')");
     }
@@ -68,13 +78,14 @@ pub fn spawn_server(name: &str, file: &Path, config: Option<&Path>, editor: Opti
         None => std::process::Stdio::null(),
     };
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
-    cmd.arg("server").arg(name).arg(file);
+    cmd.arg("server");
     if let Some(c) = config {
         cmd.arg("--config").arg(c);
     }
     if let Some(e) = editor {
         cmd.arg("--editor").arg(e);
     }
+    cmd.arg(name).arg("--").args(pane);
     let mut child = cmd.stdin(std::process::Stdio::null()).stdout(out).stderr(err).spawn()?;
     for _ in 0..200 {
         if daemon::probe(&socket).is_some() {
@@ -246,13 +257,19 @@ pub fn kill_all_sessions() -> Result<()> {
     Ok(())
 }
 
-/// Run an action in session `name`. Paths in it are made absolute (the server
-/// runs elsewhere).
+/// Run an action in session `name`. The server runs elsewhere: a new pane's
+/// file is made absolute, and its terminal starts in this directory.
 pub fn action(name: &str, mut words: Vec<String>) -> Result<()> {
-    if words.first().is_some_and(|w| w == "new-pane")
-        && let Some(file) = words.get_mut(1)
-    {
-        *file = std::path::absolute(PathBuf::from(&*file))?.display().to_string();
+    if words.first().is_some_and(|w| w == "new-pane") {
+        if words.get(1).is_none_or(|w| w != "--cwd") {
+            let cwd = std::env::current_dir()?.display().to_string();
+            words.splice(1..1, ["--cwd".to_owned(), cwd]);
+        }
+        if let Some(file) = words.get_mut(3)
+            && !file.starts_with('-')
+        {
+            *file = std::path::absolute(PathBuf::from(&*file))?.display().to_string();
+        }
     }
     match request(name, ClientMsg::Action(words))? {
         ServerMsg::Done(Ok(())) => Ok(()),

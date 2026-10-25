@@ -71,6 +71,14 @@ Known problems:
 - Ghostty 1.3.1 with kitty keyboard flags 31 reports Shift+letter as the base
   key plus Shift (e.g. `CSI 103;2u` style with alternates); termpix maps it to the
   produced character (`G`) using the alternate key or associated text.
+- kitty 0.49.2 with the kitty keyboard protocol reports the Linefeed keysym
+  (what `xdotool type` sends for a newline) as code point 10, i.e.
+  `KeyCode::Char('\n')`, not Enter. Terminal panes map control code points
+  to their keys (`crates/temzdf-term/src/keys.rs`).
+- In a terminal pane's pty `C-s` is XOFF while the program leaves flow control
+  on (`stty ixon`, the default; interactive shells' line editors usually turn
+  it off), as in any terminal: `C-s C-s` then pauses the pane's output until
+  `C-q`.
 - Environment leaks: a terminal started from inside zellij or tmux inherits
   `ZELLIJ`/`TMUX`, which makes detection think it runs inside a multiplexer.
   `scripts/e2e.sh` clears them; real users may see this when launching a GUI

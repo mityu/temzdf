@@ -18,8 +18,9 @@
 | `temzdf-protocol` | `temzdf-scene`, `termpix-core` |
 | `temzdf-pdfcore` | `temzdf-scene` |
 | `temzdf-pdfview` | `temzdf-pdfcore`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
+| `temzdf-term` | `temzdf-scene`, `termpix-core` (and `libghostty-vt`, `portable-pty`) |
 | `temzdf-tty` | `temzdf-scene`, `termpix` |
-| `temzdf-server` | `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
+| `temzdf-server` | `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf` (bin) | `temzdf-server`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-tty`, `temzdf-scene`, `termpix` |
 
 - `termpix-core`: frontend-independent primitives (geometry, raster helpers,
@@ -34,6 +35,8 @@
 - `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys)
   and what panes on one file share (`Document`, `DocumentHost`: workers,
   reload, SyncTeX routing).
+- `temzdf-term`: the terminal pane (`TermPane`: a program on a pty, its
+  output interpreted by `libghostty-vt`, the screen as scene text cells).
 - `temzdf-tty`: the terminal frontend (`TtyFrontend`: terminal setup, frame
   pacing, effects; `Presenter`, `Screen`).
 - `temzdf-protocol`: the session protocol (messages, framing, sockets).

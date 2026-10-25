@@ -1,7 +1,8 @@
 # Session server design
 
-Status (2026-10-25): steps 1 and 2 of the incremental plan below are
-implemented (PDF panes only); see "Implementation status". The research it
+Status (2026-10-26): steps 1 to 3 of the incremental plan below are
+implemented (PDF and terminal panes; terminal panes show text only); see
+"Implementation status". The research it
 builds on is on the `research/notes` branch: `doc/multiplexer.md`,
 `doc/gui-stack.md`, `doc/webview-viewer.md`, `doc/config-language.md`.
 
@@ -17,7 +18,9 @@ What exists:
 - `Session` (`crates/temzdf-server/src/session.rs`): documents (one
   `DocumentHost` per file, `crates/temzdf-pdfview/src/host.rs`, shared by every
   pane on it: one tile cache, links, text, workers, reload), PDF panes in a
-  binary layout of splits with one-cell borders, focus, the prefix key `C-s`,
+  terminal panes (`crates/temzdf-term`: a pty from `portable-pty`, Ghostty's
+  terminal emulation from `libghostty-vt`, the screen as scene text cells),
+  all in a binary layout of splits with one-cell borders, focus, the prefix key `C-s`,
   `Action`s with a text form, and one composed frame (pane layers moved into
   their rectangles, clipped, placement keys made unique and stable).
 - Three ways to run share it: `temzdf FILE` (standalone: the session and the
@@ -25,11 +28,25 @@ What exists:
   (headless, waits for the workers after each key) and the session server
   (`crates/temzdf-server/src/daemon.rs`) with TTY clients
   (`crates/temzdf/src/client.rs`).
-- Commands follow zellij: `temzdf -s NAME FILE`, `attach [-c] [NAME]` (`a`),
-  `list-sessions` (`ls`), `kill-session` (`k`), `kill-all-sessions` (`ka`),
-  `action [-s NAME] new-pane FILE | split right|down | move-focus DIR |
-  focus-next-pane | close-pane | detach`. One server process per session; its
+- Commands follow zellij: `temzdf -s NAME [FILE]` (a shell without FILE),
+  `attach [-c] [NAME [FILE]]` (`a`), `list-sessions` (`ls`), `kill-session`
+  (`k`), `kill-all-sessions` (`ka`), `action [-s NAME] new-pane [--cwd DIR]
+  [FILE | -- COMMAND...] | split right|down | move-focus DIR |
+  focus-next-pane | close-pane | detach` (`new-pane` alone opens a shell; the
+  CLI adds `--cwd` with its own directory). Splitting a PDF pane shows the same
+  document again; splitting a terminal starts another shell in the directory
+  the shell reported (OSC 7). `C-s C-s` sends `C-s` to the pane. One server process per session; its
   output goes to `$XDG_STATE_HOME/temzdf/NAME.log`.
+- Terminal panes: palette colours stay palette indices (the outer terminal's
+  theme applies), wide characters, SGR attributes, cursor shape, keys through
+  libghostty's encoder (legacy or kitty keyboard protocol, as the program
+  asks), mouse reports when the program tracks the mouse (otherwise the wheel
+  scrolls back through 10000 lines of history), bracketed paste, focus
+  reports, OSC 52 copies, resizing. A pane closes when its program exits.
+  Programs get `TERM=xterm-256color`, `COLORTERM=truecolor`,
+  `TERM_PROGRAM=temzdf` and `TEMZDF_SESSION_NAME`. The server makes at most
+  one frame per 16 ms, so floods of output cost little (`seq 1 500000` takes
+  0.14 s in a pane, `tests/e2e/terminal.actions`).
 - Clients: the latest to attach or type sets the session's size and frontend
   hints; frames are paced per client by acknowledgements, image changes are
   queued per client (latest wins), late attachers get a snapshot; effects
@@ -47,7 +64,10 @@ Not yet (in order of the plan, or found on the way):
 - One window per session (no tabs); prefix and session keys are fixed
   (configurable later, default to become `C-b`). zellij takes `C-s` for
   itself (scroll mode), so session keys do not reach temzdf inside zellij yet.
-- Steps 3 to 6: terminal panes, GUI client, web panes, programmable config.
+- Terminal panes: kitty graphics from programs inside them, a scrollback
+  indicator, selection and copy with the mouse, a status line of their own
+  (messages for the session go to a PDF pane's status bar, else the log).
+- Steps 4 to 6: GUI client, web panes, programmable config.
 
 ## Vision
 
@@ -261,7 +281,7 @@ and standalone stays the easy way to test it.
 | `temzdf-pdfview` | a PDF pane: per-view state (layout, scroll, zoom, peek window, selection, history, link preview, search UI, key bindings) that consumes input events and produces a scene; `Document` and `DocumentHost` shared by the panes on a file | `temzdf-pdfcore`, `temzdf-scene` |
 | `temzdf-tty` | TTY frontend: renders a scene with `termpix` (frame pacing, effects); used by the TTY client and by standalone mode | `temzdf-scene`, `termpix` |
 | `temzdf-server` | `Session` (layout tree, panes, focus, prefix keys, actions, composition), the server process (clients, pacing), session discovery, forward-search sockets | `temzdf-protocol`, pane crates |
-| `temzdf-term` (later) | terminal pane: `portable-pty` + `libghostty-vt` | `temzdf-scene` |
+| `temzdf-term` | terminal pane: `portable-pty` + `libghostty-vt` | `temzdf-scene`, `termpix-core` |
 | `temzdf-web` (later) | web pane: headless Chromium over CDP | `temzdf-scene` |
 | `temzdf-gui` (later) | GUI client: winit + wgpu renderer of the scene | `temzdf-scene` |
 | `temzdf` (binary) | standalone viewer, session subcommands and client, `--forward` for SyncTeX, `--render-frame` | all of the above |
@@ -311,8 +331,9 @@ the server receives the request and routes it to the panes showing that PDF.
    that attaches and detaches; several panes on one document. Validates the
    protocol, sharing and resync with existing features; testable with the
    mock terminal.
-3. **Terminal panes**: `portable-pty` + `libghostty-vt`, text in cell grids,
-   pane images re-emitted per client. temzdf becomes a multiplexer.
+3. (done, text only) **Terminal panes**: `portable-pty` + `libghostty-vt`,
+   text in cell grids. temzdf becomes a multiplexer. Images from programs in
+   the panes (re-emitted per client) are still to come.
 4. **GUI client**: wgpu renderer of the same scene, local only.
 5. **Web panes**: headless Chromium process, frames as image layers.
 6. **Programmable config** in the server (language to be decided).

@@ -16,7 +16,8 @@ use termpix::geom::{CellSize, Geometry};
 ///
 /// `temzdf FILE` shows FILE in this terminal. With `-s NAME` it runs in a
 /// session that survives detaching (`C-s d`) and can be attached again from
-/// anywhere (`temzdf attach NAME`); the session commands follow zellij's names.
+/// anywhere (`temzdf attach NAME`); without FILE the session starts with a
+/// shell. The session commands follow zellij's names.
 #[derive(Parser, Debug)]
 #[command(version, args_conflicts_with_subcommands = true)]
 struct Cli {
@@ -24,8 +25,9 @@ struct Cli {
     command: Option<Cmd>,
     /// PDF file to open.
     file: Option<PathBuf>,
-    /// Open FILE in a new session called NAME (from the file name when NAME is
-    /// the file: `temzdf -s doc.pdf`) and attach to it.
+    /// Start a new session called NAME showing FILE (a shell without FILE;
+    /// named after the file when NAME is the file: `temzdf -s doc.pdf`) and
+    /// attach to it.
     #[arg(short, long, value_name = "NAME")]
     session: Option<String>,
     /// Render one screen to this PNG instead of starting the viewer.
@@ -69,8 +71,8 @@ enum Cmd {
     #[command(alias = "a")]
     Attach {
         name: Option<String>,
-        /// Create the session NAME with FILE when it does not exist.
-        #[arg(short, long, requires = "file")]
+        /// Create the session NAME (with FILE, or a shell) when it does not exist.
+        #[arg(short, long, requires = "name")]
         create: bool,
         file: Option<PathBuf>,
     },
@@ -83,8 +85,9 @@ enum Cmd {
     /// End every session.
     #[command(alias = "ka")]
     KillAllSessions,
-    /// Run an action in a session: new-pane FILE, split right|down,
-    /// move-focus left|right|up|down, focus-next-pane, close-pane, detach.
+    /// Run an action in a session: new-pane [FILE | -- COMMAND...],
+    /// split right|down, move-focus left|right|up|down, focus-next-pane,
+    /// close-pane, detach.
     Action {
         /// The session (the only one when left out).
         #[arg(short, long, value_name = "NAME")]
@@ -94,7 +97,12 @@ enum Cmd {
     },
     /// Run a session server (started by `temzdf -s`).
     #[command(hide = true)]
-    Server { name: String, file: PathBuf },
+    Server {
+        name: String,
+        /// What the first pane shows, as `new-pane` takes it.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        pane: Vec<String>,
+    },
 }
 
 fn parse_pair(s: &str) -> Result<(u32, u32)> {
@@ -112,8 +120,13 @@ fn main() -> Result<()> {
         Some(Cmd::Attach { name, create, file }) => {
             let config = config::Config::load(cli.config.as_deref())?;
             let name = match (name, create, file) {
-                (Some(n), true, Some(f)) if temzdf_server::daemon::list()?.iter().all(|s| s.name != n) => {
-                    client::spawn_server(&n, &std::path::absolute(f)?, cli.config.as_deref(), cli.editor.as_deref())?;
+                (Some(n), true, file) if temzdf_server::daemon::list()?.iter().all(|s| s.name != n) => {
+                    client::spawn_server(
+                        &n,
+                        &client::first_pane(file.as_deref())?,
+                        cli.config.as_deref(),
+                        cli.editor.as_deref(),
+                    )?;
                     n
                 }
                 (name, ..) => client::resolve(name.as_deref())?,
@@ -121,14 +134,19 @@ fn main() -> Result<()> {
             println!("{}", client::attach(&name, &config)?);
             return Ok(());
         }
-        Some(Cmd::Server { name, file }) => {
+        Some(Cmd::Server { name, pane }) => {
             // Leave the terminal's session, so closing it does not end ours.
             let _ = rustix::process::setsid();
             let mut config = config::Config::load(cli.config.as_deref())?;
             if let Some(e) = cli.editor {
                 config.synctex.editor = Some(e);
             }
-            return temzdf_server::daemon::run(&name, &file, app::settings(&config, true)?);
+            let words: Vec<String> = std::iter::once("new-pane".to_owned()).chain(pane).collect();
+            let temzdf_server::action::Action::NewPane { spec, .. } = temzdf_server::action::Action::parse(&words)?
+            else {
+                unreachable!("parsed as new-pane")
+            };
+            return temzdf_server::daemon::run(&name, &spec, app::settings(&config, true)?);
         }
         None => {}
     }
@@ -136,12 +154,15 @@ fn main() -> Result<()> {
     if let Some(name) = &cli.session {
         // `temzdf -s doc.pdf`: the name was the file.
         let (name, file) = match &cli.file {
-            Some(f) => (name.clone(), f.clone()),
-            None if std::path::Path::new(name).is_file() => (client::name_for(name.as_ref())?, PathBuf::from(name)),
-            None => bail!("which PDF should the session {name:?} open?"),
+            Some(f) => (name.clone(), Some(f.clone())),
+            None if std::path::Path::new(name).is_file() => {
+                (client::name_for(name.as_ref())?, Some(PathBuf::from(name)))
+            }
+            None => (name.clone(), None),
         };
         let config = config::Config::load(cli.config.as_deref())?;
-        client::spawn_server(&name, &std::path::absolute(file)?, cli.config.as_deref(), cli.editor.as_deref())?;
+        let pane = client::first_pane(file.as_deref())?;
+        client::spawn_server(&name, &pane, cli.config.as_deref(), cli.editor.as_deref())?;
         println!("{}", client::attach(&name, &config)?);
         return Ok(());
     }

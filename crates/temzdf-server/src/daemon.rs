@@ -18,7 +18,7 @@ use temzdf_protocol::{self as proto, ClientMsg, ExitReason, ServerMsg, SessionIn
 use temzdf_scene::{Frame, Hints, ImageKey, ImageUpdate, Pointer};
 use termpix_core::geom::{CellSize, Geometry};
 
-use crate::action::Action;
+use crate::action::{Action, PaneSpec};
 use crate::session::{EventSink, Outcome, Session, SessionEvent, Settings};
 
 const FRAME: Duration = Duration::from_millis(16);
@@ -90,9 +90,9 @@ pub fn list() -> Result<Vec<SessionInfo>> {
     Ok(out)
 }
 
-/// Run the session `name` showing `file` until it ends. Returns once the last
-/// pane closed or the session was killed.
-pub fn run(name: &str, file: &Path, settings: Settings) -> Result<()> {
+/// Run the session `name`, starting with a pane showing `first`, until it
+/// ends. Returns once the last pane closed or the session was killed.
+pub fn run(name: &str, first: &PaneSpec, settings: Settings) -> Result<()> {
     if !proto::valid_name(name) {
         bail!("invalid session name {name:?}");
     }
@@ -121,7 +121,7 @@ pub fn run(name: &str, file: &Path, settings: Settings) -> Result<()> {
         })?;
     }
     let mut session = Session::new(name.to_owned(), DEFAULT_GEOMETRY, Hints::default(), settings, events);
-    session.open(file)?;
+    session.new_pane(first, None)?;
     let mut clients: HashMap<ClientId, Client> = HashMap::new();
     let mut next_client: ClientId = 1;
     let mut latest: Option<ClientId> = None;
@@ -129,12 +129,15 @@ pub fn run(name: &str, file: &Path, settings: Settings) -> Result<()> {
     let mut seq = 0u64;
     let mut dirty = true;
     let mut shown_pointer = Pointer::Default;
+    // When the last frame was made: busy terminals get at most one per FRAME.
+    let mut made = Instant::now() - FRAME;
 
     loop {
         // A new frame when something changed and a client can take it; clients
         // still busy with an earlier one get the latest when they acknowledge.
         if !session.is_starting() && session.error().is_none() {
-            if dirty && clients.values().any(|c| c.attached && !c.awaiting) {
+            if dirty && made.elapsed() >= FRAME && clients.values().any(|c| c.attached && !c.awaiting) {
+                made = Instant::now();
                 let frame = session.frame();
                 let updates = session.images().take_updates();
                 for c in clients.values_mut().filter(|c| c.attached) {
@@ -163,6 +166,9 @@ pub fn run(name: &str, file: &Path, settings: Settings) -> Result<()> {
             }
         }
         let mut timeout = if session.is_animating() { FRAME } else { Duration::from_secs(3600) };
+        if dirty {
+            timeout = timeout.min(FRAME.saturating_sub(made.elapsed()));
+        }
         if let Some(due) = session.next_deadline() {
             timeout = timeout.min(due.saturating_duration_since(Instant::now()));
         }
@@ -253,13 +259,11 @@ pub fn run(name: &str, file: &Path, settings: Settings) -> Result<()> {
                     break;
                 }
                 ClientMsg::Action(words) => {
-                    let result = Action::parse(&words).map_err(|e| format!("{e:#}"));
-                    let action_outcome = match &result {
-                        Ok(a) => session.action(a.clone(), now),
-                        Err(_) => Outcome::None,
-                    };
+                    let result = Action::parse(&words).and_then(|a| session.action(a, now));
+                    let action_outcome = *result.as_ref().unwrap_or(&Outcome::Redraw);
+                    let result = result.map(|_| ()).map_err(|e| format!("{e:#}"));
                     if let Some(c) = clients.remove(&id) {
-                        let _ = c.tx.send(ServerMsg::Done(result.map(|_| ())));
+                        let _ = c.tx.send(ServerMsg::Done(result));
                     }
                     outcome = match action_outcome {
                         Outcome::Detach => {

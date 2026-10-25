@@ -1,14 +1,14 @@
-//! A session: panes on documents, their layout and focus, the prefix key, and
-//! the composed frame every attached client shows. No sockets or terminals
-//! here: the standalone viewer, `--render-frame` and the session server all
-//! drive a `Session` (see doc/session-server.md).
+//! A session: panes (PDF views and terminals), their layout and focus, the
+//! prefix key, and the composed frame every attached client shows. No sockets
+//! or terminals here: the standalone viewer, `--render-frame` and the session
+//! server all drive a `Session` (see doc/session-server.md).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use temzdf_pdfcore::doc_cache::Need;
 use temzdf_pdfcore::workers::DocEvent;
 use temzdf_pdfview::document::Document;
@@ -17,21 +17,23 @@ use temzdf_pdfview::keys::{Key, Keymap};
 use temzdf_pdfview::pane::{self, PdfPane};
 use temzdf_pdfview::viewer::StandIn;
 use temzdf_scene::{CursorShape, Effect, Frame, Hints, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
+use temzdf_term::{Spawn, TermEvent, TermPane};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{CoordUnit, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use termpix_core::scroll::ScrollConfig;
 
-use crate::action::Action;
+use crate::action::{Action, PaneSpec};
 use crate::forward::{self, ForwardRequest};
 use crate::layout::{Direction, Layout, PaneId, Split};
 
 pub type DocId = u32;
 
-/// Events for the session from its documents' threads and from other
-/// processes (forward search).
+/// Events for the session from its documents' and terminals' threads and
+/// from other processes (forward search).
 pub enum SessionEvent {
     Doc(DocId, DocEvent),
     Forward(DocId, ForwardRequest),
+    Term(PaneId, TermEvent),
 }
 
 /// Where a session's events go (returns false once nobody listens).
@@ -80,7 +82,7 @@ const BORDER_PX: u32 = 2;
 /// Layer key owner for the session's own layers.
 const OWNER_SESSION: u32 = u32::MAX;
 
-/// Where a pane goes once its document opened.
+/// Where a pane goes.
 #[derive(Clone, Copy, Debug)]
 enum Spot {
     /// The first pane of the session.
@@ -99,11 +101,31 @@ struct DocEntry {
     _forward: Option<forward::Server>,
 }
 
+enum Kind {
+    Pdf { pane: Box<PdfPane>, doc: DocId },
+    Term(Box<TermPane>),
+}
+
 struct PaneEntry {
-    pane: PdfPane,
-    doc: DocId,
+    kind: Kind,
     /// In cells.
     rect: Rect,
+}
+
+impl PaneEntry {
+    fn pdf(&mut self) -> Option<&mut PdfPane> {
+        match &mut self.kind {
+            Kind::Pdf { pane, .. } => Some(pane),
+            Kind::Term(_) => None,
+        }
+    }
+
+    fn doc(&self) -> Option<DocId> {
+        match &self.kind {
+            Kind::Pdf { doc, .. } => Some(*doc),
+            Kind::Term(_) => None,
+        }
+    }
 }
 
 /// Placement keys of the panes' layers, made unique across panes and kept
@@ -149,7 +171,7 @@ pub struct Session {
     /// Solid images (background, borders) by size and colour.
     solids: HashMap<(u32, u32, [u8; 4]), ImageKey>,
     complete: bool,
-    /// Why the first document could not be opened.
+    /// Why the first pane could not be opened.
     error: Option<String>,
 }
 
@@ -186,7 +208,7 @@ impl Session {
         self.geometry
     }
 
-    /// Why the session's first document failed to open, if it did.
+    /// Why the session's first pane failed to open, if it did.
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
@@ -196,14 +218,34 @@ impl Session {
         self.layout.is_none() && self.error.is_none()
     }
 
+    /// Where a new pane goes: the first one, or beside the focused pane.
+    fn next_spot(&self) -> Spot {
+        if self.layout.is_some() { Spot::SplitOf(self.focus, Split::Horizontal) } else { Spot::First }
+    }
+
+    /// Open a new pane: the first one, or beside the focused pane.
+    pub fn new_pane(&mut self, spec: &PaneSpec, cwd: Option<&Path>) -> Result<()> {
+        let cwd = cwd.map(Path::to_owned);
+        match spec {
+            PaneSpec::Pdf(path) => {
+                let path = cwd.map_or_else(|| path.clone(), |d| d.join(path));
+                self.open(&path)
+            }
+            PaneSpec::Shell => self.open_terminal(&Spawn { argv: None, cwd, env: Vec::new() }, self.next_spot()),
+            PaneSpec::Command(argv) => {
+                self.open_terminal(&Spawn { argv: Some(argv.clone()), cwd, env: Vec::new() }, self.next_spot())
+            }
+        }
+    }
+
     /// Open `path` in a new pane: the first one, or beside the focused pane.
     /// A file already open is shared, not opened again.
     pub fn open(&mut self, path: &Path) -> Result<()> {
-        let spot = if self.layout.is_some() { Spot::SplitOf(self.focus, Split::Horizontal) } else { Spot::First };
+        let spot = self.next_spot();
         let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
         if let Some((&id, entry)) = self.docs.iter_mut().find(|(_, d)| d.path == canonical) {
             if entry.host.is_some() {
-                self.add_pane(id, spot);
+                self.add_pdf_pane(id, spot);
             } else {
                 entry.waiting.push(spot);
             }
@@ -245,26 +287,43 @@ impl Session {
         Rect::new(0, 0, self.geometry.cols as u32, self.geometry.rows as u32)
     }
 
-    /// Create a pane on an open document.
-    fn add_pane(&mut self, doc: DocId, spot: Spot) -> Option<PaneId> {
-        let id = self.alloc_id();
+    /// Put pane `id` into the layout at `spot`. Returns its rectangle.
+    fn place(&mut self, id: PaneId, spot: Spot) -> Result<Rect> {
         let area = self.area();
-        match (spot, self.layout.as_mut()) {
-            (Spot::First, None) => self.layout = Some(Layout::new(id)),
-            (Spot::SplitOf(target, split), Some(layout)) if self.panes.contains_key(&target) => {
-                if !layout.split(target, id, split, area) {
-                    self.message("no room for another pane");
-                    return None;
-                }
-            }
+        let target = match spot {
+            Spot::SplitOf(target, split) if self.panes.contains_key(&target) => Some((target, split)),
             // The target went away meanwhile: split the focused pane instead.
-            (_, Some(layout)) => {
-                if !layout.split(self.focus, id, Split::Horizontal, area) {
-                    self.message("no room for another pane");
-                    return None;
+            _ => Some((self.focus, Split::Horizontal)),
+        };
+        match (self.layout.as_mut(), target) {
+            (None, _) => self.layout = Some(Layout::new(id)),
+            (Some(layout), Some((target, split))) => {
+                if !layout.split(target, id, split, area) {
+                    bail!("no room for another pane");
                 }
             }
-            (Spot::SplitOf(..), None) => self.layout = Some(Layout::new(id)),
+            (Some(_), None) => unreachable!(),
+        }
+        let layout = self.layout.as_ref().expect("placed");
+        Ok(layout.rects(area).into_iter().find(|(p, _)| *p == id).map_or(area, |(_, r)| r))
+    }
+
+    /// Take pane `id` out of the layout again (its creation failed).
+    fn unplace(&mut self, id: PaneId) {
+        if let Some(layout) = self.layout.as_mut()
+            && !layout.remove(id)
+        {
+            self.layout = None;
+        }
+    }
+
+    /// Create a pane on an open document.
+    fn add_pdf_pane(&mut self, doc: DocId, spot: Spot) -> Option<PaneId> {
+        self.docs.get(&doc)?.host.as_ref()?;
+        let id = self.alloc_id();
+        if let Err(e) = self.place(id, spot) {
+            self.message(&e.to_string());
+            return None;
         }
         let entry = self.docs.get_mut(&doc)?;
         let host = entry.host.as_mut()?;
@@ -279,15 +338,57 @@ impl Session {
         if let Some(e) = host.watcher_error.take() {
             pane.message = Some(e);
         }
-        self.panes.insert(id, PaneEntry { pane, doc, rect: area });
-        self.focus = id;
+        self.panes.insert(id, PaneEntry { kind: Kind::Pdf { pane: Box::new(pane), doc }, rect: self.area() });
+        self.set_focus(id);
         self.relayout();
         Some(id)
     }
 
+    /// Start a program in a new terminal pane.
+    fn open_terminal(&mut self, spawn: &Spawn, spot: Spot) -> Result<()> {
+        let id = self.alloc_id();
+        let rect = self.place(id, spot)?;
+        let events = self.events.clone();
+        let sink: temzdf_term::Sink = Arc::new(move |e| events(SessionEvent::Term(id, e)));
+        let mut spawn = spawn.clone();
+        spawn.env.push(("TEMZDF_SESSION_NAME".into(), self.name.clone()));
+        let geometry = Geometry { cols: rect.w as u16, rows: rect.h as u16, cell: self.geometry.cell };
+        let term = match TermPane::spawn(&spawn, geometry, sink) {
+            Ok(t) => t,
+            Err(e) => {
+                self.unplace(id);
+                bail!("cannot start {}: {e}", spawn.argv.as_ref().map_or("the shell".into(), |a| a.join(" ")));
+            }
+        };
+        self.panes.insert(id, PaneEntry { kind: Kind::Term(Box::new(term)), rect });
+        self.set_focus(id);
+        self.relayout();
+        Ok(())
+    }
+
+    /// Move the focus, telling terminals that asked for focus reports.
+    fn set_focus(&mut self, id: PaneId) {
+        if id == self.focus {
+            return;
+        }
+        for (p, gained) in [(self.focus, false), (id, true)] {
+            if let Some(PaneEntry { kind: Kind::Term(t), .. }) = self.panes.get_mut(&p) {
+                t.focus(gained);
+            }
+        }
+        self.focus = id;
+    }
+
+    /// Show a message in the focused pane's status bar (or another PDF pane's:
+    /// terminal panes have none).
     fn message(&mut self, m: &str) {
-        if let Some(e) = self.panes.get_mut(&self.focus) {
-            e.pane.message = Some(m.into());
+        let focus = self.focus;
+        let mut pdfs: Vec<(PaneId, &mut PaneEntry)> =
+            self.panes.iter_mut().filter(|(_, e)| e.doc().is_some()).map(|(id, e)| (*id, e)).collect();
+        pdfs.sort_by_key(|(id, _)| (*id != focus, *id));
+        match pdfs.into_iter().next().and_then(|(_, e)| e.pdf()) {
+            Some(p) => p.message = Some(m.into()),
+            None => eprintln!("temzdf: {m}"),
         }
     }
 
@@ -299,8 +400,10 @@ impl Session {
             if let Some(e) = self.panes.get_mut(&id) {
                 e.rect = r;
                 let g = Geometry { cols: r.w as u16, rows: r.h as u16, cell };
-                if g != e.pane.geometry() {
-                    e.pane.resize(g);
+                match &mut e.kind {
+                    Kind::Pdf { pane, .. } if g != pane.geometry() => pane.resize(g),
+                    Kind::Pdf { .. } => {}
+                    Kind::Term(t) => t.resize(g),
                 }
             }
         }
@@ -314,15 +417,20 @@ impl Session {
     /// The frontend changed (another client became the latest).
     pub fn set_hints(&mut self, hints: Hints) {
         self.hints = hints;
-        for e in self.panes.values_mut() {
-            e.pane.viewer.stand_in_mode = StandIn::for_hints(hints);
+        for p in self.panes.values_mut().filter_map(PaneEntry::pdf) {
+            p.viewer.stand_in_mode = StandIn::for_hints(hints);
         }
     }
 
     /// The panes showing `doc`, the focused one first (it receives SyncTeX results).
     fn panes_of(panes: &mut HashMap<PaneId, PaneEntry>, doc: DocId, focus: PaneId) -> Vec<&mut PdfPane> {
-        let mut v: Vec<(PaneId, &mut PdfPane)> =
-            panes.iter_mut().filter(|(_, e)| e.doc == doc).map(|(id, e)| (*id, &mut e.pane)).collect();
+        let mut v: Vec<(PaneId, &mut PdfPane)> = panes
+            .iter_mut()
+            .filter_map(|(id, e)| match &mut e.kind {
+                Kind::Pdf { pane, doc: d } if *d == doc => Some((*id, &mut **pane)),
+                _ => None,
+            })
+            .collect();
         v.sort_by_key(|(id, _)| (*id != focus, *id));
         v.into_iter().map(|(_, p)| p).collect()
     }
@@ -337,7 +445,7 @@ impl Session {
                         let doc = Document::shared(info.bounds.clone());
                         entry.host = Some(opening.finish(info, doc, self.settings.host.clone()));
                         for spot in std::mem::take(&mut entry.waiting) {
-                            self.add_pane(id, spot);
+                            self.add_pdf_pane(id, spot);
                         }
                     }
                     other => {
@@ -371,6 +479,21 @@ impl Session {
                 }
                 Outcome::None
             }
+            SessionEvent::Term(id, TermEvent::Output(bytes)) => match self.panes.get_mut(&id) {
+                Some(PaneEntry { kind: Kind::Term(t), .. }) => {
+                    t.feed(&bytes);
+                    Outcome::Redraw
+                }
+                _ => Outcome::None,
+            },
+            // The program ended: so does its pane (unless it is gone already).
+            SessionEvent::Term(id, TermEvent::Exited) => match self.panes.get_mut(&id) {
+                Some(PaneEntry { kind: Kind::Term(t), .. }) => {
+                    t.set_exited();
+                    self.close(id)
+                }
+                _ => Outcome::None,
+            },
         }
     }
 
@@ -378,63 +501,89 @@ impl Session {
         if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
             return Outcome::None;
         }
+        let is_prefix = Key::parse(PREFIX).is_ok_and(|p| p == Key::of(k));
         if std::mem::take(&mut self.prefix) {
             let action = match k.code {
-                KeyCode::Char('%') => Action::Split(Split::Horizontal),
-                KeyCode::Char('"') => Action::Split(Split::Vertical),
-                KeyCode::Char('h') | KeyCode::Left => Action::MoveFocus(Direction::Left),
-                KeyCode::Char('j') | KeyCode::Down => Action::MoveFocus(Direction::Down),
-                KeyCode::Char('k') | KeyCode::Up => Action::MoveFocus(Direction::Up),
-                KeyCode::Char('l') | KeyCode::Right => Action::MoveFocus(Direction::Right),
-                KeyCode::Char('o') => Action::FocusNextPane,
-                KeyCode::Char('x') => Action::ClosePane,
-                KeyCode::Char('d') => Action::Detach,
+                // The prefix twice sends it to the pane.
+                _ if is_prefix => None,
+                KeyCode::Char('%') => Some(Action::Split(Split::Horizontal)),
+                KeyCode::Char('"') => Some(Action::Split(Split::Vertical)),
+                KeyCode::Char('h') | KeyCode::Left => Some(Action::MoveFocus(Direction::Left)),
+                KeyCode::Char('j') | KeyCode::Down => Some(Action::MoveFocus(Direction::Down)),
+                KeyCode::Char('k') | KeyCode::Up => Some(Action::MoveFocus(Direction::Up)),
+                KeyCode::Char('l') | KeyCode::Right => Some(Action::MoveFocus(Direction::Right)),
+                KeyCode::Char('o') => Some(Action::FocusNextPane),
+                KeyCode::Char('x') => Some(Action::ClosePane),
+                KeyCode::Char('d') => Some(Action::Detach),
                 _ => return Outcome::None,
             };
-            return self.action(action, now);
-        }
-        if Key::parse(PREFIX).is_ok_and(|p| p == Key::of(k)) {
+            if let Some(action) = action {
+                return match self.action(action, now) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        self.message(&format!("{e:#}"));
+                        Outcome::Redraw
+                    }
+                };
+            }
+        } else if is_prefix {
             self.prefix = true;
             return Outcome::None;
         }
-        let Some(e) = self.panes.get_mut(&self.focus) else { return Outcome::None };
-        match e.pane.key(k, now) {
-            pane::Action::Quit => self.close(self.focus),
-            pane::Action::Redraw => Outcome::Redraw,
-            pane::Action::None => Outcome::None,
+        let focus = self.focus;
+        let Some(e) = self.panes.get_mut(&focus) else { return Outcome::None };
+        match &mut e.kind {
+            Kind::Pdf { pane, .. } => match pane.key(k, now) {
+                pane::Action::Quit => self.close(focus),
+                pane::Action::Redraw => Outcome::Redraw,
+                pane::Action::None => Outcome::None,
+            },
+            Kind::Term(t) => Outcome::None.or(t.key(k)),
         }
     }
 
     pub fn paste(&mut self, text: &str) -> Outcome {
         let Some(e) = self.panes.get_mut(&self.focus) else { return Outcome::None };
-        Outcome::None.or(e.pane.paste(text) == pane::Action::Redraw)
+        match &mut e.kind {
+            Kind::Pdf { pane, .. } => Outcome::None.or(pane.paste(text) == pane::Action::Redraw),
+            Kind::Term(t) => Outcome::None.or(t.paste(text)),
+        }
     }
 
-    pub fn action(&mut self, action: Action, _now: Instant) -> Outcome {
+    /// Run an action. Errors (a file that cannot be opened, no room for a
+    /// pane) are for whoever asked.
+    pub fn action(&mut self, action: Action, _now: Instant) -> Result<Outcome> {
         match action {
             Action::Split(split) => {
-                let Some(doc) = self.panes.get(&self.focus).map(|e| e.doc) else { return Outcome::None };
-                self.add_pane(doc, Spot::SplitOf(self.focus, split));
-            }
-            Action::NewPane(path) => {
-                if let Err(e) = self.open(&path) {
-                    self.message(&format!("{}: {e:#}", path.display()));
+                let spot = Spot::SplitOf(self.focus, split);
+                match self.panes.get(&self.focus).map(|e| &e.kind) {
+                    Some(Kind::Pdf { doc, .. }) => {
+                        let doc = *doc;
+                        self.add_pdf_pane(doc, spot);
+                    }
+                    // A new shell where the focused one is.
+                    Some(Kind::Term(t)) => {
+                        let cwd = t.pwd().filter(|d| d.is_dir());
+                        self.open_terminal(&Spawn { argv: None, cwd, env: Vec::new() }, spot)?;
+                    }
+                    None => {}
                 }
             }
+            Action::NewPane { spec, cwd } => self.new_pane(&spec, cwd.as_deref())?,
             Action::MoveFocus(dir) => {
                 if let Some(p) = self.layout.as_ref().and_then(|l| l.neighbor(self.focus, dir, self.area())) {
-                    self.focus = p;
+                    self.set_focus(p);
                 }
             }
             Action::FocusNextPane => {
-                if let Some(l) = &self.layout {
-                    self.focus = l.next(self.focus);
+                if let Some(next) = self.layout.as_ref().map(|l| l.next(self.focus)) {
+                    self.set_focus(next);
                 }
             }
-            Action::ClosePane => return self.close(self.focus),
-            Action::Detach => return Outcome::Detach,
+            Action::ClosePane => return Ok(self.close(self.focus)),
+            Action::Detach => return Ok(Outcome::Detach),
         }
-        Outcome::Redraw
+        Ok(Outcome::Redraw)
     }
 
     /// Close a pane, and its document when no other pane shows it.
@@ -445,17 +594,19 @@ impl Session {
             // The last pane.
             return Outcome::Quit;
         }
-        if let Some(mut e) = self.panes.remove(&id) {
-            e.pane.release(&mut self.images);
-            if !self.panes.values().any(|p| p.doc == e.doc)
-                && let Some(d) = self.docs.remove(&e.doc)
+        if let Some(e) = self.panes.remove(&id)
+            && let Kind::Pdf { mut pane, doc } = e.kind
+        {
+            pane.release(&mut self.images);
+            if !self.panes.values().any(|p| p.doc() == Some(doc))
+                && let Some(d) = self.docs.remove(&doc)
                 && let Some(host) = d.host
             {
                 host.doc.borrow_mut().release(&mut self.images);
             }
         }
         if self.focus == id {
-            self.focus = next;
+            self.set_focus(next);
         }
         for p in [&mut self.hovered, &mut self.captured] {
             if *p == Some(id) {
@@ -491,10 +642,10 @@ impl Session {
         // The pointer left a pane: let it forget hover state (link previews).
         if self.hovered != under {
             if let Some(old) = self.hovered.take()
-                && let Some(e) = self.panes.get_mut(&old)
+                && let Some(p) = self.panes.get_mut(&old).and_then(PaneEntry::pdf)
             {
                 let away = MouseEvent { kind: MouseEventKind::Move, x: -100_000, y: -100_000, ..*m };
-                out = out.or(e.pane.mouse(&away, now));
+                out = out.or(p.mouse(&away, now));
             }
             self.hovered = under;
         }
@@ -504,7 +655,7 @@ impl Session {
                 if let Some(p) = under
                     && p != self.focus
                 {
-                    self.focus = p;
+                    self.set_focus(p);
                     out = Outcome::Redraw;
                 }
             }
@@ -518,19 +669,27 @@ impl Session {
             CoordUnit::Cell => (e.rect.x, e.rect.y),
         };
         let local = MouseEvent { x: m.x - dx, y: m.y - dy, ..*m };
-        out.or(e.pane.mouse(&local, now))
+        match &mut e.kind {
+            Kind::Pdf { pane, .. } => out.or(pane.mouse(&local, now)),
+            Kind::Term(t) => out.or(t.mouse(&local)),
+        }
     }
 
     /// Effects for the frontend, including requests panes made since the last
     /// call (call every loop iteration: inverse search does not redraw).
     pub fn take_effects(&mut self) -> Vec<Effect> {
         for e in self.panes.values_mut() {
-            for req in e.pane.take_requests() {
-                if let Some(host) = self.docs.get_mut(&e.doc).and_then(|d| d.host.as_mut())
-                    && let Some(effect) = host.request(req)
-                {
-                    self.effects.push(effect);
+            match &mut e.kind {
+                Kind::Pdf { pane, doc } => {
+                    for req in pane.take_requests() {
+                        if let Some(host) = self.docs.get_mut(doc).and_then(|d| d.host.as_mut())
+                            && let Some(effect) = host.request(req)
+                        {
+                            self.effects.push(effect);
+                        }
+                    }
                 }
+                Kind::Term(t) => self.effects.extend(t.take_effects()),
             }
         }
         std::mem::take(&mut self.effects)
@@ -543,7 +702,10 @@ impl Session {
 
     /// The pointer shape the frontend should show.
     pub fn pointer(&self) -> Pointer {
-        self.hovered.and_then(|p| self.panes.get(&p)).map_or(Pointer::Default, |e| e.pane.pointer())
+        match self.hovered.and_then(|p| self.panes.get(&p)).map(|e| &e.kind) {
+            Some(Kind::Pdf { pane, .. }) => pane.pointer(),
+            _ => Pointer::Default,
+        }
     }
 
     /// Compose this frame from every pane and hand their work to the documents.
@@ -565,9 +727,15 @@ impl Session {
         ids.sort_by_key(|id| *id != self.focus);
         for id in ids {
             let Some(e) = self.panes.get_mut(&id) else { continue };
-            let (frame, pane_needs) = e.pane.frame(&mut self.images);
-            needs.entry(e.doc).or_default().extend(pane_needs);
-            complete &= e.pane.viewer.is_complete();
+            let frame = match &mut e.kind {
+                Kind::Pdf { pane, doc } => {
+                    let (frame, pane_needs) = pane.frame(&mut self.images);
+                    needs.entry(*doc).or_default().extend(pane_needs);
+                    complete &= pane.viewer.is_complete();
+                    frame
+                }
+                Kind::Term(t) => t.frame(),
+            };
             let (ox, oy) = (e.rect.x * cell.width as i32, e.rect.y * cell.height as i32);
             let clip = Rect::new(ox, oy, e.rect.w * cell.width, e.rect.h * cell.height);
             for l in frame.layers {
@@ -676,20 +844,23 @@ impl Session {
     /// Nothing is being opened, loaded, rendered or searched.
     pub fn is_idle(&self) -> bool {
         self.docs.values().all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle()))
-            && self.panes.values().all(|e| !e.pane.search.is_active() || e.pane.search.is_complete())
+            && self.panes.values().all(|e| match &e.kind {
+                Kind::Pdf { pane, .. } => !pane.search.is_active() || pane.search.is_complete(),
+                Kind::Term(_) => true,
+            })
     }
 
     pub fn is_animating(&self) -> bool {
-        self.panes.values().any(|e| e.pane.is_animating())
+        self.panes.values().any(|e| matches!(&e.kind, Kind::Pdf { pane, .. } if pane.is_animating()))
     }
 
     /// Advance animations and timers. Returns whether to redraw.
     pub fn tick(&mut self, now: Instant) -> bool {
         let mut changed = false;
-        for e in self.panes.values_mut() {
-            changed |= e.pane.tick(now);
+        for p in self.panes.values_mut().filter_map(PaneEntry::pdf) {
+            changed |= p.tick(now);
             // A highlight expired.
-            changed |= e.pane.next_deadline().is_some_and(|d| now >= d);
+            changed |= p.next_deadline().is_some_and(|d| now >= d);
         }
         for (&id, d) in self.docs.iter_mut() {
             if let Some(host) = d.host.as_mut() {
@@ -701,7 +872,10 @@ impl Session {
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
-        let panes = self.panes.values().filter_map(|e| e.pane.next_deadline());
+        let panes = self.panes.values().filter_map(|e| match &e.kind {
+            Kind::Pdf { pane, .. } => pane.next_deadline(),
+            Kind::Term(_) => None,
+        });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
         panes.chain(docs).min()
     }
@@ -721,14 +895,15 @@ impl Session {
         self.panes.len()
     }
 
-    /// The focused pane (for options applied after start-up, e.g. `--page`).
+    /// The focused pane when it shows a PDF (for options applied after
+    /// start-up, e.g. `--page`).
     pub fn focused_pane(&mut self) -> Option<&mut PdfPane> {
-        self.panes.get_mut(&self.focus).map(|e| &mut e.pane)
+        self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf)
     }
 
     /// Ask for a forward search in the focused pane's document.
     pub fn forward(&mut self, req: ForwardRequest) {
-        if let Some(doc) = self.panes.get(&self.focus).map(|e| e.doc) {
+        if let Some(doc) = self.panes.get(&self.focus).and_then(PaneEntry::doc) {
             self.handle(SessionEvent::Forward(doc, req), Instant::now());
         }
     }
@@ -822,7 +997,7 @@ mod tests {
     #[test]
     fn panes_are_composed_inside_their_rectangles_with_unique_keys() {
         let (mut s, rx) = session();
-        s.action(Action::Split(Split::Horizontal), Instant::now());
+        s.action(Action::Split(Split::Horizontal), Instant::now()).unwrap();
         let (frame, _) = settle(&mut s, &rx);
         let mut keys = HashSet::new();
         for l in &frame.layers {
@@ -844,7 +1019,7 @@ mod tests {
         // Stacked panes have the same width, so the same zoom and tiles; both
         // ask for them in the first frame. (The deduplication itself is
         // tested deterministically in temzdf-pdfview's host.rs.)
-        s.action(Action::Split(Split::Vertical), Instant::now());
+        s.action(Action::Split(Split::Vertical), Instant::now()).unwrap();
         let (_, rendered) = settle(&mut s, &rx);
         assert!(!rendered.is_empty());
         let unique: HashSet<_> = rendered.iter().collect();
@@ -856,20 +1031,21 @@ mod tests {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
         let before = s.images().len();
-        s.action(Action::NewPane(pdf::fixture("sample-short.pdf")), Instant::now());
+        s.action(Action::NewPane { spec: PaneSpec::Pdf(pdf::fixture("sample-short.pdf")), cwd: None }, Instant::now())
+            .unwrap();
         while s.pane_count() < 2 {
             let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();
             s.handle(ev, Instant::now());
         }
         settle(&mut s, &rx);
         assert!(s.images().len() > before);
-        s.action(Action::ClosePane, Instant::now());
+        s.action(Action::ClosePane, Instant::now()).unwrap();
         // The remaining pane is wider again: its new tiles replace the old ones
         // over time, but the closed document's tiles and the pane's own images
         // are gone at once.
         assert_eq!(s.docs.len(), 1);
         let (_, _) = settle(&mut s, &rx);
-        assert!(s.panes.values().all(|e| e.doc != 0));
+        assert!(s.panes.values().all(|e| e.doc() != Some(0)));
     }
 
     #[test]
@@ -911,8 +1087,8 @@ mod tests {
         use termpix::mock::MockTerminal;
         let big = Geometry { cols: 100, rows: 34, ..GEOMETRY };
         let (mut s, rx) = session();
-        s.action(Action::Split(Split::Horizontal), Instant::now());
-        s.action(Action::Split(Split::Vertical), Instant::now());
+        s.action(Action::Split(Split::Horizontal), Instant::now()).unwrap();
+        s.action(Action::Split(Split::Vertical), Instant::now()).unwrap();
         let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, GEOMETRY);
         let mut presenter = temzdf_tty::Presenter::new();
         let mut out = Vec::new();
@@ -930,8 +1106,8 @@ mod tests {
 
         let (mut fresh, rx2) = session();
         fresh.resize(big);
-        fresh.action(Action::Split(Split::Horizontal), Instant::now());
-        fresh.action(Action::Split(Split::Vertical), Instant::now());
+        fresh.action(Action::Split(Split::Horizontal), Instant::now()).unwrap();
+        fresh.action(Action::Split(Split::Vertical), Instant::now()).unwrap();
         let mut comp2 = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, big);
         let (frame2, _) = settle(&mut fresh, &rx2);
         let mut out2 = Vec::new();
@@ -945,5 +1121,107 @@ mod tests {
         }
         let differing = resized.data.chunks(4).zip(expected.data.chunks(4)).filter(|(a, b)| a != b).count();
         assert_eq!(differing, 0, "{differing} pixels differ");
+    }
+
+    fn terminal_session(argv: &[&str]) -> (Session, Receiver<SessionEvent>) {
+        let (tx, rx) = mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let settings = Settings {
+            keymap: Keymap::default(),
+            preview_delay: None,
+            anchor_by_text: false,
+            scroll: ScrollConfig::default(),
+            host: HostOptions::default(),
+            serve_forward: false,
+        };
+        let mut s = Session::new("term".into(), GEOMETRY, Hints::default(), settings, sink);
+        let spec = PaneSpec::Command(argv.iter().map(|a| a.to_string()).collect());
+        s.new_pane(&spec, None).unwrap();
+        (s, rx)
+    }
+
+    /// Handle events until the composed text satisfies `done`; returns the
+    /// last outcome and the screen's rows.
+    fn wait_text(
+        s: &mut Session,
+        rx: &Receiver<SessionEvent>,
+        done: impl Fn(&[String]) -> bool,
+    ) -> (Outcome, Vec<String>) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut outcome = Outcome::None;
+        loop {
+            let rows = screen_text(&s.frame(), GEOMETRY);
+            if done(&rows) || outcome == Outcome::Quit || Instant::now() > deadline {
+                return (outcome, rows);
+            }
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
+                outcome = s.handle(ev, Instant::now());
+            }
+        }
+    }
+
+    /// The frame's text as screen rows (trailing blanks trimmed).
+    fn screen_text(frame: &Frame, g: Geometry) -> Vec<String> {
+        let mut screen = vec![vec![' '; g.cols as usize]; g.rows as usize];
+        for grid in &frame.text {
+            for (dy, row) in grid.rows.iter().enumerate() {
+                for (dx, c) in row.iter().enumerate() {
+                    let (x, y) = (grid.col as usize + dx, grid.row as usize + dy);
+                    if let (Some(ch), true) = (c.text.chars().next(), y < screen.len() && x < screen[0].len()) {
+                        screen[y][x] = ch;
+                    }
+                }
+            }
+        }
+        screen.into_iter().map(|r| r.into_iter().collect::<String>().trim_end().to_owned()).collect()
+    }
+
+    #[test]
+    fn terminal_panes_show_output_take_keys_and_close_when_the_program_exits() {
+        let (mut s, rx) =
+            terminal_session(&["sh", "-c", "stty -echo -ixon; echo ready; read l; echo \"got:$l\"; read l"]);
+        wait_text(&mut s, &rx, |r| r[0] == "ready");
+        // C-s C-s sends C-s itself (with flow control off, a plain character).
+        key(&mut s, "C-s");
+        key(&mut s, "C-s");
+        for k in ["a", "Enter"] {
+            key(&mut s, k);
+        }
+        let (_, rows) = wait_text(&mut s, &rx, |r| r[1].starts_with("got:"));
+        assert_eq!(rows[1], "got:\u{13}a");
+        assert!(s.frame().cursor.is_some());
+        key(&mut s, "Enter");
+        let (outcome, _) = wait_text(&mut s, &rx, |_| false);
+        assert_eq!(outcome, Outcome::Quit, "the last pane's program exited");
+    }
+
+    #[test]
+    fn splitting_a_terminal_starts_another_shell_beside_it() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo left; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "left");
+        // SHELL decides what the split runs.
+        // SAFETY: tests in this module do not read SHELL concurrently.
+        unsafe { std::env::set_var("SHELL", "/bin/sh") };
+        key(&mut s, "C-s");
+        assert_eq!(key(&mut s, "%"), Outcome::Redraw);
+        assert_eq!(s.pane_count(), 2);
+        for c in "echo right-$((40+2))".chars() {
+            s.key(&KeyEvent::new(KeyCode::Char(c), Modifiers::NONE), Instant::now());
+        }
+        key(&mut s, "Enter");
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("right-42")));
+        // The left pane keeps its text in its half; the new shell is in the right one.
+        assert!(rows[0].starts_with("left"), "{rows:?}");
+        let line = rows.iter().find(|l| l.contains("right-42")).unwrap();
+        assert!(line.find("right-42").unwrap() >= 45, "{line:?}");
+        // Closing it gives the first pane the whole screen again.
+        key(&mut s, "C-s");
+        key(&mut s, "x");
+        assert_eq!(s.pane_count(), 1);
+        // A bigger window: the pane (and its program's pty) grows with it.
+        s.resize(Geometry { cols: 100, rows: 34, ..GEOMETRY });
+        let frame = s.frame();
+        assert_eq!((frame.text[0].rows.len(), frame.text[0].rows[0].len()), (34, 100));
     }
 }

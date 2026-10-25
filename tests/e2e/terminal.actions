@@ -1,0 +1,48 @@
+# Terminal panes in a session.
+# Used with:
+#   mkdir -p target/e2e-terminal
+#   scripts/e2e.sh -o target/e2e-terminal tests/e2e/terminal.actions -- sh -c \
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf -s e2e-term; exec sh'
+# Expected:
+#   shell.png       a shell filling the window: the listing, "red" in red,
+#                   "green on blue", "数式 wide" (wide characters)
+#   split-less.png  the shell left, less showing Cargo.toml on the right (focused)
+#   pdf.png         sample.pdf right of that shell, opened from it
+#                   with `temzdf action new-pane`
+#   flood.png       the middle shell (focused again with C-s h) after `time seq 1 500000`: the last numbers and
+#                   a real time of well under a second
+#   detached.png    the outer shell, "[detached from session e2e-term]"
+#   reattached.png  the same three panes as pdf.png (shell text kept)
+#   killed.png      "[session e2e-term was killed]"
+pause 1
+type "ls tests/e2e | head -3; printf '\033[31mred\033[0m \033[32;44mgreen on blue\033[0m\n'; printf '\\346\\225\\260\\345\\274\\217 wide\\n'
+"
+pause 1
+shot shell
+keys ctrl+s percent
+pause 1
+type "less Cargo.toml
+"
+pause 1
+shot split-less
+keys q
+pause 0.5
+type "target/debug/temzdf action new-pane target/fixtures/sample.pdf
+"
+pause 2
+shot pdf
+keys ctrl+s h
+type "time seq 1 500000
+"
+pause 3
+shot flood
+keys ctrl+s d
+pause 1
+shot detached
+type "target/debug/temzdf attach e2e-term
+"
+pause 2.5
+shot reattached
+target/debug/temzdf kill-session e2e-term
+pause 1
+shot killed

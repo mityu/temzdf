@@ -12,6 +12,7 @@ temzdf-pdfcore.workspace = true
 temzdf-pdfview.workspace = true
 temzdf-protocol.workspace = true
 temzdf-scene.workspace = true
+temzdf-term.workspace = true
 termpix-core.workspace = true
 termpix-ui.workspace = true
 
