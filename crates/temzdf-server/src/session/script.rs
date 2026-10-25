@@ -502,6 +502,11 @@ impl Session {
             eprintln!("temzdf: {msg}");
             self.script.startup_error = Some(e.message);
         }
+        // Modes are checked once the configuration has defined them all.
+        for problem in self.modes.check() {
+            eprintln!("temzdf: configuration: {problem}");
+            self.script.startup_error.get_or_insert(problem);
+        }
         let out = self.open_first();
         out.merge(self.pump())
     }
@@ -608,10 +613,123 @@ impl Session {
                 }
                 Err(e) => (Err(format!("{e:#}")), Outcome::None),
             },
+            HostOp::DefineMode { name, inherit, unmapped, count } => {
+                let unmapped = match unmapped.as_deref() {
+                    None => None,
+                    Some("drop") => Some(crate::keymap::Unmapped::Drop),
+                    Some("passthrough") => Some(crate::keymap::Unmapped::Passthrough),
+                    Some(other) => {
+                        return (
+                            Err(format!("defineMode: unmapped {other:?} is not drop or passthrough")),
+                            Outcome::None,
+                        );
+                    }
+                };
+                let d = self.modes.define(&name);
+                if inherit.is_some() {
+                    d.inherit = inherit;
+                }
+                if unmapped.is_some() {
+                    d.unmapped = unmapped;
+                }
+                if count.is_some() {
+                    d.count = count;
+                }
+                (Ok(ScriptValue::Null), Outcome::None)
+            }
+            HostOp::Map { modes, keys, rhs, nowait, desc } => match self.script_map(&modes, &keys, rhs, nowait, desc) {
+                Ok(()) => (Ok(ScriptValue::Null), Outcome::None),
+                Err(e) => (Err(e), Outcome::None),
+            },
+            HostOp::Unmap { modes, keys } => {
+                let keys = match crate::keymap::notation::parse(&keys) {
+                    Ok(k) => k,
+                    Err(e) => return (Err(format!("unmap: {e:#}")), Outcome::None),
+                };
+                for m in &modes {
+                    if !self.modes.exists(m) {
+                        return (Err(format!("unmap: no mode {m:?}")), Outcome::None);
+                    }
+                    self.modes.unmap(m, keys.clone());
+                }
+                (Ok(ScriptValue::Null), Outcome::None)
+            }
+            HostOp::SetOption { name, value } => match self.set_option(&name, &value) {
+                Ok(()) => (Ok(ScriptValue::Null), Outcome::None),
+                Err(e) => (Err(e), Outcome::None),
+            },
+            HostOp::GetOption { name } => (self.get_option(&name), Outcome::None),
             HostOp::Command { name, args } => match self.run_command(&name, &args, None, Instant::now()) {
                 Ok((v, o)) => (Ok(v), o),
                 Err(e) => (Err(e), Outcome::None),
             },
         }
+    }
+}
+
+impl Session {
+    /// `map(modes, keys, rhs)` from a script.
+    fn script_map(
+        &mut self,
+        modes: &[String],
+        keys: &str,
+        rhs: temzdf_protocol::script::MapRhs,
+        nowait: bool,
+        desc: Option<String>,
+    ) -> Result<(), String> {
+        use crate::keymap::{Act, Target, notation};
+        let keys = notation::parse(keys).map_err(|e| format!("map: {e:#}"))?;
+        let ctrl_c = notation::parse("<C-c>").expect("notation");
+        if keys.first() == ctrl_c.first() {
+            return Err("map: <C-c> is reserved (it cancels and interrupts)".into());
+        }
+        let target = match rhs {
+            temzdf_protocol::script::MapRhs::Func(f) => Target::Func(f),
+            temzdf_protocol::script::MapRhs::Actions(list) => {
+                let known: Vec<String> = super::command_specs().into_iter().map(|c| c.name).collect();
+                for (name, _) in &list {
+                    if !known.contains(name) {
+                        return Err(format!("map: no command {name:?}"));
+                    }
+                }
+                Target::Actions(list.into_iter().map(|(n, a)| Act { name: n, args: a }).collect())
+            }
+        };
+        for m in modes {
+            if !self.modes.exists(m) {
+                return Err(format!("map: no mode {m:?} (create it with defineMode)"));
+            }
+            self.modes.map(m, keys.clone(), target.clone(), nowait, desc.clone());
+        }
+        Ok(())
+    }
+
+    fn set_option(&mut self, name: &str, value: &ScriptValue) -> Result<(), String> {
+        let num = || value.as_num().filter(|n| *n >= 0.0).ok_or(format!("o.{name}: expected a number"));
+        let flag = || match value {
+            ScriptValue::Bool(b) => Ok(*b),
+            _ => Err(format!("o.{name}: expected true or false")),
+        };
+        match name {
+            "timeoutlen" => self.options.timeoutlen = Duration::from_millis(num()? as u64),
+            "splitright" => self.options.splitright = flag()?,
+            "splitbelow" => self.options.splitbelow = flag()?,
+            "modehistory" => {
+                self.options.modehistory = (num()? as usize).max(1);
+                self.history.cap = self.options.modehistory;
+            }
+            other => return Err(format!("no option {other:?}")),
+        }
+        Ok(())
+    }
+
+    fn get_option(&self, name: &str) -> Result<ScriptValue, String> {
+        Ok(match name {
+            "timeoutlen" => ScriptValue::Num(self.options.timeoutlen.as_millis() as f64),
+            "splitright" => ScriptValue::Bool(self.options.splitright),
+            "splitbelow" => ScriptValue::Bool(self.options.splitbelow),
+            "modehistory" => ScriptValue::Num(self.options.modehistory as f64),
+            other => return Err(format!("no option {other:?}")),
+        })
     }
 }

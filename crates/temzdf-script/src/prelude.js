@@ -38,9 +38,19 @@
   // Filled once the session has said which commands it has (before the
   // configuration runs).
   const globalCmd = {};
+  // `action.split("right")` describes a command as data: mappings to such
+  // descriptions (or arrays of them) run in the session without a script.
+  const globalAction = {};
+  const ACTION = Symbol.for("temzdf.action");
   globalThis.__temzdfLoad = () => {
-    if (!Object.isFrozen(globalCmd)) commands(current, globalCmd);
+    if (Object.isFrozen(globalCmd)) return;
+    commands(current, globalCmd);
+    for (const name of JSON.parse(host.commands())) {
+      globalAction[camel(name)] = (...args) => Object.freeze({ [ACTION]: true, name, args });
+    }
+    Object.freeze(globalAction);
   };
+  const isAction = (a) => a !== null && typeof a === "object" && a[ACTION] === true;
 
   // Register `fn` as a mapped or hook function: synchronous only.
   function register(fn, what) {
@@ -72,6 +82,49 @@
 
   const temzdf = {
     cmd: globalCmd,
+    action: globalAction,
+    // map(mode | modes, lhs, rhs, { nowait, desc }): rhs is a synchronous
+    // function, an action, or an array of actions.
+    map(modes, lhs, rhs, options = {}) {
+      const payload = { modes, keys: lhs, nowait: !!options.nowait, desc: options.desc ?? null };
+      if (typeof rhs === "function") {
+        payload.func = register(rhs, `map(${lhs})`);
+      } else {
+        const list = Array.isArray(rhs) ? rhs : [rhs];
+        if (!list.every(isAction)) throw new TypeError(`map(${lhs}): expected a function, an action or actions`);
+        payload.actions = list.map((a) => ({ name: a.name, args: a.args }));
+      }
+      request(current(), "map", payload);
+    },
+    unmap(modes, lhs) {
+      request(current(), "unmap", { modes, keys: lhs });
+    },
+    // defineMode(name, { inherit, unmapped: "drop" | "passthrough", count })
+    defineMode(name, props = {}) {
+      request(current(), "defineMode", {
+        name,
+        inherit: props.inherit ?? null,
+        unmapped: props.unmapped ?? null,
+        count: props.count ?? null,
+      });
+    },
+    feedkeys(keys, options = {}) {
+      return globalCmd.feedkeys(keys, options.remap !== false);
+    },
+    currentMode() {
+      return globalCmd.currentMode();
+    },
+    // Options, as Neovim's vim.o: `o.timeoutlen = 500`.
+    o: new Proxy(
+      {},
+      {
+        get: (_, name) => (typeof name === "string" ? request(current(), "getOption", { name }) : undefined),
+        set: (_, name, value) => {
+          request(current(), "setOption", { name, value });
+          return true;
+        },
+      },
+    ),
     on(event, fn, options = {}) {
       request(current(), "on", { event, func: register(fn, `on(${event})`), nested: !!options.nested });
     },

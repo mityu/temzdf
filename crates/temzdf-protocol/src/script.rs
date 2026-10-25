@@ -78,6 +78,8 @@ pub enum Token {
 pub struct CommandSpec {
     pub name: String,
     pub doc: String,
+    /// Its TypeScript signature after the name (`(text: string): void`).
+    pub ts: String,
 }
 
 /// A script failed: an exception, a syntax error, or an interrupt.
@@ -158,12 +160,56 @@ pub enum FromHost {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum HostOp {
     /// Run a command from the server's registry.
-    Command { name: String, args: Vec<ScriptValue> },
+    Command {
+        name: String,
+        args: Vec<ScriptValue>,
+    },
     /// Run `func` on `event` (`nested`: also for events caused by hooks).
-    On { event: String, func: FuncId, nested: bool },
+    On {
+        event: String,
+        func: FuncId,
+        nested: bool,
+    },
     /// Run `func` for the session prefix followed by `key` (provisional,
     /// until modes and mappings replace the fixed prefix).
-    PrefixMap { key: String, func: FuncId },
+    PrefixMap {
+        key: String,
+        func: FuncId,
+    },
+    /// Create a mode, or change a mode's properties (`None` keeps them).
+    DefineMode {
+        name: String,
+        inherit: Option<String>,
+        unmapped: Option<String>,
+        count: Option<bool>,
+    },
+    /// Map `keys` (Neovim notation) in each of `modes`.
+    Map {
+        modes: Vec<String>,
+        keys: String,
+        rhs: MapRhs,
+        nowait: bool,
+        desc: Option<String>,
+    },
+    Unmap {
+        modes: Vec<String>,
+        keys: String,
+    },
+    SetOption {
+        name: String,
+        value: ScriptValue,
+    },
+    GetOption {
+        name: String,
+    },
+}
+
+/// What a mapping runs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum MapRhs {
+    Func(FuncId),
+    /// Commands by name with their arguments, run by the session itself.
+    Actions(Vec<(String, Vec<ScriptValue>)>),
 }
 
 #[cfg(test)]
@@ -187,7 +233,7 @@ mod tests {
         round_trip(&ToHost::Call { id: 7, func: 2, args: vec![v.clone()] });
         round_trip(&ToHost::Load {
             config: "config.ts".into(),
-            commands: vec![CommandSpec { name: "split".into(), doc: "split right|down".into() }],
+            commands: vec![CommandSpec { name: "split".into(), doc: "split right|down".into(), ts: "(): void".into() }],
         });
         round_trip(&FromHost::Request {
             req: 1,

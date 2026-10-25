@@ -409,3 +409,44 @@ fn a_click_on_another_pane_only_focuses_it() {
     t.click(70, 10);
     t.wait_for("the program's view of the click", |s| (1..6).any(|r| s.row_from(r, 50).contains('[')));
 }
+
+#[test]
+fn modes_mappings_and_options_from_the_configuration() {
+    let env = Env::new("script-modes");
+    env.config(
+        "config.ts",
+        r#"import { action, cmd, defineMode, feedkeys, map, o, on, unmap } from "temzdf";
+o.timeoutlen = 300;
+defineMode("win", { inherit: "normal", unmapped: "drop" });
+map("terminal", "<C-x>w", action.switchMode("win"));
+map("win", "v", [action.split("right"), action.sendText("echo in-new\n")]);
+map("terminal", "<C-x>e", () => cmd.sendText(`echo mode-${cmd.currentMode()}\n`));
+map("terminal", "<C-x>f", () => feedkeys("echo fed<CR>"));
+unmap("normal", "x");
+on("ModeChanged", (a: string, b: string) => console.log(`mode ${a} ${b}`));
+try { map("terminal", "<C-c>x", action.exitMode()); } catch (e) { console.log(`refused: ${(e as Error).message}`); }
+"#,
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "md"], &env.options());
+    t.wait_for("the prompt", prompt);
+    env.wait_log("md", "the refusal", |l| l.contains("refused:") && l.contains("reserved"));
+    t.keys(&["C-x", "e"]);
+    t.wait_text("mode-terminal");
+    t.keys(&["C-x", "f"]);
+    t.wait_text("fed");
+    // <C-x> alone times out and goes to the shell; the next key types on.
+    t.key("C-x");
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    t.type_text("echo after-timeout\n");
+    t.wait_text("after-timeout");
+    // A user mode inheriting normal: x is unmapped there too (unmap in normal).
+    t.keys(&["C-x", "w"]);
+    env.wait_log("md", "the mode change", |l| l.contains("mode terminal win"));
+    t.key("x");
+    t.key("v");
+    t.wait_for("the new pane's command", |s| (0..s.cells.len() as u16).any(|r| s.row_from(r, 50) == "in-new"));
+    let lines = env.script_lines("md");
+    assert!(lines.iter().any(|l| l == "mode win terminal"), "the new pane's mode after the split: {lines:?}");
+    let ls = env.run(&["ls"]);
+    assert!(ls.contains("md  (2 panes"), "x did not close a pane: {ls}");
+}

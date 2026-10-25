@@ -97,10 +97,24 @@ impl Outcome {
     }
 }
 
-/// How long a key that starts a longer mapping waits (Vim's `timeoutlen`).
-const TIMEOUTLEN: Duration = Duration::from_millis(1000);
-/// How many modes the history keeps.
-const MODE_HISTORY: usize = 100;
+/// Options scripts set with `o.<name> = ...` (global for now).
+#[derive(Clone, Debug)]
+pub struct Options {
+    /// How long a key that starts a longer mapping waits (Vim's `timeoutlen`).
+    pub timeoutlen: Duration,
+    /// Where `split()` without a side puts the new pane: right (else left).
+    pub splitright: bool,
+    /// Below (else above), for splits towards the bottom.
+    pub splitbelow: bool,
+    /// How many modes the history keeps.
+    pub modehistory: usize,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self { timeoutlen: Duration::from_millis(1000), splitright: true, splitbelow: true, modehistory: 100 }
+    }
+}
 /// Session layers: the background below every pane, borders above them.
 const Z_SESSION_BACKGROUND: i32 = -1_073_741_950;
 const Z_BORDER: i32 = -1_073_741_700;
@@ -196,6 +210,7 @@ pub struct Session {
     modes: Modes<Target>,
     matcher: Matcher,
     history: History,
+    options: Options,
     keys: Keys,
     effects: Vec<Effect>,
     /// The pane under the pointer, and the one holding a pressed button.
@@ -230,7 +245,8 @@ impl Session {
             next_id: 1,
             modes,
             matcher: Matcher::default(),
-            history: History::new("normal", MODE_HISTORY),
+            history: History::new("normal", Options::default().modehistory),
+            options: Options::default(),
             keys: Keys::default(),
             effects: Vec::new(),
             hovered: None,
@@ -621,7 +637,7 @@ impl Session {
         let mut out = Outcome::None;
         while !self.script.busy() {
             let mode = self.history.current().to_owned();
-            match self.matcher.step(&self.modes, &mode, TIMEOUTLEN, now) {
+            match self.matcher.step(&self.modes, &mode, self.options.timeoutlen, now) {
                 Step::Wait(_) => break,
                 Step::Run { target, count, .. } => out = out.merge(self.run_target(target, count, now)),
                 Step::Unmapped(stroke, ev) => {
@@ -1057,7 +1073,7 @@ impl Session {
     /// timeout, the "running a script" notice). For event loops.
     pub fn poll(&mut self, now: Instant) -> Outcome {
         let mut out = self.script_tick(now).or(self.tick(now));
-        if self.matcher.deadline(TIMEOUTLEN).is_some_and(|d| now >= d) {
+        if self.matcher.deadline(self.options.timeoutlen).is_some_and(|d| now >= d) {
             out = out.merge(self.drive(now));
         }
         out.merge(self.flush_events())
@@ -1069,7 +1085,7 @@ impl Session {
             Kind::Term(_) => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
-        panes.chain(docs).chain(self.script_deadline()).chain(self.matcher.deadline(TIMEOUTLEN)).min()
+        panes.chain(docs).chain(self.script_deadline()).chain(self.matcher.deadline(self.options.timeoutlen)).min()
     }
 
     pub fn focus(&self) -> PaneId {

@@ -19,12 +19,16 @@ use std::time::{Duration, Instant};
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::promise::PromiseState;
 use rquickjs::{Context, Ctx, Exception, Function, Module, Persistent, Runtime, Value};
-use temzdf_protocol::script::{CommandSpec, FromHost, FuncId, HostOp, ScriptError, ScriptValue, TaskId, ToHost, Token};
+use temzdf_protocol::script::{
+    CommandSpec, FromHost, FuncId, HostOp, MapRhs, ScriptError, ScriptValue, TaskId, ToHost, Token,
+};
 
 const PRELUDE: &str = include_str!("prelude.js");
 /// What `import ... from "temzdf"` gets.
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
-     export const cmd = t.cmd, on = t.on, prefixMap = t.prefixMap, dispatch = t.dispatch, atomic = t.atomic;\n\
+     export const cmd = t.cmd, action = t.action, on = t.on, map = t.map, unmap = t.unmap, defineMode = t.defineMode,\n\
+     o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, prefixMap = t.prefixMap, dispatch = t.dispatch,\n\
+     atomic = t.atomic;\n\
      export default t;\n";
 
 /// Run the host until the session goes away or says [`ToHost::Shutdown`].
@@ -250,6 +254,38 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
             nested: payload.get("nested").and_then(|v| v.as_bool()).unwrap_or(false),
         },
         "prefixMap" => HostOp::PrefixMap { key: text("key"), func: func() },
+        "defineMode" => HostOp::DefineMode {
+            name: text("name"),
+            inherit: payload.get("inherit").and_then(|v| v.as_str()).map(str::to_owned),
+            unmapped: payload.get("unmapped").and_then(|v| v.as_str()).map(str::to_owned),
+            count: payload.get("count").and_then(|v| v.as_bool()),
+        },
+        "map" => HostOp::Map {
+            modes: strings(&payload, "modes"),
+            keys: text("keys"),
+            rhs: match payload.get("func").and_then(|v| v.as_u64()) {
+                Some(f) => MapRhs::Func(f as FuncId),
+                None => MapRhs::Actions(payload.get("actions").and_then(|a| a.as_array()).map_or(Vec::new(), |a| {
+                    a.iter()
+                        .map(|act| {
+                            let name = act.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_owned();
+                            let args = act
+                                .get("args")
+                                .and_then(|a| a.as_array())
+                                .map_or(Vec::new(), |a| a.iter().map(to_script).collect());
+                            (name, args)
+                        })
+                        .collect()
+                })),
+            },
+            nowait: payload.get("nowait").and_then(|v| v.as_bool()).unwrap_or(false),
+            desc: payload.get("desc").and_then(|v| v.as_str()).map(str::to_owned),
+        },
+        "unmap" => HostOp::Unmap { modes: strings(&payload, "modes"), keys: text("keys") },
+        "setOption" => {
+            HostOp::SetOption { name: text("name"), value: payload.get("value").map_or(ScriptValue::Null, to_script) }
+        }
+        "getOption" => HostOp::GetOption { name: text("name") },
         other => return throw(&format!("internal: unknown operation {other}")),
     };
     let req = st.next_req.get();
@@ -373,6 +409,15 @@ fn error_of(ctx: &Ctx<'_>, e: rquickjs::Error) -> ScriptError {
     }
     let text: Option<String> = caught.as_string().and_then(|s| s.to_string().ok());
     ScriptError::new(text.unwrap_or_else(|| "uncatchable error (interrupted?)".into()))
+}
+
+/// `payload[key]`: a string or a list of strings.
+fn strings(payload: &serde_json::Value, key: &str) -> Vec<String> {
+    match payload.get(key) {
+        Some(serde_json::Value::String(s)) => vec![s.clone()],
+        Some(serde_json::Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn to_script(v: &serde_json::Value) -> ScriptValue {

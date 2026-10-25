@@ -13,34 +13,44 @@ use crate::layout::Direction;
 
 /// The session's own commands; the page-view commands follow (see
 /// [`command_specs`]).
-const SESSION: &[(&str, &str)] = &[
+const SESSION: &[(&str, &str, &str)] = &[
     (
         "split",
-        "split(side?: \"right\" | \"left\" | \"bottom\" | \"top\", scope?: \"pane\" | \"screen\"): another pane like the focused one",
+        "(side?: \"right\" | \"left\" | \"bottom\" | \"top\", scope?: \"pane\" | \"screen\"): void",
+        "Another pane like the focused one (the same document, or a new shell); `screen` puts it at that edge of the whole screen",
     ),
-    ("new-pane", "newPane(...words): as `temzdf action new-pane` (a file, or \"--\" and a command)"),
-    ("move-focus", "moveFocus(dir: \"left\" | \"right\" | \"up\" | \"down\")"),
-    ("focus-next-pane", "focusNextPane()"),
-    ("close-pane", "closePane()"),
-    ("detach", "detach(): the operating client detaches"),
-    ("reload-config", "reloadConfig(): restart the script host and load the configuration again"),
-    ("message", "message(text: string): show a message"),
-    ("send-text", "sendText(text: string): type text into the focused terminal pane"),
-    ("feedkeys", "feedkeys(keys: string, remap?: boolean): keys as if typed (after the running mapping)"),
-    ("switch-mode", "switchMode(mode: string): enter a mode (pushed on the mode history)"),
-    ("exit-mode", "exitMode(): back to the previous mode"),
-    ("current-mode", "currentMode(): the current mode's name"),
-    ("panes", "panes(): [{ id, kind, focused }]"),
-    ("focused-pane", "focusedPane(): the focused pane's id"),
-    ("session-name", "sessionName()"),
+    ("new-pane", "(...words: string[]): void", "As `temzdf action new-pane`: a file, or \"--\" and a command"),
+    ("move-focus", "(dir: \"left\" | \"right\" | \"up\" | \"down\"): void", "Focus the pane in that direction"),
+    ("focus-next-pane", "(): void", "Focus the next pane"),
+    ("close-pane", "(): void", "Close the focused pane"),
+    ("detach", "(): void", "The operating client detaches"),
+    ("reload-config", "(): void", "Restart the script host and load the configuration again"),
+    ("message", "(text: string): void", "Show a message"),
+    ("send-text", "(text: string): void", "Type text into the focused terminal pane (Vim's chansend)"),
+    (
+        "feedkeys",
+        "(keys: string, remap?: boolean): void",
+        "Keys as if typed, after the running mapping; remap false skips mappings",
+    ),
+    ("switch-mode", "(mode: string): void", "Enter a mode (pushed on the mode history)"),
+    ("exit-mode", "(): void", "Back to the previous mode"),
+    ("current-mode", "(): string", "The current mode's name"),
+    ("panes", "(): { id: number; kind: \"pdf\" | \"terminal\"; focused: boolean }[]", "The panes"),
+    ("focused-pane", "(): number | null", "The focused pane's id"),
+    ("session-name", "(): string", "The session's name"),
 ];
 
 /// Every command, for the script host.
 pub fn command_specs() -> Vec<CommandSpec> {
-    let session = SESSION.iter().map(|(name, doc)| CommandSpec { name: (*name).into(), doc: (*doc).into() });
+    let session = SESSION.iter().map(|(name, ts, doc)| CommandSpec {
+        name: (*name).into(),
+        doc: (*doc).into(),
+        ts: (*ts).into(),
+    });
     let pdf = Command::NAMES.iter().map(|(_, name)| CommandSpec {
         name: (*name).into(),
-        doc: format!("a page-view command in the focused PDF pane ({name}); takes the count"),
+        doc: format!("Page view: {name} in the focused PDF pane (a mapping's count applies)"),
+        ts: "(): void".into(),
     });
     session.chain(pdf).collect()
 }
@@ -84,7 +94,12 @@ impl Session {
                     Some("screen") => true,
                     Some(other) => return Err(format!("split: scope {other:?} is not pane or screen")),
                 };
-                let a = Action::split(side.unwrap_or("right"), root).map_err(|e| format!("{e:#}"))?;
+                let side = side.unwrap_or(if self.options.splitright { "right" } else { "left" });
+                let side = match side {
+                    "bottom" | "down" if !self.options.splitbelow => "top",
+                    s => s,
+                };
+                let a = Action::split(side, root).map_err(|e| format!("{e:#}"))?;
                 act(self, a)
             }
             "new-pane" => {

@@ -5,5 +5,6 @@
 
 mod host;
 pub mod strip;
+pub mod types;
 
 pub use host::run;

@@ -44,7 +44,7 @@ impl Session {
         let config = self.dir.join(file);
         let commands = ["split", "new-pane", "message"]
             .iter()
-            .map(|n| CommandSpec { name: n.to_string(), doc: String::new() })
+            .map(|n| CommandSpec { name: n.to_string(), doc: String::new(), ts: "(...args: unknown[]): void".into() })
             .collect();
         self.send(ToHost::Load { config, commands });
     }
@@ -89,6 +89,7 @@ fn describe(token: Token, op: &HostOp) -> String {
         }
         HostOp::On { event, func, nested } => format!("{t} on {event} f{func} nested={nested}"),
         HostOp::PrefixMap { key, func } => format!("{t} prefix {key} f{func}"),
+        other => format!("{t} {other:?}"),
     }
 }
 

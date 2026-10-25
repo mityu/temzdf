@@ -109,6 +109,9 @@ enum Cmd {
     /// Run the configuration script for a session (started by the session).
     #[command(hide = true)]
     ScriptHost,
+    /// Print TypeScript declarations of the scripting API (temzdf.d.ts).
+    #[command(hide = true)]
+    PrintTypes,
     /// Run a session server (started by `temzdf -s`).
     #[command(hide = true)]
     Server {
@@ -136,6 +139,10 @@ fn main() -> Result<()> {
         Some(Cmd::Action { session, timeout, action }) => {
             let timeout = std::time::Duration::from_secs_f64(timeout.max(0.001));
             return client::action(&client::resolve(session.as_deref())?, action, timeout);
+        }
+        Some(Cmd::PrintTypes) => {
+            print!("{}", temzdf_script::types::declarations(&temzdf_server::session::command_specs()));
+            return Ok(());
         }
         Some(Cmd::ScriptHost) => {
             return temzdf_script::run(std::io::stdin(), std::io::stdout()).map_err(anyhow::Error::msg);

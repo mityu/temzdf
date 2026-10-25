@@ -88,6 +88,9 @@
                 python3
                 # Tests inside tmux (crates/tuitest, crates/temzdf/tests/tui.rs).
                 tmux
+                # Type checking the shipped JavaScript configuration against
+                # `temzdf print-types` (crates/temzdf/tests/types.rs).
+                typescript
               ]
               ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
                 # End-to-end testing: run kitty on a virtual X server and drive it.
@@ -130,6 +133,7 @@
               fontconfig
               tex
               tmux
+              typescript
             ];
             inherit (base) buildInputs LIBCLANG_PATH;
             FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
