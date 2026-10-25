@@ -26,6 +26,11 @@ pub fn translate(k: &KeyEvent) -> Option<(Key, Mods, Action, Option<String>)> {
         }
     }
     let (key, text) = match k.code {
+        // Control characters reported as code points.
+        KeyCode::Char('\r' | '\n') => (Key::Enter, None),
+        KeyCode::Char('\t') => (Key::Tab, None),
+        KeyCode::Char('\x08' | '\x7f') => (Key::Backspace, None),
+        KeyCode::Char('\x1b') => (Key::Escape, None),
         KeyCode::Char(c) => {
             let key = char_key(c);
             // The text the key produces, never a control character (the
