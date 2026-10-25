@@ -319,10 +319,11 @@ mod tests {
 
     impl OutputSink for Stalled {}
 
-    /// Writes stall until the gate opens (a terminal that stopped reading).
+    /// Writes stall while the gate holds no more writes (a terminal that
+    /// stopped reading).
     struct Gated {
         inner: Buf,
-        gate: Arc<(Mutex<bool>, Condvar)>,
+        gate: Arc<(Mutex<usize>, Condvar)>,
     }
 
     impl OutputSink for Gated {}
@@ -330,10 +331,11 @@ mod tests {
     impl Write for Gated {
         fn write(&mut self, b: &[u8]) -> io::Result<usize> {
             let (m, cv) = &*self.gate;
-            let mut open = lock(m);
-            while !*open {
-                open = cv.wait(open).unwrap();
+            let mut left = lock(m);
+            while *left == 0 {
+                left = cv.wait(left).unwrap();
             }
+            *left -= 1;
             self.inner.write(b)
         }
         fn flush(&mut self) -> io::Result<()> {
@@ -390,9 +392,9 @@ mod tests {
     #[test]
     fn close_drops_the_backlog_and_terminates_the_cut_sequence() {
         let inner = Buf::default();
-        let gate = Arc::new((Mutex::new(true), Condvar::new()));
-        let out = Output::spawn(Gated { inner: inner.clone(), gate: gate.clone() }, None).unwrap();
         // The first chunk goes out, then the terminal stops reading.
+        let gate = Arc::new((Mutex::new(1), Condvar::new()));
+        let out = Output::spawn(Gated { inner: inner.clone(), gate: gate.clone() }, None).unwrap();
         let mut frame = b"\x1b_Ga=T;".to_vec();
         frame.resize(10 * CHUNK, b'A');
         frame.extend_from_slice(b"\x1b\\");
@@ -400,7 +402,6 @@ mod tests {
         while lock(&inner.0).len() < CHUNK {
             std::thread::yield_now();
         }
-        *lock(&gate.0) = false;
         // Let the writer block on its next chunk.
         std::thread::sleep(Duration::from_millis(20));
         let start = Instant::now();
@@ -408,7 +409,7 @@ mod tests {
         let g = gate.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(30));
-            *lock(&g.0) = true;
+            *lock(&g.0) = usize::MAX;
             g.1.notify_all();
         });
         out.close(b"RESET", Duration::from_secs(2));
