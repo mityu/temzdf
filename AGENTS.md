@@ -20,15 +20,21 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/termpix-core` | Library. Frontend-independent primitives: geometry, RGBA raster helpers, kinetic scroll helper, key/mouse event types. No terminal code. |
 | `crates/termpix` | Library. Terminal I/O: tty setup, capability probing, input parsing (SGR-pixel mouse, kitty keyboard), kitty graphics transport, layered compositor, mock terminal for tests; re-exports `termpix-core`. **Knows nothing about PDF.** |
 | `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley` + `taffy`). Independent of `termpix` (`termpix-core` only in its tests). |
-| `crates/temzdf` | The viewer binary (MuPDF via the `mupdf` crate, SyncTeX, reload). |
+| `crates/temzdf-scene` | Library. What a pane shows, frontend-independent: image store and frames of layers. |
+| `crates/temzdf-pdfcore` | Library. PDF backend: MuPDF (`mupdf` crate), display list and tile cache, text, SyncTeX, background workers, reload. No terminal code. |
+| `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings. No terminal code. |
+| `crates/temzdf-tty` | Library. Terminal frontend: shows scene frames through `termpix`. |
+| `crates/temzdf` | The binary: event loop, config, IPC (`--forward`), headless `--render-frame`. |
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
 | `todo.md` | Long-running tasks and deferred work. |
 | `experiments/` | Standalone experiment crates outside the workspace (see the matching doc). |
 
-Dependency direction is strictly `temzdf -> termpix -> termpix-core` (and
-`temzdf -> termpix-ui`). Never make the libraries depend on PDF, SyncTeX or
-viewer code.
+Dependency direction: `termpix-core <- termpix <- temzdf-tty <- temzdf` and
+`temzdf-scene <- temzdf-pdfcore <- temzdf-pdfview <- temzdf` (details in
+`doc/architecture.md`). Never make `termpix*` depend on PDF, SyncTeX or viewer
+code, and never make `temzdf-pdfcore`/`temzdf-pdfview` depend on `termpix`
+(tests excepted): backends and panes produce scenes, only frontends draw.
 
 ## Environment
 

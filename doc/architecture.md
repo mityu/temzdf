@@ -9,11 +9,32 @@
 
 ## Crates
 
-```
-temzdf (bin) ──> termpix-ui ──> termpix
-   │                              ▲
-   └──────────────────────────────┘
-```
+| Crate | Depends on (ours) |
+|---|---|
+| `termpix-core` | - |
+| `termpix` | `termpix-core` |
+| `termpix-ui` | - |
+| `temzdf-scene` | `termpix-core` |
+| `temzdf-pdfcore` | `temzdf-scene` |
+| `temzdf-pdfview` | `temzdf-pdfcore`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
+| `temzdf-tty` | `temzdf-scene`, `termpix` |
+| `temzdf` (bin) | all of the above except `termpix-core`/`termpix-ui` directly |
+
+- `termpix-core`: frontend-independent primitives (geometry, raster helpers,
+  kinetic scroll, key/mouse events).
+- `termpix`: the terminal library (below); re-exports `termpix-core`.
+- `termpix-ui`: pixel widgets (below); no dependency on `termpix`.
+- `temzdf-scene`: what a pane shows, independent of the frontend: an image
+  store whose changes frontends mirror, and frames (layers, text cursor,
+  pointer shape, title).
+- `temzdf-pdfcore`: the PDF backend: MuPDF wrapper, `DocCache` (display lists
+  and tiles), page text and selection, SyncTeX, background workers.
+- `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys).
+- `temzdf-tty`: the terminal frontend (`Presenter`, `Screen`, OSC helpers).
+- `temzdf`: the binary: event loop, config, IPC, headless rendering.
+
+This layout prepares the session server (`doc/session-server.md`): backends and
+panes know nothing about terminals, only frontends draw.
 
 ### termpix
 
@@ -39,7 +60,7 @@ input, status bar, popup, scrollbar. Each widget is its own layer so only change
 widgets are re-uploaded. IME: the terminal draws the preedit at the cursor, so the
 input widget moves the terminal cursor to its caret; we only receive committed text.
 
-### temzdf
+### temzdf (pdfcore, pdfview, tty, bin)
 
 - Threads: a `doc` thread owns the MuPDF `Document` (it is not `Send`) and builds
   `DisplayList`s (which are `Send + Sync`); a worker pool rasterises them; an input
@@ -47,7 +68,7 @@ input widget moves the terminal cursor to its caret; we only receive committed t
 - Display: continuous vertical layout. Pages are rendered as tiles into an LRU
   cache; uploaded images are kept by the terminal; neighbours are pre-rendered.
   After a zoom, the tiles of the previous scale stand in until tiles at the new
-  scale arrive (`viewer::StandIn`): as scaled layers with Composited backends,
+  scale arrive (`temzdf_pdfview::viewer::StandIn`): as scaled layers with Composited backends,
   composed into one unscaled image per page with Layered over shm/files
   (terminals scale images to whole cells only, which would misplace tiles by up
   to half a cell), and not at all over inline transfers, where each zoom step
@@ -55,18 +76,24 @@ input widget moves the terminal cursor to its caret; we only receive committed t
   remains.
 - Search hits and selections are separate translucent overlay layers, never baked
   into page pixels.
-- Frame pacing (`app.rs`): the first frame waits (up to 1.5 s) until the visible
+- Frame pacing (`crates/temzdf/src/app.rs`): the first frame waits (up to 1.5 s) until the visible
   pages are fully rendered, frames wait while inline transfers are unacknowledged,
   and Composited frames are capped at ~30 fps (5 fps over inline links or inside a
   multiplexer, where every strip is forwarded uncompressed by zellij 0.45).
 - Auto-reload: see `reload.md`. SyncTeX: vendored `synctex_parser.c` via `cc`,
   forward search over a Unix socket, inverse search via a configurable command.
 - Keys: `keys.rs` maps key presses to `Command`s (defaults plus `[keys]` from
-  the config, see `config.md`); `Session::command` runs them.
+  the config, see `config.md`); `PdfPane::command` runs them.
+- Images: panes register images in a `temzdf_scene::Images` store and return
+  layers referencing them; `temzdf_tty::Presenter` mirrors the store into the
+  compositor (pixels are shared, not copied) and maps the layers.
 
 ## Invariants
 
-- `termpix` and `termpix-ui` never depend on PDF, SyncTeX or viewer code.
+- `termpix-core`, `termpix` and `termpix-ui` never depend on PDF, SyncTeX or
+  viewer code.
+- `temzdf-pdfcore` and `temzdf-pdfview` never depend on `termpix` (tests
+  excepted); only `temzdf-tty` and the binary talk to the terminal.
 - Rendering is deterministic on the CPU so screens can be snapshot-tested.
 - Every frame sent to the terminal is wrapped in synchronized output.
 - The terminal is always restored, including on panic.
