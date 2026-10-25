@@ -6,6 +6,7 @@
   outputs =
     { nixpkgs, ... }:
     let
+      overlays = [ (import ./nix/libghostty-vt.nix) ];
       forEachSystem = nixpkgs.lib.genAttrs [
         "aarch64-darwin"
         "x86_64-darwin"
@@ -20,7 +21,7 @@
       packages = forEachSystem (
         system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs { inherit system overlays; };
           lib = pkgs.lib;
           temzdf = pkgs.rustPlatform.buildRustPackage {
             pname = "temzdf";
@@ -42,7 +43,11 @@
               pkg-config
               clang
             ];
-            buildInputs = [ pkgs.fontconfig ];
+            # libghostty-vt: terminal emulation for terminal panes (temzdf-term).
+            buildInputs = [
+              pkgs.fontconfig
+              pkgs.libghostty-vt.dev
+            ];
             # mupdf-sys runs bindgen, which needs libclang.
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
             doCheck = false;
@@ -63,7 +68,7 @@
       devShells = forEachSystem (
         system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs { inherit system overlays; };
           lib = pkgs.lib;
           # Build, test, and drive kitty end to end. Tools that are large or
           # usually installed globally (TeX, other terminals) are in `alldeps`.
@@ -90,6 +95,8 @@
                 imagemagick
                 xclip
               ];
+            # Found through pkg-config (temzdf-term).
+            buildInputs = [ pkgs.libghostty-vt.dev ];
             # mupdf-sys runs bindgen, which needs libclang.
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           };
@@ -121,7 +128,7 @@
               fontconfig
               tex
             ];
-            inherit (base) LIBCLANG_PATH;
+            inherit (base) buildInputs LIBCLANG_PATH;
             FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
           };
           # `nix develop .#alldeps`: every tool development of this CLI uses,

@@ -1,0 +1,17 @@
+[package]
+name = "temzdf-term"
+description = "temzdf terminal panes: a pty and Ghostty's terminal emulation (libghostty-vt), shown as temzdf-scene text."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+libghostty-vt = "0.2.2"
+# Link the libghostty-vt found by pkg-config (nix/libghostty-vt.nix builds it
+# from the commit these bindings were generated from) instead of building
+# Ghostty with Zig inside cargo.
+libghostty-vt-sys = { version = "0.2.2", features = ["pkg-config"] }
+
+[lints]
+workspace = true

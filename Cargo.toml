@@ -7,6 +7,7 @@ members = [
     "crates/temzdf-scene",
     "crates/temzdf-pdfcore",
     "crates/temzdf-pdfview",
+    "crates/temzdf-term",
     "crates/temzdf-tty",
     "crates/temzdf-protocol",
     "crates/temzdf-server",
@@ -26,6 +27,7 @@ termpix-ui = { path = "crates/termpix-ui" }
 temzdf-scene = { path = "crates/temzdf-scene" }
 temzdf-pdfcore = { path = "crates/temzdf-pdfcore" }
 temzdf-pdfview = { path = "crates/temzdf-pdfview" }
+temzdf-term = { path = "crates/temzdf-term" }
 temzdf-tty = { path = "crates/temzdf-tty" }
 temzdf-server = { path = "crates/temzdf-server" }
 temzdf-protocol = { path = "crates/temzdf-protocol" }
