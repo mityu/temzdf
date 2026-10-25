@@ -10,7 +10,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 /// A forward-search request: show what `line` of `file` produced.
@@ -54,7 +53,8 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
 }
 
-fn runtime_dir() -> PathBuf {
+/// The per-user directory for sockets.
+pub fn runtime_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
         return dir.into();
     }
@@ -111,14 +111,11 @@ impl Drop for Server {
     }
 }
 
-/// Listen for requests about `pdf`, delivering them as `map(request)` on `tx`.
-/// Another live viewer of the same file keeps its socket (an error here); a stale
-/// socket left by a crashed viewer is replaced.
-pub fn serve<T: Send + 'static>(
-    pdf: &Path,
-    tx: Sender<T>,
-    map: impl Fn(ForwardRequest) -> T + Send + 'static,
-) -> std::io::Result<Server> {
+/// Listen for requests about `pdf`, handing them to `deliver` (which returns
+/// false once nobody listens any more). Another live viewer of the same file
+/// keeps its socket (an error here); a stale socket left by a crashed viewer is
+/// replaced.
+pub fn serve(pdf: &Path, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> std::io::Result<Server> {
     let path = socket_path(pdf);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -137,7 +134,7 @@ pub fn serve<T: Send + 'static>(
             let ok = BufReader::new(&stream).read_line(&mut line).is_ok();
             let reply = match ForwardRequest::decode(&line).filter(|_| ok) {
                 Some(req) => {
-                    if tx.send(map(req)).is_err() {
+                    if !deliver(req) {
                         return;
                     }
                     "ok\n"
@@ -182,8 +179,8 @@ mod tests {
         // Use a private runtime dir so tests never touch a real viewer's socket.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
         let (tx, rx) = std::sync::mpsc::channel();
-        let server = serve(&pdf, tx, |r| r).unwrap();
-        assert!(serve(&pdf, std::sync::mpsc::channel().0, |r| r).is_err(), "second viewer");
+        let server = serve(&pdf, move |r| tx.send(r).is_ok()).unwrap();
+        assert!(serve(&pdf, |_| true).is_err(), "second viewer");
         let req = ForwardRequest { file: "main.tex".into(), line: 42, column: 0 };
         assert!(send_forward(&pdf, &req).unwrap());
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);

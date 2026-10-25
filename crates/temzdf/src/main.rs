@@ -1,10 +1,9 @@
 mod app;
 mod config;
 mod headless;
-mod ipc;
 
-use temzdf_pdfcore::{pdf, workers};
-use temzdf_pdfview::{keys, pane, viewer};
+use temzdf_pdfview::keys;
+use temzdf_server::forward as ipc;
 
 use std::path::PathBuf;
 

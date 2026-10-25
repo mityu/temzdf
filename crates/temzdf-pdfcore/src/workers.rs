@@ -261,13 +261,24 @@ pub fn spawn_watcher(path: &Path, events: Sink) -> notify::Result<notify::Recomm
 /// dropped before they start.
 pub struct RasterPool {
     shared: Arc<(Mutex<VecDeque<RenderJob>>, Condvar)>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for RasterPool {
+    /// Let the threads finish once their current job is done.
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.shared.1.notify_all();
+    }
 }
 
 impl RasterPool {
     pub fn new(threads: usize, events: Sink) -> std::io::Result<Self> {
         let shared = Arc::new((Mutex::new(VecDeque::<RenderJob>::new()), Condvar::new()));
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         for i in 0..threads.max(1) {
             let shared = shared.clone();
+            let stop = stop.clone();
             let events = events.clone();
             std::thread::Builder::new().name(format!("temzdf-raster-{i}")).spawn(move || {
                 loop {
@@ -275,6 +286,9 @@ impl RasterPool {
                         let (lock, cv) = &*shared;
                         let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
                         loop {
+                            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                                return;
+                            }
                             if let Some(job) = q.pop_front() {
                                 break job;
                             }
@@ -293,7 +307,7 @@ impl RasterPool {
                 }
             })?;
         }
-        Ok(Self { shared })
+        Ok(Self { shared, stop })
     }
 
     /// Replace queued (not yet started) jobs with `jobs`. Returns the keys of the

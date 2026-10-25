@@ -113,6 +113,25 @@ pub struct Layer {
     pub z: i32,
 }
 
+impl Layer {
+    /// The part of the layer inside `clip` (screen pixels), its source cropped
+    /// to match (proportionally for scaled layers, rounded to whole pixels).
+    pub fn clipped(&self, clip: &Rect) -> Option<Layer> {
+        let vis = self.dst.intersect(clip)?;
+        if vis == self.dst {
+            return Some(*self);
+        }
+        let fx = self.src.w as f64 / self.dst.w.max(1) as f64;
+        let fy = self.src.h as f64 / self.dst.h.max(1) as f64;
+        let x0 = (self.src.x as f64 + (vis.x - self.dst.x) as f64 * fx).round() as i32;
+        let y0 = (self.src.y as f64 + (vis.y - self.dst.y) as f64 * fy).round() as i32;
+        let x1 = (self.src.x as f64 + (vis.right() - self.dst.x as i64) as f64 * fx).round() as i32;
+        let y1 = (self.src.y as f64 + (vis.bottom() - self.dst.y as i64) as f64 * fy).round() as i32;
+        let src = Rect::new(x0, y0, (x1 - x0).max(1) as u32, (y1 - y0).max(1) as u32);
+        Some(Layer { src, dst: vis, ..*self })
+    }
+}
+
 /// Mouse pointer shapes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Pointer {
@@ -160,6 +179,20 @@ pub enum Effect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipping_crops_the_source_to_match() {
+        let l =
+            Layer { key: 1, image: ImageKey(0), src: Rect::new(0, 0, 100, 50), dst: Rect::new(10, 10, 100, 50), z: 0 };
+        assert_eq!(l.clipped(&Rect::new(0, 0, 500, 500)), Some(l));
+        let c = l.clipped(&Rect::new(50, 0, 30, 30)).unwrap();
+        assert_eq!((c.dst, c.src), (Rect::new(50, 10, 30, 20), Rect::new(40, 0, 30, 20)));
+        assert!(l.clipped(&Rect::new(200, 0, 10, 10)).is_none());
+        // Scaled 2x: the source shrinks by half.
+        let s = Layer { src: Rect::new(0, 0, 50, 25), ..l };
+        let c = s.clipped(&Rect::new(60, 10, 50, 50)).unwrap();
+        assert_eq!((c.dst, c.src), (Rect::new(60, 10, 50, 50), Rect::new(25, 0, 25, 25)));
+    }
 
     #[test]
     fn updates_mirror_the_store() {

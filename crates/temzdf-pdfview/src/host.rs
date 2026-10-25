@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use temzdf_scene::{Effect, Images};
 
-use crate::doc_cache::Need;
+use crate::doc_cache::{DocCache, Need, RenderJob};
 use crate::document::SharedDocument;
 use crate::pane::{PdfPane, Request};
 use crate::pdf::{self, DocInfo};
@@ -264,21 +264,10 @@ impl DocumentHost {
     /// Hand this frame's work (from every pane showing the file, most urgent
     /// first) to the threads. Work asked for twice is done once.
     pub fn dispatch(&mut self, needs: Vec<Need>) {
-        let mut jobs = Vec::new();
         let mut d = self.doc.borrow_mut();
-        for need in needs {
-            match &need {
-                Need::LoadPage(p) if d.cache.is_requested(*p) => continue,
-                Need::Render(job) if d.cache.is_in_flight(job.key) => continue,
-                _ => {}
-            }
-            d.cache.mark_requested(&need);
-            match need {
-                Need::LoadPage(p) => {
-                    let _ = self.cmd.send(DocCmd::LoadPage(p));
-                }
-                Need::Render(job) => jobs.push(job),
-            }
+        let (loads, jobs) = claim(&mut d.cache, needs);
+        for p in loads {
+            let _ = self.cmd.send(DocCmd::LoadPage(p));
         }
         for key in self.pool.replace(jobs) {
             d.cache.render_cancelled(key);
@@ -300,6 +289,26 @@ impl DocumentHost {
             Request::Copy(text) => Some(Effect::Copy(text)),
         }
     }
+}
+
+/// Mark the work as requested in the cache and split it into pages to load
+/// and tiles to render, dropping what is already requested (several panes on
+/// one document ask for the same tiles).
+fn claim(cache: &mut DocCache, needs: Vec<Need>) -> (Vec<usize>, Vec<RenderJob>) {
+    let (mut loads, mut jobs) = (Vec::new(), Vec::new());
+    for need in needs {
+        match &need {
+            Need::LoadPage(p) if cache.is_requested(*p) => continue,
+            Need::Render(job) if cache.is_in_flight(job.key) => continue,
+            _ => {}
+        }
+        cache.mark_requested(&need);
+        match need {
+            Need::LoadPage(p) => loads.push(p),
+            Need::Render(job) => jobs.push(job),
+        }
+    }
+    (loads, jobs)
 }
 
 /// The inverse-search shell command for a source location: `template` with
@@ -361,6 +370,28 @@ mod tests {
         let cmd = editor_command(t, Path::new("/doc/it's.tex"), 12, 0).unwrap();
         assert_eq!(cmd, "nvim --server /tmp/nv --remote-send ':e '/doc/it'\\''s.tex'<CR>:12<CR>'");
         assert!(editor_command(" ", Path::new("a.tex"), 1, 0).is_none());
+    }
+
+    #[test]
+    fn work_asked_for_twice_is_claimed_once() {
+        use crate::doc_cache::{TileKey, TileKind};
+        use crate::pdf::PixelRect;
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let bounds = pdf::page_bounds(&doc).unwrap();
+        let list = pdf::display_list(&doc, 0).unwrap();
+        let mut cache = DocCache::new(bounds.clone());
+        let job = |tx| {
+            let key = TileKey { generation: 0, page: 0, kind: TileKind::Tile { scale_q: 1024, tx, ty: 0 } };
+            let area = PixelRect { x: 0, y: 0, w: 8, h: 8 };
+            Need::Render(RenderJob { key, list: list.clone(), bounds: bounds[0], scale: 1.0, area })
+        };
+        let needs = vec![Need::LoadPage(1), job(0), job(1), Need::LoadPage(1), job(0)];
+        let (loads, jobs) = claim(&mut cache, needs);
+        assert_eq!(loads, vec![1]);
+        assert_eq!(jobs.len(), 2);
+        // The next frame asks again while they are in flight: nothing new.
+        let (loads, jobs) = claim(&mut cache, vec![job(0), Need::LoadPage(1)]);
+        assert!(loads.is_empty() && jobs.is_empty());
     }
 
     #[test]

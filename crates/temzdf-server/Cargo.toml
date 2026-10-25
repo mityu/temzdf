@@ -1,0 +1,25 @@
+[package]
+name = "temzdf-server"
+description = "temzdf sessions: panes on documents, layout, prefix keys and the composed frame; the session server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+rustix = { version = "1.1.5", features = ["process"] }
+temzdf-pdfcore.workspace = true
+temzdf-pdfview.workspace = true
+temzdf-scene.workspace = true
+termpix-core.workspace = true
+termpix-ui.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.191"
+
+[dev-dependencies]
+temzdf-pdfcore = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

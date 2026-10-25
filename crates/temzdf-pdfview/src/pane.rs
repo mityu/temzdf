@@ -154,6 +154,9 @@ pub struct PdfPane {
     outline: OutlinePanel,
     sidebar_open: bool,
     pub search: SearchState,
+    /// Search generations start here, so panes sharing a document's search
+    /// thread tell their results apart.
+    search_base: u64,
     /// The search prompt, while typing a query.
     input: Option<LineInput>,
     /// Where the view was when the prompt opened (restored on Esc).
@@ -220,6 +223,7 @@ impl PdfPane {
             outline,
             sidebar_open: false,
             search: SearchState::new(pages),
+            search_base: 0,
             input: None,
             search_origin: None,
             pending_first_hit: None,
@@ -258,6 +262,24 @@ impl PdfPane {
             pointer: (0.0, 0.0),
             drag: None,
         }
+    }
+
+    /// See `search_base`. Call before any search.
+    pub fn set_search_base(&mut self, base: u64) {
+        self.search_base = base;
+        self.search.generation = base;
+    }
+
+    /// The pane is closed: drop its own images (UI, overlays, stand-ins) from
+    /// the store; the document's tiles stay with the document.
+    pub fn release(&mut self, images: &mut Images) {
+        for (_, w) in self.widgets.drain() {
+            images.remove(w.image);
+        }
+        for (_, id) in self.overlay_images.drain() {
+            images.remove(id);
+        }
+        self.viewer.release(images);
     }
 
     pub fn geometry(&self) -> Geometry {
@@ -983,6 +1005,7 @@ impl PdfPane {
         let query = self.search.query.clone();
         let current = self.search.current;
         self.search = SearchState::new(pages);
+        self.search.generation = self.search_base;
         if !query.is_empty() {
             self.run_search(query);
             // Remember which hit was current; it is restored as results arrive.

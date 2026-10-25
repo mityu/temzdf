@@ -151,6 +151,16 @@ impl Viewer {
         v
     }
 
+    /// The view is closed: drop its own images (background, stand-ins).
+    pub fn release(&mut self, images: &mut Images) {
+        if let Some((id, ..)) = self.background.take() {
+            images.remove(id);
+        }
+        for (_, c) in self.composed.drain() {
+            images.remove(c.image);
+        }
+    }
+
     /// The shared tile cache, borrowed for one call.
     fn cache(&self) -> RefMut<'_, DocCache> {
         RefMut::map(self.doc.borrow_mut(), |d| &mut d.cache)

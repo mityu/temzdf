@@ -199,6 +199,11 @@ impl DocCache {
         self.in_flight.remove(&key);
     }
 
+    /// Nothing asked for is still being loaded or rendered.
+    pub fn is_idle(&self) -> bool {
+        self.in_flight.is_empty() && self.lists_requested.is_empty()
+    }
+
     pub fn is_in_flight(&self, key: TileKey) -> bool {
         self.in_flight.contains(&key)
     }

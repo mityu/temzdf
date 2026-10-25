@@ -50,6 +50,11 @@ impl Document {
         })
     }
 
+    /// The document is closed: drop its tiles from the image store.
+    pub fn release(&mut self, images: &mut Images) {
+        self.replace(images, Vec::new());
+    }
+
     /// A new version of the file: forget tiles, lists, links and text.
     pub fn replace(&mut self, images: &mut Images, bounds: Vec<PageBounds>) {
         let pages = bounds.len();

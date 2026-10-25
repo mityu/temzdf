@@ -1,23 +1,20 @@
-//! Interactive mode: the event loop joining the terminal frontend
-//! (`temzdf-tty`), the document's threads (`DocumentHost`) and the pane
-//! (`temzdf-pdfview`), which decides what is shown and how input is interpreted.
+//! Interactive standalone mode: one session in this process, shown in this
+//! terminal. The event loop joins the terminal frontend (`temzdf-tty`) and the
+//! session (`temzdf-server`), which holds the panes and their documents.
 
 use std::path::Path;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use temzdf_pdfview::document::Document;
-use temzdf_pdfview::host::{Forward, HostOptions, Opening};
-use temzdf_scene::Images;
+use temzdf_pdfview::host::HostOptions;
+use temzdf_server::forward::ForwardRequest;
+use temzdf_server::session::{EventSink, Outcome, Session, SessionEvent, Settings};
 use temzdf_tty::{Input, Presented, TtyFrontend};
 use termpix::tty::TermEvent;
 
 use crate::config::{Config, ReloadAnchor};
-use crate::ipc::{self, ForwardRequest};
-use crate::pane::{Action, PdfPane};
-use crate::viewer::StandIn;
-use crate::workers::{self, DocEvent};
 
 const FRAME: Duration = Duration::from_millis(16);
 
@@ -35,15 +32,31 @@ pub struct Options {
 /// Everything the main loop waits for.
 pub enum AppEvent {
     Term(TermEvent),
-    Doc(DocEvent),
-    /// Another process asked for a forward search (`temzdf --forward`).
-    ForwardRequest(ForwardRequest),
+    Session(SessionEvent),
     /// Opening an external link failed.
     OpenFailed(String),
 }
 
-fn forward(req: ForwardRequest) -> Forward {
-    Forward { file: req.file, line: req.line, column: req.column }
+/// Session settings from the configuration.
+pub fn settings(config: &Config, serve_forward: bool) -> Result<Settings> {
+    Ok(Settings {
+        keymap: config.keymap()?,
+        preview_delay: config.links.preview_delay(),
+        anchor_by_text: config.reload.anchor == ReloadAnchor::Text,
+        scroll: config.scroll.to_termpix(),
+        host: HostOptions {
+            // Wait this long after the last change before reloading (see doc/reload.md).
+            debounce: Duration::from_millis(config.reload.debounce_ms),
+            editor: config.synctex.editor.clone(),
+        },
+        serve_forward,
+    })
+}
+
+/// An event sink feeding `tx`.
+pub fn sink<E: Send + 'static>(tx: &Sender<E>, wrap: fn(SessionEvent) -> E) -> EventSink {
+    let tx = Mutex::new(tx.clone());
+    Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(wrap(e)).is_ok())
 }
 
 pub fn run(path: &Path, mut opts: Options) -> Result<()> {
@@ -56,62 +69,43 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         let medium = term.medium(caps.medium(), caps.has_medium_override());
         (backend, medium, term.zlib_level)
     })?;
-    let mut images = Images::new();
-
-    let (tx, rx) = mpsc::channel::<AppEvent>();
-    front.spawn_input(tx.clone(), AppEvent::Term)?;
-    let opening = Opening::start(path, workers::channel_sink(tx.clone(), AppEvent::Doc))?;
-    // Forward-search requests from other processes; a second viewer of the same
-    // file just goes without.
-    let _ipc = ipc::serve(path, tx.clone(), AppEvent::ForwardRequest).ok();
     if let Some(editor) = opts.editor.take() {
         opts.config.synctex.editor = Some(editor);
     }
+    let (tx, rx) = mpsc::channel::<AppEvent>();
+    front.spawn_input(tx.clone(), AppEvent::Term)?;
+    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let settings = settings(&opts.config, true)?;
+    let mut session = Session::new(name, front.geometry(), front.hints(), settings, sink(&tx, AppEvent::Session));
+    session.open(path)?;
 
     // Wait for the document before drawing anything.
-    let info = loop {
+    while session.is_starting() {
         match rx.recv()? {
-            AppEvent::Doc(DocEvent::Opened(Ok(info))) => break info,
-            AppEvent::Doc(DocEvent::Opened(Err(e))) => {
-                drop(front);
-                bail!("{e}");
+            AppEvent::Session(ev) => {
+                session.handle(ev, Instant::now());
             }
             AppEvent::Term(TermEvent::Terminate) => return Ok(()),
             _ => {}
         }
-    };
-    if info.bounds.is_empty() {
-        drop(front);
-        bail!("the document has no pages");
     }
-    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-    let doc = Document::shared(info.bounds.clone());
-    let mut session = PdfPane::with_document(name, info.clone(), doc.clone(), front.geometry());
-    session.anchor_by_text = opts.config.reload.anchor == ReloadAnchor::Text;
-    session.keymap = opts.config.keymap()?;
-    session.preview_delay = opts.config.links.preview_delay();
-    session.viewer.stand_in_mode = StandIn::for_hints(front.hints());
-    session.viewer.scroll_x.config = opts.config.scroll.to_termpix();
-    session.viewer.scroll_y.config = opts.config.scroll.to_termpix();
-    let open_command = opts.config.links.command();
-    let host_options = HostOptions {
-        // Wait this long after the last change before reloading (see doc/reload.md).
-        debounce: Duration::from_millis(opts.config.reload.debounce_ms),
-        editor: opts.config.synctex.editor.clone(),
-    };
-    let mut host = opening.finish(info, doc, host_options);
-    if let Some(e) = host.watcher_error.take() {
-        session.message = Some(e);
+    if let Some(e) = session.error() {
+        let e = e.to_owned();
+        drop(front);
+        bail!("{e}");
+    }
+    if let Some(pane) = session.focused_pane() {
+        if let Some(scale) = opts.scale {
+            pane.viewer.set_scale(scale, (0.0, 0.0));
+        }
+        if let Some(page) = opts.page {
+            pane.viewer.goto_page(page, false, Instant::now());
+        }
     }
     if let Some(req) = opts.forward.take() {
-        host.forward(forward(req), &session);
+        session.forward(req);
     }
-    if let Some(scale) = opts.scale {
-        session.viewer.set_scale(scale, (0.0, 0.0));
-    }
-    if let Some(page) = opts.page {
-        session.viewer.goto_page(page, false, Instant::now());
-    }
+    let open_command = opts.config.links.command();
     let report = |tx: &Sender<AppEvent>| {
         let tx = tx.clone();
         move |e| {
@@ -122,25 +116,22 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let mut dirty = true;
     loop {
         if dirty && front.ready() {
-            let (frame, needs) = session.frame(&mut images);
-            front.sync(&mut images);
-            host.dispatch(needs);
-            if front.present(&frame, session.viewer.is_complete())? == Presented::Shown {
+            let frame = session.frame();
+            front.sync(session.images());
+            if front.present(&frame, session.is_complete())? == Presented::Shown {
                 dirty = false;
             }
         }
         if !dirty {
             front.idle()?;
         }
-        // Requests are handled every iteration: some (Ctrl+click inverse search)
+        // Effects are handled every iteration: some (Ctrl+click inverse search)
         // do not change the screen, so they must not wait for a redraw.
-        for req in session.take_requests() {
-            if let Some(effect) = host.request(req) {
-                front.perform(effect, &open_command, report(&tx))?;
-            }
+        for effect in session.take_effects() {
+            front.perform(effect, &open_command, report(&tx))?;
         }
         let mut timeout = if session.is_animating() { FRAME } else { Duration::from_secs(3600) };
-        for due in [host.next_deadline(), session.next_deadline()].into_iter().flatten() {
+        if let Some(due) = session.next_deadline() {
             timeout = timeout.min(due.saturating_duration_since(Instant::now()));
         }
         let event = match rx.recv_timeout(front.timeout(timeout)) {
@@ -149,44 +140,44 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
             Err(RecvTimeoutError::Disconnected) => break,
         };
         let now = Instant::now();
-        match event {
-            None => {}
+        let outcome = match event {
+            None => Outcome::None,
             Some(AppEvent::Term(ev)) => match front.handle(ev)? {
                 Input::Terminate => break,
                 Input::Resized(g) => {
                     session.resize(g);
-                    dirty = true;
+                    Outcome::Redraw
                 }
-                Input::Key(key) => match session.key(&key, now) {
-                    Action::Quit => break,
-                    Action::Redraw => dirty = true,
-                    Action::None => {}
-                },
+                Input::Key(key) => session.key(&key, now),
                 Input::Mouse(m) => {
-                    dirty |= session.mouse(&m, now);
+                    let o = session.mouse(&m, now);
                     front.set_pointer(session.pointer())?;
+                    o
                 }
-                Input::Paste(text) => dirty |= session.paste(&text) == Action::Redraw,
-                Input::Handled(redraw) => dirty |= redraw,
+                Input::Paste(text) => session.paste(&text),
+                Input::Handled(true) => Outcome::Redraw,
+                Input::Handled(false) => Outcome::None,
             },
-            Some(AppEvent::ForwardRequest(req)) => host.forward(forward(req), &session),
+            Some(AppEvent::Session(ev)) => {
+                let o = session.handle(ev, now);
+                front.sync(session.images());
+                o
+            }
             Some(AppEvent::OpenFailed(e)) => {
-                session.message = Some(e);
+                session.report(e);
+                Outcome::Redraw
+            }
+        };
+        match outcome {
+            Outcome::Quit => break,
+            Outcome::Detach => {
+                session.report("not in a session: nothing to detach from".into());
                 dirty = true;
             }
-            Some(AppEvent::Doc(ev)) => {
-                let (changed, effect) = host.handle(ev, &mut [&mut session], &mut images, now);
-                front.sync(&mut images);
-                dirty |= changed;
-                if let Some(effect) = effect {
-                    front.perform(effect, &open_command, report(&tx))?;
-                }
-            }
+            Outcome::Redraw => dirty = true,
+            Outcome::None => {}
         }
-        dirty |= host.poll(&mut [&mut session], Instant::now());
         dirty |= session.tick(Instant::now());
-        // A highlight expired.
-        dirty |= session.next_deadline().is_some_and(|d| Instant::now() >= d);
     }
     Ok(())
 }
