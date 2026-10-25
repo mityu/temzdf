@@ -486,3 +486,24 @@ fn errors_float_until_the_next_key() {
     t.type_text("echo gone\n");
     t.wait_for("the message gone and the key handled", |s| !s.contains("sideways") && s.contains("gone"));
 }
+
+#[test]
+fn a_closed_shell_stays_hidden_and_shows_again() {
+    let env = Env::new("buffers");
+    let mut t = Term::spawn(&[BIN, "-s", "b"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.type_text("echo marker-left\n");
+    t.wait_text("marker-left");
+    t.keys(&["C-b", "%"]);
+    t.wait_for("a prompt in the right pane", |s| is_prompt(&s.row_from(0, 50)));
+    // Close the left pane: its shell keeps running, hidden.
+    t.keys(&["C-b", "h", "C-b", "x"]);
+    t.wait_for("one pane", |s| !s.contains("marker-left"));
+    let ls = env.run(&["ls"]);
+    assert!(ls.contains("b  (1 panes, 2 buffers, 1 attached)"), "{ls}");
+    // The first shell's buffer is 2 (the first pane took 1).
+    env.run(&["action", "-s", "b", "show-buffer", "2"]);
+    t.wait_text("marker-left");
+    t.type_text("echo still-$((2+3))\n");
+    t.wait_text("still-5");
+}
