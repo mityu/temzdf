@@ -322,12 +322,18 @@ impl Viewer {
         self.cache().generation()
     }
 
-    /// A display list arrived (see [`DocCache::page_loaded`]); pages in the
-    /// peek window are in use however far away they are.
+    /// A display list arrived, for a document only this view shows (see
+    /// [`DocCache::page_loaded`]; with several views, `DocumentHost` collects
+    /// every view's [`Viewer::retention`]).
     pub fn page_loaded(&mut self, generation: u32, page: usize, list: Arc<DisplayList>) {
-        let current = self.current_page();
-        let peeked = self.peek.map_or(0..0, |p| self.peek_pages(&p));
-        self.cache().page_loaded(generation, page, list, current, peeked);
+        let (current, in_use) = self.retention();
+        self.cache().page_loaded(generation, page, list, &[current], &[in_use]);
+    }
+
+    /// The page being read, and the pages this view needs whatever their
+    /// distance from it (those in the peek window).
+    pub fn retention(&self) -> (usize, std::ops::Range<usize>) {
+        (self.current_page(), self.peek.map_or(0..0, |p| self.peek_pages(&p)))
     }
 
     /// A page failed to load; forget the request so it is retried later.

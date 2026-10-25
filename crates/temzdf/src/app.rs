@@ -14,10 +14,12 @@ use termpix::tty::{self, Modes, TermEvent, Tty};
 
 use crate::config::{Config, ReloadAnchor};
 use crate::ipc::{self, ForwardRequest};
-use crate::pane::{Action, PdfPane, Request};
-use crate::pdf;
-use crate::viewer::{Need, StandIn};
-use crate::workers::{self, DocCmd, DocEvent, RasterPool, SearchCmd, SynctexCmd};
+use crate::pane::{Action, PdfPane};
+use crate::viewer::StandIn;
+use crate::workers::{self, DocEvent};
+use temzdf_pdfview::document::Document;
+use temzdf_pdfview::host::{Forward, HostOptions, Opening};
+use temzdf_scene::Effect;
 use temzdf_tty::{Presenter, Screen};
 
 const FRAME: Duration = Duration::from_millis(16);
@@ -28,11 +30,6 @@ const UPLOAD_AHEAD_BATCH: usize = 4 << 20;
 const OUTPUT_POLL: Duration = Duration::from_millis(5);
 /// Longest wait for the visible pages before showing the first frame.
 const FIRST_FRAME_WAIT: Duration = Duration::from_millis(1500);
-/// Retry interval while the file is incomplete or fails to open.
-const RELOAD_RETRY: Duration = Duration::from_millis(300);
-/// Give up retrying after this many attempts (about 30 s); a new change event
-/// starts over.
-const RELOAD_MAX_ATTEMPTS: u32 = 100;
 
 pub struct Options {
     /// 0-based page to show first.
@@ -61,8 +58,8 @@ impl From<DocEvent> for AppEvent {
     }
 }
 
-fn forward_cmd(req: ForwardRequest, page_hint: usize) -> SynctexCmd {
-    SynctexCmd::Forward { file: req.file, line: req.line, column: req.column, page_hint }
+fn forward(req: ForwardRequest) -> Forward {
+    Forward { file: req.file, line: req.line, column: req.column }
 }
 
 pub fn run(path: &Path, mut opts: Options) -> Result<()> {
@@ -106,14 +103,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
 
     let (tx, rx) = mpsc::channel::<AppEvent>();
     tty::spawn_input(tty.reader()?, caps.pixel_mouse, tx.clone(), AppEvent::Term)?;
-    let doc = workers::spawn_document(path.to_owned(), tx.clone())?;
-    let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
-    let pool = RasterPool::new(threads, tx.clone())?;
-    let search = workers::spawn_search(path.to_owned(), tx.clone())?;
-    // Keep the watcher alive for the whole session. Without it the viewer still
-    // works, just without auto-reload.
-    let watcher = workers::spawn_watcher(path, tx.clone());
-    let synctex = workers::spawn_synctex(path.to_owned(), tx.clone())?;
+    let opening = Opening::start(path, workers::channel_sink(tx.clone(), AppEvent::Doc))?;
     // Forward-search requests from other processes; a second viewer of the same
     // file just goes without.
     let _ipc = ipc::serve(path, tx.clone(), AppEvent::ForwardRequest).ok();
@@ -138,7 +128,8 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         bail!("the document has no pages");
     }
     let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-    let mut session = PdfPane::new(name.clone(), info, caps.geometry);
+    let doc = Document::shared(info.bounds.clone());
+    let mut session = PdfPane::with_document(name.clone(), info.clone(), doc.clone(), caps.geometry);
     session.anchor_by_text = opts.config.reload.anchor == ReloadAnchor::Text;
     session.keymap = opts.config.keymap()?;
     session.preview_delay = opts.config.links.preview_delay();
@@ -150,18 +141,17 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     session.viewer.scroll_x.config = opts.config.scroll.to_termpix();
     session.viewer.scroll_y.config = opts.config.scroll.to_termpix();
     let open_command = opts.config.links.command();
-    if let Err(e) = &watcher {
-        session.message = Some(format!("auto-reload disabled: {e}"));
-    }
-    let mut reload = ReloadState::default();
-    // A forward search that arrived while a reload was pending: an editor's
-    // compile callback (vimtex) sends it right after the PDF changed, and the
-    // old document or SyncTeX data would put it in the wrong place.
-    let mut deferred_forward: Option<ForwardRequest> = None;
     // Wait this long after the last change before reloading (see doc/reload.md).
-    let debounce = Duration::from_millis(opts.config.reload.debounce_ms);
+    let host_options = HostOptions {
+        debounce: Duration::from_millis(opts.config.reload.debounce_ms),
+        editor: opts.config.synctex.editor.clone(),
+    };
+    let mut host = opening.finish(info, doc, host_options);
+    if let Some(e) = host.watcher_error.take() {
+        session.message = Some(e);
+    }
     if let Some(req) = opts.forward.take() {
-        let _ = synctex.send(forward_cmd(req, session.viewer.current_page()));
+        host.forward(forward(req), &session);
     }
     if let Some(scale) = opts.scale {
         session.viewer.set_scale(scale, (0.0, 0.0));
@@ -200,7 +190,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         if dirty && !congested {
             let (frame, needs) = session.frame(&mut images);
             presenter.sync(&mut comp, &mut images);
-            dispatch(&mut session, &doc, &pool, needs);
+            host.dispatch(needs);
             // Do not show half-rendered first frames (each costs a full upload in
             // Composited mode), and respect the frame-rate cap.
             let hold_first = !first_shown && !session.viewer.is_complete() && started.elapsed() < FIRST_FRAME_WAIT;
@@ -229,19 +219,12 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         // Requests are dispatched every iteration: some (Ctrl+click inverse search)
         // do not change the screen, so they must not wait for a redraw.
         for req in session.take_requests() {
-            match req {
-                Request::Search { generation, query, start_page, doc_generation } => {
-                    let _ = search.send(SearchCmd { generation, query, start_page, doc_generation });
-                }
-                Request::OpenUri(uri) => open_uri(&open_command, &uri, &tx),
-                Request::Inverse { page, x, y } => {
-                    let _ = synctex.send(SynctexCmd::Inverse { page, x, y });
-                }
-                Request::Copy(text) => tty.write_all(&temzdf_tty::copy_sequence(&text, caps.in_tmux))?,
+            if let Some(effect) = host.request(req) {
+                perform(effect, &open_command, &tx, &mut tty, caps.in_tmux)?;
             }
         }
         let mut timeout = if session.is_animating() { FRAME } else { Duration::from_secs(3600) };
-        for due in [reload.due, session.next_deadline()].into_iter().flatten() {
+        for due in [host.next_deadline(), session.next_deadline()].into_iter().flatten() {
             timeout = timeout.min(due.saturating_duration_since(Instant::now()));
         }
         if congested || held || uploading {
@@ -290,110 +273,21 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 dirty |= session.paste(&text) == Action::Redraw;
             }
             Some(AppEvent::Term(_)) => {}
-            Some(AppEvent::Doc(DocEvent::Opened(_))) => {}
-            Some(AppEvent::Doc(DocEvent::PageLoaded(generation, p, list, links))) => {
-                if generation == session.viewer.generation() {
-                    session.viewer.page_loaded(generation, p, list);
-                    session.page_links(p, links);
-                    session.page_ready();
-                    dirty = true;
-                }
-            }
-            Some(AppEvent::Doc(DocEvent::PageFailed(generation, p, e))) => {
-                session.viewer.page_failed(generation, p);
-                session.message = Some(format!("page {}: {e}", p + 1));
-                dirty = true;
-            }
-            Some(AppEvent::Doc(DocEvent::Rendered(r))) => {
-                session.viewer.rendered(&mut images, r);
-                presenter.sync(&mut comp, &mut images);
-                dirty = true;
-            }
-            Some(AppEvent::Doc(DocEvent::SearchHits { generation, page, rects })) => {
-                dirty |= session.search_hits(generation, page, rects, now);
-            }
-            Some(AppEvent::Doc(DocEvent::SearchFailed(e))) => {
-                session.message = Some(format!("search: {e}"));
-                dirty = true;
-            }
-            Some(AppEvent::Doc(DocEvent::RenderFailed(key, e))) => {
-                session.viewer.render_cancelled(key);
-                session.message = Some(format!("render: {e}"));
-                dirty = true;
-            }
-            Some(AppEvent::Doc(DocEvent::FileChanged)) => {
-                reload.changed(now, debounce);
-                session.reloading = true;
-                dirty = true;
-            }
-            Some(AppEvent::ForwardRequest(req)) => {
-                if reload.due.is_some() || reload.in_flight {
-                    deferred_forward = Some(req);
-                } else {
-                    let _ = synctex.send(forward_cmd(req, session.viewer.current_page()));
-                }
-            }
-            Some(AppEvent::Doc(DocEvent::ForwardResult(boxes))) => {
-                session.forward_result(boxes, now);
-                dirty = true;
-            }
-            Some(AppEvent::Doc(DocEvent::InverseResult(loc))) => {
-                match opts.config.synctex.command(&loc.file, loc.line, loc.column) {
-                    Some(cmd) => run_shell(&cmd),
-                    None => {
-                        session.message = Some(format!(
-                            "{}:{} (set [synctex] editor in the config to open it)",
-                            loc.file.display(),
-                            loc.line
-                        ))
-                    }
-                }
-                dirty = true;
-            }
+            Some(AppEvent::ForwardRequest(req)) => host.forward(forward(req), &session),
             Some(AppEvent::OpenFailed(e)) => {
                 session.message = Some(e);
                 dirty = true;
             }
-            Some(AppEvent::Doc(DocEvent::SynctexFailed(e))) => {
-                session.message = Some(format!("SyncTeX: {e}"));
-                dirty = true;
-            }
-            Some(AppEvent::Doc(DocEvent::Reloaded(info))) => {
-                let _ = synctex.send(SynctexCmd::Reload);
-                reload.in_flight = false;
-                reload.attempts = 0;
-                session.reload(&mut images, info);
+            Some(AppEvent::Doc(ev)) => {
+                let (changed, effect) = host.handle(ev, &mut [&mut session], &mut images, now);
                 presenter.sync(&mut comp, &mut images);
-                session.reloading = reload.due.is_some();
-                dirty = true;
-            }
-            Some(AppEvent::Doc(DocEvent::ReloadFailed(e))) => {
-                reload.in_flight = false;
-                if !reload.retry(now) {
-                    session.reloading = false;
-                    session.message = Some(format!("reload failed: {e}"));
+                dirty |= changed;
+                if let Some(effect) = effect {
+                    perform(effect, &open_command, &tx, &mut tty, caps.in_tmux)?;
                 }
-                dirty = true;
             }
         }
-        // Start a due reload: only once the file looks completely written.
-        if let Some(due) = reload.due
-            && Instant::now() >= due
-            && !reload.in_flight
-        {
-            reload.due = None;
-            if pdf::looks_complete(path).unwrap_or(false) {
-                reload.in_flight = true;
-                let _ = doc.send(DocCmd::Reload);
-            } else if !reload.retry(Instant::now()) {
-                session.reloading = false;
-                session.message = Some("reload: the file stays incomplete or missing".into());
-                dirty = true;
-            }
-        }
-        if let Some(req) = deferred_forward.take_if(|_| reload.due.is_none() && !reload.in_flight) {
-            let _ = synctex.send(forward_cmd(req, session.viewer.current_page()));
-        }
+        dirty |= host.poll(&mut [&mut session], Instant::now());
         dirty |= session.tick(Instant::now());
         // A highlight expired.
         dirty |= session.next_deadline().is_some_and(|d| Instant::now() >= d);
@@ -426,35 +320,6 @@ fn run_shell(cmd: &str) {
         .spawn();
 }
 
-/// Auto-reload scheduling: a trailing debounce after change events, then
-/// retries while the file is incomplete or fails to open (as Okular does).
-#[derive(Default)]
-struct ReloadState {
-    /// When to try next.
-    due: Option<Instant>,
-    /// A reload request is with the document thread.
-    in_flight: bool,
-    attempts: u32,
-}
-
-impl ReloadState {
-    fn changed(&mut self, now: Instant, debounce: Duration) {
-        self.due = Some(now + debounce);
-        self.attempts = 0;
-    }
-
-    /// Schedule another attempt; false once we give up.
-    fn retry(&mut self, now: Instant) -> bool {
-        self.attempts += 1;
-        if self.attempts >= RELOAD_MAX_ATTEMPTS {
-            self.due = None;
-            return false;
-        }
-        self.due = Some(now + RELOAD_RETRY);
-        true
-    }
-}
-
 /// Open a URI with the configured handler, detached from the terminal. A
 /// handler that cannot start or exits with an error (e.g. `xdg-open` over SSH
 /// without a display) is reported as [`AppEvent::OpenFailed`].
@@ -485,18 +350,12 @@ fn open_uri(command: &[String], uri: &str, tx: &Sender<AppEvent>) {
     }
 }
 
-fn dispatch(session: &mut PdfPane, doc: &Sender<DocCmd>, pool: &RasterPool, needs: Vec<Need>) {
-    let mut jobs = Vec::new();
-    for need in needs {
-        session.viewer.mark_requested(&need);
-        match need {
-            Need::LoadPage(p) => {
-                let _ = doc.send(DocCmd::LoadPage(p));
-            }
-            Need::Render(job) => jobs.push(job),
-        }
+/// Do what the pane asked the frontend for.
+fn perform(effect: Effect, open_command: &[String], tx: &Sender<AppEvent>, tty: &mut Tty, in_tmux: bool) -> Result<()> {
+    match effect {
+        Effect::Copy(text) => tty.write_all(&temzdf_tty::copy_sequence(&text, in_tmux))?,
+        Effect::OpenUri(uri) => open_uri(open_command, &uri, tx),
+        Effect::RunShell(cmd) => run_shell(&cmd),
     }
-    for key in pool.replace(jobs) {
-        session.viewer.render_cancelled(key);
-    }
+    Ok(())
 }

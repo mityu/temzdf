@@ -130,15 +130,16 @@ impl DocCache {
     }
 
     /// A display list arrived. Lists for an older generation are ignored. Keeps
-    /// at most `max_lists`, dropping the ones farthest from `current` (the page
-    /// being read) but never those in `in_use`; they load again when needed.
+    /// at most `max_lists`, dropping the ones farthest from every page in
+    /// `current` (the pages being read, one per view) but never those in
+    /// `in_use`; they load again when needed.
     pub fn page_loaded(
         &mut self,
         generation: u32,
         page: usize,
         list: Arc<DisplayList>,
-        current: usize,
-        in_use: std::ops::Range<usize>,
+        current: &[usize],
+        in_use: &[std::ops::Range<usize>],
     ) {
         if generation != self.generation {
             return;
@@ -151,9 +152,12 @@ impl DocCache {
         if loaded.len() <= self.max_lists {
             return;
         }
-        let mut by_distance: Vec<usize> = loaded.into_iter().filter(|p| !in_use.contains(p)).collect();
-        by_distance.sort_by_key(|&p| std::cmp::Reverse(p.abs_diff(current)));
-        let excess = by_distance.len().saturating_sub(self.max_lists.saturating_sub(in_use.len()));
+        let used = |p: &usize| in_use.iter().any(|r| r.contains(p));
+        let kept = loaded.iter().filter(|p| used(p)).count();
+        let mut by_distance: Vec<usize> = loaded.into_iter().filter(|p| !used(p)).collect();
+        let distance = |p: usize| current.iter().map(|&c| p.abs_diff(c)).min().unwrap_or(0);
+        by_distance.sort_by_key(|&p| std::cmp::Reverse(distance(p)));
+        let excess = by_distance.len().saturating_sub(self.max_lists.saturating_sub(kept));
         for p in by_distance.into_iter().take(excess) {
             self.lists[p] = None;
         }

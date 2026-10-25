@@ -1,8 +1,8 @@
 //! Background threads: the document thread (owns the non-`Send` MuPDF
 //! `Document`, loads display lists), the raster pool (turns display lists into
 //! tiles), search, file watching and SyncTeX. Results come back as
-//! [`DocEvent`]s, sent into the caller's event channel (any event type that
-//! converts from `DocEvent`).
+//! [`DocEvent`]s through a [`Sink`], so the caller can tag them (e.g. with the
+//! document they belong to) on the way into its own event channel.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,16 @@ use mupdf::DisplayList;
 use crate::doc_cache::{RenderJob, Rendered, TileKey};
 use crate::pdf::{self, DocInfo, Link, PageRect};
 use crate::synctex::{PdfBox, Scanner, SourceLocation};
+
+/// Where worker threads send their results. Returns false once nobody listens
+/// any more (the thread then stops).
+pub type Sink = Arc<dyn Fn(DocEvent) -> bool + Send + Sync>;
+
+/// A sink feeding a channel, converting events on the way.
+pub fn channel_sink<E: Send + 'static>(tx: Sender<E>, wrap: impl Fn(DocEvent) -> E + Send + Sync + 'static) -> Sink {
+    let tx = std::sync::Mutex::new(tx);
+    Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(wrap(e)).is_ok())
+}
 
 pub enum DocEvent {
     Opened(Result<DocInfo, String>),
@@ -59,10 +69,7 @@ pub enum SynctexCmd {
 /// SyncTeX queries run here: parsing a big `.synctex.gz` takes a while and must
 /// not stall drawing. The file is (re)read lazily on the first query after
 /// start-up or a reload.
-pub fn spawn_synctex<E: From<DocEvent> + Send + 'static>(
-    pdf: PathBuf,
-    events: Sender<E>,
-) -> std::io::Result<Sender<SynctexCmd>> {
+pub fn spawn_synctex(pdf: PathBuf, events: Sink) -> std::io::Result<Sender<SynctexCmd>> {
     let (tx, rx) = mpsc::channel::<SynctexCmd>();
     std::thread::Builder::new().name("temzdf-synctex".into()).spawn(move || {
         let mut scanner: Option<Scanner> = None;
@@ -77,7 +84,7 @@ pub fn spawn_synctex<E: From<DocEvent> + Send + 'static>(
             let Some(s) = scanner.as_mut() else {
                 let name = pdf.with_extension("synctex.gz");
                 let msg = format!("no SyncTeX data ({} missing; compile with -synctex=1)", name.display());
-                if events.send(DocEvent::SynctexFailed(msg).into()).is_err() {
+                if !events(DocEvent::SynctexFailed(msg)) {
                     return;
                 }
                 continue;
@@ -97,7 +104,7 @@ pub fn spawn_synctex<E: From<DocEvent> + Send + 'static>(
                 },
                 SynctexCmd::Reload => continue,
             };
-            if events.send(ev.into()).is_err() {
+            if !events(ev) {
                 return;
             }
         }
@@ -116,10 +123,7 @@ pub struct SearchCmd {
 
 /// The search worker opens its own copy of the document so long searches do not
 /// delay page loading. A newer command interrupts the current search.
-pub fn spawn_search<E: From<DocEvent> + Send + 'static>(
-    path: PathBuf,
-    events: Sender<E>,
-) -> std::io::Result<Sender<SearchCmd>> {
+pub fn spawn_search(path: PathBuf, events: Sink) -> std::io::Result<Sender<SearchCmd>> {
     let (tx, rx) = mpsc::channel::<SearchCmd>();
     std::thread::Builder::new().name("temzdf-search".into()).spawn(move || {
         let mut doc: Option<(u32, pdf::Doc, Vec<pdf::PageBounds>)> = None;
@@ -136,7 +140,7 @@ pub fn spawn_search<E: From<DocEvent> + Send + 'static>(
                 match pdf::open(&path).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))) {
                     Ok((d, b)) => doc = Some((cmd.doc_generation, d, b)),
                     Err(e) => {
-                        let _ = events.send(DocEvent::SearchFailed(format!("{e:#}")).into());
+                        events(DocEvent::SearchFailed(format!("{e:#}")));
                         continue;
                     }
                 }
@@ -154,7 +158,7 @@ pub fn spawn_search<E: From<DocEvent> + Send + 'static>(
                     Ok(rects) => DocEvent::SearchHits { generation: cmd.generation, page, rects },
                     Err(e) => DocEvent::SearchFailed(format!("{e:#}")),
                 };
-                if events.send(ev.into()).is_err() {
+                if !events(ev) {
                     return;
                 }
             }
@@ -170,20 +174,17 @@ pub enum DocCmd {
     Reload,
 }
 
-pub fn spawn_document<E: From<DocEvent> + Send + 'static>(
-    path: PathBuf,
-    events: Sender<E>,
-) -> std::io::Result<Sender<DocCmd>> {
+pub fn spawn_document(path: PathBuf, events: Sink) -> std::io::Result<Sender<DocCmd>> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new().name("temzdf-doc".into()).spawn(move || {
         let (mut doc, mut bounds) = match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
             Ok((doc, info)) => {
                 let bounds = info.bounds.clone();
-                let _ = events.send(DocEvent::Opened(Ok(info)).into());
+                events(DocEvent::Opened(Ok(info)));
                 (doc, bounds)
             }
             Err(e) => {
-                let _ = events.send(DocEvent::Opened(Err(format!("{e:#}"))).into());
+                events(DocEvent::Opened(Err(format!("{e:#}"))));
                 return;
             }
         };
@@ -214,7 +215,7 @@ pub fn spawn_document<E: From<DocEvent> + Send + 'static>(
                     Err(e) => DocEvent::ReloadFailed(format!("{e:#}")),
                 },
             };
-            if events.send(ev.into()).is_err() {
+            if !events(ev) {
                 break;
             }
         }
@@ -227,10 +228,7 @@ pub fn spawn_document<E: From<DocEvent> + Send + 'static>(
 /// watched too and events are filtered by file name; that survives the inode
 /// changing. Symlinks are resolved and their target is watched as well. Keep
 /// the returned watcher alive.
-pub fn spawn_watcher<E: From<DocEvent> + Send + 'static>(
-    path: &Path,
-    events: Sender<E>,
-) -> notify::Result<notify::RecommendedWatcher> {
+pub fn spawn_watcher(path: &Path, events: Sink) -> notify::Result<notify::RecommendedWatcher> {
     use notify::{RecursiveMode, Watcher};
 
     let abs = std::path::absolute(path)?;
@@ -247,7 +245,7 @@ pub fn spawn_watcher<E: From<DocEvent> + Send + 'static>(
             return;
         }
         if ev.paths.iter().any(|p| p.file_name().is_some_and(|n| names.iter().any(|m| m == n))) {
-            let _ = events.send(DocEvent::FileChanged.into());
+            events(DocEvent::FileChanged);
         }
     })?;
     for t in &targets {
@@ -266,7 +264,7 @@ pub struct RasterPool {
 }
 
 impl RasterPool {
-    pub fn new<E: From<DocEvent> + Send + 'static>(threads: usize, events: Sender<E>) -> std::io::Result<Self> {
+    pub fn new(threads: usize, events: Sink) -> std::io::Result<Self> {
         let shared = Arc::new((Mutex::new(VecDeque::<RenderJob>::new()), Condvar::new()));
         for i in 0..threads.max(1) {
             let shared = shared.clone();
@@ -289,7 +287,7 @@ impl RasterPool {
                         }
                         Err(e) => DocEvent::RenderFailed(job.key, format!("{e:#}")),
                     };
-                    if events.send(ev.into()).is_err() {
+                    if !events(ev) {
                         break;
                     }
                 }
@@ -358,7 +356,7 @@ mod tests {
         }
         for threads in [1, 2, 4, 6, 8, 12] {
             let (tx, rx) = mpsc::channel::<DocEvent>();
-            let pool = RasterPool::new(threads, tx).unwrap();
+            let pool = RasterPool::new(threads, channel_sink(tx, |e| e)).unwrap();
             let start = std::time::Instant::now();
             pool.replace(jobs());
             for _ in 0..n {

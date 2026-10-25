@@ -1477,6 +1477,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mupdf",
+ "notify",
  "serde",
  "temzdf-pdfcore",
  "temzdf-scene",

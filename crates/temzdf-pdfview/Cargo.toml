@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 mupdf.workspace = true
+notify = "8.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 temzdf-pdfcore.workspace = true
 temzdf-scene.workspace = true

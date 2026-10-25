@@ -134,6 +134,18 @@ pub struct Frame {
     pub title: String,
 }
 
+/// Something a frontend does on a pane's behalf, in the frontend's own
+/// environment (its clipboard, its `DISPLAY`, its user's editor).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Effect {
+    /// Put text on the clipboard.
+    Copy(String),
+    /// Open an external link with the system handler.
+    OpenUri(String),
+    /// Run a shell command detached from the terminal (SyncTeX inverse search).
+    RunShell(String),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
