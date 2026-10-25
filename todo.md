@@ -37,6 +37,13 @@ server on one `Session`). Next and open:
   (images re-emitted per client), a scrollback indicator, mouse selection and
   copy, a place for session messages when no PDF pane is open (they go to the
   server log now).
+- [ ] Scripting and configuration (JavaScript/TypeScript in a script-host
+  process, replacing the TOML file): design in `doc/scripting.md` on the
+  `research/notes` branch. The execution model is being settled first; the
+  questions under "Open questions, to decide later" there (modes and
+  mappings, escape hatches, message area, mouse, defaults, layout details,
+  hidden buffers, client-side settings, reload, CLI scripting,
+  `check-config`) must be decided before or while implementing.
 - [ ] Step 4: GUI client (winit + wgpu). Step 5: web panes (headless
   Chromium). Step 6: programmable configuration.
 
