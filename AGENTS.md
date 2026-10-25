@@ -20,21 +20,26 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/termpix-core` | Library. Frontend-independent primitives: geometry, RGBA raster helpers, kinetic scroll helper, key/mouse event types. No terminal code. |
 | `crates/termpix` | Library. Terminal I/O: tty setup, capability probing, input parsing (SGR-pixel mouse, kitty keyboard), kitty graphics transport, layered compositor, mock terminal for tests; re-exports `termpix-core`. **Knows nothing about PDF.** |
 | `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley` + `taffy`). Independent of `termpix` (`termpix-core` only in its tests). |
-| `crates/temzdf-scene` | Library. What a pane shows, frontend-independent: image store and frames of layers. |
+| `crates/temzdf-scene` | Library. What a pane shows, frontend-independent: image store and frames of layers, frontend hints, effects. |
+| `crates/temzdf-protocol` | Library. Session protocol: client/server messages, framing, socket locations. |
 | `crates/temzdf-pdfcore` | Library. PDF backend: MuPDF (`mupdf` crate), display list and tile cache, text, SyncTeX, background workers, reload. No terminal code. |
-| `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings. No terminal code. |
-| `crates/temzdf-tty` | Library. Terminal frontend: shows scene frames through `termpix`. |
-| `crates/temzdf` | The binary: event loop, config, IPC (`--forward`), headless `--render-frame`. |
+| `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings; `Document`/`DocumentHost` shared by the panes on one file (workers, reload, SyncTeX routing). No terminal code. |
+| `crates/temzdf-tty` | Library. Terminal frontend (`TtyFrontend`): shows scene frames through `termpix`, frame pacing, effects. |
+| `crates/temzdf-server` | Library. `Session` (panes, layout, focus, prefix keys `C-s`, actions, composed frame), the session server process, forward-search sockets. No terminal code. |
+| `crates/temzdf` | The binary: standalone viewer, session commands and client (zellij names: `-s`, `attach`, `ls`, `kill-session`, `action`), config, headless `--render-frame`. |
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
 | `todo.md` | Long-running tasks and deferred work. |
 | `experiments/` | Standalone experiment crates outside the workspace (see the matching doc). |
 
 Dependency direction: `termpix-core <- termpix <- temzdf-tty <- temzdf` and
-`temzdf-scene <- temzdf-pdfcore <- temzdf-pdfview <- temzdf` (details in
-`doc/architecture.md`). Never make `termpix*` depend on PDF, SyncTeX or viewer
-code, and never make `temzdf-pdfcore`/`temzdf-pdfview` depend on `termpix`
-(tests excepted): backends and panes produce scenes, only frontends draw.
+`temzdf-scene <- temzdf-pdfcore <- temzdf-pdfview <- temzdf-server <- temzdf`
+(details in `doc/architecture.md`). Never make `termpix*` depend on PDF,
+SyncTeX or viewer code, and never make `temzdf-pdfcore`, `temzdf-pdfview` or
+`temzdf-server` depend on `termpix` (tests excepted): backends, panes and the
+session produce scenes, only frontends draw. The direction the project is
+heading (a tmux-like session server with terminal, PDF and web panes) is in
+`doc/session-server.md`.
 
 ## Environment
 
@@ -136,4 +141,5 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/config.md`: the configuration file format (keep in sync with `crates/temzdf/src/config.rs`).
 - `doc/performance.md`: measurements (raster pool, display lists, transfer) and the benchmark to rerun.
 - `doc/macos.md`: macOS specifics, verification results, and how to drive GUI terminals there.
+- `doc/session-server.md`: the session server design, what is implemented and what comes next.
 - `doc/gpu.md`: GPU rasterisation experiment (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.

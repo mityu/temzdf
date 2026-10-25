@@ -215,3 +215,7 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
     mouse coordinates and legacy keys.
   - The outer terminal must support Unicode placeholders (kitty, Ghostty; not
     WezTerm).
+- Session prefix `C-s` (2026-10-25): reaches temzdf in kitty, WezTerm and
+  tmux (raw mode clears IXON, so it is no flow control). zellij keeps `C-s`
+  for its own scroll mode, so session keys do not work inside zellij until the
+  prefix is configurable.

@@ -1,8 +1,53 @@
-# Session server design (proposal)
+# Session server design
 
-Status (2026-10-25): proposal, nothing implemented. Builds on the research in
-this branch: `doc/multiplexer.md`, `doc/gui-stack.md`, `doc/webview-viewer.md`,
-`doc/config-language.md`.
+Status (2026-10-25): steps 1 and 2 of the incremental plan below are
+implemented (PDF panes only); see "Implementation status". The research it
+builds on is on the `research/notes` branch: `doc/multiplexer.md`,
+`doc/gui-stack.md`, `doc/webview-viewer.md`, `doc/config-language.md`.
+
+## Implementation status
+
+What exists:
+
+- Crates as in "Crate layout" below, with these differences: the PDF backend
+  is `temzdf-pdfcore`; `termpix-core` holds the terminal-independent parts of
+  termpix (geometry, raster helpers, kinetic scroll, input events) so the scene
+  and panes need no terminal code; `temzdf-protocol` holds the messages,
+  framing and socket locations.
+- `Session` (`crates/temzdf-server/src/session.rs`): documents (one
+  `DocumentHost` per file, `crates/temzdf-pdfview/src/host.rs`, shared by every
+  pane on it: one tile cache, links, text, workers, reload), PDF panes in a
+  binary layout of splits with one-cell borders, focus, the prefix key `C-s`,
+  `Action`s with a text form, and one composed frame (pane layers moved into
+  their rectangles, clipped, placement keys made unique and stable).
+- Three ways to run share it: `temzdf FILE` (standalone: the session and the
+  terminal frontend in one process, nothing registered), `--render-frame`
+  (headless, waits for the workers after each key) and the session server
+  (`crates/temzdf-server/src/daemon.rs`) with TTY clients
+  (`crates/temzdf/src/client.rs`).
+- Commands follow zellij: `temzdf -s NAME FILE`, `attach [-c] [NAME]` (`a`),
+  `list-sessions` (`ls`), `kill-session` (`k`), `kill-all-sessions` (`ka`),
+  `action [-s NAME] new-pane FILE | split right|down | move-focus DIR |
+  focus-next-pane | close-pane | detach`. One server process per session; its
+  output goes to `$XDG_STATE_HOME/temzdf/NAME.log`.
+- Clients: the latest to attach or type sets the session's size and frontend
+  hints; frames are paced per client by acknowledgements, image changes are
+  queued per client (latest wins), late attachers get a snapshot; effects
+  (copy, opening links, inverse search) run in the latest client.
+
+Not yet (in order of the plan, or found on the way):
+
+- Frames carry only image layers: UI chrome (status bar, outline, prompts) is
+  still drawn as pixels by the pane, not as cell grids.
+- Every client gets frames rendered for the latest client's geometry, cell
+  size included; per-client pixel density, and zoom stored relative to the
+  pane width, are not done (fit-width does follow the pane width).
+- Pixels go through the socket; shared memory for local clients would save
+  copies (measure first).
+- One window per session (no tabs); prefix and session keys are fixed
+  (configurable later, default to become `C-b`). zellij takes `C-s` for
+  itself (scroll mode), so session keys do not reach temzdf inside zellij yet.
+- Steps 3 to 6: terminal panes, GUI client, web panes, programmable config.
 
 ## Vision
 
@@ -207,21 +252,23 @@ and standalone stays the easy way to test it.
 
 | Crate | Contents | Depends on |
 |---|---|---|
-| `termpix` | terminal I/O, probing, input parsing, kitty transport, compositor, mock terminal (unchanged) | - |
-| `termpix-ui` | pixel widgets (unchanged; cell widgets may follow) | `termpix` |
-| `temzdf-scene` | the protocol vocabulary: cell grids, image layers, image data references, input events, client capabilities and geometry; pure data with serde | - |
-| `temzdf-pdf` | the PDF backend as a document service: MuPDF wrapper, display lists, prioritised raster pool and per-document tile cache, text, links, outline, search, SyncTeX, file watching and reload; message-passing API so it can later run in a child process | (no termpix) |
-| `temzdf-pdfview` | a PDF pane: per-view state (layout, scroll, zoom, peek window, selection, history, link preview, search UI, key bindings) that consumes input events and produces a scene | `temzdf-pdf`, `temzdf-scene` |
-| `temzdf-tty` | TTY frontend: renders a scene with `termpix`, turns terminal input into scene input events; used by the TTY client and by standalone mode | `temzdf-scene`, `termpix`, `termpix-ui` |
-| `temzdf-server` | sessions, layout tree, panes, focus, client registry and per-client state, socket protocol, session discovery | `temzdf-scene`, pane crates |
+| `termpix-core` | geometry, raster helpers, kinetic scroll, key/mouse events (no terminal code) | - |
+| `termpix` | terminal I/O, probing, input parsing, kitty transport, compositor, mock terminal | `termpix-core` |
+| `termpix-ui` | pixel widgets (cell widgets may follow) | - |
+| `temzdf-scene` | what a pane shows: image store and its updates, layers, frames (cursor, pointer, title), frontend hints, effects; serde behind a feature | `termpix-core` |
+| `temzdf-protocol` | client/server messages, framing, socket locations | `temzdf-scene` |
+| `temzdf-pdfcore` | the PDF backend as a document service: MuPDF wrapper, display lists, prioritised raster pool and per-document tile cache, text, links, outline, search, SyncTeX, file watching and reload; message-passing API so it can later run in a child process | (no termpix) |
+| `temzdf-pdfview` | a PDF pane: per-view state (layout, scroll, zoom, peek window, selection, history, link preview, search UI, key bindings) that consumes input events and produces a scene; `Document` and `DocumentHost` shared by the panes on a file | `temzdf-pdfcore`, `temzdf-scene` |
+| `temzdf-tty` | TTY frontend: renders a scene with `termpix` (frame pacing, effects); used by the TTY client and by standalone mode | `temzdf-scene`, `termpix` |
+| `temzdf-server` | `Session` (layout tree, panes, focus, prefix keys, actions, composition), the server process (clients, pacing), session discovery, forward-search sockets | `temzdf-protocol`, pane crates |
 | `temzdf-term` (later) | terminal pane: `portable-pty` + `libghostty-vt` | `temzdf-scene` |
 | `temzdf-web` (later) | web pane: headless Chromium over CDP | `temzdf-scene` |
 | `temzdf-gui` (later) | GUI client: winit + wgpu renderer of the scene | `temzdf-scene` |
-| `temzdf` (binary) | subcommands: session (start/attach/list/kill), `standalone-pdf-viewer`, `--forward` for SyncTeX, `--render-frame` | all of the above |
+| `temzdf` (binary) | standalone viewer, session subcommands and client, `--forward` for SyncTeX, `--render-frame` | all of the above |
 
 Rules, extending today's dependency direction (`temzdf -> termpix-ui ->
 termpix`): `termpix` and `termpix-ui` stay ignorant of PDF and sessions;
-backends (`temzdf-pdf`, later `temzdf-term`, `temzdf-web`) know nothing about
+backends (`temzdf-pdfcore`, later `temzdf-term`, `temzdf-web`) know nothing about
 terminals or clients; only frontends (`temzdf-tty`, `temzdf-gui`) know how to
 draw; panes speak only `temzdf-scene`. SyncTeX forward search keeps working in
 both modes: standalone listens on its per-PDF socket as today; in session mode
@@ -255,12 +302,12 @@ the server receives the request and routes it to the panes showing that PDF.
 
 ## Incremental plan
 
-1. **Core split**: create `temzdf-scene`, `temzdf-pdf`, `temzdf-pdfview` and
+1. (done) **Core split**: create `temzdf-scene`, `temzdf-pdfcore`, `temzdf-pdfview` and
    `temzdf-tty` from today's code (splitting `Viewer` into the document part
    and the view part on the way); the binary's current behaviour becomes
    `standalone-pdf-viewer` (and stays the default until session mode exists).
    Nothing user-visible changes; existing tests and e2e keep passing.
-2. **Server/client for the PDF viewer alone**: `temzdf --server`, a TTY client
+2. (done) **Server/client for the PDF viewer alone**: a session server, a TTY client
    that attaches and detaches; several panes on one document. Validates the
    protocol, sharing and resync with existing features; testable with the
    mock terminal.

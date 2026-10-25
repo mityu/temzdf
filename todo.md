@@ -13,6 +13,24 @@ below them are deferred.
 - [x] M5: SyncTeX (vendored parser, IPC socket, forward/inverse search). SyncTeX anchoring on reload was dropped, see `doc/reload.md`
 - [x] M6: compatibility (Composited backend verified on WezTerm and in zellij; zellij/tmux recognised from XTVERSION; inline frames fenced for slow links)
 
+## Session server (`doc/session-server.md`)
+
+Steps 1-2 are done (PDF panes, standalone viewer and session server on one
+`Session`). Next and open:
+
+- [ ] Configurable prefix and session keys (default `C-b`; `C-s` is fixed for
+  now and taken by zellij, see `doc/terminal-compat.md`).
+- [ ] UI chrome as cell grids in the scene instead of pixels.
+- [ ] Per-client pixel density (every client now gets frames for the latest
+  client's geometry and cell size) and zoom stored relative to the pane width.
+- [ ] Shared memory instead of the socket for local clients' pixels (measure
+  the socket first).
+- [ ] Windows/tabs; a Vim-like command line on the `Action` text form.
+- [ ] Step 3: terminal panes (`portable-pty` + `libghostty-vt`, images
+  re-emitted per client).
+- [ ] Step 4: GUI client (winit + wgpu). Step 5: web panes (headless
+  Chromium). Step 6: programmable configuration.
+
 ## Deferred
 
 - zellij delays keyboard input (even its own prefix commands) while it

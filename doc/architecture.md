@@ -15,10 +15,12 @@
 | `termpix` | `termpix-core` |
 | `termpix-ui` | - |
 | `temzdf-scene` | `termpix-core` |
+| `temzdf-protocol` | `temzdf-scene`, `termpix-core` |
 | `temzdf-pdfcore` | `temzdf-scene` |
 | `temzdf-pdfview` | `temzdf-pdfcore`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf-tty` | `temzdf-scene`, `termpix` |
-| `temzdf` (bin) | all of the above except `termpix-core`/`termpix-ui` directly |
+| `temzdf-server` | `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
+| `temzdf` (bin) | `temzdf-server`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-tty`, `temzdf-scene`, `termpix` |
 
 - `termpix-core`: frontend-independent primitives (geometry, raster helpers,
   kinetic scroll, key/mouse events).
@@ -29,9 +31,17 @@
   pointer shape, title).
 - `temzdf-pdfcore`: the PDF backend: MuPDF wrapper, `DocCache` (display lists
   and tiles), page text and selection, SyncTeX, background workers.
-- `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys).
-- `temzdf-tty`: the terminal frontend (`Presenter`, `Screen`, OSC helpers).
-- `temzdf`: the binary: event loop, config, IPC, headless rendering.
+- `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys)
+  and what panes on one file share (`Document`, `DocumentHost`: workers,
+  reload, SyncTeX routing).
+- `temzdf-tty`: the terminal frontend (`TtyFrontend`: terminal setup, frame
+  pacing, effects; `Presenter`, `Screen`).
+- `temzdf-protocol`: the session protocol (messages, framing, sockets).
+- `temzdf-server`: `Session` (panes, layout, focus, prefix keys, actions, the
+  composed frame) and the session server process.
+- `temzdf`: the binary: standalone viewer, session commands and client,
+  config, headless rendering. The standalone viewer, `--render-frame` and the
+  session server all run a `Session`.
 
 This layout prepares the session server (`doc/session-server.md`): backends and
 panes know nothing about terminals, only frontends draw.

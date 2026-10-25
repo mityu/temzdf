@@ -93,6 +93,12 @@ is for named keys (`S-Tab`).
 | `copy` | `y` | copy the selection |
 | `toggle_sidebar` | `Tab` | outline |
 
+Session keys follow the prefix `C-s` (fixed for now; it is to become
+configurable, with `C-b` as the default): `%` splits side by side and `"`
+stacked (another view of the same PDF), `h`/`j`/`k`/`l` or arrows move the
+focus, `o` goes to the next pane, `x` closes the pane, `d` detaches from a
+session (`temzdf -s`). Clicking a pane focuses it.
+
 Fixed, not configurable: digits before a command are a count (`0` only after
 another digit), the outline sidebar's own keys while it has focus, and the
 one-line input (search prompt). Mouse bindings are fixed too. Defaults live in
