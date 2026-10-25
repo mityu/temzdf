@@ -1450,6 +1450,7 @@ dependencies = [
  "cc",
  "clap",
  "flate2",
+ "libc",
  "libz-sys",
  "mupdf",
  "notify",

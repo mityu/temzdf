@@ -20,6 +20,9 @@ termpix.workspace = true
 termpix-ui.workspace = true
 toml = "1.1.8"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.191"
+
 [lints]
 workspace = true
 

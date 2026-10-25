@@ -3,7 +3,8 @@
 //!
 //! Each viewer listens on a Unix socket at
 //! `$XDG_RUNTIME_DIR/temzdf/<hash of the canonical PDF path>.sock` (falling back
-//! to the system temp dir). The protocol is one line per request:
+//! to the per-user temp dir on macOS, else the system temp dir). The protocol
+//! is one line per request:
 //! `forward\t<line>\t<column>\t<source file>\n`, answered with `ok\n`.
 
 use std::io::{BufRead, BufReader, Write};
@@ -54,10 +55,32 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|d| !d.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join(format!("temzdf-{}", rustix::process::getuid().as_raw())))
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
+        return dir.into();
+    }
+    // Not $TMPDIR on macOS: `nix develop` points it at a per-shell directory,
+    // so an editor and the viewer started from different shells would miss
+    // each other.
+    #[cfg(target_os = "macos")]
+    if let Some(dir) = darwin_user_temp_dir() {
+        return dir;
+    }
+    std::env::temp_dir().join(format!("temzdf-{}", rustix::process::getuid().as_raw()))
+}
+
+/// The per-user temporary directory (`/var/folders/.../T/`, mode 0700),
+/// independent of the environment.
+#[cfg(target_os = "macos")]
+fn darwin_user_temp_dir() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let mut buf = vec![0u8; 1024];
+    // SAFETY: confstr writes at most `buf.len()` bytes, NUL included.
+    let n = unsafe { libc::confstr(libc::_CS_DARWIN_USER_TEMP_DIR, buf.as_mut_ptr().cast(), buf.len()) };
+    if n == 0 || n > buf.len() {
+        return None;
+    }
+    buf.truncate(n - 1);
+    Some(std::ffi::OsString::from_vec(buf).into())
 }
 
 /// The socket a viewer of `pdf` listens on.
@@ -141,6 +164,13 @@ mod tests {
         assert!(ForwardRequest::parse_spec("3:").is_none());
         let req = ForwardRequest { file: "a b.tex".into(), line: 3, column: 1 };
         assert_eq!(ForwardRequest::decode(&req.encode()), Some(req));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_user_temp_dir_exists() {
+        let dir = darwin_user_temp_dir().unwrap();
+        assert!(dir.is_dir(), "{dir:?}");
     }
 
     #[test]
