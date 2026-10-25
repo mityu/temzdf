@@ -11,8 +11,8 @@ configuration).
 Status (2026-10-26): implemented: the execution model, modes and key
 mappings, the shipped defaults, options, generated type definitions,
 floating messages and the escape keys; the TOML configuration is gone. How
-to write a configuration is in `doc/config.md`. Not yet: pane sizes kept on
-resize, buffers separated from panes (see `todo.md`).
+to write a configuration is in `doc/config.md`, buffers included. Not yet:
+pane sizes kept on resize (see `todo.md`).
 
 ## Pieces
 
@@ -92,7 +92,8 @@ declarations. In short, `import { ... } from "temzdf"`:
 - `o.<option>` reads and sets options.
 - `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,
   `PaneClosePre(id)`, `PaneClosed(id)`, `PaneFocused(id)`,
-  `DocumentReloaded(path)`, `ModeChanged(old, new)`.
+  `DocumentReloaded(path)`, `ModeChanged(old, new)`, `BufferCreated(id,
+  kind)`, `BufferDeleted(id)`.
 - `dispatch(async (ctx) => ...)` with `ctx.cmd` and `ctx.atomic(fn)`;
   `atomic(fn)`.
 - Globals: `setTimeout`, `clearTimeout`, `console`.

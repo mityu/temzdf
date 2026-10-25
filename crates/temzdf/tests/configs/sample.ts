@@ -29,3 +29,14 @@ map("normal", "gx", () => {
   const panes: { id: number }[] = cmd.panes();
   cmd.message(`${panes.length} panes`);
 });
+
+o.remainonexit = true;
+o.reloadanchor = "text";
+o.linkopener = ["firefox"];
+map("normal", "n", () => {
+  const hidden = cmd.buffers().filter((b) => b.panes.length === 0 && !b.exited);
+  if (hidden.length > 0) cmd.showBuffer(hidden[0].id);
+});
+map("normal", "e", [action.edit("paper.pdf"), action.deleteBuffer()]);
+on("BufferCreated", (buffer, kind) => console.log(`${kind} ${buffer}`));
+on("BufferDeleted", (buffer) => console.log(`gone ${buffer}`));

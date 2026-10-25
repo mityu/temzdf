@@ -1563,6 +1563,7 @@ mod tests {
             ("o", acts(&[("focus-next-pane", &[])])),
             ("x", acts(&[("close-pane", &[])])),
             ("d", acts(&[("detach", &[]), ("exit-mode", &[])])),
+            ("q", acts(&[("kill-session", &[])])),
             ("<C-b>", acts(&[("exit-mode", &[]), ("feedkeys", &[s("<C-b>"), ScriptValue::Bool(false)])])),
             ("<Esc>", acts(&[("exit-mode", &[])])),
         ] {

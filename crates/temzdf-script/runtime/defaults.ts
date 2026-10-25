@@ -51,6 +51,7 @@ each("normal", ["l", "<Right>"], action.moveFocus("right"));
 each("normal", ["o"], action.focusNextPane());
 each("normal", ["x"], action.closePane());
 each("normal", ["d"], [action.detach(), action.exitMode()]);
+each("normal", ["q"], action.killSession());
 // The prefix twice sends it to the pane.
 each("normal", [prefix], [action.exitMode(), action.feedkeys(prefix, false)]);
 each("normal", ["<Esc>"], action.exitMode());

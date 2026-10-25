@@ -40,9 +40,9 @@ server on one `Session`). Next and open:
   `research/notes` branch; the host and execution model are implemented
   (`doc/script-host.md`), and so are modes and key mappings, the shipped
   defaults in JavaScript, options, `print-types`, floating messages and the
-  escape keys (TOML is gone). Next: pane sizes kept on resize (the last pane
-  absorbs changes, decided), buffers separated from panes, the rest of
-  terminal panes. The
+  escape keys (TOML is gone), and buffers separated from panes. Next: the
+  rest of terminal panes, pane sizes kept on resize (the last pane absorbs
+  changes, decided), default mappings for switching buffers. The
   questions under "Open questions, to decide later" there (modes and
   mappings, escape hatches, message area, mouse, defaults, layout details,
   hidden buffers, client-side settings, reload, CLI scripting,

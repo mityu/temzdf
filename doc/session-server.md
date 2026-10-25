@@ -21,7 +21,8 @@ What exists:
   terminal panes (`crates/temzdf-term`: a pty from `portable-pty`, Ghostty's
   terminal emulation from `libghostty-vt`, the screen as scene text cells),
   all in a binary layout of splits with one-cell borders, focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
-  `Action`s with a text form, and one composed frame (pane layers moved into
+  buffers as in Vim (what panes show; closing a pane hides its buffer,
+  see `doc/config.md`), `Action`s with a text form, and one composed frame (pane layers moved into
   their rectangles, clipped, placement keys made unique and stable).
 - Three ways to run share it: `temzdf FILE` (standalone: the session and the
   terminal frontend in one process, nothing registered), `--render-frame`
@@ -45,7 +46,8 @@ What exists:
   libghostty's encoder (legacy or kitty keyboard protocol, as the program
   asks), mouse reports when the program tracks the mouse (otherwise the wheel
   scrolls back through 10000 lines of history), bracketed paste, focus
-  reports, OSC 52 copies, resizing. A pane closes when its program exits.
+  reports, OSC 52 copies, resizing (to the largest pane showing the
+  terminal). A shown terminal's panes close when its program exits.
   Programs get `TERM=xterm-256color`, `COLORTERM=truecolor`,
   `TERM_PROGRAM=temzdf` and `TEMZDF_SESSION_NAME`. The server makes at most
   one frame per 16 ms, so floods of output cost little (`seq 1 500000` takes
@@ -66,8 +68,7 @@ Not yet (in order of the plan, or found on the way):
   copies (measure first).
 - One window per session (no tabs).
 - Terminal panes: kitty graphics from programs inside them, a scrollback
-  indicator, selection and copy with the mouse, a status line of their own
-  (messages for the session go to a PDF pane's status bar, else the log).
+  indicator, selection and copy with the mouse, OSC 8 links.
 - Steps 4 to 6: GUI client, web panes, programmable config.
 
 ## Vision

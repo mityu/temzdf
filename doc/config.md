@@ -85,11 +85,12 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `normal` | `%` / `"` | split right / below (the same document, or a new shell) |
 | `normal` | `h` `j` `k` `l`, arrows | move the focus (back to that pane's mode) |
 | `normal` | `o` | next pane |
-| `normal` | `x` | close the pane |
+| `normal` | `x` | close the pane (its buffer stays, hidden) |
 | `normal` | `d` | detach (`temzdf -s`) |
+| `normal` | `q` | end the session |
 | `normal` | `<C-b>` | send `<C-b>` to the pane |
 | `normal` | `<Esc>` | back to the pane's mode |
-| `pdf` | `q` | close the pane (the last one quits) |
+| `pdf` | `q` | close the pane (see Buffers) |
 | `pdf` | `<Esc>` | clear the selection, else the search, else quit |
 | `pdf` | `j` `k` / `<Down>` `<Up>` | scroll (counts) |
 | `pdf` | `h` `l` / `<Left>` `<Right>` | scroll sideways |
@@ -131,13 +132,44 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `reloaddebounce` | `200` | milliseconds after the PDF last changed before reloading |
 | `reloadanchor` | `"position"` | `"position"` keeps the page and place on it (as Skim, Okular); `"text"` finds the line read a third down the screen in the new PDF (falling back to the position) |
 | `synctexeditor` | `null` | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/synctex.md. `--editor` overrides it |
+| `remainonexit` | `false` | a shown terminal whose program ended keeps its panes (tmux's `remain-on-exit`) |
+
+## Buffers
+
+What a pane shows is a buffer, as in Vim: a document or a terminal. Several
+panes can show one buffer (a split PDF pane shows the same document; a split
+terminal pane starts a new shell, `showBuffer` shows the same terminal).
+
+- Closing a pane hides its buffer: a terminal keeps running, a document
+  stays open (reloading as it changes) and keeps its position for the next
+  pane that shows it. Closing the last pane shows the most recently shown
+  hidden buffer instead; with none, the session ends.
+- When a shown terminal's program ends, its panes close (unless
+  `remainonexit`); a hidden one stays, marked as ended, until it was shown
+  and hidden again.
+- `buffers()` lists them (`id`, `kind`, `name`, the `panes` showing it,
+  `exited`); `showBuffer(id, pane?)` shows one in a pane (Vim's `:buffer`);
+  `edit(path)` opens a PDF in the focused pane (`:edit`); `deleteBuffer(id?)`
+  ends a terminal's program or closes a document and closes its panes.
+- A terminal shown in several panes is as large as the largest (as in
+  Neovim); smaller panes show its bottom left part.
+
+For example, a mapping that shows the next hidden buffer:
+
+```ts
+map("normal", "n", () => {
+  const hidden = cmd.buffers().filter((b) => b.panes.length === 0);
+  if (hidden.length > 0) cmd.showBuffer(hidden[0].id);
+});
+```
 
 ## Commands
 
 `cmd.*` and `action.*` share the command registry
 (`crates/temzdf-server/src/session/commands.rs`; `temzdf print-types` lists
 them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
-`focusNextPane`, `closePane`, `detach`, `reloadConfig`, `message`,
+`focusNextPane`, `closePane`, `buffers`, `showBuffer`, `edit`,
+`deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
 `sendText`, `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
 `search`, ...: every action of the PDF table above, taking the count).
