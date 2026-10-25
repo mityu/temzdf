@@ -8,6 +8,7 @@ members = [
     "crates/temzdf-pdfcore",
     "crates/temzdf-pdfview",
     "crates/temzdf-tty",
+    "crates/temzdf-protocol",
     "crates/temzdf-server",
     "crates/temzdf",
 ]
@@ -27,6 +28,7 @@ temzdf-pdfcore = { path = "crates/temzdf-pdfcore" }
 temzdf-pdfview = { path = "crates/temzdf-pdfview" }
 temzdf-tty = { path = "crates/temzdf-tty" }
 temzdf-server = { path = "crates/temzdf-server" }
+temzdf-protocol = { path = "crates/temzdf-protocol" }
 anyhow = "1.0.104"
 mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "system-fonts"] }
 

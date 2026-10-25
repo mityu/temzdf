@@ -17,6 +17,7 @@ pub use termpix_core::input;
 
 /// An image in an [`Images`] store.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ImageKey(u64);
 
 impl ImageKey {
@@ -27,14 +28,32 @@ impl ImageKey {
 
 /// Straight-alpha RGBA8 pixels, row-major, `width * height * 4` bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Image {
     pub width: u32,
     pub height: u32,
+    #[cfg_attr(feature = "serde", serde(with = "bytes"))]
     pub pixels: Arc<[u8]>,
+}
+
+/// Pixels as one byte string on the wire, not a sequence of numbers.
+#[cfg(feature = "serde")]
+mod bytes {
+    use std::sync::Arc;
+
+    pub fn serialize<S: serde::Serializer>(v: &Arc<[u8]>, s: S) -> Result<S::Ok, S::Error> {
+        serde_bytes::serialize(&**v, s)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Arc<[u8]>, D::Error> {
+        let buf: serde_bytes::ByteBuf = serde::Deserialize::deserialize(d)?;
+        Ok(buf.into_vec().into())
+    }
 }
 
 /// A change to an [`Images`] store, for frontends mirroring it.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ImageUpdate {
     /// A new image, or new pixels (possibly another size) for an existing one.
     Set(ImageKey, Image),
@@ -105,6 +124,7 @@ impl Images {
 /// is drawn on top. `key` identifies the placement across frames, so a frontend
 /// can move it instead of re-creating it; keys are unique within a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Layer {
     pub key: u32,
     pub image: ImageKey,
@@ -134,6 +154,7 @@ impl Layer {
 
 /// Mouse pointer shapes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Pointer {
     #[default]
     Default,
@@ -143,6 +164,7 @@ pub enum Pointer {
 
 /// Everything a pane shows at one moment.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Frame {
     pub layers: Vec<Layer>,
     /// Text cursor cell (column, row), shown only where text is typed so that
@@ -155,6 +177,7 @@ pub struct Frame {
 
 /// What a frontend is good at, so panes can choose how to draw.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Hints {
     /// Scaled layers are shown exactly where asked (a terminal compositing
     /// frames itself, or a GPU); otherwise they may snap to cells.
@@ -167,6 +190,7 @@ pub struct Hints {
 /// Something a frontend does on a pane's behalf, in the frontend's own
 /// environment (its clipboard, its `DISPLAY`, its user's editor).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Effect {
     /// Put text on the clipboard.
     Copy(String),

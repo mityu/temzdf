@@ -53,41 +53,11 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
 }
 
-/// The per-user directory for sockets.
-pub fn runtime_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
-        return dir.into();
-    }
-    // Not $TMPDIR on macOS: `nix develop` points it at a per-shell directory,
-    // so an editor and the viewer started from different shells would miss
-    // each other.
-    #[cfg(target_os = "macos")]
-    if let Some(dir) = darwin_user_temp_dir() {
-        return dir;
-    }
-    std::env::temp_dir().join(format!("temzdf-{}", rustix::process::getuid().as_raw()))
-}
-
-/// The per-user temporary directory (`/var/folders/.../T/`, mode 0700),
-/// independent of the environment.
-#[cfg(target_os = "macos")]
-fn darwin_user_temp_dir() -> Option<PathBuf> {
-    use std::os::unix::ffi::OsStringExt;
-    let mut buf = vec![0u8; 1024];
-    // SAFETY: confstr writes at most `buf.len()` bytes, NUL included.
-    let n = unsafe { libc::confstr(libc::_CS_DARWIN_USER_TEMP_DIR, buf.as_mut_ptr().cast(), buf.len()) };
-    if n == 0 || n > buf.len() {
-        return None;
-    }
-    buf.truncate(n - 1);
-    Some(std::ffi::OsString::from_vec(buf).into())
-}
-
 /// The socket a viewer of `pdf` listens on.
 pub fn socket_path(pdf: &Path) -> PathBuf {
     let canonical = std::fs::canonicalize(pdf).unwrap_or_else(|_| std::path::absolute(pdf).unwrap_or(pdf.into()));
     let hash = fnv1a(canonical.as_os_str().as_encoded_bytes());
-    runtime_dir().join("temzdf").join(format!("{hash:016x}.sock"))
+    temzdf_protocol::runtime_dir().join("temzdf").join(format!("{hash:016x}.sock"))
 }
 
 /// Send a request to the viewer of `pdf`. `Ok(false)` when no viewer is running.
@@ -161,13 +131,6 @@ mod tests {
         assert!(ForwardRequest::parse_spec("3:").is_none());
         let req = ForwardRequest { file: "a b.tex".into(), line: 3, column: 1 };
         assert_eq!(ForwardRequest::decode(&req.encode()), Some(req));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn darwin_user_temp_dir_exists() {
-        let dir = darwin_user_temp_dir().unwrap();
-        assert!(dir.is_dir(), "{dir:?}");
     }
 
     #[test]

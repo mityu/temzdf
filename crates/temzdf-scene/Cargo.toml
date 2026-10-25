@@ -7,7 +7,13 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_bytes = { version = "0.11.19", optional = true }
 termpix-core.workspace = true
+
+[features]
+# Serialize and deserialize (for the session protocol).
+serde = ["dep:serde", "dep:serde_bytes", "termpix-core/serde"]
 
 [lints]
 workspace = true

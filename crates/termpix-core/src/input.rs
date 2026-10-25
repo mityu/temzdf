@@ -6,6 +6,7 @@ use std::fmt;
 
 /// Keyboard modifiers, using the kitty keyboard protocol bit layout.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Modifiers(u8);
 
 impl Modifiers {
@@ -73,6 +74,7 @@ impl fmt::Debug for Modifiers {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ModifierKey {
     LeftShift,
     LeftCtrl,
@@ -91,6 +93,7 @@ pub enum ModifierKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KeyCode {
     Char(char),
     Enter,
@@ -122,6 +125,7 @@ pub enum KeyCode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KeyEventKind {
     #[default]
     Press,
@@ -130,6 +134,7 @@ pub enum KeyEventKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct KeyEvent {
     pub code: KeyCode,
     pub modifiers: Modifiers,
@@ -145,6 +150,7 @@ impl KeyEvent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MouseButton {
     Left,
     Middle,
@@ -154,6 +160,7 @@ pub enum MouseButton {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ScrollDirection {
     Up,
     Down,
@@ -162,6 +169,7 @@ pub enum ScrollDirection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MouseEventKind {
     Press(MouseButton),
     Release(MouseButton),
@@ -176,6 +184,7 @@ pub enum MouseEventKind {
 
 /// Unit of mouse coordinates, decided by whether mode 1016 is active.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CoordUnit {
     #[default]
     Cell,
@@ -183,6 +192,7 @@ pub enum CoordUnit {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MouseEvent {
     pub kind: MouseEventKind,
     /// Zero-based column (cells) or x (pixels), see `unit`.

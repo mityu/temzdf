@@ -7,7 +7,12 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"], optional = true }
 png = "0.18.1"
+
+[features]
+# Serialize and deserialize (for the session protocol).
+serde = ["dep:serde"]
 
 [lints]
 workspace = true

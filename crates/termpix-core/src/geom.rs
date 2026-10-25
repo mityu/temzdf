@@ -2,6 +2,7 @@
 
 /// A rectangle with an integer origin and size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -45,6 +46,7 @@ impl Rect {
 
 /// Size of one terminal cell in pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CellSize {
     pub width: u32,
     pub height: u32,
@@ -52,6 +54,7 @@ pub struct CellSize {
 
 /// Terminal geometry: grid size and cell size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Geometry {
     pub cols: u16,
     pub rows: u16,
