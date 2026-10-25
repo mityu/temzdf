@@ -78,11 +78,11 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         }
     }
     loop {
-        let (layers, needs) = session.frame(&mut images);
+        let (frame, needs) = session.frame(&mut images);
         presenter.sync(&mut comp, &mut images);
         if needs.is_empty() {
             let mut bytes = Vec::new();
-            comp.present(&presenter.layers(&layers), &mut bytes)?;
+            comp.present(&presenter.layers(&frame.layers), &mut bytes)?;
             let mut term = MockTerminal::new(opts.geometry, [0, 0, 0, 255]);
             if opts.linear_blending {
                 term.set_blending(termpix::raster::Blending::Linear);

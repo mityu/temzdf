@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use temzdf_scene::{ImageKey, Images, Layer, Pointer};
+use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer};
 use termpix_core::geom::{Geometry, Rect};
 use termpix_core::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
@@ -404,8 +404,9 @@ impl PdfPane {
         if label == (p + 1).to_string() { format!("{label} / {n}") } else { format!("{label} ({} / {n})", p + 1) }
     }
 
-    /// Layers for this frame and the work still needed.
-    pub fn frame(&mut self, images: &mut Images) -> (Vec<Layer>, Vec<Need>) {
+    /// This frame (layers, text cursor, pointer shape, title) and the work
+    /// still needed.
+    pub fn frame(&mut self, images: &mut Images) -> (Frame, Vec<Need>) {
         self.viewer.peek = self.preview.as_ref().map(|p| p.peek);
         let (mut layers, needs) = self.viewer.frame(images);
         // Zoom as a percentage of 96 dpi ("100%" = actual size on a typical screen).
@@ -448,7 +449,8 @@ impl PdfPane {
             let outer = Rect::new(r.x - b as i32, r.y - b as i32, r.w + 2 * b, r.h + 2 * b);
             layers.push(Layer { z: Z_PREVIEW, ..self.widget(images, KEY_PREVIEW, WidgetState::Frame, outer) });
         }
-        (layers, needs)
+        let title = format!("{} — {}", self.name, self.page_text());
+        (Frame { layers, cursor: self.caret_cell, pointer: self.pointer_shape, title }, needs)
     }
 
     fn widget(&mut self, images: &mut Images, key: u32, state: WidgetState, rect: Rect) -> Layer {
@@ -1672,7 +1674,8 @@ mod tests {
         let mut s = session();
         open_back_link_preview(&mut s, 0.33);
         let mut c = comp();
-        let (layers, needs) = s.frame(&mut c);
+        let (frame, needs) = s.frame(&mut c);
+        let layers = frame.layers;
         assert!(layers.iter().any(|l| l.z == Z_PREVIEW), "the border");
         assert!(layers.iter().any(|l| l.z == Z_PREVIEW + 1), "the window");
         assert!(matches!(&needs[0], Need::Render(j) if j.key.page == 0), "the preview's tiles first");

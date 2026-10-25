@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use temzdf_scene::{Images, Pointer};
-use termpix::compositor::{Backend, Compositor, Layer};
+use termpix::compositor::{Backend, Compositor};
 use termpix::graphics::Medium;
 use termpix::input::Event;
 use termpix::tty::{self, Modes, TermEvent, Tty};
@@ -18,7 +18,7 @@ use crate::pane::{Action, PdfPane, Request};
 use crate::pdf;
 use crate::viewer::{Need, StandIn};
 use crate::workers::{self, DocCmd, DocEvent, RasterPool, SearchCmd, SynctexCmd};
-use temzdf_tty::Presenter;
+use temzdf_tty::{Presenter, Screen};
 
 const FRAME: Duration = Duration::from_millis(16);
 /// Raw bytes of not-yet-shown images sent per idle iteration (about four
@@ -171,7 +171,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     }
 
     let mut dirty = true;
-    let mut screen = Screen { name: name.clone(), out: Vec::new(), title: String::new(), cursor: None };
+    let mut screen = Screen::new();
     let mut shown_pointer = Pointer::Default;
     let started = Instant::now();
     let mut first_shown = false;
@@ -198,9 +198,8 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         let congested = dirty && (writing || comp.is_congested(Instant::now()));
         let mut held = false;
         if dirty && !congested {
-            let (layers, needs) = session.frame(&mut images);
+            let (frame, needs) = session.frame(&mut images);
             presenter.sync(&mut comp, &mut images);
-            let layers = presenter.layers(&layers);
             dispatch(&mut session, &doc, &pool, needs);
             // Do not show half-rendered first frames (each costs a full upload in
             // Composited mode), and respect the frame-rate cap.
@@ -208,7 +207,10 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
             let too_soon = last_present.is_some_and(|t| t.elapsed() < min_interval);
             held = hold_first || too_soon;
             if !held {
-                screen.present(&session, &mut comp, &mut tty, &layers)?;
+                let bytes = screen.render(&frame, &presenter, &mut comp)?;
+                if !bytes.is_empty() {
+                    tty.write_all(bytes)?;
+                }
                 first_shown = true;
                 last_present = Some(Instant::now());
                 dirty = false;
@@ -235,15 +237,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 Request::Inverse { page, x, y } => {
                     let _ = synctex.send(SynctexCmd::Inverse { page, x, y });
                 }
-                Request::Copy(text) => {
-                    use base64::Engine;
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-                    let osc = format!("\x1b]52;c;{b64}\x1b\\").into_bytes();
-                    // tmux (default set-clipboard external) keeps OSC 52 from
-                    // applications to itself; send it straight to the terminal.
-                    let osc = if caps.in_tmux { termpix::placeholder::tmux_passthrough(&osc) } else { osc };
-                    tty.write_all(&osc)?;
-                }
+                Request::Copy(text) => tty.write_all(&temzdf_tty::copy_sequence(&text, caps.in_tmux))?,
             }
         }
         let mut timeout = if session.is_animating() { FRAME } else { Duration::from_secs(3600) };
@@ -289,11 +283,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 dirty |= session.mouse(&m, now);
                 if session.pointer() != shown_pointer {
                     shown_pointer = session.pointer();
-                    let name = match shown_pointer {
-                        Pointer::Default => "default",
-                        Pointer::Link => "pointer",
-                    };
-                    tty.write_all(format!("\x1b]22;{name}\x1b\\").as_bytes())?;
+                    tty.write_all(&temzdf_tty::pointer_sequence(shown_pointer))?;
                 }
             }
             Some(AppEvent::Term(TermEvent::Input(Event::Paste(text)))) => {
@@ -409,48 +399,6 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         dirty |= session.next_deadline().is_some_and(|d| Instant::now() >= d);
     }
     Ok(())
-}
-
-/// What was last written to the terminal besides images.
-struct Screen {
-    name: String,
-    out: Vec<u8>,
-    title: String,
-    cursor: Option<(u16, u16)>,
-}
-
-impl Screen {
-    /// Write one frame: window title, the compositor's commands, and the text
-    /// cursor (shown only at an input caret, where IME preedit follows it).
-    fn present(&mut self, session: &PdfPane, comp: &mut Compositor, tty: &mut Tty, layers: &[Layer]) -> Result<()> {
-        let out = &mut self.out;
-        out.clear();
-        let t = format!("{} — {}", self.name, session.page_text());
-        if t != self.title {
-            // Control characters would end the OSC early.
-            let clean: String = t.chars().filter(|c| !c.is_control()).collect();
-            out.extend_from_slice(format!("\x1b]2;{clean}\x1b\\").as_bytes());
-            self.title = t;
-        }
-        comp.present(layers, out)?;
-        let cursor = session.cursor();
-        if cursor != self.cursor {
-            match cursor {
-                Some((col, row)) => out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", row + 1, col + 1).as_bytes()),
-                None => out.extend_from_slice(b"\x1b[?25l"),
-            }
-            self.cursor = cursor;
-        } else if let Some((col, row)) = cursor
-            && !out.is_empty()
-        {
-            // Placing images moves the cursor; put it back.
-            out.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
-        }
-        if !out.is_empty() {
-            tty.write_all(out)?;
-        }
-        Ok(())
-    }
 }
 
 /// "geometry COLSxROWS cells of WxH px" (the format scripts/e2e.sh parses).
