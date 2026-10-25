@@ -869,4 +869,59 @@ mod tests {
         assert_eq!(s.handle(ev, Instant::now()), Outcome::Quit);
         assert!(s.error().is_some());
     }
+
+    /// Present `frame` through `comp`, appending the terminal bytes to `out`.
+    fn present(
+        s: &mut Session,
+        frame: &Frame,
+        comp: &mut termpix::compositor::Compositor,
+        presenter: &mut temzdf_tty::Presenter,
+        out: &mut Vec<u8>,
+    ) {
+        presenter.sync(comp, s.images());
+        comp.present(&presenter.layers(&frame.layers), out).unwrap();
+    }
+
+    #[test]
+    fn resizing_split_panes_redraws_like_a_fresh_start() {
+        use termpix::compositor::{Backend, Compositor};
+        use termpix::graphics::Medium;
+        use termpix::mock::MockTerminal;
+        let big = Geometry { cols: 100, rows: 34, ..GEOMETRY };
+        let (mut s, rx) = session();
+        s.action(Action::Split(Split::Horizontal), Instant::now());
+        s.action(Action::Split(Split::Vertical), Instant::now());
+        let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, GEOMETRY);
+        let mut presenter = temzdf_tty::Presenter::new();
+        let mut out = Vec::new();
+        let (frame, _) = settle(&mut s, &rx);
+        present(&mut s, &frame, &mut comp, &mut presenter, &mut out);
+        // The window grows (same cells, more of them): replay everything sent
+        // since the start into a terminal of the new size.
+        s.resize(big);
+        comp.set_geometry(big);
+        let (frame, _) = settle(&mut s, &rx);
+        present(&mut s, &frame, &mut comp, &mut presenter, &mut out);
+        let mut term = MockTerminal::new(big, [0, 0, 0, 255]);
+        term.feed(&out);
+        let resized = term.render();
+
+        let (mut fresh, rx2) = session();
+        fresh.resize(big);
+        fresh.action(Action::Split(Split::Horizontal), Instant::now());
+        fresh.action(Action::Split(Split::Vertical), Instant::now());
+        let mut comp2 = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, big);
+        let (frame2, _) = settle(&mut fresh, &rx2);
+        let mut out2 = Vec::new();
+        present(&mut fresh, &frame2, &mut comp2, &mut temzdf_tty::Presenter::new(), &mut out2);
+        let mut term2 = MockTerminal::new(big, [0, 0, 0, 255]);
+        term2.feed(&out2);
+        let expected = term2.render();
+        if let Ok(dir) = std::env::var("TEMZDF_TEST_PNG") {
+            resized.save_png(&Path::new(&dir).join("resized.png")).unwrap();
+            expected.save_png(&Path::new(&dir).join("expected.png")).unwrap();
+        }
+        let differing = resized.data.chunks(4).zip(expected.data.chunks(4)).filter(|(a, b)| a != b).count();
+        assert_eq!(differing, 0, "{differing} pixels differ");
+    }
 }

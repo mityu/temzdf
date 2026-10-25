@@ -17,6 +17,8 @@ termpix-ui.workspace = true
 
 [dev-dependencies]
 temzdf-pdfcore = { workspace = true, features = ["test-support"] }
+temzdf-tty.workspace = true
+termpix.workspace = true
 
 [lints]
 workspace = true

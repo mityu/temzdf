@@ -140,14 +140,25 @@ pub fn attach(name: &str, config: &Config) -> Result<String> {
     let mut pending: Option<(u64, Frame, bool)> = None;
     let mut last: Option<Frame> = None;
     let reason = loop {
-        if let Some((seq, frame, complete)) = &pending
+        if let Some((seq, frame, complete)) = &mut pending
             && front.ready()
-            && front.present(frame, *complete)? == Presented::Shown
         {
-            if *seq > 0 {
-                send(ClientMsg::FrameAck(*seq))?;
+            match front.present(frame, *complete)? {
+                Presented::Shown => {
+                    if *seq > 0 {
+                        send(ClientMsg::FrameAck(*seq))?;
+                    }
+                    last = pending.take().map(|p| p.1);
+                }
+                // Not shown yet, but ask for newer frames: the server only
+                // sends one once this one is acknowledged, and only newer
+                // frames have the pages this one waits for.
+                Presented::Waiting if *seq > 0 => {
+                    send(ClientMsg::FrameAck(*seq))?;
+                    *seq = 0;
+                }
+                Presented::Waiting | Presented::Held => {}
             }
-            last = pending.take().map(|p| p.1);
         }
         if pending.is_none() {
             front.idle()?;

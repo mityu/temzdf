@@ -43,9 +43,11 @@ pub enum Input {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Presented {
     Shown,
-    /// Not now (the terminal is busy, the frame rate is capped, or the first
-    /// frame waits for its pages); present again soon.
+    /// Not now (the frame rate is capped); present again soon.
     Held,
+    /// A first frame waiting for its pages to finish rendering (at most
+    /// `FIRST_FRAME_WAIT`); a newer frame should replace it.
+    Waiting,
 }
 
 pub struct TtyFrontend {
@@ -176,9 +178,11 @@ impl TtyFrontend {
     /// `FIRST_FRAME_WAIT`, and the frame-rate cap applies. `complete` says
     /// whether everything visible is fully rendered.
     pub fn present(&mut self, frame: &Frame, complete: bool) -> Result<Presented> {
-        let hold_first = !self.first_shown && !complete && self.started.elapsed() < FIRST_FRAME_WAIT;
-        let too_soon = self.last_present.is_some_and(|t| t.elapsed() < self.min_interval);
-        if hold_first || too_soon {
+        if !self.first_shown && !complete && self.started.elapsed() < FIRST_FRAME_WAIT {
+            self.retry_soon = true;
+            return Ok(Presented::Waiting);
+        }
+        if self.last_present.is_some_and(|t| t.elapsed() < self.min_interval) {
             self.retry_soon = true;
             return Ok(Presented::Held);
         }
