@@ -40,6 +40,8 @@ pub enum AppEvent {
     ForwardResult(Vec<PdfBox>),
     InverseResult(SourceLocation),
     SynctexFailed(String),
+    /// Opening an external link failed.
+    OpenFailed(String),
 }
 
 pub enum SynctexCmd {

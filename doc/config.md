@@ -26,6 +26,8 @@ smoothness_ms = 60
 
 [links]
 # Command for external links; the URI is appended. Default: xdg-open / open.
+# If it cannot start or exits with an error (e.g. xdg-open over SSH without a
+# display), the status bar says so.
 open_command = ["xdg-open"]
 # Preview internal links (references, citations, the table of contents) when
 # the pointer rests on one for preview_delay_ms. In the preview the wheel

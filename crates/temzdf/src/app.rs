@@ -205,7 +205,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 Request::Search { generation, query, start_page, doc_generation } => {
                     let _ = search.send(SearchCmd { generation, query, start_page, doc_generation });
                 }
-                Request::OpenUri(uri) => open_uri(&open_command, &uri),
+                Request::OpenUri(uri) => open_uri(&open_command, &uri, &tx),
                 Request::Inverse { page, x, y } => {
                     let _ = synctex.send(SynctexCmd::Inverse { page, x, y });
                 }
@@ -331,6 +331,10 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                         ))
                     }
                 }
+                dirty = true;
+            }
+            Some(AppEvent::OpenFailed(e)) => {
+                session.message = Some(e);
                 dirty = true;
             }
             Some(AppEvent::SynctexFailed(e)) => {
@@ -475,16 +479,34 @@ impl ReloadState {
     }
 }
 
-/// Open a URI with the configured handler, detached from the terminal.
-fn open_uri(command: &[String], uri: &str) {
+/// Open a URI with the configured handler, detached from the terminal. A
+/// handler that cannot start or exits with an error (e.g. `xdg-open` over SSH
+/// without a display) is reported as [`AppEvent::OpenFailed`].
+fn open_uri(command: &[String], uri: &str, tx: &Sender<AppEvent>) {
     let Some((program, args)) = command.split_first() else { return };
-    let _ = std::process::Command::new(program)
+    let child = std::process::Command::new(program)
         .args(args)
         .arg(uri)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+    let uri = uri.to_owned();
+    let fail = move |why: String| AppEvent::OpenFailed(format!("cannot open {uri}: {why}"));
+    match child {
+        Err(e) => {
+            let _ = tx.send(fail(format!("{program}: {e}")));
+        }
+        Ok(mut child) => {
+            let (tx, program) = (tx.clone(), program.clone());
+            std::thread::spawn(move || match child.wait() {
+                Ok(status) if !status.success() => {
+                    let _ = tx.send(fail(format!("{program} failed ({status})")));
+                }
+                _ => {}
+            });
+        }
+    }
 }
 
 fn dispatch(session: &mut Session, doc: &Sender<DocCmd>, pool: &RasterPool, needs: Vec<Need>) {
