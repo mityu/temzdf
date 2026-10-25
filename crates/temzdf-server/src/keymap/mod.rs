@@ -5,3 +5,6 @@
 pub mod notation;
 
 pub use notation::Stroke;
+pub mod modes;
+
+pub use modes::{Entry, History, Matcher, ModeDef, Modes, Step, Unmapped};
