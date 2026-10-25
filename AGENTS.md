@@ -120,4 +120,5 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/synctex.md`: forward/inverse search, editor setup, vendored parser.
 - `doc/config.md`: the configuration file format (keep in sync with `crates/temzdf/src/config.rs`).
 - `doc/performance.md`: measurements (raster pool, display lists, transfer) and the benchmark to rerun.
+- `doc/macos.md`: macOS status and the checklist to run on a Mac.
 - `doc/gpu.md`: GPU rasterisation experiment (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.

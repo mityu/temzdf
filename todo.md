@@ -24,7 +24,8 @@ below them are deferred.
   mode could help), and tmux master's native kitty support (z=0 only) is untested.
 - Verify IME preedit placement in the search prompt on kitty and Ghostty (the
   terminal cursor is shown at the caret while the prompt is open).
-- macOS support (shm quirks, `select()` instead of `poll()` on `/dev/tty`).
+- macOS support: prepared on Linux (`select()` on `/dev/tty`, cross-checked
+  `termpix`); run and verify on a Mac following `doc/macos.md`.
 - Vector-heavy pages: MuPDF's anti-aliased rasteriser is slow there and
   `vello_cpu` about 20x faster (`doc/gpu.md`; GPU rendering does not pay off).
   Measure real TikZ/pgfplots documents first; then maybe render such pages
