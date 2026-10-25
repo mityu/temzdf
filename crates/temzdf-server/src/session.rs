@@ -689,6 +689,13 @@ impl Session {
         self.focus
     }
 
+    /// The files open in the session.
+    pub fn files(&self) -> Vec<PathBuf> {
+        let mut files: Vec<_> = self.docs.values().map(|d| d.path.clone()).collect();
+        files.sort();
+        files
+    }
+
     pub fn pane_count(&self) -> usize {
         self.panes.len()
     }

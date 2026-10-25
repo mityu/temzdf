@@ -1553,8 +1553,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "rustix",
  "serde",
  "temzdf-pdfview",
+ "temzdf-protocol",
  "temzdf-scene",
  "temzdf-server",
  "temzdf-tty",

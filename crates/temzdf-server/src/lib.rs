@@ -4,6 +4,7 @@
 //! server share it. See doc/session-server.md.
 
 pub mod action;
+pub mod daemon;
 pub mod forward;
 pub mod layout;
 pub mod session;

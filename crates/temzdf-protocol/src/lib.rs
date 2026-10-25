@@ -51,11 +51,13 @@ pub enum ClientMsg {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ServerMsg {
-    /// Image changes to apply, then the frame to show.
+    /// Image changes to apply, then the frame to show. `complete`: every
+    /// visible page is fully rendered (half-rendered first frames may wait).
     Frame {
         seq: u64,
         updates: Vec<ImageUpdate>,
         frame: Frame,
+        complete: bool,
     },
     Effect(Effect),
     /// The connection ends.
@@ -192,7 +194,7 @@ mod tests {
         let layer = Layer { key: 7, image: key, src: Rect::new(0, 0, 2, 1), dst: Rect::new(-3, 4, 20, 10), z: -5 };
         let frame =
             Frame { layers: vec![layer], cursor: Some((1, 2)), pointer: Pointer::Link, title: "doc — 1 / 3".into() };
-        round_trip(&ServerMsg::Frame { seq: 9, updates: images.take_updates(), frame });
+        round_trip(&ServerMsg::Frame { seq: 9, updates: images.take_updates(), frame, complete: true });
         round_trip(&ServerMsg::Effect(Effect::Copy("x".into())));
         round_trip(&ServerMsg::Exit(ExitReason::Error("bad".into())));
         round_trip(&ServerMsg::Done(Err("no".into())));
@@ -203,7 +205,7 @@ mod tests {
         let px: Arc<[u8]> = vec![7u8; 4096].into();
         let mut images = Images::new();
         images.add(32, 32, px);
-        let msg = ServerMsg::Frame { seq: 0, updates: images.take_updates(), frame: Frame::default() };
+        let msg = ServerMsg::Frame { seq: 0, updates: images.take_updates(), frame: Frame::default(), complete: false };
         let mut buf = Vec::new();
         send(&mut buf, &msg).unwrap();
         assert!(buf.len() < 4096 + 64, "{} bytes", buf.len());

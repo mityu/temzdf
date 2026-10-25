@@ -113,6 +113,14 @@ impl Images {
         self.images.is_empty()
     }
 
+    /// Every image, as updates that recreate the store from nothing (for a
+    /// frontend that starts mirroring it late).
+    pub fn snapshot(&self) -> Vec<ImageUpdate> {
+        let mut keys: Vec<_> = self.images.keys().copied().collect();
+        keys.sort();
+        keys.into_iter().map(|k| ImageUpdate::Set(k, self.images[&k].clone())).collect()
+    }
+
     /// The changes since the last call, in order.
     pub fn take_updates(&mut self) -> Vec<ImageUpdate> {
         std::mem::take(&mut self.updates)

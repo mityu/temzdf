@@ -1,4 +1,5 @@
 mod app;
+mod client;
 mod config;
 mod headless;
 
@@ -7,16 +8,26 @@ use temzdf_server::forward as ipc;
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
-use clap::Parser;
+use anyhow::{Context, Result, bail};
+use clap::{Parser, Subcommand};
 use termpix::geom::{CellSize, Geometry};
 
 /// Terminal PDF viewer drawn with the kitty graphics protocol.
+///
+/// `temzdf FILE` shows FILE in this terminal. With `-s NAME` it runs in a
+/// session that survives detaching (`C-s d`) and can be attached again from
+/// anywhere (`temzdf attach NAME`); the session commands follow zellij's names.
 #[derive(Parser, Debug)]
-#[command(version)]
+#[command(version, args_conflicts_with_subcommands = true)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Cmd>,
     /// PDF file to open.
-    file: PathBuf,
+    file: Option<PathBuf>,
+    /// Open FILE in a new session called NAME (from the file name when NAME is
+    /// the file: `temzdf -s doc.pdf`) and attach to it.
+    #[arg(short, long, value_name = "NAME")]
+    session: Option<String>,
     /// Render one screen to this PNG instead of starting the viewer.
     #[arg(long, value_name = "PNG")]
     render_frame: Option<PathBuf>,
@@ -38,10 +49,10 @@ struct Cli {
     forward: Option<String>,
     /// SyncTeX inverse search command (Ctrl+click), with %{input}, %{line} and
     /// %{column} placeholders. Overrides [synctex] editor in the config file.
-    #[arg(long, value_name = "COMMAND")]
+    #[arg(long, value_name = "COMMAND", global = true)]
     editor: Option<String>,
     /// Configuration file (default: $XDG_CONFIG_HOME/temzdf/config.toml).
-    #[arg(long, value_name = "FILE")]
+    #[arg(long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
     /// For --render-frame: keys to press first, e.g. "Tab j Enter" (see headless.rs).
     #[arg(long, value_name = "KEYS")]
@@ -52,6 +63,40 @@ struct Cli {
     linear_blending: bool,
 }
 
+#[derive(Subcommand, Debug)]
+enum Cmd {
+    /// Attach to a session (the only one when NAME is left out).
+    #[command(alias = "a")]
+    Attach {
+        name: Option<String>,
+        /// Create the session NAME with FILE when it does not exist.
+        #[arg(short, long, requires = "file")]
+        create: bool,
+        file: Option<PathBuf>,
+    },
+    /// List the sessions.
+    #[command(alias = "ls")]
+    ListSessions,
+    /// End a session.
+    #[command(alias = "k")]
+    KillSession { name: String },
+    /// End every session.
+    #[command(alias = "ka")]
+    KillAllSessions,
+    /// Run an action in a session: new-pane FILE, split right|down,
+    /// move-focus left|right|up|down, focus-next-pane, close-pane, detach.
+    Action {
+        /// The session (the only one when left out).
+        #[arg(short, long, value_name = "NAME")]
+        session: Option<String>,
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        action: Vec<String>,
+    },
+    /// Run a session server (started by `temzdf -s`).
+    #[command(hide = true)]
+    Server { name: String, file: PathBuf },
+}
+
 fn parse_pair(s: &str) -> Result<(u32, u32)> {
     let (a, b) = s.split_once('x').with_context(|| format!("expected AxB, got {s:?}"))?;
     Ok((a.parse()?, b.parse()?))
@@ -59,7 +104,48 @@ fn parse_pair(s: &str) -> Result<(u32, u32)> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    match cli.command {
+        Some(Cmd::ListSessions) => return client::list_sessions(),
+        Some(Cmd::KillSession { name }) => return client::kill_session(&name),
+        Some(Cmd::KillAllSessions) => return client::kill_all_sessions(),
+        Some(Cmd::Action { session, action }) => return client::action(&client::resolve(session.as_deref())?, action),
+        Some(Cmd::Attach { name, create, file }) => {
+            let config = config::Config::load(cli.config.as_deref())?;
+            let name = match (name, create, file) {
+                (Some(n), true, Some(f)) if temzdf_server::daemon::list()?.iter().all(|s| s.name != n) => {
+                    client::spawn_server(&n, &std::path::absolute(f)?, cli.config.as_deref(), cli.editor.as_deref())?;
+                    n
+                }
+                (name, ..) => client::resolve(name.as_deref())?,
+            };
+            println!("{}", client::attach(&name, &config)?);
+            return Ok(());
+        }
+        Some(Cmd::Server { name, file }) => {
+            // Leave the terminal's session, so closing it does not end ours.
+            let _ = rustix::process::setsid();
+            let mut config = config::Config::load(cli.config.as_deref())?;
+            if let Some(e) = cli.editor {
+                config.synctex.editor = Some(e);
+            }
+            return temzdf_server::daemon::run(&name, &file, app::settings(&config, true)?);
+        }
+        None => {}
+    }
     let page = cli.page.map(|p| p.saturating_sub(1));
+    if let Some(name) = &cli.session {
+        // `temzdf -s doc.pdf`: the name was the file.
+        let (name, file) = match &cli.file {
+            Some(f) => (name.clone(), f.clone()),
+            None if std::path::Path::new(name).is_file() => (client::name_for(name.as_ref())?, PathBuf::from(name)),
+            None => bail!("which PDF should the session {name:?} open?"),
+        };
+        let config = config::Config::load(cli.config.as_deref())?;
+        client::spawn_server(&name, &std::path::absolute(file)?, cli.config.as_deref(), cli.editor.as_deref())?;
+        println!("{}", client::attach(&name, &config)?);
+        return Ok(());
+    }
+    let Some(file) = cli.file else { bail!("no PDF file given (see --help)") };
     if let Some(out) = &cli.render_frame {
         let (cols, rows) = parse_pair(&cli.size)?;
         let (cw, ch) = parse_pair(&cli.cell)?;
@@ -71,7 +157,7 @@ fn main() -> Result<()> {
             keys: cli.keys.clone(),
             linear_blending: cli.linear_blending,
         };
-        return headless::render_frame(&cli.file, out, &opts);
+        return headless::render_frame(&file, out, &opts);
     }
     let forward = match &cli.forward {
         Some(spec) => Some(ipc::ForwardRequest::parse_spec(spec).with_context(|| format!("bad --forward {spec:?}"))?),
@@ -79,10 +165,10 @@ fn main() -> Result<()> {
     };
     // A viewer of this file is already running: hand the request over and exit.
     if let Some(req) = &forward
-        && ipc::send_forward(&cli.file, req)?
+        && ipc::send_forward(&file, req)?
     {
         return Ok(());
     }
     let config = config::Config::load(cli.config.as_deref())?;
-    app::run(&cli.file, app::Options { page, scale: cli.scale, config, forward, editor: cli.editor.clone() })
+    app::run(&file, app::Options { page, scale: cli.scale, config, forward, editor: cli.editor.clone() })
 }

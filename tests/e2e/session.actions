@@ -1,0 +1,31 @@
+# Used with:
+#   mkdir -p target/e2e-session
+#   scripts/e2e.sh tests/e2e/session.actions -- sh -c \
+#     'target/debug/temzdf -s e2e target/fixtures/sample.pdf; exec sh'
+# Expected:
+#   split.png       two panes side by side on the same document, the right
+#                   one focused (accent border), scrolled down three steps
+#   detached.png    the shell, "[detached from session e2e]"
+#   ls.txt          "e2e  (2 panes, detached)  .../sample.pdf"
+#   reattached.png  the same two panes as split.png (state kept)
+#   new-pane.png    a third pane with sample-short.pdf, added by another process
+#   killed.png      the shell, "[session e2e was killed]"
+pause 1
+keys ctrl+s percent
+pause 1.5
+keys j j j
+pause 1
+shot split
+keys ctrl+s d
+pause 1
+shot detached
+type "target/debug/temzdf ls > target/e2e-session/ls.txt; target/debug/temzdf attach e2e
+"
+pause 2.5
+shot reattached
+target/debug/temzdf action -s e2e new-pane target/fixtures/sample-short.pdf
+pause 2
+shot new-pane
+target/debug/temzdf kill-session e2e
+pause 1
+shot killed

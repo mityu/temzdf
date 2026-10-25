@@ -1,0 +1,251 @@
+//! Session commands: start a session server, attach this terminal to a
+//! session, list and end sessions, run actions (see doc/session-server.md).
+
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
+use temzdf_protocol::{self as proto, ClientMsg, ExitReason, ServerMsg};
+use temzdf_scene::Frame;
+use temzdf_server::daemon;
+use temzdf_tty::{Input, Presented, TtyFrontend};
+use termpix::tty::TermEvent;
+
+use crate::config::Config;
+
+enum Event {
+    Term(TermEvent),
+    Server(ServerMsg),
+    /// The server closed the connection.
+    Gone,
+}
+
+/// A session name from a file name: its stem with characters outside
+/// `[A-Za-z0-9._-]` replaced, and a number appended while the name is taken.
+pub fn name_for(file: &Path) -> Result<String> {
+    let stem = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut base: String =
+        stem.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' }).collect();
+    base = base.trim_start_matches('.').chars().take(56).collect();
+    if base.is_empty() {
+        base = "temzdf".into();
+    }
+    let taken: Vec<String> = daemon::list()?.into_iter().map(|i| i.name).collect();
+    let mut name = base.clone();
+    let mut n = 2;
+    while taken.contains(&name) {
+        name = format!("{base}-{n}");
+        n += 1;
+    }
+    Ok(name)
+}
+
+/// Start a server for session `name` showing `file`, in the background, and
+/// wait until it listens. Its output goes to `$XDG_STATE_HOME/temzdf/<name>.log`.
+pub fn spawn_server(name: &str, file: &Path, config: Option<&Path>, editor: Option<&str>) -> Result<()> {
+    if !proto::valid_name(name) {
+        bail!("invalid session name {name:?} (letters, digits, '.', '_' and '-')");
+    }
+    let socket = proto::socket_path(name)?;
+    if daemon::probe(&socket).is_some() {
+        bail!("session {name:?} already exists (attach with `temzdf attach {name}`)");
+    }
+    let log = crate::app::state_dir().map(|d| d.join(format!("{name}.log")));
+    let out = match &log {
+        Some(p) => {
+            if let Some(dir) = p.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::process::Stdio::from(std::fs::OpenOptions::new().create(true).append(true).open(p)?)
+        }
+        None => std::process::Stdio::null(),
+    };
+    let err = match &log {
+        Some(p) => std::process::Stdio::from(std::fs::OpenOptions::new().append(true).open(p)?),
+        None => std::process::Stdio::null(),
+    };
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    cmd.arg("server").arg(name).arg(file);
+    if let Some(c) = config {
+        cmd.arg("--config").arg(c);
+    }
+    if let Some(e) = editor {
+        cmd.arg("--editor").arg(e);
+    }
+    let mut child = cmd.stdin(std::process::Stdio::null()).stdout(out).stderr(err).spawn()?;
+    for _ in 0..200 {
+        if daemon::probe(&socket).is_some() {
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait()? {
+            let tail = log.and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+            let last = tail.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+            bail!("the session server exited ({status}):\n{last}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    bail!("the session server did not start listening")
+}
+
+/// The session to attach to: `name`, or the only one.
+pub fn resolve(name: Option<&str>) -> Result<String> {
+    if let Some(n) = name {
+        return Ok(n.to_owned());
+    }
+    let sessions = daemon::list()?;
+    match sessions.as_slice() {
+        [one] => Ok(one.name.clone()),
+        [] => bail!("no sessions (start one with `temzdf -s NAME FILE`)"),
+        many => {
+            bail!("several sessions, name one: {}", many.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "))
+        }
+    }
+}
+
+/// Attach this terminal to session `name` until detached or the session ends.
+/// Returns a line to print once the terminal is restored.
+pub fn attach(name: &str, config: &Config) -> Result<String> {
+    let socket = proto::socket_path(name)?;
+    let stream = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
+    let _stdio = crate::app::log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
+    let term = config.terminal.clone();
+    let mut front = TtyFrontend::open(|caps| {
+        let backend = term.backend(caps.backend(), caps.has_backend_override());
+        let medium = term.medium(caps.medium(), caps.has_medium_override());
+        (backend, medium, term.zlib_level)
+    })?;
+    let (tx, rx) = mpsc::channel::<Event>();
+    front.spawn_input(tx.clone(), Event::Term)?;
+    let mut reader = std::io::BufReader::new(stream.try_clone()?);
+    std::thread::Builder::new().name("temzdf-server-in".into()).spawn(move || {
+        while let Ok(Some(msg)) = proto::recv::<ServerMsg>(&mut reader) {
+            if tx.send(Event::Server(msg)).is_err() {
+                return;
+            }
+        }
+        let _ = tx.send(Event::Gone);
+    })?;
+    let writer = Arc::new(Mutex::new(stream));
+    let send = |msg: ClientMsg| -> Result<()> {
+        proto::send(&mut *writer.lock().unwrap_or_else(|p| p.into_inner()), &msg).context("lost the session")
+    };
+    send(ClientMsg::Hello { version: proto::VERSION, geometry: front.geometry(), hints: front.hints() })?;
+    let open_command = config.links.command();
+    // The latest frame received and not shown yet (its sequence number is
+    // acknowledged once it is), and the last one shown (shown again when the
+    // terminal lost images).
+    let mut pending: Option<(u64, Frame, bool)> = None;
+    let mut last: Option<Frame> = None;
+    let reason = loop {
+        if let Some((seq, frame, complete)) = &pending
+            && front.ready()
+            && front.present(frame, *complete)? == Presented::Shown
+        {
+            if *seq > 0 {
+                send(ClientMsg::FrameAck(*seq))?;
+            }
+            last = pending.take().map(|p| p.1);
+        }
+        if pending.is_none() {
+            front.idle()?;
+        }
+        let event = match rx.recv_timeout(front.timeout(Duration::from_secs(3600))) {
+            Ok(e) => e,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break None,
+        };
+        match event {
+            Event::Term(ev) => match front.handle(ev)? {
+                Input::Terminate => {
+                    let _ = send(ClientMsg::Detach);
+                    break Some(ExitReason::Detached);
+                }
+                Input::Resized(g) => send(ClientMsg::Resize(g))?,
+                Input::Key(k) => send(ClientMsg::Key(k))?,
+                Input::Mouse(m) => send(ClientMsg::Mouse(m))?,
+                Input::Paste(text) => send(ClientMsg::Paste(text))?,
+                Input::Handled(true) => {
+                    if pending.is_none() {
+                        pending = last.clone().map(|f| (0, f, true));
+                    }
+                }
+                Input::Handled(false) => {}
+            },
+            Event::Server(ServerMsg::Frame { seq, updates, frame, complete }) => {
+                front.apply(updates);
+                pending = Some((seq, frame, complete));
+            }
+            Event::Server(ServerMsg::Effect(effect)) => {
+                let w = writer.clone();
+                front.perform(effect, &open_command, move |m| {
+                    let _ = proto::send(&mut *w.lock().unwrap_or_else(|p| p.into_inner()), &ClientMsg::Report(m));
+                })?;
+            }
+            Event::Server(ServerMsg::Exit(reason)) => break Some(reason),
+            Event::Server(_) => {}
+            Event::Gone => break None,
+        }
+    };
+    drop(front);
+    Ok(match reason {
+        Some(ExitReason::Detached) => format!("[detached from session {name}]"),
+        Some(ExitReason::SessionEnded) => format!("[session {name} ended]"),
+        Some(ExitReason::Killed) => format!("[session {name} was killed]"),
+        Some(ExitReason::Error(e)) => format!("[session {name}: {e}]"),
+        None => format!("[lost session {name}]"),
+    })
+}
+
+/// Send a one-shot request and wait for the answer.
+fn request(name: &str, msg: ClientMsg) -> Result<ServerMsg> {
+    let socket = proto::socket_path(name)?;
+    let mut s = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
+    s.set_read_timeout(Some(Duration::from_secs(5)))?;
+    proto::send(&mut s, &msg)?;
+    proto::recv(&mut s)?.context("no answer from the session")
+}
+
+pub fn list_sessions() -> Result<()> {
+    let sessions = daemon::list()?;
+    if sessions.is_empty() {
+        println!("no sessions");
+    }
+    for s in sessions {
+        let files: Vec<String> = s.files.iter().map(|f| f.display().to_string()).collect();
+        let clients = if s.clients == 0 { "detached".to_owned() } else { format!("{} attached", s.clients) };
+        println!("{}  ({} panes, {clients})  {}", s.name, s.panes, files.join(" "));
+    }
+    Ok(())
+}
+
+pub fn kill_session(name: &str) -> Result<()> {
+    match request(name, ClientMsg::Kill)? {
+        ServerMsg::Done(Ok(())) => Ok(()),
+        other => bail!("unexpected answer {other:?}"),
+    }
+}
+
+pub fn kill_all_sessions() -> Result<()> {
+    for s in daemon::list()? {
+        kill_session(&s.name)?;
+    }
+    Ok(())
+}
+
+/// Run an action in session `name`. Paths in it are made absolute (the server
+/// runs elsewhere).
+pub fn action(name: &str, mut words: Vec<String>) -> Result<()> {
+    if words.first().is_some_and(|w| w == "new-pane")
+        && let Some(file) = words.get_mut(1)
+    {
+        *file = std::path::absolute(PathBuf::from(&*file))?.display().to_string();
+    }
+    match request(name, ClientMsg::Action(words))? {
+        ServerMsg::Done(Ok(())) => Ok(()),
+        ServerMsg::Done(Err(e)) => bail!("{e}"),
+        other => bail!("unexpected answer {other:?}"),
+    }
+}
