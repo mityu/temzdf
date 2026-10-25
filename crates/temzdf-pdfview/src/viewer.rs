@@ -95,6 +95,17 @@ pub enum StandIn {
     Composed,
 }
 
+impl StandIn {
+    /// The best stand-in for a frontend.
+    pub fn for_hints(hints: temzdf_scene::Hints) -> Self {
+        match (hints.exact_scaling, hints.fast_uploads) {
+            (true, _) => Self::ScaledTiles,
+            (false, true) => Self::Composed,
+            (false, false) => Self::Thumbnail,
+        }
+    }
+}
+
 struct Composed {
     /// Current scale, old scale, screen rect.
     id: (u32, u32, Rect),

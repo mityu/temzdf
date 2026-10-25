@@ -134,6 +134,17 @@ pub struct Frame {
     pub title: String,
 }
 
+/// What a frontend is good at, so panes can choose how to draw.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Hints {
+    /// Scaled layers are shown exactly where asked (a terminal compositing
+    /// frames itself, or a GPU); otherwise they may snap to cells.
+    pub exact_scaling: bool,
+    /// New images reach the screen cheaply (shared memory, files, a GPU), so
+    /// short-lived images are fine.
+    pub fast_uploads: bool,
+}
+
 /// Something a frontend does on a pane's behalf, in the frontend's own
 /// environment (its clipboard, its `DISPLAY`, its user's editor).
 #[derive(Clone, Debug, PartialEq, Eq)]

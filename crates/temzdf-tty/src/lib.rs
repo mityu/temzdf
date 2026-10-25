@@ -7,6 +7,9 @@
 use std::collections::HashMap;
 use std::io;
 
+mod frontend;
+pub use frontend::{Input, Presented, TtyFrontend};
+
 use temzdf_scene::{Frame, ImageKey, ImageUpdate, Images, Layer, Pointer};
 use termpix::compositor::{self, Compositor, ImageId};
 
@@ -22,7 +25,12 @@ impl Presenter {
 
     /// Apply the store's changes since the last call to the compositor.
     pub fn sync(&mut self, comp: &mut Compositor, images: &mut Images) {
-        for update in images.take_updates() {
+        self.apply(comp, images.take_updates());
+    }
+
+    /// Apply changes of an image store kept elsewhere (another process).
+    pub fn apply(&mut self, comp: &mut Compositor, updates: Vec<ImageUpdate>) {
+        for update in updates {
             match update {
                 ImageUpdate::Set(key, img) => match self.ids.get(&key) {
                     Some(&id) => comp.replace_image(id, img.width, img.height, img.pixels),
