@@ -219,17 +219,8 @@ impl TermPane {
     /// A key typed while this pane has the focus.
     pub fn key(&mut self, k: &KeyEvent) -> bool {
         let redraw = self.scroll_to_bottom();
-        let Some((code, mods, action, text)) = keys::translate(k) else { return redraw };
-        let Ok(mut event) = key::Event::new() else { return redraw };
-        event.set_key(code).set_mods(mods).set_action(action);
-        if let Some(t) = text {
-            event.set_utf8(Some(t));
-        }
-        self.key_encoder.set_options_from_terminal(&self.terminal);
-        let mut out = Vec::new();
-        if self.key_encoder.encode_to_vec(&event, &mut out).is_ok() {
-            self.write(&out);
-        }
+        let out = keys::encode(&mut self.key_encoder, &self.terminal, k);
+        self.write(&out);
         redraw
     }
 
@@ -290,8 +281,7 @@ impl TermPane {
                 MouseEventKind::Leave => return false,
             };
             let Ok(mut event) = mouse::Event::new() else { return false };
-            let (_, mods, ..) = keys::translate(&KeyEvent::new(termpix_core::input::KeyCode::Enter, m.modifiers))
-                .unwrap_or((key::Key::Enter, key::Mods::empty(), key::Action::Press, None));
+            let mods = keys::mods(m.modifiers);
             event.set_action(action).set_button(button).set_mods(mods).set_position(mouse::Position { x, y });
             self.mouse_encoder.set_options_from_terminal(&self.terminal);
             self.mouse_encoder.set_size(mouse::EncoderSize {
@@ -541,16 +531,22 @@ mod tests {
 
     #[test]
     fn keys_translate_to_physical_keys() {
-        let (k, m, _, t) = keys::translate(&KeyEvent::new(KeyCode::Char('A'), Modifiers::SHIFT)).unwrap();
-        assert_eq!((k, m, t.as_deref()), (key::Key::A, key::Mods::SHIFT, Some("A")));
-        let (k, m, ..) = keys::translate(&KeyEvent::new(KeyCode::Char('c'), Modifiers::CTRL)).unwrap();
-        assert_eq!((k, m), (key::Key::C, key::Mods::CTRL));
-        assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('%'), Modifiers::SHIFT)).unwrap().0, key::Key::Digit5);
-        assert_eq!(keys::translate(&KeyEvent::new(KeyCode::F(5), Modifiers::NONE)).unwrap().0, key::Key::F5);
+        let t = keys::translate(&KeyEvent::new(KeyCode::Char('A'), Modifiers::SHIFT)).unwrap();
+        assert_eq!(
+            (t.key, t.consumed, t.text.as_deref(), t.unshifted),
+            (key::Key::A, key::Mods::SHIFT, Some("A"), Some('a'))
+        );
+        let t = keys::translate(&KeyEvent::new(KeyCode::Char('c'), Modifiers::CTRL)).unwrap();
+        assert_eq!((t.key, t.mods, t.text), (key::Key::C, key::Mods::CTRL, None));
+        assert_eq!(
+            keys::translate(&KeyEvent::new(KeyCode::Char('%'), Modifiers::SHIFT)).unwrap().key,
+            key::Key::Digit5
+        );
+        assert_eq!(keys::translate(&KeyEvent::new(KeyCode::F(5), Modifiers::NONE)).unwrap().key, key::Key::F5);
         assert!(keys::translate(&KeyEvent::new(KeyCode::Other(1), Modifiers::NONE)).is_none());
         // Control characters some terminals report as code points (kitty: the
         // Linefeed keysym xdotool types for "\n").
-        assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('\n'), Modifiers::NONE)).unwrap().0, key::Key::Enter);
-        assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('\t'), Modifiers::NONE)).unwrap().0, key::Key::Tab);
+        assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('\n'), Modifiers::NONE)).unwrap().key, key::Key::Enter);
+        assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('\t'), Modifiers::NONE)).unwrap().key, key::Key::Tab);
     }
 }
