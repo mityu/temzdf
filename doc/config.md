@@ -27,6 +27,13 @@ smoothness_ms = 60
 [links]
 # Command for external links; the URI is appended. Default: xdg-open / open.
 open_command = ["xdg-open"]
+# Preview internal links (references, citations, the table of contents) when
+# the pointer rests on one for preview_delay_ms. In the preview the wheel
+# scrolls, clicking a link follows it (external ones open and the preview
+# stays), and clicking elsewhere jumps there. Hovering an external link shows
+# its URI in the status bar.
+preview = true
+preview_delay_ms = 300
 
 [reload]
 # Wait this long after the PDF last changed before reloading.

@@ -27,6 +27,8 @@ const TILE_BUDGET: usize = 192 << 20;
 /// Display lists kept at most (about 70 KiB each for a LaTeX text page, and
 /// 0.2 ms to load again); the ones farthest from the view go first.
 const MAX_LISTS: usize = 256;
+/// Points kept above a jump target, so the context above it stays visible.
+pub const TARGET_MARGIN: f32 = 4.0 * crate::layout::GAP_PT;
 pub const MIN_SCALE: f32 = 0.1;
 pub const MAX_SCALE: f32 = 8.0;
 
@@ -41,6 +43,21 @@ const BACKGROUND: [u8; 4] = [0x3a, 0x3a, 0x3a, 0xff];
 const LAYER_BACKGROUND: u32 = 1;
 /// Layer keys at or above this are reserved for UI chrome (see `session.rs`).
 pub const LAYER_KEYS_END: u32 = 0xf000_0000;
+/// Layers of the [`Peek`] window: a tile shown there and in the page view
+/// needs a second layer key.
+const LAYER_PEEK: u32 = 0xf800_0000;
+
+/// A second window onto the document, drawn from the same tiles at the same
+/// scale (link previews). `rect` (screen pixels) shows the document from
+/// doc-space pixels `(scroll_x, scroll_y)` at its top-left.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Peek {
+    pub rect: Rect,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
+    /// The background goes at `z`, tiles at `z + 1`.
+    pub z: i32,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TileKind {
@@ -128,6 +145,8 @@ pub struct Viewer {
     composed: HashMap<usize, Composed>,
     /// See [`MAX_LISTS`].
     max_lists: usize,
+    /// Shown above the page view while set; its tiles are rendered first.
+    pub peek: Option<Peek>,
 }
 
 /// What covers a page while its tiles at the current scale render (just after
@@ -187,6 +206,7 @@ impl Viewer {
             stand_in_mode: StandIn::Thumbnail,
             composed: HashMap::new(),
             max_lists: MAX_LISTS,
+            peek: None,
         };
         v.update_scroll_bounds();
         v
@@ -246,17 +266,25 @@ impl Viewer {
     /// Scroll to a target: the page top, or a position inside the page (placed a
     /// little below the top of the screen so the context above stays visible).
     pub fn goto(&mut self, target: Target, animate: bool, now: Instant) {
-        let Some(b) = self.layout.pages.get(target.page.min(self.page_count().saturating_sub(1))) else { return };
-        let y_pt = match target.y {
-            Some(y) => b.y + y.clamp(0.0, b.h) - 4.0 * crate::layout::GAP_PT,
-            None => b.y - crate::layout::GAP_PT,
-        };
-        let px = (y_pt * self.view.scale) as f64;
+        if self.layout.pages.is_empty() {
+            return;
+        }
+        let px = (self.target_top(target) * self.view.scale) as f64;
         if animate {
             self.scroll_y.scroll_by(px - self.scroll_y.target(), now);
         } else {
             self.scroll_y.jump_to(px);
             self.sync_view();
+        }
+    }
+
+    /// The doc-space y (points) that [`Viewer::goto`] puts at the top of the
+    /// screen for `target` (unclamped). The document must have pages.
+    pub fn target_top(&self, target: Target) -> f32 {
+        let b = self.layout.pages[target.page.min(self.page_count() - 1)];
+        match target.y {
+            Some(y) => b.y + y.clamp(0.0, b.h) - TARGET_MARGIN,
+            None => b.y - crate::layout::GAP_PT,
         }
     }
 
@@ -381,9 +409,11 @@ impl Viewer {
             return;
         }
         let current = self.current_page();
-        let mut by_distance = loaded;
+        // Pages in the peek window are in use however far away they are.
+        let peeked = self.peek.map_or(0..0, |p| self.peek_pages(&p));
+        let mut by_distance: Vec<usize> = loaded.into_iter().filter(|p| !peeked.contains(p)).collect();
         by_distance.sort_by_key(|&p| std::cmp::Reverse(p.abs_diff(current)));
-        let excess = by_distance.len() - self.max_lists;
+        let excess = by_distance.len().saturating_sub(self.max_lists.saturating_sub(peeked.len()));
         for p in by_distance.into_iter().take(excess) {
             self.lists[p] = None;
         }
@@ -589,9 +619,23 @@ impl Viewer {
         }
         self.complete = complete;
 
+        // The peek window's work goes first, and only once.
+        let mut peek_needs = Vec::new();
+        if let Some(peek) = self.peek {
+            self.peek_frame(&peek, bg, (sw, sh), scale_q, &mut layers, &mut peek_needs);
+            let dup = |n: &Need| {
+                peek_needs.iter().any(|p| match (p, n) {
+                    (Need::LoadPage(a), Need::LoadPage(b)) => a == b,
+                    (Need::Render(a), Need::Render(b)) => a.key == b.key,
+                    _ => false,
+                })
+            };
+            urgent.retain(|(_, n)| !dup(n));
+            later.retain(|(_, n)| !dup(n));
+        }
         urgent.sort_by(|a, b| a.0.total_cmp(&b.0));
         later.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let needs = urgent.into_iter().chain(later).map(|(_, n)| n).collect();
+        let needs = peek_needs.into_iter().chain(urgent.into_iter().chain(later).map(|(_, n)| n)).collect();
         // Composed stand-ins not shown this frame are done with.
         let frame = self.frame_no;
         self.composed.retain(|_, c| {
@@ -603,6 +647,91 @@ impl Viewer {
         });
         self.evict(comp);
         (layers, needs)
+    }
+
+    /// Pages intersecting the peek window.
+    fn peek_pages(&self, p: &Peek) -> std::ops::Range<usize> {
+        let s = self.view.scale;
+        self.layout.pages_in(p.scroll_y / s, (p.scroll_y + p.rect.h as f32) / s)
+    }
+
+    /// The page under a screen pixel inside the peek window, and the page-space point there.
+    pub fn peek_to_page(&self, p: &Peek, sx: f32, sy: f32) -> Option<(usize, f32, f32)> {
+        if !p.rect.contains(sx as i32, sy as i32) {
+            return None;
+        }
+        let s = self.view.scale;
+        let dx = (sx - p.rect.x as f32 + p.scroll_x) / s;
+        let dy = (sy - p.rect.y as f32 + p.scroll_y) / s;
+        let page = self.layout.page_at(dy);
+        let b = self.layout.pages.get(page)?;
+        let (x, y) = (dx - b.x, dy - b.y);
+        (x >= 0.0 && y >= 0.0 && x <= b.w && y <= b.h).then_some((page, x, y))
+    }
+
+    /// Layers of the peek window: the background, then the visible parts of
+    /// the tiles under it; missing tiles and display lists become needs.
+    fn peek_frame(
+        &mut self,
+        p: &Peek,
+        bg: ImageId,
+        bg_size: (u32, u32),
+        scale_q: u32,
+        layers: &mut Vec<Layer>,
+        needs: &mut Vec<Need>,
+    ) {
+        let r = p.rect;
+        let bg_src = Rect::new(0, 0, r.w.min(bg_size.0), r.h.min(bg_size.1));
+        layers.push(Layer { key: LAYER_PEEK, image: bg, src: bg_src, dst: r, z: p.z });
+        let scale = dequantize(scale_q);
+        let mut key = LAYER_PEEK + 1;
+        for page in self.peek_pages(p) {
+            let Some(list) = self.lists[page].clone() else {
+                if !self.lists_requested.contains(&page) {
+                    needs.push(Need::LoadPage(page));
+                }
+                continue;
+            };
+            let bounds = self.bounds[page];
+            let pb = self.layout.pages[page];
+            let ox = r.x + (pb.x * scale - p.scroll_x).round() as i32;
+            let oy = r.y + (pb.y * scale - p.scroll_y).round() as i32;
+            let (pw, ph) = bounds.pixel_size(scale);
+            // The range of tiles overlapping the window.
+            let span = |from: i64, to: i64, size: u32| {
+                let a = from.clamp(0, size as i64) as u32;
+                let b = to.clamp(0, size as i64) as u32;
+                a / TILE..b.div_ceil(TILE)
+            };
+            for ty in span(r.y as i64 - oy as i64, r.bottom() - oy as i64, ph) {
+                for tx in span(r.x as i64 - ox as i64, r.right() - ox as i64, pw) {
+                    let area = PixelRect {
+                        x: tx * TILE,
+                        y: ty * TILE,
+                        w: TILE.min(pw - tx * TILE),
+                        h: TILE.min(ph - ty * TILE),
+                    };
+                    let dst = Rect::new(ox + area.x as i32, oy + area.y as i32, area.w, area.h);
+                    let Some(vis) = dst.intersect(&r) else { continue };
+                    let tile = TileKey {
+                        generation: self.generation,
+                        page: page as u32,
+                        kind: TileKind::Tile { scale_q, tx, ty },
+                    };
+                    match self.touch(tile) {
+                        Some((image, _)) => {
+                            let src = Rect::new(vis.x - dst.x, vis.y - dst.y, vis.w, vis.h);
+                            layers.push(Layer { key, image, src, dst: vis, z: p.z + 1 });
+                            key += 1;
+                        }
+                        None if !self.in_flight.contains(&tile) => {
+                            needs.push(Need::Render(RenderJob { key: tile, list: list.clone(), bounds, scale, area }));
+                        }
+                        None => {}
+                    }
+                }
+            }
+        }
     }
 
     /// Whether the last frame showed every visible page at full resolution

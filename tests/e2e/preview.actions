@@ -1,0 +1,19 @@
+# Used with: scripts/e2e.sh tests/e2e/preview.actions -- target/debug/temzdf target/fixtures/sample.pdf
+# Coordinates assume the default 900x600 window (fit width, page 1 at the top).
+# Expected: resting on "3 Filler" in the table of contents opens a preview of
+# section 3 above it (no room below) with the page's columns aligned
+# (preview.png); the wheel over the preview scrolls it, not the page
+# (preview-scrolled.png); moving away closes it (closed.png).
+pause 1
+move 150 412
+pause 1
+shot preview
+move 150 380
+move 300 300
+pause 0.1
+wheel 3 300 300
+pause 0.5
+shot preview-scrolled
+move 800 60
+pause 1
+shot closed

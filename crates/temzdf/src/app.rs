@@ -117,6 +117,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let mut session = Session::new(name.clone(), info, caps.geometry);
     session.anchor_by_text = opts.config.reload.anchor == ReloadAnchor::Text;
     session.keymap = opts.config.keymap()?;
+    session.preview_delay = opts.config.links.preview_delay();
     session.viewer.stand_in_mode = match (comp.backend(), comp.encoder_mut().medium()) {
         (Backend::Layered, Medium::Direct { .. }) => StandIn::Thumbnail,
         (Backend::Layered, _) => StandIn::Composed,

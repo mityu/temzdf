@@ -4,7 +4,7 @@
 //! and tests drive it directly.
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use termpix::compositor::{Compositor, ImageId, Layer};
 use termpix::geom::{Geometry, Rect};
@@ -19,7 +19,7 @@ use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, Target};
 use crate::search::SearchState;
 use crate::selection::{Caret, PageText, Selection};
 use crate::synctex::PdfBox;
-use crate::viewer::{LAYER_KEYS_END, Need, Viewer};
+use crate::viewer::{LAYER_KEYS_END, Need, Peek, Viewer};
 
 pub const ZOOM_STEP: f32 = 1.1;
 /// UI layers sit above page tiles but, like them, below terminal text.
@@ -27,6 +27,17 @@ const Z_UI: i32 = -1_073_741_800;
 const KEY_STATUS: u32 = LAYER_KEYS_END;
 const KEY_SIDEBAR: u32 = LAYER_KEYS_END + 1;
 const KEY_INPUT: u32 = LAYER_KEYS_END + 2;
+const KEY_PREVIEW: u32 = LAYER_KEYS_END + 3;
+/// Link previews float above the UI (still below terminal text).
+const Z_PREVIEW: i32 = Z_UI + 10;
+/// Link preview size as a fraction of the page area, its border, and how long
+/// the pointer may be off both the link and the preview before it closes (time
+/// to move from one to the other).
+const PREVIEW_WIDTH: f32 = 0.6;
+const PREVIEW_HEIGHT: f32 = 0.35;
+const PREVIEW_BORDER: u32 = 2;
+const PREVIEW_GRACE: Duration = Duration::from_millis(300);
+pub const DEFAULT_PREVIEW_DELAY: Duration = Duration::from_millis(300);
 /// Overlays (search hits, selection) use keys from here on, one per rectangle.
 const KEY_OVERLAYS: u32 = LAYER_KEYS_END + 0x1000;
 /// Overlays: above page tiles, below UI.
@@ -55,6 +66,27 @@ struct TextAnchor {
     doc_y: f32,
     screen_y: f32,
     deadline: Instant,
+}
+
+/// An internal link under the pointer, previewed once the pointer rests there
+/// until `due`.
+#[derive(Clone, Debug)]
+struct HoverLink {
+    page: usize,
+    rect: PageRect,
+    target: Target,
+    due: Instant,
+}
+
+/// An open link preview: a [`Peek`] window at the link's target.
+#[derive(Clone, Debug)]
+struct Preview {
+    /// The link it previews: its page and page-space rectangle.
+    page: usize,
+    link: PageRect,
+    peek: Peek,
+    /// When the pointer left both the link and the preview.
+    left_at: Option<Instant>,
 }
 
 /// Work the session asks the caller to do (on a worker, or inline).
@@ -102,6 +134,8 @@ enum WidgetState {
     Status(StatusBar),
     List(ListView, u32),
     Input(LineInput),
+    /// The border around a link preview.
+    Frame,
 }
 
 struct WidgetImage {
@@ -160,6 +194,13 @@ pub struct Session {
     /// Links per page, filled as pages load.
     links: Vec<Option<Vec<Link>>>,
     pointer_shape: Pointer,
+    /// `[links] preview`: preview internal links after the pointer rests on
+    /// them this long (`None`: never).
+    pub preview_delay: Option<Duration>,
+    hover: Option<HoverLink>,
+    preview: Option<Preview>,
+    /// The external link under the pointer, shown in the status bar.
+    hover_uri: Option<String>,
     /// Where the left button went down (screen pixels).
     press: Option<(f32, f32)>,
     /// Jump history: positions (with horizontal scroll) to go back / forward to.
@@ -199,6 +240,10 @@ impl Session {
             caret_cell: None,
             links: vec![None; pages],
             pointer_shape: Pointer::Default,
+            preview_delay: Some(DEFAULT_PREVIEW_DELAY),
+            hover: None,
+            preview: None,
+            hover_uri: None,
             press: None,
             back: Vec::new(),
             forward: Vec::new(),
@@ -223,6 +268,7 @@ impl Session {
 
     pub fn resize(&mut self, geometry: Geometry) {
         self.geometry = geometry;
+        self.close_preview();
         self.apply_area();
     }
 
@@ -253,6 +299,7 @@ impl Session {
     }
 
     pub fn toggle_sidebar(&mut self) {
+        self.close_preview();
         self.sidebar_open = !self.sidebar_open;
         self.apply_area();
         if self.sidebar_open {
@@ -366,6 +413,7 @@ impl Session {
 
     /// Layers for this frame and the work still needed.
     pub fn frame(&mut self, comp: &mut Compositor) -> (Vec<Layer>, Vec<Need>) {
+        self.viewer.peek = self.preview.as_ref().map(|p| p.peek);
         let (mut layers, needs) = self.viewer.frame(comp);
         // Zoom as a percentage of 96 dpi ("100%" = actual size on a typical screen).
         let zoom = (self.viewer.view.scale * 72.0 / 96.0 * 100.0).round();
@@ -388,8 +436,8 @@ impl Session {
             if self.reloading {
                 right = format!("reloading…   {right}");
             }
-            let status =
-                StatusBar { left: self.name.clone(), right, error: self.message.clone(), notice: self.notice.clone() };
+            let notice = self.hover_uri.clone().or_else(|| self.notice.clone());
+            let status = StatusBar { left: self.name.clone(), right, error: self.message.clone(), notice };
             layers.push(self.widget(comp, KEY_STATUS, WidgetState::Status(status), bar));
         }
         self.overlay_layers(comp, &mut layers);
@@ -397,6 +445,11 @@ impl Session {
             let r = self.sidebar_rect();
             let state = WidgetState::List(self.outline.list.clone(), self.row_height());
             layers.push(self.widget(comp, KEY_SIDEBAR, state, r));
+        }
+        if let Some(r) = self.preview.as_ref().map(|p| p.peek.rect) {
+            let b = PREVIEW_BORDER;
+            let outer = Rect::new(r.x - b as i32, r.y - b as i32, r.w + 2 * b, r.h + 2 * b);
+            layers.push(Layer { z: Z_PREVIEW, ..self.widget(comp, KEY_PREVIEW, WidgetState::Frame, outer) });
         }
         (layers, needs)
     }
@@ -409,6 +462,11 @@ impl Session {
                 WidgetState::Status(s) => s.render(&mut self.text, &self.theme, rect.w, rect.h),
                 WidgetState::List(l, rh) => l.render(&mut self.text, &self.theme, rect.w, rect.h, *rh),
                 WidgetState::Input(i) => i.render(&mut self.text, &self.theme, rect.w, rect.h).0,
+                WidgetState::Frame => {
+                    let mut c = Canvas::new(rect.w, rect.h);
+                    c.fill_rect(0.0, 0.0, rect.w as f32, rect.h as f32, self.theme.accent);
+                    c.finish()
+                }
             };
             let image = match self.widgets.get(&key) {
                 Some(w) => {
@@ -521,14 +579,166 @@ impl Session {
         self.pointer_shape
     }
 
-    /// The link under a screen pixel.
-    fn link_at(&self, sx: f32, sy: f32) -> Option<&Link> {
+    /// The link at a page-space point.
+    fn link_on_page(&self, page: usize, x: f32, y: f32) -> Option<&Link> {
+        self.links.get(page)?.as_ref()?.iter().find(|l| contains(&l.rect, x, y))
+    }
+
+    /// The link under a screen pixel in the page view, and its page.
+    fn link_at(&self, sx: f32, sy: f32) -> Option<(usize, &Link)> {
         let (page, x, y) = self.viewer.screen_to_page(sx, sy)?;
-        self.links
-            .get(page)?
-            .as_ref()?
-            .iter()
-            .find(|l| x >= l.rect.x0 && x <= l.rect.x1 && y >= l.rect.y0 && y <= l.rect.y1)
+        Some((page, self.link_on_page(page, x, y)?))
+    }
+
+    /// Track the link under the pointer in the page view: an external link's
+    /// URI goes to the status bar; resting on an internal link opens its
+    /// preview after the delay. Returns true when the status bar changed.
+    fn update_hover(&mut self, m: &MouseEvent, now: Instant) -> bool {
+        let (x, y) = self.pointer;
+        let hit = if self.drag.is_none() && !self.selecting { self.link_at(x, y) } else { None };
+        let hit = hit.map(|(page, l)| (page, l.clone()));
+        let uri = match &hit {
+            Some((_, Link { target: LinkTarget::External(u), .. })) => Some(u.clone()),
+            _ => None,
+        };
+        let changed = self.hover_uri != uri;
+        self.hover_uri = uri;
+        match (hit, self.preview_delay) {
+            (Some((page, Link { rect, target: LinkTarget::Internal(target) })), Some(delay))
+                if m.kind == MouseEventKind::Move =>
+            {
+                let same = |p: usize, r: &PageRect| p == page && *r == rect;
+                let shown = self.preview.as_ref().is_some_and(|p| same(p.page, &p.link));
+                if !shown && !self.hover.as_ref().is_some_and(|h| same(h.page, &h.rect)) {
+                    self.hover = Some(HoverLink { page, rect, target, due: now + delay });
+                }
+            }
+            _ => self.hover = None,
+        }
+        changed
+    }
+
+    /// Open the preview of a hovered link: below the link (above it when there
+    /// is no room), showing what following the link would put at the top of
+    /// the screen, with the page's columns where the page view has them.
+    fn open_preview(&mut self, h: HoverLink) {
+        let v = &self.viewer;
+        let s = v.view.scale;
+        let area = Rect::new(v.origin_x(), 0, v.view.screen_w as u32, v.view.screen_h as u32);
+        let b = PREVIEW_BORDER as i32;
+        let target_page = h.target.page.min(v.page_count() - 1);
+        let pb = v.layout.pages[target_page];
+        let page_w = pb.w * s;
+        let w = ((area.w as f32 * PREVIEW_WIDTH).min(page_w) as i32).min(area.w as i32 - 2 * b).max(1);
+        let ht = ((area.h as f32 * PREVIEW_HEIGHT) as i32).min(area.h as i32 - 2 * b).max(1);
+        let (_, link_top) = v.page_to_screen(h.page, h.rect.x0, h.rect.y0);
+        let (_, link_bottom) = v.page_to_screen(h.page, h.rect.x1, h.rect.y1);
+        let x = (self.pointer.0 as i32 - w / 2).clamp(area.x + b, (area.right() as i32 - w - b).max(area.x + b));
+        let below = link_bottom.ceil() as i32 + b;
+        let y = if below + ht + b <= area.bottom() as i32 { below } else { (link_top.floor() as i32 - b - ht).max(b) };
+        let page_left = v.page_to_screen(target_page, 0.0, 0.0).0;
+        let scroll_x = (pb.x * s + (x as f32 - page_left)).clamp(0.0, (v.layout.width * s - w as f32).max(0.0));
+        let scroll_y = (v.target_top(h.target) * s).max(0.0);
+        let peek = Peek { rect: Rect::new(x, y, w as u32, ht as u32), scroll_x, scroll_y, z: Z_PREVIEW + 1 };
+        self.preview = Some(Preview { page: h.page, link: h.rect, peek, left_at: None });
+    }
+
+    /// Close the link preview (and forget a pending one). Returns true if one was open.
+    fn close_preview(&mut self) -> bool {
+        self.hover = None;
+        self.preview.take().is_some()
+    }
+
+    /// Mouse events while a link preview is open. Over the preview it takes
+    /// them all (`Some`, with whether to redraw): the wheel scrolls it, a click
+    /// on a link follows it (external links open, the preview stays) and a
+    /// click elsewhere jumps to what it shows. Elsewhere (`None`) the page view
+    /// handles them; pressing a button or the wheel there closes the preview,
+    /// and so does leaving both it and its link for `PREVIEW_GRACE`.
+    fn preview_mouse(&mut self, m: &MouseEvent, now: Instant) -> Option<bool> {
+        let p = self.preview.as_mut()?;
+        let (x, y) = self.pointer;
+        let r = p.peek.rect;
+        let b = PREVIEW_BORDER as i32;
+        let outer = Rect::new(r.x - b, r.y - b, r.w + 2 * b as u32, r.h + 2 * b as u32);
+        if !outer.contains(x as i32, y as i32) {
+            let (page, link) = (p.page, p.link);
+            let on_link =
+                self.viewer.screen_to_page(x, y).is_some_and(|(pg, px, py)| pg == page && contains(&link, px, py));
+            let p = self.preview.as_mut()?;
+            match m.kind {
+                _ if on_link => p.left_at = None,
+                MouseEventKind::Move => {
+                    p.left_at.get_or_insert(now);
+                }
+                MouseEventKind::Press(_) | MouseEventKind::Scroll(_) => {
+                    self.close_preview();
+                }
+                _ => {}
+            }
+            return None;
+        }
+        p.left_at = None;
+        let peek = p.peek;
+        self.hover = None;
+        let link = self
+            .viewer
+            .peek_to_page(&peek, x, y)
+            .and_then(|(page, px, py)| self.link_on_page(page, px, py))
+            .map(|l| l.target.clone());
+        self.pointer_shape = if link.is_some() { Pointer::Link } else { Pointer::Default };
+        let uri = match &link {
+            Some(LinkTarget::External(u)) => Some(u.clone()),
+            _ => None,
+        };
+        let mut redraw = self.hover_uri != uri;
+        self.hover_uri = uri;
+        let ctrl = m.modifiers.contains(Modifiers::CTRL);
+        match m.kind {
+            MouseEventKind::Scroll(dir) if !ctrl => {
+                let step = 3.0 * self.geometry.cell.height as f32;
+                let d = match dir {
+                    ScrollDirection::Down => step,
+                    ScrollDirection::Up => -step,
+                    _ => return Some(redraw),
+                };
+                let v = &self.viewer;
+                let max = (v.layout.height * v.view.scale - peek.rect.h as f32).max(0.0);
+                let p = self.preview.as_mut()?;
+                p.peek.scroll_y = (p.peek.scroll_y + d).clamp(0.0, max);
+                redraw = true;
+            }
+            MouseEventKind::Press(MouseButton::Left) => self.press = Some((x, y)),
+            MouseEventKind::Release(MouseButton::Left) => {
+                let clicked = self.press.take().is_some_and(|(px, py)| (px - x).hypot(py - y) < CLICK_SLOP);
+                if clicked && !ctrl {
+                    match link {
+                        Some(uri @ LinkTarget::External(_)) => self.follow(uri, now),
+                        Some(target) => {
+                            self.close_preview();
+                            self.follow(target, now);
+                        }
+                        None => {
+                            let target = self.peek_top(&peek);
+                            self.close_preview();
+                            self.follow(LinkTarget::Internal(target), now);
+                        }
+                    }
+                    redraw = true;
+                }
+            }
+            _ => {}
+        }
+        Some(redraw)
+    }
+
+    /// The jump target that puts what a peek window shows at the top of the screen.
+    fn peek_top(&self, peek: &Peek) -> Target {
+        let v = &self.viewer;
+        let dy = peek.scroll_y / v.view.scale + crate::viewer::TARGET_MARGIN;
+        let page = v.layout.page_at(dy);
+        let b = v.layout.pages[page];
+        Target { page, y: Some((dy - b.y).clamp(0.0, b.h)) }
     }
 
     /// Remember the current position before a jump.
@@ -689,6 +899,18 @@ impl Session {
     /// Advance animations to `now`. Returns true when the view changed.
     pub fn tick(&mut self, now: Instant) -> bool {
         let mut changed = self.viewer.tick(now);
+        if let Some(h) = self.hover.as_mut().filter(|h| now >= h.due) {
+            if self.viewer.is_animating() {
+                // The link is moving; wait until the page stands still.
+                h.due = now + self.preview_delay.unwrap_or(DEFAULT_PREVIEW_DELAY);
+            } else if let Some(h) = self.hover.take() {
+                self.open_preview(h);
+                changed = true;
+            }
+        }
+        if self.preview.as_ref().and_then(|p| p.left_at).is_some_and(|t| now >= t + PREVIEW_GRACE) {
+            changed |= self.close_preview();
+        }
         if self.text_anchor.as_ref().is_some_and(|a| now >= a.deadline) {
             changed |= self.resolve_text_anchor(true);
         }
@@ -709,7 +931,9 @@ impl Session {
     pub fn next_deadline(&self) -> Option<Instant> {
         let flash = self.flash.as_ref().map(|f| f.1);
         let anchor = self.text_anchor.as_ref().map(|a| a.deadline);
-        flash.into_iter().chain(anchor).min()
+        let hover = self.hover.as_ref().map(|h| h.due);
+        let leave = self.preview.as_ref().and_then(|p| p.left_at).map(|t| t + PREVIEW_GRACE);
+        [flash, anchor, hover, leave].into_iter().flatten().min()
     }
 
     /// The file changed and the document thread has the new version. Keep the
@@ -722,6 +946,8 @@ impl Session {
         let selected_title = self.outline.selected_entry().map(|i| self.info.outline[i].title.clone());
         // Remember the line being read while the old text is still there.
         self.text_anchor = if self.anchor_by_text { self.capture_text_anchor(Instant::now()) } else { None };
+        self.close_preview();
+        self.hover_uri = None;
         self.viewer.replace_pages(comp, info.bounds.clone());
         let pages = info.bounds.len();
         self.links = vec![None; pages];
@@ -933,6 +1159,20 @@ impl Session {
         if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
             return Action::None;
         }
+        // Any key closes a link preview; Esc does nothing else then.
+        if self.close_preview() {
+            if k.code == KeyCode::Escape {
+                return Action::Redraw;
+            }
+            return match self.key_inner(k, now) {
+                Action::None => Action::Redraw,
+                a => a,
+            };
+        }
+        self.key_inner(k, now)
+    }
+
+    fn key_inner(&mut self, k: &KeyEvent, now: Instant) -> Action {
         self.message = None;
         // The reader moved on; a pending reload anchor would pull them back.
         self.text_anchor = None;
@@ -1013,25 +1253,35 @@ impl Session {
         if matches!(m.kind, MouseEventKind::Press(_) | MouseEventKind::Scroll(_)) {
             self.text_anchor = None;
         }
+        let had_preview = self.preview.is_some();
+        if let Some(redraw) = self.preview_mouse(m, now) {
+            return redraw;
+        }
+        let closed = had_preview && self.preview.is_none();
         let (x, y) = self.pointer;
         let over_sidebar = self.sidebar_open && self.drag.is_none() && self.sidebar_rect().contains(x as i32, y as i32);
         if over_sidebar {
-            return self.sidebar_mouse(m, now).unwrap_or(false);
+            self.hover = None;
+            let uri_cleared = self.hover_uri.take().is_some();
+            return self.sidebar_mouse(m, now).unwrap_or(false) || closed || uri_cleared;
         }
         // Leaving the sidebar clears its hover highlight.
-        let hover_cleared = self.outline.list.hover.take().is_some();
+        let mut redraw = self.outline.list.hover.take().is_some() || closed;
         let (x, y) = self.pointer;
-        // Links: pointer shape on hover, follow on click (press and release in place).
+        // Links: pointer shape and preview on hover, follow on click (press and
+        // release in place).
         self.pointer_shape =
             if self.drag.is_none() && self.link_at(x, y).is_some() { Pointer::Link } else { Pointer::Default };
+        redraw |= self.update_hover(m, now);
         match m.kind {
             MouseEventKind::Press(MouseButton::Left) => self.press = Some((x, y)),
             MouseEventKind::Release(MouseButton::Left) => {
                 let clicked = self.press.take().is_some_and(|(px, py)| (px - x).hypot(py - y) < CLICK_SLOP);
                 if clicked
                     && !m.modifiers.contains(Modifiers::CTRL)
-                    && let Some(target) = self.link_at(x, y).map(|l| l.target.clone())
+                    && let Some(target) = self.link_at(x, y).map(|(_, l)| l.target.clone())
                 {
+                    self.close_preview();
                     self.drag = None;
                     self.follow(target, now);
                     return true;
@@ -1047,7 +1297,7 @@ impl Session {
             }
             _ => {}
         }
-        self.page_mouse(m, now) || hover_cleared
+        self.page_mouse(m, now) || redraw
     }
 
     fn page_mouse(&mut self, m: &MouseEvent, now: Instant) -> bool {
@@ -1142,6 +1392,10 @@ impl Session {
         }
         true
     }
+}
+
+fn contains(r: &PageRect, x: f32, y: f32) -> bool {
+    x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1
 }
 
 /// Pixel size of the page area: the screen minus the status bar row.
@@ -1383,5 +1637,141 @@ mod tests {
         mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (20.0, 300.0));
         assert_eq!(s.viewer.view.scroll_y, before + 100.0);
         assert!(s.take_requests().is_empty());
+    }
+
+    /// Rest the pointer on the first internal link from a later page back to
+    /// page 1 (scrolled to `height` as a fraction of the screen) until its preview
+    /// opens. Returns where the pointer is.
+    fn open_back_link_preview(s: &mut Session, height: f32) -> (f32, f32) {
+        let (page, rect) = (1..s.viewer.page_count())
+            .find_map(|p| {
+                let links = s.links[p].as_ref()?;
+                let l = links.iter().find(|l| matches!(l.target, LinkTarget::Internal(Target { page: 0, .. })))?;
+                Some((p, l.rect))
+            })
+            .expect("a link back to page 1");
+        let b = s.viewer.layout.pages[page];
+        let scale = s.viewer.view.scale;
+        let y = ((b.y + rect.y0) * scale - s.viewer.view.screen_h * height).max(0.0);
+        s.viewer.jump_to(s.viewer.view.scroll_x, y);
+        let at = s.viewer.page_to_screen(page, (rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0);
+        mouse(s, MouseEventKind::Move, at);
+        assert!(s.preview.is_none(), "not before the delay");
+        let due = s.next_deadline().expect("a pending preview");
+        assert!(s.tick(due + Duration::from_millis(1)));
+        assert!(s.preview.is_some());
+        at
+    }
+
+    /// Screen position of a page-space point in the open preview.
+    fn in_preview(s: &Session, page: usize, x: f32, y: f32) -> (f32, f32) {
+        let p = s.preview.as_ref().unwrap().peek;
+        let b = s.viewer.layout.pages[page];
+        let scale = s.viewer.view.scale;
+        (p.rect.x as f32 + (b.x + x) * scale - p.scroll_x, p.rect.y as f32 + (b.y + y) * scale - p.scroll_y)
+    }
+
+    #[test]
+    fn resting_on_a_link_previews_its_target_with_clickable_urls() {
+        let mut s = session();
+        open_back_link_preview(&mut s, 0.33);
+        let mut c = comp();
+        let (layers, needs) = s.frame(&mut c);
+        assert!(layers.iter().any(|l| l.z == Z_PREVIEW), "the border");
+        assert!(layers.iter().any(|l| l.z == Z_PREVIEW + 1), "the window");
+        assert!(matches!(&needs[0], Need::Render(j) if j.key.page == 0), "the preview's tiles first");
+
+        let url = s.links[0]
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|l| l.target == LinkTarget::External("https://example.com/".into()))
+            .expect("the URL on page 1")
+            .rect;
+        let r = s.preview.as_ref().unwrap().peek.rect;
+        let mut at = in_preview(&s, 0, (url.x0 + url.x1) / 2.0, (url.y0 + url.y1) / 2.0);
+        for _ in 0..20 {
+            if r.contains(at.0 as i32, at.1 as i32) {
+                break;
+            }
+            mouse(&mut s, MouseEventKind::Scroll(ScrollDirection::Down), (r.x as f32 + 5.0, r.y as f32 + 5.0));
+            at = in_preview(&s, 0, (url.x0 + url.x1) / 2.0, (url.y0 + url.y1) / 2.0);
+        }
+        mouse(&mut s, MouseEventKind::Move, at);
+        assert_eq!(s.pointer(), Pointer::Link);
+        assert_eq!(s.hover_uri.as_deref(), Some("https://example.com/"), "shown in the status bar");
+        mouse(&mut s, MouseEventKind::Press(MouseButton::Left), at);
+        mouse(&mut s, MouseEventKind::Release(MouseButton::Left), at);
+        assert_eq!(s.take_requests(), vec![Request::OpenUri("https://example.com/".into())]);
+        assert!(s.preview.is_some(), "stays open");
+    }
+
+    #[test]
+    fn previews_go_below_the_link_or_above_it_near_the_bottom() {
+        let mut s = session();
+        let (_, y) = open_back_link_preview(&mut s, 0.33);
+        assert!(s.preview.as_ref().unwrap().peek.rect.y as f32 > y);
+        let mut s = session();
+        let (_, y) = open_back_link_preview(&mut s, 0.9);
+        let r = s.preview.as_ref().unwrap().peek.rect;
+        assert!((r.bottom() as f32) < y, "{r:?} above {y}");
+    }
+
+    #[test]
+    fn the_wheel_over_a_preview_scrolls_it_not_the_page() {
+        let mut s = session();
+        open_back_link_preview(&mut s, 0.33);
+        let page_y = s.viewer.view.scroll_y;
+        let peek = s.preview.as_ref().unwrap().peek;
+        let centre = (peek.rect.x as f32 + peek.rect.w as f32 / 2.0, peek.rect.y as f32 + peek.rect.h as f32 / 2.0);
+        assert!(mouse(&mut s, MouseEventKind::Scroll(ScrollDirection::Down), centre));
+        assert!(s.preview.as_ref().unwrap().peek.scroll_y > peek.scroll_y);
+        assert_eq!(s.viewer.view.scroll_y, page_y);
+        assert!(!s.viewer.is_animating());
+    }
+
+    #[test]
+    fn clicking_a_preview_jumps_there_and_keys_close_it() {
+        let mut s = session();
+        open_back_link_preview(&mut s, 0.33);
+        let r = s.preview.as_ref().unwrap().peek.rect;
+        let blank = (r.x as f32 + 2.0, r.y as f32 + 2.0);
+        mouse(&mut s, MouseEventKind::Press(MouseButton::Left), blank);
+        mouse(&mut s, MouseEventKind::Release(MouseButton::Left), blank);
+        assert!(s.preview.is_none());
+        s.tick(Instant::now() + Duration::from_secs(5));
+        assert_eq!(s.viewer.top_position().page, 0);
+        assert_eq!(s.back.len(), 1, "back returns to the link");
+
+        let mut s = session();
+        open_back_link_preview(&mut s, 0.33);
+        let esc = KeyEvent::new(KeyCode::Escape, Modifiers::NONE);
+        assert_eq!(s.key(&esc, Instant::now()), Action::Redraw, "closes, does not quit");
+        assert!(s.preview.is_none());
+    }
+
+    #[test]
+    fn previews_wait_for_the_pointer_and_close_after_it_leaves() {
+        let mut s = session();
+        let at = open_back_link_preview(&mut s, 0.33);
+        // Away from both the link and the preview: closes after a grace period.
+        mouse(&mut s, MouseEventKind::Move, (at.0, 2.0));
+        let now = Instant::now();
+        s.tick(now + Duration::from_millis(50));
+        assert!(s.preview.is_some(), "time to reach the preview");
+        s.tick(now + PREVIEW_GRACE + Duration::from_millis(50));
+        assert!(s.preview.is_none());
+
+        // Passing over the link does not open it.
+        mouse(&mut s, MouseEventKind::Move, at);
+        mouse(&mut s, MouseEventKind::Move, (at.0, 2.0));
+        assert!(s.next_deadline().is_none());
+        s.tick(Instant::now() + Duration::from_secs(1));
+        assert!(s.preview.is_none());
+
+        // Turned off in the config.
+        s.preview_delay = None;
+        mouse(&mut s, MouseEventKind::Move, at);
+        assert!(s.next_deadline().is_none());
     }
 }

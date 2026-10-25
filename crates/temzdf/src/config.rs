@@ -158,15 +158,34 @@ impl ScrollConfig {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct LinksConfig {
     /// Command used to open external links; the URI is appended as the last
     /// argument. Default: `xdg-open` (Linux) or `open` (macOS).
     pub open_command: Option<Vec<String>>,
+    /// Preview internal links when the pointer rests on them.
+    pub preview: bool,
+    /// How long the pointer rests on a link before its preview opens.
+    pub preview_delay_ms: u64,
+}
+
+impl Default for LinksConfig {
+    fn default() -> Self {
+        Self {
+            open_command: None,
+            preview: true,
+            preview_delay_ms: crate::session::DEFAULT_PREVIEW_DELAY.as_millis() as u64,
+        }
+    }
 }
 
 impl LinksConfig {
+    /// The link preview delay, or `None` when previews are off.
+    pub fn preview_delay(&self) -> Option<std::time::Duration> {
+        self.preview.then(|| std::time::Duration::from_millis(self.preview_delay_ms))
+    }
+
     pub fn command(&self) -> Vec<String> {
         self.open_command
             .clone()
@@ -236,6 +255,7 @@ mod tests {
             smoothness_ms = 90
             [links]
             open_command = ["firefox", "--new-tab"]
+            preview_delay_ms = 500
             [reload]
             debounce_ms = 500
             anchor = "text"
@@ -248,6 +268,8 @@ mod tests {
         assert_eq!(c.terminal.zlib_level, 6);
         assert_eq!(c.scroll.to_termpix().step, 40.0);
         assert_eq!(c.links.command(), ["firefox", "--new-tab"]);
+        assert_eq!(c.links.preview_delay(), Some(std::time::Duration::from_millis(500)));
+        assert_eq!(Config::parse("[links]\npreview = false\n").unwrap().links.preview_delay(), None);
         assert_eq!(c.reload, ReloadConfig { debounce_ms: 500, anchor: ReloadAnchor::Text });
     }
 

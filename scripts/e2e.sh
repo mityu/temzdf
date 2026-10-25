@@ -17,6 +17,7 @@
 #   wheel N [X Y]      N wheel steps (N<0 scrolls up) at X,Y (default: centre)
 #   drag X Y1 Y2       left-drag vertically from Y1 to Y2
 #   click X Y [BTN]    click (button 1 by default)
+#   move X Y           move the pointer (hover)
 #   keys KEY...        xdotool key names, e.g. `keys q` or `keys ctrl+f`
 #   type TEXT          type literal text
 #   pause SECONDS
@@ -96,6 +97,7 @@ drag() {
   xdotool mouseup 1
 }
 click() { xdotool mousemove "$1" "$2" click "${3:-1}"; }
+move() { xdotool mousemove "$1" "$2"; }
 keys() { xdotool key "$@"; }
 type() { xdotool type -- "$1"; }
 pause() { sleep "$1"; }
