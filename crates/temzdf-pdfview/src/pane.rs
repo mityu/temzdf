@@ -3,6 +3,7 @@
 //! and the key/mouse bindings. `app.rs` drives it interactively; headless mode
 //! and tests drive it directly.
 
+use std::cell::Ref;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -13,6 +14,7 @@ use termpix_core::input::{
 };
 use termpix_ui::{Canvas, Color, EditResult, LineInput, ListView, StatusBar, Text, Theme};
 
+use crate::document::{self, Document, SharedDocument};
 use crate::keys::{Command, Key, Keymap};
 use crate::outline::{self, OutlinePanel};
 use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, Target};
@@ -162,8 +164,6 @@ pub struct PdfPane {
     requests: Vec<Request>,
     /// Solid overlay images by (width, height, colour).
     overlay_images: HashMap<(u32, u32, [u8; 4]), ImageKey>,
-    /// Page text for selection, extracted on demand.
-    texts: Vec<Option<PageText>>,
     selection: Option<Selection>,
     /// A left drag is extending the selection.
     selecting: bool,
@@ -184,8 +184,6 @@ pub struct PdfPane {
     flash: Option<(Vec<PdfBox>, Instant)>,
     /// Terminal cell for the text cursor (input caret), if shown.
     caret_cell: Option<(u16, u16)>,
-    /// Links per page, filled as pages load.
-    links: Vec<Option<Vec<Link>>>,
     pointer_shape: Pointer,
     /// `[links] preview`: preview internal links after the pointer rests on
     /// them this long (`None`: never).
@@ -194,6 +192,8 @@ pub struct PdfPane {
     preview: Option<Preview>,
     /// The external link under the pointer, shown in the status bar.
     hover_uri: Option<String>,
+    /// Outline state kept across a reload (see [`PdfPane::before_reload`]).
+    reload_state: Option<(Vec<Vec<String>>, Option<String>)>,
     /// Where the left button went down (screen pixels).
     press: Option<(f32, f32)>,
     /// Jump history: positions (with horizontal scroll) to go back / forward to.
@@ -207,6 +207,12 @@ pub struct PdfPane {
 
 impl PdfPane {
     pub fn new(name: String, info: DocInfo, geometry: Geometry) -> Self {
+        let doc = Document::shared(info.bounds.clone());
+        Self::with_document(name, info, doc, geometry)
+    }
+
+    /// A pane on a document other panes may show too (`doc` must be `info`'s).
+    pub fn with_document(name: String, info: DocInfo, doc: SharedDocument, geometry: Geometry) -> Self {
         let (w, h) = page_area(geometry);
         let outline = OutlinePanel::new(&info.outline, &info.labels);
         let pages = info.bounds.len();
@@ -219,7 +225,6 @@ impl PdfPane {
             pending_first_hit: None,
             requests: Vec::new(),
             overlay_images: HashMap::new(),
-            texts: vec![None; pages],
             selection: None,
             selecting: false,
             autoscroll: 0.0,
@@ -231,16 +236,16 @@ impl PdfPane {
             reloading: false,
             flash: None,
             caret_cell: None,
-            links: vec![None; pages],
             pointer_shape: Pointer::Default,
             preview_delay: Some(DEFAULT_PREVIEW_DELAY),
             hover: None,
             preview: None,
             hover_uri: None,
+            reload_state: None,
             press: None,
             back: Vec::new(),
             forward: Vec::new(),
-            viewer: Viewer::new(info.bounds.clone(), w, h),
+            viewer: Viewer::with_document(doc, w, h),
             info,
             name,
             geometry,
@@ -536,7 +541,7 @@ impl PdfPane {
         }
         self.text_anchor = None;
         for p in pages {
-            let Some(text) = self.text_of_page(p).cloned() else { continue };
+            let Some(text) = self.text_of_page(p).map(|t| t.clone()) else { continue };
             let line = |i: usize| -> String {
                 text.lines
                     .get(i)
@@ -569,9 +574,7 @@ impl PdfPane {
     }
 
     pub fn page_links(&mut self, page: usize, links: Vec<Link>) {
-        if let Some(slot) = self.links.get_mut(page) {
-            *slot = Some(links);
-        }
+        self.viewer.doc.borrow_mut().set_links(page, links);
     }
 
     pub fn pointer(&self) -> Pointer {
@@ -579,12 +582,12 @@ impl PdfPane {
     }
 
     /// The link at a page-space point.
-    fn link_on_page(&self, page: usize, x: f32, y: f32) -> Option<&Link> {
-        self.links.get(page)?.as_ref()?.iter().find(|l| contains(&l.rect, x, y))
+    fn link_on_page(&self, page: usize, x: f32, y: f32) -> Option<Link> {
+        self.viewer.doc.borrow().link_at(page, x, y).cloned()
     }
 
     /// The link under a screen pixel in the page view, and its page.
-    fn link_at(&self, sx: f32, sy: f32) -> Option<(usize, &Link)> {
+    fn link_at(&self, sx: f32, sy: f32) -> Option<(usize, Link)> {
         let (page, x, y) = self.viewer.screen_to_page(sx, sy)?;
         Some((page, self.link_on_page(page, x, y)?))
     }
@@ -941,16 +944,29 @@ impl PdfPane {
     /// selection and per-page caches. History entries are clamped to the new
     /// page count. See doc/reload.md.
     pub fn reload(&mut self, images: &mut Images, info: DocInfo) {
+        self.before_reload();
+        self.viewer.doc.borrow_mut().replace(images, info.bounds.clone());
+        self.after_reload(images, info);
+    }
+
+    /// First half of [`PdfPane::reload`] for documents shared by several panes:
+    /// call it on every pane while the old document is still there, then
+    /// [`Document::replace`] once, then [`PdfPane::after_reload`] on every pane.
+    pub fn before_reload(&mut self) {
         let collapsed = self.outline.collapsed_paths(&self.info.outline);
         let selected_title = self.outline.selected_entry().map(|i| self.info.outline[i].title.clone());
         // Remember the line being read while the old text is still there.
         self.text_anchor = if self.anchor_by_text { self.capture_text_anchor(Instant::now()) } else { None };
+        self.reload_state = Some((collapsed, selected_title));
+    }
+
+    /// Second half of [`PdfPane::reload`], after the document was replaced.
+    pub fn after_reload(&mut self, images: &mut Images, info: DocInfo) {
+        let (collapsed, selected_title) = self.reload_state.take().unwrap_or_default();
         self.close_preview();
         self.hover_uri = None;
-        self.viewer.replace_pages(images, info.bounds.clone());
+        self.viewer.document_replaced(images, info.bounds.clone());
         let pages = info.bounds.len();
-        self.links = vec![None; pages];
-        self.texts = vec![None; pages];
         self.selection = None;
         self.selecting = false;
         for (t, _) in self.back.iter_mut().chain(self.forward.iter_mut()) {
@@ -1087,7 +1103,7 @@ impl PdfPane {
                 }
             }
             if let Some(sel) = self.selection
-                && let Some(Some(text)) = self.texts.get(page)
+                && let Some(Some(text)) = self.viewer.doc.borrow().texts.get(page)
             {
                 rects.extend(sel.rects(page, text).into_iter().map(|r| (page, r, SELECTION_COLOR)));
             }
@@ -1126,13 +1142,8 @@ impl PdfPane {
     }
 
     /// Text of a page, extracted on first use from its display list.
-    fn text_of_page(&mut self, page: usize) -> Option<&PageText> {
-        if self.texts.get(page)?.is_none() {
-            let list = self.viewer.display_list(page)?;
-            let text = PageText::extract(&list, self.info.bounds[page]).unwrap_or_default();
-            self.texts[page] = Some(text);
-        }
-        self.texts[page].as_ref()
+    fn text_of_page(&self, page: usize) -> Option<Ref<'_, PageText>> {
+        document::text_of_page(&self.viewer.doc, page)
     }
 
     /// The caret nearest a screen point, on the page under it (or the nearest page).
@@ -1147,7 +1158,7 @@ impl PdfPane {
         for p in p0..=p1 {
             self.text_of_page(p);
         }
-        let text = sel.text(&self.texts);
+        let text = sel.text(&self.viewer.doc.borrow().texts);
         if !text.is_empty() {
             self.notice = Some(format!("Copied {} characters", text.chars().count()));
             self.requests.push(Request::Copy(text));
@@ -1643,8 +1654,9 @@ mod tests {
     fn open_back_link_preview(s: &mut PdfPane, height: f32) -> (f32, f32) {
         let (page, rect) = (1..s.viewer.page_count())
             .find_map(|p| {
-                let links = s.links[p].as_ref()?;
-                let l = links.iter().find(|l| matches!(l.target, LinkTarget::Internal(Target { page: 0, .. })))?;
+                let doc = s.viewer.doc.borrow();
+                let l =
+                    doc.links(p)?.iter().find(|l| matches!(l.target, LinkTarget::Internal(Target { page: 0, .. })))?;
                 Some((p, l.rect))
             })
             .expect("a link back to page 1");
@@ -1680,8 +1692,11 @@ mod tests {
         assert!(layers.iter().any(|l| l.z == Z_PREVIEW + 1), "the window");
         assert!(matches!(&needs[0], Need::Render(j) if j.key.page == 0), "the preview's tiles first");
 
-        let url = s.links[0]
-            .as_ref()
+        let url = s
+            .viewer
+            .doc
+            .borrow()
+            .links(0)
             .unwrap()
             .iter()
             .find(|l| l.target == LinkTarget::External("https://example.com/".into()))
@@ -1793,5 +1808,44 @@ mod tests {
                 input.text
             );
         }
+    }
+
+    /// Do a pane's rendering work inline until its frame needs nothing more.
+    fn settle(s: &mut PdfPane, images: &mut Images) {
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        loop {
+            let (_, needs) = s.frame(images);
+            if needs.is_empty() {
+                return;
+            }
+            for need in needs {
+                match need {
+                    Need::LoadPage(p) => s.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap()),
+                    Need::Render(job) => {
+                        let pixels = pdf::render(&job.list, job.bounds, job.scale, job.area).unwrap();
+                        let r =
+                            crate::doc_cache::Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels };
+                        s.viewer.rendered(images, r);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn panes_on_one_document_share_its_tiles_and_links() {
+        let mut a = session();
+        let mut images = comp();
+        settle(&mut a, &mut images);
+        let shown = images.len();
+        let mut b = PdfPane::with_document("sample.pdf".into(), a.info.clone(), a.viewer.doc.clone(), a.geometry());
+        let (frame, needs) = b.frame(&mut images);
+        assert!(needs.is_empty(), "the second view needs no new tiles");
+        assert!(frame.layers.len() > 1);
+        // Only its own UI images (status bar) were added.
+        assert!(images.len() <= shown + 2, "{} vs {shown}", images.len());
+        let link = a.viewer.doc.borrow().links(0).unwrap()[0].clone();
+        let (x, y) = ((link.rect.x0 + link.rect.x1) / 2.0, (link.rect.y0 + link.rect.y1) / 2.0);
+        assert_eq!(b.link_on_page(0, x, y), Some(link), "links loaded once serve both");
     }
 }

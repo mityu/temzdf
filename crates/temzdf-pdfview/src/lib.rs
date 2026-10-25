@@ -2,6 +2,7 @@
 //! (`viewer`, `pane`), the outline sidebar, search and key bindings. Produces
 //! `temzdf-scene` images and layers; knows nothing about terminals.
 
+pub mod document;
 pub mod keys;
 pub mod layout;
 pub mod outline;
