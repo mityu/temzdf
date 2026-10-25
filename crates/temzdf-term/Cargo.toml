@@ -12,6 +12,9 @@ libghostty-vt = "0.2.2"
 # from the commit these bindings were generated from) instead of building
 # Ghostty with Zig inside cargo.
 libghostty-vt-sys = { version = "0.2.2", features = ["pkg-config"] }
+portable-pty = "0.9.0"
+temzdf-scene.workspace = true
+termpix-core.workspace = true
 
 [lints]
 workspace = true
