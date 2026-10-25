@@ -328,7 +328,9 @@ fn shm_create(data: &[u8]) -> io::Result<String> {
         // SAFETY: the object was just created exclusively by us, so nobody else
         // resizes it while mapped.
         let mut map = unsafe { memmap2::MmapMut::map_mut(&file)? };
-        map.copy_from_slice(data);
+        // macOS rounds the object up to whole pages; `S=` tells the terminal the
+        // real length.
+        map[..data.len()].copy_from_slice(data);
         map.flush()?;
         Ok(())
     })();
