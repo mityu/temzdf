@@ -79,6 +79,6 @@ reloads. Display lists, links and tiles carry the generation they belong to
 old file can never be shown after a swap. The search worker reopens the file
 when a request carries a newer document generation.
 
-Tests: unit tests in `session.rs` (`reload_*`) and the end-to-end scenario
+Tests: unit tests in `crates/temzdf-pdfview/src/pane.rs` (`reload_*`) and the end-to-end scenario
 `tests/e2e/reload.actions` (in-place truncation, rename-over with fewer pages,
 delete and recreate).

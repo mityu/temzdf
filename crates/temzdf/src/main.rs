@@ -1,19 +1,10 @@
 mod app;
 mod config;
-mod doc_cache;
 mod headless;
 mod ipc;
-mod keys;
-mod layout;
-mod outline;
-mod pdf;
-mod present;
-mod search;
-mod selection;
-mod session;
-mod synctex;
-mod viewer;
-mod workers;
+
+use temzdf_pdfcore::{pdf, workers};
+use temzdf_pdfview::{keys, pane, viewer};
 
 use std::path::PathBuf;
 

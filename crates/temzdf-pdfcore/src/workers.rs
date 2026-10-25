@@ -11,9 +11,9 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use mupdf::DisplayList;
 
+use crate::doc_cache::{RenderJob, Rendered, TileKey};
 use crate::pdf::{self, DocInfo, Link, PageRect};
 use crate::synctex::{PdfBox, Scanner, SourceLocation};
-use crate::viewer::{RenderJob, Rendered, TileKey};
 
 pub enum DocEvent {
     Opened(Result<DocInfo, String>),
@@ -313,12 +313,12 @@ impl RasterPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doc_cache::{TILE, TileKind};
     use crate::pdf::PixelRect;
-    use crate::viewer::{TILE, TileKind};
 
     /// Raster throughput by pool size. Not a regular test (timing depends on
     /// the machine); run it with
-    /// `cargo test --release -p temzdf raster_throughput -- --ignored --nocapture`
+    /// `cargo test --release -p temzdf-pdfcore raster_throughput -- --ignored --nocapture`
     /// (`TEMZDF_BENCH_PDF=doc.pdf` for another document).
     #[test]
     #[ignore]

@@ -137,7 +137,7 @@ struct WidgetImage {
     size: (u32, u32),
 }
 
-pub struct Session {
+pub struct PdfPane {
     pub viewer: Viewer,
     pub info: DocInfo,
     pub name: String,
@@ -205,7 +205,7 @@ pub struct Session {
     drag: Option<((f32, f32), (f32, f32))>,
 }
 
-impl Session {
+impl PdfPane {
     pub fn new(name: String, info: DocInfo, geometry: Geometry) -> Self {
         let (w, h) = page_area(geometry);
         let outline = OutlinePanel::new(&info.outline, &info.labels);
@@ -1414,11 +1414,11 @@ mod tests {
     use termpix_core::input::{CoordUnit, MouseEvent, MouseEventKind};
 
     /// A session on the fixture with every page loaded, at 900x600 pixels.
-    fn session() -> Session {
+    fn session() -> PdfPane {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let info = pdf::doc_info(&doc).unwrap();
         let geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
-        let mut s = Session::new("sample.pdf".into(), info, geometry);
+        let mut s = PdfPane::new("sample.pdf".into(), info, geometry);
         for p in 0..s.viewer.page_count() {
             s.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
             s.page_links(p, pdf::page_links(&doc, p, s.info.bounds[p]).unwrap());
@@ -1426,13 +1426,13 @@ mod tests {
         s
     }
 
-    fn mouse(s: &mut Session, kind: MouseEventKind, (x, y): (f32, f32)) -> bool {
+    fn mouse(s: &mut PdfPane, kind: MouseEventKind, (x, y): (f32, f32)) -> bool {
         let ev = MouseEvent { kind, x: x as i32, y: y as i32, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
         s.mouse(&ev, Instant::now())
     }
 
     /// Screen position of the middle of the first character of `needle` on page 0.
-    fn char_pos(s: &mut Session, needle: &str, offset: usize) -> (f32, f32) {
+    fn char_pos(s: &mut PdfPane, needle: &str, offset: usize) -> (f32, f32) {
         let text = s.text_of_page(0).unwrap().clone();
         let all: String = text.chars.iter().map(|c| c.c).collect();
         let i = all[..all.find(needle).unwrap()].chars().count() + offset;
@@ -1556,7 +1556,7 @@ mod tests {
     #[test]
     fn ctrl_wheel_zooms_around_the_pointer() {
         let mut s = session();
-        let ctrl_wheel = |s: &mut Session, dir, at: (f32, f32)| {
+        let ctrl_wheel = |s: &mut PdfPane, dir, at: (f32, f32)| {
             let ev = MouseEvent {
                 kind: MouseEventKind::Scroll(dir),
                 x: at.0 as i32,
@@ -1638,7 +1638,7 @@ mod tests {
     /// Rest the pointer on the first internal link from a later page back to
     /// page 1 (scrolled to `height` as a fraction of the screen) until its preview
     /// opens. Returns where the pointer is.
-    fn open_back_link_preview(s: &mut Session, height: f32) -> (f32, f32) {
+    fn open_back_link_preview(s: &mut PdfPane, height: f32) -> (f32, f32) {
         let (page, rect) = (1..s.viewer.page_count())
             .find_map(|p| {
                 let links = s.links[p].as_ref()?;
@@ -1660,7 +1660,7 @@ mod tests {
     }
 
     /// Screen position of a page-space point in the open preview.
-    fn in_preview(s: &Session, page: usize, x: f32, y: f32) -> (f32, f32) {
+    fn in_preview(s: &PdfPane, page: usize, x: f32, y: f32) -> (f32, f32) {
         let p = s.preview.as_ref().unwrap().peek;
         let b = s.viewer.layout.pages[page];
         let scale = s.viewer.view.scale;

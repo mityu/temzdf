@@ -1,5 +1,5 @@
 //! Interactive mode: terminal setup and the event loop. What is shown and how
-//! input is interpreted lives in `session.rs`.
+//! input is interpreted lives in `temzdf-pdfview` (`pane.rs`).
 
 use std::path::Path;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -14,11 +14,11 @@ use termpix::tty::{self, Modes, TermEvent, Tty};
 
 use crate::config::{Config, ReloadAnchor};
 use crate::ipc::{self, ForwardRequest};
+use crate::pane::{Action, PdfPane, Request};
 use crate::pdf;
-use crate::present::Presenter;
-use crate::session::{Action, Request, Session};
 use crate::viewer::{Need, StandIn};
 use crate::workers::{self, DocCmd, DocEvent, RasterPool, SearchCmd, SynctexCmd};
+use temzdf_tty::Presenter;
 
 const FRAME: Duration = Duration::from_millis(16);
 /// Raw bytes of not-yet-shown images sent per idle iteration (about four
@@ -138,7 +138,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         bail!("the document has no pages");
     }
     let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-    let mut session = Session::new(name.clone(), info, caps.geometry);
+    let mut session = PdfPane::new(name.clone(), info, caps.geometry);
     session.anchor_by_text = opts.config.reload.anchor == ReloadAnchor::Text;
     session.keymap = opts.config.keymap()?;
     session.preview_delay = opts.config.links.preview_delay();
@@ -422,7 +422,7 @@ struct Screen {
 impl Screen {
     /// Write one frame: window title, the compositor's commands, and the text
     /// cursor (shown only at an input caret, where IME preedit follows it).
-    fn present(&mut self, session: &Session, comp: &mut Compositor, tty: &mut Tty, layers: &[Layer]) -> Result<()> {
+    fn present(&mut self, session: &PdfPane, comp: &mut Compositor, tty: &mut Tty, layers: &[Layer]) -> Result<()> {
         let out = &mut self.out;
         out.clear();
         let t = format!("{} — {}", self.name, session.page_text());
@@ -537,7 +537,7 @@ fn open_uri(command: &[String], uri: &str, tx: &Sender<AppEvent>) {
     }
 }
 
-fn dispatch(session: &mut Session, doc: &Sender<DocCmd>, pool: &RasterPool, needs: Vec<Need>) {
+fn dispatch(session: &mut PdfPane, doc: &Sender<DocCmd>, pool: &RasterPool, needs: Vec<Need>) {
     let mut jobs = Vec::new();
     for need in needs {
         session.viewer.mark_requested(&need);

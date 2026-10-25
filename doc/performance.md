@@ -5,7 +5,7 @@ raster path; numbers are from one machine (28 hardware threads, release build).
 
 ## Rasterising tiles
 
-Benchmark: `cargo test --release -p temzdf raster_throughput -- --ignored --nocapture`
+Benchmark: `cargo test --release -p temzdf-pdfcore raster_throughput -- --ignored --nocapture`
 (`TEMZDF_BENCH_PDF=doc.pdf` for another document). It renders the 512 px tiles
 of up to 8 pages at fit width on a 1800 px wide screen, after one warm-up pass
 (the first render of a page decodes its images into MuPDF's store).

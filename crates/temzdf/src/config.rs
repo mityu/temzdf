@@ -175,7 +175,7 @@ impl Default for LinksConfig {
         Self {
             open_command: None,
             preview: true,
-            preview_delay_ms: crate::session::DEFAULT_PREVIEW_DELAY.as_millis() as u64,
+            preview_delay_ms: crate::pane::DEFAULT_PREVIEW_DELAY.as_millis() as u64,
         }
     }
 }

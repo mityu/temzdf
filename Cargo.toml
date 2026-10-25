@@ -1,6 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["crates/termpix-core", "crates/termpix", "crates/termpix-ui", "crates/temzdf-scene", "crates/temzdf"]
+members = [
+    "crates/termpix-core",
+    "crates/termpix",
+    "crates/termpix-ui",
+    "crates/temzdf-scene",
+    "crates/temzdf-pdfcore",
+    "crates/temzdf-pdfview",
+    "crates/temzdf-tty",
+    "crates/temzdf",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,6 +22,11 @@ termpix = { path = "crates/termpix" }
 termpix-core = { path = "crates/termpix-core" }
 termpix-ui = { path = "crates/termpix-ui" }
 temzdf-scene = { path = "crates/temzdf-scene" }
+temzdf-pdfcore = { path = "crates/temzdf-pdfcore" }
+temzdf-pdfview = { path = "crates/temzdf-pdfview" }
+temzdf-tty = { path = "crates/temzdf-tty" }
+anyhow = "1.0.104"
+mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "system-fonts"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

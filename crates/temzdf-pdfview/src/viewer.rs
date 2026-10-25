@@ -708,7 +708,7 @@ impl Viewer {
 mod tests {
     use super::*;
     use crate::pdf;
-    use crate::present::Presenter;
+    use temzdf_tty::Presenter;
     use termpix::compositor::{Backend, Compositor};
     use termpix::geom::{CellSize, Geometry};
     use termpix::graphics::Medium;

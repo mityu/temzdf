@@ -243,8 +243,8 @@ pub fn render(list: &DisplayList, bounds: PageBounds, scale: f32, area: PixelRec
 /// A test fixture. LaTeX sources live in `tests/fixtures/`; everything built from
 /// them (PDF, SyncTeX) is generated into `target/fixtures/` by
 /// `scripts/build-fixtures.sh` on first use and never committed.
-#[cfg(test)]
-pub(crate) fn fixture(name: &str) -> std::path::PathBuf {
+#[cfg(any(test, feature = "test-support"))]
+pub fn fixture(name: &str) -> std::path::PathBuf {
     let root = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("repository root");
     if name.ends_with(".tex") {
         return root.join("tests/fixtures").join(name);
@@ -357,7 +357,7 @@ mod tests {
 }
 
 /// Bytes on the wire for one rendered tile at different zlib levels and pixel
-/// formats. Run with `cargo test -p temzdf tile_wire_size -- --ignored --nocapture`.
+/// formats. Run with `cargo test -p temzdf-pdfcore tile_wire_size -- --ignored --nocapture`.
 #[cfg(test)]
 #[test]
 #[ignore = "measurement, prints a table"]

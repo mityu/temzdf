@@ -1,5 +1,5 @@
 //! Search results as they arrive from the search worker, and navigation
-//! between hits. Pure state; the worker lives in `workers.rs`.
+//! between hits. Pure state; the worker lives in `temzdf-pdfcore`'s `workers.rs`.
 
 use crate::pdf::{PageRect, Target};
 

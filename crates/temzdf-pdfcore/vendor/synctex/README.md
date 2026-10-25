@@ -10,7 +10,7 @@ Files: `synctex_parser.c`, `synctex_parser.h`, `synctex_parser_advanced.h`,
 License: MIT/X11-style, by Jérôme Laurens (see the header of each file);
 compatible with this project's AGPL-3.0.
 
-Built by `crates/temzdf/build.rs` with zlib from the `libz-sys` crate. The Rust
-bindings (a handful of functions) are in `crates/temzdf/src/synctex.rs`. To
+Built by `crates/temzdf-pdfcore/build.rs` with zlib from the `libz-sys` crate. The Rust
+bindings (a handful of functions) are in `crates/temzdf-pdfcore/src/synctex.rs`. To
 update, replace the files with a newer upstream version and run the SyncTeX
-tests (`cargo test -p temzdf synctex`).
+tests (`cargo test -p temzdf-pdfcore synctex`).

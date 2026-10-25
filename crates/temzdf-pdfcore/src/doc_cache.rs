@@ -20,7 +20,7 @@ const TILE_BUDGET: usize = 192 << 20;
 pub const MAX_LISTS: usize = 256;
 /// Layer key of a view's background; tile and stand-in placement keys follow.
 pub const LAYER_BACKGROUND: u32 = 1;
-/// Layer keys at or above this are reserved for UI chrome (see `session.rs`).
+/// Layer keys at or above this are reserved for UI chrome (see `temzdf-pdfview`'s `pane.rs`).
 pub const LAYER_KEYS_END: u32 = 0xf000_0000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -91,7 +91,7 @@ pub struct DocCache {
     next_layer: u32,
     generation: u32,
     /// See [`MAX_LISTS`].
-    pub(crate) max_lists: usize,
+    pub max_lists: usize,
 }
 
 impl DocCache {

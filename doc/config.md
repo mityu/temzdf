@@ -96,4 +96,4 @@ is for named keys (`S-Tab`).
 Fixed, not configurable: digits before a command are a count (`0` only after
 another digit), the outline sidebar's own keys while it has focus, and the
 one-line input (search prompt). Mouse bindings are fixed too. Defaults live in
-`crates/temzdf/src/keys.rs`; keep this table in sync.
+`crates/temzdf-pdfview/src/keys.rs`; keep this table in sync.

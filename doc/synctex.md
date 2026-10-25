@@ -87,9 +87,9 @@ any compile hook can do the same with `temzdf --forward LINE:FILE doc.pdf`.
 
 ## Implementation
 
-- Vendored SyncTeX parser 1.21 (`crates/temzdf/vendor/synctex/`, MIT-style),
-  compiled by `crates/temzdf/build.rs` with zlib from `libz-sys`; bindings and a
-  safe wrapper in `crates/temzdf/src/synctex.rs`.
+- Vendored SyncTeX parser 1.21 (`crates/temzdf-pdfcore/vendor/synctex/`, MIT-style),
+  compiled by `crates/temzdf-pdfcore/build.rs` with zlib from `libz-sys`; bindings and a
+  safe wrapper in `crates/temzdf-pdfcore/src/synctex.rs`.
 - Queries run on a worker thread (`workers::spawn_synctex`); the `.synctex.gz`
   is parsed lazily and again after every reload.
 - The parser prints errors to stderr; in interactive mode stdout/stderr are

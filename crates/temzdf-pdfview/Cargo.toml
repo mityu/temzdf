@@ -1,0 +1,24 @@
+[package]
+name = "temzdf-pdfview"
+description = "A temzdf PDF pane: view state, input handling and UI, producing temzdf-scene frames."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+mupdf.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+temzdf-pdfcore.workspace = true
+temzdf-scene.workspace = true
+termpix-core.workspace = true
+termpix-ui.workspace = true
+
+[dev-dependencies]
+temzdf-pdfcore = { workspace = true, features = ["test-support"] }
+temzdf-tty.workspace = true
+termpix.workspace = true
+
+[lints]
+workspace = true

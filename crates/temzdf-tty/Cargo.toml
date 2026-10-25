@@ -1,0 +1,14 @@
+[package]
+name = "temzdf-tty"
+description = "temzdf's terminal frontend: shows temzdf-scene frames through termpix."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+temzdf-scene.workspace = true
+termpix.workspace = true
+
+[lints]
+workspace = true

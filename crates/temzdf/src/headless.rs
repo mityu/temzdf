@@ -15,10 +15,10 @@ use termpix::input::KeyEvent;
 use termpix::mock::MockTerminal;
 
 use crate::keys::Key;
+use crate::pane::{PdfPane, Request};
 use crate::pdf;
-use crate::present::Presenter;
-use crate::session::{Request, Session};
 use crate::viewer::{Need, Rendered};
+use temzdf_tty::Presenter;
 
 pub struct FrameOptions {
     pub geometry: Geometry,
@@ -42,7 +42,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     let doc = pdf::open(pdf_path)?;
     let name =
         pdf_path.file_name().map_or_else(|| pdf_path.display().to_string(), |n| n.to_string_lossy().into_owned());
-    let mut session = Session::new(name, pdf::doc_info(&doc)?, opts.geometry);
+    let mut session = PdfPane::new(name, pdf::doc_info(&doc)?, opts.geometry);
     let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, opts.geometry);
     let mut images = Images::new();
     let mut presenter = Presenter::new();

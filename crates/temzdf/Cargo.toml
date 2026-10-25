@@ -7,19 +7,16 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
-anyhow = "1.0.104"
+anyhow.workspace = true
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
-flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
-libz-sys = { version = "1.1.30", features = ["static"] }
-mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "system-fonts"] }
-notify = "8.2.0"
 rustix = { version = "1.1.5", features = ["process"] }
 serde = { version = "1.0.229", features = ["derive"] }
 termpix.workspace = true
-termpix-core.workspace = true
-termpix-ui.workspace = true
+temzdf-pdfcore.workspace = true
+temzdf-pdfview.workspace = true
 temzdf-scene.workspace = true
+temzdf-tty.workspace = true
 toml = "1.1.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -27,6 +24,3 @@ libc = "0.2.191"
 
 [lints]
 workspace = true
-
-[build-dependencies]
-cc = "1.10.0"

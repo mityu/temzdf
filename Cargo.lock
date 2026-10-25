@@ -1447,20 +1447,44 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
- "cc",
  "clap",
- "flate2",
  "libc",
+ "rustix",
+ "serde",
+ "temzdf-pdfcore",
+ "temzdf-pdfview",
+ "temzdf-scene",
+ "temzdf-tty",
+ "termpix",
+ "toml",
+]
+
+[[package]]
+name = "temzdf-pdfcore"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "flate2",
  "libz-sys",
  "mupdf",
  "notify",
- "rustix",
- "serde",
  "temzdf-scene",
+]
+
+[[package]]
+name = "temzdf-pdfview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mupdf",
+ "serde",
+ "temzdf-pdfcore",
+ "temzdf-scene",
+ "temzdf-tty",
  "termpix",
  "termpix-core",
  "termpix-ui",
- "toml",
 ]
 
 [[package]]
@@ -1468,6 +1492,14 @@ name = "temzdf-scene"
 version = "0.1.0"
 dependencies = [
  "termpix-core",
+]
+
+[[package]]
+name = "temzdf-tty"
+version = "0.1.0"
+dependencies = [
+ "temzdf-scene",
+ "termpix",
 ]
 
 [[package]]

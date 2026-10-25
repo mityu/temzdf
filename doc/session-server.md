@@ -159,9 +159,11 @@ documents are shared, and only view state is per pane:
   document (typically a few MB for LaTeX output). The recommended default is
   one document process per file with internal raster threads, which avoids
   even that duplication; extra processes for the same file only when needed.
-- Today's `Viewer` mixes document cache and view (`crates/temzdf/src/viewer.rs`);
-  the split into a document part (lists, tiles, links, text) and a view part
-  (layout, scroll, zoom, peek window) is the first refactoring step.
+- `Viewer` used to mix document cache and view; it is now split into
+  `DocCache` (display lists, tiles; `crates/temzdf-pdfcore/src/doc_cache.rs`)
+  and the view (layout, scroll, zoom, peek window;
+  `crates/temzdf-pdfview/src/viewer.rs`). Page links and text are still kept
+  per pane and move into the document part when panes share documents.
 
 The same applies to other pane kinds: one terminal (pty + VT state) can be
 shown in several panes or windows, like tmux linked windows; one web page per
