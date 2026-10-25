@@ -6,5 +6,6 @@
 pub mod action;
 pub mod daemon;
 pub mod forward;
+pub mod keymap;
 pub mod layout;
 pub mod session;
