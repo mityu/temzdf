@@ -4,7 +4,8 @@
 //! It exists for tests and for inspecting frames without a real terminal: feed it
 //! the bytes an application wrote, then call [`MockTerminal::render`] and look at
 //! (or save) the image. It models kitty semantics as documented, not any
-//! terminal's quirks. Text cells are ignored.
+//! terminal's quirks. Text is tracked per cell ([`MockTerminal::text_rows`])
+//! but not drawn.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -46,6 +47,8 @@ pub struct MockTerminal {
     fg_id: u32,
     /// Screen cell -> (image id, image row, image column) from placeholder text.
     placeholder_cells: HashMap<(u32, u32), (u32, u32, u32)>,
+    /// Text written to cells (one character each; Unicode placeholders apart).
+    text: HashMap<(u32, u32), char>,
     /// Virtual placements (`U=1`): image id -> size in cells.
     virtual_sizes: HashMap<u32, (u32, u32)>,
     blending: Blending,
@@ -84,9 +87,23 @@ impl MockTerminal {
             buf: Vec::new(),
             fg_id: 0,
             placeholder_cells: HashMap::new(),
+            text: HashMap::new(),
             blending: Blending::Srgb,
             virtual_sizes: HashMap::new(),
         }
+    }
+
+    /// The text of each row (spaces where nothing was written, trailing ones
+    /// trimmed).
+    pub fn text_rows(&self) -> Vec<String> {
+        (0..self.geometry.rows as u32)
+            .map(|row| {
+                let line: String = (0..self.geometry.cols as u32)
+                    .map(|col| self.text.get(&(col, row)).copied().unwrap_or(' '))
+                    .collect();
+                line.trim_end().to_owned()
+            })
+            .collect()
     }
 
     pub fn placement_count(&self) -> usize {
@@ -138,9 +155,13 @@ impl MockTerminal {
                     if let [row, col] = marks[..] {
                         let cell = (self.cursor.0, self.cursor.1);
                         self.placeholder_cells.insert(cell, (self.fg_id, row, col));
+                        self.text.remove(&cell);
                     }
                     self.cursor.0 += 1;
-                } else if c.is_some_and(|c| !c.is_control() && diacritic_index(c).is_none()) {
+                } else if let Some(c) = c.filter(|c| !c.is_control() && diacritic_index(*c).is_none()) {
+                    let cell = (self.cursor.0, self.cursor.1);
+                    self.placeholder_cells.remove(&cell);
+                    self.text.insert(cell, c);
                     self.cursor.0 += 1;
                 }
                 continue;
@@ -152,6 +173,11 @@ impl MockTerminal {
                     let end = i + 2 + len;
                     match buf[end] {
                         b'H' => self.cursor_position(&buf[i + 2..end]),
+                        // Erase the whole display.
+                        b'J' if &buf[i + 2..end] == b"2" => {
+                            self.text.clear();
+                            self.placeholder_cells.clear();
+                        }
                         b'm' => self.sgr(&buf[i + 2..end]),
                         _ => {}
                     }

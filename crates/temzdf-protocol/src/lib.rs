@@ -171,7 +171,7 @@ pub fn socket_path(name: &str) -> io::Result<PathBuf> {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use temzdf_scene::{ImageKey, Images, Layer, Pointer, Rect};
+    use temzdf_scene::{Cell, CursorShape, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
     use termpix_core::geom::CellSize;
     use termpix_core::input::{KeyCode, Modifiers};
 
@@ -192,8 +192,21 @@ mod tests {
         let mut images = Images::new();
         let key: ImageKey = images.add(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         let layer = Layer { key: 7, image: key, src: Rect::new(0, 0, 2, 1), dst: Rect::new(-3, 4, 20, 10), z: -5 };
-        let frame =
-            Frame { layers: vec![layer], cursor: Some((1, 2)), pointer: Pointer::Link, title: "doc — 1 / 3".into() };
+        let frame = Frame {
+            layers: vec![layer],
+            text: vec![TextGrid {
+                col: 3,
+                row: 1,
+                rows: vec![vec![
+                    Cell { text: "数".into(), width: 2, fg: Some([1, 2, 3]), ..Cell::blank() },
+                    Cell::default(),
+                ]],
+            }],
+            cursor: Some((1, 2)),
+            cursor_shape: CursorShape::Bar { blink: true },
+            pointer: Pointer::Link,
+            title: "doc — 1 / 3".into(),
+        };
         round_trip(&ServerMsg::Frame { seq: 9, updates: images.take_updates(), frame, complete: true });
         round_trip(&ServerMsg::Effect(Effect::Copy("x".into())));
         round_trip(&ServerMsg::Exit(ExitReason::Error("bad".into())));

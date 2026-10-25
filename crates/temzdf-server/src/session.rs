@@ -16,7 +16,7 @@ use temzdf_pdfview::host::{DocumentHost, Forward, HostOptions, Opening};
 use temzdf_pdfview::keys::{Key, Keymap};
 use temzdf_pdfview::pane::{self, PdfPane};
 use temzdf_pdfview::viewer::StandIn;
-use temzdf_scene::{Effect, Frame, Hints, ImageKey, Images, Layer, Pointer, Rect};
+use temzdf_scene::{CursorShape, Effect, Frame, Hints, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{CoordUnit, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use termpix_core::scroll::ScrollConfig;
@@ -549,22 +549,15 @@ impl Session {
     /// Compose this frame from every pane and hand their work to the documents.
     pub fn frame(&mut self) -> Frame {
         let cell = self.geometry.cell;
-        let (sw, sh) = (self.geometry.width_px().max(1), self.geometry.height_px().max(1));
+        // No screen-wide background: terminal panes show the terminal's own
+        // background, so only the gaps between panes get one (border_layers).
         let mut layers = Vec::new();
+        let mut text = Vec::new();
         let mut used = HashSet::new();
-        let bg = self.solid(sw, sh, BACKGROUND);
-        used.insert((OWNER_SESSION, 0));
-        let key = self.keys.get(OWNER_SESSION, 0);
-        layers.push(Layer {
-            key,
-            image: bg,
-            src: Rect::new(0, 0, sw, sh),
-            dst: Rect::new(0, 0, sw, sh),
-            z: Z_SESSION_BACKGROUND,
-        });
         let order = self.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
         let mut needs: HashMap<DocId, Vec<Need>> = HashMap::new();
         let mut cursor = None;
+        let mut cursor_shape = CursorShape::Default;
         let mut title = self.name.clone();
         let mut complete = true;
         // The focused pane's work first.
@@ -584,8 +577,12 @@ impl Session {
                     layers.push(Layer { key: self.keys.get(id, l.key), ..c });
                 }
             }
+            for g in frame.text {
+                text.push(TextGrid { col: g.col + e.rect.x as u16, row: g.row + e.rect.y as u16, ..g });
+            }
             if id == self.focus {
                 cursor = frame.cursor.map(|(c, r)| (c + e.rect.x as u16, r + e.rect.y as u16));
+                cursor_shape = frame.cursor_shape;
                 title = frame.title;
             }
         }
@@ -597,7 +594,7 @@ impl Session {
                 host.dispatch(needs);
             }
         }
-        Frame { layers, cursor, pointer: self.pointer(), title }
+        Frame { layers, text, cursor, cursor_shape, pointer: self.pointer(), title }
     }
 
     /// Lines in the one-cell gaps between panes; the focused pane's in the accent colour.
@@ -609,12 +606,24 @@ impl Session {
         let (cols, rows) = (self.geometry.cols as i32, self.geometry.rows as i32);
         let accent = termpix_ui::Theme::dark().accent.0;
         let mut lines = Vec::new();
+        let mut gaps = Vec::new();
         for (id, e) in &self.panes {
             let r = e.rect;
             let (x0, y0) = (r.x * cell.width as i32, r.y * cell.height as i32);
             let (w, h) = (r.w * cell.width, r.h * cell.height);
             let focus = *id == self.focus;
             let (vx, vy) = ((cell.width - BORDER_PX) / 2, (cell.height - BORDER_PX) / 2);
+            // The gap cells right of and below the pane (including the corner
+            // where gaps cross).
+            let (cw, ch) = (cell.width, cell.height);
+            let right = r.right() < cols as i64;
+            let below = r.bottom() < rows as i64;
+            if right {
+                gaps.push(Rect::new(x0 + w as i32, y0, cw, h + if below { ch } else { 0 }));
+            }
+            if below {
+                gaps.push(Rect::new(x0, y0 + h as i32, w, ch));
+            }
             if r.right() < cols as i64 {
                 lines.push((focus, Rect::new(x0 + w as i32 + vx as i32, y0, BORDER_PX, h)));
             }
@@ -627,6 +636,18 @@ impl Session {
             if r.y > 0 {
                 lines.push((focus, Rect::new(x0, y0 - cell.height as i32 + vy as i32, w, BORDER_PX)));
             }
+        }
+        for (i, r) in gaps.into_iter().enumerate() {
+            let image = self.solid(r.w, r.h, BACKGROUND);
+            let k = (OWNER_SESSION, 0x1000 + i as u32);
+            used.insert(k);
+            layers.push(Layer {
+                key: self.keys.get(k.0, k.1),
+                image,
+                src: Rect::new(0, 0, r.w, r.h),
+                dst: r,
+                z: Z_SESSION_BACKGROUND,
+            });
         }
         for (i, (focus, r)) in lines.into_iter().enumerate() {
             let image = self.solid(r.w, r.h, if focus { accent } else { BORDER });
@@ -810,7 +831,8 @@ mod tests {
             let in_right = l.dst.x >= 450;
             let screen = l.dst == Rect::new(0, 0, 900, 600);
             let border = l.dst.w == BORDER_PX || l.dst.h == BORDER_PX;
-            assert!(in_left || in_right || screen || border, "{:?} crosses the panes", l.dst);
+            let gap = l.dst.x == 440 && l.dst.w == 10;
+            assert!(in_left || in_right || screen || border || gap, "{:?} crosses the panes", l.dst);
         }
         // The focused pane's title is the window title.
         assert!(frame.title.starts_with("sample.pdf"), "{}", frame.title);

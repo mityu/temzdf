@@ -8,9 +8,11 @@ use std::collections::HashMap;
 use std::io;
 
 mod frontend;
+mod text;
 pub use frontend::{Input, Presented, TtyFrontend};
+pub use text::TextScreen;
 
-use temzdf_scene::{Frame, ImageKey, ImageUpdate, Images, Layer, Pointer};
+use temzdf_scene::{CursorShape, Frame, ImageKey, ImageUpdate, Images, Layer, Pointer};
 use termpix::compositor::{self, Compositor, ImageId};
 
 #[derive(Debug, Default)]
@@ -67,6 +69,10 @@ pub struct Screen {
     out: Vec<u8>,
     title: String,
     cursor: Option<(u16, u16)>,
+    shape: CursorShape,
+    text: TextScreen,
+    /// Screen size the text was written for.
+    size: (u16, u16),
 }
 
 impl Screen {
@@ -75,8 +81,9 @@ impl Screen {
     }
 
     /// The bytes for one frame: the window title when it changed, the
-    /// compositor's commands, and the text cursor (shown only at an input
-    /// caret, where IME preedit follows it). Empty when nothing changed.
+    /// compositor's commands with the text cells that changed, and the text
+    /// cursor (shown only where text is typed, where IME preedit follows it).
+    /// Empty when nothing changed.
     pub fn render(&mut self, frame: &Frame, presenter: &Presenter, comp: &mut Compositor) -> io::Result<&[u8]> {
         let out = &mut self.out;
         out.clear();
@@ -86,7 +93,32 @@ impl Screen {
             out.extend_from_slice(format!("\x1b]2;{clean}\x1b\\").as_bytes());
             self.title = frame.title.clone();
         }
-        comp.present(&presenter.layers(&frame.layers), out)?;
+        let g = comp.geometry();
+        if (g.cols, g.rows) != self.size {
+            // The terminal may have reflowed or dropped our text: start clean.
+            self.size = (g.cols, g.rows);
+            self.text.resize(g.cols, g.rows);
+            out.extend_from_slice(b"\x1b[2J");
+            comp.rewrite_placeholder_text();
+        }
+        // Text leaving cells that tmux placeholder text covered before: write
+        // the placeholders again, and the text over them.
+        if comp.placeholder_text_pending() || (self.text.would_clear(&frame.text) && is_placeholders(comp)) {
+            comp.rewrite_placeholder_text();
+            self.text.invalidate();
+        }
+        let text = self.text.render(&frame.text);
+        comp.present_with(&presenter.layers(&frame.layers), &text, out)?;
+        if frame.cursor_shape != self.shape {
+            let n = match frame.cursor_shape {
+                CursorShape::Default => 0,
+                CursorShape::Block { blink } => 2 - blink as u8,
+                CursorShape::Underline { blink } => 4 - blink as u8,
+                CursorShape::Bar { blink } => 6 - blink as u8,
+            };
+            out.extend_from_slice(format!("\x1b[{n} q").as_bytes());
+            self.shape = frame.cursor_shape;
+        }
         let cursor = frame.cursor;
         if cursor != self.cursor {
             match cursor {
@@ -97,11 +129,15 @@ impl Screen {
         } else if let Some((col, row)) = cursor
             && !out.is_empty()
         {
-            // Placing images moves the cursor; put it back.
+            // Placing images and writing text move the cursor; put it back.
             out.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
         }
         Ok(out)
     }
+}
+
+fn is_placeholders(comp: &Compositor) -> bool {
+    matches!(comp.backend(), termpix::compositor::Backend::Placeholders { .. })
 }
 
 /// OSC 22: set the mouse pointer shape.

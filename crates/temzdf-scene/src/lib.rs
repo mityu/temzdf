@@ -175,12 +175,98 @@ pub enum Pointer {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Frame {
     pub layers: Vec<Layer>,
-    /// Text cursor cell (column, row), shown only where text is typed so that
-    /// input method preedit appears there.
+    /// Text in cells (terminal panes), drawn above the layers. Cells outside
+    /// every grid show the layers below.
+    pub text: Vec<TextGrid>,
+    /// Text cursor cell (column, row), shown where text is typed (a terminal
+    /// pane, a prompt) so that input method preedit appears there.
     pub cursor: Option<(u16, u16)>,
+    pub cursor_shape: CursorShape,
     pub pointer: Pointer,
     /// Window title.
     pub title: String,
+}
+
+/// A rectangle of text cells at (`col`, `row`) of the screen; every row has
+/// the same number of cells.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TextGrid {
+    pub col: u16,
+    pub row: u16,
+    pub rows: Vec<Vec<Cell>>,
+}
+
+impl TextGrid {
+    pub fn width(&self) -> u16 {
+        self.rows.first().map_or(0, |r| r.len() as u16)
+    }
+}
+
+/// One text cell. A wide character takes two cells: the second is a spacer
+/// (`width` 0, empty text).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Cell {
+    /// The grapheme; empty for a blank cell or a spacer.
+    pub text: String,
+    /// 1, 2 for a wide character, 0 for the spacer after one.
+    pub width: u8,
+    /// `None`: the terminal's default colour.
+    pub fg: Option<[u8; 3]>,
+    pub bg: Option<[u8; 3]>,
+    pub attrs: Attrs,
+}
+
+impl Cell {
+    pub fn blank() -> Self {
+        Self { width: 1, ..Default::default() }
+    }
+}
+
+/// Text attributes, as SGR knows them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Attrs {
+    pub bold: bool,
+    pub faint: bool,
+    pub italic: bool,
+    pub underline: Underline,
+    pub blink: bool,
+    pub inverse: bool,
+    pub invisible: bool,
+    pub strikethrough: bool,
+    pub overline: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Underline {
+    #[default]
+    None,
+    Single,
+    Double,
+    Curly,
+    Dotted,
+    Dashed,
+}
+
+/// How the text cursor looks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum CursorShape {
+    /// Whatever the user's terminal shows by default.
+    #[default]
+    Default,
+    Block {
+        blink: bool,
+    },
+    Underline {
+        blink: bool,
+    },
+    Bar {
+        blink: bool,
+    },
 }
 
 /// What a frontend is good at, so panes can choose how to draw.

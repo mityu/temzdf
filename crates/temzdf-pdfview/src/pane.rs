@@ -477,7 +477,7 @@ impl PdfPane {
             layers.push(Layer { z: Z_PREVIEW, ..self.widget(images, KEY_PREVIEW, WidgetState::Frame, outer) });
         }
         let title = format!("{} — {}", self.name, self.page_text());
-        (Frame { layers, cursor: self.caret_cell, pointer: self.pointer_shape, title }, needs)
+        (Frame { layers, cursor: self.caret_cell, pointer: self.pointer_shape, title, ..Default::default() }, needs)
     }
 
     fn widget(&mut self, images: &mut Images, key: u32, state: WidgetState, rect: Rect) -> Layer {

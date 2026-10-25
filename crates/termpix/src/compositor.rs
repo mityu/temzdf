@@ -299,6 +299,18 @@ impl Compositor {
 
     /// Forget every placement so the next frame re-places all layers. Use after
     /// the screen was cleared or the terminal was reset.
+    /// Whether the next frame writes the placeholder text (Placeholders
+    /// backend), over whatever text the screen showed.
+    pub fn placeholder_text_pending(&self) -> bool {
+        matches!(self.backend, Backend::Placeholders { .. }) && !self.placeholder_text
+    }
+
+    /// Write the placeholder text again with the next frame (Placeholders
+    /// backend), e.g. after the application's text gave cells back.
+    pub fn rewrite_placeholder_text(&mut self) {
+        self.placeholder_text = false;
+    }
+
     pub fn forget_placements(&mut self) {
         if matches!(self.backend, Backend::Layered) && !self.placed.is_empty() {
             self.encoder.delete(&mut self.pending, Delete::All { free: false });
@@ -323,6 +335,15 @@ impl Compositor {
     /// Emit the commands that make the terminal show `layers`. Writes nothing when
     /// the screen would not change.
     pub fn present(&mut self, layers: &[Layer], out: &mut Vec<u8>) -> io::Result<()> {
+        self.present_with(layers, &[], out)
+    }
+
+    /// Like [`Compositor::present`], with `text` (the application's own text
+    /// output: cursor moves, SGR, characters) written after the graphics in the
+    /// same synchronized update, so text and images change together. With the
+    /// Placeholders backend, text written over placeholder cells replaces those
+    /// image cells; see [`Compositor::rewrite_placeholder_text`].
+    pub fn present_with(&mut self, layers: &[Layer], text: &[u8], out: &mut Vec<u8>) -> io::Result<()> {
         let mut body = std::mem::take(&mut self.pending);
         match self.backend {
             Backend::Layered => self.present_layered(layers, &mut body)?,
@@ -336,9 +357,10 @@ impl Compositor {
         if self.tmux_passthrough {
             body = crate::placeholder::wrap_for_tmux(&body);
         }
-        if !body.is_empty() {
+        if !body.is_empty() || !text.is_empty() {
             out.extend_from_slice(SYNC_BEGIN);
             out.extend_from_slice(&body);
+            out.extend_from_slice(text);
             out.extend_from_slice(SYNC_END);
             // Inline transfers can outpace a slow link (SSH): ask the terminal to
             // acknowledge this frame, so callers can wait (see is_congested).

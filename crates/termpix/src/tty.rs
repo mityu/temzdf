@@ -107,7 +107,8 @@ impl Modes {
             s.extend_from_slice(b"\x1b[?1006l\x1b[?1003l");
         }
         // Free every image we may have left, end any pending synchronized update.
-        s.extend_from_slice(b"\x1b_Ga=d,d=A,q=2\x1b\\\x1b[?2026l\x1b[?25h");
+        // Back to the default cursor shape, in case it was changed.
+        s.extend_from_slice(b"\x1b_Ga=d,d=A,q=2\x1b\\\x1b[?2026l\x1b[?25h\x1b[0 q");
         if self.alternate_screen {
             s.extend_from_slice(b"\x1b[?1049l");
         }
