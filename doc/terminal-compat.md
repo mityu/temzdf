@@ -84,7 +84,9 @@ Known problems:
   - WezTerm 20260117: the probe finds shm unusable (#7631) and picks
     Composited over temp files, which works. At startup it reports 8x16 px
     cells for an instant before the window settles; the resize that follows
-    corrects it. Redraws lazily while its window is not focused.
+    corrects it. Redraws lazily while its window is not focused. Synthesized
+    Shift+G arrived as `CSI 103;;71u` (no Shift, text G); termpix now takes
+    the associated text whenever only Shift (or nothing) is held.
   - SGR-pixel coordinates are exact in all three (WezTerm's origin is below
     its tab bar).
 

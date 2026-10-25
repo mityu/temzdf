@@ -2,7 +2,7 @@
 
 Status (2026-10-25): verified on an Apple Silicon Mac (macOS 26, M1) in kitty
 0.49.2, Ghostty 1.3.1 and WezTerm 20260117. Everything in the checklist below
-works; what is left is listed under "Open" and in `todo.md`.
+works.
 
 ## Platform specifics
 
@@ -44,34 +44,49 @@ works; what is left is listed under "Open" and in `todo.md`.
 8. Quitting mid-frame (direct and shm) leaves the shell clean in kitty,
    Ghostty and WezTerm.
 
-## Open
-
-- Opening an external URL (`open`) was not clicked in the test run.
-- IME preedit placement on macOS.
+Also confirmed by the user: external URLs open in the browser, and IME input
+is fine for now.
 
 ## Checking GUI terminals on a Mac without a human
 
-`scripts/e2e.sh` is Linux-only (Xvfb, xdotool). On macOS the same checks were
-driven with small Swift helpers using public and private system APIs; they are
-not in the repository yet (see `todo.md`). What worked:
+`scripts/e2e.sh` is Linux-only (Xvfb, xdotool). On macOS use
+`scripts/macos-gui.sh` (its header lists the commands); it builds two small
+Swift tools from `scripts/macos/` into `target/macos-gui/`. A session:
 
-- Screenshots: `screencapture -l <window id>` (needs the screen recording
-  permission for the terminal Claude runs in). Window ids, owners and titles
-  come from `CGWindowListCopyWindowInfo`; the title shows temzdf's page number.
-- kitty redraws nothing while its window is covered, so a window behind others
-  screenshots stale. A virtual display (`CGVirtualDisplay`, a private API also
-  used by DeskPad) next to the real screen solves it: launch the terminal in the
-  background (`open -g -na <App> --args ...`), move its window there with the
-  accessibility API (`kAXPositionAttribute`), and it renders without focus.
-- Keys: kitty takes `kitty @ send-text`/`send-key` over its remote-control
-  socket (keep the socket path under 104 bytes). Ghostty accepts key events
-  posted to its process (`CGEvent.postToPid`) even in the background, but only
-  with real key codes; events that carry just a Unicode string are ignored.
-  WezTerm ignores per-process events: activate it and post globally, checking
-  first that it is the frontmost app so nothing reaches another window.
-- Mouse: CGEvents at global coordinates go to the topmost window there, so the
-  target must be active. A click on an inactive Ghostty window only focuses it.
-  Wait for kinetic scrolling and WezTerm's lazy redraw (over 1.5 s while the
-  window is not focused) before measuring a screenshot.
-- `kitty @ send-key shift+g` sends `CSI 103;2u` without the shifted key, which
-  real typing includes; use `send-text G`.
+```sh
+scripts/macos-gui.sh display start
+read -r pid status < <(scripts/macos-gui.sh launch kitty -- target/debug/temzdf target/fixtures/sample.pdf)
+scripts/macos-gui.sh key "$pid" G          # or: type "$pid" /needle
+scripts/macos-gui.sh title "$pid"          # sample.pdf — 3 / 3
+scripts/macos-gui.sh click "$pid" 60 72    # window points, as in the screenshot
+scripts/macos-gui.sh shot "$pid" target/macos-gui/shot.png
+scripts/macos-gui.sh close "$pid"
+scripts/macos-gui.sh display stop
+```
+
+It needs the screen recording and accessibility permissions for the terminal
+it runs in. How it works, and why:
+
+- Windows live on a virtual display (`vdisp`, private `CGVirtualDisplay` API as
+  used by DeskPad) next to the real screen. kitty redraws nothing while its
+  window is covered, so a window behind others would screenshot stale; on the
+  virtual display it renders without focus and without covering anything.
+  Terminals start in the background (`open -g -n`) and are moved there with
+  the accessibility API.
+- Screenshots: `screencapture -l <window id>`, scaled to points. Window ids,
+  bounds and titles come from `CGWindowListCopyWindowInfo`; the title shows
+  temzdf's page number.
+- Keys never go to whatever window is in front. kitty gets them through its
+  remote-control socket (`kitty @ send-text`/`send-key`; `send-key shift+g`
+  would lack the shifted key that real typing reports, so single characters go
+  through `send-text`). Ghostty accepts key events posted to its process
+  (`CGEvent.postToPid`) in the background, but only with real key codes, hence
+  the US-layout map in `termctl`. kitty and WezTerm ignore such events; WezTerm
+  is activated and gets global events, sent only while it is frontmost.
+- Mouse events go to the window under the pointer, so mouse commands activate
+  the terminal and give the front back afterwards. A click on an inactive
+  window would only focus it.
+- In a command-line tool `NSWorkspace.frontmostApplication` only updates while
+  the run loop runs; `termctl` waits with the run loop for that reason.
+- Wait for kinetic scrolling to stop, and give WezTerm time: it redraws lazily
+  while its window is not focused (over 1.5 s).

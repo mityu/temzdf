@@ -22,12 +22,8 @@ below them are deferred.
   through passthrough) work; see `doc/terminal-compat.md`. Left: zellij over SSH
   is still slow (zellij 0.45.1 forwards images uncompressed; a half-resolution
   mode could help), and tmux master's native kitty support (z=0 only) is untested.
-- Verify IME preedit placement in the search prompt on kitty and Ghostty (the
-  terminal cursor is shown at the caret while the prompt is open).
-- macOS: verified in kitty, Ghostty and WezTerm (`doc/macos.md`). Left: open
-  an external URL, IME preedit placement, and turning the Swift helpers used
-  for the check (virtual display, window moves, PID-targeted keys,
-  screenshots) into a `scripts/` tool like `scripts/e2e.sh`.
+- macOS GUI checks (`scripts/macos-gui.sh`) are driven step by step; action
+  files and `expect` judging as in `scripts/e2e.sh` could be shared.
 - Vector-heavy pages: MuPDF's anti-aliased rasteriser is slow there and
   `vello_cpu` about 20x faster (`doc/gpu.md`; GPU rendering does not pay off).
   Measure real TikZ/pgfplots documents first; then maybe render such pages

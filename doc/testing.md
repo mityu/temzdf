@@ -8,6 +8,7 @@ Layers of verification, cheapest first. All of them run without a human.
 | Headless frames | `target/debug/temzdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S]` | What a screen looks like: runs the real `Viewer` and compositor, replays the bytes through the mock terminal. Read the PNG to check it. |
 | Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
 | Judged e2e | `expect NAME KEYS` in an action file (e.g. `tests/e2e/expect.actions`) | The screen matches what `--render-frame` draws after the same keys (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending. Not PDF rendering itself (both sides use MuPDF). |
+| Real terminal (macOS) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | The same on macOS, step by step instead of action files (`doc/macos.md`). |
 | User | Ghostty / WezTerm on a real desktop | The feel of scrolling and zooming. |
 
 Action files live in `tests/e2e/`; each starts with a comment saying how to run it

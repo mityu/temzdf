@@ -56,6 +56,11 @@ screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/` from
 `tests/fixtures/*.tex` (tests run it automatically; e2e scenarios need it first). The
 full testing approach is in `doc/testing.md`.
 
+`scripts/e2e.sh` is Linux-only. On macOS, `scripts/macos-gui.sh` runs kitty,
+Ghostty or WezTerm in the background on a virtual display and drives them
+(keys, mouse, window screenshots) without disturbing the desktop; see its
+header and `doc/macos.md`.
+
 Debugging terminal problems:
 
 - `cargo run -p termpix --example probe` prints what detection found.
