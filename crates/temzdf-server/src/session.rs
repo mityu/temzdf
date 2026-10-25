@@ -1245,6 +1245,9 @@ impl Session {
             _ => {}
         }
         let Some(id) = target else { return out };
+        // In the operating mode, the left button selects in terminals even
+        // when their program tracks the mouse.
+        let select = self.history.current() == "normal";
         let Some(e) = self.panes.get_mut(&id) else { return out };
         let (dx, dy) = match m.unit {
             CoordUnit::Pixel => ((e.rect.x * cell.width as i32), (e.rect.y * cell.height as i32)),
@@ -1254,7 +1257,7 @@ impl Session {
         match &mut e.kind {
             Kind::Pdf { pane, .. } => out.or(pane.mouse(&local, now)),
             Kind::Term { buf, view } => match self.terms.get_mut(buf) {
-                Some(t) => out.or(view.mouse(&mut t.term, &local)),
+                Some(t) => out.or(view.mouse(&mut t.term, &local, select)),
                 None => out,
             },
         }
@@ -1469,6 +1472,9 @@ impl Session {
                 changed |= host.poll(&mut panes, now);
             }
         }
+        for t in self.terms.values_mut() {
+            changed |= t.term.autoscroll(now);
+        }
         changed
     }
 
@@ -1488,8 +1494,10 @@ impl Session {
             Kind::Term { .. } => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
+        let terms = self.terms.values().filter_map(|t| t.term.autoscroll_deadline());
         panes
             .chain(docs)
+            .chain(terms)
             .chain(self.script_deadline())
             .chain(self.matcher.deadline(self.options.timeoutlen))
             .chain(self.notice_deadline())

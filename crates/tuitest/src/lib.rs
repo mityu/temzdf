@@ -213,6 +213,13 @@ pub fn have_tmux() -> bool {
     std::process::Command::new("tmux").arg("-V").stdout(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
+#[derive(Clone, Copy)]
+enum MouseStep {
+    Press,
+    Drag,
+    Release,
+}
+
 pub struct Term {
     terminal: Terminal<'static, 'static>,
     render: RenderState<'static>,
@@ -230,6 +237,8 @@ pub struct Term {
     received: Vec<u8>,
     size: Rc<RefCell<(u16, u16, u32, u32)>>,
     tmux: Option<Tmux>,
+    /// Text the program copied (OSC 52), oldest first.
+    copied: Rc<RefCell<Vec<String>>>,
 }
 
 impl Term {
@@ -326,6 +335,19 @@ impl Term {
                 let _ = w.borrow_mut().write_all(data);
             })
             .expect("callback");
+        let copied: Rc<RefCell<Vec<String>>> = Rc::default();
+        let c = copied.clone();
+        terminal
+            .on_clipboard_write(move |_, write| {
+                for content in write.contents() {
+                    if content.mime.starts_with("text/plain") {
+                        c.borrow_mut().push(content.data.to_owned());
+                        break;
+                    }
+                }
+                Ok(())
+            })
+            .expect("callback");
         let xtversion = opts.xtversion;
         terminal.on_xtversion(move |_| Some(xtversion)).expect("callback");
         let size = Rc::new(RefCell::new((opts.rows, opts.cols, opts.cell.0, opts.cell.1)));
@@ -367,6 +389,7 @@ impl Term {
             received: Vec::new(),
             size,
             tmux,
+            copied,
         }
     }
 
@@ -532,6 +555,27 @@ impl Term {
     /// Click the left button at the centre of a cell, encoded as the program
     /// asked (SGR, SGR-pixels, ...); nothing is sent if it tracks no mouse.
     pub fn click(&mut self, col: u16, row: u16) {
+        self.mouse(&[(MouseStep::Press, col, row, 0.5), (MouseStep::Release, col, row, 0.5)]);
+    }
+
+    /// Drag with the left button from one cell to another (ending past the
+    /// middle of the last cell, so a selection includes it).
+    pub fn drag(&mut self, from: (u16, u16), to: (u16, u16)) {
+        self.mouse(&[
+            (MouseStep::Press, from.0, from.1, 0.25),
+            (MouseStep::Drag, to.0, to.1, 0.75),
+            (MouseStep::Release, to.0, to.1, 0.75),
+        ]);
+    }
+
+    /// Text the program wrote to the clipboard (OSC 52) since the start.
+    pub fn copied(&mut self) -> Vec<String> {
+        self.pump(Duration::ZERO);
+        self.copied.borrow().clone()
+    }
+
+    /// Left-button events at cells (`x` the fraction of the cell's width).
+    fn mouse(&mut self, steps: &[(MouseStep, u16, u16, f32)]) {
         use libghostty_vt::mouse;
         self.pump(Duration::ZERO);
         let (rows, cols, cw, ch) = *self.size.borrow();
@@ -547,8 +591,13 @@ impl Term {
             padding_right: 0,
             padding_left: 0,
         });
-        let position = mouse::Position { x: (col as f32 + 0.5) * cw as f32, y: (row as f32 + 0.5) * ch as f32 };
-        for (action, pressed) in [(mouse::Action::Press, true), (mouse::Action::Release, false)] {
+        for &(step, col, row, frac) in steps {
+            let position = mouse::Position { x: (col as f32 + frac) * cw as f32, y: (row as f32 + 0.5) * ch as f32 };
+            let (action, pressed) = match step {
+                MouseStep::Press => (mouse::Action::Press, true),
+                MouseStep::Drag => (mouse::Action::Motion, true),
+                MouseStep::Release => (mouse::Action::Release, false),
+            };
             let mut event = mouse::Event::new().expect("mouse event");
             event.set_action(action).set_button(Some(mouse::Button::Left)).set_position(position);
             encoder.set_any_button_pressed(pressed);

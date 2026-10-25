@@ -507,3 +507,24 @@ fn a_closed_shell_stays_hidden_and_shows_again() {
     t.type_text("echo still-$((2+3))\n");
     t.wait_text("still-5");
 }
+
+#[test]
+fn dragging_in_a_shell_copies_to_the_outer_terminal() {
+    let env = Env::new("select");
+    let mut t = Term::spawn(&[BIN, "-s", "c"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.type_text("clear; echo copy-me please\n");
+    let s = t.wait_for("the output", |s| s.lines().iter().any(|l| l == "copy-me please"));
+    let row = s.find("copy-me please").unwrap() as u16;
+    t.drag((0, row), (6, row));
+    let s = t.wait_for("the selection", |s| s.cell(3, row).inverse);
+    assert!(!s.cell(8, row).inverse, "only the dragged cells");
+    let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
+    while t.copied().is_empty() && std::time::Instant::now() < deadline {
+        t.pump(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(t.copied(), ["copy-me"]);
+    // Typing clears the selection.
+    t.type_text("x");
+    t.wait_for("no selection", |s| !s.cell(3, row).inverse);
+}

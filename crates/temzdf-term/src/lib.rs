@@ -18,16 +18,22 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use libghostty_vt::fmt::Format;
 use libghostty_vt::render::{CellIterator, CursorVisualStyle, Dirty, RowIterator};
 use libghostty_vt::screen::CellWide;
+use libghostty_vt::selection::FormatOptions;
+use libghostty_vt::selection::gesture::{
+    Autoscroll, AutoscrollTickEvent, DragEvent, Geometry as GestureGeometry, Gesture, PressEvent, ReleaseEvent,
+};
 use libghostty_vt::style::{StyleColor, Underline as GUnderline};
-use libghostty_vt::terminal::{Mode, ScrollViewport};
+use libghostty_vt::terminal::{Mode, Point, PointCoordinate, ScrollViewport};
 use libghostty_vt::{RenderState, Terminal, TerminalOptions, focus, key, mouse, paste};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use temzdf_scene::{Attrs, Cell, Color, CursorShape, Effect, Frame, TextGrid, Underline};
 use termpix_core::geom::Geometry;
-use termpix_core::input::{CoordUnit, KeyEvent, MouseButton, MouseEvent, MouseEventKind, ScrollDirection};
+use termpix_core::input::{CoordUnit, KeyEvent, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection};
 
 /// What the pty's reader thread reports.
 pub enum TermEvent {
@@ -53,6 +59,29 @@ pub struct Spawn {
 const SCROLLBACK: usize = 10_000;
 /// Rows the wheel scrolls through history per step.
 const WHEEL_ROWS: isize = 3;
+/// Clicks closer together than this count as double and triple clicks.
+const MULTI_CLICK: Duration = Duration::from_millis(500);
+/// How often a selection dragged past the top or bottom scrolls a row.
+const AUTOSCROLL_EVERY: Duration = Duration::from_millis(50);
+
+/// A mouse selection: libghostty's gesture state machine (single click and
+/// drag selects cells, double click words, triple click lines) and its
+/// reusable events.
+struct Selecting {
+    gesture: Gesture<'static>,
+    press: PressEvent<'static>,
+    drag: DragEvent<'static>,
+    release: ReleaseEvent<'static>,
+    tick: AutoscrollTickEvent<'static>,
+    /// The left button is down for a selection.
+    active: bool,
+    /// Where the pointer is (terminal pixels), for autoscrolling.
+    pointer: (f32, f32),
+    /// When to scroll the next row while dragged past an edge.
+    autoscroll_at: Option<Instant>,
+    /// A selection is shown.
+    shown: bool,
+}
 
 pub struct TermBuffer {
     terminal: Terminal<'static, 'static>,
@@ -71,6 +100,8 @@ pub struct TermBuffer {
     /// The view is scrolled back into history.
     scrolled: bool,
     exited: bool,
+    selecting: Selecting,
+    born: Instant,
 }
 
 impl TermBuffer {
@@ -164,6 +195,18 @@ impl TermBuffer {
             effects,
             scrolled: false,
             exited: false,
+            selecting: Selecting {
+                gesture: Gesture::new().map_err(ghostty_err)?,
+                press: PressEvent::new().map_err(ghostty_err)?,
+                drag: DragEvent::new().map_err(ghostty_err)?,
+                release: ReleaseEvent::new().map_err(ghostty_err)?,
+                tick: AutoscrollTickEvent::new().map_err(ghostty_err)?,
+                active: false,
+                pointer: (0.0, 0.0),
+                autoscroll_at: None,
+                shown: false,
+            },
+            born: Instant::now(),
         })
     }
 
@@ -231,7 +274,7 @@ impl TermBuffer {
 
     /// A key typed while a pane showing it has the focus.
     pub fn key(&mut self, k: &KeyEvent) -> bool {
-        let redraw = self.scroll_to_bottom();
+        let redraw = self.clear_selection() | self.scroll_to_bottom();
         let out = keys::encode(&mut self.key_encoder, &self.terminal, k);
         self.write(&out);
         redraw
@@ -248,7 +291,7 @@ impl TermBuffer {
 
     /// Bracketed paste when the program asked for it.
     pub fn paste(&mut self, text: &str) -> bool {
-        let redraw = self.scroll_to_bottom();
+        let redraw = self.clear_selection() | self.scroll_to_bottom();
         let bracketed = self.terminal.mode(Mode::BRACKETED_PASTE).unwrap_or(false);
         let mut data = text.as_bytes().to_vec();
         let mut buf = vec![0u8; data.len() + 16];
@@ -270,14 +313,27 @@ impl TermBuffer {
     }
 
     /// A mouse event in terminal coordinates. Programs that track the mouse
-    /// get it; otherwise the wheel scrolls through history.
-    pub fn mouse(&mut self, m: &MouseEvent) -> bool {
+    /// get it, except that Shift and the left button select text (as does the
+    /// left button alone for other programs, or with `select`: the session's
+    /// operating mode); otherwise the wheel scrolls through history.
+    pub fn mouse(&mut self, m: &MouseEvent, select: bool) -> bool {
         let cell = self.geometry.cell;
-        if self.terminal.is_mouse_tracking().unwrap_or(false) {
-            let (x, y) = match m.unit {
-                CoordUnit::Pixel => (m.x as f32, m.y as f32),
-                CoordUnit::Cell => ((m.x as f32 + 0.5) * cell.width as f32, (m.y as f32 + 0.5) * cell.height as f32),
-            };
+        let (x, y) = match m.unit {
+            CoordUnit::Pixel => (m.x as f32, m.y as f32),
+            CoordUnit::Cell => ((m.x as f32 + 0.5) * cell.width as f32, (m.y as f32 + 0.5) * cell.height as f32),
+        };
+        let tracking = self.terminal.is_mouse_tracking().unwrap_or(false);
+        match m.kind {
+            MouseEventKind::Press(MouseButton::Left)
+                if !tracking || select || m.modifiers.contains(Modifiers::SHIFT) =>
+            {
+                return self.select_press(x, y);
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.selecting.active => return self.select_drag(x, y),
+            MouseEventKind::Release(MouseButton::Left) if self.selecting.active => return self.select_release(),
+            _ => {}
+        }
+        if tracking {
             let (action, button) = match m.kind {
                 MouseEventKind::Press(b) => (mouse::Action::Press, Some(button(b))),
                 MouseEventKind::Release(b) => (mouse::Action::Release, Some(button(b))),
@@ -330,6 +386,151 @@ impl TermBuffer {
         }
     }
 
+    /// The cell under a terminal pixel, clamped into the screen.
+    fn cell_at(&self, x: f32, y: f32) -> PointCoordinate {
+        let g = self.geometry;
+        let col = (x / g.cell.width.max(1) as f32).floor().clamp(0.0, g.cols.saturating_sub(1) as f32);
+        let row = (y / g.cell.height.max(1) as f32).floor().clamp(0.0, g.rows.saturating_sub(1) as f32);
+        PointCoordinate { x: col as u16, y: row as u32 }
+    }
+
+    fn gesture_geometry(&self) -> GestureGeometry {
+        let g = self.geometry;
+        GestureGeometry {
+            columns: g.cols.max(1) as u32,
+            cell_width: g.cell.width.max(1),
+            padding_left: 0,
+            screen_height: g.height_px().max(1),
+        }
+    }
+
+    fn select_press(&mut self, x: f32, y: f32) -> bool {
+        let at = self.cell_at(x, y);
+        let time = self.born.elapsed();
+        let distance = self.geometry.cell.width as f64;
+        let sel = &mut self.selecting;
+        let t = &self.terminal;
+        let Ok(grid) = t.grid_ref(Point::Viewport(at)) else { return false };
+        let ev = sel
+            .press
+            .set_position(x as f64, y as f64)
+            .and_then(|e| e.set_time(time))
+            .and_then(|e| e.set_repeat_interval(MULTI_CLICK))
+            .and_then(|e| e.set_repeat_distance(distance));
+        if ev.is_err() {
+            return false;
+        }
+        // A single click selects nothing (it clears the selection) until it
+        // drags; double and triple clicks select a word or a line at once.
+        let selection = sel.press.apply(&mut sel.gesture, t, grid).ok().flatten();
+        let _ = t.set_selection(selection.as_ref());
+        let redraw = sel.shown || selection.is_some();
+        sel.shown = selection.is_some();
+        sel.active = true;
+        sel.pointer = (x, y);
+        if redraw {
+            self.grid.clear();
+        }
+        redraw
+    }
+
+    fn select_drag(&mut self, x: f32, y: f32) -> bool {
+        let at = self.cell_at(x, y);
+        let geometry = self.gesture_geometry();
+        let sel = &mut self.selecting;
+        let t = &self.terminal;
+        sel.pointer = (x, y);
+        let Ok(grid) = t.grid_ref(Point::Viewport(at)) else { return false };
+        if sel.drag.set_position(x as f64, y as f64).is_err() {
+            return false;
+        }
+        let Ok(Some(selection)) = sel.drag.apply(&mut sel.gesture, t, grid, geometry) else { return false };
+        let _ = t.set_selection(Some(&selection));
+        sel.shown = true;
+        let edge = !matches!(sel.gesture.autoscroll(t), Ok(Autoscroll::None) | Err(_));
+        sel.autoscroll_at = edge.then(|| sel.autoscroll_at.unwrap_or_else(|| Instant::now() + AUTOSCROLL_EVERY));
+        self.grid.clear();
+        true
+    }
+
+    /// The button went up: the selection is copied (to the clipboard of the
+    /// client, OSC 52 in a terminal).
+    fn select_release(&mut self) -> bool {
+        let sel = &mut self.selecting;
+        let t = &self.terminal;
+        let _ = sel.release.apply(&mut sel.gesture, t, None);
+        sel.active = false;
+        sel.autoscroll_at = None;
+        if !sel.shown {
+            return false;
+        }
+        let options = FormatOptions::new().with_emit_format(Format::Plain).with_unwrap(true).with_trim(true);
+        if let Ok(Some(bytes)) = t.format_selection_alloc(None, options) {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            if !text.is_empty() {
+                self.effects.borrow_mut().push(Effect::Copy(text));
+            }
+        }
+        false
+    }
+
+    /// Forget the selection (typing does). Returns whether one was shown.
+    pub fn clear_selection(&mut self) -> bool {
+        if !std::mem::take(&mut self.selecting.shown) {
+            return false;
+        }
+        let _ = self.terminal.set_selection(None);
+        self.grid.clear();
+        true
+    }
+
+    /// The selection is dragged past the top or bottom: when to scroll.
+    pub fn autoscroll_deadline(&self) -> Option<Instant> {
+        self.selecting.autoscroll_at
+    }
+
+    /// Scroll a row towards where the selection is dragged, extending it.
+    pub fn autoscroll(&mut self, now: Instant) -> bool {
+        let Some(at) = self.selecting.autoscroll_at else { return false };
+        if now < at {
+            return false;
+        }
+        let direction = match self.selecting.gesture.autoscroll(&self.terminal) {
+            Ok(Autoscroll::Up) => -1,
+            Ok(Autoscroll::Down) => 1,
+            _ => {
+                self.selecting.autoscroll_at = None;
+                return false;
+            }
+        };
+        self.terminal.scroll_viewport(ScrollViewport::Delta(direction));
+        if direction < 0 {
+            self.scrolled = true;
+        }
+        let (x, y) = self.selecting.pointer;
+        let at = self.cell_at(x, y);
+        let geometry = self.gesture_geometry();
+        let sel = &mut self.selecting;
+        let t = &self.terminal;
+        if let Ok(Some(selection)) = sel.tick.apply(&mut sel.gesture, t, at, geometry) {
+            let _ = t.set_selection(Some(&selection));
+        }
+        sel.autoscroll_at = Some(now + AUTOSCROLL_EVERY);
+        self.grid.clear();
+        true
+    }
+
+    /// Rows above the bottom and rows of history, while the view is scrolled
+    /// back (`None` at the bottom).
+    pub fn scroll_position(&self) -> Option<(u64, u64)> {
+        if !self.scrolled {
+            return None;
+        }
+        let bar = self.terminal.scrollbar().ok()?;
+        let above = bar.total.saturating_sub(bar.offset + bar.len);
+        (above > 0).then(|| (above, bar.total.saturating_sub(bar.len)))
+    }
+
     /// The whole screen now.
     pub fn frame(&mut self) -> Frame {
         let mut cursor = None;
@@ -353,6 +554,12 @@ impl TermBuffer {
                             }
                         }
                         line.resize_with(cols, Cell::blank);
+                        // The selection shows inverted.
+                        if let Ok(Some(sel)) = row.selection() {
+                            for c in line.iter_mut().take(sel.end_x as usize + 1).skip(sel.start_x as usize) {
+                                c.attrs.inverse = !c.attrs.inverse;
+                            }
+                        }
                         self.grid[y] = line;
                         let _ = row.set_dirty(false);
                     }
@@ -427,17 +634,32 @@ impl TermView {
             let r = r.checked_sub(top as u16)?;
             (c < self.geometry.cols && r < self.geometry.rows).then_some((c, r))
         });
+        // Scrolled back: how far, at the top right (as tmux's copy mode).
+        if let Some((above, history)) = term.scroll_position()
+            && let Some(row) = frame.text.first_mut().and_then(|g| g.rows.first_mut())
+        {
+            let label = format!("[{above}/{history}]");
+            let start = row.len().saturating_sub(label.chars().count());
+            for (c, ch) in row[start..].iter_mut().zip(label.chars()) {
+                *c = Cell {
+                    text: ch.to_string(),
+                    width: 1,
+                    attrs: Attrs { inverse: true, ..Attrs::default() },
+                    ..Cell::blank()
+                };
+            }
+        }
         frame
     }
 
-    /// A mouse event in view coordinates.
-    pub fn mouse(&self, term: &mut TermBuffer, m: &MouseEvent) -> bool {
+    /// A mouse event in view coordinates (see [`TermBuffer::mouse`]).
+    pub fn mouse(&self, term: &mut TermBuffer, m: &MouseEvent, select: bool) -> bool {
         let top = self.top(term) as i32;
         let dy = match m.unit {
             CoordUnit::Pixel => top * term.geometry.cell.height as i32,
             CoordUnit::Cell => top,
         };
-        term.mouse(&MouseEvent { y: m.y + dy, ..*m })
+        term.mouse(&MouseEvent { y: m.y + dy, ..*m }, select)
     }
 }
 
@@ -600,6 +822,91 @@ mod tests {
         assert!(matches!(frame.cursor, None | Some((1, 1))), "{:?}", frame.cursor);
         let narrow = TermView::new(Geometry { cols: 1, rows: 2, ..GEOMETRY }).frame(&mut term);
         assert_eq!(narrow.cursor, None, "outside the view");
+    }
+
+    fn mouse(kind: MouseEventKind, col: u16, row: u16, modifiers: Modifiers) -> MouseEvent {
+        // Pixel coordinates in the middle of the cell.
+        let (x, y) = (col as i32 * 10 + 5, row as i32 * 20 + 10);
+        MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers }
+    }
+
+    fn copies(term: &mut TermBuffer) -> Vec<String> {
+        term.take_effects()
+            .into_iter()
+            .filter_map(|e| match e {
+                Effect::Copy(t) => Some(t),
+                _ => None,
+            })
+            .collect()
+    }
+
+    const LEFT: MouseButton = MouseButton::Left;
+
+    #[test]
+    fn dragging_selects_and_releasing_copies() {
+        let (mut term, _) =
+            run(&["sh", "-c", "printf 'hello world\\nsecond line'; sleep 5"], |_| {}, |r| r[1] == "second line");
+        let none = Modifiers::NONE;
+        term.mouse(&mouse(MouseEventKind::Press(LEFT), 6, 0, none), false);
+        term.mouse(&mouse(MouseEventKind::Drag(LEFT), 2, 1, none), false);
+        let frame = term.frame();
+        assert!(frame.text[0].rows[0][6].attrs.inverse, "the selection shows inverted");
+        assert!(!frame.text[0].rows[0][5].attrs.inverse);
+        term.mouse(&mouse(MouseEventKind::Release(LEFT), 2, 1, none), false);
+        // The cell under the pointer counts once the pointer passes its
+        // middle (as in Ghostty): the drag ends before the c.
+        assert_eq!(copies(&mut term), ["world\nse"]);
+        // A double click selects a word; typing clears it.
+        for kind in [MouseEventKind::Press(LEFT), MouseEventKind::Release(LEFT)].repeat(2) {
+            term.mouse(&mouse(kind, 1, 0, none), false);
+        }
+        assert_eq!(copies(&mut term), ["hello"]);
+        assert!(term.key(&KeyEvent::new(KeyCode::Char('x'), Modifiers::NONE)));
+        assert!(!term.frame().text[0].rows[0][1].attrs.inverse);
+        // A plain click copies nothing.
+        term.mouse(&mouse(MouseEventKind::Press(LEFT), 1, 1, none), false);
+        term.mouse(&mouse(MouseEventKind::Release(LEFT), 1, 1, none), false);
+        assert!(copies(&mut term).is_empty());
+    }
+
+    #[test]
+    fn programs_tracking_the_mouse_get_plain_drags_and_shift_selects() {
+        // Mouse tracking (button events, SGR), then echo what arrives.
+        let script = "stty raw -echo; printf 'ready\\033[?1002h\\033[?1006h\\n'; od -An -c";
+        let (mut term, _) = run(&["sh", "-c", script], |_| {}, |r| r[0] == "ready");
+        let none = Modifiers::NONE;
+        term.mouse(&mouse(MouseEventKind::Press(LEFT), 0, 0, none), false);
+        term.mouse(&mouse(MouseEventKind::Release(LEFT), 0, 0, none), false);
+        assert!(copies(&mut term).is_empty());
+        assert!(!term.selecting.active, "the program got it");
+        // With Shift (or in the operating mode), temzdf selects.
+        term.mouse(&mouse(MouseEventKind::Press(LEFT), 0, 0, Modifiers::SHIFT), false);
+        term.mouse(&mouse(MouseEventKind::Drag(LEFT), 4, 0, Modifiers::SHIFT), false);
+        term.mouse(&mouse(MouseEventKind::Release(LEFT), 4, 0, Modifiers::SHIFT), false);
+        assert_eq!(copies(&mut term), ["read"]);
+        // (Not a double click.)
+        std::thread::sleep(MULTI_CLICK);
+        term.mouse(&mouse(MouseEventKind::Press(LEFT), 1, 0, none), true);
+        term.mouse(&mouse(MouseEventKind::Drag(LEFT), 2, 0, none), true);
+        term.mouse(&mouse(MouseEventKind::Release(LEFT), 2, 0, none), true);
+        assert_eq!(copies(&mut term), ["e"]);
+    }
+
+    #[test]
+    fn scrolled_back_views_say_how_far() {
+        let (mut term, _) = run(&["sh", "-c", "seq 1 20; sleep 5"], |_| {}, |r| r.iter().any(|l| l == "20"));
+        let view = TermView::new(GEOMETRY);
+        let top = |t: &mut TermBuffer| -> String {
+            view.frame(t).text[0].rows[0].iter().map(|c| c.text.as_str()).collect::<String>().trim_end().to_owned()
+        };
+        assert!(!top(&mut term).contains('['), "at the bottom, nothing");
+        term.mouse(&mouse(MouseEventKind::Scroll(ScrollDirection::Up), 0, 0, Modifiers::NONE), false);
+        // 20 lines and the prompt line on 6 rows: 15 of history, 3 scrolled.
+        let line = top(&mut term);
+        assert!(line.ends_with("[3/15]"), "{line:?}");
+        assert!(view.frame(&mut term).text[0].rows[0][39].attrs.inverse);
+        term.key(&KeyEvent::new(KeyCode::Char('x'), Modifiers::NONE));
+        assert!(!top(&mut term).contains('['), "typing returns to the bottom");
     }
 
     #[test]
