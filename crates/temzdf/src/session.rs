@@ -1304,6 +1304,36 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_wheel_zooms_around_the_pointer() {
+        let mut s = session();
+        let ctrl_wheel = |s: &mut Session, dir, at: (f32, f32)| {
+            let ev = MouseEvent {
+                kind: MouseEventKind::Scroll(dir),
+                x: at.0 as i32,
+                y: at.1 as i32,
+                unit: CoordUnit::Pixel,
+                modifiers: Modifiers::CTRL,
+            };
+            s.mouse(&ev, Instant::now());
+            s.tick(Instant::now() + std::time::Duration::from_secs(5));
+        };
+        for (dir, at) in [
+            (ScrollDirection::Up, (700.0, 400.0)),
+            (ScrollDirection::Up, (150.0, 100.0)),
+            (ScrollDirection::Down, (600.0, 300.0)),
+        ] {
+            let before = s.viewer.screen_to_page(at.0, at.1).unwrap();
+            ctrl_wheel(&mut s, dir, at);
+            let after = s.viewer.screen_to_page(at.0, at.1).unwrap();
+            assert_eq!(before.0, after.0, "{dir:?} at {at:?}");
+            assert!(
+                (before.1 - after.1).abs() < 0.5 && (before.2 - after.2).abs() < 0.5,
+                "{dir:?} at {at:?}: {before:?} -> {after:?}"
+            );
+        }
+    }
+
+    #[test]
     fn enter_before_the_results_arrive_still_selects_the_first_hit() {
         let mut s = session();
         let now = Instant::now();

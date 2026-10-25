@@ -32,6 +32,11 @@ pixel may differ). Results go to `OUTDIR/expect.txt`; `NAME.actual.png`,
   WezTerm, tmux and zellij. Not in Ghostty (its window decorations move the
   terminal area).
 
+Both sides run the same viewer code, so a bug in viewer state shows up on
+both and passes: zooming anchored at the top-left instead of the pointer did
+(found by the user). Behaviour of the view itself needs unit tests
+(e.g. `session::tests::ctrl_wheel_zooms_around_the_pointer`).
+
 `tests/e2e/expect.actions` passes in all four (2026-10-25). Comparing against
 headless renders already found two bugs: kitty darkened the screen edges of the
 stretched 1x1 background image, and Enter pressed before search results

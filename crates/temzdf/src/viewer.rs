@@ -219,10 +219,16 @@ impl Viewer {
         self.view.scroll_y = self.scroll_y.offset() as f32;
     }
 
+    /// After `view` was changed directly (zoom, resize, new layout): update the
+    /// scroll limits and move the scrollers to the view's position (clamped),
+    /// ending any animation. The view is the source of truth here; reading the
+    /// scrollers back instead would undo the change (zooming then anchored at
+    /// the top-left corner instead of the pointer).
     fn update_scroll_bounds(&mut self) {
+        let (x, y) = (self.view.scroll_x, self.view.scroll_y);
         self.scroll_x.set_bounds(0.0, self.view.max_scroll_x(&self.layout) as f64);
         self.scroll_y.set_bounds(0.0, self.view.max_scroll_y(&self.layout) as f64);
-        self.sync_view();
+        self.jump_to(x, y);
     }
 
     /// Jump (no animation) so the view's top-left is at the given doc-space pixels.
@@ -313,7 +319,6 @@ impl Viewer {
         self.jump_to(self.view.scroll_x, self.view.scroll_y);
         self.view.zoom_at(&self.layout, scale.clamp(MIN_SCALE, MAX_SCALE), anchor.0, anchor.1);
         self.update_scroll_bounds();
-        self.jump_to(self.view.scroll_x, self.view.scroll_y);
     }
 
     /// Zoom so the widest page fills the page area, and keep doing so when the
@@ -345,7 +350,6 @@ impl Viewer {
         self.view.scroll_y += sy;
         self.view.clamp(&self.layout);
         self.update_scroll_bounds();
-        self.jump_to(self.view.scroll_x, self.view.scroll_y);
         if self.fit_mode {
             let scale = View::fit_width_scale(&self.layout, self.view.screen_w);
             self.apply_scale(scale, (0.0, 0.0));
@@ -427,7 +431,6 @@ impl Viewer {
         self.view.scroll_y = (b.y + fraction * b.h) * self.view.scale;
         self.view.clamp(&self.layout);
         self.update_scroll_bounds();
-        self.jump_to(self.view.scroll_x, self.view.scroll_y);
     }
 
     pub fn mark_requested(&mut self, need: &Need) {
@@ -828,6 +831,19 @@ mod tests {
         comp.present(&layers, &mut out).unwrap();
         term.feed(&out);
         (early, term.render(), stand_ins)
+    }
+
+    #[test]
+    fn resizing_keeps_the_top_left_doc_point() {
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let bounds = pdf::doc_info(&doc).unwrap().bounds;
+        let mut v = Viewer::new(bounds, 900, 560);
+        v.set_scale(2.0, (0.0, 0.0));
+        v.jump_to(300.0, 1500.0);
+        let before = v.view.screen_to_doc(&v.layout, 0.0, 0.0);
+        v.resize(700, 400);
+        let after = v.view.screen_to_doc(&v.layout, 0.0, 0.0);
+        assert!((before.0 - after.0).abs() < 0.01 && (before.1 - after.1).abs() < 0.01, "{before:?} {after:?}");
     }
 
     #[test]
