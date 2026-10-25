@@ -759,14 +759,19 @@ fn kitty_key(fields: &[&str]) -> Option<Event> {
             let base = char::from_u32(code)?;
             // The protocol reports the unshifted key plus Shift. Report the character
             // actually produced, like legacy input does: from the alternate key, or
-            // failing that from the associated text.
+            // failing that from the associated text. The text also counts without
+            // Shift in the modifiers: WezTerm leaves Shift out of the press of a
+            // shifted character in some cases (`CSI 103;;71u` for G).
             let single_text = text.as_deref().and_then(|t| {
                 let mut it = t.chars();
                 it.next().filter(|_| it.next().is_none())
             });
+            let locks = Modifiers::from_bits(Modifiers::CAPS_LOCK.bits() | Modifiers::NUM_LOCK.bits());
+            let only_shift =
+                Modifiers::from_bits(modifiers.bits() & !(Modifiers::SHIFT.bits() | locks.bits())) == Modifiers::NONE;
             match (modifiers.contains(Modifiers::SHIFT), shifted, single_text) {
                 (true, Some(c), _) => KeyCode::Char(c),
-                (true, None, Some(c)) => KeyCode::Char(c),
+                (_, _, Some(c)) if only_shift => KeyCode::Char(c),
                 _ => KeyCode::Char(base),
             }
         }
@@ -893,6 +898,10 @@ mod tests {
         // with neither, the base key is kept.
         assert!(matches!(&parse(b"\x1b[103;2;71u")[0], Event::Key(KeyEvent { code: KeyCode::Char('G'), .. })));
         assert!(matches!(&parse(b"\x1b[103;2u")[0], Event::Key(KeyEvent { code: KeyCode::Char('g'), .. })));
+        // The text wins even when Shift is missing (WezTerm on macOS), but not
+        // with Ctrl or Alt, whose text is not what a binding means.
+        assert!(matches!(&parse(b"\x1b[103;;71u")[0], Event::Key(KeyEvent { code: KeyCode::Char('G'), .. })));
+        assert!(matches!(&parse(b"\x1b[102;3;402u")[0], Event::Key(KeyEvent { code: KeyCode::Char('f'), .. })));
         // Shifted digit row: Shift+3 on a US layout is '#'
         assert!(matches!(&parse(b"\x1b[51:35;2u")[0], Event::Key(KeyEvent { code: KeyCode::Char('#'), .. })));
         // Repeat of an arrow key
