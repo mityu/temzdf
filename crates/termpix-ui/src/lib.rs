@@ -1,4 +1,5 @@
-//! Widget kit that renders UI layers to RGBA images for termpix.
+//! Widget kit that renders UI layers to RGBA images, for termpix or any other
+//! frontend that shows RGBA images (it does not depend on termpix).
 //!
 //! Drawing uses `vello_cpu`, text uses `parley` with system fonts. Widgets render
 //! into their own images so the compositor only re-uploads what changed.

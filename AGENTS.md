@@ -18,7 +18,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | Path | Purpose |
 |---|---|
 | `crates/termpix` | Library. Terminal I/O: tty setup, capability probing, input parsing (SGR-pixel mouse, kitty keyboard), kitty graphics transport, layered compositor, kinetic scroll helper, mock terminal for tests. **Knows nothing about PDF.** |
-| `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley` + `taffy`). Depends only on `termpix`. |
+| `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley` + `taffy`). Independent of `termpix` (used only in its tests). |
 | `crates/temzdf` | The viewer binary (MuPDF via the `mupdf` crate, SyncTeX, reload). |
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
