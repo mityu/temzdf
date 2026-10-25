@@ -31,10 +31,8 @@ pub trait OutputSink: Write + Send + 'static {
 
 impl OutputSink for std::fs::File {
     fn wait_writable(&self, timeout: Duration) {
-        use rustix::event::{PollFd, PollFlags, Timespec};
-        let mut fds = [PollFd::new(self, PollFlags::OUT)];
-        let ts = Timespec { tv_sec: timeout.as_secs() as _, tv_nsec: timeout.subsec_nanos() as _ };
-        let _ = rustix::event::poll(&mut fds, Some(&ts));
+        use std::os::fd::AsFd;
+        let _ = crate::tty::wait_fd(self.as_fd(), true, Some(timeout));
     }
 }
 

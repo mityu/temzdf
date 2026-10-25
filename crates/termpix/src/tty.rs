@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-use rustix::event::{PollFd, PollFlags, Timespec};
+use rustix::event::Timespec;
 use rustix::termios::{self, OptionalActions, Termios};
 
 use crate::geom::{CellSize, Geometry};
@@ -340,16 +340,33 @@ impl Winsize {
     }
 }
 
-fn read_timeout(fd: BorrowedFd<'_>, buf: &mut [u8], timeout: Option<Duration>) -> io::Result<Option<usize>> {
-    let mut fds = [PollFd::new(&fd, PollFlags::IN)];
+/// Wait until `fd` is readable (or writable), at most `timeout` (`None` =
+/// forever). Returns whether it is.
+///
+/// `select`, not `poll`: macOS's `poll` does not support terminal devices
+/// (it reports `POLLNVAL` for `/dev/tty`). One code path everywhere, so the
+/// one macOS needs is the one exercised on Linux too.
+pub(crate) fn wait_fd(fd: BorrowedFd<'_>, write: bool, timeout: Option<Duration>) -> io::Result<bool> {
+    use rustix::event::{FdSetElement, fd_set_insert, fd_set_num_elements, select};
+    use std::os::fd::AsRawFd;
+    let raw = fd.as_raw_fd();
     let ts = timeout.map(|d| Timespec { tv_sec: d.as_secs() as _, tv_nsec: d.subsec_nanos() as _ });
     loop {
-        match rustix::event::poll(&mut fds, ts.as_ref()) {
-            Ok(0) => return Ok(None),
-            Ok(_) => break,
+        let mut set = vec![FdSetElement::default(); fd_set_num_elements(1, raw + 1)];
+        fd_set_insert(&mut set, raw);
+        let (read_set, write_set) = if write { (None, Some(&mut set[..])) } else { (Some(&mut set[..]), None) };
+        // SAFETY: the only fd in the set is `fd`, which is open (borrowed).
+        match unsafe { select(raw + 1, read_set, write_set, None, ts.as_ref()) } {
+            Ok(n) => return Ok(n > 0),
             Err(rustix::io::Errno::INTR) => continue,
             Err(e) => return Err(e.into()),
         }
+    }
+}
+
+fn read_timeout(fd: BorrowedFd<'_>, buf: &mut [u8], timeout: Option<Duration>) -> io::Result<Option<usize>> {
+    if !wait_fd(fd, false, timeout)? {
+        return Ok(None);
     }
     match rustix::io::read(fd, buf) {
         Ok(n) => Ok(Some(n)),
@@ -474,6 +491,20 @@ impl Drop for StdioRedirect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wait_fd_reports_readiness_and_times_out() {
+        use std::io::Write;
+        let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let t = std::time::Instant::now();
+        assert!(!wait_fd(a.as_fd(), false, Some(Duration::from_millis(30))).unwrap());
+        assert!(t.elapsed() >= Duration::from_millis(25));
+        assert!(wait_fd(a.as_fd(), true, Some(Duration::ZERO)).unwrap(), "an empty socket is writable");
+        b.write_all(b"x").unwrap();
+        assert!(wait_fd(a.as_fd(), false, Some(Duration::from_secs(1))).unwrap());
+        let mut buf = [0u8; 4];
+        assert_eq!(read_timeout(a.as_fd(), &mut buf, Some(Duration::ZERO)).unwrap(), Some(1));
+    }
 
     #[test]
     fn finds_the_da1_reply_behind_other_replies() {
