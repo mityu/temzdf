@@ -10,9 +10,9 @@ use std::time::Instant;
 
 use mupdf::DisplayList;
 use temzdf_scene::{ImageKey, Images, Layer};
-use termpix::geom::Rect;
-use termpix::raster::{RgbaImage, RgbaRef, blit};
-use termpix::scroll::KineticScroll;
+use termpix_core::geom::Rect;
+use termpix_core::raster::{RgbaImage, RgbaRef, blit};
+use termpix_core::scroll::KineticScroll;
 
 use crate::doc_cache::{DocCache, LAYER_BACKGROUND, dequantize, quantize};
 pub use crate::doc_cache::{LAYER_KEYS_END, Need, RenderJob, Rendered, TILE, TileKey, TileKind};

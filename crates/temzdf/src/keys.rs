@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 use serde::Deserialize;
-use termpix::input::{KeyCode, KeyEvent, Modifiers};
+use termpix_core::input::{KeyCode, KeyEvent, Modifiers};
 
 /// What a key can do in the page view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]

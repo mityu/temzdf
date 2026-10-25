@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use temzdf_scene::Images;
+use temzdf_scene::{Images, Pointer};
 use termpix::compositor::{Backend, Compositor, Layer};
 use termpix::graphics::Medium;
 use termpix::input::Event;
@@ -16,7 +16,7 @@ use crate::config::{Config, ReloadAnchor};
 use crate::ipc::{self, ForwardRequest};
 use crate::pdf;
 use crate::present::Presenter;
-use crate::session::{Action, Pointer, Request, Session};
+use crate::session::{Action, Request, Session};
 use crate::viewer::{Need, StandIn};
 use crate::workers::{self, DocCmd, DocEvent, RasterPool, SearchCmd, SynctexCmd};
 

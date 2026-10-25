@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use temzdf_scene::{ImageKey, Images, Layer};
-use termpix::geom::{Geometry, Rect};
-use termpix::input::{
+use temzdf_scene::{ImageKey, Images, Layer, Pointer};
+use termpix_core::geom::{Geometry, Rect};
+use termpix_core::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
 };
 use termpix_ui::{Canvas, Color, EditResult, LineInput, ListView, StatusBar, Text, Theme};
@@ -108,13 +108,6 @@ pub enum Request {
         x: f32,
         y: f32,
     },
-}
-
-/// Mouse pointer shapes (OSC 22 names).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Pointer {
-    Default,
-    Link,
 }
 
 /// Movement (pixels) below which a press and release count as a click.
@@ -1417,8 +1410,8 @@ fn wheel_n(v: &mut Viewer, dir: f64, count: Option<usize>, now: Instant) {
 mod tests {
     use super::*;
     use crate::pdf;
-    use termpix::geom::CellSize;
-    use termpix::input::{CoordUnit, MouseEvent, MouseEventKind};
+    use termpix_core::geom::CellSize;
+    use termpix_core::input::{CoordUnit, MouseEvent, MouseEventKind};
 
     /// A session on the fixture with every page loaded, at 900x600 pixels.
     fn session() -> Session {

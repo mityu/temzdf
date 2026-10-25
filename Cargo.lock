@@ -1456,7 +1456,9 @@ dependencies = [
  "notify",
  "rustix",
  "serde",
+ "temzdf-scene",
  "termpix",
+ "termpix-core",
  "termpix-ui",
  "toml",
 ]

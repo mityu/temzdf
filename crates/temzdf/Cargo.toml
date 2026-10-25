@@ -17,6 +17,7 @@ notify = "8.2.0"
 rustix = { version = "1.1.5", features = ["process"] }
 serde = { version = "1.0.229", features = ["derive"] }
 termpix.workspace = true
+termpix-core.workspace = true
 termpix-ui.workspace = true
 temzdf-scene.workspace = true
 toml = "1.1.8"
