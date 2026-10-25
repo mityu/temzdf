@@ -257,15 +257,14 @@ impl TtyFrontend {
     /// Carry out an effect a pane asked for, in this frontend's environment.
     /// Failures to open a link are reported through `on_failure` (possibly
     /// later, from another thread).
-    pub fn perform(
-        &mut self,
-        effect: Effect,
-        open_command: &[String],
-        on_failure: impl Fn(String) + Send + 'static,
-    ) -> Result<()> {
+    pub fn perform(&mut self, effect: Effect, on_failure: impl Fn(String) + Send + 'static) -> Result<()> {
         match effect {
             Effect::Copy(text) => self.tty.write_all(&copy_sequence(&text, self.caps.in_tmux))?,
-            Effect::OpenUri(uri) => open_uri(open_command, &uri, on_failure),
+            Effect::OpenUri { uri, command } => {
+                let default = vec![if cfg!(target_os = "macos") { "open" } else { "xdg-open" }.to_owned()];
+                let command = command.filter(|c| !c.is_empty()).unwrap_or(default);
+                open_uri(&command, &uri, on_failure)
+            }
             Effect::RunShell(cmd) => run_shell(&cmd),
         }
         Ok(())

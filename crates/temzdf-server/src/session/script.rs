@@ -153,6 +153,7 @@ impl Session {
             self.script.first = Some((first, cwd));
             return Ok(());
         }
+        self.apply_overrides();
         self.new_pane(&first, cwd.as_deref())?;
         if self.settings.script.is_some() {
             let why = self.script.startup_error.take().unwrap_or_else(|| "the script host could not start".into());
@@ -530,8 +531,18 @@ impl Session {
         out.merge(self.pump())
     }
 
+    /// Command-line options win over the configuration's.
+    pub(super) fn apply_overrides(&mut self) {
+        for (name, value) in self.settings.overrides.clone() {
+            if let Err(e) = self.set_option(&name, &value) {
+                eprintln!("temzdf: {e}");
+            }
+        }
+    }
+
     /// Open the first pane (startup) once the configuration has loaded.
     fn open_first(&mut self) -> Outcome {
+        self.apply_overrides();
         if let Some((spec, cwd)) = self.script.first.take() {
             if let Err(e) = self.new_pane(&spec, cwd.as_deref()) {
                 if self.layout.is_none() && self.docs.is_empty() {
@@ -717,31 +728,71 @@ impl Session {
         Ok(())
     }
 
-    fn set_option(&mut self, name: &str, value: &ScriptValue) -> Result<(), String> {
+    pub(super) fn set_option(&mut self, name: &str, value: &ScriptValue) -> Result<(), String> {
         let num = || value.as_num().filter(|n| *n >= 0.0).ok_or(format!("o.{name}: expected a number"));
+        let ms = || num().map(|n| Duration::from_millis(n as u64));
         let flag = || match value {
             ScriptValue::Bool(b) => Ok(*b),
             _ => Err(format!("o.{name}: expected true or false")),
         };
+        let text = || match value {
+            ScriptValue::Null => Ok(None),
+            ScriptValue::Str(s) => Ok(Some(s.clone())),
+            _ => Err(format!("o.{name}: expected a string or null")),
+        };
+        let o = &mut self.options;
         match name {
-            "timeoutlen" => self.options.timeoutlen = Duration::from_millis(num()? as u64),
-            "splitright" => self.options.splitright = flag()?,
-            "splitbelow" => self.options.splitbelow = flag()?,
-            "modehistory" => {
-                self.options.modehistory = (num()? as usize).max(1);
-                self.history.cap = self.options.modehistory;
+            "timeoutlen" => o.timeoutlen = ms()?,
+            "splitright" => o.splitright = flag()?,
+            "splitbelow" => o.splitbelow = flag()?,
+            "modehistory" => o.modehistory = (num()? as usize).max(1),
+            "scrollstep" => o.scrollstep = num()?,
+            "scrollsmoothness" => o.scrollsmoothness = ms()?,
+            "linkopener" => {
+                o.linkopener = match value {
+                    ScriptValue::Null => None,
+                    ScriptValue::List(l) => {
+                        let words: Option<Vec<String>> = l.iter().map(|w| w.as_str().map(str::to_owned)).collect();
+                        Some(words.filter(|w| !w.is_empty()).ok_or("o.linkopener: expected a list of strings")?)
+                    }
+                    _ => return Err("o.linkopener: expected a list of strings or null".into()),
+                }
             }
+            "linkpreview" => o.linkpreview = flag()?,
+            "linkpreviewdelay" => o.linkpreviewdelay = ms()?,
+            "reloaddebounce" => o.reloaddebounce = ms()?,
+            "reloadanchor" => {
+                o.reloadanchor_text = match value.as_str() {
+                    Some("position") => false,
+                    Some("text") => true,
+                    _ => return Err("o.reloadanchor: expected \"position\" or \"text\"".into()),
+                }
+            }
+            "synctexeditor" => o.synctexeditor = text()?,
             other => return Err(format!("no option {other:?}")),
         }
+        self.apply_options();
         Ok(())
     }
 
     fn get_option(&self, name: &str) -> Result<ScriptValue, String> {
+        let o = &self.options;
+        let ms = |d: Duration| ScriptValue::Num(d.as_millis() as f64);
         Ok(match name {
-            "timeoutlen" => ScriptValue::Num(self.options.timeoutlen.as_millis() as f64),
-            "splitright" => ScriptValue::Bool(self.options.splitright),
-            "splitbelow" => ScriptValue::Bool(self.options.splitbelow),
-            "modehistory" => ScriptValue::Num(self.options.modehistory as f64),
+            "timeoutlen" => ms(o.timeoutlen),
+            "splitright" => ScriptValue::Bool(o.splitright),
+            "splitbelow" => ScriptValue::Bool(o.splitbelow),
+            "modehistory" => ScriptValue::Num(o.modehistory as f64),
+            "scrollstep" => ScriptValue::Num(o.scrollstep),
+            "scrollsmoothness" => ms(o.scrollsmoothness),
+            "linkopener" => o.linkopener.as_ref().map_or(ScriptValue::Null, |l| {
+                ScriptValue::List(l.iter().map(|w| ScriptValue::Str(w.clone())).collect())
+            }),
+            "linkpreview" => ScriptValue::Bool(o.linkpreview),
+            "linkpreviewdelay" => ms(o.linkpreviewdelay),
+            "reloaddebounce" => ms(o.reloaddebounce),
+            "reloadanchor" => ScriptValue::Str(if o.reloadanchor_text { "text" } else { "position" }.into()),
+            "synctexeditor" => o.synctexeditor.clone().map_or(ScriptValue::Null, ScriptValue::Str),
             other => return Err(format!("no option {other:?}")),
         })
     }

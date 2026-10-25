@@ -105,6 +105,11 @@ pub struct DocumentHost {
 }
 
 impl DocumentHost {
+    /// New reload and inverse-search options (from the configuration).
+    pub fn set_options(&mut self, options: HostOptions) {
+        self.options = options;
+    }
+
     /// A forward search for this file, shown in `pane`.
     pub fn forward(&mut self, req: Forward, pane: &PdfPane) {
         if self.reload.due.is_some() || self.reload.in_flight {
@@ -285,7 +290,7 @@ impl DocumentHost {
                 let _ = self.synctex.send(SynctexCmd::Inverse { page, x, y });
                 None
             }
-            Request::OpenUri(uri) => Some(Effect::OpenUri(uri)),
+            Request::OpenUri(uri) => Some(Effect::OpenUri { uri, command: None }),
             Request::Copy(text) => Some(Effect::Copy(text)),
         }
     }

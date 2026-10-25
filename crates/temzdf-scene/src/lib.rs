@@ -300,8 +300,9 @@ pub struct Hints {
 pub enum Effect {
     /// Put text on the clipboard.
     Copy(String),
-    /// Open an external link with the system handler.
-    OpenUri(String),
+    /// Open an external link: with `command` (the URI appended), else the
+    /// system handler (`xdg-open`, `open`).
+    OpenUri { uri: String, command: Option<Vec<String>> },
     /// Run a shell command detached from the terminal (SyncTeX inverse search).
     RunShell(String),
 }

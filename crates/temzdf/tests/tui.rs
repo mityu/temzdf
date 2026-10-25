@@ -435,11 +435,18 @@ map("terminal", "<C-x>f", () => feedkeys("echo fed<CR>"));
 unmap("normal", "x");
 on("ModeChanged", (a: string, b: string) => console.log(`mode ${a} ${b}`));
 try { map("terminal", "<C-c>x", action.exitMode()); } catch (e) { console.log(`refused: ${(e as Error).message}`); }
+o.scrollstep = 90;
+o.linkopener = ["true"];
+o.reloadanchor = "text";
+console.log(`options ${o.scrollstep} ${JSON.stringify(o.linkopener)} ${o.reloadanchor} ${o.linkpreviewdelay}`);
+try { (o as any).nope = 1; } catch (e) { console.log(`option refused: ${(e as Error).message}`); }
 "#,
     );
     let mut t = Term::spawn(&[BIN, "-s", "md"], &env.options());
     t.wait_for("the prompt", prompt);
     env.wait_log("md", "the refusal", |l| l.contains("refused:") && l.contains("reserved"));
+    env.wait_log("md", "the options", |l| l.contains(r#"options 90 ["true"] text 300"#));
+    env.wait_log("md", "the unknown option", |l| l.contains("option refused: no option \"nope\""));
     t.keys(&["C-x", "e"]);
     t.wait_text("mode-terminal");
     t.keys(&["C-x", "f"]);

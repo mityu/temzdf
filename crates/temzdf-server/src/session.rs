@@ -56,16 +56,15 @@ pub type EventSink = Arc<dyn Fn(SessionEvent) -> bool + Send + Sync>;
 /// How new panes and documents are set up (from the configuration).
 #[derive(Clone)]
 pub struct Settings {
-    pub preview_delay: Option<Duration>,
-    pub anchor_by_text: bool,
-    pub scroll: ScrollConfig,
-    pub host: HostOptions,
     /// Listen for `temzdf --forward` on each document's socket (not for
     /// headless rendering, which must not take a running viewer's socket).
     pub serve_forward: bool,
     /// The configuration script and how to run the script host; `None`
     /// runs no scripts.
     pub script: Option<ScriptSettings>,
+    /// Options set on the command line (`--editor`): they win over the
+    /// configuration's.
+    pub overrides: Vec<(String, ScriptValue)>,
 }
 
 /// What the caller should do after an event.
@@ -107,11 +106,58 @@ pub struct Options {
     pub splitbelow: bool,
     /// How many modes the history keeps.
     pub modehistory: usize,
+    /// Pixels per wheel step, and the easing's time constant.
+    pub scrollstep: f64,
+    pub scrollsmoothness: Duration,
+    /// The command opening external links (the URI appended); the system
+    /// handler when `None`.
+    pub linkopener: Option<Vec<String>>,
+    /// Preview internal links after the pointer rests on one this long.
+    pub linkpreview: bool,
+    pub linkpreviewdelay: Duration,
+    /// Wait this long after the PDF changed before reloading.
+    pub reloaddebounce: Duration,
+    /// Keep the line being read across reloads (else the position).
+    pub reloadanchor_text: bool,
+    /// The inverse-search command (`%{input}`, `%{line}`, `%{column}`).
+    pub synctexeditor: Option<String>,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Self { timeoutlen: Duration::from_millis(1000), splitright: true, splitbelow: true, modehistory: 100 }
+        let scroll = ScrollConfig::default();
+        Self {
+            timeoutlen: Duration::from_millis(1000),
+            splitright: true,
+            splitbelow: true,
+            modehistory: 100,
+            scrollstep: scroll.step,
+            scrollsmoothness: scroll.tau,
+            linkopener: None,
+            linkpreview: true,
+            linkpreviewdelay: temzdf_pdfview::pane::DEFAULT_PREVIEW_DELAY,
+            reloaddebounce: Duration::from_millis(200),
+            reloadanchor_text: false,
+            synctexeditor: None,
+        }
+    }
+}
+
+impl Options {
+    fn scroll(&self) -> ScrollConfig {
+        ScrollConfig {
+            step: self.scrollstep.max(1.0),
+            tau: self.scrollsmoothness.max(Duration::from_millis(1)),
+            ..Default::default()
+        }
+    }
+
+    fn preview_delay(&self) -> Option<Duration> {
+        self.linkpreview.then_some(self.linkpreviewdelay)
+    }
+
+    fn host(&self) -> HostOptions {
+        HostOptions { debounce: self.reloaddebounce, editor: self.synctexeditor.clone() }
     }
 }
 /// Session layers: the background below every pane, borders above them.
@@ -396,10 +442,10 @@ impl Session {
         let entry = self.docs.get_mut(&doc)?;
         let host = entry.host.as_mut()?;
         let mut pane = PdfPane::with_document(entry.name.clone(), host.info.clone(), host.doc.clone(), self.geometry);
-        pane.preview_delay = self.settings.preview_delay;
-        pane.anchor_by_text = self.settings.anchor_by_text;
-        pane.viewer.scroll_x.config = self.settings.scroll;
-        pane.viewer.scroll_y.config = self.settings.scroll;
+        pane.preview_delay = self.options.preview_delay();
+        pane.anchor_by_text = self.options.reloadanchor_text;
+        pane.viewer.scroll_x.config = self.options.scroll();
+        pane.viewer.scroll_y.config = self.options.scroll();
         pane.viewer.stand_in_mode = StandIn::for_hints(self.hints);
         pane.set_search_base((id as u64) << 32);
         if let Some(e) = host.watcher_error.take() {
@@ -526,7 +572,7 @@ impl Session {
                 match result {
                     Ok(info) if !info.bounds.is_empty() => {
                         let doc = Document::shared(info.bounds.clone());
-                        entry.host = Some(opening.finish(info, doc, self.settings.host.clone()));
+                        entry.host = Some(opening.finish(info, doc, self.options.host()));
                         for spot in std::mem::take(&mut entry.waiting) {
                             self.add_pdf_pane(id, spot);
                         }
@@ -745,6 +791,22 @@ impl Session {
         }
     }
 
+    /// Options changed: panes and documents follow.
+    fn apply_options(&mut self) {
+        let (scroll, preview, anchor, host) =
+            (self.options.scroll(), self.options.preview_delay(), self.options.reloadanchor_text, self.options.host());
+        for p in self.panes.values_mut().filter_map(PaneEntry::pdf) {
+            p.viewer.scroll_x.config = scroll;
+            p.viewer.scroll_y.config = scroll;
+            p.preview_delay = preview;
+            p.anchor_by_text = anchor;
+        }
+        for h in self.docs.values_mut().filter_map(|d| d.host.as_mut()) {
+            h.set_options(host.clone());
+        }
+        self.history.cap = self.options.modehistory;
+    }
+
     /// The current mode's name.
     pub fn current_mode(&self) -> &str {
         self.history.current()
@@ -931,6 +993,14 @@ impl Session {
                     }
                 }
                 Kind::Term(t) => self.effects.extend(t.take_effects()),
+            }
+        }
+        // Links open with the configured command, in the client.
+        for e in &mut self.effects {
+            if let Effect::OpenUri { command, .. } = e
+                && command.is_none()
+            {
+                command.clone_from(&self.options.linkopener);
             }
         }
         std::mem::take(&mut self.effects)
@@ -1232,14 +1302,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
         let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
-        let settings = Settings {
-            preview_delay: None,
-            anchor_by_text: false,
-            scroll: ScrollConfig::default(),
-            host: HostOptions::default(),
-            serve_forward: false,
-            script: None,
-        };
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
         let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
         default_mappings(&mut s.modes);
         s.open(&pdf::fixture("sample.pdf")).unwrap();
@@ -1367,14 +1430,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
         let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
-        let settings = Settings {
-            preview_delay: None,
-            anchor_by_text: false,
-            scroll: ScrollConfig::default(),
-            host: HostOptions::default(),
-            serve_forward: false,
-            script: None,
-        };
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
         let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
         s.open(Path::new("/nonexistent/x.pdf")).unwrap();
         let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();
@@ -1441,14 +1497,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
         let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
-        let settings = Settings {
-            preview_delay: None,
-            anchor_by_text: false,
-            scroll: ScrollConfig::default(),
-            host: HostOptions::default(),
-            serve_forward: false,
-            script: None,
-        };
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
         let mut s = Session::new("term".into(), GEOMETRY, Hints::default(), settings, sink);
         default_mappings(&mut s.modes);
         let spec = PaneSpec::Command(argv.iter().map(|a| a.to_string()).collect());

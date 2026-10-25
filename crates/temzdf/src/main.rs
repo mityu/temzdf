@@ -3,7 +3,6 @@ mod client;
 mod config;
 mod headless;
 
-use temzdf_pdfview::keys;
 use temzdf_server::forward as ipc;
 
 use std::path::PathBuf;
@@ -50,10 +49,11 @@ struct Cli {
     #[arg(long, value_name = "LINE[:COLUMN]:FILE")]
     forward: Option<String>,
     /// SyncTeX inverse search command (Ctrl+click), with %{input}, %{line} and
-    /// %{column} placeholders. Overrides [synctex] editor in the config file.
+    /// %{column} placeholders. Overrides `o.synctexeditor` of the configuration.
     #[arg(long, value_name = "COMMAND", global = true)]
     editor: Option<String>,
-    /// Configuration file (default: $XDG_CONFIG_HOME/temzdf/config.toml).
+    /// Configuration script (default: $XDG_CONFIG_HOME/temzdf/config.ts or
+    /// config.js).
     #[arg(long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
     /// Do not run the configuration script ($XDG_CONFIG_HOME/temzdf/config.ts
@@ -149,13 +149,11 @@ fn main() -> Result<()> {
             return temzdf_script::run(std::io::stdin(), std::io::stdout()).map_err(anyhow::Error::msg);
         }
         Some(Cmd::Attach { name, create, file }) => {
-            let config = config::Config::load(cli.config.as_deref())?;
             let name = match (name, create, file) {
                 (Some(n), true, file) if temzdf_server::daemon::list()?.iter().all(|s| s.name != n) => {
                     client::spawn_server(
                         &n,
                         &client::first_pane(file.as_deref())?,
-                        &config,
                         cli.config.as_deref(),
                         cli.editor.as_deref(),
                         cli.clean,
@@ -164,23 +162,19 @@ fn main() -> Result<()> {
                 }
                 (name, ..) => client::resolve(name.as_deref())?,
             };
-            println!("{}", client::attach(&name, &config)?);
+            println!("{}", client::attach(&name)?);
             return Ok(());
         }
         Some(Cmd::Server { name, log, pane }) => {
             // Leave the terminal's session, so closing it does not end ours.
             let _ = rustix::process::setsid();
-            let mut config = config::Config::load(cli.config.as_deref())?;
-            if let Some(e) = cli.editor {
-                config.synctex.editor = Some(e);
-            }
             let words: Vec<String> = std::iter::once("new-pane".to_owned()).chain(pane).collect();
             let temzdf_server::action::Action::NewPane { spec, .. } = temzdf_server::action::Action::parse(&words)?
             else {
                 unreachable!("parsed as new-pane")
             };
-            let script = app::script_settings(cli.clean)?;
-            return temzdf_server::daemon::run(&name, &spec, log, app::settings(&config, true, script)?);
+            let script = app::script_settings(cli.clean, cli.config.as_deref())?;
+            return temzdf_server::daemon::run(&name, &spec, log, app::settings(true, script, cli.editor.as_deref()));
         }
         None => {}
     }
@@ -194,10 +188,9 @@ fn main() -> Result<()> {
             }
             None => (name.clone(), None),
         };
-        let config = config::Config::load(cli.config.as_deref())?;
         let pane = client::first_pane(file.as_deref())?;
-        client::spawn_server(&name, &pane, &config, cli.config.as_deref(), cli.editor.as_deref(), cli.clean)?;
-        println!("{}", client::attach(&name, &config)?);
+        client::spawn_server(&name, &pane, cli.config.as_deref(), cli.editor.as_deref(), cli.clean)?;
+        println!("{}", client::attach(&name)?);
         return Ok(());
     }
     let Some(file) = cli.file else { bail!("no PDF file given (see --help)") };
@@ -224,7 +217,7 @@ fn main() -> Result<()> {
     {
         return Ok(());
     }
-    let config = config::Config::load(cli.config.as_deref())?;
+    let config = cli.config.clone();
     app::run(
         &file,
         app::Options { page, scale: cli.scale, config, forward, editor: cli.editor.clone(), clean: cli.clean },

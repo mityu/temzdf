@@ -10,9 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use temzdf_pdfview::host::HostOptions;
 use temzdf_scene::Hints;
-use temzdf_server::session::{EventSink, Session, SessionEvent, Settings};
+use temzdf_server::session::{EventSink, Session, SessionEvent};
 use temzdf_tty::Presenter;
 use termpix::compositor::{Backend, Compositor};
 use termpix::geom::Geometry;
@@ -50,15 +49,8 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     let tx = Mutex::new(tx);
     let sink: EventSink = Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(e).is_ok());
     // The shipped default configuration maps the keys (no user configuration).
-    let script = crate::app::script_settings(true)?;
-    let settings = Settings {
-        preview_delay: None,
-        anchor_by_text: false,
-        scroll: Default::default(),
-        host: HostOptions::default(),
-        serve_forward: false,
-        script,
-    };
+    let script = crate::app::script_settings(true, None)?;
+    let settings = crate::app::settings(false, script, None);
     // A Layered terminal over inline transfers, like the mock terminal.
     let mut session = Session::new(name, opts.geometry, Hints::default(), settings, sink);
     session.start(temzdf_server::action::PaneSpec::Pdf(pdf_path.to_owned()), None)?;

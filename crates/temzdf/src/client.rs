@@ -11,10 +11,8 @@ use anyhow::{Context, Result, bail};
 use temzdf_protocol::{self as proto, ClientMsg, ExitReason, ServerMsg};
 use temzdf_scene::Frame;
 use temzdf_server::daemon;
-use temzdf_tty::{Input, Presented, TtyFrontend};
+use temzdf_tty::{Input, Presented};
 use termpix::tty::TermEvent;
-
-use crate::config::Config;
 
 enum Event {
     Term(TermEvent),
@@ -58,7 +56,6 @@ pub fn first_pane(file: Option<&Path>) -> Result<Vec<String>> {
 pub fn spawn_server(
     name: &str,
     pane: &[String],
-    config: &Config,
     config_path: Option<&Path>,
     editor: Option<&str>,
     clean: bool,
@@ -70,7 +67,7 @@ pub fn spawn_server(
     if daemon::probe(&socket).is_some() {
         bail!("session {name:?} already exists (attach with `temzdf attach {name}`)");
     }
-    let log = crate::app::log_dir(config).map(|d| d.join(format!("{name}.log")));
+    let log = crate::app::log_dir().map(|d| d.join(format!("{name}.log")));
     let out = match &log {
         Some(p) => {
             if let Some(dir) = p.parent() {
@@ -131,16 +128,11 @@ pub fn resolve(name: Option<&str>) -> Result<String> {
 
 /// Attach this terminal to session `name` until detached or the session ends.
 /// Returns a line to print once the terminal is restored.
-pub fn attach(name: &str, config: &Config) -> Result<String> {
+pub fn attach(name: &str) -> Result<String> {
     let socket = proto::socket_path(name)?;
     let stream = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
-    let _stdio = crate::app::log_path(config).and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
-    let term = config.terminal.clone();
-    let mut front = TtyFrontend::open(|caps| {
-        let backend = term.backend(caps.backend(), caps.has_backend_override());
-        let medium = term.medium(caps.medium(), caps.has_medium_override());
-        (backend, medium, term.zlib_level)
-    })?;
+    let _stdio = crate::app::log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
+    let mut front = crate::app::open_frontend()?;
     let (tx, rx) = mpsc::channel::<Event>();
     front.spawn_input(tx.clone(), Event::Term)?;
     let mut reader = std::io::BufReader::new(stream.try_clone()?);
@@ -157,7 +149,6 @@ pub fn attach(name: &str, config: &Config) -> Result<String> {
         proto::send(&mut *writer.lock().unwrap_or_else(|p| p.into_inner()), &msg).context("lost the session")
     };
     send(ClientMsg::Hello { version: proto::VERSION, geometry: front.geometry(), hints: front.hints() })?;
-    let open_command = config.links.command();
     // The latest frame received and not shown yet (its sequence number is
     // acknowledged once it is), and the last one shown (shown again when the
     // terminal lost images).
@@ -225,7 +216,7 @@ pub fn attach(name: &str, config: &Config) -> Result<String> {
             }
             Event::Server(ServerMsg::Effect(effect)) => {
                 let w = writer.clone();
-                front.perform(effect, &open_command, move |m| {
+                front.perform(effect, move |m| {
                     let _ = proto::send(&mut *w.lock().unwrap_or_else(|p| p.into_inner()), &ClientMsg::Report(m));
                 })?;
             }
