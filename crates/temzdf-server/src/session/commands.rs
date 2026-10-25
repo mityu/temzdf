@@ -123,7 +123,7 @@ impl Session {
             "detach" => ok(Outcome::Detach),
             "reload-config" => act(self, Action::ReloadConfig),
             "message" => {
-                self.message(&text(0).unwrap_or_default());
+                self.notify(super::notices::Kind::Info, &text(0).unwrap_or_default());
                 ok(Outcome::Redraw)
             }
             "send-text" => match self.panes.get_mut(&self.focus).map(|e| &mut e.kind) {

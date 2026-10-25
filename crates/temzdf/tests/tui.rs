@@ -111,7 +111,8 @@ fn fixture(name: &str) -> PathBuf {
 
 /// A shell prompt (`$ `, or `sh-5.3$ ` where PS1 does not get through).
 fn is_prompt(line: &str) -> bool {
-    line.trim_end().ends_with('$')
+    // A floating message may cover the rest of the line.
+    line.trim_end().ends_with('$') || line.starts_with("$ ")
 }
 
 fn prompt(s: &Screen) -> bool {
@@ -375,8 +376,17 @@ fn reload_config_registers_again_and_the_session_survives_the_host() {
     let killed = Command::new("pkill").args(["-P", &pid, "-f", "script-host"]).status().unwrap();
     assert!(killed.success());
     env.wait_log("r", "the host's exit", |l| l.contains("the script host exited"));
+    // The notice floats at the top right with the keys that still work.
+    t.wait_text("<C-b>r restarts");
     t.type_text("clear; echo still-$((2+2))\n");
     t.wait_text("still-4");
+    // <C-b>r brings the host (and the mappings) back.
+    t.keys(&["C-b", "r"]);
+    env.wait_log("r", "the third load", |l| l.matches("[log]: loaded").count() == 3);
+    t.wait_for("the notice gone", |s| !s.contains("<C-b>r restarts"));
+    t.keys(&["C-b", "e"]);
+    t.key("Esc");
+    t.wait_for("the mapping again", |s| s.lines().iter().any(|l| l.trim() == "mapped"));
 }
 
 #[test]
@@ -449,4 +459,22 @@ try { map("terminal", "<C-c>x", action.exitMode()); } catch (e) { console.log(`r
     assert!(lines.iter().any(|l| l == "mode win terminal"), "the new pane's mode after the split: {lines:?}");
     let ls = env.run(&["ls"]);
     assert!(ls.contains("md  (2 panes"), "x did not close a pane: {ls}");
+}
+
+#[test]
+fn errors_float_until_the_next_key() {
+    let env = Env::new("notice");
+    env.config(
+        "config.js",
+        "import { cmd, map } from \"temzdf\";\nmap(\"terminal\", \"<C-x>\", () => cmd.moveFocus(\"sideways\"));\n",
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "n"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.key("C-x");
+    let s = t.wait_text("sideways");
+    let row = s.find("sideways").unwrap();
+    assert!(s.lines()[row].find("sideways").unwrap() > 50, "at the right: {}", s.text());
+    assert!(s.text().contains('╭'), "in a box: {}", s.text());
+    t.type_text("echo gone\n");
+    t.wait_for("the message gone and the key handled", |s| !s.contains("sideways") && s.contains("gone"));
 }

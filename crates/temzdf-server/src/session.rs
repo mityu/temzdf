@@ -23,11 +23,12 @@ use termpix_core::scroll::ScrollConfig;
 
 use crate::action::{Action, PaneSpec};
 use crate::forward::{self, ForwardRequest};
-use crate::keymap::{History, Matcher, Modes, Step, Target, Unmapped};
+use crate::keymap::{History, Matcher, Modes, Step, Stroke, Target, Unmapped, notation};
 use crate::layout::{Layout, PaneId, Split};
 use temzdf_protocol::script::{FromHost, ScriptValue};
 
 mod commands;
+mod notices;
 mod script;
 
 pub use commands::command_specs;
@@ -209,6 +210,9 @@ pub struct Session {
     matcher: Matcher,
     history: History,
     options: Options,
+    notices: Vec<notices::Notice>,
+    /// The fixed escape keymap (script host down) saw its prefix.
+    escape_prefix: bool,
     keys: Keys,
     effects: Vec<Effect>,
     /// The pane under the pointer, and the one holding a pressed button.
@@ -245,6 +249,8 @@ impl Session {
             matcher: Matcher::default(),
             history: History::new("normal", Options::default().modehistory),
             options: Options::default(),
+            notices: Vec::new(),
+            escape_prefix: false,
             keys: Keys::default(),
             effects: Vec::new(),
             hovered: None,
@@ -450,15 +456,9 @@ impl Session {
 
     /// Show a message in the focused pane's status bar (or another PDF pane's:
     /// terminal panes have none).
+    /// An error message, in a floating window until the next key.
     fn message(&mut self, m: &str) {
-        let focus = self.focus;
-        let mut pdfs: Vec<(PaneId, &mut PaneEntry)> =
-            self.panes.iter_mut().filter(|(_, e)| e.doc().is_some()).map(|(id, e)| (*id, e)).collect();
-        pdfs.sort_by_key(|(id, _)| (*id != focus, *id));
-        match pdfs.into_iter().next().and_then(|(_, e)| e.pdf()) {
-            Some(p) => p.message = Some(m.into()),
-            None => eprintln!("temzdf: {m}"),
-        }
+        self.notify(notices::Kind::Error, m);
     }
 
     /// Give every pane its rectangle (after the layout or the screen changed).
@@ -590,14 +590,20 @@ impl Session {
         if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
             return Outcome::None;
         }
+        // A key dismisses error messages (and is handled as usual).
+        let dismissed = Outcome::None.or(self.dismiss_errors());
         if self.hold_key(k) {
-            return Outcome::None;
+            return dismissed;
         }
         let out = self.key_inner(k, now);
-        out.merge(self.flush_events())
+        dismissed.merge(out).merge(self.flush_events())
     }
 
     fn key_inner(&mut self, k: &KeyEvent, now: Instant) -> Outcome {
+        // The script host should run but does not: the fixed escape keys.
+        if self.settings.script.is_some() && !self.script.running() {
+            return self.escape_key(k, now);
+        }
         // <C-c> cancels pending keys and the count; otherwise it is an
         // ordinary (unmappable) key.
         let ctrl_c =
@@ -626,6 +632,46 @@ impl Session {
         }
         self.matcher.push(k);
         out.merge(self.drive(now))
+    }
+
+    /// Keys while the script host is down (no configured mappings work):
+    /// `<C-b>d` detaches, `<C-b>q` ends the session, `<C-b>r` restarts the
+    /// host; everything else goes to the focused pane as typed.
+    fn escape_key(&mut self, k: &KeyEvent, now: Instant) -> Outcome {
+        let stroke = Stroke::of(k);
+        let is = |s: &str| notation::parse(s).is_ok_and(|v| v[0] == stroke);
+        if std::mem::take(&mut self.escape_prefix) {
+            return if is("d") {
+                Outcome::Detach
+            } else if is("q") {
+                Outcome::Quit
+            } else if is("r") {
+                match self.reload_scripts() {
+                    Ok(o) => o,
+                    Err(e) => {
+                        self.message(&format!("{e:#}"));
+                        Outcome::Redraw
+                    }
+                }
+            } else {
+                Outcome::None
+            };
+        }
+        if is("<C-b>") {
+            self.escape_prefix = true;
+            return Outcome::None;
+        }
+        let focus = self.focus;
+        match self.panes.get_mut(&focus).map(|e| &mut e.kind) {
+            Some(Kind::Term(t)) => Outcome::None.or(t.key(k)),
+            // The pane's own page-view keys still work.
+            Some(Kind::Pdf { pane, .. }) => match pane.key(k, now) {
+                pane::Action::Quit => self.close(focus),
+                pane::Action::Redraw => Outcome::Redraw,
+                pane::Action::None => Outcome::None,
+            },
+            None => Outcome::None,
+        }
     }
 
     /// Let the matcher decide what queued keys do, until it waits (for more
@@ -957,6 +1003,8 @@ impl Session {
                 host.dispatch(needs);
             }
         }
+        // Floating messages over everything.
+        text.extend(self.notice_grids());
         Frame { layers, text, cursor, cursor_shape, pointer: self.pointer(), title }
     }
 
@@ -1069,7 +1117,7 @@ impl Session {
     /// [`Session::tick`], plus scripting's timers (the configuration's load
     /// timeout, the "running a script" notice). For event loops.
     pub fn poll(&mut self, now: Instant) -> Outcome {
-        let mut out = self.script_tick(now).or(self.tick(now));
+        let mut out = self.script_tick(now).or(self.tick(now)).or(self.expire_notices(now));
         if self.matcher.deadline(self.options.timeoutlen).is_some_and(|d| now >= d) {
             out = out.merge(self.drive(now));
         }
@@ -1082,7 +1130,12 @@ impl Session {
             Kind::Term(_) => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
-        panes.chain(docs).chain(self.script_deadline()).chain(self.matcher.deadline(self.options.timeoutlen)).min()
+        panes
+            .chain(docs)
+            .chain(self.script_deadline())
+            .chain(self.matcher.deadline(self.options.timeoutlen))
+            .chain(self.notice_deadline())
+            .min()
     }
 
     pub fn focus(&self) -> PaneId {

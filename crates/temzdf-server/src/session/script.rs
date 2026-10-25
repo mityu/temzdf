@@ -113,6 +113,11 @@ pub struct Bridge {
 }
 
 impl Bridge {
+    /// The script host is up.
+    pub(super) fn running(&self) -> bool {
+        self.host.is_some()
+    }
+
     pub(super) fn busy(&self) -> bool {
         self.loading.is_some() || !self.frames.is_empty() || self.atomic.is_some()
     }
@@ -149,6 +154,10 @@ impl Session {
             return Ok(());
         }
         self.new_pane(&first, cwd.as_deref())?;
+        if self.settings.script.is_some() {
+            let why = self.script.startup_error.take().unwrap_or_else(|| "the script host could not start".into());
+            self.host_down(&why);
+        }
         self.event("SessionReady", vec![]);
         self.flush_events();
         Ok(())
@@ -187,6 +196,7 @@ impl Session {
             return false;
         }
         self.script.host = Some(Host { child, stdin });
+        self.clear_host_notice();
         self.script.loading = Some(Instant::now() + LOAD_TIMEOUT);
         self.script.busy_since = Some(Instant::now());
         self.script.send(&ToHost::Load { config: s.config.clone(), commands: super::commands::command_specs() })
@@ -220,6 +230,14 @@ impl Session {
             }
         }
         out
+    }
+
+    /// Say the host is down and which keys still work.
+    fn host_down(&mut self, why: &str) {
+        let text = format!(
+            "{why}: mappings are off. <C-b>d detaches, <C-b>q ends the session, <C-b>r restarts the script host"
+        );
+        self.notify(super::notices::Kind::Host, &text);
     }
 
     /// The host runs something: input is held and frames wait.
@@ -487,7 +505,7 @@ impl Session {
         }
         let loading = self.script.loading.is_some();
         let mut out = self.drop_host();
-        self.message("the script host exited; scripts are off until reload-config");
+        self.host_down("the script host exited");
         if loading {
             out = out.merge(self.open_first());
         }
@@ -543,14 +561,16 @@ impl Session {
                 Some(format!("the configuration did not finish loading within {} s", LOAD_TIMEOUT.as_secs()));
             eprintln!("temzdf: {}", self.script.startup_error.as_deref().unwrap_or_default());
             self.script.loading = Some(now);
-            return self.finish_loading(Ok(()));
+            let out = self.finish_loading(Ok(()));
+            self.host_down("the configuration did not finish loading");
+            return out;
         }
         if self.script.busy()
             && !self.script.notice_shown
             && self.script.busy_since.is_some_and(|t| now >= t + BUSY_NOTICE)
         {
             self.script.notice_shown = true;
-            self.message("running a script; <C-c> interrupts it");
+            self.notify(super::notices::Kind::Info, "running a script; <C-c> interrupts it");
             return Outcome::Redraw;
         }
         Outcome::None
