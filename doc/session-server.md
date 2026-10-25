@@ -180,26 +180,37 @@ pane by default, since web views are stateful per viewport.
 | Web | headless Chromium over CDP in its own process, screencast frames | Fits the server model: the engine is offscreen anyway, so web panes are pixel surfaces like PDF pages. This removes the Wayland webview embedding problem for the GUI (no native child views needed on wlroots, xfwl4 or macOS). CEF only if Chromium's encode/decode cost dominates; Servo later |
 | TTY client | `termpix` (+ `termpix-ui` for pixel widgets where still needed) | Exists; becomes the scene renderer for terminals |
 | GUI client | winit + wgpu + parley/swash (or glyphon), egui optional for chrome | A thin scene renderer (cell grids as glyph quads, layers as textures); GPUI or Qt bring their own application models, which a thin client does not need, and the webview argument for Qt disappears |
-| Config | Lua via `mlua` in the server | Key bindings and hooks act on server state; generated LuaCATS stubs |
+| Config | TOML for now; later a language running in the server (Lua via `mlua` was the survey's pick) | Key bindings and hooks act on server state |
 
 The biggest consequence: with the web engine and the PDF renderer both
 offscreen in the server, every pane kind reduces to cell grids plus image
 layers, so both clients stay small and identical in behaviour, and the GUI
 needs no platform webview at all.
 
+## Decisions (2026-10-25, with the user)
+
+- **Size**: the latest active client's size wins (tmux `latest`). Other
+  attached clients may see the screen cut off or padded; that is acceptable.
+- **Zoom**: stored relative to the pane width (fit-width = the page width
+  equals the pane width; other zooms as a fraction of it), so every client
+  shows the same part of the page and renders it at its own pixel density.
+- **Isolation**: start with threads where that is simpler, but keep the
+  document and web services behind message-passing interfaces so they can move
+  into child processes later (the intended end state).
+- **No resurrection**: a server restart loses the sessions.
+- **Configuration**: stays TOML for now; the programmable language
+  (`doc/config-language.md`) is decided later.
+- **Terminal panes**: `libghostty-vt` for VT emulation (temzdf itself behaves
+  best in Ghostty among the tested terminals: layered kitty placements work
+  there, while WezTerm needed whole-frame compositing); the pty itself comes
+  from `portable-pty` (or `rustix`), since libghostty-vt does not spawn
+  processes.
+
 ## Open questions
 
-- Which client's size wins by default (`latest` proposed) and how viewports
-  pan for the others.
-- Whether fit-width zoom follows the logical (session) size or each client's
-  pixel size.
-- Crash isolation boundaries: MuPDF and the web engine in child processes from
-  the start, or threads first.
 - The capability set the server advertises to programs in terminal panes, and
   how kitty graphics from panes reach clients (re-emission per client; the
   biggest piece of new work, see `doc/multiplexer.md`).
-- Resurrection after a server restart (layout, cwd and commands; PDF view
-  state is easy to save).
 - Naming and crate layout once temzdf is more than a PDF viewer.
 
 ## Incremental plan
@@ -215,4 +226,4 @@ needs no platform webview at all.
    pane images re-emitted per client. temzdf becomes a multiplexer.
 4. **GUI client**: wgpu renderer of the same scene, local only.
 5. **Web panes**: headless Chromium process, frames as image layers.
-6. **Lua config** in the server.
+6. **Programmable config** in the server (language to be decided).
