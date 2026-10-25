@@ -1,5 +1,6 @@
 //! Log every input event termpix parses, one per line, to the file given as
-//! the first argument (stdout is the UI). Press q (or Ctrl+C) to quit.
+//! the first argument (stdout is the UI). Press q (or Ctrl+C) to quit; closing
+//! the terminal quits too.
 //! Useful to see what a terminal actually sends: `cargo run -p termpix --example events -- events.log`.
 
 use std::io::Write;
@@ -23,6 +24,10 @@ fn main() -> std::io::Result<()> {
     for ev in rx {
         writeln!(log, "{ev:?}")?;
         log.flush()?;
+        // SIGTERM/SIGHUP (e.g. the terminal window was closed).
+        if matches!(ev, TermEvent::Terminate) {
+            break;
+        }
         if let TermEvent::Input(Event::Key(k)) = &ev
             && k.kind != KeyEventKind::Release
             && (k.code == KeyCode::Char('q') || (k.code == KeyCode::Char('c') && k.modifiers.contains(Modifiers::CTRL)))
