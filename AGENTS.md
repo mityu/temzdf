@@ -27,6 +27,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-term` | Library. The terminal pane: a program on a pty (`portable-pty`), its output interpreted by `libghostty-vt` (from Nix: `nix/libghostty-vt.nix`), the screen as scene text cells. No `termpix`. |
 | `crates/temzdf-tty` | Library. Terminal frontend (`TtyFrontend`): shows scene frames through `termpix`, frame pacing, effects. |
 | `crates/temzdf-server` | Library. `Session` (panes, layout, focus, prefix keys `C-s`, actions, composed frame), the session server process, forward-search sockets. No terminal code. |
+| `crates/temzdf-script` | Library. The script host (`temzdf script-host`): runs `config.ts`/`config.js` in QuickJS (`rquickjs`, TypeScript stripped with swc) and talks to the session over `temzdf-protocol`. The server never links it (child process). |
 | `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
 | `crates/temzdf` | The binary: standalone viewer, session commands and client (zellij names: `-s`, `attach`, `ls`, `kill-session`, `action`), config, headless `--render-frame`. |
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
@@ -153,4 +154,5 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/performance.md`: measurements (raster pool, display lists, transfer) and the benchmark to rerun.
 - `doc/macos.md`: macOS specifics, verification results, and how to drive GUI terminals there.
 - `doc/session-server.md`: the session server design, what is implemented and what comes next.
+- `doc/script-host.md`: the JavaScript/TypeScript configuration: the script host, execution model, API.
 - `doc/gpu.md`: GPU rasterisation experiment (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.

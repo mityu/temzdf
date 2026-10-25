@@ -1,5 +1,9 @@
 # Configuration
 
+A configuration script, `$XDG_CONFIG_HOME/temzdf/config.ts` or `config.js`,
+can register hooks and (for now) prefix mappings; see `doc/script-host.md`.
+It is to replace this TOML file. `--clean` skips it.
+
 `temzdf` reads `$XDG_CONFIG_HOME/temzdf/config.toml` (falling back to
 `~/.config/temzdf/config.toml`), or the file given with `--config FILE`. A
 missing default file is fine; an explicitly given missing file is an error.

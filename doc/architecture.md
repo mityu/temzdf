@@ -22,6 +22,7 @@
 | `temzdf-tty` | `temzdf-scene`, `termpix` |
 | `temzdf-server` | `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf` (bin) | `temzdf-server`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-tty`, `temzdf-scene`, `termpix` |
+| `temzdf-script` | `temzdf-protocol` (and `rquickjs`, `swc_ts_fast_strip`) |
 | `tuitest` (tests only) | `libghostty-vt`, `portable-pty` (none of ours; `temzdf` uses it in `tests/tui.rs`) |
 
 - `termpix-core`: frontend-independent primitives (geometry, raster helpers,
@@ -36,6 +37,8 @@
 - `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys)
   and what panes on one file share (`Document`, `DocumentHost`: workers,
   reload, SyncTeX routing).
+- `temzdf-script`: the script host process (QuickJS), see
+  `doc/script-host.md`; sessions talk to it over pipes.
 - `temzdf-term`: the terminal pane (`TermPane`: a program on a pty, its
   output interpreted by `libghostty-vt`, the screen as scene text cells).
 - `temzdf-tty`: the terminal frontend (`TtyFrontend`: terminal setup, frame

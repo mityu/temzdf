@@ -39,7 +39,11 @@ server on one `Session`). Next and open:
   server log now).
 - [ ] Scripting and configuration (JavaScript/TypeScript in a script-host
   process, replacing the TOML file): design in `doc/scripting.md` on the
-  `research/notes` branch. The execution model is being settled first; the
+  `research/notes` branch; the host and execution model are implemented
+  (`doc/script-host.md`). Next: modes and key mappings (replacing
+  `prefixMap` and the Rust keymaps), the default configuration in
+  JavaScript, removing TOML, generated `.d.ts`, the floating message window,
+  pane sizes kept on resize (the last pane absorbs changes, decided). The
   questions under "Open questions, to decide later" there (modes and
   mappings, escape hatches, message area, mouse, defaults, layout details,
   hidden buffers, client-side settings, reload, CLI scripting,
