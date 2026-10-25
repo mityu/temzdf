@@ -53,7 +53,9 @@ key-driven checks prefer `expect NAME KEYS`, which compares the terminal with
 a headless render and fails the run on a mismatch (`tests/e2e/expect.actions`). See the
 script header for the helpers. `temzdf FILE --render-frame out.png` renders one
 screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/` from
-`tests/fixtures/*.tex` (tests run it automatically; e2e scenarios need it first). The
+`tests/fixtures/*.tex` (tests run it automatically; e2e scenarios need it first).
+For refactorings, `scripts/frames.sh render DIR` before and after plus
+`scripts/frames.sh compare A B` proves the screen is pixel-identical. The
 full testing approach is in `doc/testing.md`.
 
 `scripts/e2e.sh` is Linux-only. On macOS, `scripts/macos-gui.sh` runs kitty,
