@@ -375,3 +375,34 @@ fn reload_config_registers_again_and_the_session_survives_the_host() {
     t.type_text("clear; echo still-$((2+2))\n");
     t.wait_text("still-4");
 }
+
+#[test]
+fn a_click_on_another_pane_only_focuses_it() {
+    let env = Env::new("click");
+    // The right pane's program tracks the mouse and shows what it gets.
+    let script = "printf '\\033[?1000h\\033[?1006h'; stty raw -echo; printf 'tracking\\r\\n'; \
+                  head -c 12 | od -An -c; sleep 30";
+    let mut t = Term::spawn(&[BIN, "-s", "c"], &env.options());
+    t.wait_for("the prompt", prompt);
+    let words = vec![
+        "action".to_owned(),
+        "-s".into(),
+        "c".into(),
+        "new-pane".into(),
+        "--".into(),
+        "sh".into(),
+        "-c".into(),
+        script.into(),
+    ];
+    let out = Command::new(BIN).args(&words).envs(env.vars()).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    t.wait_for("the tracking program", |s| s.row_from(0, 50).starts_with("tracking"));
+    // Focus back to the shell, then click the program's pane: only focus.
+    t.keys(&["C-s", "h"]);
+    t.click(70, 10);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(!t.screen().row_from(1, 50).contains('['), "the focusing click reached the program");
+    // A second click, now that it has the focus, reaches it.
+    t.click(70, 10);
+    t.wait_for("the program's view of the click", |s| (1..6).any(|r| s.row_from(r, 50).contains('[')));
+}

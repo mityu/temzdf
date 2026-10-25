@@ -527,6 +527,36 @@ impl Term {
         self.write(&bytes);
     }
 
+    /// Click the left button at the centre of a cell, encoded as the program
+    /// asked (SGR, SGR-pixels, ...); nothing is sent if it tracks no mouse.
+    pub fn click(&mut self, col: u16, row: u16) {
+        use libghostty_vt::mouse;
+        self.pump(Duration::ZERO);
+        let (rows, cols, cw, ch) = *self.size.borrow();
+        let mut encoder = mouse::Encoder::new().expect("mouse encoder");
+        encoder.set_options_from_terminal(&self.terminal);
+        encoder.set_size(mouse::EncoderSize {
+            screen_width: cols as u32 * cw,
+            screen_height: rows as u32 * ch,
+            cell_width: cw,
+            cell_height: ch,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_right: 0,
+            padding_left: 0,
+        });
+        let position = mouse::Position { x: (col as f32 + 0.5) * cw as f32, y: (row as f32 + 0.5) * ch as f32 };
+        for (action, pressed) in [(mouse::Action::Press, true), (mouse::Action::Release, false)] {
+            let mut event = mouse::Event::new().expect("mouse event");
+            event.set_action(action).set_button(Some(mouse::Button::Left)).set_position(position);
+            encoder.set_any_button_pressed(pressed);
+            let mut bytes = Vec::new();
+            if encoder.encode_to_vec(&event, &mut bytes).is_ok() && !bytes.is_empty() {
+                self.write(&bytes);
+            }
+        }
+    }
+
     pub fn keys(&mut self, specs: &[&str]) {
         for s in specs {
             self.key(s);

@@ -192,6 +192,8 @@ pub struct Session {
     /// The pane under the pointer, and the one holding a pressed button.
     hovered: Option<PaneId>,
     captured: Option<PaneId>,
+    /// The pressed button only switched the focus.
+    focus_click: bool,
     /// Solid images (background, borders) by size and colour.
     solids: HashMap<(u32, u32, [u8; 4]), ImageKey>,
     complete: bool,
@@ -221,6 +223,7 @@ impl Session {
             effects: Vec::new(),
             hovered: None,
             captured: None,
+            focus_click: false,
             solids: HashMap::new(),
             complete: false,
             error: None,
@@ -741,11 +744,21 @@ impl Session {
                 if let Some(p) = under
                     && p != self.focus
                 {
+                    // A click on another pane only focuses it: the press, its
+                    // drags and its release stay out of the pane (a program
+                    // there would act on a click meant to switch panes).
                     self.set_focus(p);
-                    out = Outcome::Redraw;
+                    self.focus_click = true;
+                    return Outcome::Redraw;
                 }
             }
-            MouseEventKind::Release(_) => self.captured = None,
+            MouseEventKind::Release(_) => {
+                self.captured = None;
+                if std::mem::take(&mut self.focus_click) {
+                    return out;
+                }
+            }
+            MouseEventKind::Drag(_) if self.focus_click => return out,
             _ => {}
         }
         let Some(id) = target else { return out };
