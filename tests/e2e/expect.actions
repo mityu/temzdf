@@ -9,29 +9,29 @@ expect start ""
 # One key at a time: quick repeats accelerate scrolling (flick), which the
 # headless renderer (it lets each key's animation settle) does not reproduce.
 for _ in 1 2 3; do keys j; pause 0.6; done
-expect scrolled "j j j"
+expect scrolled "jjj"
 keys plus
 pause 0.3
 keys plus
 pause 1.5
-expect zoomed "j j j + +"
+expect zoomed "jjj++"
 keys 0
 pause 1
-expect fit "j j j + + 0"
+expect fit "jjj++0"
 keys 2 shift+g
 pause 1.5
-expect page2 "j j j + + 0 2 G"
+expect page2 "jjj++02G"
 keys slash
 type needle
 keys Return
 pause 1
-expect search "j j j + + 0 2 G / n e e d l e Enter"
+expect search "jjj++02G/needle<CR>"
 keys n
 pause 1
-expect next "j j j + + 0 2 G / n e e d l e Enter n"
+expect next "jjj++02G/needle<CR>n"
 # Apart: with legacy key encoding (tmux) ESC followed quickly by Tab reads as Alt+Tab.
 keys Escape
 pause 0.3
 keys Tab
 pause 1
-expect sidebar "j j j + + 0 2 G / n e e d l e Enter n Esc Tab"
+expect sidebar "jjj++02G/needle<CR>n<Esc><Tab>"

@@ -60,7 +60,8 @@ struct Cli {
     /// or config.js).
     #[arg(long, global = true)]
     clean: bool,
-    /// For --render-frame: keys to press first, e.g. "Tab j Enter" (see headless.rs).
+    /// For --render-frame: keys to press first, in Vim's feedkeys notation, e.g.
+    /// "<Tab>jj<CR>" (see headless.rs).
     #[arg(long, value_name = "KEYS")]
     keys: Option<String>,
     /// For --render-frame: blend translucent layers in linear light like kitty

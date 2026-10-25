@@ -109,9 +109,10 @@ impl std::fmt::Display for ScriptError {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ToHost {
-    /// Evaluate the configuration; answered by [`FromHost::Ready`].
+    /// Evaluate the shipped defaults, then the user's configuration (none
+    /// with `--clean`); answered by [`FromHost::Ready`].
     Load {
-        config: PathBuf,
+        config: Option<PathBuf>,
         commands: Vec<CommandSpec>,
     },
     /// Run a registered function; answered by [`FromHost::Done`].
@@ -170,12 +171,6 @@ pub enum HostOp {
         func: FuncId,
         nested: bool,
     },
-    /// Run `func` for the session prefix followed by `key` (provisional,
-    /// until modes and mappings replace the fixed prefix).
-    PrefixMap {
-        key: String,
-        func: FuncId,
-    },
     /// Create a mode, or change a mode's properties (`None` keeps them).
     DefineMode {
         name: String,
@@ -232,7 +227,7 @@ mod tests {
         assert_eq!(v.get("pane").and_then(ScriptValue::as_num), Some(3.0));
         round_trip(&ToHost::Call { id: 7, func: 2, args: vec![v.clone()] });
         round_trip(&ToHost::Load {
-            config: "config.ts".into(),
+            config: Some("config.ts".into()),
             commands: vec![CommandSpec { name: "split".into(), doc: "split right|down".into(), ts: "(): void".into() }],
         });
         round_trip(&FromHost::Request {

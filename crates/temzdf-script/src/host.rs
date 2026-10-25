@@ -24,10 +24,13 @@ use temzdf_protocol::script::{
 };
 
 const PRELUDE: &str = include_str!("prelude.js");
+/// The shipped default configuration, loaded before the user's.
+const DEFAULTS: &str = include_str!("../runtime/defaults.ts");
+const DEFAULTS_NAME: &str = "temzdf:defaults";
 /// What `import ... from "temzdf"` gets.
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
      export const cmd = t.cmd, action = t.action, on = t.on, map = t.map, unmap = t.unmap, defineMode = t.defineMode,\n\
-     o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, prefixMap = t.prefixMap, dispatch = t.dispatch,\n\
+     o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, dispatch = t.dispatch,\n\
      atomic = t.atomic;\n\
      export default t;\n";
 
@@ -85,7 +88,7 @@ pub fn run(input: impl Read + Send + 'static, output: impl Write + 'static) -> R
         match st.rx.recv_timeout(timeout) {
             Ok(ToHost::Load { config, commands }) => {
                 *st.commands.borrow_mut() = commands;
-                let result = context.with(|ctx| load_config(&ctx, &st, &config));
+                let result = context.with(|ctx| load_config(&ctx, &st, config.as_deref()));
                 st.send(&FromHost::Ready(result));
             }
             Ok(ToHost::Call { id, func, args }) => context.with(|ctx| run_call(&ctx, &st, id, func, args)),
@@ -253,7 +256,6 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
             func: func(),
             nested: payload.get("nested").and_then(|v| v.as_bool()).unwrap_or(false),
         },
-        "prefixMap" => HostOp::PrefixMap { key: text("key"), func: func() },
         "defineMode" => HostOp::DefineMode {
             name: text("name"),
             inherit: payload.get("inherit").and_then(|v| v.as_str()).map(str::to_owned),
@@ -352,32 +354,39 @@ fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {
     }
 }
 
-/// Evaluate the configuration. Its top level only registers things; a
-/// top-level `await` that does not settle at once is an error.
-fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: &Path) -> Result<(), ScriptError> {
-    let name = path.display().to_string();
-    let source = read_module(path).map_err(ScriptError::new)?;
+/// Evaluate the shipped defaults, then the configuration at `path`.
+fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: Option<&Path>) -> Result<(), ScriptError> {
     st.tokens.borrow_mut().push(Token::Load);
     let result = (|| {
         let fill: Function = ctx.globals().get("__temzdfLoad").map_err(|e| error_of(ctx, e))?;
         fill.call::<_, ()>(()).map_err(|e| error_of(ctx, e))?;
-        let promise = Module::evaluate(ctx.clone(), name.clone(), source).map_err(|e| error_of(ctx, e))?;
-        while ctx.execute_pending_job() {}
-        match promise.state() {
-            PromiseState::Resolved => Ok(()),
-            PromiseState::Rejected => Err(promise
-                .result::<Value>()
-                .and_then(|r| r.err())
-                .map_or_else(|| ScriptError::new("failed"), |e| error_of(ctx, e))),
-            PromiseState::Pending => Err(ScriptError::new(format!(
-                "{name}: the configuration waits at its top level (`await`); \
-                 start asynchronous work with dispatch() instead"
-            ))),
-        }
+        let defaults = crate::strip::strip(DEFAULTS_NAME, DEFAULTS).map_err(ScriptError::new)?;
+        evaluate(ctx, DEFAULTS_NAME, defaults)?;
+        let Some(path) = path else { return Ok(()) };
+        let source = read_module(path).map_err(ScriptError::new)?;
+        evaluate(ctx, &path.display().to_string(), source)
     })();
     st.tokens.borrow_mut().pop();
     st.interrupt.store(false, Ordering::SeqCst);
     result
+}
+
+/// Evaluate one module. Its top level only registers things; a top-level
+/// `await` that does not settle at once is an error.
+fn evaluate(ctx: &Ctx<'_>, name: &str, source: String) -> Result<(), ScriptError> {
+    let promise = Module::evaluate(ctx.clone(), name.to_owned(), source).map_err(|e| error_of(ctx, e))?;
+    while ctx.execute_pending_job() {}
+    match promise.state() {
+        PromiseState::Resolved => Ok(()),
+        PromiseState::Rejected => Err(promise
+            .result::<Value>()
+            .and_then(|r| r.err())
+            .map_or_else(|| ScriptError::new("failed"), |e| error_of(ctx, e))),
+        PromiseState::Pending => Err(ScriptError::new(format!(
+            "{name}: the configuration waits at its top level (`await`); \
+             start asynchronous work with dispatch() instead"
+        ))),
+    }
 }
 
 /// A module's JavaScript: TypeScript is stripped of its types.

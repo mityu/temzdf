@@ -239,14 +239,16 @@ impl Term {
     }
 
     /// Run `argv` inside a private tmux server (passthrough on, no status
-    /// line), shown in this terminal.
+    /// line, no prefix key: every key reaches `argv`), shown in this
+    /// terminal.
     pub fn inside_tmux(argv: &[&str], opts: &Options) -> Self {
         static N: AtomicU32 = AtomicU32::new(0);
         let socket = format!("tuitest-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
         let conf = std::env::temp_dir().join(format!("{socket}.conf"));
         std::fs::write(
             &conf,
-            "set -g allow-passthrough on\nset -g status off\nset -sg escape-time 0\nset -g default-terminal tmux-256color\n",
+            "set -g allow-passthrough on\nset -g status off\nset -sg escape-time 0\nset -g default-terminal tmux-256color\n\
+             set -g prefix None\nset -g prefix2 None\nunbind C-b\n",
         )
         .expect("tmux configuration");
         let mut full: Vec<String> = vec!["tmux".into(), "-L".into(), socket.clone(), "-f".into()];

@@ -119,8 +119,6 @@ declare module "temzdf" {{
   /** Start an asynchronous task without waiting for it. */
   export function dispatch(fn: (ctx: TaskContext) => Promise<void> | void): void;
   export function atomic<T>(fn: () => T): T;
-  /** Provisional: map `key` after the session prefix. */
-  export function prefixMap(key: string, fn: (ctx: MapContext) => void): void;
 }}
 "#
     )

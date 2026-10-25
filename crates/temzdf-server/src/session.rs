@@ -13,7 +13,6 @@ use temzdf_pdfcore::doc_cache::Need;
 use temzdf_pdfcore::workers::DocEvent;
 use temzdf_pdfview::document::Document;
 use temzdf_pdfview::host::{DocumentHost, Forward, HostOptions, Opening};
-use temzdf_pdfview::keys::Keymap;
 use temzdf_pdfview::pane::{self, PdfPane};
 use temzdf_pdfview::viewer::StandIn;
 use temzdf_scene::{CursorShape, Effect, Frame, Hints, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
@@ -24,7 +23,7 @@ use termpix_core::scroll::ScrollConfig;
 
 use crate::action::{Action, PaneSpec};
 use crate::forward::{self, ForwardRequest};
-use crate::keymap::{Act, Entry, History, Matcher, Modes, Step, Stroke, Target, Unmapped, notation};
+use crate::keymap::{History, Matcher, Modes, Step, Target, Unmapped};
 use crate::layout::{Layout, PaneId, Split};
 use temzdf_protocol::script::{FromHost, ScriptValue};
 
@@ -56,7 +55,6 @@ pub type EventSink = Arc<dyn Fn(SessionEvent) -> bool + Send + Sync>;
 /// How new panes and documents are set up (from the configuration).
 #[derive(Clone)]
 pub struct Settings {
-    pub keymap: Keymap,
     pub preview_delay: Option<Duration>,
     pub anchor_by_text: bool,
     pub scroll: ScrollConfig,
@@ -230,7 +228,7 @@ pub struct Session {
 
 impl Session {
     pub fn new(name: String, geometry: Geometry, hints: Hints, settings: Settings, events: EventSink) -> Self {
-        let modes = default_modes(&settings.keymap);
+        let modes = builtin_modes();
         Self {
             name,
             images: Images::new(),
@@ -392,7 +390,6 @@ impl Session {
         let entry = self.docs.get_mut(&doc)?;
         let host = entry.host.as_mut()?;
         let mut pane = PdfPane::with_document(entry.name.clone(), host.info.clone(), host.doc.clone(), self.geometry);
-        pane.keymap = self.settings.keymap.clone();
         pane.preview_delay = self.settings.preview_delay;
         pane.anchor_by_text = self.settings.anchor_by_text;
         pane.viewer.scroll_x.config = self.settings.scroll;
@@ -1117,10 +1114,10 @@ impl Session {
     }
 }
 
-/// The built-in modes and, until the shipped JavaScript defaults take over,
-/// their default mappings: `normal` (operating), `terminal` (pass-through)
-/// and `pdf` (`keymap`'s page-view keys). `<C-s>` enters `normal`.
-fn default_modes(keymap: &Keymap) -> Modes<Target> {
+/// The built-in modes, without mappings (the shipped JavaScript defaults,
+/// `crates/temzdf-script/runtime/defaults.ts`, map them): `normal`
+/// (operating), `terminal` (pass-through) and `pdf`.
+fn builtin_modes() -> Modes<Target> {
     let mut m = Modes::default();
     for (name, unmapped, count) in
         [("normal", Unmapped::Drop, true), ("terminal", Unmapped::Passthrough, false), ("pdf", Unmapped::Drop, true)]
@@ -1129,53 +1126,47 @@ fn default_modes(keymap: &Keymap) -> Modes<Target> {
         d.unmapped = Some(unmapped);
         d.count = Some(count);
     }
-    let keys = |s: &str| notation::parse(s).expect("default keys");
-    let acts = |v: &[(&str, &[&str])]| {
-        Target::Actions(
-            v.iter().map(|(n, a)| Act::new(n, a.iter().map(|s| ScriptValue::Str((*s).into())).collect())).collect(),
-        )
-    };
-    for (lhs, target) in [
-        ("%", acts(&[("split", &["right"])])),
-        ("\"", acts(&[("split", &["bottom"])])),
-        ("h", acts(&[("move-focus", &["left"])])),
-        ("<Left>", acts(&[("move-focus", &["left"])])),
-        ("j", acts(&[("move-focus", &["down"])])),
-        ("<Down>", acts(&[("move-focus", &["down"])])),
-        ("k", acts(&[("move-focus", &["up"])])),
-        ("<Up>", acts(&[("move-focus", &["up"])])),
-        ("l", acts(&[("move-focus", &["right"])])),
-        ("<Right>", acts(&[("move-focus", &["right"])])),
-        ("o", acts(&[("focus-next-pane", &[])])),
-        ("x", acts(&[("close-pane", &[])])),
-        ("d", acts(&[("detach", &[]), ("exit-mode", &[])])),
-        // The prefix twice sends it to the pane.
-        ("<C-s>", acts(&[("exit-mode", &[]), ("feedkeys", &["<C-s>"])])),
-        ("<Esc>", acts(&[("exit-mode", &[])])),
-    ] {
-        m.map("normal", keys(lhs), target, false, None);
-    }
-    // feedkeys from <C-s><C-s> must not map again.
-    if let Some(Entry::Map { target: Target::Actions(a), .. }) = m.define("normal").maps.get_mut(&keys("<C-s>")) {
-        a[1].args.push(ScriptValue::Bool(false));
-    }
-    for mode in ["terminal", "pdf"] {
-        m.map(mode, keys("<C-s>"), acts(&[("switch-mode", &["normal"])]), false, None);
-    }
-    for (key, cmd) in keymap.bindings() {
-        let stroke = Stroke::of(&key.event());
-        // <C-c> is reserved (it cancels and interrupts).
-        if stroke == keys("<C-c>")[0] {
-            continue;
-        }
-        m.map("pdf", vec![stroke], Target::Actions(vec![Act::new(cmd.name(), vec![])]), false, None);
-    }
     m
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keymap::{Act, Stroke, notation};
+    use temzdf_pdfview::keys::Keymap;
+
+    /// What the shipped defaults (runtime/defaults.ts) map, for sessions
+    /// without a script host.
+    fn default_mappings(m: &mut Modes<Target>) {
+        let keys = |s: &str| notation::parse(s).expect("keys");
+        let acts =
+            |v: &[(&str, &[ScriptValue])]| Target::Actions(v.iter().map(|(n, a)| Act::new(n, a.to_vec())).collect());
+        let s = |x: &str| ScriptValue::Str(x.into());
+        for (lhs, target) in [
+            ("%", acts(&[("split", &[s("right")])])),
+            ("\"", acts(&[("split", &[s("bottom")])])),
+            ("h", acts(&[("move-focus", &[s("left")])])),
+            ("j", acts(&[("move-focus", &[s("down")])])),
+            ("k", acts(&[("move-focus", &[s("up")])])),
+            ("l", acts(&[("move-focus", &[s("right")])])),
+            ("o", acts(&[("focus-next-pane", &[])])),
+            ("x", acts(&[("close-pane", &[])])),
+            ("d", acts(&[("detach", &[]), ("exit-mode", &[])])),
+            ("<C-b>", acts(&[("exit-mode", &[]), ("feedkeys", &[s("<C-b>"), ScriptValue::Bool(false)])])),
+            ("<Esc>", acts(&[("exit-mode", &[])])),
+        ] {
+            m.map("normal", keys(lhs), target, false, None);
+        }
+        for mode in ["terminal", "pdf"] {
+            m.map(mode, keys("<C-b>"), acts(&[("switch-mode", &[s("normal")])]), false, None);
+        }
+        for (key, cmd) in Keymap::default().bindings() {
+            let stroke = Stroke::of(&key.event());
+            if stroke != keys("<C-c>")[0] {
+                m.map("pdf", vec![stroke], Target::Actions(vec![Act::new(cmd.name(), vec![])]), false, None);
+            }
+        }
+    }
     use std::sync::mpsc::{self, Receiver};
     use temzdf_pdfcore::doc_cache::TileKey;
     use temzdf_pdfcore::pdf;
@@ -1189,7 +1180,6 @@ mod tests {
         let tx = std::sync::Mutex::new(tx);
         let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
         let settings = Settings {
-            keymap: Keymap::default(),
             preview_delay: None,
             anchor_by_text: false,
             scroll: ScrollConfig::default(),
@@ -1198,6 +1188,7 @@ mod tests {
             script: None,
         };
         let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
+        default_mappings(&mut s.modes);
         s.open(&pdf::fixture("sample.pdf")).unwrap();
         while s.is_starting() {
             let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();
@@ -1244,22 +1235,22 @@ mod tests {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
         let first = s.focus();
-        assert_eq!(key(&mut s, "<C-s>"), Outcome::Redraw, "the normal mode");
+        assert_eq!(key(&mut s, "<C-b>"), Outcome::Redraw, "the normal mode");
         assert_eq!(s.current_mode(), "normal");
         assert_eq!(key(&mut s, "%"), Outcome::Redraw);
         assert_eq!(s.pane_count(), 2);
         let second = s.focus();
         assert_ne!(first, second, "the new pane has the focus");
-        key(&mut s, "<C-s>");
+        key(&mut s, "<C-b>");
         key(&mut s, "h");
         assert_eq!(s.focus(), first);
         // A click on the right half focuses the pane there.
         click(&mut s, 700, 200);
         assert_eq!(s.focus(), second);
-        key(&mut s, "<C-s>");
+        key(&mut s, "<C-b>");
         assert_eq!(key(&mut s, "x"), Outcome::Redraw);
         assert_eq!((s.pane_count(), s.focus()), (1, first));
-        key(&mut s, "<C-s>");
+        key(&mut s, "<C-b>");
         assert_eq!(key(&mut s, "d"), Outcome::Detach);
         assert_eq!(key(&mut s, "q"), Outcome::Quit, "quitting the last pane ends the session");
     }
@@ -1324,7 +1315,6 @@ mod tests {
         let tx = std::sync::Mutex::new(tx);
         let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
         let settings = Settings {
-            keymap: Keymap::default(),
             preview_delay: None,
             anchor_by_text: false,
             scroll: ScrollConfig::default(),
@@ -1399,7 +1389,6 @@ mod tests {
         let tx = std::sync::Mutex::new(tx);
         let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
         let settings = Settings {
-            keymap: Keymap::default(),
             preview_delay: None,
             anchor_by_text: false,
             scroll: ScrollConfig::default(),
@@ -1408,6 +1397,7 @@ mod tests {
             script: None,
         };
         let mut s = Session::new("term".into(), GEOMETRY, Hints::default(), settings, sink);
+        default_mappings(&mut s.modes);
         let spec = PaneSpec::Command(argv.iter().map(|a| a.to_string()).collect());
         s.new_pane(&spec, None).unwrap();
         (s, rx)
@@ -1451,15 +1441,18 @@ mod tests {
 
     #[test]
     fn terminal_panes_show_output_take_keys_and_close_when_the_program_exits() {
-        let (mut s, rx) =
-            terminal_session(&["sh", "-c", "stty -echo -ixon; echo ready; read l; echo \"got:$l\"; read l"]);
+        let (mut s, rx) = terminal_session(&[
+            "sh",
+            "-c",
+            "stty -echo -ixon; echo ready; read l; echo \"got:$(printf %s \"$l\" | od -An -tx1 | tr -d ' ')\"; read l",
+        ]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
-        // C-s C-s sends C-s itself (with flow control off, a plain character).
-        key(&mut s, "<C-s>");
-        key(&mut s, "<C-s>");
+        // The prefix twice sends it itself.
+        key(&mut s, "<C-b>");
+        key(&mut s, "<C-b>");
         key(&mut s, "a<CR>");
         let (_, rows) = wait_text(&mut s, &rx, |r| r[1].starts_with("got:"));
-        assert_eq!(rows[1], "got:\u{13}a");
+        assert_eq!(rows[1], "got:0261", "C-b (0x02), then a");
         assert!(s.frame().cursor.is_some());
         key(&mut s, "<CR>");
         let (outcome, _) = wait_text(&mut s, &rx, |_| false);
@@ -1473,7 +1466,7 @@ mod tests {
         // SHELL decides what the split runs.
         // SAFETY: tests in this module do not read SHELL concurrently.
         unsafe { std::env::set_var("SHELL", "/bin/sh") };
-        key(&mut s, "<C-s>");
+        key(&mut s, "<C-b>");
         assert_eq!(key(&mut s, "%"), Outcome::Redraw);
         assert_eq!(s.pane_count(), 2);
         for c in "echo right-$((40+2))".chars() {
@@ -1486,7 +1479,7 @@ mod tests {
         let line = rows.iter().find(|l| l.contains("right-42")).unwrap();
         assert!(line.find("right-42").unwrap() >= 45, "{line:?}");
         // Closing it gives the first pane the whole screen again.
-        key(&mut s, "<C-s>");
+        key(&mut s, "<C-b>");
         key(&mut s, "x");
         assert_eq!(s.pane_count(), 1);
         // A bigger window: the pane (and its program's pty) grows with it.

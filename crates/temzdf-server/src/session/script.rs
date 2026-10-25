@@ -30,7 +30,8 @@ use crate::action::PaneSpec;
 pub struct ScriptSettings {
     /// The host program and its arguments (`temzdf script-host`).
     pub command: Vec<String>,
-    pub config: PathBuf,
+    /// The user's configuration (`None` with `--clean`: the shipped defaults only).
+    pub config: Option<PathBuf>,
 }
 
 /// How long startup (and a reload) waits for the configuration.
@@ -197,7 +198,7 @@ impl Session {
         let mut out = self.drop_host();
         self.script.hooks.clear();
         // Mappings start over too (the configuration registers them again).
-        self.modes = super::default_modes(&self.settings.keymap);
+        self.modes = super::builtin_modes();
         if !self.spawn_host(&s) {
             let e = self.script.startup_error.take().unwrap_or_else(|| "cannot start the script host".into());
             anyhow::bail!(e);
@@ -605,14 +606,6 @@ impl Session {
                 self.script.hooks.entry(event).or_default().push(Hook { func, nested });
                 (Ok(ScriptValue::Null), Outcome::None)
             }
-            // Provisional: keys after the prefix are keys of the `normal` mode.
-            HostOp::PrefixMap { key, func } => match crate::keymap::notation::parse(&key) {
-                Ok(k) => {
-                    self.modes.map("normal", k, crate::keymap::Target::Func(func), false, None);
-                    (Ok(ScriptValue::Null), Outcome::None)
-                }
-                Err(e) => (Err(format!("{e:#}")), Outcome::None),
-            },
             HostOp::DefineMode { name, inherit, unmapped, count } => {
                 let unmapped = match unmapped.as_deref() {
                     None => None,

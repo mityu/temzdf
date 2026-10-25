@@ -23,8 +23,8 @@
 #   pause SECONDS
 #   expect NAME [KEYS] save OUTDIR/NAME.png and compare it with the screen
 #                      `temzdf --render-frame` draws for the same geometry after
-#                      KEYS (headless notation, e.g. "3 G" or "/ n e e d l e
-#                      Enter"; the whole sequence since startup). Only for
+#                      KEYS (Vim feedkeys notation, e.g. "3G" or
+#                      "/needle<CR>"; the whole sequence since startup). Only for
 #                      COMMAND = temzdf [--page N] [--scale S] FILE (possibly
 #                      after `env VAR=...`), key-driven scenarios (mouse actions
 #                      have no headless equivalent) and terminals drawing from

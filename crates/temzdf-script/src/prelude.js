@@ -128,10 +128,6 @@
     on(event, fn, options = {}) {
       request(current(), "on", { event, func: register(fn, `on(${event})`), nested: !!options.nested });
     },
-    // Provisional: run `fn` for the session prefix followed by `key`.
-    prefixMap(key, fn) {
-      request(current(), "prefixMap", { key, func: register(fn, `prefixMap(${key})`) });
-    },
     // Start an asynchronous task without waiting for it. It issues commands
     // through its `ctx`.
     dispatch(fn) {

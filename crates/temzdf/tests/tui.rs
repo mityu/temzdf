@@ -157,7 +157,7 @@ fn detaching_and_attaching_again_keeps_the_shell() {
     t.wait_for("the prompt", prompt);
     t.type_text("echo marker-1\n");
     t.wait_text("marker-1");
-    t.keys(&["C-s", "d"]);
+    t.keys(&["C-b", "d"]);
     t.wait_text("[detached from session d]");
     assert_eq!(t.wait_exit(), 0);
 
@@ -182,7 +182,7 @@ fn splitting_a_terminal_and_opening_a_pdf_beside_it() {
     t.type_text("echo left-pane\n");
     t.wait_text("left-pane");
     // A new shell on the right half (100 columns: 49 + border + 50).
-    t.keys(&["C-s", "%"]);
+    t.keys(&["C-b", "%"]);
     t.wait_for("a prompt in the right pane", |s| is_prompt(&s.row_from(0, 50)));
     t.type_text("echo right-$((1+1))\n");
     let s = t.wait_for("output in the right pane", |s| s.row_from(1, 50) == "right-2");
@@ -236,7 +236,7 @@ fn inside_tmux() {
     t.wait_text("in-6");
     assert!(t.capture_pane().contains("in-6"), "tmux sees the same:\n{}", t.capture_pane());
     // The prefix reaches temzdf through tmux.
-    t.keys(&["C-s", "%"]);
+    t.keys(&["C-b", "%"]);
     t.wait_for("a second pane", |s| is_prompt(&s.row_from(0, 50)));
     let pdf = fixture("sample.pdf");
     env.run(&["action", "-s", "x", "new-pane", &pdf.display().to_string()]);
@@ -246,13 +246,13 @@ fn inside_tmux() {
 }
 
 #[test]
-fn a_prefix_mapping_from_a_typescript_configuration() {
+fn a_mapping_from_a_typescript_configuration() {
     let env = Env::new("script-map");
     env.config(
         "config.ts",
-        r#"import { cmd, prefixMap } from "temzdf";
+        r#"import { cmd, map } from "temzdf";
 const label: string = "mapped";
-prefixMap("t", (): void => {
+map("normal", "t", (): void => {
   cmd.split("right");
   cmd.sendText(`echo ${label}-$((40+2))\n`);
 });
@@ -260,7 +260,7 @@ prefixMap("t", (): void => {
     );
     let mut t = Term::spawn(&[BIN, "-s", "m"], &env.options());
     t.wait_for("the prompt", prompt);
-    t.keys(&["C-s", "t"]);
+    t.keys(&["C-b", "t"]);
     t.wait_for("the mapping's command in the new pane", |s| {
         (0..s.cells.len() as u16).any(|r| s.row_from(r, 50) == "mapped-42")
     });
@@ -281,11 +281,11 @@ on("PaneClosed", (id) => console.log(`closed ${id}`));
     let mut t = Term::spawn(&[BIN, "-s", "h"], &env.options());
     t.wait_for("the prompt", prompt);
     env.wait_log("h", "ready", |l| l.contains("[log]: ready"));
-    t.keys(&["C-s", "%"]);
+    t.keys(&["C-b", "%"]);
     env.wait_log("h", "the second pane", |l| l.contains("opened 2"));
     // Closing it: the "before" hook runs first; the pane its split creates
     // fires no PaneOpened (events inside hooks only reach nested hooks).
-    t.keys(&["C-s", "x"]);
+    t.keys(&["C-b", "x"]);
     env.wait_log("h", "the close", |l| l.contains("closed 2"));
     let lines = env.script_lines("h");
     assert_eq!(lines, ["opened 1 terminal", "ready", "opened 2 terminal", "pre 2", "closed 2"], "{lines:?}");
@@ -296,10 +296,10 @@ on("PaneClosed", (id) => console.log(`closed ${id}`));
 #[test]
 fn ctrl_c_interrupts_a_runaway_mapping() {
     let env = Env::new("script-interrupt");
-    env.config("config.js", "import { prefixMap } from \"temzdf\";\nprefixMap(\"l\", () => { for (;;) {} });\n");
+    env.config("config.js", "import { map } from \"temzdf\";\nmap(\"normal\", \"l\", () => { for (;;) {} });\n");
     let mut t = Term::spawn(&[BIN, "-s", "i"], &env.options());
     t.wait_for("the prompt", prompt);
-    t.keys(&["C-s", "l"]);
+    t.keys(&["C-b", "l"]);
     std::thread::sleep(std::time::Duration::from_millis(300));
     // While it runs, input is held; `temzdf action` waits too and times out.
     t.type_text("echo lost\n");
@@ -360,13 +360,13 @@ fn reload_config_registers_again_and_the_session_survives_the_host() {
     let env = Env::new("script-reload");
     env.config(
         "config.js",
-        "import { cmd, prefixMap } from \"temzdf\";\nconsole.log(\"loaded\");\nprefixMap(\"e\", () => cmd.sendText(\"echo mapped\\n\"));\n",
+        "import { cmd, map } from \"temzdf\";\nconsole.log(\"loaded\");\nmap(\"normal\", \"e\", () => cmd.sendText(\"echo mapped\\n\"));\n",
     );
     let mut t = Term::spawn(&[BIN, "-s", "r"], &env.options());
     t.wait_for("the prompt", prompt);
     env.run(&["action", "-s", "r", "reload-config"]);
     env.wait_log("r", "the second load", |l| l.matches("[log]: loaded").count() == 2);
-    t.keys(&["C-s", "e"]);
+    t.keys(&["C-b", "e"]);
     t.wait_text("mapped");
     t.key("Esc");
     // Kill the host: the session goes on without scripts.
@@ -401,7 +401,7 @@ fn a_click_on_another_pane_only_focuses_it() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     t.wait_for("the tracking program", |s| s.row_from(0, 50).starts_with("tracking"));
     // Focus back to the shell, then click the program's pane: only focus.
-    t.keys(&["C-s", "h"]);
+    t.keys(&["C-b", "h"]);
     t.click(70, 10);
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(!t.screen().row_from(1, 50).contains('['), "the focusing click reached the program");

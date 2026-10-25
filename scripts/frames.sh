@@ -16,25 +16,25 @@ if [[ -z "${IN_NIX_SHELL:-}" ]]; then
   exec nix develop --quiet -c "$0" "$@" 2> >(grep -v "Git tree .* is dirty" >&2)
 fi
 
-# name | options after the PDF | keys pressed first (headless notation)
+# name | options after the PDF | keys pressed first (Vim feedkeys notation)
 scenarios=(
   "start||"
   "page2|--page 2|"
   "zoomed|--scale 2.5|"
   "small-cells|--size 80x24 --cell 8x16|"
-  "scroll||j j j j j"
+  "scroll||jjjjj"
   "half-page||d"
   "last-page||G"
-  "zoom-in||+ +"
-  "zoom-out||- - -"
-  "pan-right|--scale 3|l l l"
-  "sidebar||Tab"
-  "sidebar-move||Tab j j"
-  "sidebar-jump||Tab j j Enter"
-  "search-prompt||/ n e e"
-  "search||/ n e e d l e Enter"
-  "search-next||/ n e e d l e Enter n n"
-  "history||G C-o"
+  "zoom-in||++"
+  "zoom-out||---"
+  "pan-right|--scale 3|lll"
+  "sidebar||<Tab>"
+  "sidebar-move||<Tab>jj"
+  "sidebar-jump||<Tab>jj<CR>"
+  "search-prompt||/nee"
+  "search||/needle<CR>"
+  "search-next||/needle<CR>nn"
+  "history||G<C-o>"
 )
 
 render() {

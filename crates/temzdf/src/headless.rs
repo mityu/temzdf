@@ -20,24 +20,24 @@ use termpix::graphics::Medium;
 use termpix::input::KeyEvent;
 use termpix::mock::MockTerminal;
 
-use crate::keys::{Key, Keymap};
-
 pub struct FrameOptions {
     pub geometry: Geometry,
     /// 0-based page to scroll to.
     pub page: Option<usize>,
     /// Zoom (pixels per point); fit width when `None`.
     pub scale: Option<f32>,
-    /// Keys to press before rendering, space separated (see [`parse_keys`]).
+    /// Keys to press before rendering (see [`parse_keys`]).
     pub keys: Option<String>,
     /// Blend translucent layers in linear light (as kitty does).
     pub linear_blending: bool,
 }
 
-/// Parse a key list like `"Tab j j Enter C-f 3 G"`, in the notation of
-/// [`Key::parse`].
+/// Parse keys in Vim's `feedkeys` notation (`jjj++02G/needle<CR>`).
 pub fn parse_keys(spec: &str) -> Result<Vec<KeyEvent>> {
-    spec.split_whitespace().map(|tok| Ok(Key::parse(tok)?.event())).collect()
+    if spec.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(temzdf_server::keymap::notation::parse(spec)?.into_iter().map(|k| k.event()).collect())
 }
 
 /// Longest wait for the worker threads.
@@ -49,18 +49,19 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     let (tx, rx) = mpsc::channel::<SessionEvent>();
     let tx = Mutex::new(tx);
     let sink: EventSink = Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(e).is_ok());
+    // The shipped default configuration maps the keys (no user configuration).
+    let script = crate::app::script_settings(true)?;
     let settings = Settings {
-        keymap: Keymap::default(),
         preview_delay: None,
         anchor_by_text: false,
         scroll: Default::default(),
         host: HostOptions::default(),
         serve_forward: false,
-        script: None,
+        script,
     };
     // A Layered terminal over inline transfers, like the mock terminal.
     let mut session = Session::new(name, opts.geometry, Hints::default(), settings, sink);
-    session.open(pdf_path)?;
+    session.start(temzdf_server::action::PaneSpec::Pdf(pdf_path.to_owned()), None)?;
     // Simulated clock, so animations started by keys settle deterministically.
     let mut now = Instant::now();
     while session.is_starting() {

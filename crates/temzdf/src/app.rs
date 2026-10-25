@@ -41,20 +41,16 @@ pub enum AppEvent {
 }
 
 /// Session settings from the configuration.
-/// How the session runs the configuration script: none with `--clean` or
-/// when there is no `config.ts`/`config.js`.
+/// How the session runs the script host: the shipped defaults, then
+/// `config.ts`/`config.js` unless `clean`.
 pub fn script_settings(clean: bool) -> Result<Option<ScriptSettings>> {
-    if clean {
-        return Ok(None);
-    }
-    let Some(config) = crate::config::script_path()? else { return Ok(None) };
+    let config = if clean { None } else { crate::config::script_path()? };
     let exe = std::env::current_exe()?.display().to_string();
     Ok(Some(ScriptSettings { command: vec![exe, "script-host".into()], config }))
 }
 
 pub fn settings(config: &Config, serve_forward: bool, script: Option<ScriptSettings>) -> Result<Settings> {
     Ok(Settings {
-        keymap: config.keymap()?,
         preview_delay: config.links.preview_delay(),
         anchor_by_text: config.reload.anchor == ReloadAnchor::Text,
         scroll: config.scroll.to_termpix(),

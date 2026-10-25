@@ -7,7 +7,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use temzdf_protocol::script::{CommandSpec, FromHost, HostOp, ScriptValue, ToHost, Token};
+use temzdf_protocol::script::{CommandSpec, FromHost, HostOp, MapRhs, ScriptValue, ToHost, Token};
 
 struct Session {
     to_host: UnixStream,
@@ -41,10 +41,10 @@ impl Session {
     }
 
     fn load(&mut self, file: &str) {
-        let config = self.dir.join(file);
-        let commands = ["split", "new-pane", "message"]
-            .iter()
-            .map(|n| CommandSpec { name: n.to_string(), doc: String::new(), ts: "(...args: unknown[]): void".into() })
+        let config = Some(self.dir.join(file));
+        let commands = command_names()
+            .into_iter()
+            .map(|name| CommandSpec { name, doc: String::new(), ts: "(...args: unknown[]): void".into() })
             .collect();
         self.send(ToHost::Load { config, commands });
     }
@@ -54,7 +54,10 @@ impl Session {
         loop {
             match self.recv() {
                 FromHost::Request { req, token, op } => {
-                    log.push(describe(token, &op));
+                    let d = describe(token, &op);
+                    if !d.is_empty() {
+                        log.push(d);
+                    }
                     self.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
                 }
                 other => return other,
@@ -68,6 +71,24 @@ impl Drop for Session {
         let _ = temzdf_protocol::send(&mut self.to_host, &ToHost::Shutdown);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// The commands the tests use, and those the shipped defaults use (every
+/// `action.fooBar(` in runtime/defaults.ts, as `foo-bar`).
+fn command_names() -> Vec<String> {
+    let mut names: Vec<String> = ["split", "new-pane", "message"].iter().map(|s| s.to_string()).collect();
+    let defaults = include_str!("../runtime/defaults.ts");
+    for part in defaults.split("action.").skip(1) {
+        let camel: String = part.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+        let kebab: String = camel
+            .chars()
+            .map(|c| if c.is_ascii_uppercase() { format!("-{}", c.to_ascii_lowercase()) } else { c.to_string() })
+            .collect();
+        if !names.contains(&kebab) {
+            names.push(kebab);
+        }
+    }
+    names
 }
 
 fn describe(token: Token, op: &HostOp) -> String {
@@ -88,7 +109,9 @@ fn describe(token: Token, op: &HostOp) -> String {
             format!("{t} {name}({})", args.join(","))
         }
         HostOp::On { event, func, nested } => format!("{t} on {event} f{func} nested={nested}"),
-        HostOp::PrefixMap { key, func } => format!("{t} prefix {key} f{func}"),
+        HostOp::Map { modes, keys, rhs: MapRhs::Func(f), .. } => format!("{t} map {} {keys} f{f}", modes.join(",")),
+        // The shipped defaults map actions; leave them out.
+        HostOp::Map { rhs: MapRhs::Actions(_), .. } => String::new(),
         other => format!("{t} {other:?}"),
     }
 }
@@ -103,11 +126,11 @@ fn ready_ok(msg: FromHost) {
 #[test]
 fn a_typescript_configuration_registers_and_runs_commands() {
     let config = r#"
-import { cmd, on, prefixMap } from "temzdf";
+import { cmd, on, map } from "temzdf";
 import { greeting } from "./lib.ts";
 const n: number = 2;
 on("PaneOpened", (pane: number) => cmd.message(`opened ${pane}`));
-prefixMap("t", () => { cmd.split("right"); cmd.newPane(); });
+map("normal", "t", () => { cmd.split("right"); cmd.newPane(); });
 cmd.message(greeting(n));
 "#;
     let lib = "export function greeting(n: number): string { return `hello ${n}`; }\n";
@@ -115,7 +138,7 @@ cmd.message(greeting(n));
     s.load("config.ts");
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
-    assert_eq!(log, ["load on PaneOpened f0 nested=false", "load prefix t f1", "load message(hello 2)"]);
+    assert_eq!(log, ["load on PaneOpened f0 nested=false", "load map normal t f1", "load message(hello 2)"]);
 
     // The prefix mapping: its commands carry its call's token.
     log.clear();
@@ -136,9 +159,9 @@ cmd.message(greeting(n));
 #[test]
 fn hooks_run_nested_inside_the_command_that_caused_them() {
     let config = r#"
-import { cmd, on, prefixMap } from "temzdf";
+import { cmd, on, map } from "temzdf";
 on("PaneOpened", () => cmd.message("hook"));
-prefixMap("s", () => { cmd.split("right"); cmd.message("after split"); });
+map("normal", "s", () => { cmd.split("right"); cmd.message("after split"); });
 "#;
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
@@ -159,10 +182,10 @@ prefixMap("s", () => { cmd.split("right"); cmd.message("after split"); });
 
 #[test]
 fn mapped_functions_must_be_synchronous_and_errors_carry_positions() {
-    let config = r#"import { prefixMap, cmd } from "temzdf";
-prefixMap("a", async () => {});
-prefixMap("b", () => { throw new Error("boom"); });
-prefixMap("c", () => cmd.message(String(1)));
+    let config = r#"import { map, cmd } from "temzdf";
+map("normal", "a", async () => {});
+map("normal", "b", () => { throw new Error("boom"); });
+map("normal", "c", () => cmd.message(String(1)));
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
     s.load("config.ts");
@@ -184,9 +207,9 @@ prefixMap("c", () => cmd.message(String(1)));
 
 #[test]
 fn an_endless_function_is_interrupted_even_if_it_catches() {
-    let config = r#"import { prefixMap, cmd } from "temzdf";
-prefixMap("l", () => { for (;;) { try { for (;;) {} } catch (e) {} } });
-prefixMap("w", () => { try { cmd.message("waits"); } catch (e) {} for (;;) {} });
+    let config = r#"import { map, cmd } from "temzdf";
+map("normal", "l", () => { for (;;) { try { for (;;) {} } catch (e) {} } });
+map("normal", "w", () => { try { cmd.message("waits"); } catch (e) {} for (;;) {} });
 "#;
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
@@ -215,15 +238,15 @@ fn top_level_await_and_syntax_errors_fail_the_load() {
         ("bare.js", "import x from \"lodash\";\n"),
     ]);
     s.load("wait.js");
-    let FromHost::Ready(Err(e)) = s.recv() else { panic!() };
+    let FromHost::Ready(Err(e)) = s.serve(&mut Vec::new()) else { panic!() };
     assert!(e.message.contains("dispatch"), "{e}");
     s.load("quick.js");
-    ready_ok(s.recv());
+    ready_ok(s.serve(&mut Vec::new()));
     s.load("enum.ts");
-    let FromHost::Ready(Err(e)) = s.recv() else { panic!() };
+    let FromHost::Ready(Err(e)) = s.serve(&mut Vec::new()) else { panic!() };
     assert!(e.message.contains("enum.ts:2:"), "{e}");
     s.load("bare.js");
-    let FromHost::Ready(Err(e)) = s.recv() else { panic!() };
+    let FromHost::Ready(Err(e)) = s.serve(&mut Vec::new()) else { panic!() };
     assert!(e.to_string().contains("only \"temzdf\" and relative paths"), "{e}");
 }
 

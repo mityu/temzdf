@@ -54,6 +54,16 @@ fn the_sample_configuration_type_checks() {
 }
 
 #[test]
+fn the_shipped_defaults_type_check() {
+    if !have_tsc() {
+        eprintln!("SKIPPED: tsc not found");
+        return;
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../temzdf-script/runtime/defaults.ts");
+    check(&[("defaults.ts", &std::fs::read_to_string(path).unwrap())]).unwrap();
+}
+
+#[test]
 fn mistakes_do_not_type_check() {
     if !have_tsc() {
         eprintln!("SKIPPED: tsc not found");
