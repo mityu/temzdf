@@ -12,7 +12,7 @@ vello_cpu = "0.3.0"
 
 [dev-dependencies]
 # Only to save snapshot PNGs in tests.
-termpix.workspace = true
+termpix-core.workspace = true
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/termpix", "crates/termpix-ui", "crates/temzdf"]
+members = ["crates/termpix-core", "crates/termpix", "crates/termpix-ui", "crates/temzdf"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ repository = "https://github.com/mityu/temzdf-cli"
 
 [workspace.dependencies]
 termpix = { path = "crates/termpix" }
+termpix-core = { path = "crates/termpix-core" }
 termpix-ui = { path = "crates/termpix-ui" }
 
 [workspace.lints.rust]

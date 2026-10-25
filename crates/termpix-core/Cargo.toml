@@ -1,0 +1,13 @@
+[package]
+name = "termpix-core"
+description = "Frontend-independent primitives shared by termpix and other frontends: geometry, RGBA raster helpers, kinetic scrolling and input event types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+png = "0.18.1"
+
+[lints]
+workspace = true

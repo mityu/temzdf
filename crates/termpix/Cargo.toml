@@ -10,9 +10,9 @@ repository.workspace = true
 base64 = "0.23.1"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 memmap2 = "0.9.12"
-png = "0.18.1"
 rustix = { version = "1.1.5", features = ["termios", "shm", "fs", "event", "stdio", "process", "mm"] }
 signal-hook = "0.4.5"
+termpix-core.workspace = true
 
 [lints]
 workspace = true

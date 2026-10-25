@@ -27,7 +27,7 @@ mod tests {
         let dark = px.as_chunks::<4>().0.iter().filter(|p| p[0] < 100).count();
         assert!(dark > 100, "text was drawn ({dark} dark pixels)");
         if let Ok(dir) = std::env::var("TERMPIX_UI_SNAPSHOT_DIR") {
-            let img = termpix::raster::RgbaImage::from_raw(320, 40, px).unwrap();
+            let img = termpix_core::raster::RgbaImage::from_raw(320, 40, px).unwrap();
             img.save_png(&std::path::Path::new(&dir).join("text.png")).unwrap();
         }
     }

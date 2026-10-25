@@ -307,7 +307,7 @@ mod tests {
 
     fn save(name: &str, w: u32, h: u32, px: Vec<u8>) {
         if let Ok(dir) = std::env::var("TERMPIX_UI_SNAPSHOT_DIR") {
-            let img = termpix::raster::RgbaImage::from_raw(w, h, px).unwrap();
+            let img = termpix_core::raster::RgbaImage::from_raw(w, h, px).unwrap();
             img.save_png(&std::path::Path::new(&dir).join(name)).unwrap();
         }
     }

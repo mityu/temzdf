@@ -3,13 +3,12 @@
 //! See `doc/architecture.md` at the repository root for the design.
 
 pub mod compositor;
-pub mod geom;
 pub mod graphics;
 pub mod input;
 pub mod mock;
 pub mod output;
 pub mod placeholder;
 pub mod probe;
-pub mod raster;
-pub mod scroll;
 pub mod tty;
+
+pub use termpix_core::{geom, raster, scroll};
