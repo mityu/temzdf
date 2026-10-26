@@ -951,6 +951,12 @@ impl PdfPane {
         if self.text_anchor.as_ref().is_some_and(|a| now >= a.deadline) {
             changed |= self.resolve_text_anchor(true);
         }
+        // The forward-search highlight ends on the caller's clock (a replay's
+        // simulated one too), not the wall clock.
+        if self.flash.as_ref().is_some_and(|f| now >= f.1) {
+            self.flash = None;
+            changed = true;
+        }
         if self.autoscroll != 0.0 {
             let dt = self.autoscroll_at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
             let v = &mut self.viewer;
@@ -1157,10 +1163,6 @@ impl PdfPane {
             if let Some((boxes, _)) = &self.flash {
                 rects.extend(boxes.iter().filter(|b| b.page == page).map(|b| (page, b.rect, FLASH_COLOR)));
             }
-        }
-        if self.flash.as_ref().is_some_and(|f| Instant::now() >= f.1) {
-            self.flash = None;
-            rects.retain(|r| r.2 != FLASH_COLOR);
         }
         let scale = self.viewer.view.scale;
         let area =
@@ -1564,8 +1566,15 @@ mod tests {
         assert!(s.flash.is_none());
         assert_eq!(s.viewer.view_state().top.page, top.page, "no jump");
         // Valid boxes after an invalid one still count.
-        s.forward_result(vec![PdfBox { page: pages, rect }, PdfBox { page: pages - 1, rect }], Instant::now());
+        let now = Instant::now();
+        s.forward_result(vec![PdfBox { page: pages, rect }, PdfBox { page: pages - 1, rect }], now);
         assert_eq!(s.flash.as_ref().map(|f| f.0.len()), Some(1));
+        // The highlight goes when the given clock passes its end, however
+        // long the test itself took.
+        s.frame(&mut temzdf_scene::Images::new());
+        assert!(s.flash.is_some(), "drawn while it lasts");
+        assert!(s.tick(now + FLASH_DURATION));
+        assert!(s.flash.is_none());
     }
 
     #[test]
