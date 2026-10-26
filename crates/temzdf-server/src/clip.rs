@@ -5,7 +5,7 @@
 //! lower panes' layers are cut into the pieces outside the floats, and their
 //! text cells there are left out (absent, so the float's own images show).
 
-use temzdf_scene::{Cell, Layer, Rect, TextGrid};
+use temzdf_scene::{Layer, Rect, TextGrid};
 
 /// `r` without every rectangle of `covers`, as disjoint pieces.
 pub fn uncovered(r: Rect, covers: &[Rect]) -> Vec<Rect> {
@@ -32,7 +32,6 @@ pub fn text_pieces(grid: TextGrid, covers: &[Rect]) -> Vec<TextGrid> {
     if !covers.iter().any(|c| c.intersect(&area).is_some()) {
         return vec![grid];
     }
-    let blank = |c: &Cell| Cell { text: String::new(), width: 1, ..c.clone() };
     uncovered(area, covers)
         .into_iter()
         .map(|p| {
@@ -41,12 +40,7 @@ pub fn text_pieces(grid: TextGrid, covers: &[Rect]) -> Vec<TextGrid> {
                 .iter()
                 .map(|row| {
                     let mut cells = row[x0..x0 + p.w as usize].to_vec();
-                    if let Some(first) = cells.first_mut().filter(|c| c.width == 0) {
-                        *first = blank(first);
-                    }
-                    if let Some(last) = cells.last_mut().filter(|c| c.width == 2) {
-                        *last = blank(last);
-                    }
+                    temzdf_scene::mend_wide(&mut cells);
                     cells
                 })
                 .collect();
@@ -58,6 +52,7 @@ pub fn text_pieces(grid: TextGrid, covers: &[Rect]) -> Vec<TextGrid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use temzdf_scene::Cell;
     use temzdf_scene::Images;
 
     fn layer(src: Rect, dst: Rect) -> Layer {

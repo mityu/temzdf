@@ -681,6 +681,8 @@ impl TermView {
             for row in &mut out {
                 row.truncate(cols);
                 row.resize_with(cols, Cell::blank);
+                // A wide character cut in half at the view's edge.
+                temzdf_scene::mend_wide(row);
             }
             grid.rows = out;
         }
@@ -702,6 +704,8 @@ impl TermView {
                     ..Cell::blank()
                 };
             }
+            // The label may cover half of a wide character.
+            temzdf_scene::mend_wide(row);
         }
         frame
     }
@@ -876,6 +880,20 @@ mod tests {
         assert!(matches!(frame.cursor, None | Some((1, 1))), "{:?}", frame.cursor);
         let narrow = TermView::new(Geometry { cols: 1, rows: 2, ..GEOMETRY }).frame(&mut term, &mut Images::new());
         assert_eq!(narrow.cursor, None, "outside the view");
+    }
+
+    #[test]
+    fn a_wide_character_cut_at_the_views_edge_goes_blank() {
+        // "ab数" in a view 3 wide (on the last row: small views show the
+        // bottom left): the wide character's first half is the last cell;
+        // drawn, it would spill over (or wrap the screen).
+        let (mut term, _) =
+            run(&["sh", "-c", "printf '\\n\\n\\n\\n\\nab\\346\\225\\260'; sleep 5"], |_| {}, |r| r[5] == "ab数");
+        let view = TermView::new(Geometry { cols: 3, rows: 2, ..GEOMETRY });
+        let frame = view.frame(&mut term, &mut Images::new());
+        let row = &frame.text[0].rows[1];
+        assert_eq!(row.len(), 3);
+        assert_eq!((row[2].text.as_str(), row[2].width), ("", 1), "{row:?}");
     }
 
     fn mouse(kind: MouseEventKind, col: u16, row: u16, modifiers: Modifiers) -> MouseEvent {

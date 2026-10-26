@@ -106,6 +106,8 @@ impl TextScreen {
                     // Our text goes away: blank with the default pen.
                     None => (Color::Default, Color::Default, Attrs::default(), " ", 1),
                     Some(c) if c.width == 0 => (c.fg, c.bg, c.attrs, " ", 1),
+                    // In the last column it would wrap, or scroll the screen.
+                    Some(c) if c.width == 2 && x + 1 >= cols => (c.fg, c.bg, c.attrs, " ", 1),
                     Some(c) => {
                         (c.fg, c.bg, c.attrs, if c.text.is_empty() { " " } else { c.text.as_str() }, c.width.max(1))
                     }
@@ -264,5 +266,18 @@ mod tests {
         let out = String::from_utf8(out).unwrap();
         assert!(out.starts_with("\x1b[1;1H") && out.contains('数'), "{out:?}");
         assert!(again.is_empty(), "shown now");
+    }
+
+    #[test]
+    fn a_wide_character_in_the_last_column_is_written_as_a_blank() {
+        let mut t = TextScreen::new(4, 2);
+        let wide = Cell { text: "数".into(), width: 2, ..Cell::default() };
+        let g = TextGrid { col: 3, row: 0, rows: vec![vec![wide]] };
+        let out = String::from_utf8(t.render(std::slice::from_ref(&g))).unwrap();
+        assert!(!out.contains('数'), "{out:?}");
+        let mut term =
+            MockTerminal::new(Geometry { cols: 4, rows: 2, cell: CellSize { width: 8, height: 16 } }, [0, 0, 0, 255]);
+        term.feed(out.as_bytes());
+        assert_eq!(term.text_rows(), vec!["", ""], "nothing wrapped onto the next row");
     }
 }

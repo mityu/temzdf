@@ -244,6 +244,24 @@ impl Cell {
     pub fn blank() -> Self {
         Self { width: 1, ..Default::default() }
     }
+
+    /// A blank cell in this cell's colours.
+    pub fn blanked(&self) -> Self {
+        Self { text: String::new(), width: 1, ..self.clone() }
+    }
+}
+
+/// After a row was cut or written over: a wide character without its
+/// spacer, or a spacer without its character, becomes a blank cell (a wide
+/// character in the last column would wrap, or scroll the screen).
+pub fn mend_wide(row: &mut [Cell]) {
+    for i in 0..row.len() {
+        let lone_wide = row[i].width == 2 && row.get(i + 1).is_none_or(|n| n.width != 0);
+        let lone_spacer = row[i].width == 0 && (i == 0 || row[i - 1].width != 2);
+        if lone_wide || lone_spacer {
+            row[i] = row[i].blanked();
+        }
+    }
 }
 
 /// Text attributes, as SGR knows them.
@@ -320,6 +338,16 @@ pub enum Effect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn halves_of_wide_characters_go_blank() {
+        let c = |text: &str, width| Cell { text: text.into(), width, fg: Color::Indexed(2), ..Cell::default() };
+        let mut row = vec![c("", 0), c("a", 1), c("数", 2), c("", 0), c("字", 2)];
+        mend_wide(&mut row);
+        let shown: Vec<_> = row.iter().map(|x| (x.text.as_str(), x.width)).collect();
+        assert_eq!(shown, [("", 1), ("a", 1), ("数", 2), ("", 0), ("", 1)]);
+        assert_eq!(row[4].fg, Color::Indexed(2), "the colours stay");
+    }
 
     #[test]
     fn clipping_crops_the_source_to_match() {
