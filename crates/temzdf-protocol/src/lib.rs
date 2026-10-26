@@ -115,8 +115,13 @@ pub fn recv<T: for<'de> Deserialize<'de>>(r: &mut impl Read) -> io::Result<Optio
     if len > MAX_MESSAGE {
         return Err(io::Error::new(io::ErrorKind::InvalidData, format!("message of {len} bytes")));
     }
-    let mut body = vec![0u8; len];
-    r.read_exact(&mut body)?;
+    // Grown as bytes come, not allocated from the length alone (a bogus
+    // length would take hundreds of megabytes for nothing).
+    let mut body = Vec::new();
+    r.take(len as u64).read_to_end(&mut body)?;
+    if body.len() < len {
+        return Err(io::ErrorKind::UnexpectedEof.into());
+    }
     postcard::from_bytes(&body).map(Some).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
@@ -247,6 +252,15 @@ fn socket_in(dir: &Path, name: &str) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bogus_length_does_not_allocate_it() {
+        // 500 MB announced, 3 bytes sent: an error, without the allocation.
+        let mut bytes = (500u32 << 20).to_le_bytes().to_vec();
+        bytes.extend_from_slice(b"abc");
+        let e = recv::<ClientMsg>(&mut bytes.as_slice()).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof);
+    }
 
     #[test]
     fn socket_paths_fit_a_sockaddr() {

@@ -343,6 +343,9 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     Ok(())
 }
 
+/// How long a new connection has to send its first message.
+const FIRST_MESSAGE_WITHIN: Duration = Duration::from_secs(10);
+
 /// How long the main loop may wait for events. A pending frame (`dirty`)
 /// or an animation only shortens the wait while a client can take a frame:
 /// otherwise the next frame waits for an event anyway (an acknowledgement,
@@ -454,11 +457,16 @@ fn detach(clients: &mut HashMap<ClientId, Client>, id: ClientId) -> Outcome {
 }
 
 fn start_reader(id: ClientId, stream: &UnixStream, tx: Sender<Event>) -> Result<()> {
+    // A connection that says nothing goes after a while (each holds a
+    // thread); once it spoke, it may stay quiet as long as it likes.
+    stream.set_read_timeout(Some(FIRST_MESSAGE_WITHIN))?;
+    let quiet = stream.try_clone()?;
     let mut r = BufReader::new(stream.try_clone()?);
     std::thread::Builder::new().name(format!("temzdf-client-{id}")).spawn(move || {
         loop {
             match proto::recv::<ClientMsg>(&mut r) {
                 Ok(Some(msg)) => {
+                    let _ = quiet.set_read_timeout(None);
                     if tx.send(Event::Msg(id, msg)).is_err() {
                         return;
                     }
