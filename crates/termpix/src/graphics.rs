@@ -200,6 +200,7 @@ impl Encoder {
             }
             Medium::TempFile => {
                 let path = write_temp_file(px.data)?;
+                self.shm.files.push(path.clone());
                 write!(keys, ",t=t,S={}", px.data.len()).unwrap();
                 write_command(out, &keys, B64.encode(path.as_os_str().as_encoded_bytes()).as_bytes());
             }
@@ -246,24 +247,48 @@ impl Drop for Encoder {
 
 /// A graphics query (`a=q`) with a 1x1 RGB image sent over `medium`. The terminal
 /// replies with `OK` or an error for image `id` without storing anything.
-pub fn query(out: &mut Vec<u8>, id: u32, medium: Medium) -> io::Result<()> {
+/// Returns the shared memory object or file the image went in: a terminal
+/// that does not take that medium leaves it behind, so [`Leftover::remove`]
+/// it once the reply came (or did not).
+pub fn query(out: &mut Vec<u8>, id: u32, medium: Medium) -> io::Result<Option<Leftover>> {
     let data = [0u8; 3];
     let mut keys = Vec::new();
     write!(keys, "a=q,i={id},s=1,v=1,f=24").unwrap();
-    match medium {
-        Medium::Direct { .. } => write_command(out, &keys, B64.encode(data).as_bytes()),
+    Ok(match medium {
+        Medium::Direct { .. } => {
+            write_command(out, &keys, B64.encode(data).as_bytes());
+            None
+        }
         Medium::SharedMemory => {
             let name = shm_create(&data)?;
             write!(keys, ",t=s,S=3").unwrap();
             write_command(out, &keys, B64.encode(name.as_bytes()).as_bytes());
+            Some(Leftover::Shm(name))
         }
         Medium::TempFile => {
             let path = write_temp_file(&data)?;
             write!(keys, ",t=t,S=3").unwrap();
             write_command(out, &keys, B64.encode(path.as_os_str().as_encoded_bytes()).as_bytes());
+            Some(Leftover::File(path))
+        }
+    })
+}
+
+/// Where a query's image went (see [`query`]).
+#[derive(Debug)]
+pub enum Leftover {
+    Shm(String),
+    File(PathBuf),
+}
+
+impl Leftover {
+    /// Remove it, if the terminal did not (it removes what it consumed).
+    pub fn remove(self) {
+        match self {
+            Self::Shm(name) => drop(rustix::shm::unlink(name.as_str())),
+            Self::File(path) => drop(std::fs::remove_file(path)),
         }
     }
-    Ok(())
 }
 
 fn write_command(out: &mut Vec<u8>, keys: &[u8], payload: &[u8]) {
@@ -341,10 +366,11 @@ fn shm_create(data: &[u8]) -> io::Result<String> {
     Ok(name)
 }
 
-/// Shared-memory objects we created, oldest first.
+/// Shared-memory objects and temporary files we created, oldest first.
 #[derive(Debug, Default)]
 struct ShmTracker {
     names: Vec<String>,
+    files: Vec<PathBuf>,
 }
 
 impl ShmTracker {
@@ -359,6 +385,10 @@ impl ShmTracker {
         for name in self.names.drain(..excess) {
             // The terminal unlinks objects it consumed; ENOENT is the normal case.
             let _ = rustix::shm::unlink(name.as_str());
+        }
+        let excess = self.files.len().saturating_sub(keep);
+        for path in self.files.drain(..excess) {
+            let _ = std::fs::remove_file(path);
         }
     }
 }
@@ -377,6 +407,27 @@ mod tests {
 
     fn s(b: &[u8]) -> String {
         String::from_utf8(b.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn what_queries_and_file_transfers_leave_behind_is_removed() {
+        let mut out = Vec::new();
+        let Some(Leftover::File(path)) = query(&mut out, 1, Medium::TempFile).unwrap() else { panic!() };
+        assert!(path.exists());
+        Leftover::File(path.clone()).remove();
+        assert!(!path.exists());
+        let Some(Leftover::Shm(name)) = query(&mut out, 2, Medium::SharedMemory).unwrap() else { panic!() };
+        Leftover::Shm(name.clone()).remove();
+        assert!(rustix::shm::open(name.as_str(), rustix::shm::OFlags::RDONLY, rustix::fs::Mode::empty()).is_err());
+        assert!(query(&mut out, 3, Medium::Direct { compress: false }).unwrap().is_none());
+        // Files a terminal did not take are cleaned up like shm objects.
+        let mut enc = Encoder::new(Medium::TempFile);
+        let px = Pixels { width: 1, height: 1, format: PixelFormat::Rgba, data: &[0, 0, 0, 255] };
+        enc.transmit(&mut out, 9, px, None).unwrap();
+        let sent = enc.shm.files[0].clone();
+        assert!(sent.exists());
+        enc.cleanup_shm(0);
+        assert!(!sent.exists());
     }
 
     #[test]

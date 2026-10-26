@@ -221,8 +221,11 @@ pub fn probe(tty: &mut Tty, timeout: Duration) -> io::Result<Capabilities> {
     q.extend_from_slice(b"\x1b[>0q"); // XTVERSION
     graphics::query(&mut q, ID_DIRECT, Medium::Direct { compress: false })?;
     // shm and temp-file probes are only meaningful on the same host; failures are fine.
-    let _ = graphics::query(&mut q, ID_SHM, Medium::SharedMemory);
-    let _ = graphics::query(&mut q, ID_FILE, Medium::TempFile);
+    let leftovers: Vec<_> = [Medium::SharedMemory, Medium::TempFile]
+        .into_iter()
+        .zip([ID_SHM, ID_FILE])
+        .filter_map(|(m, id)| graphics::query(&mut q, id, m).ok().flatten())
+        .collect();
     q.extend_from_slice(b"\x1b[?1016$p\x1b[?2026$p\x1b[?u\x1b[16t\x1b[c");
     tty.write_all(&q)?;
 
@@ -242,6 +245,11 @@ pub fn probe(tty: &mut Tty, timeout: Duration) -> io::Result<Capabilities> {
                 break 'outer;
             }
         }
+    }
+    // Replies come in order: past the last one (or the deadline) the
+    // terminal is done with the probe images. Those it took it removed.
+    for l in leftovers {
+        l.remove();
     }
     let winsize = tty.winsize()?;
     let mut caps = interpret(&env, &replies, winsize.geometry(), (winsize.cols, winsize.rows));
