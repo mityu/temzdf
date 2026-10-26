@@ -125,6 +125,8 @@ struct RestoreState {
     reset: Vec<u8>,
     /// Queued output, dropped before the reset is written.
     out: Option<Output<File>>,
+    /// The thread that opened the terminal: its panic ends the program.
+    owner: std::thread::ThreadId,
 }
 
 static RESTORE: Mutex<Option<RestoreState>> = Mutex::new(None);
@@ -194,9 +196,21 @@ fn install_panic_hook() {
     }
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        restore_now(false);
+        restore_after_panic();
         previous(info);
     }));
+}
+
+/// Put the terminal back for a panic on the thread that opened it, which
+/// ends the program. Other threads' panics may be caught (`catch_unwind`
+/// around a library that panics) or end only that thread: restoring then
+/// would leave the program running with its screen gone and its output
+/// dropped.
+fn restore_after_panic() {
+    let owner = RESTORE.lock().ok().and_then(|g| g.as_ref().map(|s| s.owner));
+    if owner == Some(std::thread::current().id()) {
+        restore_now(false);
+    }
 }
 
 /// The controlling terminal in raw mode. Dropping it restores the terminal,
@@ -231,6 +245,7 @@ impl Tty {
             termios: original,
             reset: modes.disable_sequence(),
             out: Some(out.clone()),
+            owner: std::thread::current().id(),
         });
         install_panic_hook();
         let mut tty = Self { file, out };
@@ -492,6 +507,39 @@ impl Drop for StdioRedirect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_panic_on_the_terminals_thread_restores_it() {
+        use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
+        let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
+        grantpt(&master).unwrap();
+        unlockpt(&master).unwrap();
+        let name = ptsname(&master, Vec::new()).unwrap();
+        let slave = OpenOptions::new().read(true).write(true).open(name.to_str().unwrap()).unwrap();
+        let termios = termios::tcgetattr(&slave).unwrap();
+        *RESTORE.lock().unwrap() = Some(RestoreState {
+            fd: slave.into(),
+            termios,
+            reset: b"RESET".to_vec(),
+            out: None,
+            owner: std::thread::current().id(),
+        });
+        install_panic_hook();
+        // A panic another thread catches (a library's, around a worker's
+        // call) leaves the terminal as it is.
+        std::thread::spawn(|| {
+            let _ = std::panic::catch_unwind(|| panic!("caught on a worker"));
+        })
+        .join()
+        .unwrap();
+        assert!(RESTORE.lock().unwrap().is_some(), "still the program's");
+        // A panic on the terminal's thread ends the program: restored.
+        let _ = std::panic::catch_unwind(|| panic!("on the terminal's thread"));
+        assert!(RESTORE.lock().unwrap().is_none());
+        let mut buf = [0u8; 64];
+        let n = read_timeout(master.as_fd(), &mut buf, Some(Duration::from_secs(1))).unwrap().unwrap_or(0);
+        assert_eq!(&buf[..n], b"RESET");
+    }
 
     #[test]
     fn wait_fd_reports_readiness_and_times_out() {
