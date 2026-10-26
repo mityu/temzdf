@@ -42,10 +42,12 @@
 # it prints "TERMINAL CRASHED" and exits 3; failed `expect`s exit 4. Requires the dev shell (kitty,
 # xvfb-run, xdotool, imagemagick; Ghostty from the host); re-executes inside it.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# Absolute: it re-executes itself after the cd.
+self=$(realpath "$0")
+cd "$(dirname "$self")/.."
 
 if [[ -z "${IN_NIX_SHELL:-}" ]]; then
-  exec nix develop --quiet -c "$0" "$@" 2> >(grep -v "Git tree .* is dirty" >&2)
+  exec nix develop --quiet -c "$self" "$@" 2> >(grep -v "Git tree .* is dirty" >&2)
 fi
 
 size=900x600
@@ -58,12 +60,12 @@ while getopts "t:m:s:o:h" opt; do
     m) mux=$OPTARG ;;
     s) size=$OPTARG ;;
     o) outdir=$OPTARG ;;
-    *) sed -n '2,/^set -euo/{/^set -euo/!p}' "$0"; exit 2 ;;
+    *) sed -n '2,/^set -euo/{/^set -euo/!p}' "$self"; exit 2 ;;
   esac
 done
 shift $((OPTIND - 1))
 if [[ $# -lt 3 || $2 != "--" ]]; then
-  sed -n '2,/^set -euo/{/^set -euo/!p}' "$0"
+  sed -n '2,/^set -euo/{/^set -euo/!p}' "$self"
   exit 2
 fi
 actions=$(realpath "$1")
@@ -75,7 +77,7 @@ height=${size#*x}
 
 if [[ -z "${E2E_INNER:-}" ]]; then
   export E2E_INNER=1
-  exec xvfb-run -a -s "-screen 0 ${width}x${height}x24" "$0" -t "$term" ${mux:+-m "$mux"} -s "$size" -o "$outdir" "$actions" -- "$@"
+  exec xvfb-run -a -s "-screen 0 ${width}x${height}x24" "$self" -t "$term" ${mux:+-m "$mux"} -s "$size" -o "$outdir" "$actions" -- "$@"
 fi
 
 shot() { import -window root "$outdir/$1.png"; }

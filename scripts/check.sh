@@ -8,10 +8,12 @@
 #
 # It does not run end-to-end terminal tests or regenerate fixtures.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# Absolute: it re-executes itself after the cd.
+self=$(realpath "$0")
+cd "$(dirname "$self")/.."
 
 if [[ -z "${IN_NIX_SHELL:-}" ]]; then
-  exec nix develop --quiet -c "$0" "$@" 2> >(grep -v "Git tree .* is dirty" >&2)
+  exec nix develop --quiet -c "$self" "$@" 2> >(grep -v "Git tree .* is dirty" >&2)
 fi
 
 fix=0
