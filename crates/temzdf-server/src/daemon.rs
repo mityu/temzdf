@@ -147,8 +147,22 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     let mut queued: VecDeque<(ClientId, Vec<String>)> = VecDeque::new();
     // When the last frame was made: busy terminals get at most one per FRAME.
     let mut made = Instant::now() - FRAME;
+    let mut socket_checked = Instant::now();
 
     loop {
+        // A session nobody can reach (its socket removed, or replaced by
+        // another server's) ends: tests' temporary directories go, and
+        // orphans must not live on.
+        if socket_checked.elapsed() >= SOCKET_CHECK {
+            socket_checked = Instant::now();
+            if !_cleanup.still_ours() {
+                eprintln!("temzdf server: the socket is gone; ending session {name}");
+                for c in clients.values() {
+                    let _ = c.tx.send(ServerMsg::Exit(ExitReason::SessionEnded));
+                }
+                break;
+            }
+        }
         // A new frame when something changed and a client can take it; clients
         // still busy with an earlier one get the latest when they acknowledge.
         if !session.is_starting() && session.error().is_none() {
@@ -186,7 +200,8 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
             }
         }
         let can_send = clients.values().any(|c| c.attached && !c.awaiting) && !session.holds_frames();
-        let timeout = wait_for(dirty, session.is_animating(), can_send, made, session.next_deadline(), Instant::now());
+        let timeout = wait_for(dirty, session.is_animating(), can_send, made, session.next_deadline(), Instant::now())
+            .min(SOCKET_CHECK);
         let event = match rx.recv_timeout(timeout) {
             Ok(e) => Some(e),
             Err(RecvTimeoutError::Timeout) => None,
@@ -342,6 +357,9 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     std::thread::sleep(Duration::from_millis(100));
     Ok(())
 }
+
+/// How often the server checks that its socket is still there and its own.
+const SOCKET_CHECK: Duration = Duration::from_secs(2);
 
 /// How long a new connection has to send its first message.
 const FIRST_MESSAGE_WITHIN: Duration = Duration::from_secs(10);
@@ -525,6 +543,11 @@ struct RemoveOnDrop {
 impl RemoveOnDrop {
     fn new(path: &Path) -> Self {
         Self { path: path.to_owned(), id: file_id(path) }
+    }
+
+    /// The socket is still there, and the one this server bound.
+    fn still_ours(&self) -> bool {
+        self.id.is_some() && file_id(&self.path) == self.id
     }
 }
 

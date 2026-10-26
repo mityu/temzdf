@@ -825,3 +825,42 @@ fn action_detach_detaches_the_operating_client_only() {
     first.type_text("echo first-$((2+2))\n");
     first.wait_text("first-4");
 }
+
+#[test]
+fn a_server_whose_socket_is_gone_ends() {
+    let env = Env::new("orphan");
+    // Killed however the test ends; its output kept out of the test's.
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut server = Kill(
+        Command::new(BIN)
+            .args(["server", "o", "--clean", "--"])
+            .envs(env.vars())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.path("run/temzdf/sessions/o.sock");
+    let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
+    while !socket.exists() {
+        assert!(std::time::Instant::now() < deadline, "the server never listened");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    // Removed (a test's temporary directory going, another server taking
+    // the name): nobody can reach the session any more.
+    std::fs::remove_file(&socket).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if server.0.try_wait().unwrap().is_some() {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the server lives on");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
