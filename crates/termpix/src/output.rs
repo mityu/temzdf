@@ -102,6 +102,8 @@ struct Queue {
     pending: usize,
     /// Drop everything queued and stop.
     closed: bool,
+    /// Every [`Output`] is gone: write what is queued, then stop.
+    ended: bool,
     error: Option<io::ErrorKind>,
 }
 
@@ -122,14 +124,27 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// A queue of bytes for `W` and the thread writing them.
+/// A queue of bytes for `W` and the thread writing them. The thread ends
+/// after [`Output::close`], or once every clone is dropped and the queue is
+/// written.
 pub struct Output<W> {
     shared: Arc<Shared<W>>,
+    _handles: Arc<Handles<W>>,
 }
 
 impl<W> Clone for Output<W> {
     fn clone(&self) -> Self {
-        Self { shared: self.shared.clone() }
+        Self { shared: self.shared.clone(), _handles: self._handles.clone() }
+    }
+}
+
+/// Dropped with the last [`Output`] (the writer holds only [`Shared`]).
+struct Handles<W>(Arc<Shared<W>>);
+
+impl<W> Drop for Handles<W> {
+    fn drop(&mut self) {
+        lock(&self.0.queue).ended = true;
+        self.0.changed.notify_all();
     }
 }
 
@@ -137,13 +152,13 @@ impl<W: OutputSink> Output<W> {
     /// Start the writer thread. `trace` gets a copy of every byte written.
     pub fn spawn(out: W, trace: Option<std::fs::File>) -> io::Result<Self> {
         let shared = Arc::new(Shared {
-            queue: Mutex::new(Queue { bufs: VecDeque::new(), pending: 0, closed: false, error: None }),
+            queue: Mutex::new(Queue { bufs: VecDeque::new(), pending: 0, closed: false, ended: false, error: None }),
             changed: Condvar::new(),
             sink: Mutex::new(Sink { out, seq: Seq::Ground, trace }),
         });
         let s = shared.clone();
         std::thread::Builder::new().name("termpix-output".into()).spawn(move || writer(&s))?;
-        Ok(Self { shared })
+        Ok(Self { _handles: Arc::new(Handles(shared.clone())), shared })
     }
 }
 
@@ -230,6 +245,9 @@ fn writer<W: OutputSink>(s: &Shared<W>) {
                 }
                 if let Some(b) = q.bufs.pop_front() {
                     break b;
+                }
+                if q.ended {
+                    return;
                 }
                 q = s.changed.wait(q).unwrap_or_else(|e| e.into_inner());
             }
@@ -387,6 +405,38 @@ mod tests {
         let got = lock(&sink.0).clone();
         assert_eq!(&got[..3], b"abc");
         assert_eq!(got.len(), 3 + 3 * CHUNK);
+    }
+
+    #[test]
+    fn dropping_every_output_writes_the_queue_and_ends_the_writer() {
+        /// Tells when the writer let go of it (its thread ended).
+        struct Watched(Buf, std::sync::mpsc::Sender<()>);
+        impl Write for Watched {
+            fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+                self.0.write(b)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        impl OutputSink for Watched {}
+        impl Drop for Watched {
+            fn drop(&mut self) {
+                let _ = self.1.send(());
+            }
+        }
+        let inner = Buf::default();
+        let (tx, gone) = std::sync::mpsc::channel();
+        let out = Output::spawn(Watched(inner.clone(), tx), None).unwrap();
+        let other = out.clone();
+        out.write(&vec![b'x'; 3 * CHUNK]).unwrap();
+        drop(out);
+        other.write(b"end").unwrap();
+        drop(other);
+        assert!(gone.recv_timeout(Duration::from_secs(5)).is_ok(), "the writer ended");
+        let got = lock(&inner.0).clone();
+        assert_eq!(got.len(), 3 * CHUNK + 3);
+        assert!(got.ends_with(b"end"));
     }
 
     #[test]
