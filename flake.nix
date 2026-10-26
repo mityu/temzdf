@@ -70,36 +70,43 @@
         let
           pkgs = import nixpkgs { inherit system overlays; };
           lib = pkgs.lib;
+          # The toolchain and what scripts/check.sh runs (also in `ci`).
+          build = with pkgs; [
+            cargo
+            rustc
+            clippy
+            rustfmt
+            pkg-config
+            clang
+            fontconfig
+            # Tests inside tmux (crates/tuitest, crates/temzdf/tests/tui.rs).
+            tmux
+            # Type checking the shipped JavaScript configuration against
+            # `temzdf print-types` (crates/temzdf/tests/types.rs).
+            typescript
+          ];
           # Build, test, and drive kitty end to end. Tools that are large or
           # usually installed globally (TeX, other terminals) are in `alldeps`.
           base = {
+            packages = with pkgs; [
+              rust-analyzer
+              agent-browser
+              # Scratch scripts during development (not needed by the build).
+              python3
+            ];
             nativeBuildInputs =
-              with pkgs;
-              [
-                cargo
-                rustc
-                clippy
-                rustfmt
-                rust-analyzer
-                pkg-config
-                clang
-                fontconfig
-                # Scratch scripts during development (not needed by the build).
-                python3
-                # Tests inside tmux (crates/tuitest, crates/temzdf/tests/tui.rs).
-                tmux
-                # Type checking the shipped JavaScript configuration against
-                # `temzdf print-types` (crates/temzdf/tests/types.rs).
-                typescript
-              ]
-              ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-                # End-to-end testing: run kitty on a virtual X server and drive it.
-                kitty
-                xvfb-run
-                xdotool
-                imagemagick
-                xclip
-              ];
+              build
+              ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux (
+                with pkgs;
+                [
+                  # End-to-end testing: run kitty on a virtual X server and drive it.
+                  kitty
+                  xvfb-run
+                  xdotool
+                  imagemagick
+                  xclip
+                ]
+              );
             # Found through pkg-config (temzdf-term).
             buildInputs = [ pkgs.libghostty-vt.dev ];
             # mupdf-sys runs bindgen, which needs libclang.
@@ -123,18 +130,7 @@
           # (.github/workflows/ci.yml): the toolchain, TeX for the fixtures, and
           # a fixed font set instead of whatever the host has installed.
           ci = pkgs.mkShell {
-            nativeBuildInputs = with pkgs; [
-              cargo
-              rustc
-              clippy
-              rustfmt
-              pkg-config
-              clang
-              fontconfig
-              tex
-              tmux
-              typescript
-            ];
+            nativeBuildInputs = build ++ [ tex ];
             inherit (base) buildInputs LIBCLANG_PATH;
             FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
           };
