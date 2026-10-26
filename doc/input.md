@@ -10,6 +10,10 @@
 - `CSI > 31 u` kitty keyboard protocol, all flags (disambiguate, event types incl.
   release, alternate keys, all keys as escapes, associated text). Needed for key
   release and modifier-only events. Query with `CSI ? u` + DA1 as sentinel.
+  With "all keys as escapes" the keypad comes as its own codes (57399..57427:
+  `KP_0`..`KP_9`, operators, `KP_Enter`, and `KP_Left` etc. with Num Lock
+  off); termpix reads them as the keys they stand for (digits, `Enter`,
+  arrows, ...). Other private-use codes (media keys) stay `KeyCode::Other`.
 - `CSI ? 2004 h` bracketed paste, `CSI ? 1004 h` focus, `CSI ? 2048 h` in-band
   resize.
 

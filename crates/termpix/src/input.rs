@@ -549,6 +549,27 @@ fn kitty_key(fields: &[&str]) -> Option<Event> {
         57362 => KeyCode::Pause,
         57363 => KeyCode::Menu,
         57376..=57398 => KeyCode::F((code - 57376 + 13) as u8),
+        // The keypad (flag 8 reports it apart): as the keys it stands for.
+        57399..=57408 => KeyCode::Char(char::from(b'0' + (code - 57399) as u8)),
+        57409 => KeyCode::Char('.'),
+        57410 => KeyCode::Char('/'),
+        57411 => KeyCode::Char('*'),
+        57412 => KeyCode::Char('-'),
+        57413 => KeyCode::Char('+'),
+        57414 => KeyCode::Enter,
+        57415 => KeyCode::Char('='),
+        57416 => KeyCode::Char(','),
+        57417 => KeyCode::Left,
+        57418 => KeyCode::Right,
+        57419 => KeyCode::Up,
+        57420 => KeyCode::Down,
+        57421 => KeyCode::PageUp,
+        57422 => KeyCode::PageDown,
+        57423 => KeyCode::Home,
+        57424 => KeyCode::End,
+        57425 => KeyCode::Insert,
+        57426 => KeyCode::Delete,
+        57427 => KeyCode::Begin,
         57441..=57454 => KeyCode::Modifier(match code {
             57441 => ModifierKey::LeftShift,
             57442 => ModifierKey::LeftCtrl,
@@ -715,6 +736,16 @@ mod tests {
         assert!(matches!(&parse(b"\x1b[102;3;402u")[0], Event::Key(KeyEvent { code: KeyCode::Char('f'), .. })));
         // Shifted digit row: Shift+3 on a US layout is '#'
         assert!(matches!(&parse(b"\x1b[51:35;2u")[0], Event::Key(KeyEvent { code: KeyCode::Char('#'), .. })));
+        // The keypad, as the keys it stands for (KP_7 with Num Lock, KP_Enter,
+        // KP_Left with Num Lock off).
+        let code = |b: &[u8]| match &parse(b)[0] {
+            Event::Key(k) => k.code,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(code(b"\x1b[57406;129;55u"), KeyCode::Char('7'));
+        assert_eq!(code(b"\x1b[57414u"), KeyCode::Enter);
+        assert_eq!(code(b"\x1b[57413u"), KeyCode::Char('+'));
+        assert_eq!(code(b"\x1b[57417u"), KeyCode::Left);
         // Repeat of an arrow key
         let ev = parse(b"\x1b[1;1:2A");
         assert!(matches!(&ev[0], Event::Key(KeyEvent { code: KeyCode::Up, kind: KeyEventKind::Repeat, .. })));
