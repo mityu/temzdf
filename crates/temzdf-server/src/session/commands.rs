@@ -27,8 +27,18 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("focus-next-pane", "(): void", "Focus the next pane"),
     (
         "resize-pane",
-        "(how: \"left\" | \"right\" | \"up\" | \"down\" | { width?: number; height?: number }, cells?: number): void",
-        "Move the focused pane's right (bottom) border, else its left (top) one, `cells` cells that way (1 times a mapping's count); or give the pane a size",
+        "(how: \"left\" | \"right\" | \"up\" | \"down\" | \"wider\" | \"narrower\" | \"taller\" | \"shorter\" | { width?: number; height?: number }, cells?: number): void",
+        "Move the focused pane's right (bottom) border, else its left (top) one, `cells` cells that way (1 times a mapping's count); or make the pane wider, narrower, taller, shorter by `cells` (Vim's <C-w>> < + -); or give it a size",
+    ),
+    (
+        "move-pane",
+        "(side: \"left\" | \"right\" | \"top\" | \"bottom\"): void",
+        "Move the focused pane to that edge of the screen, the full height or width there (Vim's <C-w>H J K L)",
+    ),
+    (
+        "rotate-panes",
+        "(reverse?: boolean): void",
+        "Rotate the panes in the focused pane's row or column, each to the next place (Vim's <C-w>r; reverse: <C-w>R); a mapping's count repeats it",
     ),
     ("close-pane", "(): void", "Close the focused pane (its buffer stays, hidden)"),
     (
@@ -204,6 +214,40 @@ impl Session {
                 self.relayout();
                 ok(Outcome::Redraw)
             }
+            "move-pane" => {
+                let side = match text(0).as_deref() {
+                    Some("left") => Direction::Left,
+                    Some("right") => Direction::Right,
+                    Some("top" | "up") => Direction::Up,
+                    Some("bottom" | "down") => Direction::Down,
+                    other => return Err(format!("movePane: {other:?} is not left, right, top or bottom")),
+                };
+                if self.is_float(self.focus) {
+                    return Err("movePane: the pane floats".into());
+                }
+                let (pane, area) = (self.focus, self.area());
+                let moved = self.layout.as_mut().is_some_and(|l| l.move_to_edge(pane, side, area));
+                if moved {
+                    self.dragging = None;
+                    self.relayout();
+                }
+                ok(if moved { Outcome::Redraw } else { Outcome::None })
+            }
+            "rotate-panes" => {
+                let reverse = matches!(args.first(), Some(ScriptValue::Bool(true)));
+                let pane = self.focus;
+                let mut moved = false;
+                if let Some(l) = self.layout.as_mut() {
+                    for _ in 0..count.unwrap_or(1) {
+                        moved |= l.rotate(pane, reverse);
+                    }
+                }
+                if moved {
+                    self.dragging = None;
+                    self.relayout();
+                }
+                ok(if moved { Outcome::Redraw } else { Outcome::None })
+            }
             "toggle-floats" => {
                 self.toggle_floats().map_err(|e| format!("toggleFloats: {e:#}"))?;
                 ok(Outcome::Redraw)
@@ -352,6 +396,20 @@ impl Session {
                 }
                 moved
             }
+            Some(ScriptValue::Str(how)) if matches!(how.as_str(), "wider" | "narrower" | "taller" | "shorter") => {
+                let cells = num(args.get(1)).unwrap_or(1.0) as i32 * count.unwrap_or(1) as i32;
+                let (split, sign) = match how.as_str() {
+                    "wider" => (Split::Horizontal, 1),
+                    "narrower" => (Split::Horizontal, -1),
+                    "taller" => (Split::Vertical, 1),
+                    _ => (Split::Vertical, -1),
+                };
+                let Some((_, r)) = layout.rects(area).into_iter().find(|(p, _)| *p == pane) else {
+                    return Ok((ScriptValue::Null, Outcome::None));
+                };
+                let now = if split == Split::Horizontal { r.w } else { r.h } as i32;
+                layout.set_pane_size(pane, split, (now + sign * cells).max(0) as u32, area)
+            }
             dir => {
                 let cells = num(args.get(1)).unwrap_or(1.0) as i32 * count.unwrap_or(1) as i32;
                 let (split, sign) = match dir.and_then(ScriptValue::as_str) {
@@ -387,10 +445,10 @@ impl Session {
             dir => {
                 let cells = num(args.get(1)).unwrap_or(1) * count.unwrap_or(1) as i64;
                 let (w, h) = match dir.and_then(ScriptValue::as_str) {
-                    Some("left") => (Some(-cells), None),
-                    Some("right") => (Some(cells), None),
-                    Some("up") => (None, Some(-cells)),
-                    Some("down") => (None, Some(cells)),
+                    Some("left" | "narrower") => (Some(-cells), None),
+                    Some("right" | "wider") => (Some(cells), None),
+                    Some("up" | "shorter") => (None, Some(-cells)),
+                    Some("down" | "taller") => (None, Some(cells)),
                     other => return Err(format!("resizePane: {other:?} is not left, right, up, down or a size")),
                 };
                 self.resize_float(pane, w, h, false);

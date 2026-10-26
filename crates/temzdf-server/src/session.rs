@@ -1735,8 +1735,16 @@ mod tests {
             ("w", acts(&[("toggle-floats", &[])])),
             ("W", acts(&[("open-float", &[])])),
             ("e", acts(&[("toggle-floating", &[]), ("exit-mode", &[])])),
-            ("H", acts(&[("resize-pane", &[s("left")])])),
-            ("L", acts(&[("resize-pane", &[s("right")])])),
+            ("+", acts(&[("resize-pane", &[s("taller")])])),
+            ("-", acts(&[("resize-pane", &[s("shorter")])])),
+            ("<lt>", acts(&[("resize-pane", &[s("narrower")])])),
+            (">", acts(&[("resize-pane", &[s("wider")])])),
+            ("H", acts(&[("move-pane", &[s("left")])])),
+            ("J", acts(&[("move-pane", &[s("bottom")])])),
+            ("K", acts(&[("move-pane", &[s("top")])])),
+            ("L", acts(&[("move-pane", &[s("right")])])),
+            ("r", acts(&[("rotate-panes", &[])])),
+            ("R", acts(&[("rotate-panes", &[ScriptValue::Bool(true)])])),
             ("x", acts(&[("close-pane", &[])])),
             ("d", acts(&[("detach", &[]), ("exit-mode", &[])])),
             ("q", acts(&[("kill-session", &[])])),
@@ -2189,13 +2197,44 @@ mod tests {
         s.mouse(&at(MouseEventKind::Release(MouseButton::Left), 70), now);
         assert_eq!((width(&s, left), cols(&s)), (70, 70), "and gets the new size on release");
         assert_eq!(s.focus, right, "the border took the press");
-        // The keys move the focused pane's border: the right pane has only a
-        // left one.
-        assert_eq!(key(&mut s, "<C-b>3H"), Outcome::Redraw);
+        // The keys size the focused pane (as Vim's <C-w>> and <C-w><).
+        assert_eq!(key(&mut s, "<C-b>3>"), Outcome::Redraw);
         assert_eq!((width(&s, left), cols(&s)), (67, 67));
-        key(&mut s, "L");
+        key(&mut s, "<lt>");
         assert_eq!(width(&s, left), 68, "the normal mode stays");
         assert_eq!(s.current_mode(), "normal");
+    }
+
+    #[test]
+    fn the_shipped_keys_move_and_rotate_panes() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "ready");
+        let one = s.focus;
+        key(&mut s, "<C-b>%");
+        let two = s.focus;
+        key(&mut s, "<C-b>\"");
+        let three = s.focus;
+        let panes = |s: &Session| s.layout.as_ref().unwrap().panes();
+        assert_eq!(panes(&s), [one, two, three]);
+        // H: the full height at the left; K: the full width at the top.
+        key(&mut s, "<C-b>H");
+        assert_eq!(panes(&s), [three, one, two]);
+        assert_eq!(s.panes[&three].rect.h, s.area().h);
+        key(&mut s, "K");
+        assert_eq!((s.panes[&three].rect.y, s.panes[&three].rect.w), (0, s.area().w));
+        // r: the row of the others turns; R back.
+        s.set_focus(one);
+        key(&mut s, "<C-b>r");
+        assert_eq!(panes(&s), [three, two, one]);
+        key(&mut s, "R");
+        assert_eq!(panes(&s), [three, one, two]);
+        assert_eq!(s.focus, one, "the focus stays with its pane");
+        // Sizes: + and - (one pane in a column: its border moves).
+        let h = s.panes[&one].rect.h;
+        key(&mut s, "2-");
+        assert_eq!(s.panes[&one].rect.h, h - 2);
+        key(&mut s, "+");
+        assert_eq!(s.panes[&one].rect.h, h - 1);
     }
 
     /// Open a floating pane running `argv` with `opts`; returns it.

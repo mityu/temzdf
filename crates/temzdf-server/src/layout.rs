@@ -169,6 +169,70 @@ impl Layout {
         walk(&mut self.root, old, new)
     }
 
+    /// Move `pane` to an edge of the screen, the full width or height there
+    /// (Vim's `<C-w>H` and friends). False when it is the only pane or there
+    /// is no room (nothing changes then).
+    pub fn move_to_edge(&mut self, pane: PaneId, side: Direction, area: Rect) -> bool {
+        let before = self.clone();
+        if !self.remove(pane) {
+            return false;
+        }
+        let (split, first) = match side {
+            Direction::Left => (Split::Horizontal, true),
+            Direction::Right => (Split::Horizontal, false),
+            Direction::Up => (Split::Vertical, true),
+            Direction::Down => (Split::Vertical, false),
+        };
+        if self.split_at(None, pane, split, first, area) {
+            return true;
+        }
+        *self = before;
+        false
+    }
+
+    /// Rotate the panes in the row or column `pane` is in (the splits of
+    /// one kind around it), each taking the next one's place, the last the
+    /// first's (`reverse`: the other way), as Vim's `<C-w>r` and `<C-w>R`.
+    /// The places keep their sizes. False with nothing to rotate.
+    pub fn rotate(&mut self, pane: PaneId, reverse: bool) -> bool {
+        let Some(path) = self.path_to(pane) else { return false };
+        let Some(parent) = path.len().checked_sub(1) else { return false };
+        let Some(Node::Split { split, .. }) = self.node(&path[..parent]) else { return false };
+        let split = *split;
+        // Up through the splits of the same kind: the whole row or column.
+        let mut top = parent;
+        while top > 0 && matches!(self.node(&path[..top - 1]), Some(Node::Split { split: s, .. }) if *s == split) {
+            top -= 1;
+        }
+        let mut n = &mut self.root;
+        for &side in &path[..top] {
+            let Node::Split { a, b, .. } = n else { return false };
+            n = if side { b } else { a };
+        }
+        fn places<'a>(n: &'a mut Node, split: Split, out: &mut Vec<&'a mut Node>) {
+            if matches!(n, Node::Split { split: s, .. } if *s == split) {
+                if let Node::Split { a, b, .. } = n {
+                    places(a, split, out);
+                    places(b, split, out);
+                }
+            } else {
+                out.push(n);
+            }
+        }
+        let mut slots = Vec::new();
+        places(n, split, &mut slots);
+        let mut items: Vec<Node> = slots.iter_mut().map(|s| std::mem::replace(&mut **s, Node::Leaf(0))).collect();
+        if reverse {
+            items.rotate_left(1);
+        } else {
+            items.rotate_right(1);
+        }
+        for (slot, item) in slots.into_iter().zip(items) {
+            *slot = item;
+        }
+        true
+    }
+
     /// The pane next to `pane` in `dir`: among those beyond its edge that
     /// overlap it across, the nearest, then the one most in line with it.
     pub fn neighbor(&self, pane: PaneId, dir: Direction, area: Rect) -> Option<PaneId> {
@@ -271,7 +335,22 @@ impl Layout {
     /// The split owning the border `pane` would move across `split`, and
     /// whether the pane is after it (the border is its left or top one).
     fn pane_border(&self, pane: PaneId, split: Split) -> Option<(Vec<bool>, bool)> {
-        // The splits from the root down to the pane, with the side taken.
+        let path = self.path_to(pane)?;
+        // Each split on the way, nearest first: (its path, the side taken).
+        let mut splits = Vec::new();
+        let mut n = &self.root;
+        for (i, &side) in path.iter().enumerate() {
+            let Node::Split { split: s, a, b, .. } = n else { break };
+            if *s == split {
+                splits.push((path[..i].to_vec(), side));
+            }
+            n = if side { b } else { a };
+        }
+        splits.iter().rev().find(|(_, side)| !side).or_else(|| splits.last()).cloned()
+    }
+
+    /// The sides taken from the root down to `pane` (`true`: the second half).
+    fn path_to(&self, pane: PaneId) -> Option<Vec<bool>> {
         fn find(n: &Node, pane: PaneId, path: &mut Vec<bool>) -> bool {
             match n {
                 Node::Leaf(p) => *p == pane,
@@ -288,20 +367,7 @@ impl Layout {
             }
         }
         let mut path = Vec::new();
-        if !find(&self.root, pane, &mut path) {
-            return None;
-        }
-        // Each split on the way, nearest first: (its path, the side taken).
-        let mut splits = Vec::new();
-        let mut n = &self.root;
-        for (i, &side) in path.iter().enumerate() {
-            let Node::Split { split: s, a, b, .. } = n else { break };
-            if *s == split {
-                splits.push((path[..i].to_vec(), side));
-            }
-            n = if side { b } else { a };
-        }
-        splits.iter().rev().find(|(_, side)| !side).or_else(|| splits.last()).cloned()
+        find(&self.root, pane, &mut path).then_some(path)
     }
 
     /// The rectangle and kind of the split at `path`.
@@ -548,6 +614,49 @@ mod tests {
         assert!(l.set_pane_size(1, Split::Horizontal, 20, AREA));
         assert_eq!(rect_of(&l, 1).w, 20);
         assert!(!l.set_pane_size(1, Split::Horizontal, 20, AREA), "already");
+    }
+
+    #[test]
+    fn panes_move_to_an_edge_of_the_screen() {
+        let mut l = three();
+        assert!(l.move_to_edge(3, Direction::Left, AREA));
+        assert_eq!(l.panes(), [3, 1, 2]);
+        assert_eq!(rect_of(&l, 3), Rect::new(0, 0, 40, 31), "the full height at the left");
+        assert!(l.move_to_edge(1, Direction::Down, AREA));
+        assert_eq!(rect_of(&l, 1), Rect::new(0, 16, 81, 15), "the full width at the bottom");
+        let mut one = Layout::new(1);
+        assert!(!one.move_to_edge(1, Direction::Up, AREA), "the only pane");
+        // No room: nothing changes.
+        let small = Rect::new(0, 0, 21, 31);
+        let mut l = Layout::new(1);
+        l.split(1, 2, Split::Horizontal, small);
+        let before = l.clone();
+        assert!(!l.move_to_edge(1, Direction::Up, Rect::new(0, 0, 21, 7)));
+        assert_eq!(l, before);
+    }
+
+    #[test]
+    fn panes_rotate_within_their_row_and_keep_the_places_sizes() {
+        // 1 | 2 | 3, the first one wider.
+        let mut l = Layout::new(1);
+        l.split(1, 2, Split::Horizontal, AREA);
+        l.split(2, 3, Split::Horizontal, AREA);
+        l.move_border(1, Split::Horizontal, 10, AREA);
+        let widths = |l: &Layout| l.rects(AREA).iter().map(|(_, r)| r.w).collect::<Vec<_>>();
+        let before = widths(&l);
+        assert!(l.rotate(2, false));
+        assert_eq!(l.panes(), [3, 1, 2]);
+        assert_eq!(widths(&l), before, "the places keep their sizes");
+        assert!(l.rotate(2, true));
+        assert_eq!(l.panes(), [1, 2, 3]);
+        // A column inside a row turns as one.
+        let mut l = three();
+        assert!(l.rotate(1, false));
+        assert_eq!(l.panes(), [2, 3, 1]);
+        // Within the column: 2 and 3 swap.
+        assert!(l.rotate(2, false));
+        assert_eq!(l.panes(), [3, 2, 1]);
+        assert!(!Layout::new(1).rotate(1, false), "nothing to rotate");
     }
 
     #[test]

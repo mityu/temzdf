@@ -84,7 +84,9 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `terminal`, `pdf` | `<C-b>` | enter the `normal` mode (the prefix) |
 | `normal` | `%` / `"` | split right / below (the same document, or a new shell) |
 | `normal` | `h` `j` `k` `l`, arrows | move the focus (back to that pane's mode) |
-| `normal` | `H` `J` `K` `L` | move a border of the pane left / down / up / right (counts; the right or bottom border, else the left or top one) |
+| `normal` | `+` `-` `<` `>` | the pane taller / shorter / narrower / wider (counts; as Vim's `<C-w>+` ...) |
+| `normal` | `H` `J` `K` `L` | move the pane to the left / bottom / top / right edge, the full height or width there (Vim's `<C-w>H` ...) |
+| `normal` | `r` / `R` | rotate the panes in the pane's row or column (Vim's `<C-w>r` / `<C-w>R`; counts) |
 | `normal` | `o` | next pane |
 | `normal` | `w` | show or hide the floating panes (with none, open a floating shell) |
 | `normal` | `W` | open a floating shell |
@@ -210,7 +212,8 @@ open-float -- htop` work as `new-pane`.
 `cmd.*` and `action.*` share the command registry
 (`crates/temzdf-server/src/session/commands.rs`; `temzdf print-types` lists
 them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
-`focusNextPane`, `resizePane`, `closePane`, `openFloat`, `floatConfig`,
+`focusNextPane`, `resizePane`, `movePane`, `rotatePanes`, `closePane`,
+`openFloat`, `floatConfig`,
 `toggleFloats`, `toggleFloating`, `buffers`, `showBuffer`, `edit`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
 `sendText`, `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
@@ -218,7 +221,8 @@ them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `search`, ...: every action of the PDF table above, taking the count).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
 action split right`). `resizePane("left", 5)` moves a border of the focused
-pane five cells left (as tmux's `resize-pane -L 5`); `resizePane({ width:
+pane five cells left (as tmux's `resize-pane -L 5`), `resizePane("wider",
+5)` makes it five cells wider (as Vim's `5<C-w>>`), `resizePane({ width:
 40 })` sets its size.
 
 ## Environment

@@ -632,8 +632,8 @@ fn borders_drag_and_the_shipped_keys_resize_panes() {
         pairs.map(|(_, cols)| cols).collect()
     };
     t.wait_for("the new size", |s| widths(s).contains(&29));
-    // The shipped mappings: the right pane's left border moves left.
-    t.keys(&["C-b", "5", "H", "Esc"]);
+    // The shipped mappings: the right pane five columns wider (Vim's <C-w>>).
+    t.keys(&["C-b", "5", ">", "Esc"]);
     t.type_text("clear; stty size\n");
     t.wait_for("five columns wider", |s| widths(s).contains(&34));
 }

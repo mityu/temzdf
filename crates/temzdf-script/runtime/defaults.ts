@@ -48,12 +48,20 @@ each("normal", ["h", "<Left>"], action.moveFocus("left"));
 each("normal", ["j", "<Down>"], action.moveFocus("down"));
 each("normal", ["k", "<Up>"], action.moveFocus("up"));
 each("normal", ["l", "<Right>"], action.moveFocus("right"));
-// Borders move the way of the key (the right or bottom one if the pane has
-// one); the normal mode stays, so the keys repeat (3L: three cells).
-each("normal", ["H"], action.resizePane("left"));
-each("normal", ["J"], action.resizePane("down"));
-each("normal", ["K"], action.resizePane("up"));
-each("normal", ["L"], action.resizePane("right"));
+// Sizes as Vim's <C-w>+ - < >: the pane taller, shorter, narrower, wider;
+// the normal mode stays, so the keys repeat (3>: three cells).
+each("normal", ["+"], action.resizePane("taller"));
+each("normal", ["-"], action.resizePane("shorter"));
+each("normal", ["<lt>"], action.resizePane("narrower"));
+each("normal", [">"], action.resizePane("wider"));
+// Places as Vim's <C-w>H J K L r R: the pane to an edge of the screen;
+// the panes of its row or column rotated.
+each("normal", ["H"], action.movePane("left"));
+each("normal", ["J"], action.movePane("bottom"));
+each("normal", ["K"], action.movePane("top"));
+each("normal", ["L"], action.movePane("right"));
+each("normal", ["r"], action.rotatePanes());
+each("normal", ["R"], action.rotatePanes(true));
 each("normal", ["o"], action.focusNextPane());
 // Floating panes (zellij's keys): show or hide them all (with none, open a
 // floating shell), open a floating shell, turn the focused pane floating or

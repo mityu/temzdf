@@ -7,7 +7,7 @@
 # Expected (90x30 cells of 10x20 px):
 #   dragged.png  the border at column 60: the left pane 60 columns wide, the
 #                right one printing "30 29" (`stty size`)
-#   keys.png     after C-b 5 H: the border at column 55, the right pane
+#   keys.png     after C-b 5 > (five columns wider): the border at column 55, the right pane
 #                printing "30 34"
 keys ctrl+b percent
 pause 1
@@ -20,7 +20,7 @@ type "clear; stty size
 "
 pause 1
 shot dragged
-keys ctrl+b 5 H Escape
+keys ctrl+b 5 greater Escape
 type "clear; stty size
 "
 pause 1
