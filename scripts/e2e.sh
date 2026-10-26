@@ -3,8 +3,13 @@
 # WezTerm) on a virtual X server, drive it with an actions script, and save
 # screenshots.
 #
-# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm] [-m zellij|tmux] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
-#   -t TERM   terminal to run (default kitty)
+# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-m zellij|tmux] [-I] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
+#   -t TERM   terminal to run (default kitty); gui: COMMAND is temzdf-gui
+#             itself (e.g. target/debug/temzdf-gui FILE), run under the xfwm4
+#             window manager on lavapipe ($TEMZDF_LAVAPIPE_ICD); the screen
+#             is 100 px larger each way for its decorations
+#   -I        (gui) Japanese input: fcitx5 with Mozc (its HOME in OUTDIR),
+#             XMODIFIERS set; `ime on` / `ime off` switch it
 #   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
 #             frames, a single pane; its config and layout go to OUTDIR/zellij;
 #             tmux: a private server with passthrough and mouse on, no status)
@@ -12,8 +17,8 @@
 #   -o OUTDIR where screenshots and terminal.log go (default: target/e2e)
 #   ACTIONS   bash file sourced after the terminal started; it can use the helpers below.
 #
-# Helpers available to ACTIONS (coordinates are window pixels; MODS are
-# letters: C Ctrl, S Shift, A Alt):
+# Helpers available to ACTIONS (coordinates are pixels of the terminal area,
+# or of the GUI's drawing area; MODS are letters: C Ctrl, S Shift, A Alt):
 #   shot NAME          save OUTDIR/NAME.png
 #   wheel N [X Y [MODS]] N wheel steps (N<0 scrolls up) at X,Y (default: centre),
 #                      30 ms apart (a flick: they accelerate)
@@ -24,6 +29,7 @@
 #   keys KEY...        xdotool key names, e.g. `keys q` or `keys ctrl+f`
 #   type TEXT          type literal text
 #   pause SECONDS
+#   ime on|off         (-I) switch the input method
 #   expect NAME KEYS   save OUTDIR/NAME.png and compare it with the screen
 #                      `temzdf --render-frame` draws for the same geometry after
 #                      KEYS (Vim feedkeys notation, e.g. "3G" or
@@ -42,6 +48,10 @@
 #                      Ghostty without decorations). Results go to
 #                      OUTDIR/expect.txt, mismatches to NAME.diff.png; the
 #                      recorded input to OUTDIR/events.txt.
+#                      With -t gui, `expect NAME` compares the window with
+#                      `temzdf-gui --render-frame` attached to the same
+#                      session at that moment (the window's drawing, not the
+#                      session's input handling).
 #
 # temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log.
 # It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij) and
@@ -65,11 +75,13 @@ fi
 size=900x600
 term=kitty
 mux=
+ime=
 outdir=target/e2e
-while getopts "t:m:s:o:h" opt; do
+while getopts "t:m:s:o:Ih" opt; do
   case $opt in
     t) term=$OPTARG ;;
     m) mux=$OPTARG ;;
+    I) ime=1 ;;
     s) size=$OPTARG ;;
     o) outdir=$OPTARG ;;
     *) sed -n '2,/^set -euo/{/^set -euo/!p}' "$self"; exit 2 ;;
@@ -89,7 +101,14 @@ height=${size#*x}
 
 if [[ -z "${E2E_INNER:-}" ]]; then
   export E2E_INNER=1
-  exec xvfb-run -a -s "-screen 0 ${width}x${height}x24" "$self" -t "$term" ${mux:+-m "$mux"} -s "$size" -o "$outdir" "$actions" -- "$@"
+  screen="${width}x${height}"
+  # The GUI's window has decorations around its drawing area.
+  [[ $term == gui ]] && screen="$((width + 100))x$((height + 100))"
+  # An input method needs a session bus.
+  bus=()
+  [[ -n $ime ]] && bus=(dbus-run-session --)
+  exec xvfb-run -a -s "-screen 0 ${screen}x24" "${bus[@]}" "$self" -t "$term" ${mux:+-m "$mux"} ${ime:+-I} \
+    -s "$size" -o "$outdir" "$actions" -- "$@"
 fi
 
 # What the helpers send is recorded with its time (OUTDIR/events.txt, in
@@ -107,8 +126,9 @@ record() {
   if [[ $1 == -at ]]; then ms=$2; shift 2; else ms=$((($(usec) - t0) / 1000)); fi
   echo "$ms $*" >>"$events"
 }
-# Window pixels to the terminal's.
-at() { echo "$(($1 - origin_x)) $(($2 - origin_y))"; }
+# Coordinates as given (the terminal area's) and on the screen.
+at() { echo "$1 $2"; }
+root() { echo "$(($1 + origin_x)) $(($2 + origin_y))"; }
 # xdotool modifier key names for MODS letters.
 mod_keys() {
   local m=${1:-} c
@@ -125,7 +145,7 @@ shot() { import -window root "$outdir/$1.png"; }
 wheel() {
   local n=$1 x=${2:-$((width / 2))} y=${3:-$((height / 2))} mods=${4:-} btn=5 dir=down k
   if ((n < 0)); then btn=4 dir=up n=$((-n)); fi
-  xdotool mousemove "$x" "$y"
+  xdotool mousemove $(root "$x" "$y")
   record move "$(at "$x" "$y")" $mods
   for k in $(mod_keys "$mods"); do xdotool keydown "$k"; done
   # One xdotool call: separate ones take about 0.1 s each, too slow for a
@@ -137,13 +157,13 @@ wheel() {
 }
 dragto() {
   local x=$1 y=$2 x2=$3 y2=$4 steps=${5:-10} i px py
-  xdotool mousemove "$x" "$y"
+  xdotool mousemove $(root "$x" "$y")
   record move "$(at "$x" "$y")"
   xdotool mousedown 1
   record press "$(at "$x" "$y")" left
   for ((i = 1; i <= steps; i++)); do
     px=$((x + (x2 - x) * i / steps)) py=$((y + (y2 - y) * i / steps))
-    xdotool mousemove "$px" "$py"
+    xdotool mousemove $(root "$px" "$py")
     record drag "$(at "$px" "$py")" left
     sleep 0.03
   done
@@ -154,7 +174,7 @@ drag() { dragto "$1" "$2" "$1" "$3"; }
 click() {
   local x=$1 y=$2 btn=${3:-1} mods=${4:-} k b
   b=$(button_name "$btn")
-  xdotool mousemove "$x" "$y"
+  xdotool mousemove $(root "$x" "$y")
   record move "$(at "$x" "$y")" $mods
   for k in $(mod_keys "$mods"); do xdotool keydown "$k"; done
   xdotool click "$btn"
@@ -163,7 +183,7 @@ click() {
   for k in $(mod_keys "$mods"); do xdotool keyup "$k"; done
 }
 move() {
-  xdotool mousemove "$1" "$2"
+  xdotool mousemove $(root "$1" "$2")
   record move "$(at "$1" "$2")"
 }
 # An xdotool key name in Vim's notation (the names actions use; others
@@ -213,7 +233,39 @@ type() {
   record key "$out"
 }
 pause() { sleep "$1"; }
+ime() {
+  case $1 in
+    on) fcitx5-remote -o ;;
+    off) fcitx5-remote -c ;;
+  esac
+}
+# The GUI's form of expect: the window against an offscreen render of the
+# same session at this moment.
+expect_gui() {
+  local name=$1 session out
+  shot "$name"
+  session=$("$temzdf" ls | head -1 | cut -d' ' -f1)
+  "${clean_env[@]}" VK_DRIVER_FILES="$TEMZDF_LAVAPIPE_ICD" "$gui_bin" --render-frame "$outdir/$name.expected.png" \
+    -s "$session" --size "${win_w}x${win_h}" 2>"$outdir/$name.expected.log" || {
+    echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
+    return
+  }
+  magick "$outdir/$name.png" -crop "${win_w}x${win_h}+$origin_x+$origin_y" +repage "$outdir/$name.actual.png"
+  out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.actual.png" "$outdir/$name.expected.png" \
+    "$outdir/$name.diff.png" 2>&1 || true)
+  out=${out%% *}
+  if [[ $out == 0 ]]; then
+    rm -f "$outdir/$name.diff.png"
+    echo "PASS $name" | tee -a "$outdir/expect.txt"
+  else
+    echo "FAIL $name: $out pixels differ (see $name.diff.png)" | tee -a "$outdir/expect.txt"
+  fi
+}
 expect() {
+  if [[ $term == gui ]]; then
+    expect_gui "$1"
+    return
+  fi
   local name=$1 keys=${2:-} input geo cols rows cw ch out
   if (($# >= 2)); then
     input=("--keys=$keys")
@@ -362,6 +414,22 @@ case $term in
       "--window-width=$((width / 10))" "--window-height=$((height / 21))" -e "$@" >"$outdir/terminal.log" 2>&1 &
     startup=6
     ;;
+  gui)
+    # A window manager, as on a desktop (decorations, focus).
+    xfwm4 >"$outdir/wm.log" 2>&1 &
+    sleep 1
+    gui_env=(VK_DRIVER_FILES="$TEMZDF_LAVAPIPE_ICD")
+    if [[ -n $ime ]]; then
+      mkdir -p "$outdir/ime/.config/fcitx5"
+      printf '[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=mozc\n\n[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n[Groups/0/Items/1]\nName=mozc\nLayout=\n\n[GroupOrder]\n0=Default\n' \
+        >"$outdir/ime/.config/fcitx5/profile"
+      HOME="$outdir/ime" XDG_CONFIG_HOME="$outdir/ime/.config" fcitx5 -d --replace >"$outdir/ime.log" 2>&1
+      sleep 2
+      gui_env+=(XMODIFIERS=@im=fcitx)
+    fi
+    "${clean_env[@]}" "${gui_env[@]}" "$@" >"$outdir/terminal.log" 2>&1 &
+    startup=5
+    ;;
   wezterm)
     # -n: ignore the user's wezterm config. The software renderer works on Xvfb.
     # WezTerm sizes windows in cells: 10x22 px at its defaults (more rows would
@@ -380,6 +448,14 @@ case $term in
 esac
 term_pid=$!
 sleep "$((startup + mux_startup))"
+# The GUI's drawing area: where its window's inside is on the screen.
+if [[ $term == gui ]]; then
+  for w in "$@"; do [[ $w == */temzdf-gui ]] && gui_bin=$w && break; done
+  temzdf=$(dirname "$gui_bin")/temzdf
+  wid=$(xdotool search --sync --onlyvisible --pid "$term_pid" | tail -1)
+  eval "$(xwininfo -id "$wid" | awk '/Absolute upper-left X/ {print "origin_x=" $4}
+    /Absolute upper-left Y/ {print "origin_y=" $4} /Width:/ {print "win_w=" $2} /Height:/ {print "win_h=" $2}')"
+fi
 # Without a window manager WezTerm only gets mouse events once focused.
 if [[ $term == wezterm ]]; then
   xdotool search --class wezterm windowfocus 2>/dev/null || true

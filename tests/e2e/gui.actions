@@ -1,0 +1,26 @@
+# The GUI client on a PDF session, under xfwm4 on Xvfb (lavapipe).
+# Used with:
+#   cargo build -p temzdf -p temzdf-gui
+#   scripts/e2e.sh -t gui -o target/e2e-gui tests/e2e/gui.actions -- target/debug/temzdf-gui target/fixtures/sample.pdf
+# Judged (expect: the window against temzdf-gui --render-frame on the same
+# session): the first page (start), after a flick of the wheel (wheel), Ctrl
+# and the wheel zooming in at the pointer (zoom), page 3 after 3G (page3),
+# the title selected by a drag after g (selected). Not judged: the
+# clipboard holds the title (clipboard.txt, copied through arboard).
+pause 1
+expect start
+wheel 5
+pause 1.5
+expect wheel
+wheel -3 300 200 C
+pause 2
+expect zoom
+keys 3 shift+g
+pause 1.5
+expect page3
+keys 0 g
+pause 1.5
+dragto 318 188 582 190 5
+pause 1
+expect selected
+xclip -selection clipboard -o >"$outdir/clipboard.txt" 2>/dev/null || true
