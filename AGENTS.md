@@ -47,15 +47,20 @@ heading (a tmux-like session server with terminal, PDF and web panes) is in
 
 ## Environment
 
-Everything runs inside the Nix dev shell (`flake.nix`):
+Everything runs inside the Nix dev shell (`flake.nix`). Agents are started
+inside it, so run tools directly, not through `nix develop -c` (it costs a
+shell evaluation each time); if a tool the dev shell should provide is
+missing, say so instead of working around it. A tool added to `flake.nix`
+needs the shell, and the agent in it, restarted.
 
 ```sh
 scripts/check.sh            # fmt check + clippy -D warnings + tests, terse output
 scripts/check.sh --fix      # same, but apply rustfmt
-nix develop -c cargo build --workspace
+cargo build --workspace
 ```
 
-Run `scripts/check.sh` before every commit; it enters the dev shell by itself.
+Run `scripts/check.sh` before every commit. The scripts enter the dev shell by
+themselves when started outside it.
 
 Design notes and research live on the `research/notes` branch.
 `scripts/notes.sh show FILE` reads one from there. To edit them without
@@ -71,7 +76,7 @@ inside tmux, without an X server. See "Simulated terminal tests" in
 End-to-end checks in a real kitty (virtual X server, no display needed):
 
 ```sh
-nix develop -c cargo build --example scroll_demo
+cargo build --example scroll_demo
 scripts/e2e.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
 ```
 

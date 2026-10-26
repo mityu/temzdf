@@ -15,7 +15,7 @@ Layers of verification, cheapest first. All of them run without a human.
 
 Action files live in `tests/e2e/`; each starts with a comment saying how to run it
 and what the screenshots should show. To look at many screenshots at once:
-`nix develop -c montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
+`montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 
 ## Simulated terminal tests
 
