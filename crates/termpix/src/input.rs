@@ -370,7 +370,7 @@ impl Parser {
                 1 => Some(MouseButton::Middle),
                 2 => Some(MouseButton::Right),
                 3 => None,
-                n => Some(MouseButton::Other(n as u8 + 4)),
+                n => Some(MouseButton::Other(n as u8)),
             };
             match (motion, release, button) {
                 (true, _, Some(btn)) => MouseEventKind::Drag(btn),
@@ -764,6 +764,25 @@ mod tests {
         ));
         let ev = parse(b"\x1b[<67;3;3M");
         assert!(matches!(ev[0], Event::Mouse(MouseEvent { kind: MouseEventKind::Scroll(ScrollDirection::Right), .. })));
+    }
+
+    #[test]
+    fn sgr_extra_buttons_are_8_to_11() {
+        // xterm sends buttons 8 to 11 (back, forward, ...) as 128 + 0..3.
+        for (code, button) in [(128, 8), (129, 9), (130, 10), (131, 11)] {
+            let ev = parse(format!("\x1b[<{code};3;3M").as_bytes());
+            assert_eq!(
+                ev[0],
+                Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Press(MouseButton::Other(button)),
+                    x: 2,
+                    y: 2,
+                    unit: CoordUnit::Cell,
+                    modifiers: Modifiers::NONE,
+                }),
+                "code {code}"
+            );
+        }
     }
 
     #[test]
