@@ -230,6 +230,12 @@ xdotool key q || true
 sleep 0.5
 kill "$term_pid" 2>/dev/null || true
 wait "$term_pid" 2>/dev/null || true
+if [[ $mux == tmux ]]; then
+  # The server outlives the terminal; kill-server leaves its socket file.
+  sock=$(tmux -L "e2e-$$" display-message -p '#{socket_path}' 2>/dev/null || true)
+  tmux -L "e2e-$$" kill-server 2>/dev/null || true
+  [[ -n $sock ]] && rm -f -- "$sock"
+fi
 echo "screenshots in $outdir"
 if ((crashed)); then
   echo "TERMINAL CRASHED (see $outdir/terminal.log)"

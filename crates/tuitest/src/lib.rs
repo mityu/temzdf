@@ -204,7 +204,15 @@ impl Tmux {
 
 impl Drop for Tmux {
     fn drop(&mut self) {
+        // kill-server leaves the socket file behind: remove it too.
+        let socket = self.cmd().args(["display-message", "-p", "#{socket_path}"]).output().ok();
         let _ = self.cmd().arg("kill-server").stderr(std::process::Stdio::null()).status();
+        if let Some(out) = socket.filter(|o| o.status.success()) {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+            if !path.is_empty() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
     }
 }
 
