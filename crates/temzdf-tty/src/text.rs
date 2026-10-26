@@ -78,10 +78,13 @@ impl TextScreen {
             // Where the cursor is after the last character written (`None`:
             // somewhere else, so move it before writing).
             let mut at: Option<usize> = None;
+            // A wide character to write again although it did not change:
+            // only its spacer did (a selection ending in its right half).
+            let mut again: Option<usize> = None;
             let mut x = 0;
             while x < cols {
                 let i = y * cols + x;
-                if want[i] == self.shown[i] {
+                if want[i] == self.shown[i] && again != Some(i) {
                     x += 1;
                     continue;
                 }
@@ -93,6 +96,7 @@ impl TextScreen {
                 {
                     x -= 1;
                     at = None;
+                    again = Some(i - 1);
                     continue;
                 }
                 if at != Some(x) {
@@ -239,5 +243,26 @@ mod tests {
         let mut term = mock();
         term.feed(out.as_bytes());
         assert_eq!(term.text_rows()[1], "数 xyz");
+    }
+
+    #[test]
+    fn a_changed_spacer_writes_its_wide_character_again() {
+        // A selection ending in the right half of a wide character changes
+        // only the spacer; that once looped forever.
+        let wide = Cell { text: "数".into(), width: 2, ..Cell::default() };
+        let spacer = Cell { width: 0, ..Cell::default() };
+        let inverse = Cell { attrs: Attrs { inverse: true, ..Attrs::default() }, ..spacer.clone() };
+        let before = TextGrid { col: 0, row: 0, rows: vec![vec![wide.clone(), spacer, cell("a")]] };
+        let after = TextGrid { col: 0, row: 0, rows: vec![vec![wide, inverse, cell("a")]] };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut t = TextScreen::new(12, 3);
+            t.render(std::slice::from_ref(&before));
+            let _ = tx.send((t.render(std::slice::from_ref(&after)), t.render(std::slice::from_ref(&after))));
+        });
+        let (out, again) = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("render finishes");
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.starts_with("\x1b[1;1H") && out.contains('数'), "{out:?}");
+        assert!(again.is_empty(), "shown now");
     }
 }
