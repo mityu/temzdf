@@ -74,7 +74,7 @@ impl Layout {
             match n {
                 Node::Leaf(p) => out.push((*p, r)),
                 Node::Split { split, a, b, size } => {
-                    let (ra, rb) = parts(*split, r, *size);
+                    let (ra, rb) = parts(*split, r, *size, min_extent(b, *split));
                     walk(a, ra, out);
                     walk(b, rb, out);
                 }
@@ -190,6 +190,179 @@ impl Layout {
         let i = panes.iter().position(|p| *p == pane).unwrap_or(0);
         panes[(i + 1) % panes.len()]
     }
+
+    /// The border at cell (`col`, `row`) and how its split arranges the panes
+    /// (`Horizontal`: a vertical border, dragged sideways).
+    pub fn border_at(&self, area: Rect, col: i32, row: i32) -> Option<(BorderId, Split)> {
+        let inside = |r: Rect| col >= r.x && (col as i64) < r.right() && row >= r.y && (row as i64) < r.bottom();
+        let mut path = Vec::new();
+        let (mut n, mut r) = (&self.root, area);
+        while let Node::Split { split, a, b, size } = n {
+            let (ra, rb) = parts(*split, r, *size, min_extent(b, *split));
+            if inside(ra) {
+                (n, r) = (a, ra);
+                path.push(false);
+            } else if inside(rb) {
+                (n, r) = (b, rb);
+                path.push(true);
+            } else {
+                return inside(r).then_some((BorderId(path), *split));
+            }
+        }
+        None
+    }
+
+    /// How the split of border `id` arranges the panes.
+    pub fn split_of(&self, id: &BorderId) -> Option<Split> {
+        match self.node(&id.0)? {
+            Node::Split { split, .. } => Some(*split),
+            Node::Leaf(_) => None,
+        }
+    }
+
+    /// Move border `id` so that it is at cell `col` (a vertical border) or
+    /// `row`, as far as the panes' minimum sizes allow. False if it did not move.
+    pub fn drag_border(&mut self, id: &BorderId, col: i32, row: i32, area: Rect) -> bool {
+        let Some((r, split)) = self.split_rect(&id.0, area) else { return false };
+        let to = match split {
+            Split::Horizontal => col - r.x,
+            Split::Vertical => row - r.y,
+        };
+        self.set_size(&id.0, to, area)
+    }
+
+    /// Move one of `pane`'s borders across `split` by `cells` (negative: left
+    /// or up): the right (bottom) border if it has one, else the left (top).
+    /// False if nothing moved.
+    pub fn move_border(&mut self, pane: PaneId, split: Split, cells: i32, area: Rect) -> bool {
+        let Some((path, _)) = self.pane_border(pane, split) else { return false };
+        let Some(current) = self.size_of(&path, area) else { return false };
+        self.set_size(&path, current + cells, area)
+    }
+
+    /// Make `pane` `cells` wide (`Horizontal`) or high, moving its right
+    /// (bottom) border, else its left (top) one. False if nothing changed.
+    pub fn set_pane_size(&mut self, pane: PaneId, split: Split, cells: u32, area: Rect) -> bool {
+        let Some((_, r)) = self.rects(area).into_iter().find(|(p, _)| *p == pane) else { return false };
+        let now = match split {
+            Split::Horizontal => r.w,
+            Split::Vertical => r.h,
+        };
+        let Some((_, after)) = self.pane_border(pane, split) else { return false };
+        let grow = cells as i32 - now as i32;
+        self.move_border(pane, split, if after { -grow } else { grow }, area)
+    }
+
+    /// The split owning the border `pane` would move across `split`, and
+    /// whether the pane is after it (the border is its left or top one).
+    fn pane_border(&self, pane: PaneId, split: Split) -> Option<(Vec<bool>, bool)> {
+        // The splits from the root down to the pane, with the side taken.
+        fn find(n: &Node, pane: PaneId, path: &mut Vec<bool>) -> bool {
+            match n {
+                Node::Leaf(p) => *p == pane,
+                Node::Split { a, b, .. } => {
+                    for (side, child) in [(false, a), (true, b)] {
+                        path.push(side);
+                        if find(child, pane, path) {
+                            return true;
+                        }
+                        path.pop();
+                    }
+                    false
+                }
+            }
+        }
+        let mut path = Vec::new();
+        if !find(&self.root, pane, &mut path) {
+            return None;
+        }
+        // Each split on the way, nearest first: (its path, the side taken).
+        let mut splits = Vec::new();
+        let mut n = &self.root;
+        for (i, &side) in path.iter().enumerate() {
+            let Node::Split { split: s, a, b, .. } = n else { break };
+            if *s == split {
+                splits.push((path[..i].to_vec(), side));
+            }
+            n = if side { b } else { a };
+        }
+        splits.iter().rev().find(|(_, side)| !side).or_else(|| splits.last()).cloned()
+    }
+
+    /// The rectangle and kind of the split at `path`.
+    fn split_rect(&self, path: &[bool], area: Rect) -> Option<(Rect, Split)> {
+        let (mut n, mut r) = (&self.root, area);
+        for &side in path {
+            let Node::Split { split, a, b, size } = n else { return None };
+            let (ra, rb) = parts(*split, r, *size, min_extent(b, *split));
+            (n, r) = if side { (b, rb) } else { (a, ra) };
+        }
+        match n {
+            Node::Split { split, .. } => Some((r, *split)),
+            Node::Leaf(_) => None,
+        }
+    }
+
+    /// The first half's size of the split at `path`, as shown.
+    fn size_of(&self, path: &[bool], area: Rect) -> Option<i32> {
+        let (r, split) = self.split_rect(path, area)?;
+        let Node::Split { size, b, .. } = self.node(path)? else { return None };
+        let (a, _) = parts(split, r, *size, min_extent(b, split));
+        Some(match split {
+            Split::Horizontal => a.w as i32,
+            Split::Vertical => a.h as i32,
+        })
+    }
+
+    fn node(&self, path: &[bool]) -> Option<&Node> {
+        let mut n = &self.root;
+        for &side in path {
+            let Node::Split { a, b, .. } = n else { return None };
+            n = if side { b } else { a };
+        }
+        Some(n)
+    }
+
+    /// Set the first half's size of the split at `path` to `to`, clamped so
+    /// both halves keep their panes' minimum sizes. False if it did not change.
+    fn set_size(&mut self, path: &[bool], to: i32, area: Rect) -> bool {
+        let Some((r, split)) = self.split_rect(path, area) else { return false };
+        let Some(before) = self.size_of(path, area) else { return false };
+        let mut n = &mut self.root;
+        for &side in path {
+            let Node::Split { a, b, .. } = n else { return false };
+            n = if side { b } else { a };
+        }
+        let Node::Split { a, b, size, .. } = n else { return false };
+        let room = match split {
+            Split::Horizontal => r.w,
+            Split::Vertical => r.h,
+        }
+        .saturating_sub(1) as i32;
+        let (lo, hi) = (min_extent(a, split) as i32, room - min_extent(b, split) as i32);
+        if lo > hi {
+            return false;
+        }
+        let to = to.clamp(lo, hi);
+        *size = to as u32;
+        to != before
+    }
+}
+
+/// A border between two panes (or groups of panes): the split it belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BorderId(Vec<bool>);
+
+/// The fewest cells `n` needs across `split` (width for `Horizontal`).
+fn min_extent(n: &Node, split: Split) -> u32 {
+    match n {
+        Node::Leaf(_) => match split {
+            Split::Horizontal => MIN_COLS,
+            Split::Vertical => MIN_ROWS,
+        },
+        Node::Split { split: s, a, b, .. } if *s == split => min_extent(a, split) + 1 + min_extent(b, split),
+        Node::Split { a, b, .. } => min_extent(a, split).max(min_extent(b, split)),
+    }
 }
 
 /// The two halves of `r` with a one-cell border between them.
@@ -198,22 +371,23 @@ fn halves(split: Split, r: Rect) -> (Rect, Rect) {
         Split::Horizontal => r.w,
         Split::Vertical => r.h,
     };
-    parts(split, r, extent.saturating_sub(1) / 2)
+    parts(split, r, extent.saturating_sub(1) / 2, min_extent(&Node::Leaf(0), split))
 }
 
 /// `r` in two with a one-cell border between them, the first `size` cells
-/// wide (or high) if the second keeps its minimum; the second takes the rest.
-fn parts(split: Split, r: Rect, size: u32) -> (Rect, Rect) {
+/// wide (or high) if the second keeps its minimum `min_b`; the second takes
+/// the rest.
+fn parts(split: Split, r: Rect, size: u32, min_b: u32) -> (Rect, Rect) {
     match split {
         Split::Horizontal => {
             let room = r.w.saturating_sub(1);
-            let a = size.min(room.saturating_sub(MIN_COLS));
+            let a = size.min(room.saturating_sub(min_b));
             let b = room - a;
             (Rect::new(r.x, r.y, a, r.h), Rect::new(r.x + a as i32 + 1, r.y, b, r.h))
         }
         Split::Vertical => {
             let room = r.h.saturating_sub(1);
-            let a = size.min(room.saturating_sub(MIN_ROWS));
+            let a = size.min(room.saturating_sub(min_b));
             let b = room - a;
             (Rect::new(r.x, r.y, r.w, a), Rect::new(r.x, r.y + a as i32 + 1, r.w, b))
         }
@@ -286,6 +460,79 @@ mod tests {
         // New splits halve what they split.
         l.split(1, 4, Split::Horizontal, big);
         assert_eq!(l.rects(big)[..2], [(1, Rect::new(0, 0, 19, 41)), (4, Rect::new(20, 0, 20, 41))]);
+    }
+
+    fn rect_of(l: &Layout, pane: PaneId) -> Rect {
+        l.rects(AREA).into_iter().find(|(p, _)| *p == pane).unwrap().1
+    }
+
+    /// 1 | 2 over 3 (`AREA`: 81x31).
+    fn three() -> Layout {
+        let mut l = Layout::new(1);
+        l.split(1, 2, Split::Horizontal, AREA);
+        l.split(2, 3, Split::Vertical, AREA);
+        l
+    }
+
+    #[test]
+    fn borders_are_found_by_their_cells() {
+        let l = three();
+        let (vertical, s) = l.border_at(AREA, 40, 20).unwrap();
+        assert_eq!(s, Split::Horizontal);
+        let (horizontal, s) = l.border_at(AREA, 60, 15).unwrap();
+        assert_eq!(s, Split::Vertical);
+        assert_ne!(vertical, horizontal);
+        assert_eq!(l.border_at(AREA, 40, 0).unwrap().0, vertical, "the whole height");
+        assert!(l.border_at(AREA, 39, 20).is_none() && l.border_at(AREA, 41, 14).is_none(), "inside panes");
+        assert!(l.border_at(AREA, 81, 0).is_none(), "outside");
+    }
+
+    #[test]
+    fn dragging_a_border_resizes_both_sides_within_the_minimum() {
+        let mut l = three();
+        let (border, _) = l.border_at(AREA, 40, 20).unwrap();
+        assert!(l.drag_border(&border, 30, 5, AREA));
+        assert_eq!(rect_of(&l, 1), Rect::new(0, 0, 30, 31));
+        assert_eq!((rect_of(&l, 2).x, rect_of(&l, 2).w), (31, 50));
+        assert!(!l.drag_border(&border, 30, 9, AREA), "the same column");
+        l.drag_border(&border, 2, 0, AREA);
+        assert_eq!(rect_of(&l, 1).w, MIN_COLS);
+        l.drag_border(&border, 200, 0, AREA);
+        assert_eq!(rect_of(&l, 2).w, MIN_COLS);
+        let (border, _) = l.border_at(AREA, 75, 15).unwrap();
+        l.drag_border(&border, 0, 0, AREA);
+        assert_eq!(rect_of(&l, 2).h, MIN_ROWS);
+    }
+
+    #[test]
+    fn a_border_keeps_the_panes_beyond_nested_splits() {
+        // 1 | (2 | 3): the outer border stops where 2 and 3 are both minimal.
+        let mut l = Layout::new(1);
+        l.split(1, 2, Split::Horizontal, AREA);
+        l.split(2, 3, Split::Horizontal, AREA);
+        let (outer, _) = l.border_at(AREA, 40, 0).unwrap();
+        l.drag_border(&outer, 80, 0, AREA);
+        assert_eq!((rect_of(&l, 2).w, rect_of(&l, 3).w), (MIN_COLS, MIN_COLS));
+        assert_eq!(rect_of(&l, 1).w, 81 - 2 * (MIN_COLS + 1));
+    }
+
+    #[test]
+    fn panes_move_their_right_border_else_their_left() {
+        let mut l = three();
+        assert!(l.move_border(1, Split::Horizontal, 5, AREA));
+        assert_eq!(rect_of(&l, 1).w, 45);
+        // Pane 2 has no right border: its left one moves.
+        assert!(l.move_border(2, Split::Horizontal, -3, AREA));
+        assert_eq!(rect_of(&l, 1).w, 42);
+        // Pane 3 has no bottom border: its top one moves up.
+        assert!(l.move_border(3, Split::Vertical, -5, AREA));
+        assert_eq!((rect_of(&l, 2).h, rect_of(&l, 3).h), (10, 20));
+        assert!(!l.move_border(1, Split::Vertical, 1, AREA), "no border that way");
+        assert!(l.set_pane_size(3, Split::Vertical, 25, AREA));
+        assert_eq!(rect_of(&l, 3).h, 25);
+        assert!(l.set_pane_size(1, Split::Horizontal, 20, AREA));
+        assert_eq!(rect_of(&l, 1).w, 20);
+        assert!(!l.set_pane_size(1, Split::Horizontal, 20, AREA), "already");
     }
 
     #[test]

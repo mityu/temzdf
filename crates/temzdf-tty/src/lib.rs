@@ -145,6 +145,8 @@ pub fn pointer_sequence(pointer: Pointer) -> Vec<u8> {
     let name = match pointer {
         Pointer::Default => "default",
         Pointer::Link => "pointer",
+        Pointer::ResizeColumns => "ew-resize",
+        Pointer::ResizeRows => "ns-resize",
     };
     format!("\x1b]22;{name}\x1b\\").into_bytes()
 }
@@ -196,6 +198,7 @@ mod tests {
     #[test]
     fn pointer_and_clipboard_sequences() {
         assert_eq!(pointer_sequence(Pointer::Link), b"\x1b]22;pointer\x1b\\");
+        assert_eq!(pointer_sequence(Pointer::ResizeRows), b"\x1b]22;ns-resize\x1b\\");
         assert_eq!(copy_sequence("hi", false), b"\x1b]52;c;aGk=\x1b\\");
         assert!(copy_sequence("hi", true).starts_with(b"\x1bPtmux;"));
     }

@@ -168,6 +168,10 @@ pub enum Pointer {
     Default,
     /// Over something clickable (a link).
     Link,
+    /// Over a border between panes side by side: drag sideways.
+    ResizeColumns,
+    /// Over a border between stacked panes: drag up or down.
+    ResizeRows,
 }
 
 /// Everything a pane shows at one moment.

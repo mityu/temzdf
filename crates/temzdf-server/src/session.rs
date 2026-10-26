@@ -18,13 +18,13 @@ use temzdf_pdfview::viewer::{StandIn, ViewState};
 use temzdf_scene::{CursorShape, Effect, Frame, Hints, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
 use temzdf_term::{Spawn, TermBuffer, TermEvent, TermView};
 use termpix_core::geom::Geometry;
-use termpix_core::input::{CoordUnit, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
+use termpix_core::input::{CoordUnit, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
 use termpix_core::scroll::ScrollConfig;
 
 use crate::action::{Action, PaneSpec};
 use crate::forward::{self, ForwardRequest};
 use crate::keymap::{History, Matcher, Modes, Step, Stroke, Target, Unmapped, notation};
-use crate::layout::{Layout, PaneId, Split};
+use crate::layout::{BorderId, Layout, PaneId, Split};
 use temzdf_protocol::script::{FromHost, ScriptValue};
 
 mod commands;
@@ -307,6 +307,9 @@ pub struct Session {
     captured: Option<PaneId>,
     /// The pressed button only switched the focus.
     focus_click: bool,
+    /// The border being dragged, and the kind of border under the pointer.
+    dragging: Option<BorderId>,
+    over_border: Option<Split>,
     /// Solid images (background, borders) by size and colour.
     solids: HashMap<(u32, u32, [u8; 4]), ImageKey>,
     complete: bool,
@@ -346,6 +349,8 @@ impl Session {
             hovered: None,
             captured: None,
             focus_click: false,
+            dragging: None,
+            over_border: None,
             solids: HashMap::new(),
             complete: false,
             error: None,
@@ -452,6 +457,7 @@ impl Session {
 
     /// Put pane `id` into the layout at `spot`. Returns its rectangle.
     fn place(&mut self, id: PaneId, spot: Spot) -> Result<Rect> {
+        self.dragging = None;
         let area = self.area();
         let (target, split, before) = match spot {
             Spot::Split { target: Some(t), split, before } if self.panes.contains_key(&t) => (Some(t), split, before),
@@ -787,7 +793,10 @@ impl Session {
                 }
             }
         }
-        self.fit_terms();
+        // Programs get their new size when the drag ends.
+        if self.dragging.is_none() {
+            self.fit_terms();
+        }
     }
 
     /// A terminal is as large as the largest pane showing it (as in Neovim);
@@ -1184,6 +1193,8 @@ impl Session {
                 *p = None;
             }
         }
+        // The layout changed under it.
+        self.dragging = None;
         self.relayout();
         Outcome::Redraw
     }
@@ -1228,6 +1239,9 @@ impl Session {
             }
             self.hovered = under;
         }
+        if let Some(border) = self.border_mouse(m, under, px, py) {
+            return out.merge(border);
+        }
         match m.kind {
             MouseEventKind::Press(_) => {
                 self.captured = under;
@@ -1270,6 +1284,41 @@ impl Session {
         }
     }
 
+    /// Borders: the pointer shape over them, and dragging them with the left
+    /// button. `Some` when the event was the border's.
+    fn border_mouse(&mut self, m: &MouseEvent, under: Option<PaneId>, px: f32, py: f32) -> Option<Outcome> {
+        let cell = self.geometry.cell;
+        let (col, row) = ((px / cell.width as f32).floor() as i32, (py / cell.height as f32).floor() as i32);
+        let area = self.area();
+        let layout = self.layout.as_mut()?;
+        if let Some(id) = &self.dragging {
+            return Some(match m.kind {
+                MouseEventKind::Release(_) => {
+                    self.dragging = None;
+                    self.over_border = layout.border_at(area, col, row).map(|(_, s)| s);
+                    self.fit_terms();
+                    Outcome::Redraw
+                }
+                MouseEventKind::Drag(_) if layout.drag_border(id, col, row, area) => {
+                    self.relayout();
+                    Outcome::Redraw
+                }
+                _ => Outcome::None,
+            });
+        }
+        // Over a pane, or a button held for one: not a border's.
+        let border = if under.is_none() && self.captured.is_none() { layout.border_at(area, col, row) } else { None };
+        self.over_border = border.as_ref().map(|(_, s)| *s);
+        let (id, _) = border?;
+        Some(match m.kind {
+            MouseEventKind::Press(MouseButton::Left) => {
+                self.dragging = Some(id);
+                Outcome::Redraw
+            }
+            _ => Outcome::None,
+        })
+    }
+
     /// Effects for the frontend, including requests panes made since the last
     /// call (call every loop iteration: inverse search does not redraw).
     pub fn take_effects(&mut self) -> Vec<Effect> {
@@ -1308,6 +1357,12 @@ impl Session {
 
     /// The pointer shape the frontend should show.
     pub fn pointer(&self) -> Pointer {
+        let border = self.dragging.as_ref().and_then(|id| self.layout.as_ref()?.split_of(id)).or(self.over_border);
+        match border {
+            Some(Split::Horizontal) => return Pointer::ResizeColumns,
+            Some(Split::Vertical) => return Pointer::ResizeRows,
+            None => {}
+        }
         match self.hovered.and_then(|p| self.panes.get(&p)).map(|e| &e.kind) {
             Some(Kind::Pdf { pane, .. }) => pane.pointer(),
             Some(Kind::Term { buf, .. }) if self.terms.get(buf).is_some_and(|t| t.term.hovering_link()) => {
@@ -1586,6 +1641,8 @@ mod tests {
             ("k", acts(&[("move-focus", &[s("up")])])),
             ("l", acts(&[("move-focus", &[s("right")])])),
             ("o", acts(&[("focus-next-pane", &[])])),
+            ("H", acts(&[("resize-pane", &[s("left")])])),
+            ("L", acts(&[("resize-pane", &[s("right")])])),
             ("x", acts(&[("close-pane", &[])])),
             ("d", acts(&[("detach", &[]), ("exit-mode", &[])])),
             ("q", acts(&[("kill-session", &[])])),
@@ -1608,7 +1665,7 @@ mod tests {
     use temzdf_pdfcore::doc_cache::TileKey;
     use temzdf_pdfcore::pdf;
     use termpix_core::geom::CellSize;
-    use termpix_core::input::{Modifiers, MouseButton};
+    use termpix_core::input::Modifiers;
 
     const GEOMETRY: Geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
 
@@ -2001,5 +2058,45 @@ mod tests {
         key(&mut s, "<CR>");
         let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().filter(|l| *l == "30 90").count() == 2);
         assert_eq!(rows.iter().filter(|l| *l == "30 90").count(), 2, "{rows:?}");
+    }
+
+    #[test]
+    fn dragging_a_border_resizes_panes_and_their_programs_on_release() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "ready");
+        let left = s.focus;
+        key(&mut s, "<C-b>%");
+        let right = s.focus;
+        let (term, width) = (s.panes[&left].buffer(), |s: &Session, p| s.panes[&p].rect.w);
+        let cols = |s: &Session| s.terms[&term].term.geometry().cols;
+        let border = width(&s, left) as i32;
+        let at = |kind, col: i32| MouseEvent {
+            kind,
+            x: col * 10 + 5,
+            y: 105,
+            unit: CoordUnit::Pixel,
+            modifiers: Modifiers::NONE,
+        };
+        let now = Instant::now();
+        s.mouse(&at(MouseEventKind::Move, border - 3), now);
+        assert_eq!(s.pointer(), Pointer::Default);
+        s.mouse(&at(MouseEventKind::Move, border), now);
+        assert_eq!(s.pointer(), Pointer::ResizeColumns, "over the border");
+        s.mouse(&at(MouseEventKind::Press(MouseButton::Left), border), now);
+        assert_eq!(s.mouse(&at(MouseEventKind::Drag(MouseButton::Left), 60), now), Outcome::Redraw);
+        assert_eq!((width(&s, left), width(&s, right)), (60, 29));
+        assert_eq!(cols(&s), border as u16, "the program keeps its size while dragging");
+        assert_eq!(s.pointer(), Pointer::ResizeColumns, "anywhere while dragging");
+        s.mouse(&at(MouseEventKind::Drag(MouseButton::Left), 70), now);
+        s.mouse(&at(MouseEventKind::Release(MouseButton::Left), 70), now);
+        assert_eq!((width(&s, left), cols(&s)), (70, 70), "and gets the new size on release");
+        assert_eq!(s.focus, right, "the border took the press");
+        // The keys move the focused pane's border: the right pane has only a
+        // left one.
+        assert_eq!(key(&mut s, "<C-b>3H"), Outcome::Redraw);
+        assert_eq!((width(&s, left), cols(&s)), (67, 67));
+        key(&mut s, "L");
+        assert_eq!(width(&s, left), 68, "the normal mode stays");
+        assert_eq!(s.current_mode(), "normal");
     }
 }

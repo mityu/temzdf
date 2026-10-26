@@ -48,6 +48,12 @@ each("normal", ["h", "<Left>"], action.moveFocus("left"));
 each("normal", ["j", "<Down>"], action.moveFocus("down"));
 each("normal", ["k", "<Up>"], action.moveFocus("up"));
 each("normal", ["l", "<Right>"], action.moveFocus("right"));
+// Borders move the way of the key (the right or bottom one if the pane has
+// one); the normal mode stays, so the keys repeat (3L: three cells).
+each("normal", ["H"], action.resizePane("left"));
+each("normal", ["J"], action.resizePane("down"));
+each("normal", ["K"], action.resizePane("up"));
+each("normal", ["L"], action.resizePane("right"));
 each("normal", ["o"], action.focusNextPane());
 each("normal", ["x"], action.closePane());
 each("normal", ["d"], [action.detach(), action.exitMode()]);

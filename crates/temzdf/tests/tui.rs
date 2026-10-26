@@ -530,6 +530,32 @@ fn dragging_in_a_shell_copies_to_the_outer_terminal() {
 }
 
 #[test]
+fn borders_drag_and_the_shipped_keys_resize_panes() {
+    let env = Env::new("resize");
+    let mut t = Term::spawn(&[BIN, "-s", "r"], &env.options());
+    t.wait_for("the prompt", prompt);
+    // 100 columns: 49 + border + 50.
+    t.keys(&["C-b", "%"]);
+    t.wait_for("a prompt in the right pane", |s| is_prompt(&s.row_from(0, 50)));
+    t.drag((49, 5), (70, 5));
+    t.type_text("clear; stty size\n");
+    // `stty size` prints "ROWS COLS".
+    let widths = |s: &tuitest::Screen| -> Vec<u16> {
+        let lines = s.lines();
+        let pairs = lines.iter().flat_map(|l| {
+            let words: Vec<_> = l.split_whitespace().map(|w| w.parse::<u16>().ok()).collect();
+            words.windows(2).filter_map(|w| Some((w[0]?, w[1]?))).collect::<Vec<_>>()
+        });
+        pairs.map(|(_, cols)| cols).collect()
+    };
+    t.wait_for("the new size", |s| widths(s).contains(&29));
+    // The shipped mappings: the right pane's left border moves left.
+    t.keys(&["C-b", "5", "H", "Esc"]);
+    t.type_text("clear; stty size\n");
+    t.wait_for("five columns wider", |s| widths(s).contains(&34));
+}
+
+#[test]
 fn images_from_a_program_show_inside_its_pane() {
     let env = Env::new("graphics");
     let mut t = Term::spawn(&[BIN, "-s", "g"], &env.options());

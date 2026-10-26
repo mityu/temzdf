@@ -37,7 +37,10 @@ What exists:
   focus-next-pane | close-pane | detach` (`new-pane` alone opens a shell; the
   CLI adds `--cwd` with its own directory). Splitting a PDF pane shows the same
   document again; splitting a terminal starts another shell in the directory
-  the shell reported (OSC 7). `<C-b><C-b>` sends `<C-b>` to the pane. One server process per session; its
+  the shell reported (OSC 7). `<C-b><C-b>` sends `<C-b>` to the pane.
+  Borders drag with the mouse, and `resize-pane` (`H` `J` `K` `L` in the
+  `normal` mode) moves them from the keyboard; a split keeps its first
+  half's size, so the last pane takes a change of the screen size. One server process per session; its
   output goes to `NAME.log` in the log directory (`$TEMZDF_LOG_DIR`, or
   `$XDG_STATE_HOME/temzdf`); `temzdf ls -v` shows it. Any command of the
   registry runs from the CLI too (`temzdf action NAME ARGS...`).

@@ -84,6 +84,7 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `terminal`, `pdf` | `<C-b>` | enter the `normal` mode (the prefix) |
 | `normal` | `%` / `"` | split right / below (the same document, or a new shell) |
 | `normal` | `h` `j` `k` `l`, arrows | move the focus (back to that pane's mode) |
+| `normal` | `H` `J` `K` `L` | move a border of the pane left / down / up / right (counts; the right or bottom border, else the left or top one) |
 | `normal` | `o` | next pane |
 | `normal` | `x` | close the pane (its buffer stays, hidden) |
 | `normal` | `d` | detach (`temzdf -s`) |
@@ -107,7 +108,10 @@ Inside tmux, `<C-b>` is tmux's own prefix: map another key for temzdf (or
 press it twice there).
 
 While a PDF pane's search prompt is open or its outline has the focus, keys
-go to them directly (fixed keys). Mouse handling is built in. In terminal
+go to them directly (fixed keys). Mouse handling is built in. Dragging a
+border between panes resizes them, in any mode (the pointer shows a resize
+shape over borders); programs in terminal panes get their new size when the
+button is released. Panes stay at least 10 columns by 4 rows. In terminal
 panes the left button selects (drag; double click a word, triple click a
 line) and releasing copies to the clipboard (OSC 52 through the client's
 terminal); where the program uses the mouse, hold Shift, or select from the
@@ -173,13 +177,15 @@ map("normal", "n", () => {
 `cmd.*` and `action.*` share the command registry
 (`crates/temzdf-server/src/session/commands.rs`; `temzdf print-types` lists
 them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
-`focusNextPane`, `closePane`, `buffers`, `showBuffer`, `edit`,
+`focusNextPane`, `resizePane`, `closePane`, `buffers`, `showBuffer`, `edit`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
 `sendText`, `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
 `search`, ...: every action of the PDF table above, taking the count).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
-action split right`).
+action split right`). `resizePane("left", 5)` moves a border of the focused
+pane five cells left (as tmux's `resize-pane -L 5`); `resizePane({ width:
+40 })` sets its size.
 
 ## Environment
 

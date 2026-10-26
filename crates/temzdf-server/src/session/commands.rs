@@ -9,7 +9,7 @@ use temzdf_protocol::script::{CommandSpec, ScriptValue};
 use super::{Kind, Outcome, PaneEntry, Session, Spot};
 use crate::action::Action;
 use crate::keymap::notation;
-use crate::layout::Direction;
+use crate::layout::{Direction, Split};
 
 /// The session's own commands; the page-view commands follow (see
 /// [`command_specs`]).
@@ -22,6 +22,11 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("new-pane", "(...words: string[]): void", "As `temzdf action new-pane`: a file, or \"--\" and a command"),
     ("move-focus", "(dir: \"left\" | \"right\" | \"up\" | \"down\"): void", "Focus the pane in that direction"),
     ("focus-next-pane", "(): void", "Focus the next pane"),
+    (
+        "resize-pane",
+        "(how: \"left\" | \"right\" | \"up\" | \"down\" | { width?: number; height?: number }, cells?: number): void",
+        "Move the focused pane's right (bottom) border, else its left (top) one, `cells` cells that way (1 times a mapping's count); or give the pane a size",
+    ),
     ("close-pane", "(): void", "Close the focused pane (its buffer stays, hidden)"),
     (
         "buffers",
@@ -142,6 +147,7 @@ impl Session {
                 act(self, Action::MoveFocus(dir))
             }
             "focus-next-pane" => act(self, Action::FocusNextPane),
+            "resize-pane" => self.resize_pane(args, count),
             "close-pane" => ok(self.request_close(self.focus)),
             "buffers" => Ok((self.buffer_list(), Outcome::None)),
             "show-buffer" => {
@@ -228,6 +234,43 @@ impl Session {
             "session-name" => Ok((ScriptValue::Str(self.name.clone()), Outcome::None)),
             other => Err(format!("no command {other:?}")),
         }
+    }
+
+    fn resize_pane(&mut self, args: &[ScriptValue], count: Option<usize>) -> Result<(ScriptValue, Outcome), String> {
+        let area = self.area();
+        let pane = self.focus;
+        let Some(layout) = self.layout.as_mut() else { return Ok((ScriptValue::Null, Outcome::None)) };
+        let num = |v: Option<&ScriptValue>| match v {
+            Some(ScriptValue::Num(n)) => Some(*n),
+            Some(ScriptValue::Str(s)) => s.parse().ok(),
+            _ => None,
+        };
+        let moved = match args.first() {
+            Some(o @ ScriptValue::Map(_)) => {
+                let mut moved = false;
+                for (key, split) in [("width", Split::Horizontal), ("height", Split::Vertical)] {
+                    if let Some(n) = num(o.get(key)) {
+                        moved |= layout.set_pane_size(pane, split, n.max(0.0) as u32, area);
+                    }
+                }
+                moved
+            }
+            dir => {
+                let cells = num(args.get(1)).unwrap_or(1.0) as i32 * count.unwrap_or(1) as i32;
+                let (split, sign) = match dir.and_then(ScriptValue::as_str) {
+                    Some("left") => (Split::Horizontal, -1),
+                    Some("right") => (Split::Horizontal, 1),
+                    Some("up") => (Split::Vertical, -1),
+                    Some("down") => (Split::Vertical, 1),
+                    other => return Err(format!("resizePane: {other:?} is not left, right, up, down or a size")),
+                };
+                layout.move_border(pane, split, sign * cells, area)
+            }
+        };
+        if moved {
+            self.relayout();
+        }
+        Ok((ScriptValue::Null, if moved { Outcome::Redraw } else { Outcome::None }))
     }
 
     /// `temzdf action NAME ARGS...`: a command by name, its arguments as
