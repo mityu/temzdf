@@ -131,8 +131,31 @@ fn parse_pair(s: &str) -> Result<(u32, u32)> {
     Ok((a.parse()?, b.parse()?))
 }
 
+/// An option only the standalone viewer takes, if given.
+fn viewer_only_option(cli: &Cli) -> Option<&'static str> {
+    [
+        (cli.render_frame.is_some(), "--render-frame"),
+        (cli.page.is_some(), "--page"),
+        (cli.scale.is_some(), "--scale"),
+        (cli.forward.is_some(), "--forward"),
+        (cli.keys.is_some(), "--keys"),
+    ]
+    .into_iter()
+    .find_map(|(given, name)| given.then_some(name))
+}
+
+/// Options that apply only when a session starts, given (`file`: a FILE).
+fn session_only_options(cli: &Cli, file: bool) -> Vec<&'static str> {
+    [(file, "FILE"), (cli.editor.is_some(), "--editor"), (cli.config.is_some(), "--config"), (cli.clean, "--clean")]
+        .into_iter()
+        .filter_map(|(given, name)| given.then_some(name))
+        .collect()
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Flags for starting a session, for warnings when it exists already.
+    let start_flags = session_only_options(&cli, false);
     match cli.command {
         Some(Cmd::ListSessions { verbose }) => return client::list_sessions(verbose),
         Some(Cmd::KillSession { name }) => return client::kill_session(&name),
@@ -152,6 +175,18 @@ fn main() -> Result<()> {
             return temzdf_script::run(std::io::stdin(), std::io::stdout()).map_err(anyhow::Error::msg);
         }
         Some(Cmd::Attach { name, create, file }) => {
+            if file.is_some() && !create {
+                bail!("a FILE is for a new session: attach -c NAME FILE");
+            }
+            let exists = |n: &str| temzdf_server::daemon::list().is_ok_and(|l| l.iter().any(|s| s.name == n));
+            if let Some(n) = &name
+                && exists(n)
+            {
+                let unused = file.is_some().then_some("FILE").into_iter().chain(start_flags);
+                for unused in unused {
+                    eprintln!("temzdf: session {n:?} exists: {unused} not used");
+                }
+            }
             let name = match (name, create, file) {
                 (Some(n), true, file) if temzdf_server::daemon::list()?.iter().all(|s| s.name != n) => {
                     client::spawn_server(
@@ -183,6 +218,13 @@ fn main() -> Result<()> {
     }
     let page = cli.page.map(|p| p.saturating_sub(1));
     if let Some(name) = &cli.session {
+        if let Some(option) = viewer_only_option(&cli) {
+            bail!("{option} is for the viewer, not sessions (-s)");
+        }
+        // `temzdf -s typo.pdf`: not a name, a file that is not there.
+        if cli.file.is_none() && name.to_ascii_lowercase().ends_with(".pdf") && !std::path::Path::new(name).is_file() {
+            bail!("{name}: no such file");
+        }
         // `temzdf -s doc.pdf`: the name was the file.
         let (name, file) = match &cli.file {
             Some(f) => (name.clone(), Some(f.clone())),
@@ -225,4 +267,21 @@ fn main() -> Result<()> {
         &file,
         app::Options { page, scale: cli.scale, config, forward, editor: cli.editor.clone(), clean: cli.clean },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn options_that_do_not_apply_are_named() {
+        let cli = |args: &[&str]| Cli::try_parse_from(std::iter::once("temzdf").chain(args.iter().copied())).unwrap();
+        assert_eq!(viewer_only_option(&cli(&["-s", "x", "--page", "3"])), Some("--page"));
+        assert_eq!(viewer_only_option(&cli(&["-s", "x"])), None);
+        assert_eq!(
+            session_only_options(&cli(&["attach", "x", "--clean", "--editor", "vi"]), true),
+            ["FILE", "--editor", "--clean"]
+        );
+        assert!(session_only_options(&cli(&["attach", "x"]), false).is_empty());
+    }
 }
