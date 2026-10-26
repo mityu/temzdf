@@ -1024,7 +1024,8 @@ mod tests {
 
     #[test]
     fn scrolled_back_views_say_how_far() {
-        let (mut term, _) = run(&["sh", "-c", "seq 1 20; sleep 5"], |_| {}, |r| r.iter().any(|l| l == "20"));
+        // Until the newline after 20 is in too (the output may come in pieces).
+        let (mut term, _) = run(&["sh", "-c", "seq 1 20; sleep 5"], |_| {}, |r| r[4] == "20");
         let view = TermView::new(GEOMETRY);
         let top = |t: &mut TermBuffer| -> String {
             view.frame(t, &mut Images::new()).text[0].rows[0]
