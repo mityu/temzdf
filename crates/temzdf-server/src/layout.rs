@@ -213,19 +213,20 @@ impl Layout {
     }
 
     /// Rotate the panes in the row or column `pane` is in (the splits of
-    /// one kind around it), each taking the next one's place, the last the
-    /// first's (`reverse`: the other way), as Vim's `<C-w>r` and `<C-w>R`.
+    /// one kind around it) `times` places, each taking the next one's place,
+    /// the last the first's (`reverse`: the other way), as Vim's `<C-w>r`
+    /// and `<C-w>R` with a count.
     /// The places keep their sizes. False with nothing to rotate.
-    pub fn rotate(&mut self, pane: PaneId, reverse: bool, area: Rect) -> bool {
+    pub fn rotate(&mut self, pane: PaneId, reverse: bool, times: usize, area: Rect) -> bool {
         let before = self.clone();
-        if self.rotate_places(pane, reverse) && self.settle(area) {
+        if self.rotate_places(pane, reverse, times) && self.settle(area) {
             return true;
         }
         *self = before;
         false
     }
 
-    fn rotate_places(&mut self, pane: PaneId, reverse: bool) -> bool {
+    fn rotate_places(&mut self, pane: PaneId, reverse: bool, times: usize) -> bool {
         let Some(path) = self.path_to(pane) else { return false };
         let Some(parent) = path.len().checked_sub(1) else { return false };
         let Some(Node::Split { split, .. }) = self.node(&path[..parent]) else { return false };
@@ -253,10 +254,12 @@ impl Layout {
         let mut slots = Vec::new();
         places(n, split, &mut slots);
         let mut items: Vec<Node> = slots.iter_mut().map(|s| std::mem::replace(&mut **s, Node::Leaf(0))).collect();
+        // `times` places on: as many times round as fits takes no time.
+        let n = times % items.len();
         if reverse {
-            items.rotate_left(1);
+            items.rotate_left(n);
         } else {
-            items.rotate_right(1);
+            items.rotate_right(n);
         }
         for (slot, item) in slots.into_iter().zip(items) {
             *slot = item;
@@ -695,7 +698,7 @@ mod tests {
         l.split(2, 3, Split::Horizontal, AREA);
         l.set_pane_size(1, Split::Horizontal, 10, AREA);
         assert_eq!(rect_of(&l, 1).w, 10);
-        assert!(l.rotate(1, false, AREA));
+        assert!(l.rotate(1, false, 1, AREA));
         assert_eq!(l.panes(), [2, 3, 4, 1]);
         assert_min(&l, AREA);
     }
@@ -709,19 +712,25 @@ mod tests {
         l.move_border(1, Split::Horizontal, 10, AREA);
         let widths = |l: &Layout| l.rects(AREA).iter().map(|(_, r)| r.w).collect::<Vec<_>>();
         let before = widths(&l);
-        assert!(l.rotate(2, false, AREA));
+        assert!(l.rotate(2, false, 1, AREA));
         assert_eq!(l.panes(), [3, 1, 2]);
         assert_eq!(widths(&l), before, "the places keep their sizes");
-        assert!(l.rotate(2, true, AREA));
+        assert!(l.rotate(2, true, 1, AREA));
         assert_eq!(l.panes(), [1, 2, 3]);
         // A column inside a row turns as one.
         let mut l = three();
-        assert!(l.rotate(1, false, AREA));
+        assert!(l.rotate(1, false, 1, AREA));
         assert_eq!(l.panes(), [2, 3, 1]);
         // Within the column: 2 and 3 swap.
-        assert!(l.rotate(2, false, AREA));
+        assert!(l.rotate(2, false, 1, AREA));
         assert_eq!(l.panes(), [3, 2, 1]);
-        assert!(!Layout::new(1).rotate(1, false, AREA), "nothing to rotate");
+        assert!(!Layout::new(1).rotate(1, false, 1, AREA), "nothing to rotate");
+        // A count goes round: two places in a column of two is where it
+        // started, and the largest count takes no time.
+        let before = l.panes();
+        assert!(l.rotate(2, false, 2, AREA));
+        assert_eq!(l.panes(), before);
+        assert!(l.rotate(2, false, usize::MAX, AREA));
     }
 
     #[test]

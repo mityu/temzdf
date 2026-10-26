@@ -106,6 +106,14 @@ pub fn command_specs() -> Vec<CommandSpec> {
     session.chain(pdf).collect()
 }
 
+/// `cells` times a mapping's `count`, kept within what any screen has
+/// (counts saturate at usize::MAX; scripts pass any number).
+fn times(cells: f64, count: Option<usize>) -> i32 {
+    const MOST: f64 = 100_000.0;
+    let cells = if cells.is_nan() { 0.0 } else { cells.clamp(-MOST, MOST) };
+    (cells * count.unwrap_or(1).min(100_000) as f64).clamp(-MOST, MOST) as i32
+}
+
 impl Session {
     /// Run command `name`. `count` comes from a mapping (`3j`).
     pub(super) fn run_command(
@@ -236,12 +244,7 @@ impl Session {
             "rotate-panes" => {
                 let reverse = matches!(args.first(), Some(ScriptValue::Bool(true)));
                 let (pane, area) = (self.focus, self.area());
-                let mut moved = false;
-                if let Some(l) = self.layout.as_mut() {
-                    for _ in 0..count.unwrap_or(1) {
-                        moved |= l.rotate(pane, reverse, area);
-                    }
-                }
+                let moved = self.layout.as_mut().is_some_and(|l| l.rotate(pane, reverse, count.unwrap_or(1), area));
                 if moved {
                     self.dragging = None;
                     self.relayout();
@@ -397,7 +400,7 @@ impl Session {
                 moved
             }
             Some(ScriptValue::Str(how)) if matches!(how.as_str(), "wider" | "narrower" | "taller" | "shorter") => {
-                let cells = num(args.get(1)).unwrap_or(1.0) as i32 * count.unwrap_or(1) as i32;
+                let cells = times(num(args.get(1)).unwrap_or(1.0), count);
                 let (split, sign) = match how.as_str() {
                     "wider" => (Split::Horizontal, 1),
                     "narrower" => (Split::Horizontal, -1),
@@ -411,7 +414,7 @@ impl Session {
                 layout.set_pane_size(pane, split, (now + sign * cells).max(0) as u32, area)
             }
             dir => {
-                let cells = num(args.get(1)).unwrap_or(1.0) as i32 * count.unwrap_or(1) as i32;
+                let cells = times(num(args.get(1)).unwrap_or(1.0), count);
                 let (split, sign) = match dir.and_then(ScriptValue::as_str) {
                     Some("left") => (Split::Horizontal, -1),
                     Some("right") => (Split::Horizontal, 1),
@@ -443,7 +446,7 @@ impl Session {
         match args.first() {
             Some(o @ ScriptValue::Map(_)) => self.resize_float(pane, num(o.get("width")), num(o.get("height")), true),
             dir => {
-                let cells = num(args.get(1)).unwrap_or(1) * count.unwrap_or(1) as i64;
+                let cells = times(num(args.get(1)).unwrap_or(1) as f64, count) as i64;
                 let (w, h) = match dir.and_then(ScriptValue::as_str) {
                     Some("left" | "narrower") => (Some(-cells), None),
                     Some("right" | "wider") => (Some(cells), None),
@@ -465,5 +468,21 @@ impl Session {
         self.map_depth = 0;
         let (_, out) = self.run_command(name, &args, None, Instant::now()).map_err(anyhow::Error::msg)?;
         Ok(out.merge(self.flush_events()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::times;
+
+    #[test]
+    fn counts_and_cells_stay_in_range() {
+        assert_eq!(times(3.0, Some(4)), 12);
+        assert_eq!(times(-2.0, None), -2);
+        // Counts saturate at usize::MAX; scripts pass anything.
+        assert_eq!(times(1.0, Some(usize::MAX)), 100_000);
+        assert_eq!(times(-1.0, Some(usize::MAX)), -100_000);
+        assert_eq!(times(f64::INFINITY, None), 100_000);
+        assert_eq!(times(f64::NAN, Some(5)), 0);
     }
 }
