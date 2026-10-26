@@ -90,7 +90,11 @@ screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/` from
 `tests/fixtures/*.tex` (tests run it automatically; e2e scenarios need it first).
 For refactorings, `scripts/frames.sh render-rev HEAD A` (the last commit),
 `scripts/frames.sh render B` (your build) and `scripts/frames.sh compare A B`
-prove the screen is pixel-identical. The
+prove the screen is pixel-identical. A test written for a fix should fail
+without it: `scripts/mutate.sh FILE OLD NEW -- cargo test ...` puts the bug
+back for one run and restores the file (it refuses a pattern that does not
+match once, and tells a mutation that did not compile or a filter that ran
+no test from a caught one). The
 full testing approach is in `doc/testing.md`.
 
 `scripts/e2e.sh` is Linux-only. On macOS, `scripts/macos-gui.sh` runs kitty,

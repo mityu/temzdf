@@ -18,6 +18,16 @@ Action files live in `tests/e2e/`; each starts with a comment saying how to run 
 and what the screenshots should show. To look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 
+## Mutation checks
+
+A test written for a fix should fail without the fix. `scripts/mutate.sh
+FILE OLD NEW -- COMMAND` replaces OLD (exactly one occurrence) with NEW,
+runs COMMAND (after checking it passes unmutated; `-n` skips that) and
+restores FILE whatever happens. It answers CAUGHT (exit 0), SURVIVED (1:
+the tests do not notice), or why it proves nothing: OLD not found once (2),
+the mutated code did not compile (3), no test ran (4: a filter matching
+nothing).
+
 ## Miri
 
 `scripts/miri.sh [PACKAGE...]` runs the workspace's unit tests (`--lib`,
