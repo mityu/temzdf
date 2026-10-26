@@ -215,12 +215,14 @@ fn the_shell_follows_the_window_size() {
 
 #[test]
 fn typed_keys_echo_at_once_with_composited_frames() {
-    // WezTerm's setup: composited frames sent inline, whose rate is capped
-    // (200 ms). The cap held text too: every key showed up to 200 ms late.
+    // Composited frames sent inline over SSH, whose rate is capped (200 ms;
+    // WezTerm on Linux sends inline too, locally). The cap held text too:
+    // every key showed up to 200 ms late.
     let env = Env::new("echo");
     let mut opts = env.options();
     opts.env.push(("TERMPIX_BACKEND".into(), "composited".into()));
     opts.env.push(("TERMPIX_MEDIUM".into(), "direct".into()));
+    opts.env.push(("SSH_CONNECTION".into(), "192.0.2.1 50000 192.0.2.2 22".into()));
     let mut t = Term::spawn(&[BIN, "-s", "e"], &opts);
     t.wait_for("the prompt", prompt);
     let mut typed = String::from("$ ");
@@ -234,6 +236,57 @@ fn typed_keys_echo_at_once_with_composited_frames() {
             t.pump(std::time::Duration::from_millis(1));
         }
         times.push(start.elapsed());
+    }
+    times.sort();
+    assert!(times[times.len() / 2] < std::time::Duration::from_millis(100), "echo times: {times:?}");
+}
+
+#[test]
+fn typed_keys_echo_at_once_while_a_pdf_scrolls() {
+    // Composited frames sent inline over SSH, as above, and a PDF beside the
+    // shell scrolled by the wheel: its frames send pixels and are capped; the
+    // shell's text must not wait for them.
+    let env = Env::new("echo-scroll");
+    let mut opts = env.options();
+    opts.env.push(("TERMPIX_BACKEND".into(), "composited".into()));
+    opts.env.push(("TERMPIX_MEDIUM".into(), "direct".into()));
+    opts.env.push(("SSH_CONNECTION".into(), "192.0.2.1 50000 192.0.2.2 22".into()));
+    let mut t = Term::spawn(&[BIN, "-s", "e"], &opts);
+    t.wait_for("the prompt", prompt);
+    env.run(&["action", "-s", "e", "new-pane", &fixture("sample.pdf").display().to_string()]);
+    // One composited image covers the screen: see the split in the shell.
+    let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
+    while !env.run(&["ls"]).contains("2 panes") {
+        assert!(std::time::Instant::now() < deadline, "the PDF pane never opened");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    t.click(10, 10);
+    t.type_text("clear; stty size\n");
+    t.wait_text("30 49");
+    t.settle(std::time::Duration::from_millis(500));
+    t.type_text("clear\n");
+    t.wait_for("a clear screen", |s| s.lines().first().is_some_and(|l| l.trim_end() == "$"));
+    let mut typed = String::from("$ ");
+    let mut times = Vec::new();
+    let mut down = true;
+    for (i, c) in "abcdefghij".chars().enumerate() {
+        typed.push(c);
+        let start = std::time::Instant::now();
+        t.key(&c.to_string());
+        while !t.screen().lines().iter().any(|l| l.starts_with(&typed)) {
+            assert!(start.elapsed() < tuitest::TIMEOUT, "{c:?} never echoed");
+            t.wheel(75, 10, down);
+            t.pump(std::time::Duration::from_millis(5));
+        }
+        times.push(start.elapsed());
+        if i % 3 == 2 {
+            down = !down;
+        }
+        // Keep scrolling between keys.
+        for _ in 0..4 {
+            t.wheel(75, 10, down);
+            t.pump(std::time::Duration::from_millis(10));
+        }
     }
     times.sort();
     assert!(times[times.len() / 2] < std::time::Duration::from_millis(100), "echo times: {times:?}");

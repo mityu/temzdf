@@ -401,6 +401,16 @@ impl Compositor {
         Ok(())
     }
 
+    /// Text alone, in a synchronized update, leaving the images as they are
+    /// (for text that should not wait for a frame's images).
+    pub fn present_text(&mut self, text: &[u8], out: &mut Vec<u8>) {
+        if !text.is_empty() {
+            out.extend_from_slice(SYNC_BEGIN);
+            out.extend_from_slice(text);
+            out.extend_from_slice(SYNC_END);
+        }
+    }
+
     fn present_layered(&mut self, layers: &[Layer], out: &mut Vec<u8>) -> io::Result<()> {
         let screen = self.geometry.screen_rect();
         let cell = self.geometry.cell;

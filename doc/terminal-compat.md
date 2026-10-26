@@ -209,9 +209,14 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   WezTerm and `Backend::composited_strips(2)` for zellij.
 - WezTerm on Linux (user's machine, 2026-10-26): both the shm and the
   temp-file probes fail, so Composited over direct transfers, which the
-  frontend takes for a slow link (frames capped at one per 200 ms). The cap
-  used to hold text-only frames too: keys typed into a shell echoed up to
-  200 ms late (user report). It now applies only to frames that send pixels.
+  frontend took for a slow link (frames capped at one per 200 ms). The cap
+  held text too: keys typed into a shell echoed up to 200 ms late, and up to
+  500 ms while a PDF beside it scrolled (user reports). Now direct transfers
+  count as slow only over SSH (`SSH_CONNECTION`, `SSH_CLIENT`, `SSH_TTY`;
+  33 ms locally), and a frame whose images wait for the cap still shows its
+  text at once (and is acknowledged, so the next one comes).
+- In the e2e harness (Xvfb) WezTerm's shm probe succeeds, unlike on the
+  user's desktop; force `TERMPIX_MEDIUM=direct` to reproduce the latter.
 - tmux 3.8 inside kitty 0.49.2 (`scripts/e2e.sh -m tmux`, passthrough on, mouse
   on): works with the Placeholders backend. Frames are composited as strips
   and sent as `U=1` virtual images through passthrough (`ESC P tmux; ...`), and

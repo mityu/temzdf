@@ -218,6 +218,8 @@ enum MouseStep {
     Press,
     Drag,
     Release,
+    WheelUp,
+    WheelDown,
 }
 
 pub struct Term {
@@ -299,6 +301,9 @@ impl Term {
             "TERMPIX_BACKEND",
             "TERMPIX_MEDIUM",
             "TERMPIX_TRACE",
+            "SSH_CONNECTION",
+            "SSH_CLIENT",
+            "SSH_TTY",
         ] {
             cmd.env_remove(var);
         }
@@ -568,13 +573,18 @@ impl Term {
         ]);
     }
 
+    /// Turn the mouse wheel by one notch over a cell.
+    pub fn wheel(&mut self, col: u16, row: u16, down: bool) {
+        self.mouse(&[(if down { MouseStep::WheelDown } else { MouseStep::WheelUp }, col, row, 0.5)]);
+    }
+
     /// Text the program wrote to the clipboard (OSC 52) since the start.
     pub fn copied(&mut self) -> Vec<String> {
         self.pump(Duration::ZERO);
         self.copied.borrow().clone()
     }
 
-    /// Left-button events at cells (`x` the fraction of the cell's width).
+    /// Left-button and wheel events at cells (`x` the fraction of the cell's width).
     fn mouse(&mut self, steps: &[(MouseStep, u16, u16, f32)]) {
         use libghostty_vt::mouse;
         self.pump(Duration::ZERO);
@@ -593,13 +603,15 @@ impl Term {
         });
         for &(step, col, row, frac) in steps {
             let position = mouse::Position { x: (col as f32 + frac) * cw as f32, y: (row as f32 + 0.5) * ch as f32 };
-            let (action, pressed) = match step {
-                MouseStep::Press => (mouse::Action::Press, true),
-                MouseStep::Drag => (mouse::Action::Motion, true),
-                MouseStep::Release => (mouse::Action::Release, false),
+            let (action, pressed, button) = match step {
+                MouseStep::Press => (mouse::Action::Press, true, mouse::Button::Left),
+                MouseStep::Drag => (mouse::Action::Motion, true, mouse::Button::Left),
+                MouseStep::Release => (mouse::Action::Release, false, mouse::Button::Left),
+                MouseStep::WheelUp => (mouse::Action::Press, false, mouse::Button::Four),
+                MouseStep::WheelDown => (mouse::Action::Press, false, mouse::Button::Five),
             };
             let mut event = mouse::Event::new().expect("mouse event");
-            event.set_action(action).set_button(Some(mouse::Button::Left)).set_position(position);
+            event.set_action(action).set_button(Some(button)).set_position(position);
             encoder.set_any_button_pressed(pressed);
             let mut bytes = Vec::new();
             if encoder.encode_to_vec(&event, &mut bytes).is_ok() && !bytes.is_empty() {

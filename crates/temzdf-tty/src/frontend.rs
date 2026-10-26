@@ -43,7 +43,8 @@ pub enum Input {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Presented {
     Shown,
-    /// Not now (the frame rate is capped); present again soon.
+    /// Its images not now (the frame rate is capped), but its text is shown
+    /// when it can be alone; present again soon (or a newer frame).
     Held,
     /// A first frame waiting for its pages to finish rendering (at most
     /// `FIRST_FRAME_WAIT`); a newer frame should replace it.
@@ -108,9 +109,10 @@ impl TtyFrontend {
         }
         let composited = matches!(backend, Backend::Composited { .. } | Backend::Placeholders { .. });
         // tmux passes our (compressed) bytes through as they are; zellij
-        // re-encodes every image uncompressed; inline transfers without a
-        // multiplexer usually mean SSH.
-        let slow_link = caps.in_zellij || (!caps.in_tmux && matches!(medium, Medium::Direct { .. }));
+        // re-encodes every image uncompressed. Inline transfers are slow over
+        // SSH, but local terminals without shm or temp files (WezTerm on
+        // Linux) take them fast.
+        let slow_link = caps.in_zellij || (!caps.in_tmux && matches!(medium, Medium::Direct { .. }) && over_ssh());
         let min_interval = match (composited, slow_link) {
             (false, _) => Duration::ZERO,
             (true, false) => Duration::from_millis(33),
@@ -189,6 +191,13 @@ impl TtyFrontend {
         let pixels = self.comp.would_resend(&self.presenter.layers(&frame.layers));
         if pixels && self.last_pixels.is_some_and(|t| t.elapsed() < self.min_interval) {
             self.retry_soon = true;
+            // A PDF scrolling beside a shell: the shell's echo goes out now.
+            if let Some(bytes) = self.screen.render_text(frame, &mut self.comp)
+                && !bytes.is_empty()
+            {
+                self.tty.write_all(bytes)?;
+            }
+            self.set_pointer(frame.pointer)?;
             return Ok(Presented::Held);
         }
         let bytes = self.screen.render(frame, &self.presenter, &mut self.comp)?;
@@ -279,6 +288,12 @@ impl TtyFrontend {
 }
 
 /// "geometry COLSxROWS cells of WxH px" (the format scripts/e2e.sh parses).
+/// Whether this process runs in an SSH session (sshd sets these for the
+/// login shell; children inherit them, so do tmux panes started there).
+fn over_ssh() -> bool {
+    ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].iter().any(|v| std::env::var_os(v).is_some())
+}
+
 fn geometry_line(g: Geometry) -> String {
     format!("geometry {}x{} cells of {}x{} px", g.cols, g.rows, g.cell.width, g.cell.height)
 }

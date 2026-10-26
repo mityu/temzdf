@@ -85,20 +85,14 @@ impl Screen {
     /// cursor (shown only where text is typed, where IME preedit follows it).
     /// Empty when nothing changed.
     pub fn render(&mut self, frame: &Frame, presenter: &Presenter, comp: &mut Compositor) -> io::Result<&[u8]> {
-        let out = &mut self.out;
-        out.clear();
-        if frame.title != self.title {
-            // Control characters would end the OSC early.
-            let clean: String = frame.title.chars().filter(|c| !c.is_control()).collect();
-            out.extend_from_slice(format!("\x1b]2;{clean}\x1b\\").as_bytes());
-            self.title = frame.title.clone();
-        }
+        self.out.clear();
+        self.title(frame);
         let g = comp.geometry();
         if (g.cols, g.rows) != self.size {
             // The terminal may have reflowed or dropped our text: start clean.
             self.size = (g.cols, g.rows);
             self.text.resize(g.cols, g.rows);
-            out.extend_from_slice(b"\x1b[2J");
+            self.out.extend_from_slice(b"\x1b[2J");
             comp.rewrite_placeholder_text();
         }
         // Text leaving cells that tmux placeholder text covered before: write
@@ -108,7 +102,43 @@ impl Screen {
             self.text.invalidate();
         }
         let text = self.text.render(&frame.text);
-        comp.present_with(&presenter.layers(&frame.layers), &text, out)?;
+        comp.present_with(&presenter.layers(&frame.layers), &text, &mut self.out)?;
+        self.cursor(frame);
+        Ok(&self.out)
+    }
+
+    /// Like [`Screen::render`], but leaves the images as they are: for a
+    /// frame whose images have to wait (the frame-rate cap) while its text
+    /// (a shell echoing keys) should not. `None` when text and images must
+    /// change together: a new screen size, or tmux placeholder text to write
+    /// again.
+    pub fn render_text(&mut self, frame: &Frame, comp: &mut Compositor) -> Option<&[u8]> {
+        let g = comp.geometry();
+        if (g.cols, g.rows) != self.size
+            || comp.placeholder_text_pending()
+            || (self.text.would_clear(&frame.text) && is_placeholders(comp))
+        {
+            return None;
+        }
+        self.out.clear();
+        self.title(frame);
+        let text = self.text.render(&frame.text);
+        comp.present_text(&text, &mut self.out);
+        self.cursor(frame);
+        Some(&self.out)
+    }
+
+    fn title(&mut self, frame: &Frame) {
+        if frame.title != self.title {
+            // Control characters would end the OSC early.
+            let clean: String = frame.title.chars().filter(|c| !c.is_control()).collect();
+            self.out.extend_from_slice(format!("\x1b]2;{clean}\x1b\\").as_bytes());
+            self.title = frame.title.clone();
+        }
+    }
+
+    fn cursor(&mut self, frame: &Frame) {
+        let out = &mut self.out;
         if frame.cursor_shape != self.shape {
             let n = match frame.cursor_shape {
                 CursorShape::Default => 0,
@@ -132,7 +162,6 @@ impl Screen {
             // Placing images and writing text move the cursor; put it back.
             out.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
         }
-        Ok(out)
     }
 }
 
@@ -164,6 +193,7 @@ pub fn copy_sequence(text: &str, in_tmux: bool) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use temzdf_scene::{Cell, TextGrid};
     use termpix::compositor::Backend;
     use termpix::geom::{CellSize, Geometry};
     use termpix::graphics::Medium;
@@ -193,6 +223,39 @@ mod tests {
         assert!(screen.render(&frame, &presenter, &mut comp).unwrap().is_empty(), "nothing changed");
         frame.cursor = None;
         assert_eq!(screen.render(&frame, &presenter, &mut comp).unwrap(), b"\x1b[?25l");
+    }
+
+    #[test]
+    fn text_goes_out_alone_while_images_wait() {
+        let g = Geometry { cols: 10, rows: 5, cell: CellSize { width: 8, height: 16 } };
+        let mut comp = Compositor::new(Backend::composited(), Medium::Direct { compress: false }, g);
+        let mut images = Images::new();
+        let mut presenter = Presenter::new();
+        let key = images.add(1, 1, vec![255; 4]);
+        presenter.sync(&mut comp, &mut images);
+        let layer = |x| Layer {
+            key: 1,
+            image: key,
+            src: termpix::geom::Rect::new(0, 0, 1, 1),
+            dst: termpix::geom::Rect::new(x, 0, 8, 8),
+            z: 0,
+        };
+        let text = |s: &str| {
+            let cell = Cell { text: s.into(), width: 1, ..Cell::default() };
+            vec![TextGrid { col: 0, row: 1, rows: vec![vec![cell]] }]
+        };
+        let mut frame = Frame { layers: vec![layer(0)], text: text("a"), ..Default::default() };
+        let mut screen = Screen::new();
+        assert!(screen.render_text(&frame, &mut comp).is_none(), "the first frame writes everything");
+        screen.render(&frame, &presenter, &mut comp).unwrap();
+        // The image moved and the text changed: the text alone, no graphics.
+        frame.layers = vec![layer(8)];
+        frame.text = text("b");
+        let alone = String::from_utf8_lossy(screen.render_text(&frame, &mut comp).unwrap()).into_owned();
+        assert!(alone.contains('b') && !alone.contains("\x1b_G"), "{alone:?}");
+        // Later the images catch up, without writing the text again.
+        let rest = String::from_utf8_lossy(screen.render(&frame, &presenter, &mut comp).unwrap()).into_owned();
+        assert!(rest.contains("\x1b_G") && !rest.contains('b'), "{rest:?}");
     }
 
     #[test]

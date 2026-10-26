@@ -165,10 +165,11 @@ pub fn attach(name: &str) -> Result<String> {
                     }
                     last = pending.take().map(|p| p.1);
                 }
-                // Not shown yet, but ask for newer frames: the server only
-                // sends one once this one is acknowledged, and only newer
-                // frames have the pages this one waits for.
-                Presented::Waiting if *seq > 0 => {
+                // Not shown yet (or only its text), but ask for newer frames:
+                // the server only sends one once this one is acknowledged;
+                // only newer frames have the pages a first frame waits for,
+                // and a shell's next echo must not wait for held images.
+                Presented::Waiting | Presented::Held if *seq > 0 => {
                     if send(ClientMsg::FrameAck(*seq)).is_err() {
                         break ended(&rx);
                     }
