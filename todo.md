@@ -23,7 +23,7 @@ server on one `Session`). Next and open:
   client's geometry and cell size) and zoom stored relative to the pane width.
 - [ ] Shared memory instead of the socket for local clients' pixels (measure
   the socket first).
-- [ ] Windows/tabs; a Vim-like command line on the `Action` text form.
+- [ ] A Vim-like command line on the `Action` text form (tab pages are done).
 - [ ] User report (2026-10-26, deferred): after resizing the terminal window
   with split panes, the bottom-right pane's status bar (file name) stayed where
   it was. Not reproduced in kitty or WezTerm (standalone and session) nor

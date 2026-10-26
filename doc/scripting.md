@@ -25,7 +25,7 @@ The Vim vocabulary maps onto temzdf as follows:
 |---|---|
 | window (`winid`) | pane |
 | buffer (`bufnr`) | a PDF document, a terminal (process and screen), later a web page |
-| tab page | tabs (later) |
+| tab page | tab page (`newTab`, `gt`; see "Tab pages" in `doc/config.md`) |
 | mode | mode (see "Modes") |
 | option scopes (global, window, buffer) | the same three scopes |
 | autocmd | hooks |

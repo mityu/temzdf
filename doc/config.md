@@ -94,6 +94,8 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `normal` | `W` | open a floating shell |
 | `normal` | `e` | turn the pane floating, or tiled again |
 | `normal` | `x` | close the pane (its buffer stays, hidden) |
+| `normal` | `gt` / `gT` | next / previous tab page; `{N}gt` goes to tab page N, `{N}gT` N back (Vim) |
+| `normal` | `T` | move the pane to a new tab page (Vim's `<C-w>T`) |
 | `normal` | `d` | detach (`temzdf -s`) |
 | `normal` | `q` | end the session |
 | `normal` | `<C-b>` | send `<C-b>` to the pane |
@@ -149,6 +151,7 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `reloadanchor` | `"position"` | `"position"` keeps the page and place on it (as Skim, Okular); `"text"` finds the line read a third down the screen in the new PDF (falling back to the position) |
 | `synctexeditor` | `null` | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/synctex.md. `--editor` overrides it |
 | `remainonexit` | `false` | a shown terminal whose program ended keeps its panes (tmux's `remain-on-exit`) |
+| `showtabline` | `1` | when the tab line shows (Vim's): `0` never, `1` with two tab pages or more, `2` always |
 
 ## Buffers
 
@@ -160,7 +163,8 @@ terminal pane starts a new shell, `showBuffer` shows the same terminal).
   stays open (reloading as it changes) and keeps its position for the next
   pane that shows it. Closing the last pane ends the session, hidden
   buffers or not (as if every buffer were Vim's `buftype=nofile`); so does
-  the last pane's program ending.
+  the last pane's program ending. Buffers belong to no tab page: any tab's
+  panes can show them.
 - When a shown terminal's program ends, its panes close (unless
   `remainonexit`); a hidden one stays, marked as ended, until it was shown
   and hidden again.
@@ -189,14 +193,18 @@ shell by default); `opts` take `width`, `height` (the content's, in cells,
 or `"N%"` of the screen for the whole float), `col`, `row` (centred when
 left out), `title` and `focus: false`. The default is a centred float of
 80% by 80%. `temzdf action open-float FILE.pdf` and `temzdf action
-open-float -- htop` work as `new-pane`.
+open-float -- htop` work as `new-pane`. `tabpage` says where it shows, as
+for Vim's popups: `0` (default) the tab page it opens on, `-1` every tab
+page, `N` tab page N.
 
 - Focusing a float raises it. `moveFocus` moves among the floats (or among
   the tiled panes, where the focus is); `focusNextPane` goes through the
   floats, then the tiled panes. A click on a tiled pane focuses it and the
   floats stay.
 - `toggleFloats()` shows or hides them all; hidden, their programs keep
-  running and the focus goes back to the tiled pane focused last.
+  running and the focus goes back to the tiled pane focused last. Each tab
+  page shows or hides its own; floats on every tab page follow the current
+  one's. The stacking is one for all tab pages.
 - Splitting, or `newPane`, while a float has the focus opens another float,
   two cells right and down.
 - `resizePane("right", 5)` widens a float (its right or bottom edge moves);
@@ -204,10 +212,37 @@ open-float -- htop` work as `new-pane`.
   With the mouse, its title edge moves it and its other edges and corners
   resize it.
 - `toggleFloating(pane?)` turns a tiled pane floating and back (beside the
-  tiled pane focused last); the last tiled pane cannot float.
-- Closing the last tiled pane puts the topmost shown float in its place;
-  with the floats hidden (or none), the session ends.
+  tiled pane focused last; a float on every tab page becomes a pane of the
+  current one); the last tiled pane cannot float.
+- Closing a tab page's last tiled pane puts the topmost shown float of that
+  tab page in its place (not one on every tab page); with none, the tab
+  page closes (see Tab pages).
 - A float's program exiting closes it (unless `remainonexit`).
+
+## Tab pages
+
+As in Vim, a tab page is a layout of panes with its own focus; buffers are
+shared, and a terminal shown in several tab pages is as large as its
+largest pane in any of them. All clients show the same tab page.
+
+- With two tab pages or more (`showtabline`), the top row is the tab line:
+  each tab page's number and name (`renameTab`) or focused buffer, the
+  current one highlighted. A click there goes to that tab page; a middle
+  click closes it.
+- `newTab(what?)` opens a tab page after the current one (`what` as for
+  `openFloat`; a shell by default; `temzdf action new-tab FILE.pdf` or
+  `new-tab -- htop`), `closeTab(n?)` closes one with its panes (their
+  buffers stay; the last tab page stays: `killSession` ends the session),
+  `nextTab()`, `prevTab()` and `gotoTab(n)` go to one (counted from 1;
+  `gt`, `gT`), `moveTab(to?)` moves the current one as Vim's `:tabmove`
+  (after tab page `to`, `0` first, none last, or `"+1"` / `"-1"`),
+  `breakPane(pane?)` moves a pane to a new tab page (`T`), `tabs()` lists
+  them, `currentTab()` gives the current one's number.
+- Closing a tab page's last pane (or its program ending) closes the tab
+  page, unless a float of its own shows (it takes the place); the tab page
+  after it becomes current. With the last tab page, the session ends.
+- `panes()` gives each pane's `tab` (`null` for a float on every tab page).
+- Hooks: `TabEntered(n)`, `TabClosed(n)`.
 
 ## Commands
 
@@ -216,7 +251,9 @@ open-float -- htop` work as `new-pane`.
 them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `focusNextPane`, `resizePane`, `movePane`, `rotatePanes`, `closePane`,
 `openFloat`, `floatConfig`,
-`toggleFloats`, `toggleFloating`, `buffers`, `showBuffer`, `edit`,
+`toggleFloats`, `toggleFloating`, `newTab`, `closeTab`, `nextTab`,
+`prevTab`, `gotoTab`, `moveTab`, `renameTab`, `breakPane`, `tabs`,
+`currentTab`, `buffers`, `showBuffer`, `edit`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
 `sendText`, `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,

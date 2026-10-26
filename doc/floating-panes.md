@@ -262,3 +262,14 @@ borders, animations.
   pages in WezTerm, hidden since they exist.
 - A click on a float's frame never reaches the pane below; frames lie over
   the tiled borders.
+
+## Tab pages (2026-10-27, with the user)
+
+With tab pages, a float shows on the tab page it opened on, or on all of
+them, as Vim's popup `tabpage` option (`openFloat(what, { tabpage: -1 })`;
+`floatConfig` changes it). The stack is one for all tab pages (raising a
+float on one raises it everywhere); showing and hiding is per tab page, and
+floats on every tab page follow the current one's. Closing a tab page's
+last tiled pane puts only a float of that tab page in its place: one on
+every tab page would leave the others. `toggleFloating` makes a float on
+every tab page a tiled pane of the current one.

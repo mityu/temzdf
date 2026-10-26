@@ -864,3 +864,64 @@ fn a_server_whose_socket_is_gone_ends() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
+
+/// The tab line's first row starts with " 1 ".
+fn tab_line(s: &Screen) -> bool {
+    s.lines().first().is_some_and(|l| l.starts_with(" 1 "))
+}
+
+#[test]
+fn tabs_switch_by_keys_and_clicks_and_floats_on_all_tabs_follow() {
+    let env = Env::new("tabs");
+    env.config(
+        "config.js",
+        "import { action, map } from \"temzdf\";\nmap(\"normal\", \"F\", action.openFloat(null, { tabpage: -1 }));\n",
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "tb"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.type_text("echo first-$((1+1))\n");
+    t.wait_text("first-2");
+    let pdf = fixture("sample.pdf");
+    env.run(&["action", "-s", "tb", "new-tab", &pdf.display().to_string()]);
+    let s = t.wait_for("the tab line and the PDF", |s| tab_line(s) && s.images.iter().any(|p| p.cols > 1));
+    assert!(s.lines()[0].contains(" 2 sample.pdf"), "{}", s.lines()[0]);
+    assert!(!s.text().contains("first-2"), "the first tab's shell does not show");
+    assert!(env.run(&["ls"]).contains("(2 tabs, 2 panes"));
+    // gt: the first tab again, without the PDF's images.
+    t.keys(&["C-b", "g", "t"]);
+    t.wait_for("the shell's tab", |s| s.text().contains("first-2") && s.images.is_empty());
+    // The shell is one row lower and a row shorter.
+    t.type_text("stty size\n");
+    t.wait_for("its size", |s| s.lines().iter().any(|l| l.starts_with("29 100")));
+    // A click on the second tab's label.
+    let col = t.screen().lines()[0].find(" 2 ").unwrap() as u16 + 1;
+    t.click(col, 0);
+    t.wait_for("the PDF's tab", |s| s.images.iter().any(|p| p.cols > 1) && !s.text().contains("first-2"));
+    // A float on all tabs shows on both.
+    t.keys(&["C-b", "F"]);
+    t.wait_for("a prompt in the float", |s| s.row_from(FLOAT_CONTENT.1 + 1, FLOAT_CONTENT.0).starts_with('$'));
+    t.type_text("echo everywhere-$((2*3))\n");
+    t.wait_text("everywhere-6");
+    t.keys(&["C-b", "1", "g", "t"]);
+    t.wait_for("the float over the first tab", |s| {
+        s.text().contains("everywhere-6") && s.images.iter().all(|p| p.cols <= 1 || p.row > 2)
+    });
+}
+
+#[test]
+fn tabs_inside_tmux() {
+    if !tuitest::have_tmux() {
+        eprintln!("SKIPPED: tmux not found");
+        return;
+    }
+    let env = Env::new("tabs-tmux");
+    let mut t = Term::inside_tmux(&["env", "SHELL=/bin/sh", BIN, "-s", "tt"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.type_text("echo first-$((1+1))\n");
+    t.wait_text("first-2");
+    env.run(&["action", "-s", "tt", "new-tab", "--", "sh", "-c", "echo second-$((2+2)); sleep 30"]);
+    let s = t.wait_for("the second tab", |s| tab_line(s) && s.text().contains("second-4"));
+    assert!(!s.text().contains("first-2"));
+    t.keys(&["C-b", "g", "T"]);
+    t.wait_for("the first tab", |s| tab_line(s) && s.text().contains("first-2") && !s.text().contains("second-4"));
+}

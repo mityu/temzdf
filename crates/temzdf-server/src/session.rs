@@ -1816,6 +1816,9 @@ mod tests {
             ("r", acts(&[("rotate-panes", &[])])),
             ("R", acts(&[("rotate-panes", &[ScriptValue::Bool(true)])])),
             ("x", acts(&[("close-pane", &[])])),
+            ("gt", acts(&[("next-tab", &[])])),
+            ("gT", acts(&[("prev-tab", &[])])),
+            ("T", acts(&[("break-pane", &[])])),
             ("d", acts(&[("detach", &[]), ("exit-mode", &[])])),
             ("q", acts(&[("kill-session", &[])])),
             ("<C-b>", acts(&[("exit-mode", &[]), ("feedkeys", &[s("<C-b>"), ScriptValue::Bool(false)])])),
@@ -2978,5 +2981,25 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn the_shipped_keys_switch_and_break_out_tabs() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        key(&mut s, "<C-b>%");
+        let right = s.focus;
+        key(&mut s, "<C-b>T");
+        assert_eq!((s.tabs.len(), s.tab, s.focus, s.current_mode()), (2, 1, right, "terminal"));
+        new_tab(&mut s, &["sleep", "30"]);
+        key(&mut s, "<C-b>gt");
+        assert_eq!((s.tab, s.current_mode()), (0, "terminal"));
+        key(&mut s, "<C-b>gT");
+        assert_eq!(s.tab, 2);
+        key(&mut s, "<C-b>2gt");
+        assert_eq!((s.tab, s.focus), (1, right));
+        key(&mut s, "<C-b>2gT");
+        assert_eq!(s.tab, 2);
     }
 }

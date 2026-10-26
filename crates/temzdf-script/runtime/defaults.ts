@@ -70,6 +70,10 @@ each("normal", ["w"], action.toggleFloats());
 each("normal", ["W"], action.openFloat());
 each("normal", ["e"], [action.toggleFloating(), action.exitMode()]);
 each("normal", ["x"], action.closePane());
+// Tab pages as Vim's gt, gT ({N}gt: tab page N) and <C-w>T.
+each("normal", ["gt"], action.nextTab());
+each("normal", ["gT"], action.prevTab());
+each("normal", ["T"], action.breakPane());
 each("normal", ["d"], [action.detach(), action.exitMode()]);
 each("normal", ["q"], action.killSession());
 // The prefix twice sends it to the pane.

@@ -24,7 +24,9 @@ What exists:
   area; when the screen changes size the last pane takes the difference), focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
   buffers as in Vim (what panes show; closing a pane hides its buffer,
   see `doc/config.md`), floating panes over the layout (a stack of framed
-  panes; `doc/config.md`, design in `doc/floating-panes.md`),
+  panes; `doc/config.md`, design in `doc/floating-panes.md`), tab pages
+  as Vim's (a layout and focus each, buffers shared, a tab line;
+  `crates/temzdf-server/src/session/tabs.rs`, `doc/config.md`),
   `Action`s with a text form, and one composed frame (pane
   layers moved into their rectangles, clipped, placement keys made unique and
   stable; what a float covers is cut out of the panes below it,
@@ -83,7 +85,6 @@ Not yet (in order of the plan, or found on the way):
   pane width, are not done (fit-width does follow the pane width).
 - Pixels go through the socket; shared memory for local clients would save
   copies (measure first).
-- One window per session (no tabs).
 - Terminal panes: kitty graphics through Unicode placeholders (tmux inside a
   pane) and animation frames.
 - Steps 4 to 6: GUI client, web panes, programmable config.
@@ -333,6 +334,30 @@ the server receives the request and routes it to the panes showing that PDF.
   there, while WezTerm needed whole-frame compositing); the pty itself comes
   from `portable-pty` (or `rustix`), since libghostty-vt does not spawn
   processes.
+
+## Tab pages (decided 2026-10-27, with the user)
+
+- As in Vim: each tab page has its layout and focus (the focus comes back
+  when the tab page is entered); buffers are shared, and a terminal's size
+  counts its panes in every tab page (Neovim's rule).
+- The current tab page is the session's, the same for every client (tmux;
+  zellij gives each client its own).
+- A tab page's last tiled pane gives way to a shown float of that tab page;
+  without one the tab page closes, and the last one ends the session.
+- The tab line follows Vim's `showtabline` (default 1: with two tab pages or
+  more), on the top row: number and focused buffer, or the name given with
+  `rename-tab`. A click goes to a tab page, a middle click closes it.
+- Floats carry Vim's popup `tabpage` (one tab page by default, or all); one
+  stack for all, shown or hidden per tab page.
+- Commands as Vim and tmux name them (`new-tab`, `close-tab`, `next-tab`,
+  `prev-tab`, `goto-tab`, `move-tab` as `:tabmove`, `rename-tab`,
+  `break-pane` as `<C-w>T`); default keys after the prefix as Vim's: `gt`,
+  `gT`, `{N}gt`, `T`. No default keys for new-tab and close-tab (Vim has
+  none: `:tabnew`, `:tabclose`).
+- Implementation (`crates/temzdf-server/src/session/tabs.rs`): as Vim keeps
+  the current tab page's windows in globals, the session's fields hold the
+  current tab page's layout and focus, and the others keep theirs in their
+  record, swapped on switching.
 
 ## Open questions
 
