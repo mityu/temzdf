@@ -106,7 +106,7 @@
           gui = with pkgs; [
             vulkan-tools
             mesa
-            xfce.xfwm4
+            xfwm4
             xwininfo
             xprop
             sway
