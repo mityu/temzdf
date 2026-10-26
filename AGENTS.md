@@ -57,6 +57,11 @@ nix develop -c cargo build --workspace
 
 Run `scripts/check.sh` before every commit; it enters the dev shell by itself.
 
+Design notes and research live on the `research/notes` branch.
+`scripts/notes.sh show FILE` reads one from there. To edit them without
+leaving your branch, `scripts/notes.sh open` gives you a worktree and
+`scripts/notes.sh close` removes it again.
+
 Behaviour visible on screen (terminal panes, sessions, CLI, keys) is best
 tested in `crates/temzdf/tests/tui.rs`: the real binary behind a simulated
 terminal (`crates/tuitest`), checked by text, cells and image placements, also
