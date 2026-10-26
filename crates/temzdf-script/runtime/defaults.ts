@@ -55,6 +55,12 @@ each("normal", ["J"], action.resizePane("down"));
 each("normal", ["K"], action.resizePane("up"));
 each("normal", ["L"], action.resizePane("right"));
 each("normal", ["o"], action.focusNextPane());
+// Floating panes (zellij's keys): show or hide them all (with none, open a
+// floating shell), open a floating shell, turn the focused pane floating or
+// tiled (the focus stays, so back to its mode, as zellij does).
+each("normal", ["w"], action.toggleFloats());
+each("normal", ["W"], action.openFloat());
+each("normal", ["e"], [action.toggleFloating(), action.exitMode()]);
 each("normal", ["x"], action.closePane());
 each("normal", ["d"], [action.detach(), action.exitMode()]);
 each("normal", ["q"], action.killSession());

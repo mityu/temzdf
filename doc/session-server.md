@@ -23,8 +23,13 @@ What exists:
   all in a binary layout of splits with one-cell borders (a split halves its
   area; when the screen changes size the last pane takes the difference), focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
   buffers as in Vim (what panes show; closing a pane hides its buffer,
-  see `doc/config.md`), `Action`s with a text form, and one composed frame (pane layers moved into
-  their rectangles, clipped, placement keys made unique and stable).
+  see `doc/config.md`), floating panes over the layout (a stack of framed
+  panes; `doc/config.md`, design in `doc/floating-panes.md` on
+  `research/notes`), `Action`s with a text form, and one composed frame (pane
+  layers moved into their rectangles, clipped, placement keys made unique and
+  stable; what a float covers is cut out of the panes below it,
+  `crates/temzdf-server/src/clip.rs`, since images cannot be stacked over
+  text).
 - Three ways to run share it: `temzdf FILE` (standalone: the session and the
   terminal frontend in one process, nothing registered), `--render-frame`
   (headless, waits for the workers after each key) and the session server

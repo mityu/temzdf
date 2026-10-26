@@ -86,6 +86,9 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `normal` | `h` `j` `k` `l`, arrows | move the focus (back to that pane's mode) |
 | `normal` | `H` `J` `K` `L` | move a border of the pane left / down / up / right (counts; the right or bottom border, else the left or top one) |
 | `normal` | `o` | next pane |
+| `normal` | `w` | show or hide the floating panes (with none, open a floating shell) |
+| `normal` | `W` | open a floating shell |
+| `normal` | `e` | turn the pane floating, or tiled again |
 | `normal` | `x` | close the pane (its buffer stays, hidden) |
 | `normal` | `d` | detach (`temzdf -s`) |
 | `normal` | `q` | end the session |
@@ -173,12 +176,42 @@ map("normal", "n", () => {
 });
 ```
 
+## Floating panes
+
+A floating pane shows a buffer, as any pane, in a frame over the tiled panes
+(nothing below shows through it). `openFloat(what?, opts?)` opens one:
+`what` is `{ buffer: id }`, `{ file: path }` or `{ command: [...] }` (a new
+shell by default); `opts` take `width`, `height` (the content's, in cells,
+or `"N%"` of the screen for the whole float), `col`, `row` (centred when
+left out), `title` and `focus: false`. The default is a centred float of
+80% by 80%. `temzdf action open-float FILE.pdf` and `temzdf action
+open-float -- htop` work as `new-pane`.
+
+- Focusing a float raises it. `moveFocus` moves among the floats (or among
+  the tiled panes, where the focus is); `focusNextPane` goes through the
+  floats, then the tiled panes. A click on a tiled pane focuses it and the
+  floats stay.
+- `toggleFloats()` shows or hides them all; hidden, their programs keep
+  running and the focus goes back to the tiled pane focused last.
+- Splitting, or `newPane`, while a float has the focus opens another float,
+  two cells right and down.
+- `resizePane("right", 5)` widens a float (its right or bottom edge moves);
+  `floatConfig(pane, opts)` moves or resizes one, or changes its title.
+  With the mouse, its title edge moves it and its other edges and corners
+  resize it.
+- `toggleFloating(pane?)` turns a tiled pane floating and back (beside the
+  tiled pane focused last); the last tiled pane cannot float.
+- Closing the last tiled pane puts the topmost shown float in its place;
+  with the floats hidden (or none), the session ends.
+- A float's program exiting closes it (unless `remainonexit`).
+
 ## Commands
 
 `cmd.*` and `action.*` share the command registry
 (`crates/temzdf-server/src/session/commands.rs`; `temzdf print-types` lists
 them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
-`focusNextPane`, `resizePane`, `closePane`, `buffers`, `showBuffer`, `edit`,
+`focusNextPane`, `resizePane`, `closePane`, `openFloat`, `floatConfig`,
+`toggleFloats`, `toggleFloating`, `buffers`, `showBuffer`, `edit`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
 `sendText`, `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,

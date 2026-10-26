@@ -1732,6 +1732,9 @@ mod tests {
             ("k", acts(&[("move-focus", &[s("up")])])),
             ("l", acts(&[("move-focus", &[s("right")])])),
             ("o", acts(&[("focus-next-pane", &[])])),
+            ("w", acts(&[("toggle-floats", &[])])),
+            ("W", acts(&[("open-float", &[])])),
+            ("e", acts(&[("toggle-floating", &[]), ("exit-mode", &[])])),
             ("H", acts(&[("resize-pane", &[s("left")])])),
             ("L", acts(&[("resize-pane", &[s("right")])])),
             ("x", acts(&[("close-pane", &[])])),
@@ -2412,5 +2415,26 @@ mod tests {
         s.mouse(&at(MouseEventKind::Drag(left), 60, 6), now);
         s.mouse(&at(MouseEventKind::Release(left), 60, 6), now);
         assert_eq!((frame(&s).x, frame(&s).w), (40, 12), "the left edge stops at the smallest width");
+    }
+
+    #[test]
+    fn the_shipped_keys_open_hide_and_embed_floats() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        let tiled = s.focus;
+        key(&mut s, "<C-b>W");
+        let f = s.focus;
+        assert!(s.is_float(f), "W: a floating shell");
+        assert_eq!(s.current_mode(), "terminal", "in its own mode");
+        key(&mut s, "<C-b>w");
+        assert_eq!((s.focus, s.floats_hidden), (tiled, true), "w: hidden");
+        key(&mut s, "<C-b>w");
+        assert_eq!((s.focus, s.floats_hidden), (f, false), "w: shown");
+        key(&mut s, "<C-b>e");
+        assert!(!s.is_float(f), "e: tiled");
+        assert_eq!(s.current_mode(), "terminal", "back to the pane's mode");
+        assert_eq!(s.layout.as_ref().unwrap().panes(), [tiled, f]);
+        key(&mut s, "<C-b>e");
+        assert!(s.is_float(f), "e: floating again");
     }
 }

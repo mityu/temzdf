@@ -41,8 +41,10 @@ server on one `Session`). Next and open:
   defaults in JavaScript, options, `print-types`, floating messages and the
   escape keys (TOML is gone), buffers separated from panes, and terminal
   panes' selection, links and images, pane sizes kept when the screen
-  changes size, and resizing panes (dragging borders, `resize-pane`). Next:
-  default mappings for switching buffers, floating panes. The
+  changes size, resizing panes (dragging borders, `resize-pane`), and
+  floating panes. Next: default mappings for switching buffers; status and
+  title bars on panes and the window (direction in `doc/floating-panes.md`
+  on `research/notes`). The
   questions under "Open questions, to decide later" there (modes and
   mappings, escape hatches, message area, mouse, defaults, layout details,
   hidden buffers, client-side settings, reload, CLI scripting,
