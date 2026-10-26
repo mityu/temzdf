@@ -105,18 +105,25 @@ pub fn doc_info(doc: &Doc) -> Result<DocInfo> {
         .map(|i| doc.page_label(i).ok().filter(|l| !l.is_empty()).unwrap_or_else(|| (i + 1).to_string()))
         .collect();
     let mut outline = Vec::new();
-    flatten_outline(&doc.outlines()?, 0, &mut outline);
+    flatten_outline(&doc.outlines()?, 0, bounds.len(), &mut outline);
     Ok(DocInfo { bounds, labels, outline })
 }
 
-fn flatten_outline(items: &[mupdf::Outline], depth: usize, out: &mut Vec<OutlineEntry>) {
+fn flatten_outline(items: &[mupdf::Outline], depth: usize, pages: usize, out: &mut Vec<OutlineEntry>) {
     for item in items {
         let index = out.len();
-        let target = item.dest.map(|d| Target { page: d.loc.page_number as usize, y: dest_top(&d.kind) });
+        let target = item.dest.and_then(|d| internal_target(&d, pages));
         out.push(OutlineEntry { title: item.title.trim().to_owned(), depth, target, descendants: 0 });
-        flatten_outline(&item.down, depth + 1, out);
+        flatten_outline(&item.down, depth + 1, pages, out);
         out[index].descendants = out.len() - index - 1;
     }
+}
+
+/// Where a destination leads, if it is a page of the document (one MuPDF
+/// cannot resolve has page -1, read as u32::MAX: not the last page).
+fn internal_target(d: &mupdf::link::LinkDestination, pages: usize) -> Option<Target> {
+    let page = d.loc.page_number as usize;
+    (page < pages).then(|| Target { page, y: dest_top(&d.kind) })
 }
 
 /// The vertical position a destination asks for, in page space, if any.
@@ -188,6 +195,7 @@ pub struct Link {
 
 /// Links on a page, with rectangles in page space.
 pub fn page_links(doc: &Doc, page: usize, bounds: PageBounds) -> Result<Vec<Link>> {
+    let pages = doc.page_count()?.max(0) as usize;
     let p = doc.load_page(page as i32)?;
     // mupdf-rs unwraps while resolving destinations; never let a malformed link
     // take the document thread down.
@@ -200,7 +208,7 @@ pub fn page_links(doc: &Doc, page: usize, bounds: PageBounds) -> Result<Vec<Link
             let rect =
                 PageRect { x0: r.x0 - bounds.x0, y0: r.y0 - bounds.y0, x1: r.x1 - bounds.x0, y1: r.y1 - bounds.y0 };
             let target = match l.dest {
-                Some(d) => LinkTarget::Internal(Target { page: d.loc.page_number as usize, y: dest_top(&d.kind) }),
+                Some(d) => LinkTarget::Internal(internal_target(&d, pages)?),
                 None if !l.uri.is_empty() && !l.uri.starts_with('#') => LinkTarget::External(l.uri),
                 None => return None,
             };
@@ -276,6 +284,18 @@ pub fn fixture(name: &str) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destinations_outside_the_document_lead_nowhere() {
+        let dest = |page_number| mupdf::link::LinkDestination {
+            loc: mupdf::document::Location { chapter: 0, page_in_chapter: page_number, page_number },
+            kind: DestinationKind::Fit,
+        };
+        assert_eq!(internal_target(&dest(2), 3).map(|t| t.page), Some(2));
+        assert_eq!(internal_target(&dest(3), 3), None);
+        // MuPDF's "unresolved", -1, read as u32.
+        assert_eq!(internal_target(&dest(u32::MAX), 3), None);
+    }
 
     #[test]
     fn an_open_document_does_not_read_the_file_again() {
