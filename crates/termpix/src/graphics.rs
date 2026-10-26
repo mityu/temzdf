@@ -393,12 +393,19 @@ impl ShmTracker {
     }
 }
 
-/// kitty only deletes `t=t` files whose path contains this marker.
+/// kitty only deletes `t=t` files whose path contains this marker. The name
+/// is predictable, so the file is created new (never through a symlink or
+/// over a file someone else put there) and readable by us alone.
 fn write_temp_file(data: &[u8]) -> io::Result<PathBuf> {
     let path = std::env::temp_dir().join(format!("tty-graphics-protocol-termpix-{}", unique_suffix()));
-    let mut f = File::create(&path)?;
-    f.write_all(data)?;
+    create_private(&path)?.write_all(data)?;
     Ok(path)
+}
+
+/// A new file only we can read; fails if anything (a symlink too) is there.
+fn create_private(path: &std::path::Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)
 }
 
 #[cfg(test)]
@@ -428,6 +435,23 @@ mod tests {
         assert!(sent.exists());
         enc.cleanup_shm(0);
         assert!(!sent.exists());
+    }
+
+    #[test]
+    fn temp_files_are_new_and_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = write_temp_file(b"x").unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_file(&path).unwrap();
+        // A symlink planted under the name is not followed.
+        let planted = std::env::temp_dir().join(format!("termpix-planted-{}", std::process::id()));
+        let target = std::env::temp_dir().join(format!("termpix-target-{}", std::process::id()));
+        std::fs::write(&target, b"keep").unwrap();
+        std::os::unix::fs::symlink(&target, &planted).unwrap();
+        assert!(create_private(&planted).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+        std::fs::remove_file(&planted).unwrap();
+        std::fs::remove_file(&target).unwrap();
     }
 
     #[test]
