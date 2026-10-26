@@ -86,8 +86,14 @@ pub struct DocCache {
     tiles: HashMap<TileKey, Cached>,
     in_flight: HashSet<TileKey>,
     used_bytes: usize,
-    /// Clock for least-recently-used eviction, advanced once per frame.
+    /// Clock for least-recently-used eviction, advanced once per composed
+    /// frame: when a view that drew at this tick draws again (the views of
+    /// one frame share a tick).
     clock: u64,
+    /// The views that drew at this tick.
+    views: HashSet<u64>,
+    /// Bytes of tiles kept at most ([`TILE_BUDGET`]).
+    budget: usize,
     next_layer: u32,
     generation: u32,
     /// See [`MAX_LISTS`].
@@ -105,6 +111,8 @@ impl DocCache {
             in_flight: HashSet::new(),
             used_bytes: 0,
             clock: 0,
+            views: HashSet::new(),
+            budget: TILE_BUDGET,
             next_layer: LAYER_BACKGROUND + 1,
             generation: 0,
             max_lists: MAX_LISTS,
@@ -230,9 +238,15 @@ impl DocCache {
         self.tiles.insert(r.key, Cached { image, layer, bytes, last_used: self.clock });
     }
 
-    /// Start a frame: tiles touched from now on count as used by it.
-    pub fn begin_frame(&mut self) {
-        self.clock += 1;
+    /// View `view` starts drawing: tiles touched from now on count as used
+    /// by this frame. Several views of the document (panes) drawing one
+    /// composed frame share its tick, so none evicts what another just used.
+    pub fn begin_frame(&mut self, view: u64) {
+        if !self.views.insert(view) {
+            self.clock += 1;
+            self.views.clear();
+            self.views.insert(view);
+        }
     }
 
     /// A cached tile's image and placement key, marking it used this frame.
@@ -270,22 +284,56 @@ impl DocCache {
         layer
     }
 
-    /// Drop least recently used tiles over budget, never ones used this frame.
+    /// Drop least recently used tiles over budget, never ones used this frame
+    /// or the one before (views that have not drawn this frame yet still
+    /// show those).
     pub fn evict(&mut self, images: &mut Images) {
-        if self.used_bytes <= TILE_BUDGET {
+        if self.used_bytes <= self.budget {
             return;
         }
         let mut old: Vec<(u64, TileKey)> =
-            self.tiles.iter().filter(|(_, c)| c.last_used < self.clock).map(|(k, c)| (c.last_used, *k)).collect();
+            self.tiles.iter().filter(|(_, c)| c.last_used + 1 < self.clock).map(|(k, c)| (c.last_used, *k)).collect();
         old.sort_by_key(|(t, _)| *t);
         for (_, key) in old {
-            if self.used_bytes <= TILE_BUDGET {
+            if self.used_bytes <= self.budget {
                 break;
             }
             if let Some(c) = self.tiles.remove(&key) {
                 images.remove(c.image);
                 self.used_bytes -= c.bytes;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pdf::PageBounds;
+
+    fn tile(cache: &mut DocCache, images: &mut Images, tx: u32) -> TileKey {
+        let key = TileKey { generation: cache.generation(), page: 0, kind: TileKind::Tile { scale_q: 1, tx, ty: 0 } };
+        cache.rendered(images, Rendered { key, width: 10, height: 10, pixels: vec![0; 400] });
+        key
+    }
+
+    #[test]
+    fn views_of_one_frame_keep_each_others_tiles() {
+        let mut images = Images::new();
+        let bounds = vec![PageBounds { x0: 0.0, y0: 0.0, x1: 100.0, y1: 100.0 }];
+        let mut cache = DocCache::new(bounds);
+        cache.budget = 1000; // two tiles
+        let (a, b) = (tile(&mut cache, &mut images, 0), tile(&mut cache, &mut images, 1));
+        // Frame after frame, pane 1 shows tile a and pane 2 tile b; a third
+        // tile pushes the cache over its budget.
+        for frame in 0..4 {
+            cache.begin_frame(1);
+            assert!(cache.touch(a).is_some(), "frame {frame}: pane 1 lost its tile");
+            cache.evict(&mut images);
+            cache.begin_frame(2);
+            assert!(cache.touch(b).is_some(), "frame {frame}: pane 2 lost its tile");
+            tile(&mut cache, &mut images, 10 + frame);
+            cache.evict(&mut images);
         }
     }
 }

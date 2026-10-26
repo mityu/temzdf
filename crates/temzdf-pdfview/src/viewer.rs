@@ -65,6 +65,8 @@ pub struct Peek {
 }
 
 pub struct Viewer {
+    /// Tells views of one document apart (see `DocCache::begin_frame`).
+    id: u64,
     /// Display lists and tiles (shareable between views of one document).
     pub doc: SharedDocument,
     pub layout: Layout,
@@ -143,7 +145,9 @@ impl Viewer {
             screen_w,
             screen_h: height as f32,
         };
+        static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let mut v = Self {
+            id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             doc,
             layout,
             view,
@@ -444,7 +448,8 @@ impl Viewer {
     /// Build this frame's layers and the outstanding work, most urgent first.
     pub fn frame(&mut self, images: &mut Images) -> (Vec<Layer>, Vec<Need>) {
         self.frame_no += 1;
-        self.cache().begin_frame();
+        let id = self.id;
+        self.cache().begin_frame(id);
         self.sync_view();
         let view = self.view;
         let ox = self.origin_x;
@@ -525,7 +530,12 @@ impl Viewer {
                     };
                     let dst = Rect::new(sx + area.x as i32, sy + area.y as i32, area.w, area.h);
                     let on_screen = dst.intersect(&screen).is_some();
-                    let near = dst.y as f32 <= view.screen_h + view.screen_h && dst.bottom() as f32 >= -view.screen_h;
+                    // Within a screen of the screen, every way (wide pages at a high
+                    // zoom would otherwise fetch whole rows of tiles).
+                    let near = dst.y as f32 <= view.screen_h + view.screen_h
+                        && dst.bottom() as f32 >= -view.screen_h
+                        && (dst.x as f32) <= ox as f32 + view.screen_w * 2.0
+                        && dst.right() as f32 >= ox as f32 - view.screen_w;
                     if !on_screen && !near {
                         continue;
                     }
