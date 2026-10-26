@@ -112,7 +112,13 @@ pub struct Parser {
     buf: Vec<u8>,
     pixel_mouse: bool,
     paste: Option<Vec<u8>>,
+    /// Flushes in a row that found a sequence begun and not finished.
+    stalls: u32,
 }
+
+/// Flushes a begun sequence waits through (at the 25 ms the reader waits
+/// between them, about a second) before it is dropped.
+const MAX_STALLS: u32 = 40;
 
 enum Step {
     /// Consumed `n` bytes, maybe producing an event.
@@ -138,6 +144,9 @@ impl Parser {
 
     /// Feed bytes and return every event that is complete.
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<Event> {
+        if !bytes.is_empty() {
+            self.stalls = 0;
+        }
         let mut buf = std::mem::take(&mut self.buf);
         buf.extend_from_slice(bytes);
         let mut events = Vec::new();
@@ -181,11 +190,24 @@ impl Parser {
     /// Interpret whatever is buffered as complete input. Call this when no bytes
     /// arrived for a short while (e.g. 25 ms): a lone `ESC` becomes the Escape key
     /// and `ESC x` becomes Alt+x.
+    ///
+    /// A control sequence begun and not finished (`ESC [` and more, as a
+    /// mouse report split over a slow link) is not keys: it waits for the
+    /// rest, and is dropped if that never comes.
     pub fn flush(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
         if self.paste.is_some() {
             // An unterminated paste: keep waiting, pastes can be large and slow.
             return events;
+        }
+        let begun = self.buf.len() > 2 && self.buf[0] == ESC && matches!(self.buf[1], b'[' | b']' | b'P' | b'_');
+        if begun {
+            self.stalls += 1;
+            if self.stalls < MAX_STALLS {
+                return events;
+            }
+            self.stalls = 0;
+            return vec![Event::Unknown(std::mem::take(&mut self.buf))];
         }
         let buf = std::mem::take(&mut self.buf);
         let mut pos = 0;
@@ -701,6 +723,30 @@ mod tests {
         assert!(p.feed(b"\x1b").is_empty());
         assert_eq!(p.flush(), vec![k(KeyCode::Escape, Modifiers::NONE)]);
         assert!(!p.has_pending());
+    }
+
+    #[test]
+    fn a_sequence_split_by_a_pause_is_not_keys() {
+        // A mouse report cut in two by a slow link (SSH): the reader's
+        // 25 ms flush comes in between.
+        let mut p = Parser::new();
+        assert!(p.feed(b"\x1b[<0;10").is_empty());
+        assert!(p.flush().is_empty(), "begun: wait for the rest");
+        let ev = p.feed(b";5M");
+        assert!(
+            matches!(ev[..], [Event::Mouse(MouseEvent { kind: MouseEventKind::Press(MouseButton::Left), .. })]),
+            "{ev:?}"
+        );
+        // One that never ends is dropped, not typed.
+        assert!(p.feed(b"\x1b[<0;1").is_empty());
+        let flushed: Vec<Event> = (0..MAX_STALLS).flat_map(|_| p.flush()).collect();
+        assert!(matches!(flushed[..], [Event::Unknown(_)]), "{flushed:?}");
+        assert!(!p.has_pending());
+        // Alt+[ is ESC [ alone.
+        assert!(p.feed(b"\x1b[").is_empty());
+        assert!(
+            matches!(&p.flush()[..], [Event::Key(KeyEvent { code: KeyCode::Char('['), modifiers, .. })] if *modifiers == Modifiers::ALT)
+        );
     }
 
     #[test]
