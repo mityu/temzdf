@@ -142,6 +142,9 @@ pub struct Compositor {
 const FENCE_IDS: std::ops::Range<u32> = 0x7f_0000..0x7f_ffff;
 /// With this many frames unacknowledged, hold back new ones.
 const MAX_FENCES: usize = 2;
+/// Shared memory and files made for the last this many frames stay (the
+/// terminal may not have read them yet); older ones it did not consume go.
+const KEEP_SHM_FRAMES: u64 = 16;
 /// A fence not answered within this time no longer counts (lost reply).
 const FENCE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -396,8 +399,8 @@ impl Compositor {
                 self.fence(out)?;
             }
         }
-        // Keep a few recent shm objects: the terminal may not have read them yet.
-        self.encoder.cleanup_shm(8);
+        // Shared memory of recent frames stays: the terminal may not have read it yet.
+        self.encoder.end_frame(KEEP_SHM_FRAMES);
         Ok(())
     }
 
@@ -861,7 +864,7 @@ mod tests {
             c.present(&[layer(img, x, 0)], &mut Vec::new()).unwrap();
         }
         assert!(!c.is_congested(Instant::now()));
-        c.encoder_mut().cleanup_shm(0);
+        c.encoder_mut().cleanup_shm();
     }
 
     #[test]

@@ -200,7 +200,7 @@ impl Encoder {
             }
             Medium::TempFile => {
                 let path = write_temp_file(px.data)?;
-                self.shm.files.push(path.clone());
+                self.shm.files.push((self.shm.frame, path.clone()));
                 write!(keys, ",t=t,S={}", px.data.len()).unwrap();
                 write_command(out, &keys, B64.encode(path.as_os_str().as_encoded_bytes()).as_bytes());
             }
@@ -231,17 +231,24 @@ impl Encoder {
         write_command(out, &keys, b"");
     }
 
-    /// Remove shared-memory objects the terminal did not consume. Call this
-    /// periodically with the number of recent objects to keep (they may still be
-    /// in flight), and with 0 on shutdown.
-    pub fn cleanup_shm(&mut self, keep: usize) {
-        self.shm.cleanup(keep);
+    /// A frame went out: remove the shared-memory objects and files of
+    /// frames before the last `keep` the terminal did not consume (those of
+    /// recent frames may still be on their way, however many one frame made).
+    pub fn end_frame(&mut self, keep: u64) {
+        self.shm.frame += 1;
+        self.shm.cleanup(self.shm.frame.saturating_sub(keep));
+    }
+
+    /// Remove every shared-memory object and file the terminal did not
+    /// consume (on shutdown).
+    pub fn cleanup_shm(&mut self) {
+        self.shm.cleanup(u64::MAX);
     }
 }
 
 impl Drop for Encoder {
     fn drop(&mut self) {
-        self.shm.cleanup(0);
+        self.cleanup_shm();
     }
 }
 
@@ -366,28 +373,31 @@ fn shm_create(data: &[u8]) -> io::Result<String> {
     Ok(name)
 }
 
-/// Shared-memory objects and temporary files we created, oldest first.
+/// Shared-memory objects and temporary files we created, oldest first,
+/// with the frame they were made for.
 #[derive(Debug, Default)]
 struct ShmTracker {
-    names: Vec<String>,
-    files: Vec<PathBuf>,
+    frame: u64,
+    names: Vec<(u64, String)>,
+    files: Vec<(u64, PathBuf)>,
 }
 
 impl ShmTracker {
     fn create(&mut self, data: &[u8]) -> io::Result<String> {
         let name = shm_create(data)?;
-        self.names.push(name.clone());
+        self.names.push((self.frame, name.clone()));
         Ok(name)
     }
 
-    fn cleanup(&mut self, keep: usize) {
-        let excess = self.names.len().saturating_sub(keep);
-        for name in self.names.drain(..excess) {
+    /// Remove what was made for frames before `before`.
+    fn cleanup(&mut self, before: u64) {
+        let old = self.names.iter().take_while(|(f, _)| *f < before).count();
+        for (_, name) in self.names.drain(..old) {
             // The terminal unlinks objects it consumed; ENOENT is the normal case.
             let _ = rustix::shm::unlink(name.as_str());
         }
-        let excess = self.files.len().saturating_sub(keep);
-        for path in self.files.drain(..excess) {
+        let old = self.files.iter().take_while(|(f, _)| *f < before).count();
+        for (_, path) in self.files.drain(..old) {
             let _ = std::fs::remove_file(path);
         }
     }
@@ -431,9 +441,9 @@ mod tests {
         let mut enc = Encoder::new(Medium::TempFile);
         let px = Pixels { width: 1, height: 1, format: PixelFormat::Rgba, data: &[0, 0, 0, 255] };
         enc.transmit(&mut out, 9, px, None).unwrap();
-        let sent = enc.shm.files[0].clone();
+        let sent = enc.shm.files[0].1.clone();
         assert!(sent.exists());
-        enc.cleanup_shm(0);
+        enc.cleanup_shm();
         assert!(!sent.exists());
     }
 
@@ -586,7 +596,28 @@ mod tests {
         let name = String::from_utf8(B64.decode(name_b64).unwrap()).unwrap();
         let on_disk = std::path::Path::new("/dev/shm").join(name.trim_start_matches('/'));
         assert_eq!(std::fs::read(&on_disk).unwrap(), data);
-        enc.cleanup_shm(0);
+        enc.cleanup_shm();
         assert!(!on_disk.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shared_memory_stays_for_recent_frames_however_many() {
+        let mut enc = Encoder::new(Medium::SharedMemory);
+        let mut out = Vec::new();
+        let data = [9u8; 4];
+        let px = || Pixels { width: 1, height: 1, format: PixelFormat::Rgba, data: &data };
+        // One frame sends many images (tiles after a zoom).
+        for id in 0..20 {
+            enc.transmit(&mut out, id, px(), None).unwrap();
+        }
+        let first = std::path::Path::new("/dev/shm").join(enc.shm.names[0].1.trim_start_matches('/'));
+        enc.end_frame(2);
+        assert!(first.exists(), "the terminal may not have read it yet");
+        enc.end_frame(2);
+        assert!(first.exists());
+        enc.end_frame(2);
+        assert!(!first.exists(), "two frames later it goes");
+        enc.cleanup_shm();
     }
 }
