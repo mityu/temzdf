@@ -127,11 +127,13 @@ impl Key {
         let mut rest = s;
         // A prefix needs something after it: "-" and "C--" are the minus key.
         while rest.len() > 2 {
-            let m = match &rest[..2] {
-                "C-" => Modifiers::CTRL,
-                "M-" => Modifiers::ALT,
-                "S-" => Modifiers::SHIFT,
-                "D-" => Modifiers::SUPER,
+            // `get`: a name starting with a multi-byte character has no
+            // two-byte prefix (slicing it would panic).
+            let m = match rest.get(..2) {
+                Some("C-") => Modifiers::CTRL,
+                Some("M-") => Modifiers::ALT,
+                Some("S-") => Modifiers::SHIFT,
+                Some("D-") => Modifiers::SUPER,
                 _ => break,
             };
             mods |= m;
@@ -257,6 +259,9 @@ mod tests {
 
     #[test]
     fn parses_the_notation() {
+        // Multi-byte names do not panic.
+        let _ = Key::parse("数字");
+        let _ = Key::parse("C-数");
         assert_eq!(Key::parse("j").unwrap(), Key { code: KeyCode::Char('j'), mods: Modifiers::NONE });
         assert_eq!(Key::parse("C-f").unwrap(), Key { code: KeyCode::Char('f'), mods: Modifiers::CTRL });
         assert_eq!(
