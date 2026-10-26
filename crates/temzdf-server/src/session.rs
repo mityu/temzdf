@@ -184,8 +184,14 @@ const MAX_MAP_DEPTH: usize = 1000;
 /// Layer key owner for the session's own layers.
 const OWNER_SESSION: u32 = u32::MAX;
 
+/// Whether a pane put at `spot` takes the focus (a float may be opened
+/// without it).
+fn takes_focus(spot: &Spot) -> bool {
+    !matches!(spot, Spot::Float(s) if !s.focus)
+}
+
 /// Where a pane goes.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Spot {
     /// The first pane of the session.
     First,
@@ -501,11 +507,16 @@ impl Session {
             return Ok(self.place_float(id, spec));
         }
         let area = self.area();
+        // A float has no place in the layout to split: the tiled pane
+        // focused last stands in (rather than "no room").
+        let tiled = |t: PaneId| if self.is_float(t) { self.tiled_focus } else { t };
         let (target, split, before) = match spot {
-            Spot::Split { target: Some(t), split, before } if self.panes.contains_key(&t) => (Some(t), split, before),
+            Spot::Split { target: Some(t), split, before } if self.panes.contains_key(&t) => {
+                (Some(tiled(t)), split, before)
+            }
             Spot::Split { target: None, split, before } => (None, split, before),
             // The target went away meanwhile: split the focused pane instead.
-            _ => (Some(self.focus), Split::Horizontal, false),
+            _ => (Some(tiled(self.focus)), Split::Horizontal, false),
         };
         match self.layout.as_mut() {
             None => self.layout = Some(Layout::new(id)),
@@ -542,6 +553,7 @@ impl Session {
             return Some(p);
         }
         let id = self.alloc_id();
+        let focus = takes_focus(&spot);
         if let Err(e) = self.place(id, spot) {
             self.message(&e.to_string());
             return None;
@@ -550,7 +562,9 @@ impl Session {
         let kind = self.pdf_kind(id, doc)?;
         self.panes.insert(id, PaneEntry { kind, rect: self.area() });
         self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
-        self.set_focus(id);
+        if focus {
+            self.set_focus(id);
+        }
         self.relayout();
         if restore {
             self.restore_view(id);
@@ -761,6 +775,7 @@ impl Session {
     /// Start a program in a new terminal pane.
     fn open_terminal(&mut self, spawn: &Spawn, spot: Spot) -> Result<PaneId> {
         let id = self.alloc_id();
+        let focus = takes_focus(&spot);
         let rect = self.place(id, spot)?;
         let buf = self.alloc_id();
         let events = self.events.clone();
@@ -778,16 +793,18 @@ impl Session {
         };
         self.terms.insert(buf, TermEntry { term: Box::new(term), exited: false });
         self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str("terminal".into())]);
-        self.terminal_pane(id, buf, rect);
+        self.terminal_pane(id, buf, rect, focus);
         Ok(id)
     }
 
     /// Pane `id`, placed at `rect`, shows terminal `buf`.
-    fn terminal_pane(&mut self, id: PaneId, buf: BufferId, rect: Rect) {
+    fn terminal_pane(&mut self, id: PaneId, buf: BufferId, rect: Rect, focus: bool) {
         let geometry = Geometry { cols: rect.w as u16, rows: rect.h as u16, cell: self.geometry.cell };
         self.panes.insert(id, PaneEntry { kind: Kind::Term { buf, view: TermView::new(geometry) }, rect });
         self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("terminal".into())]);
-        self.set_focus(id);
+        if focus {
+            self.set_focus(id);
+        }
         self.relayout();
     }
 
@@ -2609,5 +2626,22 @@ mod tests {
         s.run_command("resize-pane", &[ScriptValue::map([("width", ScriptValue::Num(-5.0))])], None, Instant::now())
             .unwrap();
         s.frame();
+    }
+
+    #[test]
+    fn a_float_waiting_for_its_file_keeps_its_title_and_focus() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        let tiled = s.focus;
+        let what = ScriptValue::map([(
+            "file",
+            ScriptValue::Str(temzdf_pdfcore::pdf::fixture("sample.pdf").display().to_string()),
+        )]);
+        let opts = ScriptValue::map([("title", ScriptValue::Str("paper".into())), ("focus", ScriptValue::Bool(false))]);
+        let (pane, _) = s.run_command("open-float", &[what, opts], None, Instant::now()).unwrap();
+        assert_eq!(pane, ScriptValue::Null, "opening: no pane yet");
+        pump(&mut s, &rx, |s| !s.floats.is_empty());
+        assert_eq!(s.floats[0].title.as_deref(), Some("paper"));
+        assert_eq!(s.focus, tiled, "focus: false");
     }
 }

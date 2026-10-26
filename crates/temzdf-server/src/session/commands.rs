@@ -199,13 +199,13 @@ impl Session {
                     }
                 };
                 let mut spec = FloatSpec::default();
-                let mut title = None;
-                let mut focus = true;
                 if let Some(o) = args.get(1).filter(|o| matches!(o, ScriptValue::Map(_))) {
+                    let mut title = None;
                     floats::read_opts(o, &mut spec, &mut title).map_err(|e| format!("openFloat: {e}"))?;
-                    focus = !matches!(o.get("focus"), Some(ScriptValue::Bool(false)));
+                    spec.title = title;
+                    spec.focus = !matches!(o.get("focus"), Some(ScriptValue::Bool(false)));
                 }
-                let pane = self.open_float(what, spec, title, focus).map_err(|e| format!("openFloat: {e}"))?;
+                let pane = self.open_float(what, spec).map_err(|e| format!("openFloat: {e}"))?;
                 Ok((pane.map_or(ScriptValue::Null, |p| ScriptValue::Num(p as f64)), Outcome::Redraw))
             }
             "float-config" => {
@@ -214,7 +214,7 @@ impl Session {
                 let Some(f) = self.float_mut(pane) else {
                     return Err(format!("floatConfig: pane {pane} does not float"));
                 };
-                let (mut spec, mut title) = (f.spec, f.title.clone());
+                let (mut spec, mut title) = (f.spec.clone(), f.title.clone());
                 floats::read_opts(o, &mut spec, &mut title).map_err(|e| format!("floatConfig: {e}"))?;
                 if let Some(f) = self.float_mut(pane) {
                     (f.spec, f.title) = (spec, title);

@@ -55,17 +55,21 @@ impl Extent {
 /// Where a float goes and how large it is. Sizes in cells are the content's
 /// (the frame comes around it, as in Neovim); shares of the screen are the
 /// whole float's. A missing position centres it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FloatSpec {
     pub width: Extent,
     pub height: Extent,
     pub col: Option<Extent>,
     pub row: Option<Extent>,
+    /// When it opens (a file may open later): its title, and whether it
+    /// takes the focus.
+    pub title: Option<String>,
+    pub focus: bool,
 }
 
 impl Default for FloatSpec {
     fn default() -> Self {
-        Self { width: Extent::Percent(80), height: Extent::Percent(80), col: None, row: None }
+        Self { width: Extent::Percent(80), height: Extent::Percent(80), col: None, row: None, title: None, focus: true }
     }
 }
 
@@ -93,6 +97,7 @@ impl FloatSpec {
             height: Extent::Cells(h),
             col: Some(Extent::Cells(frame.x.max(0) as u32)),
             row: Some(Extent::Cells(frame.y.max(0) as u32)),
+            ..Self::default()
         }
     }
 }
@@ -264,7 +269,8 @@ impl Session {
     /// Put pane `id` on top of the floats. Returns its content rectangle.
     pub(super) fn place_float(&mut self, id: PaneId, spec: FloatSpec) -> Rect {
         let frame = spec.frame(self.area());
-        self.floats.push(Float { frame, ..Float::new(id, spec) });
+        let title = spec.title.clone();
+        self.floats.push(Float { frame, title, ..Float::new(id, spec) });
         // A new float shows the others too.
         self.floats_hidden = false;
         content(frame)
@@ -299,7 +305,8 @@ impl Session {
     pub(super) fn cascade(&self) -> FloatSpec {
         let Some(f) = self.floats.iter().find(|f| f.pane == self.focus) else { return FloatSpec::default() };
         let r = content(f.frame);
-        let moved = Rect::new(f.frame.x + CASCADE, f.frame.y + CASCADE, f.frame.w, f.frame.h);
+        let moved =
+            Rect::new(f.frame.x.saturating_add(CASCADE), f.frame.y.saturating_add(CASCADE), f.frame.w, f.frame.h);
         FloatSpec::at(moved, r.w, r.h)
     }
 
@@ -353,41 +360,27 @@ impl Session {
 
     /// Open a float showing `what`, focused unless `focus` is false. A file
     /// still opening has no pane yet (`None`).
-    pub(super) fn open_float(
-        &mut self,
-        what: FloatWhat,
-        spec: FloatSpec,
-        title: Option<String>,
-        focus: bool,
-    ) -> Result<Option<PaneId>, String> {
-        let before = self.focus;
-        let spot = Spot::Float(spec);
-        let pane = match what {
+    pub(super) fn open_float(&mut self, what: FloatWhat, spec: FloatSpec) -> Result<Option<PaneId>, String> {
+        let spot = Spot::Float(spec.clone());
+        Ok(match what {
             FloatWhat::Spawn(spawn) => Some(self.open_terminal(&spawn, spot).map_err(|e| format!("{e:#}"))?),
             FloatWhat::File(path) => {
-                // An open document gets its pane now, another one once open.
+                // An open document gets its pane now, another one once open
+                // (the spec, title and focus included, waits with it).
                 let top = self.floats.last().map(|f| f.pane);
                 self.open_at(&path, spot).map_err(|e| format!("{e:#}"))?;
                 self.floats.last().map(|f| f.pane).filter(|p| Some(*p) != top)
             }
             FloatWhat::Buffer(buf) if self.terms.contains_key(&buf) => {
                 let id = self.alloc_id();
+                let focus = spec.focus;
                 let rect = self.place_float(id, spec);
-                self.terminal_pane(id, buf, rect);
+                self.terminal_pane(id, buf, rect, focus);
                 Some(id)
             }
             FloatWhat::Buffer(buf) if self.docs.contains_key(&buf) => self.add_pdf_pane(buf, spot),
             FloatWhat::Buffer(buf) => return Err(format!("no buffer {buf}")),
-        };
-        if let Some(p) = pane {
-            if let Some(f) = self.float_mut(p) {
-                f.title = title;
-            }
-            if !focus && self.panes.contains_key(&before) {
-                self.set_focus(before);
-            }
-        }
-        Ok(pane)
+        })
     }
 
     /// Show or hide every float; with none, open a floating shell.
@@ -600,9 +593,10 @@ mod tests {
             height: Extent::Cells(5),
             col: Some(Extent::Cells(3)),
             row: Some(Extent::Percent(50)),
+            ..FloatSpec::default()
         };
         assert_eq!(cells.frame(area), Rect::new(3, 15, 22, 7), "content in cells, the frame around it");
-        let past = FloatSpec { col: Some(Extent::Cells(95)), row: Some(Extent::Cells(29)), ..cells };
+        let past = FloatSpec { col: Some(Extent::Cells(95)), row: Some(Extent::Cells(29)), ..cells.clone() };
         assert_eq!(past.frame(area), Rect::new(78, 23, 22, 7), "kept on the screen");
         let tiny = FloatSpec { width: Extent::Cells(1), height: Extent::Cells(1), ..FloatSpec::default() };
         assert_eq!(tiny.frame(area).w, MIN_COLS + 2);
