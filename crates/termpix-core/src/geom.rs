@@ -42,6 +42,28 @@ impl Rect {
         }
         Some(Rect::new(x0, y0, (x1 - x0 as i64) as u32, (y1 - y0 as i64) as u32))
     }
+
+    /// This rectangle without `other`: up to four disjoint rectangles (the
+    /// full-width bands above and below `other`, then the parts left and
+    /// right of it), none when `other` covers it all.
+    pub fn subtract(&self, other: &Rect) -> Vec<Rect> {
+        let Some(cut) = self.intersect(other) else { return vec![*self] };
+        let mut out = Vec::with_capacity(4);
+        let span = |a: i64, b: i64| (b - a) as u32;
+        if cut.y > self.y {
+            out.push(Rect::new(self.x, self.y, self.w, span(self.y as i64, cut.y as i64)));
+        }
+        if cut.bottom() < self.bottom() {
+            out.push(Rect::new(self.x, cut.bottom() as i32, self.w, span(cut.bottom(), self.bottom())));
+        }
+        if cut.x > self.x {
+            out.push(Rect::new(self.x, cut.y, span(self.x as i64, cut.x as i64), cut.h));
+        }
+        if cut.right() < self.right() {
+            out.push(Rect::new(cut.right() as i32, cut.y, span(cut.right(), self.right()), cut.h));
+        }
+        out
+    }
 }
 
 /// Size of one terminal cell in pixels.
@@ -84,5 +106,28 @@ mod tests {
         let a = Rect::new(0, 0, 10, 10);
         assert_eq!(a.intersect(&Rect::new(-5, 5, 10, 10)), Some(Rect::new(0, 5, 5, 5)));
         assert_eq!(a.intersect(&Rect::new(10, 0, 5, 5)), None);
+    }
+
+    #[test]
+    fn subtract_leaves_disjoint_pieces_covering_the_rest() {
+        let a = Rect::new(0, 0, 10, 10);
+        assert_eq!(a.subtract(&Rect::new(20, 0, 5, 5)), [a], "apart");
+        assert!(a.subtract(&Rect::new(-1, -1, 12, 12)).is_empty(), "covered");
+        assert_eq!(
+            a.subtract(&Rect::new(3, 4, 2, 3)),
+            [Rect::new(0, 0, 10, 4), Rect::new(0, 7, 10, 3), Rect::new(0, 4, 3, 3), Rect::new(5, 4, 5, 3)],
+            "a hole: four pieces"
+        );
+        // Every pixel is in exactly one piece or in the cut, for overlaps on
+        // every side.
+        for other in [Rect::new(-5, -5, 8, 8), Rect::new(6, 2, 10, 3), Rect::new(2, 8, 3, 9), Rect::new(0, 0, 10, 4)] {
+            let pieces = a.subtract(&other);
+            for y in 0..10 {
+                for x in 0..10 {
+                    let n = pieces.iter().filter(|p| p.contains(x, y)).count() + other.contains(x, y) as usize;
+                    assert_eq!(n, 1, "({x}, {y}) minus {other:?}: {pieces:?}");
+                }
+            }
+        }
     }
 }

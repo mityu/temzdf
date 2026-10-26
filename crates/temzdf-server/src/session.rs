@@ -22,6 +22,7 @@ use termpix_core::input::{CoordUnit, KeyCode, KeyEvent, KeyEventKind, MouseButto
 use termpix_core::scroll::ScrollConfig;
 
 use crate::action::{Action, PaneSpec};
+use crate::clip;
 use crate::forward::{self, ForwardRequest};
 use crate::keymap::{History, Matcher, Modes, Step, Stroke, Target, Unmapped, notation};
 use crate::layout::{BorderId, Layout, PaneId, Split};
@@ -253,22 +254,36 @@ impl PaneEntry {
 
 /// Placement keys of the panes' layers, made unique across panes and kept
 /// stable from frame to frame (so the compositor moves rather than re-creates).
+/// A layer cut by floats gets a key per piece; the first piece keeps the key
+/// the whole layer had.
 #[derive(Default)]
 struct Keys {
-    map: HashMap<(u32, u32), u32>,
+    map: HashMap<(u32, u32, u32), u32>,
     next: u32,
+    /// The keys placed this frame; the others are forgotten after it.
+    used: HashSet<(u32, u32, u32)>,
 }
 
 impl Keys {
-    fn get(&mut self, owner: u32, key: u32) -> u32 {
+    fn get(&mut self, k: (u32, u32, u32)) -> u32 {
+        self.used.insert(k);
         let next = &mut self.next;
-        *self.map.entry((owner, key)).or_insert_with(|| {
+        *self.map.entry(k).or_insert_with(|| {
             *next = next.wrapping_add(1).max(1);
             *next
         })
     }
 
-    fn retain(&mut self, used: &HashSet<(u32, u32)>) {
+    /// Add `layer` (`key` of `owner`) to `out`, cut around `covers` (pixels).
+    fn place(&mut self, out: &mut Vec<Layer>, owner: u32, key: u32, layer: Layer, covers: &[Rect]) {
+        for (i, piece) in clip::layer_pieces(&layer, covers).into_iter().enumerate() {
+            out.push(Layer { key: self.get((owner, key, i as u32)), ..piece });
+        }
+    }
+
+    /// Forget the keys not placed since the last call.
+    fn end_frame(&mut self) {
+        let used = std::mem::take(&mut self.used);
         self.map.retain(|k, _| used.contains(k));
     }
 }
@@ -1355,7 +1370,6 @@ impl Session {
         // background, so only the gaps between panes get one (border_layers).
         let mut layers = Vec::new();
         let mut text = Vec::new();
-        let mut used = HashSet::new();
         let order = self.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
         let mut needs: HashMap<DocId, Vec<Need>> = HashMap::new();
         let mut cursor = None;
@@ -1366,6 +1380,9 @@ impl Session {
         let mut ids = order.clone();
         ids.sort_by_key(|id| *id != self.focus);
         for id in ids {
+            // What lies above this pane, in cells and in pixels.
+            let covers = self.covers(Some(id));
+            let covers_px: Vec<Rect> = covers.iter().map(|r| self.pixels(r)).collect();
             let Some(e) = self.panes.get_mut(&id) else { continue };
             let frame = match &mut e.kind {
                 Kind::Pdf { pane, doc } => {
@@ -1391,22 +1408,25 @@ impl Session {
             for l in frame.layers {
                 let moved = Layer { dst: Rect::new(l.dst.x + ox, l.dst.y + oy, l.dst.w, l.dst.h), ..l };
                 if let Some(c) = moved.clipped(&clip) {
-                    used.insert((id, l.key));
-                    layers.push(Layer { key: self.keys.get(id, l.key), ..c });
+                    self.keys.place(&mut layers, id, l.key, c, &covers_px);
                 }
             }
             for g in frame.text {
-                text.push(TextGrid { col: g.col + e.rect.x as u16, row: g.row + e.rect.y as u16, ..g });
+                let g = TextGrid { col: g.col + e.rect.x as u16, row: g.row + e.rect.y as u16, ..g };
+                text.extend(clip::text_pieces(g, &covers));
             }
             if id == self.focus {
-                cursor = frame.cursor.map(|(c, r)| (c + e.rect.x as u16, r + e.rect.y as u16));
+                cursor = frame
+                    .cursor
+                    .map(|(c, r)| (c + e.rect.x as u16, r + e.rect.y as u16))
+                    .filter(|&(c, r)| !covers.iter().any(|k| k.contains(c as i32, r as i32)));
                 cursor_shape = frame.cursor_shape;
                 title = frame.title;
             }
         }
         self.complete = complete;
-        self.border_layers(&mut layers, &mut used);
-        self.keys.retain(&used);
+        self.border_layers(&mut layers);
+        self.keys.end_frame();
         for (doc, needs) in needs {
             if let Some(host) = self.docs.get_mut(&doc).and_then(|d| d.host.as_mut()) {
                 host.dispatch(needs);
@@ -1418,10 +1438,11 @@ impl Session {
     }
 
     /// Lines in the one-cell gaps between panes; the focused pane's in the accent colour.
-    fn border_layers(&mut self, layers: &mut Vec<Layer>, used: &mut HashSet<(u32, u32)>) {
+    fn border_layers(&mut self, layers: &mut Vec<Layer>) {
         if self.panes.len() < 2 {
             return;
         }
+        let covers: Vec<Rect> = self.covers(None).iter().map(|r| self.pixels(r)).collect();
         let cell = self.geometry.cell;
         let (cols, rows) = (self.geometry.cols as i32, self.geometry.rows as i32);
         let accent = termpix_ui::Theme::dark().accent.0;
@@ -1459,23 +1480,27 @@ impl Session {
         }
         for (i, r) in gaps.into_iter().enumerate() {
             let image = self.solid(r.w, r.h, BACKGROUND);
-            let k = (OWNER_SESSION, 0x1000 + i as u32);
-            used.insert(k);
-            layers.push(Layer {
-                key: self.keys.get(k.0, k.1),
-                image,
-                src: Rect::new(0, 0, r.w, r.h),
-                dst: r,
-                z: Z_SESSION_BACKGROUND,
-            });
+            let layer = Layer { key: 0, image, src: Rect::new(0, 0, r.w, r.h), dst: r, z: Z_SESSION_BACKGROUND };
+            self.keys.place(layers, OWNER_SESSION, 0x1000 + i as u32, layer, &covers);
         }
         for (i, (focus, r)) in lines.into_iter().enumerate() {
             let image = self.solid(r.w, r.h, if focus { accent } else { BORDER });
-            let k = (OWNER_SESSION, 1 + i as u32);
-            used.insert(k);
             let z = if focus { Z_BORDER_FOCUS } else { Z_BORDER };
-            layers.push(Layer { key: self.keys.get(k.0, k.1), image, src: Rect::new(0, 0, r.w, r.h), dst: r, z });
+            let layer = Layer { key: 0, image, src: Rect::new(0, 0, r.w, r.h), dst: r, z };
+            self.keys.place(layers, OWNER_SESSION, 1 + i as u32, layer, &covers);
         }
+    }
+
+    /// What covers `pane` (the session's own layers with `None`), in cells:
+    /// nothing yet; floating panes will.
+    fn covers(&self, _pane: Option<PaneId>) -> Vec<Rect> {
+        Vec::new()
+    }
+
+    /// A rectangle of cells in screen pixels.
+    fn pixels(&self, r: &Rect) -> Rect {
+        let cell = self.geometry.cell;
+        Rect::new(r.x * cell.width as i32, r.y * cell.height as i32, r.w * cell.width, r.h * cell.height)
     }
 
     fn solid(&mut self, w: u32, h: u32, color: [u8; 4]) -> ImageKey {

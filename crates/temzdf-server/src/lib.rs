@@ -4,6 +4,7 @@
 //! server share it. See doc/session-server.md.
 
 pub mod action;
+mod clip;
 pub mod daemon;
 pub mod forward;
 pub mod keymap;
