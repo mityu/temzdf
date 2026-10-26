@@ -21,7 +21,7 @@ use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 /// Larger messages are refused (a frame with every image of a full cache is
 /// about 200 MB).
 const MAX_MESSAGE: usize = 512 << 20;
@@ -37,6 +37,11 @@ pub enum ClientMsg {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Paste(String),
+    /// Text an input method committed (Japanese, dead keys, an emoji
+    /// palette): not keys, and not a paste (no brackets for terminals).
+    Text(String),
+    /// The client's window or terminal gained (true) or lost the focus.
+    Focus(bool),
     Resize(Geometry),
     /// The frame with this number is on screen: send the next one.
     FrameAck(u64),

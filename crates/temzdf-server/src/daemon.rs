@@ -220,6 +220,11 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     dirty |= become_latest(&mut session, &mut latest, &clients, id);
                     outcome = session.paste(&text);
                 }
+                ClientMsg::Text(text) => {
+                    dirty |= become_latest(&mut session, &mut latest, &clients, id);
+                    outcome = session.text(&text, Instant::now());
+                }
+                ClientMsg::Focus(gained) => outcome = session.client_focus(gained),
                 ClientMsg::Resize(g) => {
                     if let Some(c) = clients.get_mut(&id)
                         && let Some(g) = usable(g)

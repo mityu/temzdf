@@ -652,6 +652,15 @@ impl Term {
         }
     }
 
+    /// The window gained or lost the focus: a focus report (CSI I / CSI O),
+    /// when the program asked for them (mode 1004), as a terminal sends.
+    pub fn focus(&mut self, gained: bool) {
+        self.pump(Duration::ZERO);
+        if self.terminal.mode(libghostty_vt::terminal::Mode::FOCUS_EVENT).unwrap_or(false) {
+            self.write(if gained { b"\x1b[I" } else { b"\x1b[O" });
+        }
+    }
+
     /// Paste, bracketed when the program asked for it.
     pub fn paste(&mut self, text: &str) {
         self.pump(Duration::ZERO);

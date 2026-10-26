@@ -75,6 +75,11 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("message", "(text: string): void", "Show a message"),
     ("send-text", "(text: string): void", "Type text into the focused terminal pane (Vim's chansend)"),
     (
+        "paste",
+        "(from?: \"clipboard\" | \"primary\"): void",
+        "Paste the client's clipboard (or the primary selection) into the focused pane; terminals paste with their own keys",
+    ),
+    (
         "feedkeys",
         "(keys: string, remap?: boolean): void",
         "Keys as if typed, after the running mapping; remap false skips mappings",
@@ -362,6 +367,15 @@ impl Session {
             "message" => {
                 self.notify(super::notices::Kind::Info, &text(0).unwrap_or_default());
                 ok(Outcome::Redraw)
+            }
+            "paste" => {
+                let primary = match text(0).as_deref() {
+                    None | Some("clipboard") => false,
+                    Some("primary") => true,
+                    Some(other) => return Err(format!("paste: {other:?} is not clipboard or primary")),
+                };
+                self.effects.push(temzdf_scene::Effect::Paste { primary });
+                ok(Outcome::None)
             }
             "send-text" => match self.focused_term() {
                 Some(t) => ok(Outcome::None.or(t.send_text(&text(0).unwrap_or_default()))),

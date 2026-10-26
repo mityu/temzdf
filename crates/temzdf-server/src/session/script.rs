@@ -61,6 +61,7 @@ enum Held {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Paste(String),
+    Text(String),
 }
 
 /// Work waiting for the host, innermost (top of the stack) last.
@@ -306,6 +307,14 @@ impl Session {
         true
     }
 
+    pub(super) fn hold_text(&mut self, text: &str) -> bool {
+        if !self.script.busy() {
+            return false;
+        }
+        self.script.held.push_back(Held::Text(text.to_owned()));
+        true
+    }
+
     /// Send a call to the host and wait for it on the frame stack.
     pub(super) fn call(&mut self, func: FuncId, args: Vec<ScriptValue>, hook: bool) {
         let id = self.script.next_call;
@@ -456,6 +465,7 @@ impl Session {
                 Held::Key(k) => self.key(&k, now),
                 Held::Mouse(m) => self.mouse(&m, now),
                 Held::Paste(t) => self.paste(&t),
+                Held::Text(t) => self.text(&t, now),
             };
             out = out.merge(o);
         }

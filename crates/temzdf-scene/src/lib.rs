@@ -333,6 +333,9 @@ pub enum Effect {
     OpenUri { uri: String, command: Option<Vec<String>> },
     /// Run a shell command detached from the terminal (SyncTeX inverse search).
     RunShell(String),
+    /// Paste what the client's clipboard holds (`primary`: the X11/Wayland
+    /// primary selection), answered with `ClientMsg::Paste`.
+    Paste { primary: bool },
 }
 
 #[cfg(test)]

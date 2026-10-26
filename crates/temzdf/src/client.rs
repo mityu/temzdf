@@ -107,12 +107,13 @@ pub fn attach(name: &str) -> Result<String> {
                     let _ = send(ClientMsg::Detach);
                     break Some(ExitReason::Detached);
                 }
-                input @ (Input::Resized(_) | Input::Key(_) | Input::Mouse(_) | Input::Paste(_)) => {
+                input @ (Input::Resized(_) | Input::Key(_) | Input::Mouse(_) | Input::Paste(_) | Input::Focus(_)) => {
                     let msg = match input {
                         Input::Resized(g) => ClientMsg::Resize(g),
                         Input::Key(k) => ClientMsg::Key(k),
                         Input::Mouse(m) => ClientMsg::Mouse(m),
                         Input::Paste(text) => ClientMsg::Paste(text),
+                        Input::Focus(gained) => ClientMsg::Focus(gained),
                         _ => unreachable!(),
                     };
                     if send(msg).is_err() {

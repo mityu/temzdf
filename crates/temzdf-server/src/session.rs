@@ -18,7 +18,9 @@ use temzdf_pdfview::viewer::{StandIn, ViewState};
 use temzdf_scene::{CursorShape, Effect, Frame, Hints, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
 use temzdf_term::{Spawn, TermBuffer, TermEvent, TermView};
 use termpix_core::geom::Geometry;
-use termpix_core::input::{CoordUnit, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
+use termpix_core::input::{
+    CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use termpix_core::scroll::ScrollConfig;
 
 use crate::action::{Action, PaneSpec};
@@ -1216,6 +1218,40 @@ impl Session {
     /// The current mode's name.
     pub fn current_mode(&self) -> &str {
         self.history.current()
+    }
+
+    /// Text an input method committed: typed into the focused terminal in a
+    /// pass-through mode (`terminal`), else each character as a key, so
+    /// mappings stay reachable with an input method on (as Vim takes IME
+    /// input in Normal mode).
+    pub fn text(&mut self, text: &str, now: Instant) -> Outcome {
+        if self.hold_text(text) {
+            return Outcome::None;
+        }
+        let mode = self.history.current().to_owned();
+        let out = if self.modes.unmapped(&mode) == Unmapped::Passthrough
+            && let Some(t) = self.focused_term()
+        {
+            Outcome::None.or(t.send_text(text))
+        } else {
+            let mut out = Outcome::None;
+            for c in text.chars() {
+                let key = KeyEvent { text: Some(c.to_string()), ..KeyEvent::new(KeyCode::Char(c), Modifiers::NONE) };
+                out = out.merge(self.key(&key, now));
+            }
+            out
+        };
+        out.merge(self.flush_events())
+    }
+
+    /// The client's window (or terminal) gained or lost the focus: the
+    /// focused terminal pane tells its program, if it asked (Vim reloads
+    /// files on focus).
+    pub fn client_focus(&mut self, gained: bool) -> Outcome {
+        if let Some(t) = self.focused_term() {
+            t.focus(gained);
+        }
+        Outcome::None
     }
 
     pub fn paste(&mut self, text: &str) -> Outcome {
@@ -3001,5 +3037,41 @@ mod tests {
         assert_eq!((s.tab, s.focus), (1, right));
         key(&mut s, "<C-b>2gT");
         assert_eq!(s.tab, 2);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn committed_text_is_typed_in_terminals_and_keys_elsewhere() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; read l; echo \"got:$l\"; sleep 30"]);
+        // In the terminal mode: typed as it is (not keys, not a paste).
+        s.text("日本語", Instant::now());
+        key(&mut s, "<CR>");
+        // (Wide characters leave a blank spacer cell in the screen's text.)
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
+        assert!(rows.iter().any(|l| l.replace(' ', "").contains("got:日本語")), "{rows:?}");
+        // In the normal mode: keys, so mappings work with an input method on.
+        key(&mut s, "<C-b>");
+        s.text("%", Instant::now());
+        assert_eq!(s.layout.as_ref().unwrap().panes().len(), 2, "split by the % mapping");
+        // paste asks the client for its clipboard.
+        s.take_effects();
+        s.run_command("paste", &[], None, Instant::now()).unwrap();
+        s.run_command("paste", &[ScriptValue::Str("primary".into())], None, Instant::now()).unwrap();
+        assert_eq!(
+            s.take_effects(),
+            [temzdf_scene::Effect::Paste { primary: false }, temzdf_scene::Effect::Paste { primary: true }]
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn the_clients_focus_reaches_programs_that_asked() {
+        let script = "printf '\\033[?1004h'; stty raw -echo; printf ready; v=$(dd bs=1 count=6 2>/dev/null | od -An -c | tr -s ' '); printf 'got:%s' \"$v\"; sleep 30";
+        let (mut s, rx) = terminal_session(&["sh", "-c", script]);
+        wait_text(&mut s, &rx, |r| r[0].contains("ready"));
+        s.client_focus(false);
+        s.client_focus(true);
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
+        assert!(rows.iter().any(|l| l.contains("got: 033 [ O 033 [ I")), "{rows:?}");
     }
 }

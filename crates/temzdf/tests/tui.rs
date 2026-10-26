@@ -925,3 +925,17 @@ fn tabs_inside_tmux() {
     t.keys(&["C-b", "g", "T"]);
     t.wait_for("the first tab", |s| tab_line(s) && s.text().contains("first-2") && !s.text().contains("second-4"));
 }
+
+#[test]
+fn the_terminals_focus_reaches_a_program_in_a_session() {
+    let env = Env::new("focus");
+    let mut t = Term::spawn(&[BIN, "-s", "fo"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.type_text(
+        "printf '\\033[?1004h'; stty raw -echo; printf ready; dd bs=1 count=6 2>/dev/null | od -An -c | tr -s ' '\n",
+    );
+    t.wait_text("ready");
+    t.focus(false);
+    t.focus(true);
+    t.wait_text("033 [ O 033 [ I");
+}

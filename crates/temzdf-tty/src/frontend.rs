@@ -31,6 +31,8 @@ pub enum Input {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Paste(String),
+    /// The terminal gained (true) or lost the focus.
+    Focus(bool),
     /// The terminal changed size.
     Resized(Geometry),
     /// The terminal went away or we were told to stop.
@@ -278,6 +280,7 @@ impl TtyFrontend {
             TermEvent::Input(Event::Key(key)) => Input::Key(key),
             TermEvent::Input(Event::Mouse(m)) => Input::Mouse(m),
             TermEvent::Input(Event::Paste(text)) => Input::Paste(text),
+            TermEvent::Input(Event::Focus(gained)) => Input::Focus(gained),
             _ => Input::Handled(false),
         })
     }
@@ -293,6 +296,10 @@ impl TtyFrontend {
                 temzdf_client::open_uri(&command, &uri, on_failure)
             }
             Effect::RunShell(cmd) => temzdf_client::run_shell(&cmd),
+            // The terminal holds the clipboard and pastes with its own key.
+            Effect::Paste { .. } => {
+                on_failure("in a terminal, paste with the terminal's own key (Ctrl+Shift+V, Cmd+V)".into())
+            }
         }
         Ok(())
     }
