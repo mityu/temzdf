@@ -214,6 +214,10 @@ pub enum DocCmd {
     Reload,
 }
 
+/// How long opening a document keeps trying (TeX may be writing it).
+const FIRST_OPEN_FOR: std::time::Duration = std::time::Duration::from_secs(5);
+const FIRST_OPEN_RETRY: std::time::Duration = std::time::Duration::from_millis(300);
+
 /// The document thread: opens `path` (a snapshot of it, see [`pdf::open`],
 /// shared with the search thread through `snapshot`) and loads pages.
 pub fn spawn_document(path: PathBuf, events: Sink, snapshot: Snapshot) -> std::io::Result<Sender<DocCmd>> {
@@ -225,7 +229,34 @@ pub fn spawn_document(path: PathBuf, events: Sink, snapshot: Snapshot) -> std::i
     };
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new().name("temzdf-doc".into()).spawn(move || {
-        let (mut doc, mut bounds) = match open(&path) {
+        // Started while TeX writes the file: wait for it, as reloads do.
+        let first = || {
+            let deadline = std::time::Instant::now() + FIRST_OPEN_FOR;
+            loop {
+                let complete = pdf::looks_complete(&path);
+                if let Err(e) = &complete
+                    && e.kind() == std::io::ErrorKind::NotFound
+                {
+                    return Err(anyhow::anyhow!("cannot open {}: no such file", path.display()));
+                }
+                let result = match complete {
+                    Ok(true) => open(&path).and_then(|(bytes, doc, info)| {
+                        if info.bounds.is_empty() {
+                            Err(anyhow::anyhow!("the document has no pages"))
+                        } else {
+                            Ok((bytes, doc, info))
+                        }
+                    }),
+                    Ok(false) => Err(anyhow::anyhow!("{} looks incomplete (no %%EOF at its end)", path.display())),
+                    Err(e) => Err(e.into()),
+                };
+                if result.is_ok() || std::time::Instant::now() >= deadline {
+                    return result;
+                }
+                std::thread::sleep(FIRST_OPEN_RETRY);
+            }
+        };
+        let (mut doc, mut bounds) = match first() {
             Ok((bytes, doc, info)) => {
                 snapshot.set(0, bytes);
                 let bounds = info.bounds.clone();
@@ -380,6 +411,27 @@ mod tests {
     use super::*;
     use crate::doc_cache::{TILE, TileKind};
     use crate::pdf::PixelRect;
+
+    #[test]
+    fn opening_waits_for_a_file_being_written() {
+        let path = std::env::temp_dir().join(format!("temzdf-writing-{}.pdf", std::process::id()));
+        let full = std::fs::read(pdf::fixture("sample.pdf")).unwrap();
+        std::fs::write(&path, &full[..full.len() / 2]).unwrap();
+        let (tx, rx) = mpsc::channel::<DocEvent>();
+        let _cmds = spawn_document(path.clone(), channel_sink(tx, |e| e), Snapshot::default()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        std::fs::write(&path, &full).unwrap();
+        let opened = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+        assert!(matches!(opened, DocEvent::Opened(Ok(_))), "the half-written file was taken");
+        std::fs::remove_file(&path).unwrap();
+        // A missing file fails at once.
+        let (tx, rx) = mpsc::channel::<DocEvent>();
+        let start = std::time::Instant::now();
+        let _cmds = spawn_document(path.clone(), channel_sink(tx, |e| e), Snapshot::default()).unwrap();
+        let failed = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+        assert!(matches!(failed, DocEvent::Opened(Err(e)) if e.contains("no such file")));
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
 
     #[test]
     fn synctex_data_follows_its_file() {
