@@ -328,6 +328,9 @@ pub struct Session {
     /// The border being dragged, and the kind of border under the pointer.
     dragging: Option<BorderId>,
     over_border: Option<Split>,
+    /// The float frame being dragged, and the part of a frame under the pointer.
+    float_drag: Option<floats::FloatDrag>,
+    over_frame: Option<floats::Grip>,
     /// Solid images (background, borders) by size and colour.
     solids: HashMap<(u32, u32, [u8; 4]), ImageKey>,
     complete: bool,
@@ -370,6 +373,8 @@ impl Session {
             captured: None,
             focus_click: false,
             dragging: None,
+            float_drag: None,
+            over_frame: None,
             over_border: None,
             solids: HashMap::new(),
             complete: false,
@@ -482,6 +487,7 @@ impl Session {
     /// Put pane `id` into the layout at `spot`. Returns its rectangle.
     fn place(&mut self, id: PaneId, spot: Spot) -> Result<Rect> {
         self.dragging = None;
+        self.float_drag = None;
         if let Spot::Float(spec) = spot {
             return Ok(self.place_float(id, spec));
         }
@@ -815,7 +821,7 @@ impl Session {
         }
         self.relayout_floats();
         // Programs get their new size when the drag ends.
-        if self.dragging.is_none() {
+        if self.dragging.is_none() && self.float_drag.is_none() {
             self.fit_terms();
         }
     }
@@ -1259,6 +1265,7 @@ impl Session {
         }
         // The layout changed under it.
         self.dragging = None;
+        self.float_drag = None;
         self.relayout();
         Outcome::Redraw
     }
@@ -1305,23 +1312,15 @@ impl Session {
             }
             self.hovered = under;
         }
+        // Floats' frames lie over the borders (unless one is being dragged).
+        let (col, row) = ((px / cell.width as f32).floor() as i32, (py / cell.height as f32).floor() as i32);
+        if self.dragging.is_none()
+            && let Some(frame) = self.float_mouse(m, col, row)
+        {
+            return out.merge(frame);
+        }
         if let Some(border) = self.border_mouse(m, under, px, py) {
             return out.merge(border);
-        }
-        // A float's frame: a press focuses (and raises) it, nothing goes to
-        // the pane.
-        if self.captured.is_none()
-            && let Some(p) = under
-            && self.panes.get(&p).is_some_and(|e| {
-                let (col, row) = ((px / cell.width as f32).floor() as i32, (py / cell.height as f32).floor() as i32);
-                !e.rect.contains(col, row)
-            })
-        {
-            if matches!(m.kind, MouseEventKind::Press(_)) {
-                self.set_focus(p);
-                return Outcome::Redraw;
-            }
-            return out;
         }
         match m.kind {
             MouseEventKind::Press(_) => {
@@ -1438,6 +1437,9 @@ impl Session {
 
     /// The pointer shape the frontend should show.
     pub fn pointer(&self) -> Pointer {
+        if let Some(grip) = self.float_drag.map(|d| d.pointer()).or(self.over_frame.map(|g| g.pointer())) {
+            return grip;
+        }
         let border = self.dragging.as_ref().and_then(|id| self.layout.as_ref()?.split_of(id)).or(self.over_border);
         match border {
             Some(Split::Horizontal) => return Pointer::ResizeColumns,
@@ -2348,5 +2350,67 @@ mod tests {
         s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
         assert_eq!(s.floats.len(), 1);
         assert_eq!(s.focus, s.floats[0].pane);
+    }
+
+    #[test]
+    fn dragging_a_float_moves_and_resizes_it_and_its_program_on_release() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        let tiled = s.focus;
+        let n = |v: f64| ScriptValue::Num(v);
+        let f = float(
+            &mut s,
+            &["sleep", "30"],
+            &[("width", n(20.0)), ("height", n(6.0)), ("col", n(10.0)), ("row", n(5.0))],
+        );
+        let frame = |s: &Session| s.floats.iter().find(|x| x.pane == f).unwrap().frame;
+        let cols = |s: &Session| s.terms[&s.panes[&f].buffer()].term.geometry().cols;
+        assert_eq!(frame(&s), Rect::new(10, 5, 22, 8));
+        // Cells to pixels (10 x 20 cells), at the cell's centre.
+        let at = |kind, col: i32, row: i32| MouseEvent {
+            kind,
+            x: col * 10 + 5,
+            y: row * 20 + 10,
+            unit: CoordUnit::Pixel,
+            modifiers: Modifiers::NONE,
+        };
+        let now = Instant::now();
+        let left = MouseButton::Left;
+        // A click in the tiled pane focuses it; the float stays.
+        s.mouse(&at(MouseEventKind::Press(left), 50, 20), now);
+        s.mouse(&at(MouseEventKind::Release(left), 50, 20), now);
+        assert_eq!(s.focus, tiled);
+        // The pointer over the frame's parts.
+        for (col, row, pointer) in [
+            (15, 5, Pointer::Move),
+            (10, 5, Pointer::ResizeNwse),
+            (31, 12, Pointer::ResizeNwse),
+            (31, 5, Pointer::ResizeNesw),
+            (31, 8, Pointer::ResizeColumns),
+            (15, 12, Pointer::ResizeRows),
+            (15, 8, Pointer::Default),
+        ] {
+            s.mouse(&at(MouseEventKind::Move, col, row), now);
+            assert_eq!(s.pointer(), pointer, "at ({col}, {row})");
+        }
+        // Moving by the title edge focuses the float.
+        s.mouse(&at(MouseEventKind::Press(left), 15, 5), now);
+        assert_eq!(s.focus, f);
+        s.mouse(&at(MouseEventKind::Drag(left), 25, 2), now);
+        assert_eq!(frame(&s), Rect::new(20, 2, 22, 8));
+        s.mouse(&at(MouseEventKind::Release(left), 25, 2), now);
+        // Resizing by the bottom right corner: the program gets the size on release.
+        s.mouse(&at(MouseEventKind::Press(left), 41, 9), now);
+        s.mouse(&at(MouseEventKind::Drag(left), 51, 11), now);
+        assert_eq!(frame(&s), Rect::new(20, 2, 32, 10));
+        assert_eq!((s.panes[&f].rect.w, cols(&s)), (30, 20), "the program keeps its size while dragging");
+        assert_eq!(s.pointer(), Pointer::ResizeNwse);
+        s.mouse(&at(MouseEventKind::Release(left), 51, 11), now);
+        assert_eq!(cols(&s), 30);
+        // Not below the smallest float.
+        s.mouse(&at(MouseEventKind::Press(left), 20, 6), now);
+        s.mouse(&at(MouseEventKind::Drag(left), 60, 6), now);
+        s.mouse(&at(MouseEventKind::Release(left), 60, 6), now);
+        assert_eq!((frame(&s).x, frame(&s).w), (40, 12), "the left edge stops at the smallest width");
     }
 }

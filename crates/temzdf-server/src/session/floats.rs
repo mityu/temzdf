@@ -3,13 +3,16 @@
 //! together; what lies under a shown float is cut out of the panes below
 //! (see `crate::clip`). Design: `doc/floating-panes.md` on `research/notes`.
 
-use temzdf_scene::{Attrs, Cell, Color, Layer, Rect, TextGrid};
+use temzdf_scene::{Attrs, Cell, Color, Layer, Pointer, Rect, TextGrid};
+use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
 
 use std::path::PathBuf;
 
 use temzdf_term::Spawn;
 
-use super::{BACKGROUND, BORDER, BORDER_PX, BufferId, Session, Spot, Z_BORDER, Z_BORDER_FOCUS, Z_SESSION_BACKGROUND};
+use super::{
+    BACKGROUND, BORDER, BORDER_PX, BufferId, Outcome, Session, Spot, Z_BORDER, Z_BORDER_FOCUS, Z_SESSION_BACKGROUND,
+};
 use crate::layout::{Direction, PaneId};
 use temzdf_protocol::script::ScriptValue;
 
@@ -114,6 +117,76 @@ pub(super) struct Float {
 impl Float {
     pub(super) fn new(pane: PaneId, spec: FloatSpec) -> Self {
         Self { pane, spec, frame: Rect::default(), title: None, focusable: true, modal: false }
+    }
+}
+
+/// What dragging a part of a float's frame does: the title edge moves it,
+/// the other edges and the corners resize it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Grip {
+    Move,
+    Resize { left: bool, right: bool, top: bool, bottom: bool },
+}
+
+impl Grip {
+    pub(super) fn pointer(self) -> Pointer {
+        match self {
+            Self::Move => Pointer::Move,
+            Self::Resize { left, right, top, bottom } => {
+                if (left && top) || (right && bottom) {
+                    Pointer::ResizeNwse
+                } else if (right && top) || (left && bottom) {
+                    Pointer::ResizeNesw
+                } else if left || right {
+                    Pointer::ResizeColumns
+                } else {
+                    Pointer::ResizeRows
+                }
+            }
+        }
+    }
+
+    /// `start` (a frame) dragged by `dx`, `dy` cells, no smaller than the
+    /// smallest float.
+    fn drag(self, start: Rect, dx: i32, dy: i32) -> Rect {
+        let (mut x, mut y, mut w, mut h) = (start.x, start.y, start.w as i32, start.h as i32);
+        let (min_w, min_h) = (MIN_COLS as i32 + 2, MIN_ROWS as i32 + 2);
+        match self {
+            Self::Move => (x, y) = (x + dx, y + dy),
+            Self::Resize { left, right, top, bottom } => {
+                if left {
+                    let nw = (w - dx).max(min_w);
+                    (x, w) = (x + w - nw, nw);
+                }
+                if right {
+                    w = (w + dx).max(min_w);
+                }
+                if top {
+                    let nh = (h - dy).max(min_h);
+                    (y, h) = (y + h - nh, nh);
+                }
+                if bottom {
+                    h = (h + dy).max(min_h);
+                }
+            }
+        }
+        Rect::new(x.max(0), y.max(0), w as u32, h as u32)
+    }
+}
+
+/// A float's frame being dragged.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FloatDrag {
+    pane: PaneId,
+    grip: Grip,
+    /// Where the drag started (cell) and the frame then.
+    from: (i32, i32),
+    start: Rect,
+}
+
+impl FloatDrag {
+    pub(super) fn pointer(&self) -> Pointer {
+        self.grip.pointer()
     }
 }
 
@@ -360,6 +433,65 @@ impl Session {
         self.set_focus(pane);
         self.relayout();
         Ok(())
+    }
+
+    /// The topmost shown float whose frame (not its content) is at cell
+    /// (`col`, `row`), and that part of the frame.
+    fn grip_at(&self, col: i32, row: i32) -> Option<(PaneId, Grip)> {
+        let f = self.shown_floats().iter().rev().find(|f| f.frame.contains(col, row))?;
+        if content(f.frame).contains(col, row) {
+            return None;
+        }
+        let r = f.frame;
+        let (left, right) = (col == r.x, col as i64 == r.right() - 1);
+        let (top, bottom) = (row == r.y, row as i64 == r.bottom() - 1);
+        let corner = (left || right) && (top || bottom);
+        let grip = if top && !corner { Grip::Move } else { Grip::Resize { left, right, top, bottom } };
+        Some((f.pane, grip))
+    }
+
+    /// Floats' frames under the mouse: a press focuses (and raises) the
+    /// float and starts moving or resizing it; its programs get their new
+    /// size on release. Nothing over a frame reaches the panes. `Some` when
+    /// the event was a frame's.
+    pub(super) fn float_mouse(&mut self, m: &MouseEvent, col: i32, row: i32) -> Option<Outcome> {
+        if let Some(d) = self.float_drag {
+            return Some(match m.kind {
+                MouseEventKind::Drag(_) => {
+                    let frame = d.grip.drag(d.start, col - d.from.0, row - d.from.1);
+                    if let Some(f) = self.float_mut(d.pane) {
+                        f.spec = FloatSpec::at(frame, frame.w - 2, frame.h - 2);
+                    }
+                    self.relayout();
+                    Outcome::Redraw
+                }
+                MouseEventKind::Release(_) => {
+                    self.float_drag = None;
+                    self.captured = None;
+                    self.over_frame = self.grip_at(col, row).map(|(_, g)| g);
+                    self.fit_terms();
+                    Outcome::Redraw
+                }
+                _ => Outcome::None,
+            });
+        }
+        // A button held for a pane (a selection) passes over frames.
+        let hit = if self.captured.is_none() { self.grip_at(col, row) } else { None };
+        self.over_frame = hit.map(|(_, g)| g);
+        let (pane, grip) = hit?;
+        Some(match m.kind {
+            MouseEventKind::Press(MouseButton::Left) => {
+                self.set_focus(pane);
+                let start = self.floats.iter().find(|f| f.pane == pane).map_or_else(Rect::default, |f| f.frame);
+                self.float_drag = Some(FloatDrag { pane, grip, from: (col, row), start });
+                Outcome::Redraw
+            }
+            MouseEventKind::Press(_) => {
+                self.set_focus(pane);
+                Outcome::Redraw
+            }
+            _ => Outcome::None,
+        })
     }
 
     /// The frames of the shown floats, bottom to top, each cut by the floats

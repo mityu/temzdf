@@ -172,6 +172,12 @@ pub enum Pointer {
     ResizeColumns,
     /// Over a border between stacked panes: drag up or down.
     ResizeRows,
+    /// Over what moves something (a floating pane's title edge).
+    Move,
+    /// Over a top-left or bottom-right corner: drag diagonally.
+    ResizeNwse,
+    /// Over a top-right or bottom-left corner.
+    ResizeNesw,
 }
 
 /// Everything a pane shows at one moment.

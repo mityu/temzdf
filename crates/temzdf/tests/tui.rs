@@ -724,3 +724,30 @@ fn a_floating_shell_inside_tmux() {
     assert!(cells.iter().any(|&(x, y)| (x, y) == (FLOAT_FRAME.0, FLOAT_FRAME.1 + 5)), "the frame's left edge");
     assert!(!cells.iter().any(|&(x, y)| x >= cx && x < cx + cw && y >= cy && y < cy + ch), "nothing over the content");
 }
+
+#[test]
+fn a_float_moves_by_its_title_edge_and_a_click_raises_it() {
+    let env = Env::new("float-drag");
+    let mut t = Term::spawn(&[BIN, "-s", "fd"], &env.options());
+    t.wait_for("the prompt", prompt);
+    env.run(&["action", "-s", "fd", "open-float"]);
+    t.wait_for("a prompt in the float", float_prompt);
+    // The title edge from column 30 to 35, row 3 to 5: the float moves 5
+    // right and 2 down.
+    t.drag((30, FLOAT_FRAME.1), (35, FLOAT_FRAME.1 + 2));
+    let (cx, cy) = (FLOAT_CONTENT.0 + 5, FLOAT_CONTENT.1 + 2);
+    t.wait_for("the float moved", |s| s.row_from(cy, cx).starts_with('$'));
+    t.type_text("stty size\n");
+    t.wait_for("its shell's size", |s| s.row_from(cy + 1, cx).starts_with("22 78"));
+    // A click on the tiled shell focuses it; typing goes there.
+    t.click(2, 1);
+    t.type_text("echo tiled-$((1+1))\n");
+    t.wait_text("tiled-2");
+    // A second float (centred: the focus is not in a float) over the first;
+    // a click on the first's right edge, beside the second, raises it.
+    env.run(&["action", "-s", "fd", "open-float", "--", "sh", "-c", "echo second; sleep 30"]);
+    t.wait_text("second");
+    t.click(FLOAT_FRAME.0 + 5 + FLOAT_FRAME.2 - 1, cy + 10);
+    t.type_text("echo first-$((2+3))\n");
+    t.wait_text("first-5");
+}

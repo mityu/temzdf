@@ -20,7 +20,7 @@ use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 /// Larger messages are refused (a frame with every image of a full cache is
 /// about 200 MB).
 const MAX_MESSAGE: usize = 512 << 20;
