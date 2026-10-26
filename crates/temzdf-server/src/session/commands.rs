@@ -462,6 +462,7 @@ impl Session {
     pub fn run_cli(&mut self, words: &[String]) -> anyhow::Result<Outcome> {
         let Some((name, rest)) = words.split_first() else { anyhow::bail!("which action?") };
         let args: Vec<ScriptValue> = rest.iter().map(|w| ScriptValue::Str(w.clone())).collect();
+        self.map_depth = 0;
         let (_, out) = self.run_command(name, &args, None, Instant::now()).map_err(anyhow::Error::msg)?;
         Ok(out.merge(self.flush_events()))
     }

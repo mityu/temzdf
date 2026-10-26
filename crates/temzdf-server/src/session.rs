@@ -179,6 +179,8 @@ const BACKGROUND: [u8; 4] = [0x3a, 0x3a, 0x3a, 0xff];
 const BORDER: [u8; 4] = [0x5a, 0x5a, 0x5a, 0xff];
 /// Border line thickness in pixels (centred in the one-cell gap).
 const BORDER_PX: u32 = 2;
+/// The most mappings one typed key may run (Vim's `maxmapdepth`).
+const MAX_MAP_DEPTH: usize = 1000;
 /// Layer key owner for the session's own layers.
 const OWNER_SESSION: u32 = u32::MAX;
 
@@ -318,6 +320,8 @@ pub struct Session {
     notices: Vec<notices::Notice>,
     /// The fixed escape keymap (script host down) saw its prefix.
     escape_prefix: bool,
+    /// Mappings run since the last typed key (Vim's `maxmapdepth`).
+    map_depth: usize,
     keys: Keys,
     effects: Vec<Effect>,
     /// The pane under the pointer, and the one holding a pressed button.
@@ -367,6 +371,7 @@ impl Session {
             options: Options::default(),
             notices: Vec::new(),
             escape_prefix: false,
+            map_depth: 0,
             keys: Keys::default(),
             effects: Vec::new(),
             hovered: None,
@@ -969,6 +974,7 @@ impl Session {
         }
         // A key dismisses error messages (and is handled as usual).
         let dismissed = Outcome::None.or(self.dismiss_errors());
+        self.map_depth = 0;
         if self.hold_key(k) {
             return dismissed;
         }
@@ -1061,7 +1067,18 @@ impl Session {
             let mode = self.history.current().to_owned();
             match self.matcher.step(&self.modes, &mode, self.options.timeoutlen, now) {
                 Step::Wait(_) => break,
-                Step::Run { target, count, .. } => out = out.merge(self.run_target(target, count, now)),
+                Step::Run { target, count, .. } => {
+                    // Mappings that feed keys mapping to themselves (`a` to
+                    // `a`, or to `aa`) would run forever, as in Vim.
+                    self.map_depth += 1;
+                    if self.map_depth > MAX_MAP_DEPTH {
+                        self.matcher.cancel();
+                        self.message("recursive mapping (more than 1000 mappings for one key)");
+                        out = out.merge(Outcome::Redraw);
+                        break;
+                    }
+                    out = out.merge(self.run_target(target, count, now));
+                }
                 Step::Unmapped(stroke, ev) => {
                     if self.modes.unmapped(&mode) == Unmapped::Passthrough {
                         let ev = ev.unwrap_or_else(|| stroke.event());
@@ -2502,5 +2519,27 @@ mod tests {
         }
         // Around them the frame is drawn.
         assert!(frame.layers.iter().any(|l| l.dst.y == 0 && l.dst.x == 0), "the frame of float {f}");
+    }
+
+    #[test]
+    fn recursive_mappings_stop_with_an_error() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "ready");
+        let feed = |keys: &str| Target::Actions(vec![Act::new("feedkeys", vec![ScriptValue::Str(keys.into())])]);
+        let keys = |k: &str| notation::parse(k).unwrap();
+        s.modes.map("normal", keys("a"), feed("a"), false, None);
+        s.modes.map("normal", keys("b"), feed("bb"), false, None);
+        for k in ["a", "b"] {
+            let start = Instant::now();
+            key(&mut s, &format!("<C-b>{k}"));
+            assert!(start.elapsed() < Duration::from_secs(5), "{k} ran too long");
+            let shown = s.notices.iter().any(|n| n.text.contains("recursive mapping"));
+            assert!(shown, "{k}: an error says why");
+            assert!(s.matcher.pending().is_empty());
+            key(&mut s, "<Esc>");
+        }
+        // Ordinary keys work again afterwards.
+        key(&mut s, "<C-b>%");
+        assert_eq!(s.pane_count(), 2);
     }
 }
