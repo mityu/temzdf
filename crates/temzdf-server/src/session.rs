@@ -203,6 +203,8 @@ enum Spot {
     Replace(PaneId),
     /// A floating pane, on top of the others.
     Float(floats::FloatSpec),
+    /// The first pane of a new tab after the current one (made then).
+    NewTab,
 }
 
 struct DocEntry {
@@ -323,6 +325,7 @@ pub struct Session {
     /// fields above; see `tabs`).
     tabs: Vec<tabs::Tab>,
     tab: usize,
+    next_tab: tabs::TabId,
     next_id: u32,
     modes: Modes<Target>,
     matcher: Matcher,
@@ -377,6 +380,7 @@ impl Session {
             tiled_focus: 0,
             tabs: vec![tabs::Tab::new(1)],
             tab: 0,
+            next_tab: 2,
             next_id: 1,
             modes,
             matcher: Matcher::default(),
@@ -513,12 +517,16 @@ impl Session {
         if let Spot::Float(spec) = spot {
             return Ok(self.place_float(id, spec));
         }
+        if let Spot::NewTab = spot {
+            self.open_tab();
+        }
         let area = self.area();
         // A float has no place in the layout to split: the tiled pane
         // focused last stands in (rather than "no room").
         let tiled = |t: PaneId| if self.is_float(t) { self.tiled_focus } else { t };
         let (target, split, before) = match spot {
-            Spot::Split { target: Some(t), split, before } if self.panes.contains_key(&t) => {
+            // (A pane of another tab is no target here.)
+            Spot::Split { target: Some(t), split, before } if self.tab_of(t) == Some(self.tab) => {
                 (Some(tiled(t)), split, before)
             }
             Spot::Split { target: None, split, before } => (None, split, before),
@@ -547,6 +555,10 @@ impl Session {
             && !layout.remove(id)
         {
             self.layout = None;
+            // A new tab that got no pane goes again.
+            if self.tabs.len() > 1 {
+                self.remove_tab(self.tab);
+            }
         }
     }
 
@@ -908,8 +920,14 @@ impl Session {
         }
     }
 
-    /// The panes showing `doc`, the focused one first (it receives SyncTeX results).
-    fn panes_of(panes: &mut HashMap<PaneId, PaneEntry>, doc: DocId, focus: PaneId) -> Vec<&mut PdfPane> {
+    /// The panes showing `doc`, the focused one first (it receives SyncTeX
+    /// results), then those on screen (`here`).
+    fn panes_of<'a>(
+        panes: &'a mut HashMap<PaneId, PaneEntry>,
+        doc: DocId,
+        focus: PaneId,
+        here: &[PaneId],
+    ) -> Vec<&'a mut PdfPane> {
         let mut v: Vec<(PaneId, &mut PdfPane)> = panes
             .iter_mut()
             .filter_map(|(id, e)| match &mut e.kind {
@@ -917,7 +935,7 @@ impl Session {
                 _ => None,
             })
             .collect();
-        v.sort_by_key(|(id, _)| (*id != focus, *id));
+        v.sort_by_key(|(id, _)| (*id != focus, !here.contains(id), *id));
         v.into_iter().map(|(_, p)| p).collect()
     }
 
@@ -973,15 +991,17 @@ impl Session {
                     let path = d.path.display().to_string();
                     self.event("DocumentReloaded", vec![ScriptValue::Str(path)]);
                 }
+                let here = self.here_panes();
                 let Some(host) = self.docs.get_mut(&id).and_then(|d| d.host.as_mut()) else { return Outcome::None };
-                let mut panes = Self::panes_of(&mut self.panes, id, self.focus);
+                let mut panes = Self::panes_of(&mut self.panes, id, self.focus, &here);
                 let (changed, effect) = host.handle(ev, &mut panes, &mut self.images, now);
                 self.effects.extend(effect);
                 Outcome::None.or(changed)
             }
             SessionEvent::Forward(id, req) => {
+                let here = self.here_panes();
                 let Some(host) = self.docs.get_mut(&id).and_then(|d| d.host.as_mut()) else { return Outcome::None };
-                let panes = Self::panes_of(&mut self.panes, id, self.focus);
+                let panes = Self::panes_of(&mut self.panes, id, self.focus, &here);
                 if let Some(pane) = panes.first() {
                     host.forward(Forward { file: req.file, line: req.line, column: req.column }, pane);
                 }
@@ -1267,17 +1287,23 @@ impl Session {
     /// Closing the last pane ends the session, hidden buffers or not (as if
     /// every buffer were Vim's `buftype=nofile`).
     /// A closing float leaves the focus to the float below it, else to the
-    /// last focused tiled pane. The last tiled pane leaves its place to the
-    /// topmost shown float; with none shown, the session ends.
+    /// last focused tiled pane. A tab's last tiled pane leaves its place to
+    /// the topmost shown float of that tab (not one on all tabs: it would
+    /// leave the others); with none, the tab closes, and with the last tab
+    /// the session ends.
     fn close(&mut self, id: PaneId) -> Outcome {
+        if let Some(i) = self.tab_of(id).filter(|i| *i != self.tab) {
+            return self.close_in_tab(i, id);
+        }
         let next = if self.is_float(id) {
             self.floats.retain(|f| f.pane != id);
             self.shown_floats().last().map_or(self.tiled_focus, |f| f.pane)
         } else {
-            let top = self.shown_floats().last().map(|f| f.pane);
+            let own = tabs::FloatTab::Only(self.tab_id());
+            let top = self.shown_floats().into_iter().rev().find(|f| f.tab == own).map(|f| f.pane);
             let Some(layout) = self.layout.as_mut() else { return Outcome::Quit };
             if layout.panes().len() <= 1 {
-                let Some(top) = top else { return Outcome::Quit };
+                let Some(top) = top else { return self.remove_tab(self.tab) };
                 layout.replace(id, top);
                 self.floats.retain(|f| f.pane != top);
                 top
@@ -1287,15 +1313,7 @@ impl Session {
                 next
             }
         };
-        if let Some(e) = self.panes.remove(&id) {
-            if id == self.focus
-                && let Some(t) = e.term().and_then(|b| self.terms.get_mut(&b))
-            {
-                t.term.focus(false);
-            }
-            self.hide(e.kind);
-        }
-        self.event("PaneClosed", vec![ScriptValue::Num(id as f64)]);
+        self.discard_pane(id);
         if self.focus == id {
             self.set_focus(next);
         }
@@ -1303,11 +1321,6 @@ impl Session {
             && let Some(first) = self.layout.as_ref().and_then(|l| l.panes().first().copied())
         {
             self.tiled_focus = first;
-        }
-        for p in [&mut self.hovered, &mut self.captured] {
-            if *p == Some(id) {
-                *p = None;
-            }
         }
         // The layout changed under it.
         self.dragging = None;
@@ -1674,9 +1687,10 @@ impl Session {
             // A highlight expired.
             changed |= p.next_deadline().is_some_and(|d| now >= d);
         }
+        let here = self.here_panes();
         for (&id, d) in self.docs.iter_mut() {
             if let Some(host) = d.host.as_mut() {
-                let mut panes = Self::panes_of(&mut self.panes, id, self.focus);
+                let mut panes = Self::panes_of(&mut self.panes, id, self.focus, &here);
                 changed |= host.poll(&mut panes, now);
             }
         }
@@ -2678,5 +2692,184 @@ mod tests {
         pump(&mut s, &rx, |s| !s.floats.is_empty());
         assert_eq!(s.floats[0].title.as_deref(), Some("paper"));
         assert_eq!(s.focus, tiled, "focus: false");
+    }
+
+    /// `new-tab` with a command; returns its pane.
+    fn new_tab(s: &mut Session, argv: &[&str]) -> PaneId {
+        let what = ScriptValue::map([(
+            "command",
+            ScriptValue::List(argv.iter().map(|a| ScriptValue::Str((*a).into())).collect()),
+        )]);
+        let (pane, _) = s.run_command("new-tab", &[what], None, Instant::now()).unwrap();
+        pane.as_num().expect("a pane") as PaneId
+    }
+
+    fn cmd(s: &mut Session, name: &str, args: &[&str], count: Option<usize>) -> Result<Outcome, String> {
+        let args: Vec<ScriptValue> = args.iter().map(|a| ScriptValue::Str((*a).into())).collect();
+        s.run_command(name, &args, count, Instant::now()).map(|(_, o)| o)
+    }
+
+    /// The tab line's labels, in order (`tabs()`).
+    fn labels(s: &mut Session) -> Vec<String> {
+        let (list, _) = s.run_command("tabs", &[], None, Instant::now()).unwrap();
+        let ScriptValue::List(list) = list else { panic!() };
+        list.iter().map(|t| t.get("label").and_then(ScriptValue::as_str).unwrap_or_default().to_owned()).collect()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn tabs_open_switch_move_and_close() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let one = s.focus;
+        let two = new_tab(&mut s, &["sh", "-c", "echo two; sleep 30"]);
+        assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 1, two));
+        let (_, rows) = wait_text(&mut s, &rx, |r| r[0] == "two");
+        assert!(!rows.iter().any(|r| r.contains("one")), "only the current tab shows");
+        // After the last, the first; the focus is the tab's own.
+        cmd(&mut s, "next-tab", &[], None).unwrap();
+        assert_eq!((s.tab, s.focus), (0, one));
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        // A count goes to that tab (Vim's {N}gt), back as many (gT).
+        cmd(&mut s, "next-tab", &[], Some(2)).unwrap();
+        assert_eq!((s.tab, s.focus), (1, two));
+        cmd(&mut s, "prev-tab", &[], Some(3)).unwrap();
+        assert_eq!(s.tab, 0);
+        assert!(cmd(&mut s, "goto-tab", &["3"], None).unwrap_err().contains("no tab page 3"));
+        // A new tab goes after the current one.
+        let three = new_tab(&mut s, &["sh", "-c", "echo three; sleep 30"]);
+        assert_eq!(s.tab, 1);
+        for (i, name) in ["a", "c", "b"].iter().enumerate() {
+            cmd(&mut s, "goto-tab", &[&(i + 1).to_string()], None).unwrap();
+            cmd(&mut s, "rename-tab", &[name], None).unwrap();
+        }
+        assert_eq!(labels(&mut s), ["a", "c", "b"]);
+        // :tabmove: after tab N (0: first), last, or by places.
+        cmd(&mut s, "goto-tab", &["2"], None).unwrap();
+        cmd(&mut s, "move-tab", &[], None).unwrap();
+        assert_eq!((labels(&mut s), s.tab), (vec!["a".into(), "b".into(), "c".into()], 2));
+        cmd(&mut s, "move-tab", &["0"], None).unwrap();
+        assert_eq!((labels(&mut s), s.tab), (vec!["c".into(), "a".into(), "b".into()], 0));
+        cmd(&mut s, "move-tab", &["+1"], None).unwrap();
+        assert_eq!(labels(&mut s), ["a", "c", "b"]);
+        // After itself (Vim: no effect), then after the last.
+        cmd(&mut s, "move-tab", &["2"], None).unwrap();
+        assert_eq!(labels(&mut s), ["a", "c", "b"]);
+        cmd(&mut s, "move-tab", &["3"], None).unwrap();
+        assert_eq!(labels(&mut s), ["a", "b", "c"]);
+        // An empty name shows the focused buffer again.
+        cmd(&mut s, "rename-tab", &[], None).unwrap();
+        assert_eq!(labels(&mut s)[2], "shell");
+        // Closing the current tab goes to the one after it, else before; the
+        // buffers stay.
+        assert_eq!(s.focus, three);
+        let buffers = s.buffer_count();
+        assert_eq!(cmd(&mut s, "close-tab", &[], None), Ok(Outcome::Redraw));
+        assert_eq!((s.tabs.len(), s.tab, s.focus, s.buffer_count()), (2, 1, two, buffers));
+        assert!(!s.panes.contains_key(&three));
+        cmd(&mut s, "close-tab", &["1"], None).unwrap();
+        assert_eq!((s.tabs.len(), s.tab, s.focus), (1, 0, two));
+        assert!(cmd(&mut s, "close-tab", &[], None).unwrap_err().contains("last tab page"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_tabs_last_pane_gives_way_to_its_own_float_else_the_tab_closes() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let one = s.focus;
+        let two = new_tab(&mut s, &["sleep", "30"]);
+        let own = float(&mut s, &["sleep", "30"], &[]);
+        let all = float(&mut s, &["sleep", "30"], &[("tabpage", ScriptValue::Num(-1.0))]);
+        // The tab's own float takes the place, not the one on all tabs.
+        assert_eq!(s.close(two), Outcome::Redraw);
+        assert_eq!(s.layout.as_ref().unwrap().panes(), [own]);
+        assert!(s.is_float(all));
+        // Without one, the tab closes; the float on all tabs stays.
+        assert_eq!(s.close(own), Outcome::Redraw);
+        assert_eq!((s.tabs.len(), s.tab), (1, 0));
+        assert!(s.shown_floats().iter().any(|f| f.pane == all));
+        // The last tab's last pane: the session ends (the float does not
+        // keep it).
+        assert_eq!(s.close(one), Outcome::Quit);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn panes_of_other_tabs_close_there() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let one = s.focus;
+        // A tab whose only program ends while another tab is current goes.
+        new_tab(&mut s, &["sh", "-c", "sleep 0.3"]);
+        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        let out = pump(&mut s, &rx, |s| s.tabs.len() == 1);
+        assert_ne!(out, Outcome::Quit);
+        assert_eq!((s.tabs.len(), s.tab, s.focus), (1, 0, one));
+        // One of two panes there: the tab stays, its focus moves on.
+        let a = new_tab(&mut s, &["sleep", "30"]);
+        s.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
+        let b = s.focus;
+        assert_ne!(a, b);
+        let buf = s.panes[&b].buffer();
+        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        s.delete_buffer(buf).unwrap();
+        assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 0, one));
+        cmd(&mut s, "goto-tab", &["2"], None).unwrap();
+        assert_eq!((s.layout.as_ref().unwrap().panes(), s.focus), (vec![a], a));
+        assert_eq!(s.panes[&a].rect, s.area(), "the whole screen again");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn break_pane_moves_a_pane_to_a_new_tab() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let left = s.focus;
+        assert!(cmd(&mut s, "break-pane", &[], None).unwrap_err().contains("only tiled pane"));
+        key(&mut s, "<C-b>%");
+        let right = s.focus;
+        cmd(&mut s, "break-pane", &[], None).unwrap();
+        assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 1, right));
+        assert_eq!(s.layout.as_ref().unwrap().panes(), [right]);
+        assert_eq!(s.panes[&right].rect, s.area());
+        cmd(&mut s, "prev-tab", &[], None).unwrap();
+        assert_eq!((s.layout.as_ref().unwrap().panes(), s.focus), (vec![left], left));
+        assert_eq!(s.panes[&left].rect, s.area());
+        // A float becomes the new tab's tiled pane.
+        let f = float(&mut s, &["sleep", "30"], &[]);
+        cmd(&mut s, "break-pane", &[], None).unwrap();
+        assert!(!s.is_float(f));
+        assert_eq!((s.tab, s.layout.as_ref().unwrap().panes()), (1, vec![f]));
+        assert_eq!(s.tabs.len(), 3);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_terminal_in_two_tabs_is_as_large_as_the_larger() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let one = s.focus;
+        let buf = s.panes[&one].buffer();
+        key(&mut s, "<C-b>%");
+        let half = s.panes[&one].rect.w as u16;
+        assert_eq!(s.terms[&buf].term.geometry().cols, half);
+        let what = ScriptValue::map([("buffer", ScriptValue::Num(buf as f64))]);
+        s.run_command("new-tab", &[what], None, Instant::now()).unwrap();
+        assert_eq!(s.terms[&buf].term.geometry().cols, GEOMETRY.cols, "the whole screen in the new tab");
+        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        assert_eq!(s.terms[&buf].term.geometry().cols, GEOMETRY.cols, "the other tab still counts");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn only_the_current_tabs_images_are_drawn() {
+        let (mut s, rx) = session();
+        settle(&mut s, &rx);
+        assert!(!s.frame().layers.is_empty());
+        new_tab(&mut s, &["sleep", "30"]);
+        assert!(s.frame().layers.is_empty(), "the PDF is in the other tab");
+        cmd(&mut s, "prev-tab", &[], None).unwrap();
+        assert!(!s.frame().layers.is_empty());
     }
 }

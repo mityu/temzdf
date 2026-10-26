@@ -48,6 +48,8 @@ pub const EVENTS: &[&str] = &[
     "PaneClosePre",
     "PaneClosed",
     "PaneFocused",
+    "TabEntered",
+    "TabClosed",
     "DocumentReloaded",
     "ModeChanged",
     "BufferCreated",

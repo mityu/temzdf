@@ -84,10 +84,48 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("current-mode", "(): string", "The current mode's name"),
     (
         "panes",
-        "(): { id: number; kind: \"pdf\" | \"terminal\"; buffer: number; focused: boolean; floating: boolean; rect: { col: number; row: number; width: number; height: number } }[]",
-        "The panes (rect: the content, in cells)",
+        "(): { id: number; kind: \"pdf\" | \"terminal\"; buffer: number; focused: boolean; floating: boolean; tab: number | null; rect: { col: number; row: number; width: number; height: number } }[]",
+        "The panes of every tab (tab: its index from 1, null for a float on all tabs; rect: the content, in cells)",
     ),
     ("focused-pane", "(): number | null", "The focused pane's id"),
+    (
+        "new-tab",
+        "(what?: { buffer: number } | { file: string } | { command: string[] } | null): number | null",
+        "Open a tab page after the current one, its pane showing `what` (a new shell by default), as Vim's :tabnew; returns the pane (null for a file still opening)",
+    ),
+    (
+        "close-tab",
+        "(tab?: number): void",
+        "Close a tab page (the current one; counted from 1) and its panes; their buffers stay, hidden. The last tab page stays (kill-session ends the session)",
+    ),
+    (
+        "next-tab",
+        "(): void",
+        "Go to the next tab page, after the last to the first; with a mapping's count N, to tab page N (Vim's gt)",
+    ),
+    (
+        "prev-tab",
+        "(): void",
+        "Go to the previous tab page, before the first to the last; a mapping's count goes that many back (Vim's gT)",
+    ),
+    ("goto-tab", "(tab: number): void", "Go to tab page `tab` (counted from 1)"),
+    (
+        "move-tab",
+        "(to?: number | string): void",
+        "Move the current tab page after tab page `to` (0: first; none: last), or \"+N\"/\"-N\" places, as Vim's :tabmove",
+    ),
+    (
+        "rename-tab",
+        "(name?: string): void",
+        "Name the current tab page in the tab line (no name: the focused pane's buffer again)",
+    ),
+    ("break-pane", "(pane?: number): void", "Move a pane (the focused one) to a new tab page, as Vim's <C-w>T"),
+    (
+        "tabs",
+        "(): { index: number; name: string | null; label: string; current: boolean; panes: number[] }[]",
+        "The tab pages in order (index from 1; panes: tiled, and floats on that tab only)",
+    ),
+    ("current-tab", "(): number", "The current tab page's index (from 1, as Vim's tabpagenr())"),
     ("session-name", "(): string", "The session's name"),
 ];
 
@@ -104,6 +142,41 @@ pub fn command_specs() -> Vec<CommandSpec> {
         ts: "(): void".into(),
     });
     session.chain(pdf).collect()
+}
+
+/// What a new pane shows (`openFloat`, `newTab`): `{ buffer }`, `{ file }`,
+/// `{ command }`, nothing (a shell), or the words of `temzdf action
+/// open-float FILE.pdf` or `-- htop`, as `new-pane`.
+fn read_what(args: &[ScriptValue]) -> Result<FloatWhat, String> {
+    Ok(match args.first() {
+        None | Some(ScriptValue::Null) => FloatWhat::Spawn(Spawn::default()),
+        Some(o @ ScriptValue::Map(_)) => {
+            if let Some(b) = o.get("buffer").and_then(ScriptValue::as_num) {
+                FloatWhat::Buffer(b as BufferId)
+            } else if let Some(f) = o.get("file").and_then(ScriptValue::as_str) {
+                FloatWhat::File(f.into())
+            } else if let Some(ScriptValue::List(argv)) = o.get("command") {
+                let argv = argv.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect();
+                FloatWhat::Spawn(Spawn { argv: Some(argv), ..Spawn::default() })
+            } else {
+                return Err("what is { buffer }, { file } or { command }".into());
+            }
+        }
+        Some(_) => {
+            let mut words = vec!["new-pane".to_owned()];
+            words.extend(args.iter().filter_map(|a| a.as_str().map(str::to_owned)));
+            match Action::parse(&words).map_err(|e| format!("{e:#}"))? {
+                Action::NewPane { spec: PaneSpec::Pdf(p), cwd } => {
+                    FloatWhat::File(cwd.map_or_else(|| p.clone(), |d| d.join(&p)))
+                }
+                Action::NewPane { spec: PaneSpec::Command(argv), cwd } => {
+                    FloatWhat::Spawn(Spawn { argv: Some(argv), cwd, ..Spawn::default() })
+                }
+                Action::NewPane { cwd, .. } => FloatWhat::Spawn(Spawn { cwd, ..Spawn::default() }),
+                _ => return Err("what to open?".into()),
+            }
+        }
+    })
 }
 
 /// `cells` times a mapping's `count`, kept within what any screen has
@@ -168,41 +241,15 @@ impl Session {
                 act(self, a)
             }
             "open-float" => {
-                let what = match args.first() {
-                    None | Some(ScriptValue::Null) => FloatWhat::Spawn(Spawn::default()),
-                    Some(o @ ScriptValue::Map(_)) => {
-                        if let Some(b) = o.get("buffer").and_then(ScriptValue::as_num) {
-                            FloatWhat::Buffer(b as BufferId)
-                        } else if let Some(f) = o.get("file").and_then(ScriptValue::as_str) {
-                            FloatWhat::File(f.into())
-                        } else if let Some(ScriptValue::List(argv)) = o.get("command") {
-                            let argv = argv.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect();
-                            FloatWhat::Spawn(Spawn { argv: Some(argv), ..Spawn::default() })
-                        } else {
-                            return Err("openFloat: what is { buffer }, { file } or { command }".into());
-                        }
-                    }
-                    // `temzdf action open-float FILE.pdf` or `-- htop`, as new-pane.
-                    Some(_) => {
-                        let mut words = vec!["new-pane".to_owned()];
-                        words.extend(args.iter().filter_map(|a| a.as_str().map(str::to_owned)));
-                        match Action::parse(&words).map_err(|e| format!("{e:#}"))? {
-                            Action::NewPane { spec: PaneSpec::Pdf(p), cwd } => {
-                                FloatWhat::File(cwd.map_or_else(|| p.clone(), |d| d.join(&p)))
-                            }
-                            Action::NewPane { spec: PaneSpec::Command(argv), cwd } => {
-                                FloatWhat::Spawn(Spawn { argv: Some(argv), cwd, ..Spawn::default() })
-                            }
-                            Action::NewPane { cwd, .. } => FloatWhat::Spawn(Spawn { cwd, ..Spawn::default() }),
-                            _ => return Err("openFloat: what to open?".into()),
-                        }
-                    }
-                };
+                let what = read_what(args).map_err(|e| format!("openFloat: {e}"))?;
                 let mut spec = FloatSpec::default();
                 if let Some(o) = args.get(1).filter(|o| matches!(o, ScriptValue::Map(_))) {
                     let mut title = None;
                     floats::read_opts(o, &mut spec, &mut title).map_err(|e| format!("openFloat: {e}"))?;
                     spec.title = title;
+                    if let Some(t) = o.get("tabpage") {
+                        spec.tab = Some(self.float_tab(t).map_err(|e| format!("openFloat: {e}"))?);
+                    }
                     spec.focus = !matches!(o.get("focus"), Some(ScriptValue::Bool(false)));
                 }
                 let pane = self.open_float(what, spec).map_err(|e| format!("openFloat: {e}"))?;
@@ -216,8 +263,19 @@ impl Session {
                 };
                 let (mut spec, mut title) = (f.spec.clone(), f.title.clone());
                 floats::read_opts(o, &mut spec, &mut title).map_err(|e| format!("floatConfig: {e}"))?;
+                let tab = match o.get("tabpage") {
+                    Some(t) => Some(self.float_tab(t).map_err(|e| format!("floatConfig: {e}"))?),
+                    None => None,
+                };
                 if let Some(f) = self.float_mut(pane) {
                     (f.spec, f.title) = (spec, title);
+                    if let Some(tab) = tab {
+                        f.tab = tab;
+                    }
+                }
+                // Moved off the current tab: the focus stays on this one.
+                if tab.is_some() && self.focus == pane && !self.shown_floats().iter().any(|f| f.pane == pane) {
+                    self.set_focus(self.tiled_focus);
                 }
                 self.relayout();
                 ok(Outcome::Redraw)
@@ -351,6 +409,15 @@ impl Session {
                             ("focused", ScriptValue::Bool(id == self.focus)),
                             ("floating", ScriptValue::Bool(self.is_float(id))),
                             (
+                                "tab",
+                                match self.floats.iter().find(|f| f.pane == id).map(|f| f.tab) {
+                                    Some(super::tabs::FloatTab::All) => ScriptValue::Null,
+                                    _ => {
+                                        self.tab_of(id).map_or(ScriptValue::Null, |i| ScriptValue::Num((i + 1) as f64))
+                                    }
+                                },
+                            ),
+                            (
                                 "rect",
                                 ScriptValue::map([
                                     ("col", ScriptValue::Num(r.x as f64)),
@@ -364,6 +431,62 @@ impl Session {
                     .collect();
                 Ok((ScriptValue::List(list), Outcome::None))
             }
+            "new-tab" => {
+                let what = read_what(args).map_err(|e| format!("newTab: {e}"))?;
+                let pane = self.open_what(what, Spot::NewTab).map_err(|e| format!("newTab: {e}"))?;
+                Ok((pane.map_or(ScriptValue::Null, |p| ScriptValue::Num(p as f64)), Outcome::Redraw))
+            }
+            "close-tab" => {
+                let i = match id(0) {
+                    Some(n) => self.tab_number(n).map_err(|e| format!("closeTab: {e}"))?,
+                    None => self.tab,
+                };
+                if self.tabs.len() <= 1 {
+                    return Err("closeTab: the last tab page stays (killSession ends the session)".into());
+                }
+                ok(self.remove_tab(i))
+            }
+            "next-tab" => {
+                let i = match count {
+                    Some(n) => self.tab_number(n as u32).map_err(|e| format!("nextTab: {e}"))?,
+                    None => (self.tab + 1) % self.tabs.len(),
+                };
+                self.enter_tab(i);
+                ok(Outcome::Redraw)
+            }
+            "prev-tab" => {
+                let len = self.tabs.len();
+                let back = count.unwrap_or(1) % len;
+                self.enter_tab((self.tab + len - back) % len);
+                ok(Outcome::Redraw)
+            }
+            "goto-tab" => {
+                let n = id(0).ok_or("gotoTab: which tab page?")?;
+                let i = self.tab_number(n).map_err(|e| format!("gotoTab: {e}"))?;
+                self.enter_tab(i);
+                ok(Outcome::Redraw)
+            }
+            "move-tab" => {
+                let to = match args.first() {
+                    Some(ScriptValue::Num(n)) => Some(format!("{n}")),
+                    Some(ScriptValue::Str(s)) => Some(s.clone()),
+                    _ => None,
+                };
+                self.move_tab(to.as_deref()).map_err(|e| format!("moveTab: {e}"))?;
+                ok(Outcome::Redraw)
+            }
+            "rename-tab" => {
+                let tab = self.tab;
+                self.tabs[tab].name = text(0).filter(|s| !s.is_empty());
+                ok(Outcome::Redraw)
+            }
+            "break-pane" => {
+                let pane = id(0).unwrap_or(self.focus);
+                self.break_pane(pane).map_err(|e| format!("breakPane: {e}"))?;
+                ok(Outcome::Redraw)
+            }
+            "tabs" => Ok((self.tab_list(), Outcome::None)),
+            "current-tab" => Ok((ScriptValue::Num((self.tab + 1) as f64), Outcome::None)),
             "focused-pane" => Ok((
                 if self.panes.contains_key(&self.focus) {
                     ScriptValue::Num(self.focus as f64)

@@ -376,20 +376,24 @@ impl Session {
     /// Open a float showing `what`, focused unless `focus` is false. A file
     /// still opening has no pane yet (`None`).
     pub(super) fn open_float(&mut self, what: FloatWhat, spec: FloatSpec) -> Result<Option<PaneId>, String> {
-        let spot = Spot::Float(spec.clone());
+        self.open_what(what, Spot::Float(spec))
+    }
+
+    /// Open a pane at `spot` showing `what`. A file still opening has no
+    /// pane yet (`None`; its spot waits with it).
+    pub(super) fn open_what(&mut self, what: FloatWhat, spot: Spot) -> Result<Option<PaneId>, String> {
         Ok(match what {
             FloatWhat::Spawn(spawn) => Some(self.open_terminal(&spawn, spot).map_err(|e| format!("{e:#}"))?),
             FloatWhat::File(path) => {
-                // An open document gets its pane now, another one once open
-                // (the spec, title and focus included, waits with it).
-                let top = self.floats.last().map(|f| f.pane);
+                // An open document gets its pane now, another one once open.
+                let next = self.next_id;
                 self.open_at(&path, spot).map_err(|e| format!("{e:#}"))?;
-                self.floats.last().map(|f| f.pane).filter(|p| Some(*p) != top)
+                (next..self.next_id).find(|p| self.panes.contains_key(p))
             }
             FloatWhat::Buffer(buf) if self.terms.contains_key(&buf) => {
                 let id = self.alloc_id();
-                let focus = spec.focus;
-                let rect = self.place_float(id, spec);
+                let focus = super::takes_focus(&spot);
+                let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
                 self.terminal_pane(id, buf, rect, focus);
                 Some(id)
             }
@@ -560,7 +564,7 @@ impl Session {
     }
 
     /// A pane's buffer name: the document's file name or the terminal's title.
-    fn pane_name(&self, pane: PaneId) -> String {
+    pub(super) fn pane_name(&self, pane: PaneId) -> String {
         let Some(e) = self.panes.get(&pane) else { return String::new() };
         match &e.kind {
             super::Kind::Pdf { doc, .. } => self.docs.get(doc).map(|d| d.name.clone()).unwrap_or_default(),

@@ -319,7 +319,8 @@ pub fn list_sessions(verbose: bool) -> Result<()> {
     for s in sessions {
         let files: Vec<String> = s.files.iter().map(|f| f.display().to_string()).collect();
         let clients = if s.clients == 0 { "detached".to_owned() } else { format!("{} attached", s.clients) };
-        println!("{}  ({} panes, {} buffers, {clients})  {}", s.name, s.panes, s.buffers, files.join(" "));
+        let tabs = if s.tabs > 1 { format!("{} tabs, ", s.tabs) } else { String::new() };
+        println!("{}  ({tabs}{} panes, {} buffers, {clients})  {}", s.name, s.panes, s.buffers, files.join(" "));
         if verbose {
             println!("    pid: {}", s.pid);
             if let Some(log) = &s.log {
@@ -376,7 +377,7 @@ fn utf8(p: &Path) -> Result<String> {
 /// Paths in `temzdf action` words are the caller's: resolve them against
 /// `cwd` here (the server has its own working directory) and check that
 /// files exist (opening happens later in the server, too late to fail the
-/// command). `new-pane` and `open-float [--cwd DIR] [FILE | -- COMMAND...]`
+/// command). `new-pane`, `open-float` and `new-tab` `[--cwd DIR] [FILE | -- COMMAND...]`
 /// get `--cwd` (the caller's directory unless given; relative to it), and
 /// FILE is relative to that directory; `edit FILE` is relative to `cwd`.
 fn resolve_paths(words: &mut Vec<String>, cwd: &Path) -> Result<()> {
@@ -387,7 +388,7 @@ fn resolve_paths(words: &mut Vec<String>, cwd: &Path) -> Result<()> {
         utf8(&p)
     };
     match words.first().map(String::as_str) {
-        Some("new-pane" | "open-float") => {
+        Some("new-pane" | "open-float" | "new-tab") => {
             if words.get(1).is_none_or(|w| w != "--cwd") {
                 words.splice(1..1, ["--cwd".to_owned(), utf8(cwd)?]);
             }
