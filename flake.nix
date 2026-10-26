@@ -102,6 +102,13 @@
             libxcursor
             libxi
             libxrandr
+            # winit's X11 backend loads these too.
+            libxfixes
+            libxrender
+            libxext
+            libxinerama
+            libxcb
+            libxscrnsaver
           ];
           gui = with pkgs; [
             vulkan-tools

@@ -254,6 +254,10 @@ impl Renderer {
         &self.device
     }
 
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
     /// The cell grid the font makes.
     pub fn metrics(&self) -> CellMetrics {
         self.metrics

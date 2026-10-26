@@ -8,11 +8,19 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+temzdf-client.workspace = true
+temzdf-protocol.workspace = true
 temzdf-scene.workspace = true
 termpix-core.workspace = true
 wgpu = "30.0.1"
 glyphon = "0.12.0"
 pollster = "0.4.0"
+# 0.31 is in beta; its IME and scroll-source fixes are what this client
+# needs (doc/gui-client.md). Pinned exactly, updated deliberately.
+winit = "=0.31.0-beta.4"
+arboard = { version = "3.7.0", features = ["wayland-data-control"] }
+clap = { version = "4.6.7", features = ["derive"] }
+unicode-width = "0.2.2"
 
 [lints]
 workspace = true
