@@ -240,6 +240,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call libghostty-vt")]
     fn legacy_encoding() {
         let s = |c, m| sent(b"", c, m);
         assert_eq!(s(KeyCode::Char('h'), Modifiers::CTRL), "\x08");
@@ -257,6 +258,7 @@ mod tests {
     /// Programs that turn on the kitty keyboard protocol (fish 4, neovim)
     /// get Ctrl combinations as `CSI code;mods u` and typed text as text.
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call libghostty-vt")]
     fn kitty_keyboard_encoding() {
         let s = |c, m| sent(b"\x1b[>1u", c, m);
         assert_eq!(s(KeyCode::Char('h'), Modifiers::CTRL), "\x1b[104;5u");

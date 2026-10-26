@@ -400,7 +400,8 @@ mod tests {
         let out = Output::spawn(sink.clone(), None).unwrap();
         out.write(b"abc").unwrap();
         out.write(&vec![b'x'; 3 * CHUNK]).unwrap();
-        assert!(out.drain(Duration::from_secs(5)));
+        // Miri interprets the writer byte by byte: give it far longer.
+        assert!(out.drain(Duration::from_secs(if cfg!(miri) { 600 } else { 5 })));
         assert_eq!(out.pending(), 0);
         let got = lock(&sink.0).clone();
         assert_eq!(&got[..3], b"abc");
@@ -433,13 +434,14 @@ mod tests {
         drop(out);
         other.write(b"end").unwrap();
         drop(other);
-        assert!(gone.recv_timeout(Duration::from_secs(5)).is_ok(), "the writer ended");
+        assert!(gone.recv_timeout(Duration::from_secs(if cfg!(miri) { 600 } else { 5 })).is_ok(), "the writer ended");
         let got = lock(&inner.0).clone();
         assert_eq!(got.len(), 3 * CHUNK + 3);
         assert!(got.ends_with(b"end"));
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "timing: Miri runs far slower than the deadlines")]
     fn close_drops_the_backlog_and_terminates_the_cut_sequence() {
         let inner = Buf::default();
         // The first chunk goes out, then the terminal stops reading.

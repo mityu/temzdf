@@ -351,6 +351,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call fontconfig")]
     fn widgets_render() {
         let mut text = Text::new();
         let theme = Theme::dark();

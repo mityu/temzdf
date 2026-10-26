@@ -569,6 +569,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri has no Unix sockets")]
     fn sockets_are_claimed_once_and_never_taken_from_a_live_server() {
         let dir = std::env::temp_dir().join(format!("temzdf-claim-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

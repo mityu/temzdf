@@ -5,6 +5,7 @@ Layers of verification, cheapest first. All of them run without a human.
 | Layer | How | What it catches |
 |---|---|---|
 | Unit tests | `scripts/check.sh` | Input parsing, kitty command encoding, compositor diffing (replayed through `termpix::mock`), layout maths, tile rendering vs full-page rendering |
+| Miri | `scripts/miri.sh` (part of `scripts/check.sh` when `cargo miri` is there) | Undefined behaviour, data races and leaked threads or memory in the unit tests' Rust code (ours and the Rust dependencies). See "Miri" below. |
 | Headless frames | `target/debug/temzdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal. Read the PNG to check it. `scripts/frames.sh` renders a fixed set and compares two sets pixel by pixel (for refactorings). |
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
 | Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `scripts/check.sh`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
@@ -16,6 +17,29 @@ Layers of verification, cheapest first. All of them run without a human.
 Action files live in `tests/e2e/`; each starts with a comment saying how to run it
 and what the screenshots should show. To look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
+
+## Miri
+
+`scripts/miri.sh [PACKAGE...]` runs the workspace's unit tests (`--lib`,
+`--bins`; not `crates/*/tests` or `tuitest`) under Miri, one process per
+test and all cores at once, in about a minute and a half. `scripts/check.sh`
+runs it after the normal tests, or skips it with a note when the toolchain
+has no Miri (the `ci` shell); `--no-miri` skips it on purpose. Isolation is
+off, so tests can read files and the real clock.
+
+Miri interprets Rust only. Tests that reach foreign code (MuPDF, the
+SyncTeX parser, libghostty-vt, fontconfig, QuickJS), open a pty, spawn a
+process (building fixtures counts), or use Unix sockets, shared memory,
+`select` or inotify cannot run there; they carry
+`#[cfg_attr(miri, ignore = "why")]`, so the reason shows in the output.
+Mark a new test the same way when Miri stops on an "unsupported operation".
+Tests with deadlines get much longer ones under Miri (`cfg!(miri)`), which
+runs code tens to hundreds of times slower; where that would not keep the
+test meaningful it is ignored instead.
+
+What Miri found so far: the output writer thread of `termpix` lived on when
+every `Output` was dropped without `close` (fixed), and zlib-rs violates
+the aliasing rules (`doc/known-issues.md`; those tests are ignored).
 
 ## Simulated terminal tests
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Pre-commit gate: rustfmt check, clippy (warnings are errors) and tests for the
-# whole workspace, with terse output. Re-executes itself inside the Nix dev shell
-# when needed, so it works from any shell.
+# whole workspace, then the unit tests under Miri (scripts/miri.sh) when
+# `cargo miri` is available, with terse output. Re-executes itself inside the
+# Nix dev shell when needed, so it works from any shell.
 #
-# Usage: scripts/check.sh [--fix] [cargo test args...]
-#   --fix   run `cargo fmt` instead of only checking formatting
+# Usage: scripts/check.sh [--fix] [--no-miri] [cargo test args...]
+#   --fix      run `cargo fmt` instead of only checking formatting
+#   --no-miri  skip Miri (about a minute and a half)
 #
 # It does not run end-to-end terminal tests or regenerate fixtures.
 set -euo pipefail
@@ -16,11 +18,15 @@ if [[ -z "${IN_NIX_SHELL:-}" ]]; then
   exec nix develop --quiet -c "$self" "$@" 2> >(grep -v "Git tree .* is dirty" >&2)
 fi
 
-fix=0
-if [[ "${1:-}" == "--fix" ]]; then
-  fix=1
+fix=0 miri=1
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --fix) fix=1 ;;
+    --no-miri) miri=0 ;;
+    *) break ;;
+  esac
   shift
-fi
+done
 
 status=0
 if ((fix)); then
@@ -45,5 +51,11 @@ passed=$(grep -oE "[0-9]+ passed" <<<"$out" | awk '{s+=$1} END {print s+0}')
 
 if ((status == 0)); then
   echo "OK fmt, clippy, tests ($passed passed)"
+fi
+
+if ((miri)); then
+  scripts/miri.sh && st=0 || st=$?
+  # 2: no Miri here (e.g. the CI shell); it said so.
+  if ((st != 0 && st != 2)); then status=1; fi
 fi
 exit "$status"

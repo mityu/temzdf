@@ -427,6 +427,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot use shared memory")]
     fn what_queries_and_file_transfers_leave_behind_is_removed() {
         let mut out = Vec::new();
         let Some(Leftover::File(path)) = query(&mut out, 1, Medium::TempFile).unwrap() else { panic!() };
@@ -512,6 +513,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/known-issues.md)")]
     fn compressed_transmit_round_trips() {
         let mut enc = Encoder::new(Medium::Direct { compress: true });
         let mut out = Vec::new();
@@ -535,6 +537,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/known-issues.md)")]
     fn zlib_level_is_configurable() {
         let data = vec![255u8; 129 * 128 * 4];
         let px = Pixels { width: 129, height: 128, format: PixelFormat::Rgba, data: &data };
@@ -584,6 +587,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot use shared memory")]
     fn shared_memory_transmit_and_cleanup() {
         let mut enc = Encoder::new(Medium::SharedMemory);
         let mut out = Vec::new();
@@ -602,6 +606,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot use shared memory")]
     fn shared_memory_stays_for_recent_frames_however_many() {
         let mut enc = Encoder::new(Medium::SharedMemory);
         let mut out = Vec::new();

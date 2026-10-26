@@ -884,6 +884,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn shows_program_output_with_colours() {
         let (mut pane, rows) = run(
             &["sh", "-c", "printf 'hello \\033[31mred\\033[0m\\n\\033[38;2;1;2;3mrgb'; sleep 5"],
@@ -899,6 +900,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn keys_reach_the_program() {
         let (_, rows) = run(
             &["sh", "-c", "stty -echo; read line; echo \"got:$line\"; sleep 5"],
@@ -914,6 +916,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn smaller_views_show_the_bottom_left() {
         let (mut term, _) = run(&["sh", "-c", "printf 'a\\nb\\nc\\nd\\ne\\nf'; sleep 5"], |_| {}, |r| r[5] == "f");
         let small = TermView::new(Geometry { cols: 3, rows: 2, ..GEOMETRY });
@@ -929,6 +932,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn a_wide_character_cut_at_the_views_edge_goes_blank() {
         // "ab数" in a view 3 wide (on the last row: small views show the
         // bottom left): the wide character's first half is the last cell;
@@ -961,6 +965,7 @@ mod tests {
     const LEFT: MouseButton = MouseButton::Left;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn dragging_selects_and_releasing_copies() {
         let (mut term, _) =
             run(&["sh", "-c", "printf 'hello world\\nsecond line'; sleep 5"], |_| {}, |r| r[1] == "second line");
@@ -988,6 +993,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn programs_tracking_the_mouse_get_plain_drags_and_shift_selects() {
         // Mouse tracking (button events, SGR), then echo what arrives.
         let script = "stty raw -echo; printf 'ready\\033[?1002h\\033[?1006h\\n'; od -An -c";
@@ -1011,6 +1017,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn clicking_a_link_opens_it() {
         let script = "printf 'see \\033]8;;https://example.org/a\\033\\\\here\\033]8;;\\033\\\\ now'; sleep 5";
         let (mut term, _) = run(&["sh", "-c", script], |_| {}, |r| r[0] == "see here now");
@@ -1039,6 +1046,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn images_from_programs_become_layers() {
         // A 2x2 RGBA image shown over 4x2 cells after "ab", then a 1x1 PNG.
         let rgba = "/wAA/wD/AP8AAP///////w==";
@@ -1069,6 +1077,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn the_wheel_sends_arrows_to_programs_on_the_alternate_screen() {
         // Alternate screen, alternate scroll on, no mouse tracking (as less).
         let script = "printf '\\033[?1049h\\033[?1007hready'; stty raw -echo; v=$(dd bs=1 count=3 2>/dev/null | od -An -tx1 | tr -d ' '); printf 'got:%s' \"$v\"; sleep 5";
@@ -1097,6 +1106,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn scrolled_back_views_say_how_far() {
         // Until the newline after 20 is in too (the output may come in pieces).
         let (mut term, _) = run(&["sh", "-c", "seq 1 20; sleep 5"], |_| {}, |r| r[4] == "20");
@@ -1120,6 +1130,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn the_pane_reports_its_program_exiting() {
         let (pane, _) = run(&["sh", "-c", "exit 0"], |_| {}, |_| false);
         assert!(pane.exited());

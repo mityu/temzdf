@@ -298,6 +298,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn an_open_document_does_not_read_the_file_again() {
         // TeX rewriting the file while pages are still to load.
         let path = std::env::temp_dir().join(format!("temzdf-snapshot-{}.pdf", std::process::id()));
@@ -312,6 +313,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn opens_fixture_and_reads_a4_pages() {
         let doc = open(&fixture("sample.pdf")).unwrap();
         let pages = page_bounds(&doc).unwrap();
@@ -321,6 +323,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn outline_and_labels() {
         let doc = open(&fixture("sample.pdf")).unwrap();
         let info = doc_info(&doc).unwrap();
@@ -345,6 +348,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn search_finds_needles_on_every_page() {
         let doc = open(&fixture("sample.pdf")).unwrap();
         let bounds = page_bounds(&doc).unwrap();
@@ -357,6 +361,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn links_internal_and_external() {
         let doc = open(&fixture("sample.pdf")).unwrap();
         let bounds = page_bounds(&doc).unwrap();
@@ -370,6 +375,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn completeness_check() {
         let dir = std::env::temp_dir().join(format!("temzdf-complete-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -385,6 +391,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn tiles_match_full_render() {
         let doc = open(&fixture("sample.pdf")).unwrap();
         let bounds = page_bounds(&doc).unwrap()[0];

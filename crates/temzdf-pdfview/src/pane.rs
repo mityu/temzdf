@@ -1554,6 +1554,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn forward_results_past_the_last_page_are_ignored() {
         let mut s = session();
         let pages = s.viewer.page_count();
@@ -1568,6 +1569,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn typing_a_search_does_not_wrap_to_an_earlier_hit_before_the_rest_is_searched() {
         let mut s = session();
         let now = Instant::now();
@@ -1588,6 +1590,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn next_match_before_the_search_finished_waits_for_it() {
         let mut s = session();
         let now = Instant::now();
@@ -1608,6 +1611,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn the_status_bar_is_not_the_page_under_it() {
         let mut s = session();
         let y = s.viewer.view.screen_h + 5.0;
@@ -1619,6 +1623,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn copies_say_when_pages_not_loaded_were_left_out() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let info = pdf::doc_info(&doc).unwrap();
@@ -1636,6 +1641,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn tiny_panes_draw_without_panicking() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let info = pdf::doc_info(&doc).unwrap();
@@ -1649,6 +1655,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn page_view_commands_take_counts() {
         let mut s = session();
         let now = Instant::now();
@@ -1663,6 +1670,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn a_selection_released_over_the_sidebar_ends_and_copies() {
         let mut s = session();
         let a = char_pos(&mut s, "temzdf sample", 0);
@@ -1679,6 +1687,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn drag_over_text_selects_and_copies() {
         let mut s = session();
         let a = char_pos(&mut s, "temzdf sample", 0);
@@ -1700,6 +1709,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn reload_keeps_the_reading_position() {
         let mut s = session();
         let mut c = comp();
@@ -1715,6 +1725,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn text_anchor_keeps_the_line_in_place_when_text_is_inserted_above() {
         let mut s = session();
         s.anchor_by_text = true;
@@ -1744,6 +1755,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn input_cancels_a_pending_text_anchor() {
         let mut s = session();
         s.anchor_by_text = true;
@@ -1755,6 +1767,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn reload_clamps_to_the_last_page_and_keeps_the_fraction() {
         let mut s = session();
         let mut c = comp();
@@ -1772,6 +1785,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn reload_reruns_the_search_and_keeps_the_sidebar() {
         let mut s = session();
         let mut c = comp();
@@ -1807,6 +1821,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn ctrl_wheel_zooms_around_the_pointer() {
         let mut s = session();
         let ctrl_wheel = |s: &mut PdfPane, dir, at: (f32, f32)| {
@@ -1837,6 +1852,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn enter_before_the_results_arrive_still_selects_the_first_hit() {
         let mut s = session();
         let now = Instant::now();
@@ -1857,6 +1873,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn selection_drag_at_the_edge_scrolls_by_itself() {
         let mut s = session();
         let a = char_pos(&mut s, "temzdf sample", 0);
@@ -1878,6 +1895,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn drag_in_margin_pans() {
         let mut s = session();
         let before = s.viewer.view.scroll_y;
@@ -1922,6 +1940,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn resting_on_a_link_previews_its_target_with_clickable_urls() {
         let mut s = session();
         open_back_link_preview(&mut s, 0.33);
@@ -1961,6 +1980,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn previews_go_below_the_link_or_above_it_near_the_bottom() {
         let mut s = session();
         let (_, y) = open_back_link_preview(&mut s, 0.33);
@@ -1972,6 +1992,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn the_wheel_over_a_preview_scrolls_it_not_the_page() {
         let mut s = session();
         open_back_link_preview(&mut s, 0.33);
@@ -1985,6 +2006,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn clicking_a_preview_jumps_there_and_keys_close_it() {
         let mut s = session();
         open_back_link_preview(&mut s, 0.33);
@@ -2005,6 +2027,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn previews_wait_for_the_pointer_and_close_after_it_leaves() {
         let mut s = session();
         let at = open_back_link_preview(&mut s, 0.33);
@@ -2030,6 +2053,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn the_terminal_cursor_never_covers_typed_text() {
         let mut s = session();
         let mut c = comp();
@@ -2073,6 +2097,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn panes_on_one_document_share_its_tiles_and_links() {
         let mut a = session();
         let mut images = comp();

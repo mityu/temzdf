@@ -278,6 +278,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn relative_names_are_relative_to_where_tex_ran() {
         let inputs = ["/proj/./main.tex".to_owned(), "./ch1.tex".to_owned()];
         assert_eq!(tex_dir(&inputs), Some(PathBuf::from("/proj")));
@@ -298,6 +299,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn forward_and_inverse_on_the_fixture() {
         let pdf_path = pdf::fixture("sample.pdf");
         let tex = std::fs::read_to_string(pdf::fixture("sample.tex")).unwrap();
@@ -323,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn inverse_on_the_title_points_at_maketitle() {
         let tex = std::fs::read_to_string(pdf::fixture("sample.tex")).unwrap();
         let mut s = Scanner::open(&pdf::fixture("sample.pdf")).unwrap();
@@ -334,6 +337,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn missing_synctex_is_none() {
         let dir = std::env::temp_dir().join(format!("temzdf-nosynctex-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

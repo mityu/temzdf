@@ -1858,6 +1858,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn prefix_keys_split_focus_and_close() {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
@@ -1883,6 +1884,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn panes_are_composed_inside_their_rectangles_with_unique_keys() {
         let (mut s, rx) = session();
         s.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
@@ -1902,6 +1904,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn panes_on_one_document_render_each_tile_once() {
         let (mut s, rx) = session();
         // Stacked panes have the same width, so the same zoom and tiles; both
@@ -1915,6 +1918,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn closing_a_pane_hides_its_document_until_it_is_shown_again() {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
@@ -1956,6 +1960,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri has no inotify")]
     fn opening_a_missing_file_fails_the_session() {
         let (tx, rx) = mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
@@ -1981,6 +1986,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn resizing_split_panes_redraws_like_a_fresh_start() {
         use termpix::compositor::{Backend, Compositor};
         use termpix::graphics::Medium;
@@ -2076,6 +2082,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn terminal_panes_show_output_take_keys_and_close_when_the_program_exits() {
         let (mut s, rx) = terminal_session(&[
             "sh",
@@ -2096,6 +2103,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn splitting_a_terminal_starts_another_shell_beside_it() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo left; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "left");
@@ -2135,6 +2143,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn closed_terminals_keep_running_hidden() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo first; read l; echo \"got:$l\"; read l"]);
         wait_text(&mut s, &rx, |r| r[0] == "first");
@@ -2159,6 +2168,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn a_hidden_terminal_that_ended_stays_until_it_was_shown() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo started; sleep 1; echo bye"]);
         wait_text(&mut s, &rx, |r| r[0] == "started");
@@ -2182,6 +2192,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn a_terminal_in_two_panes_is_as_large_as_the_larger() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo ready; while read l; do stty size; done"]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -2205,6 +2216,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn dragging_a_border_resizes_panes_and_their_programs_on_release() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -2244,6 +2256,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn the_shipped_keys_move_and_rotate_panes() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -2287,6 +2300,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn a_float_covers_the_panes_below_it() {
         let (mut s, rx) =
             terminal_session(&["sh", "-c", "for i in 1 2 3 4 5 6 7 8; do printf '%080d\\n' 0; done; sleep 30"]);
@@ -2325,6 +2339,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn floats_cascade_raise_take_turns_and_hide_together() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -2378,6 +2393,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn the_last_tiled_pane_gives_way_to_a_shown_float() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -2406,6 +2422,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn a_floating_terminal_closes_when_its_program_exits() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -2433,6 +2450,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn dragging_a_float_moves_and_resizes_it_and_its_program_on_release() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -2495,6 +2513,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn the_shipped_keys_open_hide_and_embed_floats() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -2516,6 +2535,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn no_image_lies_under_text_drawn_over_it() {
         // WezTerm draws images over text whatever their z: text over images
         // (messages, a float's title) needs the images cut out below it.
@@ -2544,6 +2564,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn recursive_mappings_stop_with_an_error() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -2566,6 +2587,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn a_terminal_closes_when_its_program_exits_although_jobs_hold_the_pty() {
         // The shell leaves a job behind that keeps the pty open. (Linux hangs
         // the pty up when its session leader exits, so its end of file came
@@ -2577,6 +2599,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn deleting_a_terminal_ends_a_program_that_ignores_hangups_without_waiting() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "trap '' HUP; echo ready; exec sleep 1000"]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -2596,6 +2619,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn a_float_opened_while_the_configuration_loads_leaves_the_first_pane_tiled() {
         let (tx, _rx) = mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
@@ -2612,6 +2636,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn floats_on_tiny_screens_and_cells_do_not_overflow() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -2630,6 +2655,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn a_float_waiting_for_its_file_keeps_its_title_and_focus() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "tiled");

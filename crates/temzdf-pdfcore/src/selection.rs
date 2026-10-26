@@ -167,6 +167,7 @@ mod tests {
     use crate::pdf;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn select_words_on_the_fixture() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::page_bounds(&doc).unwrap()[0];

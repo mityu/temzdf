@@ -156,6 +156,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri has no Unix sockets")]
     fn round_trip_through_the_socket() {
         let dir = std::env::temp_dir().join(format!("temzdf-ipc-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

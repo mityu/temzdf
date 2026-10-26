@@ -15,6 +15,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call fontconfig")]
     fn draws_text_including_cjk() {
         let mut text = Text::new();
         let style = TextStyle { size: 18.0, color: Color::rgb(20, 20, 20), bold: false, family: "sans-serif" };
@@ -33,6 +34,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call fontconfig")]
     fn ellipsis_fits_width() {
         let mut text = Text::new();
         let style = TextStyle { size: 14.0, color: Color::rgb(0, 0, 0), bold: false, family: "sans-serif" };

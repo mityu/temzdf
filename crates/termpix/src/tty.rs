@@ -520,6 +520,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a tty")]
     fn only_a_panic_on_the_terminals_thread_restores_it() {
         use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
         let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
@@ -566,6 +567,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call select")]
     fn wait_fd_reports_readiness_and_times_out() {
         use std::io::Write;
         let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();

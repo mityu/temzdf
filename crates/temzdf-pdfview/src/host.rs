@@ -379,6 +379,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn work_asked_for_twice_is_claimed_once() {
         use crate::doc_cache::{TileKey, TileKind};
         use crate::pdf::PixelRect;

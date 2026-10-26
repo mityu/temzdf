@@ -413,6 +413,7 @@ mod tests {
     use crate::pdf::PixelRect;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn opening_waits_for_a_file_being_written() {
         let path = std::env::temp_dir().join(format!("temzdf-writing-{}.pdf", std::process::id()));
         let full = std::fs::read(pdf::fixture("sample.pdf")).unwrap();
@@ -434,6 +435,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn synctex_data_follows_its_file() {
         let dir = std::env::temp_dir().join(format!("temzdf-synctex-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

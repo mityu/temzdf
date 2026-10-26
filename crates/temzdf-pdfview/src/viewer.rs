@@ -903,6 +903,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn resizing_keeps_the_top_left_doc_point() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::doc_info(&doc).unwrap().bounds;
@@ -916,6 +917,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn a_view_state_restores_in_a_pane_of_another_width() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::doc_info(&doc).unwrap().bounds;
@@ -940,6 +942,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn display_lists_far_from_the_view_are_dropped_and_reloaded() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::doc_info(&doc).unwrap().bounds;
@@ -960,6 +963,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn zooming_shows_old_tiles_scaled_until_new_ones_arrive() {
         for (backend, mode) in [(Backend::composited(), StandIn::ScaledTiles), (Backend::Layered, StandIn::Composed)] {
             let (early, done, count) = zoom_frames(backend, mode);
