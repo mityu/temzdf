@@ -809,3 +809,19 @@ fn unhandled_promise_rejections_are_logged() {
     let log = env.wait_log("rj", "the rejections", |l| l.contains("boom-in-a-timer") && l.contains("plain-reason"));
     assert!(log.contains("unhandled promise rejection"), "{log}");
 }
+
+#[test]
+fn action_detach_detaches_the_operating_client_only() {
+    let env = Env::new("detach-one");
+    let mut first = Term::spawn(&[BIN, "-s", "d1"], &env.options());
+    first.wait_for("the prompt", prompt);
+    let mut second = Term::spawn(&[BIN, "attach", "d1"], &env.options());
+    second.wait_for("the prompt", prompt);
+    second.type_text("echo second-typed\n");
+    second.wait_text("second-typed");
+    env.run(&["action", "-s", "d1", "detach"]);
+    second.wait_text("[detached from session d1]");
+    // The other one is still attached and works.
+    first.type_text("echo first-$((2+2))\n");
+    first.wait_text("first-4");
+}

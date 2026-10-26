@@ -383,20 +383,10 @@ fn run_action(
     if let Some(c) = clients.remove(&id) {
         let _ = c.tx.send(ServerMsg::Done(result));
     }
-    match action_outcome {
-        Outcome::Detach => {
-            for c in clients.values() {
-                let _ = c.tx.send(ServerMsg::Exit(ExitReason::Detached));
-            }
-            clients.clear();
-            Outcome::Redraw
-        }
-        o => o,
-    }
+    // A detach detaches the operating (latest) client, as from a mapping.
+    action_outcome
 }
 
-/// Input or a new size makes a client the latest: the session follows its
-/// size (and frontend).
 /// A client's terminal size, if it is one to lay panes out in (a client
 /// reporting no rows, columns or cell size is ignored).
 fn usable(g: Geometry) -> Option<Geometry> {
