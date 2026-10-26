@@ -128,6 +128,26 @@ fn synctex_stamp(pdf: &Path) -> Option<(std::time::SystemTime, u64)> {
     })
 }
 
+/// The document's bytes as the document thread last opened them, with that
+/// version's generation: the search thread opens the very same version
+/// (reading the file itself, it could get a newer one, whose page count the
+/// viewer does not know yet).
+#[derive(Clone, Default)]
+pub struct Snapshot(Arc<std::sync::Mutex<Option<Version>>>);
+
+/// A generation and its bytes.
+type Version = (u32, Arc<[u8]>);
+
+impl Snapshot {
+    fn set(&self, generation: u32, bytes: Arc<[u8]>) {
+        *self.0.lock().unwrap_or_else(|p| p.into_inner()) = Some((generation, bytes));
+    }
+
+    fn get(&self) -> Option<Version> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+}
+
 /// A search request: find `query` on every page, starting at `start_page`.
 pub struct SearchCmd {
     pub generation: u64,
@@ -137,9 +157,10 @@ pub struct SearchCmd {
     pub doc_generation: u32,
 }
 
-/// The search worker opens its own copy of the document so long searches do not
-/// delay page loading. A newer command interrupts the current search.
-pub fn spawn_search(path: PathBuf, events: Sink) -> std::io::Result<Sender<SearchCmd>> {
+/// The search worker opens its own copy of the document (the version in
+/// `snapshot`) so long searches do not delay page loading. A newer command
+/// interrupts the current search.
+pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<SearchCmd>> {
     let (tx, rx) = mpsc::channel::<SearchCmd>();
     std::thread::Builder::new().name("temzdf-search".into()).spawn(move || {
         let mut doc: Option<(u32, pdf::Doc, Vec<pdf::PageBounds>)> = None;
@@ -153,7 +174,10 @@ pub fn spawn_search(path: PathBuf, events: Sink) -> std::io::Result<Sender<Searc
                 },
             };
             if doc.as_ref().is_none_or(|d| d.0 != cmd.doc_generation) {
-                match pdf::open(&path).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))) {
+                // Only the version the request was made on: another one means
+                // the request is stale (a reload follows with a new one).
+                let Some((_, bytes)) = snapshot.get().filter(|s| s.0 == cmd.doc_generation) else { continue };
+                match pdf::open_bytes(&bytes).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))) {
                     Ok((d, b)) => doc = Some((cmd.doc_generation, d, b)),
                     Err(e) => {
                         events(DocEvent::SearchFailed(format!("{e:#}")));
@@ -190,11 +214,20 @@ pub enum DocCmd {
     Reload,
 }
 
-pub fn spawn_document(path: PathBuf, events: Sink) -> std::io::Result<Sender<DocCmd>> {
+/// The document thread: opens `path` (a snapshot of it, see [`pdf::open`],
+/// shared with the search thread through `snapshot`) and loads pages.
+pub fn spawn_document(path: PathBuf, events: Sink, snapshot: Snapshot) -> std::io::Result<Sender<DocCmd>> {
+    let open = move |path: &Path| -> anyhow::Result<(Arc<[u8]>, pdf::Doc, DocInfo)> {
+        let bytes = pdf::read(path)?;
+        let doc = anyhow::Context::with_context(pdf::open_bytes(&bytes), || format!("cannot open {}", path.display()))?;
+        let info = pdf::doc_info(&doc)?;
+        Ok((bytes, doc, info))
+    };
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new().name("temzdf-doc".into()).spawn(move || {
-        let (mut doc, mut bounds) = match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
-            Ok((doc, info)) => {
+        let (mut doc, mut bounds) = match open(&path) {
+            Ok((bytes, doc, info)) => {
+                snapshot.set(0, bytes);
                 let bounds = info.bounds.clone();
                 events(DocEvent::Opened(Ok(info)));
                 (doc, bounds)
@@ -220,11 +253,12 @@ pub fn spawn_document(path: PathBuf, events: Sink) -> std::io::Result<Sender<Doc
                     Err(e) => DocEvent::PageFailed(generation, p, format!("{e:#}")),
                 },
                 // The old document stays in use until the new one opened fine.
-                DocCmd::Reload => match pdf::open(&path).and_then(|d| pdf::doc_info(&d).map(|i| (d, i))) {
-                    Ok((d, info)) if !info.bounds.is_empty() => {
+                DocCmd::Reload => match open(&path) {
+                    Ok((bytes, d, info)) if !info.bounds.is_empty() => {
                         doc = d;
                         bounds = info.bounds.clone();
                         generation = generation.wrapping_add(1);
+                        snapshot.set(generation, bytes);
                         DocEvent::Reloaded(info)
                     }
                     Ok(_) => DocEvent::ReloadFailed("the document has no pages".into()),

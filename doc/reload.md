@@ -30,14 +30,21 @@ Skim (BSD-3, `SKFileUpdateChecker.m`, `SKMainDocument.m`,
    retrying, only a "Reloading..." status.
 3. **Open, then swap.** The new `Document` is opened on the doc thread while the
    old one stays on screen. Swap only after success.
-4. **Viewport.** Save page index + normalized (0..1) top-left of the viewport within
+4. **Open a snapshot.** MuPDF reads pages lazily, so a document opened from
+   the file reads it again for every page loaded later; while TeX rewrites
+   the file, those pages came from a mix of two versions ("found object X
+   instead of Y", or another page after xref repair). The file is read whole
+   and opened from memory (`pdf::open`): an open document never touches the
+   file again. It costs the PDF's size in memory, twice (the document thread
+   and the search thread each hold a MuPDF copy).
+5. **Viewport.** Save page index + normalized (0..1) top-left of the viewport within
    that page + zoom + horizontal offset. Restore using the *new* page geometry so
    small page-size changes still land correctly. If the page count shrinks, clamp
    to the last page and keep the normalized offset.
-5. **Other state.** Keep sidebar visibility/selection, outline expansion (matched
+6. **Other state.** Keep sidebar visibility/selection, outline expansion (matched
    by title path) and navigation history (clamped). Keep the search query and
    re-run it on the new document. Clear the text selection.
-6. **No SyncTeX anchoring.** Planned as an option (inverse-search the viewport
+7. **No SyncTeX anchoring.** Planned as an option (inverse-search the viewport
    before the reload, forward-search the result after it) and tried on
    2026-10-25 with a real latexmk rebuild. It was dropped. When text is inserted
    above the anchor, which is exactly when position-based restore drifts, the
@@ -46,7 +53,7 @@ Skim (BSD-3, `SKFileUpdateChecker.m`, `SKMainDocument.m`,
    stale SyncTeX data. Editor-driven forward search after each successful
    compile (e.g. a vimtex compiler callback running `temzdf --forward`) solves
    the real problem, because the editor knows the cursor in the *new* source.
-7. **Text anchoring (opt-in, `o.reloadanchor = "text"`).** Before the swap,
+8. **Text anchoring (opt-in, `o.reloadanchor = "text"`).** Before the swap,
    remember the line nearest a third of the way down the screen (at least 8
    alphanumeric characters), its neighbouring lines, its doc y and its screen y.
    The position-based restore happens first. Once the pages within two of the
@@ -76,8 +83,13 @@ shrinking. Each must keep the viewport and never show an empty view.
 Generations: the document thread and the viewer both count successful
 reloads. Display lists, links and tiles carry the generation they belong to
 (`TileKey::generation`, `AppEvent::PageLoaded`), so results computed from the
-old file can never be shown after a swap. The search worker reopens the file
-when a request carries a newer document generation.
+old file can never be shown after a swap. The search worker opens the bytes
+the document thread opened (`workers::Snapshot`, by generation) rather than
+the file, so it searches the version the viewer shows (reading the file
+itself, it could get a newer one with another page count, and the search
+would never complete); requests for another generation are stale and dropped.
+The SyncTeX worker reads the `.synctex.gz` again whenever its modification
+time or size changed (pdfTeX writes it after the PDF).
 
 Tests: unit tests in `crates/temzdf-pdfview/src/pane.rs` (`reload_*`) and the end-to-end scenario
 `tests/e2e/reload.actions` (in-place truncation, rename-over with fewer pages,

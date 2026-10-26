@@ -40,9 +40,22 @@ impl PageBounds {
 /// and adds PDF-only features (page labels).
 pub type Doc = PdfDocument;
 
+/// Open `path` as it is now: read whole, and opened from memory. MuPDF reads
+/// pages lazily; from the file, a page first needed while TeX rewrites it
+/// would come from a mix of two versions ("found object X instead of Y", or
+/// the wrong page after repair).
 pub fn open(path: &Path) -> Result<Doc> {
-    let s = path.to_str().context("path is not valid UTF-8")?;
-    PdfDocument::open(s).with_context(|| format!("cannot open {}", path.display()))
+    open_bytes(&read(path)?).with_context(|| format!("cannot open {}", path.display()))
+}
+
+/// The bytes of `path`, for [`open_bytes`].
+pub fn read(path: &Path) -> Result<std::sync::Arc<[u8]>> {
+    Ok(std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?.into())
+}
+
+/// A document from its bytes (MuPDF keeps its own copy).
+pub fn open_bytes(bytes: &[u8]) -> Result<Doc> {
+    Ok(PdfDocument::from_bytes(bytes)?)
 }
 
 /// Whether a PDF file looks completely written: `%%EOF` appears within its last
@@ -263,6 +276,20 @@ pub fn fixture(name: &str) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_open_document_does_not_read_the_file_again() {
+        // TeX rewriting the file while pages are still to load.
+        let path = std::env::temp_dir().join(format!("temzdf-snapshot-{}.pdf", std::process::id()));
+        std::fs::copy(fixture("sample.pdf"), &path).unwrap();
+        let doc = open(&path).unwrap();
+        let pages = doc_info(&doc).unwrap().bounds.len();
+        std::fs::write(&path, b"%PDF-1.5 half written").unwrap();
+        for p in 0..pages {
+            display_list(&doc, p).unwrap_or_else(|e| panic!("page {p}: {e:#}"));
+        }
+        std::fs::remove_file(&path).unwrap();
+    }
 
     #[test]
     fn opens_fixture_and_reads_a4_pages() {
