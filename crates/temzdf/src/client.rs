@@ -310,20 +310,83 @@ pub fn kill_all_sessions() -> Result<()> {
 /// Run an action in session `name`. The server runs elsewhere: a new pane's
 /// file is made absolute, and its terminal starts in this directory.
 pub fn action(name: &str, mut words: Vec<String>, timeout: Duration) -> Result<()> {
-    if words.first().is_some_and(|w| w == "new-pane") {
-        if words.get(1).is_none_or(|w| w != "--cwd") {
-            let cwd = std::env::current_dir()?.display().to_string();
-            words.splice(1..1, ["--cwd".to_owned(), cwd]);
-        }
-        if let Some(file) = words.get_mut(3)
-            && !file.starts_with('-')
-        {
-            *file = std::path::absolute(PathBuf::from(&*file))?.display().to_string();
-        }
-    }
+    resolve_paths(&mut words, &std::env::current_dir()?)?;
     match request(name, ClientMsg::Action(words), timeout)? {
         ServerMsg::Done(Ok(())) => Ok(()),
         ServerMsg::Done(Err(e)) => bail!("{e}"),
         other => bail!("unexpected answer {other:?}"),
+    }
+}
+
+/// Paths in `temzdf action` words are the caller's: resolve them against
+/// `cwd` here (the server has its own working directory) and check that
+/// files exist (opening happens later in the server, too late to fail the
+/// command). `new-pane` and `open-float [--cwd DIR] [FILE | -- COMMAND...]`
+/// get `--cwd` (the caller's directory unless given; relative to it), and
+/// FILE is relative to that directory; `edit FILE` is relative to `cwd`.
+fn resolve_paths(words: &mut Vec<String>, cwd: &Path) -> Result<()> {
+    let existing = |p: PathBuf| -> Result<String> {
+        if !p.exists() {
+            bail!("{}: no such file", p.display());
+        }
+        Ok(p.display().to_string())
+    };
+    match words.first().map(String::as_str) {
+        Some("new-pane" | "open-float") => {
+            if words.get(1).is_none_or(|w| w != "--cwd") {
+                words.splice(1..1, ["--cwd".to_owned(), cwd.display().to_string()]);
+            }
+            let Some(dir) = words.get(2).map(|d| cwd.join(d)) else { bail!("--cwd: which directory?") };
+            words[2] = dir.display().to_string();
+            if let Some(file) = words.get_mut(3)
+                && !file.starts_with('-')
+            {
+                *file = existing(dir.join(&*file))?;
+            }
+        }
+        Some("edit") => {
+            if let Some(file) = words.get_mut(1) {
+                *file = existing(cwd.join(&*file))?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_paths_are_the_callers() {
+        let tmp = std::env::temp_dir().join(format!("temzdf-paths-{}", std::process::id()));
+        std::fs::create_dir_all(tmp.join("sub")).unwrap();
+        std::fs::write(tmp.join("a.pdf"), "").unwrap();
+        std::fs::write(tmp.join("sub/b.pdf"), "").unwrap();
+        let w = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let t = |p: &str| tmp.join(p).display().to_string();
+        let mut words = w(&["new-pane", "a.pdf"]);
+        resolve_paths(&mut words, &tmp).unwrap();
+        let here = tmp.display().to_string();
+        assert_eq!(words, [w(&["new-pane", "--cwd"]), vec![here.clone(), t("a.pdf")]].concat());
+        // FILE is relative to --cwd DIR, itself relative to the caller.
+        let mut words = w(&["open-float", "--cwd", "sub", "b.pdf"]);
+        resolve_paths(&mut words, &tmp).unwrap();
+        assert_eq!(words, [w(&["open-float", "--cwd"]), vec![t("sub"), t("sub/b.pdf")]].concat());
+        let mut words = w(&["open-float", "--", "htop"]);
+        resolve_paths(&mut words, &tmp).unwrap();
+        assert_eq!(words, [w(&["open-float", "--cwd"]), vec![here], w(&["--", "htop"])].concat());
+        let mut words = w(&["edit", "sub/b.pdf"]);
+        resolve_paths(&mut words, &tmp).unwrap();
+        assert_eq!(words, ["edit".to_owned(), t("sub/b.pdf")]);
+        // A missing file fails here, not later in the server.
+        let e = resolve_paths(&mut w(&["edit", "missing.pdf"]), &tmp).unwrap_err();
+        assert!(e.to_string().contains("no such file"), "{e}");
+        assert!(resolve_paths(&mut w(&["new-pane", "missing.pdf"]), &tmp).is_err());
+        let mut words = w(&["split", "right"]);
+        resolve_paths(&mut words, &tmp).unwrap();
+        assert_eq!(words, w(&["split", "right"]));
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 }
