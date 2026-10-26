@@ -321,6 +321,23 @@ pub struct Hints {
     pub fast_uploads: bool,
 }
 
+/// How a client that draws text itself (a GUI) should look: the colours
+/// the scene leaves to the frontend (`Color::Default`, `Color::Indexed`)
+/// and the font. `None` and missing palette entries: the client's own.
+/// Terminal clients ignore it (their terminal decides).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Appearance {
+    pub foreground: Option<[u8; 3]>,
+    pub background: Option<[u8; 3]>,
+    /// Colours of the first palette indices.
+    pub palette: Vec<[u8; 3]>,
+    /// As Neovim's `guifont`: "Family:h14" (size in points).
+    pub font: String,
+    /// For wide (CJK) characters; `None`: the font's own, then fallbacks.
+    pub font_wide: Option<String>,
+}
+
 /// Something a frontend does on a pane's behalf, in the frontend's own
 /// environment (its clipboard, its `DISPLAY`, its user's editor).
 #[derive(Clone, Debug, PartialEq, Eq)]

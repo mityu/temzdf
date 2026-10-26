@@ -120,6 +120,16 @@ declare module "temzdf" {{
     remainonexit: boolean;
     /** When the tab line shows: 0 never, 1 with two tab pages or more, 2 always. */
     showtabline: 0 | 1 | 2;
+    /** Default text colour (#rrggbb) for GUI clients and terminal panes; null: the client's. */
+    foreground: string | null;
+    /** Default background colour (#rrggbb); null: the client's. */
+    background: string | null;
+    /** The first palette colours (#rrggbb), index 0 first; the rest stay the default. */
+    palette: string[];
+    /** The GUI font, as Neovim's guifont: Family:h14. */
+    guifont: string;
+    /** The GUI font for wide (CJK) characters; null: the font's own, then fallbacks. */
+    guifontwide: string | null;
   }}
   export const o: Options;
 

@@ -797,6 +797,23 @@ impl Session {
             }
             "synctexeditor" => o.synctexeditor = text()?,
             "remainonexit" => o.remainonexit = flag()?,
+            "foreground" => o.foreground = color(value).map_err(|e| format!("o.foreground: {e}"))?,
+            "background" => o.background = color(value).map_err(|e| format!("o.background: {e}"))?,
+            "palette" => {
+                let ScriptValue::List(l) = value else {
+                    return Err("o.palette: expected a list of \"#rrggbb\"".into());
+                };
+                if l.len() > 256 {
+                    return Err("o.palette: at most 256 colours".into());
+                }
+                o.palette = l
+                    .iter()
+                    .map(|c| color(c)?.ok_or_else(|| "null in a palette".to_owned()))
+                    .collect::<Result<_, String>>()
+                    .map_err(|e| format!("o.palette: {e}"))?;
+            }
+            "guifont" => o.guifont = text()?.ok_or("o.guifont: expected a string")?,
+            "guifontwide" => o.guifontwide = text()?,
             "showtabline" => match value.as_num() {
                 Some(n) if [0.0, 1.0, 2.0].contains(&n) => o.showtabline = n as u8,
                 _ => return Err("o.showtabline: expected 0, 1 or 2".into()),
@@ -830,9 +847,32 @@ impl Session {
             "synctexeditor" => o.synctexeditor.clone().map_or(ScriptValue::Null, ScriptValue::Str),
             "remainonexit" => ScriptValue::Bool(o.remainonexit),
             "showtabline" => ScriptValue::Num(o.showtabline as f64),
+            "foreground" => o.foreground.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
+            "background" => o.background.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
+            "palette" => ScriptValue::List(o.palette.iter().map(|c| ScriptValue::Str(hex(*c))).collect()),
+            "guifont" => ScriptValue::Str(o.guifont.clone()),
+            "guifontwide" => o.guifontwide.clone().map_or(ScriptValue::Null, ScriptValue::Str),
             other => return Err(format!("no option {other:?}")),
         })
     }
+}
+
+/// A colour option: "#rrggbb", or null for none.
+fn color(v: &ScriptValue) -> Result<Option<[u8; 3]>, String> {
+    match v {
+        ScriptValue::Null => Ok(None),
+        ScriptValue::Str(s) => {
+            let h = s.strip_prefix('#').filter(|h| h.len() == 6 && h.chars().all(|c| c.is_ascii_hexdigit()));
+            let h = h.ok_or_else(|| format!("{s:?} is not \"#rrggbb\""))?;
+            let byte = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).expect("checked");
+            Ok(Some([byte(0), byte(2), byte(4)]))
+        }
+        other => Err(format!("{other:?} is not \"#rrggbb\"")),
+    }
+}
+
+fn hex(c: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
 
 #[cfg(test)]

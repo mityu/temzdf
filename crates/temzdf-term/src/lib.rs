@@ -264,6 +264,25 @@ impl TermBuffer {
 
     /// Write `text` to the program as if typed (for scripts, like Vim's
     /// `chansend()`).
+    /// The default colours (the session's theme): what `Default` and
+    /// palette cells mean, and what programs asking (OSC 10, 11, 4) are
+    /// told. `None` and missing entries: libghostty's built-in defaults.
+    pub fn set_colors(&mut self, fg: Option<[u8; 3]>, bg: Option<[u8; 3]>, palette: &[[u8; 3]]) {
+        use libghostty_vt::style::RgbColor;
+        let rgb = |c: [u8; 3]| RgbColor { r: c[0], g: c[1], b: c[2] };
+        let _ = self.terminal.set_default_fg_color(fg.map(rgb));
+        let _ = self.terminal.set_default_bg_color(bg.map(rgb));
+        let _ = self.terminal.set_default_color_palette(None);
+        if !palette.is_empty()
+            && let Ok(mut p) = self.terminal.default_color_palette()
+        {
+            for (i, c) in palette.iter().enumerate().take(256) {
+                p.0[i] = rgb(*c);
+            }
+            let _ = self.terminal.set_default_color_palette(Some(p));
+        }
+    }
+
     pub fn send_text(&mut self, text: &str) -> bool {
         let redraw = self.scroll_to_bottom();
         self.write(text.as_bytes());

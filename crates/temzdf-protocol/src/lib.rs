@@ -16,12 +16,12 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use temzdf_scene::{Effect, Frame, Hints, ImageUpdate};
+use temzdf_scene::{Appearance, Effect, Frame, Hints, ImageUpdate};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 9;
 /// Larger messages are refused (a frame with every image of a full cache is
 /// about 200 MB).
 const MAX_MESSAGE: usize = 512 << 20;
@@ -68,6 +68,8 @@ pub enum ServerMsg {
         complete: bool,
     },
     Effect(Effect),
+    /// How to look (GUI clients): when attaching and when it changes.
+    Appearance(Appearance),
     /// The connection ends.
     Exit(ExitReason),
     Info(SessionInfo),

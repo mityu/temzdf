@@ -95,6 +95,8 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     let mut next_client: ClientId = 1;
     let mut latest: Option<ClientId> = None;
     let mut last_frame: Option<(u64, Frame, bool)> = None;
+    // How GUI clients look, as last sent.
+    let mut looks = session.appearance();
     let mut seq = 0u64;
     let mut dirty = true;
     let mut shown_pointer = Pointer::Default;
@@ -154,6 +156,14 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 let _ = c.tx.send(ServerMsg::Effect(effect));
             }
         }
+        // The configuration changed how GUI clients look.
+        let now_looks = session.appearance();
+        if now_looks != looks {
+            for c in clients.values().filter(|c| c.attached) {
+                let _ = c.tx.send(ServerMsg::Appearance(now_looks.clone()));
+            }
+            looks = now_looks;
+        }
         let can_send = clients.values().any(|c| c.attached && !c.awaiting) && !session.holds_frames();
         let timeout = wait_for(dirty, session.is_animating(), can_send, made, session.next_deadline(), Instant::now())
             .min(SOCKET_CHECK);
@@ -198,6 +208,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                         clients.remove(&id);
                         continue;
                     }
+                    let _ = c.tx.send(ServerMsg::Appearance(session.appearance()));
                     c.attached = true;
                     c.pending = session.images().snapshot().into_iter().map(|u| (key_of(&u), u)).collect();
                     (c.geometry, c.hints) = (usable(geometry), Some(hints));

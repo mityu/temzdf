@@ -137,6 +137,14 @@ pub struct Options {
     /// When the tab line shows (Vim's `showtabline`): 0 never, 1 with two
     /// tabs or more, 2 always.
     pub showtabline: u8,
+    /// Colours for clients and terminal panes (`None`: the client's own),
+    /// and the first palette entries.
+    pub foreground: Option<[u8; 3]>,
+    pub background: Option<[u8; 3]>,
+    pub palette: Vec<[u8; 3]>,
+    /// The GUI font (Neovim's `guifont`), and one for wide characters.
+    pub guifont: String,
+    pub guifontwide: Option<String>,
 }
 
 impl Default for Options {
@@ -157,6 +165,11 @@ impl Default for Options {
             synctexeditor: None,
             remainonexit: false,
             showtabline: 1,
+            foreground: None,
+            background: None,
+            palette: Vec::new(),
+            guifont: "UDEV Gothic NF:h14".into(),
+            guifontwide: None,
         }
     }
 }
@@ -819,7 +832,9 @@ impl Session {
                 bail!("cannot start {}: {e}", spawn.argv.as_ref().map_or("the shell".into(), |a| a.join(" ")));
             }
         };
-        self.terms.insert(buf, TermEntry { term: Box::new(term), exited: false });
+        let mut term = Box::new(term);
+        term.set_colors(self.options.foreground, self.options.background, &self.options.palette);
+        self.terms.insert(buf, TermEntry { term, exited: false });
         self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str("terminal".into())]);
         self.terminal_pane(id, buf, rect, focus);
         Ok(id)
@@ -1213,6 +1228,22 @@ impl Session {
             h.set_options(host.clone());
         }
         self.history.cap = self.options.modehistory;
+        let o = &self.options;
+        for t in self.terms.values_mut() {
+            t.term.set_colors(o.foreground, o.background, &o.palette);
+        }
+    }
+
+    /// How GUI clients should look (see [`temzdf_scene::Appearance`]).
+    pub fn appearance(&self) -> temzdf_scene::Appearance {
+        let o = &self.options;
+        temzdf_scene::Appearance {
+            foreground: o.foreground,
+            background: o.background,
+            palette: o.palette.clone(),
+            font: o.guifont.clone(),
+            font_wide: o.guifontwide.clone(),
+        }
     }
 
     /// The current mode's name.
@@ -3073,5 +3104,37 @@ mod tests {
         s.client_focus(true);
         let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
         assert!(rows.iter().any(|l| l.contains("got: 033 [ O 033 [ I")), "{rows:?}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn the_theme_answers_programs_colour_queries() {
+        let script = "stty raw -echo min 0 time 20; printf ready; printf '\\033]11;?\\033\\\\'; v=$(dd bs=64 count=1 2>/dev/null | tr -d '\\033'); printf 'got:%s' \"$v\"; sleep 30";
+        let (mut s, rx) = terminal_session(&["sh", "-c", "sleep 30"]);
+        s.set_option("background", &ScriptValue::Str("#102030".into())).unwrap();
+        s.set_option("palette", &ScriptValue::List(vec![ScriptValue::Str("#ff0000".into())])).unwrap();
+        // A terminal opened after the theme was set gets it too.
+        s.run_command(
+            "new-pane",
+            &[
+                ScriptValue::Str("--".into()),
+                ScriptValue::Str("sh".into()),
+                ScriptValue::Str("-c".into()),
+                ScriptValue::Str(script.into()),
+            ],
+            None,
+            Instant::now(),
+        )
+        .unwrap();
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
+        assert!(rows.iter().any(|l| l.contains("rgb:1010/2020/3030")), "{rows:?}");
+        // Options read back; bad values are refused.
+        assert_eq!(s.appearance().background, Some([0x10, 0x20, 0x30]));
+        assert_eq!(s.appearance().palette, [[0xff, 0, 0]]);
+        assert_eq!(s.appearance().font, "UDEV Gothic NF:h14");
+        assert!(s.set_option("foreground", &ScriptValue::Str("#12345".into())).is_err());
+        assert!(s.set_option("palette", &ScriptValue::List(vec![ScriptValue::Null])).is_err());
+        s.set_option("guifontwide", &ScriptValue::Str("Noto Sans CJK JP".into())).unwrap();
+        assert_eq!(s.appearance().font_wide.as_deref(), Some("Noto Sans CJK JP"));
     }
 }

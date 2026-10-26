@@ -939,3 +939,28 @@ fn the_terminals_focus_reaches_a_program_in_a_session() {
     t.focus(true);
     t.wait_text("033 [ O 033 [ I");
 }
+
+#[test]
+fn an_attaching_client_is_told_how_to_look() {
+    use temzdf_protocol::{ClientMsg, ServerMsg};
+    let env = Env::new("appearance");
+    env.config("config.js", "import { o } from \"temzdf\";\no.background = \"#102030\";\no.guifont = \"Mono:h11\";\n");
+    let mut t = Term::spawn(&[BIN, "-s", "ap"], &env.options());
+    t.wait_for("the prompt", prompt);
+    // A second client, as a GUI would attach.
+    let sock = env.path("run/temzdf/sessions/ap.sock");
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+    let geometry =
+        termpix::geom::Geometry { cols: 80, rows: 24, cell: termpix::geom::CellSize { width: 10, height: 20 } };
+    let hello = ClientMsg::Hello { version: temzdf_protocol::VERSION, geometry, hints: Default::default() };
+    temzdf_protocol::send(&mut s, &hello).unwrap();
+    let looks = loop {
+        match temzdf_protocol::recv::<ServerMsg>(&mut s).unwrap().unwrap() {
+            ServerMsg::Appearance(a) => break a,
+            ServerMsg::Frame { .. } => panic!("a frame before the appearance"),
+            _ => {}
+        }
+    };
+    assert_eq!((looks.background, looks.font.as_str()), (Some([0x10, 0x20, 0x30]), "Mono:h11"));
+}

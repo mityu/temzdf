@@ -152,6 +152,10 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `synctexeditor` | `null` | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/synctex.md. `--editor` overrides it |
 | `remainonexit` | `false` | a shown terminal whose program ended keeps its panes (tmux's `remain-on-exit`) |
 | `showtabline` | `1` | when the tab line shows (Vim's): `0` never, `1` with two tab pages or more, `2` always |
+| `foreground`, `background` | `null` | default colours (`"#rrggbb"`) of GUI clients and terminal panes (programs asking with OSC 10/11 are told); `null`: the client's own. A terminal client's terminal keeps its own |
+| `palette` | `[]` | the first colours of the 256-colour palette (`["#000000", "#cd0000", ...]`), for GUI clients and terminal panes (OSC 4); the rest stay the default |
+| `guifont` | `"UDEV Gothic NF:h14"` | the GUI client's font, as Neovim's `guifont` (`Family:hSIZE`, points) |
+| `guifontwide` | `null` | the GUI client's font for wide (CJK) characters; `null`: `guifont`, then fallbacks |
 
 ## Buffers
 
@@ -255,7 +259,8 @@ them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `prevTab`, `gotoTab`, `moveTab`, `renameTab`, `breakPane`, `tabs`,
 `currentTab`, `buffers`, `showBuffer`, `edit`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
-`sendText`, `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
+`sendText`, `paste` (the client's clipboard, or `"primary"`; GUI clients:
+terminal clients paste with the terminal's keys), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
 `search`, ...: every action of the PDF table above, taking the count).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
