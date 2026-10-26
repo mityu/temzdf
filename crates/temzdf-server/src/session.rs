@@ -983,8 +983,7 @@ impl Session {
         }
         // <C-c> cancels pending keys and the count; otherwise it is an
         // ordinary (unmappable) key.
-        let ctrl_c =
-            k.code == KeyCode::Char('c') && k.modifiers.without_locks() == termpix_core::input::Modifiers::CTRL;
+        let ctrl_c = script::is_interrupt(k);
         if ctrl_c && (!self.matcher.pending().is_empty() || self.matcher.count().is_some()) {
             self.matcher.cancel();
             return Outcome::None;

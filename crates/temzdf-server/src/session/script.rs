@@ -121,6 +121,12 @@ pub struct Bridge {
     startup_error: Option<String>,
 }
 
+/// `<C-c>`, whatever the lock keys (kitty's keyboard protocol reports Caps
+/// Lock and Num Lock as modifiers).
+pub(super) fn is_interrupt(k: &KeyEvent) -> bool {
+    k.code == KeyCode::Char('c') && k.modifiers.without_locks() == Modifiers::CTRL
+}
+
 impl Bridge {
     /// The script host is up.
     pub(super) fn running(&self) -> bool {
@@ -266,7 +272,7 @@ impl Session {
         if !self.script.busy() {
             return false;
         }
-        if k.code == KeyCode::Char('c') && k.modifiers == Modifiers::CTRL {
+        if is_interrupt(k) {
             // As Vim's CTRL-C: typeahead is dropped too.
             self.matcher.cancel();
             self.script.held.clear();
@@ -806,5 +812,20 @@ impl Session {
             "remainonexit" => ScriptValue::Bool(o.remainonexit),
             other => return Err(format!("no option {other:?}")),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ctrl_c_interrupts_with_lock_keys_on() {
+        let key = |m| KeyEvent::new(KeyCode::Char('c'), m);
+        assert!(is_interrupt(&key(Modifiers::CTRL)));
+        assert!(is_interrupt(&key(Modifiers::CTRL | Modifiers::CAPS_LOCK)));
+        assert!(is_interrupt(&key(Modifiers::CTRL | Modifiers::NUM_LOCK | Modifiers::CAPS_LOCK)));
+        assert!(!is_interrupt(&key(Modifiers::CTRL | Modifiers::SHIFT)));
+        assert!(!is_interrupt(&key(Modifiers::CAPS_LOCK)));
     }
 }
