@@ -287,6 +287,8 @@ pub struct Session {
     terms: HashMap<BufferId, TermEntry>,
     /// Advanced whenever a buffer is hidden.
     clock: u64,
+    /// What a new shell pane runs; `None`: `$SHELL`.
+    shell: Option<Vec<String>>,
     panes: HashMap<PaneId, PaneEntry>,
     layout: Option<Layout>,
     focus: PaneId,
@@ -328,6 +330,7 @@ impl Session {
             docs: HashMap::new(),
             terms: HashMap::new(),
             clock: 0,
+            shell: None,
             panes: HashMap::new(),
             layout: None,
             focus: 0,
@@ -724,6 +727,7 @@ impl Session {
         let events = self.events.clone();
         let sink: temzdf_term::Sink = Arc::new(move |e| events(SessionEvent::Term(buf, e)));
         let mut spawn = spawn.clone();
+        spawn.argv = spawn.argv.or_else(|| self.shell.clone());
         spawn.env.push(("TEMZDF_SESSION_NAME".into(), self.name.clone()));
         let geometry = Geometry { cols: rect.w as u16, rows: rect.h as u16, cell: self.geometry.cell };
         let term = match TermBuffer::spawn(&spawn, geometry, sink) {
@@ -1828,6 +1832,8 @@ mod tests {
         let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
         let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
         let mut s = Session::new("term".into(), GEOMETRY, Hints::default(), settings, sink);
+        // Splits start this instead of the user's $SHELL.
+        s.shell = Some(vec!["/bin/sh".into()]);
         default_mappings(&mut s.modes);
         let spec = PaneSpec::Command(argv.iter().map(|a| a.to_string()).collect());
         s.new_pane(&spec, None).unwrap();
@@ -1894,9 +1900,6 @@ mod tests {
     fn splitting_a_terminal_starts_another_shell_beside_it() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo left; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "left");
-        // SHELL decides what the split runs.
-        // SAFETY: tests in this module do not read SHELL concurrently.
-        unsafe { std::env::set_var("SHELL", "/bin/sh") };
         key(&mut s, "<C-b>");
         assert_eq!(key(&mut s, "%"), Outcome::Redraw);
         assert_eq!(s.pane_count(), 2);
@@ -1934,8 +1937,6 @@ mod tests {
 
     #[test]
     fn closed_terminals_keep_running_hidden() {
-        // SAFETY: tests in this module do not read SHELL concurrently.
-        unsafe { std::env::set_var("SHELL", "/bin/sh") };
         let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo first; read l; echo \"got:$l\"; read l"]);
         wait_text(&mut s, &rx, |r| r[0] == "first");
         let first = s.panes[&s.focus].buffer();
@@ -1960,8 +1961,6 @@ mod tests {
 
     #[test]
     fn a_hidden_terminal_that_ended_stays_until_it_was_shown() {
-        // SAFETY: tests in this module do not read SHELL concurrently.
-        unsafe { std::env::set_var("SHELL", "/bin/sh") };
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo started; sleep 1; echo bye"]);
         wait_text(&mut s, &rx, |r| r[0] == "started");
         let first = s.panes[&s.focus].buffer();
@@ -1983,8 +1982,6 @@ mod tests {
 
     #[test]
     fn a_terminal_in_two_panes_is_as_large_as_the_larger() {
-        // SAFETY: tests in this module do not read SHELL concurrently.
-        unsafe { std::env::set_var("SHELL", "/bin/sh") };
         let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo ready; while read l; do stty size; done"]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
         let first = s.panes[&s.focus].buffer();

@@ -62,7 +62,11 @@ pub fn socket_path(pdf: &Path) -> PathBuf {
 
 /// Send a request to the viewer of `pdf`. `Ok(false)` when no viewer is running.
 pub fn send_forward(pdf: &Path, req: &ForwardRequest) -> std::io::Result<bool> {
-    let Ok(mut stream) = UnixStream::connect(socket_path(pdf)) else { return Ok(false) };
+    send_to(&socket_path(pdf), req)
+}
+
+fn send_to(socket: &Path, req: &ForwardRequest) -> std::io::Result<bool> {
+    let Ok(mut stream) = UnixStream::connect(socket) else { return Ok(false) };
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.write_all(req.encode().as_bytes())?;
     let mut reply = String::new();
@@ -86,7 +90,10 @@ impl Drop for Server {
 /// keeps its socket (an error here); a stale socket left by a crashed viewer is
 /// replaced.
 pub fn serve(pdf: &Path, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> std::io::Result<Server> {
-    let path = socket_path(pdf);
+    serve_at(socket_path(pdf), deliver)
+}
+
+fn serve_at(path: PathBuf, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> std::io::Result<Server> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
         use std::os::unix::fs::PermissionsExt;
@@ -137,18 +144,16 @@ mod tests {
     fn round_trip_through_the_socket() {
         let dir = std::env::temp_dir().join(format!("temzdf-ipc-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let pdf = dir.join("doc.pdf");
-        std::fs::write(&pdf, b"%PDF").unwrap();
-        // Use a private runtime dir so tests never touch a real viewer's socket.
-        unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
+        // A private socket, so tests never touch a real viewer's.
+        let socket = dir.join("temzdf").join("doc.sock");
         let (tx, rx) = std::sync::mpsc::channel();
-        let server = serve(&pdf, move |r| tx.send(r).is_ok()).unwrap();
-        assert!(serve(&pdf, |_| true).is_err(), "second viewer");
+        let server = serve_at(socket.clone(), move |r| tx.send(r).is_ok()).unwrap();
+        assert!(serve_at(socket.clone(), |_| true).is_err(), "second viewer");
         let req = ForwardRequest { file: "main.tex".into(), line: 42, column: 0 };
-        assert!(send_forward(&pdf, &req).unwrap());
+        assert!(send_to(&socket, &req).unwrap());
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);
         drop(server);
-        assert!(!send_forward(&pdf, &req).unwrap(), "socket removed");
+        assert!(!send_to(&socket, &req).unwrap(), "socket removed");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

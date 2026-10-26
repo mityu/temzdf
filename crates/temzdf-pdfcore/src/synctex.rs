@@ -70,7 +70,9 @@ pub struct Scanner {
 }
 
 // SAFETY: the scanner is only ever used from one thread at a time (it is owned,
-// and all methods take `&mut self`); the library keeps no thread-local state.
+// and all methods take `&mut self`). The library has no thread-local state; its
+// globals are class tables a new scanner copies (read only) and the static
+// buffers of the debugging `*_abstract` functions, which we never call.
 unsafe impl Send for Scanner {}
 
 impl Drop for Scanner {
