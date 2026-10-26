@@ -203,10 +203,21 @@ impl Compositor {
     /// Add an RGBA image (straight alpha). It is uploaded lazily, the first time a
     /// frame uses it.
     pub fn add_image(&mut self, width: u32, height: u32, data: impl Into<Arc<[u8]>>) -> ImageId {
-        let id = self.next_id;
-        self.next_id = self.next_id.checked_add(1).unwrap_or(FIRST_IMAGE_ID);
+        let id = self.free_id();
         self.insert_image(id, width, height, data.into());
         ImageId(id)
+    }
+
+    /// The next image id: never one of the ids kept for strips and fences,
+    /// nor one still in use after the ids went all the way round.
+    fn free_id(&mut self) -> u32 {
+        loop {
+            let id = self.next_id;
+            self.next_id = id.checked_add(1).unwrap_or(FIRST_IMAGE_ID);
+            if !(STRIP_IDS..FENCE_IDS.end).contains(&id) && !self.images.contains_key(&id) {
+                return id;
+            }
+        }
     }
 
     /// Replace the pixels of an existing image (it may change size).
@@ -885,6 +896,20 @@ mod tests {
         term.feed(&out2);
         assert_eq!(term.render().pixel(5, 0), [255, 0, 0, 255]);
         assert_eq!(term.render().pixel(4, 0), [0, 0, 0, 255], "uncovered: terminal background");
+    }
+
+    #[test]
+    fn image_ids_skip_the_reserved_ones_and_those_in_use() {
+        let mut c = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, geometry());
+        c.next_id = STRIP_IDS - 1;
+        assert_eq!(c.add_image(1, 1, vec![0; 4]).raw(), STRIP_IDS - 1);
+        assert_eq!(c.add_image(1, 1, vec![0; 4]).raw(), FENCE_IDS.end, "past strips and fences");
+        // All the way round: the first ids are still in use.
+        c.next_id = FIRST_IMAGE_ID;
+        let a = c.add_image(1, 1, vec![0; 4]).raw();
+        c.next_id = u32::MAX;
+        assert_eq!(c.add_image(1, 1, vec![0; 4]).raw(), u32::MAX);
+        assert_eq!(c.add_image(1, 1, vec![0; 4]).raw(), a + 1, "{a} is taken");
     }
 
     #[test]
