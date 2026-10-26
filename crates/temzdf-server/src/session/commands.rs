@@ -235,11 +235,11 @@ impl Session {
             }
             "rotate-panes" => {
                 let reverse = matches!(args.first(), Some(ScriptValue::Bool(true)));
-                let pane = self.focus;
+                let (pane, area) = (self.focus, self.area());
                 let mut moved = false;
                 if let Some(l) = self.layout.as_mut() {
                     for _ in 0..count.unwrap_or(1) {
-                        moved |= l.rotate(pane, reverse);
+                        moved |= l.rotate(pane, reverse, area);
                     }
                 }
                 if moved {

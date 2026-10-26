@@ -183,18 +183,49 @@ impl Layout {
             Direction::Up => (Split::Vertical, true),
             Direction::Down => (Split::Vertical, false),
         };
-        if self.split_at(None, pane, split, first, area) {
+        if self.split_at(None, pane, split, first, area) && self.settle(area) {
             return true;
         }
         *self = before;
         false
     }
 
+    /// Give every split a size its halves fit in (each keeps its panes'
+    /// smallest size), as shown on `area`; after moves that put subtrees in
+    /// places sized for others. False when the layout cannot fit at all.
+    fn settle(&mut self, area: Rect) -> bool {
+        fn walk(n: &mut Node, r: Rect) -> bool {
+            let Node::Split { split, a, b, size } = n else { return r.w >= MIN_COLS && r.h >= MIN_ROWS };
+            let room = match split {
+                Split::Horizontal => r.w,
+                Split::Vertical => r.h,
+            }
+            .saturating_sub(1);
+            let (lo, min_b) = (min_extent(a, *split), min_extent(b, *split));
+            if lo + min_b > room {
+                return false;
+            }
+            *size = (*size).clamp(lo, room - min_b);
+            let (ra, rb) = parts(*split, r, *size, min_b);
+            walk(a, ra) && walk(b, rb)
+        }
+        walk(&mut self.root, area)
+    }
+
     /// Rotate the panes in the row or column `pane` is in (the splits of
     /// one kind around it), each taking the next one's place, the last the
     /// first's (`reverse`: the other way), as Vim's `<C-w>r` and `<C-w>R`.
     /// The places keep their sizes. False with nothing to rotate.
-    pub fn rotate(&mut self, pane: PaneId, reverse: bool) -> bool {
+    pub fn rotate(&mut self, pane: PaneId, reverse: bool, area: Rect) -> bool {
+        let before = self.clone();
+        if self.rotate_places(pane, reverse) && self.settle(area) {
+            return true;
+        }
+        *self = before;
+        false
+    }
+
+    fn rotate_places(&mut self, pane: PaneId, reverse: bool) -> bool {
         let Some(path) = self.path_to(pane) else { return false };
         let Some(parent) = path.len().checked_sub(1) else { return false };
         let Some(Node::Split { split, .. }) = self.node(&path[..parent]) else { return false };
@@ -635,6 +666,40 @@ mod tests {
         assert_eq!(l, before);
     }
 
+    /// Every pane at least its smallest size.
+    fn assert_min(l: &Layout, area: Rect) {
+        for (p, r) in l.rects(area) {
+            assert!(r.w >= MIN_COLS && r.h >= MIN_ROWS, "pane {p} is {r:?}: {:?}", l.rects(area));
+        }
+    }
+
+    #[test]
+    fn moves_and_rotations_keep_every_pane_at_its_smallest_size() {
+        // Six side by side on 101 columns; the first to the right edge
+        // used to leave a pane 6 columns wide.
+        let area = Rect::new(0, 0, 101, 31);
+        let mut l = Layout::new(1);
+        l.split(1, 2, Split::Horizontal, area);
+        l.split(1, 3, Split::Horizontal, area);
+        l.split(3, 5, Split::Horizontal, area);
+        l.split(2, 4, Split::Horizontal, area);
+        l.split(4, 6, Split::Horizontal, area);
+        assert_min(&l, area);
+        assert!(l.move_to_edge(1, Direction::Right, area));
+        assert_min(&l, area);
+        // 1 | ((2 | 3) / 4) with 1 narrowed to 10: rotating put the column
+        // into 10 columns, pane 2 0 wide.
+        let mut l = Layout::new(1);
+        l.split(1, 2, Split::Horizontal, AREA);
+        l.split(2, 4, Split::Vertical, AREA);
+        l.split(2, 3, Split::Horizontal, AREA);
+        l.set_pane_size(1, Split::Horizontal, 10, AREA);
+        assert_eq!(rect_of(&l, 1).w, 10);
+        assert!(l.rotate(1, false, AREA));
+        assert_eq!(l.panes(), [2, 3, 4, 1]);
+        assert_min(&l, AREA);
+    }
+
     #[test]
     fn panes_rotate_within_their_row_and_keep_the_places_sizes() {
         // 1 | 2 | 3, the first one wider.
@@ -644,19 +709,19 @@ mod tests {
         l.move_border(1, Split::Horizontal, 10, AREA);
         let widths = |l: &Layout| l.rects(AREA).iter().map(|(_, r)| r.w).collect::<Vec<_>>();
         let before = widths(&l);
-        assert!(l.rotate(2, false));
+        assert!(l.rotate(2, false, AREA));
         assert_eq!(l.panes(), [3, 1, 2]);
         assert_eq!(widths(&l), before, "the places keep their sizes");
-        assert!(l.rotate(2, true));
+        assert!(l.rotate(2, true, AREA));
         assert_eq!(l.panes(), [1, 2, 3]);
         // A column inside a row turns as one.
         let mut l = three();
-        assert!(l.rotate(1, false));
+        assert!(l.rotate(1, false, AREA));
         assert_eq!(l.panes(), [2, 3, 1]);
         // Within the column: 2 and 3 swap.
-        assert!(l.rotate(2, false));
+        assert!(l.rotate(2, false, AREA));
         assert_eq!(l.panes(), [3, 2, 1]);
-        assert!(!Layout::new(1).rotate(1, false), "nothing to rotate");
+        assert!(!Layout::new(1).rotate(1, false, AREA), "nothing to rotate");
     }
 
     #[test]
