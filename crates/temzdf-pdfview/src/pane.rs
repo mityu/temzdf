@@ -1325,7 +1325,11 @@ impl PdfPane {
         }
         let closed = had_preview && self.preview.is_none();
         let (x, y) = self.pointer;
-        let over_sidebar = self.sidebar_open && self.drag.is_none() && self.sidebar_rect().contains(x as i32, y as i32);
+        // A selection or drag that moved over the sidebar is still the page's.
+        let over_sidebar = self.sidebar_open
+            && self.drag.is_none()
+            && !self.selecting
+            && self.sidebar_rect().contains(x as i32, y as i32);
         if over_sidebar {
             self.hover = None;
             let uri_cleared = self.hover_uri.take().is_some();
@@ -1521,6 +1525,22 @@ mod tests {
         // Valid boxes after an invalid one still count.
         s.forward_result(vec![PdfBox { page: pages, rect }, PdfBox { page: pages - 1, rect }], Instant::now());
         assert_eq!(s.flash.as_ref().map(|f| f.0.len()), Some(1));
+    }
+
+    #[test]
+    fn a_selection_released_over_the_sidebar_ends_and_copies() {
+        let mut s = session();
+        let a = char_pos(&mut s, "temzdf sample", 0);
+        s.sidebar_open = true;
+        let side = s.sidebar_rect();
+        let over = ((side.x + 5) as f32, a.1);
+        assert!(a.0 > over.0, "the text is right of the sidebar");
+        mouse(&mut s, MouseEventKind::Press(MouseButton::Left), (a.0 + 1.0, a.1));
+        mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), (a.0 + 40.0, a.1));
+        mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), over);
+        mouse(&mut s, MouseEventKind::Release(MouseButton::Left), over);
+        assert!(!s.selecting, "the release reached the page");
+        assert!(matches!(s.take_requests()[..], [Request::Copy(_)]));
     }
 
     #[test]
