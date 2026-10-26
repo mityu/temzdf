@@ -68,6 +68,12 @@ Known problems:
   (`crates/termpix/src/graphics.rs`). Reproduce with
   `TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf target/fixtures/sample.pdf`
   after switching the level back to 1. Not yet reported upstream.
+- WezTerm 20260117 (software renderer, Xvfb, 2026-10-28): SGR-pixel
+  coordinates are one-based (`xdotool mousemove 450 300` arrives as 451,301;
+  kitty reports 450,300), and input arrives in bursts while it renders:
+  wheel steps sent 30 ms apart came 78, 1, 24 and 91 ms apart. So
+  `scripts/e2e.sh` replays what temzdf recorded (`TEMZDF_RECORD_INPUT`),
+  not what it sent.
 - Ghostty (reported by the user, 2026-10-27, more often over SSH) reports
   SGR-pixel motion past the window's left or top edge with negative
   coordinates (`CSI <35;-3;251M`). The `-` is not a CSI parameter byte

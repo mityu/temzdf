@@ -12,24 +12,36 @@
 #   -o OUTDIR where screenshots and terminal.log go (default: target/e2e)
 #   ACTIONS   bash file sourced after the terminal started; it can use the helpers below.
 #
-# Helpers available to ACTIONS (coordinates are window pixels):
+# Helpers available to ACTIONS (coordinates are window pixels; MODS are
+# letters: C Ctrl, S Shift, A Alt):
 #   shot NAME          save OUTDIR/NAME.png
-#   wheel N [X Y]      N wheel steps (N<0 scrolls up) at X,Y (default: centre)
+#   wheel N [X Y [MODS]] N wheel steps (N<0 scrolls up) at X,Y (default: centre),
+#                      30 ms apart (a flick: they accelerate)
 #   drag X Y1 Y2       left-drag vertically from Y1 to Y2
-#   click X Y [BTN]    click (button 1 by default)
+#   dragto X1 Y1 X2 Y2 [STEPS]  left-drag in STEPS moves (default 10), 30 ms apart
+#   click X Y [BTN [MODS]]  click (button 1 by default)
 #   move X Y           move the pointer (hover)
 #   keys KEY...        xdotool key names, e.g. `keys q` or `keys ctrl+f`
 #   type TEXT          type literal text
 #   pause SECONDS
-#   expect NAME [KEYS] save OUTDIR/NAME.png and compare it with the screen
+#   expect NAME KEYS   save OUTDIR/NAME.png and compare it with the screen
 #                      `temzdf --render-frame` draws for the same geometry after
 #                      KEYS (Vim feedkeys notation, e.g. "3G" or
-#                      "/needle<CR>"; the whole sequence since startup). Only for
-#                      COMMAND = temzdf [--page N] [--scale S] FILE (possibly
-#                      after `env VAR=...`), key-driven scenarios (mouse actions
-#                      have no headless equivalent) and terminals drawing from
-#                      the window's top-left (kitty, WezTerm). Results go to
-#                      OUTDIR/expect.txt, mismatches to NAME.diff.png.
+#                      "/needle<CR>"; the whole sequence since startup; "" for
+#                      the first screen).
+#   expect NAME        the same after all the input temzdf handled since
+#                      startup, replayed with its timing (--render-frame
+#                      --events of what temzdf recorded through
+#                      TEMZDF_RECORD_INPUT, so the terminal's own delivery
+#                      times and coordinates count): mouse actions too. Pause
+#                      before it until animations end. Mouse actions are not
+#                      judged inside multiplexers (they report cells).
+#                      Both forms only for COMMAND = temzdf [--page N] [--scale
+#                      S] FILE (possibly after `env VAR=...`) and terminals
+#                      drawing from the window's top-left (kitty, WezTerm,
+#                      Ghostty without decorations). Results go to
+#                      OUTDIR/expect.txt, mismatches to NAME.diff.png; the
+#                      recorded input to OUTDIR/events.txt.
 #
 # temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log.
 # It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij) and
@@ -80,33 +92,152 @@ if [[ -z "${E2E_INNER:-}" ]]; then
   exec xvfb-run -a -s "-screen 0 ${width}x${height}x24" "$self" -t "$term" ${mux:+-m "$mux"} -s "$size" -o "$outdir" "$actions" -- "$@"
 fi
 
+# What the helpers send is recorded with its time (OUTDIR/events.txt, in
+# `--render-frame --events` form, window pixels minus the terminal area's
+# origin): for checking what was sent against what temzdf recorded
+# (OUTDIR/input.txt), and for when the last input went out.
+events=$outdir/events.txt
+origin_x=0 origin_y=0
+t0=0
+# Microseconds now, without starting a process.
+usec() { local t=$EPOCHREALTIME; echo "${t/./}"; }
+# record [-at MS] WHAT...: at the time given (milliseconds since t0) or now.
+record() {
+  local ms
+  if [[ $1 == -at ]]; then ms=$2; shift 2; else ms=$((($(usec) - t0) / 1000)); fi
+  echo "$ms $*" >>"$events"
+}
+# Window pixels to the terminal's.
+at() { echo "$(($1 - origin_x)) $(($2 - origin_y))"; }
+# xdotool modifier key names for MODS letters.
+mod_keys() {
+  local m=${1:-} c
+  for ((c = 0; c < ${#m}; c++)); do
+    case ${m:c:1} in
+      C) echo ctrl ;; S) echo shift ;; A) echo alt ;;
+      *) echo "bad modifier ${m:c:1}" >&2; exit 2 ;;
+    esac
+  done
+}
+button_name() { case $1 in 1) echo left ;; 2) echo middle ;; 3) echo right ;; *) echo "bad button $1" >&2; exit 2 ;; esac; }
+
 shot() { import -window root "$outdir/$1.png"; }
 wheel() {
-  local n=$1 x=${2:-$((width / 2))} y=${3:-$((height / 2))} btn=5
-  if ((n < 0)); then btn=4; n=$((-n)); fi
+  local n=$1 x=${2:-$((width / 2))} y=${3:-$((height / 2))} mods=${4:-} btn=5 dir=down k
+  if ((n < 0)); then btn=4 dir=up n=$((-n)); fi
   xdotool mousemove "$x" "$y"
-  for _ in $(seq "$n"); do xdotool click "$btn"; sleep 0.03; done
+  record move "$(at "$x" "$y")" $mods
+  for k in $(mod_keys "$mods"); do xdotool keydown "$k"; done
+  # One xdotool call: separate ones take about 0.1 s each, too slow for a
+  # flick. The steps are recorded at the times xdotool spaces them.
+  local first=$((($(usec) - t0) / 1000)) i
+  xdotool click --repeat "$n" --delay 30 "$btn"
+  for ((i = 0; i < n; i++)); do record -at $((first + 30 * i)) wheel $dir "$(at "$x" "$y")" $mods; done
+  for k in $(mod_keys "$mods"); do xdotool keyup "$k"; done
 }
-drag() {
-  local x=$1 y=$2 to=$3 step
-  step=$(((to - y) / 10))
-  ((step == 0)) && step=1
-  xdotool mousemove "$x" "$y" mousedown 1
-  while (((step > 0 && y < to) || (step < 0 && y > to))); do
-    y=$((y + step))
-    if (((step > 0 && y > to) || (step < 0 && y < to))); then y=$to; fi
-    xdotool mousemove "$x" "$y"
+dragto() {
+  local x=$1 y=$2 x2=$3 y2=$4 steps=${5:-10} i px py
+  xdotool mousemove "$x" "$y"
+  record move "$(at "$x" "$y")"
+  xdotool mousedown 1
+  record press "$(at "$x" "$y")" left
+  for ((i = 1; i <= steps; i++)); do
+    px=$((x + (x2 - x) * i / steps)) py=$((y + (y2 - y) * i / steps))
+    xdotool mousemove "$px" "$py"
+    record drag "$(at "$px" "$py")" left
     sleep 0.03
   done
   xdotool mouseup 1
+  record release "$(at "$x2" "$y2")" left
 }
-click() { xdotool mousemove "$1" "$2" click "${3:-1}"; }
-move() { xdotool mousemove "$1" "$2"; }
-keys() { xdotool key "$@"; }
-type() { xdotool type -- "$1"; }
+drag() { dragto "$1" "$2" "$1" "$3"; }
+click() {
+  local x=$1 y=$2 btn=${3:-1} mods=${4:-} k b
+  b=$(button_name "$btn")
+  xdotool mousemove "$x" "$y"
+  record move "$(at "$x" "$y")" $mods
+  for k in $(mod_keys "$mods"); do xdotool keydown "$k"; done
+  xdotool click "$btn"
+  record press "$(at "$x" "$y")" "$b" $mods
+  record release "$(at "$x" "$y")" "$b" $mods
+  for k in $(mod_keys "$mods"); do xdotool keyup "$k"; done
+}
+move() {
+  xdotool mousemove "$1" "$2"
+  record move "$(at "$1" "$2")"
+}
+# An xdotool key name in Vim's notation (the names actions use; others
+# stop the run rather than record something else).
+key_notation() {
+  local k=$1 mods="" name
+  while [[ $k == *+* ]]; do
+    case ${k%%+*} in
+      ctrl) mods+=C- ;; alt) mods+=M- ;; shift) mods+=S- ;;
+      *) echo "key_notation: $1" >&2; exit 2 ;;
+    esac
+    k=${k#*+}
+  done
+  case $k in
+    Return) name="<CR>" ;; Escape) name="<Esc>" ;; Tab) name="<Tab>" ;; BackSpace) name="<BS>" ;;
+    space) name="<Space>" ;; Up | Down | Left | Right | Home | End) name="<$k>" ;;
+    Page_Up | Prior) name="<PageUp>" ;; Page_Down | Next) name="<PageDown>" ;;
+    plus) name="+" ;; minus) name="-" ;; equal) name="=" ;; slash) name="/" ;; question) name="?" ;;
+    less) name="<lt>" ;; greater) name=">" ;; colon) name=":" ;; percent) name="%" ;;
+    [a-z0-9]) name=$k ;;
+    *) echo "key_notation: $1" >&2; exit 2 ;;
+  esac
+  # Shift with a letter is the capital (as the terminal reports it).
+  if [[ $mods == S- && $name == [a-z] ]]; then mods="" name=${name^^}; fi
+  if [[ -n $mods ]]; then
+    [[ $name == "<"*">" ]] && name=${name:1:-1}
+    name="<$mods$name>"
+  fi
+  echo "$name"
+}
+keys() {
+  local k
+  for k in "$@"; do
+    xdotool key "$k"
+    record key "$(key_notation "$k")"
+  done
+}
+type() {
+  local s=$1 i c out=""
+  xdotool type -- "$s"
+  for ((i = 0; i < ${#s}; i++)); do
+    c=${s:i:1}
+    case $c in
+      "<") out+="<lt>" ;; " ") out+="<Space>" ;; $'\n') out+="<CR>" ;; *) out+=$c ;;
+    esac
+  done
+  record key "$out"
+}
 pause() { sleep "$1"; }
 expect() {
-  local name=$1 keys=${2:-} geo cols rows cw ch out
+  local name=$1 keys=${2:-} input geo cols rows cw ch out
+  if (($# >= 2)); then
+    input=("--keys=$keys")
+  else
+    # Everything sent so far, then the moment of the screenshot.
+    if [[ -n $mux ]] && grep -qvE '^[0-9]+ key ' "$events"; then
+      echo "FAIL $name: mouse actions are not judged inside $mux" | tee -a "$outdir/expect.txt"
+      return
+    fi
+    # temzdf's own record of what it handled (its clock, the terminal's
+    # coordinates: terminals deliver late or offset), ended as long after
+    # its last input as the screenshot came after the last one sent.
+    if [[ ! -f $outdir/input.txt ]]; then
+      echo "FAIL $name: temzdf recorded no input (TEMZDF_RECORD_INPUT)" | tee -a "$outdir/expect.txt"
+      return
+    fi
+    local now sent last
+    now=$((($(usec) - t0) / 1000))
+    sent=$(tail -1 "$events" | cut -d' ' -f1)
+    last=$(tail -1 "$outdir/input.txt" | cut -d' ' -f1)
+    cp "$outdir/input.txt" "$outdir/$name.events.txt"
+    echo "$((${last:-0} + now - ${sent:-0})) end" >>"$outdir/$name.events.txt"
+    input=("--events=$outdir/$name.events.txt")
+  fi
   shot "$name"
   geo=$(grep -oE 'geometry [0-9]+x[0-9]+ cells of [0-9]+x[0-9]+ px' "$outdir/state/temzdf/temzdf.log" | tail -1) || {
     echo "FAIL $name: no geometry in temzdf.log" | tee -a "$outdir/expect.txt"
@@ -115,12 +246,12 @@ expect() {
   read -r cols rows cw ch <<<"$(sed -E 's/geometry ([0-9]+)x([0-9]+) cells of ([0-9]+)x([0-9]+) px/\1 \2 \3 \4/' <<<"$geo")"
   # --keys=...: key lists may start with "-" (zoom out).
   "${expect_cmd[@]}" --render-frame "$outdir/$name.expected.png" --size "${cols}x${rows}" \
-    --cell "${cw}x${ch}" "--keys=$keys" "$expect_file" 2>"$outdir/$name.expected.log" || {
+    --cell "${cw}x${ch}" "${input[@]}" "$expect_file" 2>"$outdir/$name.expected.log" || {
     echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
     return
   }
   # The terminal may have spare pixels right and below the cell grid.
-  magick "$outdir/$name.png" -crop "$((cols * cw))x$((rows * ch))+0+0" +repage "$outdir/$name.actual.png"
+  magick "$outdir/$name.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage "$outdir/$name.actual.png"
   out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.actual.png" "$outdir/$name.expected.png" \
     "$outdir/$name.diff.png" 2>&1 || true)
   out=${out%% *}
@@ -211,7 +342,8 @@ cleanup() {
   rm -rf -- "$XDG_RUNTIME_DIR"
 }
 trap cleanup EXIT
-clean_env=(env -u TEMZDF_LOG_DIR -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state")
+clean_env=(env -u TEMZDF_LOG_DIR -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state"
+  "TEMZDF_RECORD_INPUT=$outdir/input.txt")
 case $term in
   kitty)
     "${clean_env[@]}" kitty --config NONE -o font_size=12 -o "initial_window_width=$width" \
@@ -248,6 +380,9 @@ if [[ $term == wezterm ]]; then
   xdotool search --class wezterm windowfocus 2>/dev/null || true
   sleep 0.3
 fi
+# The recorded times start here (the first screen is up).
+: >"$events"
+t0=$(usec)
 # shellcheck source=/dev/null
 source "$actions"
 crashed=0

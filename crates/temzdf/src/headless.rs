@@ -69,7 +69,7 @@ pub enum Input {
 /// 120   press 160 412 left      press, release, drag: X Y BUTTON [MODS]
 /// 150   drag 160 430 left
 /// 180   release 160 430 left
-/// 200   move 300 200            move: X Y [MODS]
+/// 200   move 300 200            move, leave: X Y [MODS]
 /// 230   wheel down 300 200 C    wheel up|down|left|right X Y [MODS]
 /// 1500  end                     render at this time (else when settled)
 /// ```
@@ -113,6 +113,7 @@ pub fn parse_events(text: &str) -> Result<Vec<Timed>> {
             "release" => (MouseEventKind::Release(button()?), rest.get(3)),
             "drag" => (MouseEventKind::Drag(button()?), rest.get(3)),
             "move" => (MouseEventKind::Move, rest.get(2)),
+            "leave" => (MouseEventKind::Leave, rest.get(2)),
             "wheel" => {
                 let dir = match dir {
                     Some("up") => ScrollDirection::Up,
@@ -137,6 +138,79 @@ pub fn parse_events(text: &str) -> Result<Vec<Timed>> {
         out.push(Timed { at, input: Input::Mouse(MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers }) });
     }
     Ok(out)
+}
+
+/// Writes the input an interactive viewer handles, as a timeline for
+/// [`parse_events`] (`TEMZDF_RECORD_INPUT=FILE`): with the viewer's own clock
+/// and the terminal's own coordinates, so a replay sees what the viewer saw
+/// (not what a test sent: terminals deliver late, batch, or offset).
+pub struct Recorder {
+    out: std::io::BufWriter<std::fs::File>,
+    start: Instant,
+}
+
+impl Recorder {
+    /// From `TEMZDF_RECORD_INPUT`, if set.
+    pub fn from_env() -> Result<Option<Self>> {
+        let Some(path) = std::env::var_os("TEMZDF_RECORD_INPUT") else { return Ok(None) };
+        let file = std::fs::File::create(&path).with_context(|| format!("TEMZDF_RECORD_INPUT={path:?}"))?;
+        Ok(Some(Self { out: std::io::BufWriter::new(file), start: Instant::now() }))
+    }
+
+    fn line(&mut self, now: Instant, what: &str) {
+        use std::io::Write;
+        let ms = now.saturating_duration_since(self.start).as_millis();
+        let _ = writeln!(self.out, "{ms} {what}");
+        let _ = self.out.flush();
+    }
+
+    pub fn key(&mut self, k: &KeyEvent, now: Instant) {
+        if k.kind == termpix::input::KeyEventKind::Release || matches!(k.code, termpix::input::KeyCode::Modifier(_)) {
+            return;
+        }
+        let keys = temzdf_server::keymap::Stroke::of(k).notation();
+        self.line(now, &format!("key {keys}"));
+    }
+
+    /// Mouse events in pixels (cells, as inside multiplexers, are not
+    /// recorded: a replay needs the pixel).
+    pub fn mouse(&mut self, m: &MouseEvent, now: Instant) {
+        if m.unit != CoordUnit::Pixel {
+            return;
+        }
+        let button = |b: &MouseButton| match b {
+            MouseButton::Left => Some("left"),
+            MouseButton::Middle => Some("middle"),
+            MouseButton::Right => Some("right"),
+            _ => None,
+        };
+        let what = match &m.kind {
+            MouseEventKind::Press(b) => button(b).map(|b| format!("press {} {} {b}", m.x, m.y)),
+            MouseEventKind::Release(b) => button(b).map(|b| format!("release {} {} {b}", m.x, m.y)),
+            MouseEventKind::Drag(b) => button(b).map(|b| format!("drag {} {} {b}", m.x, m.y)),
+            MouseEventKind::Move => Some(format!("move {} {}", m.x, m.y)),
+            MouseEventKind::Leave => Some(format!("leave {} {}", m.x, m.y)),
+            MouseEventKind::Scroll(d) => {
+                let d = match d {
+                    ScrollDirection::Up => "up",
+                    ScrollDirection::Down => "down",
+                    ScrollDirection::Left => "left",
+                    ScrollDirection::Right => "right",
+                };
+                Some(format!("wheel {d} {} {}", m.x, m.y))
+            }
+        };
+        let Some(mut what) = what else { return };
+        let mods: String = [(Modifiers::CTRL, 'C'), (Modifiers::SHIFT, 'S'), (Modifiers::ALT, 'A')]
+            .into_iter()
+            .filter(|(f, _)| m.modifiers.contains(*f))
+            .map(|(_, c)| c)
+            .collect();
+        if !mods.is_empty() {
+            what = format!("{what} {mods}");
+        }
+        self.line(now, &what);
+    }
 }
 
 /// The simulated clock's step while time passes in a replay (a frame).
@@ -258,6 +332,51 @@ fn settle(session: &mut Session, rx: &Receiver<SessionEvent>, now: Instant) -> R
         session.handle(ev, now);
         while let Ok(ev) = rx.try_recv() {
             session.handle(ev, now);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_the_recorder_writes_replays_as_the_same_input() {
+        let path = std::env::temp_dir().join(format!("temzdf-record-{}.txt", std::process::id()));
+        let file = std::fs::File::create(&path).unwrap();
+        let start = Instant::now();
+        let mut r = Recorder { out: std::io::BufWriter::new(file), start };
+        let at = |ms| start + Duration::from_millis(ms);
+        let mouse = |kind, modifiers| MouseEvent { kind, x: 451, y: 301, unit: CoordUnit::Pixel, modifiers };
+        let input = [
+            (0, Input::Key(parse_keys("<C-f>").unwrap()[0].clone())),
+            (5, Input::Key(parse_keys("<lt>").unwrap()[0].clone())),
+            (30, Input::Mouse(mouse(MouseEventKind::Scroll(ScrollDirection::Down), Modifiers::CTRL))),
+            (60, Input::Mouse(mouse(MouseEventKind::Press(MouseButton::Left), Modifiers::NONE))),
+            (90, Input::Mouse(mouse(MouseEventKind::Drag(MouseButton::Left), Modifiers::SHIFT))),
+            (95, Input::Mouse(mouse(MouseEventKind::Release(MouseButton::Left), Modifiers::NONE))),
+            (99, Input::Mouse(mouse(MouseEventKind::Leave, Modifiers::NONE))),
+        ];
+        for (ms, i) in &input {
+            match i {
+                Input::Key(k) => r.key(k, at(*ms)),
+                Input::Mouse(m) => r.mouse(m, at(*ms)),
+                Input::End => {}
+            }
+        }
+        // Cells (inside multiplexers) are left out.
+        r.mouse(&MouseEvent { unit: CoordUnit::Cell, ..mouse(MouseEventKind::Move, Modifiers::NONE) }, at(120));
+        drop(r);
+        let back = parse_events(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(back.len(), input.len());
+        for ((ms, want), got) in input.iter().zip(&back) {
+            assert_eq!(got.at, Duration::from_millis(*ms));
+            match (want, &got.input) {
+                (Input::Key(a), Input::Key(b)) => assert_eq!((a.code, a.modifiers), (b.code, b.modifiers)),
+                (Input::Mouse(a), Input::Mouse(b)) => assert_eq!(a, b),
+                other => panic!("{other:?}"),
+            }
         }
     }
 }

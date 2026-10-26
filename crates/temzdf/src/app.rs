@@ -133,6 +133,9 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         }
     };
 
+    // TEMZDF_RECORD_INPUT=FILE: what this viewer handles, for replaying
+    // (scripts/e2e.sh judges mouse actions with it).
+    let mut recorder = crate::headless::Recorder::from_env()?;
     let mut dirty = true;
     loop {
         if dirty && front.ready() && !session.holds_frames() {
@@ -168,8 +171,16 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                     session.resize(g);
                     Outcome::Redraw
                 }
-                Input::Key(key) => session.key(&key, now),
+                Input::Key(key) => {
+                    if let Some(r) = &mut recorder {
+                        r.key(&key, now);
+                    }
+                    session.key(&key, now)
+                }
                 Input::Mouse(m) => {
+                    if let Some(r) = &mut recorder {
+                        r.mouse(&m, now);
+                    }
                     let o = session.mouse(&m, now);
                     front.set_pointer(session.pointer())?;
                     o
