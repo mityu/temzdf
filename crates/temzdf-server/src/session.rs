@@ -132,6 +132,9 @@ pub struct Options {
     /// A shown terminal whose program ended keeps its panes (tmux's
     /// `remain-on-exit`).
     pub remainonexit: bool,
+    /// When the tab line shows (Vim's `showtabline`): 0 never, 1 with two
+    /// tabs or more, 2 always.
+    pub showtabline: u8,
 }
 
 impl Default for Options {
@@ -151,6 +154,7 @@ impl Default for Options {
             reloadanchor_text: false,
             synctexeditor: None,
             remainonexit: false,
+            showtabline: 1,
         }
     }
 }
@@ -506,8 +510,10 @@ impl Session {
         id
     }
 
+    /// Where panes go: the screen, below the tab line when it shows.
     fn area(&self) -> Rect {
-        Rect::new(0, 0, self.geometry.cols as u32, self.geometry.rows as u32)
+        let top = u32::from(self.tabline_shown());
+        Rect::new(0, top as i32, self.geometry.cols as u32, (self.geometry.rows as u32).saturating_sub(top))
     }
 
     /// Put pane `id` into the layout at `spot`. Returns its rectangle.
@@ -1371,8 +1377,11 @@ impl Session {
             }
             self.hovered = under;
         }
-        // Floats' frames lie over the borders (unless one is being dragged).
         let (col, row) = ((px / cell.width as f32).floor() as i32, (py / cell.height as f32).floor() as i32);
+        if let Some(tabs) = self.tabline_mouse(m, col, row) {
+            return out.merge(tabs);
+        }
+        // Floats' frames lie over the borders (unless one is being dragged).
         if self.dragging.is_none()
             && let Some(frame) = self.float_mouse(m, col, row)
         {
@@ -1579,6 +1588,7 @@ impl Session {
         self.complete = complete;
         self.border_layers(&mut layers);
         self.float_frames(&mut layers, &mut text);
+        text.extend(self.tabline().map(|(grid, _)| grid));
         self.keys.end_frame();
         for (doc, needs) in needs {
             if let Some(host) = self.docs.get_mut(&doc).and_then(|d| d.host.as_mut()) {
@@ -1598,7 +1608,7 @@ impl Session {
         }
         let covers: Vec<Rect> = self.covers(None).iter().map(|r| self.pixels(r)).collect();
         let cell = self.geometry.cell;
-        let (cols, rows) = (self.geometry.cols as i32, self.geometry.rows as i32);
+        let area = self.area();
         let accent = termpix_ui::Theme::dark().accent.0;
         let mut lines = Vec::new();
         let mut gaps = Vec::new();
@@ -1611,24 +1621,24 @@ impl Session {
             // The gap cells right of and below the pane (including the corner
             // where gaps cross).
             let (cw, ch) = (cell.width, cell.height);
-            let right = r.right() < cols as i64;
-            let below = r.bottom() < rows as i64;
+            let right = r.right() < area.right();
+            let below = r.bottom() < area.bottom();
             if right {
                 gaps.push(Rect::new(x0 + w as i32, y0, cw, h + if below { ch } else { 0 }));
             }
             if below {
                 gaps.push(Rect::new(x0, y0 + h as i32, w, ch));
             }
-            if r.right() < cols as i64 {
+            if right {
                 lines.push((focus, Rect::new(x0 + w as i32 + vx as i32, y0, BORDER_PX, h)));
             }
-            if r.x > 0 {
+            if r.x > area.x {
                 lines.push((focus, Rect::new(x0 - cell.width as i32 + vx as i32, y0, BORDER_PX, h)));
             }
-            if r.bottom() < rows as i64 {
+            if below {
                 lines.push((focus, Rect::new(x0, y0 + h as i32 + vy as i32, w, BORDER_PX)));
             }
-            if r.y > 0 {
+            if r.y > area.y {
                 lines.push((focus, Rect::new(x0, y0 - cell.height as i32 + vy as i32, w, BORDER_PX)));
             }
         }
@@ -2871,5 +2881,45 @@ mod tests {
         assert!(s.frame().layers.is_empty(), "the PDF is in the other tab");
         cmd(&mut s, "prev-tab", &[], None).unwrap();
         assert!(!s.frame().layers.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn the_tab_line_takes_the_top_row_and_its_clicks_switch_and_close() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let one = s.focus;
+        let buf = s.panes[&one].buffer();
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows, "one tab: no tab line");
+        new_tab(&mut s, &["sh", "-c", "echo two; sleep 30"]);
+        let (_, rows) = wait_text(&mut s, &rx, |r| r[1] == "two");
+        assert_eq!(rows[0], " 1 shell  2 shell");
+        assert_eq!(s.area(), Rect::new(0, 1, GEOMETRY.cols as u32, GEOMETRY.rows as u32 - 1));
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1, "the other tab's terminal too");
+        // A click on a tab goes there; the middle button closes it.
+        let cell = GEOMETRY.cell;
+        click(&mut s, 2 * cell.width as i32, cell.height as i32 / 2);
+        assert_eq!((s.tab, s.focus), (0, one));
+        wait_text(&mut s, &rx, |r| r[1] == "one");
+        let middle = |kind| MouseEvent {
+            kind,
+            x: 12 * cell.width as i32,
+            y: 0,
+            unit: CoordUnit::Pixel,
+            modifiers: Modifiers::NONE,
+        };
+        s.mouse(&middle(MouseEventKind::Press(MouseButton::Middle)), Instant::now());
+        s.mouse(&middle(MouseEventKind::Release(MouseButton::Middle)), Instant::now());
+        assert_eq!(s.tabs.len(), 1);
+        // One tab: the line goes, the panes get the row back.
+        assert_eq!(s.area().y, 0);
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows);
+        // showtabline: always, never.
+        s.set_option("showtabline", &ScriptValue::Num(2.0)).unwrap();
+        assert_eq!((s.area().y, screen_text(&s.frame(), GEOMETRY)[0].as_str()), (1, " 1 shell"));
+        s.set_option("showtabline", &ScriptValue::Num(0.0)).unwrap();
+        new_tab(&mut s, &["sleep", "30"]);
+        assert_eq!(s.area().y, 0);
+        assert!(s.set_option("showtabline", &ScriptValue::Num(3.0)).is_err());
     }
 }

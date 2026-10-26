@@ -116,7 +116,8 @@ impl Session {
         }
         let max = (cols / 2).max(20).min(cols - 4);
         let mut out = Vec::new();
-        let mut row = 0usize;
+        // Below the tab line.
+        let mut row = self.area().y as usize;
         for n in self.notices.iter().rev() {
             let lines = wrap(&n.text, max);
             let inner = lines.iter().map(|l| l.chars().map(width).sum::<usize>()).max().unwrap_or(0).max(1);

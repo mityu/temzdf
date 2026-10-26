@@ -118,6 +118,8 @@ declare module "temzdf" {{
     synctexeditor: string | null;
     /** A shown terminal whose program ended keeps its panes. */
     remainonexit: boolean;
+    /** When the tab line shows: 0 never, 1 with two tab pages or more, 2 always. */
+    showtabline: 0 | 1 | 2;
   }}
   export const o: Options;
 

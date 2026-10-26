@@ -5,8 +5,10 @@
 //! the other tabs keep theirs in [`Tab::saved`]; switching swaps them.
 
 use temzdf_protocol::script::ScriptValue;
+use temzdf_scene::{Attrs, Cell, Color, TextGrid};
+use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
 
-use super::{Outcome, PaneEntry, Session};
+use super::{BACKGROUND, Outcome, PaneEntry, Session};
 use crate::layout::{Layout, PaneId};
 
 pub(super) type TabId = u32;
@@ -376,5 +378,124 @@ impl Session {
     /// The number of tabs (for `temzdf ls`).
     pub fn tab_count(&self) -> usize {
         self.tabs.len()
+    }
+
+    /// Whether the tab line takes the top row.
+    pub(super) fn tabline_shown(&self) -> bool {
+        let wanted = match self.options.showtabline {
+            0 => false,
+            1 => self.tabs.len() > 1,
+            _ => true,
+        };
+        wanted && self.geometry.rows > 1
+    }
+
+    /// The tab line, and the columns each tab takes on it.
+    pub(super) fn tabline(&self) -> Option<(TextGrid, Vec<(usize, usize)>)> {
+        if !self.tabline_shown() {
+            return None;
+        }
+        let labels: Vec<(String, String)> =
+            (0..self.tabs.len()).map(|i| (format!(" {} ", i + 1), self.tab_label(i))).collect();
+        let (row, spans) = tabline_cells(&labels, self.tab, self.geometry.cols as usize);
+        Some((TextGrid { col: 0, row: 0, rows: vec![row] }, spans))
+    }
+
+    /// Clicks on the tab line: the left button goes to the tab, the middle
+    /// one closes it. `Some` when the event was the tab line's.
+    pub(super) fn tabline_mouse(&mut self, m: &MouseEvent, col: i32, row: i32) -> Option<Outcome> {
+        if row != 0 || self.captured.is_some() || self.dragging.is_some() || self.float_drag.is_some() {
+            return None;
+        }
+        let (_, spans) = self.tabline()?;
+        let tab = spans.iter().position(|&(a, b)| (a..b).contains(&(col.max(0) as usize)));
+        Some(match (m.kind, tab) {
+            (MouseEventKind::Press(MouseButton::Left), Some(i)) => {
+                self.enter_tab(i);
+                Outcome::Redraw
+            }
+            (MouseEventKind::Press(MouseButton::Middle), Some(i)) if self.tabs.len() > 1 => self.remove_tab(i),
+            _ => Outcome::None,
+        })
+    }
+}
+
+/// The tab line's cells for tabs (number, label), `current` highlighted,
+/// `cols` wide, and the columns each tab takes. Labels shrink to fit, as
+/// far as the numbers still do.
+fn tabline_cells(tabs: &[(String, String)], current: usize, cols: usize) -> (Vec<Cell>, Vec<(usize, usize)>) {
+    let width = |s: &str| s.chars().map(super::notices::width).sum::<usize>();
+    let full: usize = tabs.iter().map(|(n, l)| width(n) + width(l) + 1).sum();
+    // Room per label when they do not all fit.
+    let room = if full <= cols {
+        usize::MAX
+    } else {
+        let numbers: usize = tabs.iter().map(|(n, _)| width(n) + 1).sum();
+        cols.saturating_sub(numbers) / tabs.len().max(1)
+    };
+    let bg = Color::Rgb([BACKGROUND[0], BACKGROUND[1], BACKGROUND[2]]);
+    let mut row = Vec::new();
+    let mut spans = Vec::new();
+    for (i, (number, label)) in tabs.iter().enumerate() {
+        let on = i == current;
+        let fg = if on { Color::Rgb([0xee, 0xee, 0xee]) } else { Color::Rgb([0xaa, 0xaa, 0xaa]) };
+        let bg = if on { Color::Rgb([0x5f, 0x5f, 0x66]) } else { bg };
+        let attrs = Attrs { bold: on, ..Attrs::default() };
+        let start = row.len();
+        let mut used = 0;
+        for (j, c) in number.chars().chain(label.chars().filter(|c| !c.is_control())).enumerate() {
+            let w = super::notices::width(c);
+            if j >= number.chars().count() && used + w > room {
+                break;
+            }
+            if j >= number.chars().count() {
+                used += w;
+            }
+            row.push(Cell { text: c.to_string(), width: w as u8, fg, bg, attrs });
+            if w == 2 {
+                row.push(Cell { text: String::new(), width: 0, fg, bg, attrs });
+            }
+        }
+        row.push(Cell { text: " ".into(), width: 1, fg, bg, attrs });
+        spans.push((start, row.len()));
+    }
+    // Cut at the screen's edge (a wide character there goes blank), then
+    // fill the rest of the row.
+    row.truncate(cols);
+    if row.last().is_some_and(|c| c.width == 2) {
+        let c = row.last_mut().expect("checked");
+        (c.text, c.width) = (" ".into(), 1);
+    }
+    let blank = Cell { text: " ".into(), width: 1, fg: Color::Default, bg, attrs: Attrs::default() };
+    row.resize(cols, blank);
+    (row, spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(row: &[Cell]) -> String {
+        row.iter().map(|c| c.text.as_str()).collect::<String>().trim_end().to_owned()
+    }
+
+    #[test]
+    fn the_tab_line_shows_numbers_and_labels_and_shrinks_them_to_fit() {
+        let tabs = |l: &[&str]| -> Vec<(String, String)> {
+            l.iter().enumerate().map(|(i, s)| (format!(" {} ", i + 1), (*s).to_owned())).collect()
+        };
+        let (row, spans) = tabline_cells(&tabs(&["shell", "paper.pdf"]), 1, 40);
+        assert_eq!(text(&row), " 1 shell  2 paper.pdf");
+        assert_eq!(spans, [(0, 9), (9, 22)]);
+        assert_eq!(row.len(), 40);
+        assert!(row[10].attrs.bold && !row[1].attrs.bold, "the current tab stands out");
+        // Too narrow: the labels shrink, the numbers stay.
+        let (row, spans) = tabline_cells(&tabs(&["abcdefgh", "ijklmnop"]), 0, 16);
+        assert_eq!(text(&row), " 1 abcd  2 ijkl");
+        assert_eq!(spans, [(0, 8), (8, 16)]);
+        // Wide characters keep their spacer cell.
+        let (row, _) = tabline_cells(&tabs(&["数式"]), 0, 20);
+        assert_eq!(text(&row), " 1 数式");
+        assert_eq!((row[3].width, row[4].width), (2, 0));
     }
 }

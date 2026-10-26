@@ -787,9 +787,16 @@ impl Session {
             }
             "synctexeditor" => o.synctexeditor = text()?,
             "remainonexit" => o.remainonexit = flag()?,
+            "showtabline" => match value.as_num() {
+                Some(n) if [0.0, 1.0, 2.0].contains(&n) => o.showtabline = n as u8,
+                _ => return Err("o.showtabline: expected 0, 1 or 2".into()),
+            },
             other => return Err(format!("no option {other:?}")),
         }
         self.apply_options();
+        if name == "showtabline" {
+            self.relayout();
+        }
         Ok(())
     }
 
@@ -812,6 +819,7 @@ impl Session {
             "reloadanchor" => ScriptValue::Str(if o.reloadanchor_text { "text" } else { "position" }.into()),
             "synctexeditor" => o.synctexeditor.clone().map_or(ScriptValue::Null, ScriptValue::Str),
             "remainonexit" => ScriptValue::Bool(o.remainonexit),
+            "showtabline" => ScriptValue::Num(o.showtabline as f64),
             other => return Err(format!("no option {other:?}")),
         })
     }
