@@ -62,8 +62,13 @@ struct Cli {
     clean: bool,
     /// For --render-frame: keys to press first, in Vim's feedkeys notation, e.g.
     /// "<Tab>jj<CR>" (see headless.rs).
-    #[arg(long, value_name = "KEYS")]
+    #[arg(long, value_name = "KEYS", conflicts_with = "events")]
     keys: Option<String>,
+    /// For --render-frame: a timeline of keys and mouse input to replay first
+    /// (one per line: "MS key KEYS", "MS press|release|drag X Y BUTTON",
+    /// "MS move X Y", "MS wheel DIR X Y", "MS end"; see headless.rs).
+    #[arg(long, value_name = "FILE")]
+    events: Option<PathBuf>,
     /// For --render-frame: blend translucent layers in linear light like kitty
     /// (scripts/e2e.sh compares against real terminals).
     #[arg(long, hide = true)]
@@ -139,6 +144,7 @@ fn viewer_only_option(cli: &Cli) -> Option<&'static str> {
         (cli.scale.is_some(), "--scale"),
         (cli.forward.is_some(), "--forward"),
         (cli.keys.is_some(), "--keys"),
+        (cli.events.is_some(), "--events"),
     ]
     .into_iter()
     .find_map(|(given, name)| given.then_some(name))
@@ -248,6 +254,12 @@ fn main() -> Result<()> {
             page,
             scale: cli.scale,
             keys: cli.keys.clone(),
+            events: match &cli.events {
+                Some(f) => Some(headless::parse_events(
+                    &std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?,
+                )?),
+                None => None,
+            },
             linear_blending: cli.linear_blending,
         };
         return headless::render_frame(&file, out, &opts);
