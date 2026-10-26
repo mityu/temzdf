@@ -1,12 +1,19 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { nixpkgs, ... }:
+    { nixpkgs, rust-overlay, ... }:
     let
-      overlays = [ (import ./nix/libghostty-vt.nix) ];
+      overlays = [
+        (import ./nix/libghostty-vt.nix)
+        (import rust-overlay)
+      ];
       forEachSystem = nixpkgs.lib.genAttrs [
         "aarch64-darwin"
         "x86_64-darwin"
@@ -72,10 +79,7 @@
           lib = pkgs.lib;
           # The toolchain and what scripts/check.sh runs (also in `ci`).
           build = with pkgs; [
-            cargo
-            rustc
-            clippy
-            rustfmt
+            (rust-bin.selectLatestNightlyWith (toolchain: toolchain.default))
             pkg-config
             clang
             fontconfig
@@ -89,7 +93,17 @@
           # usually installed globally (TeX, other terminals) are in `alldeps`.
           base = {
             packages = with pkgs; [
-              rust-analyzer
+              (rust-bin.selectLatestNightlyWith (
+                toolchain:
+                toolchain.default.override {
+                  extensions = [
+                    "rust-src"
+                    "miri"
+                    "rust-analyzer"
+                    "clippy"
+                  ];
+                }
+              ))
               agent-browser
               # Scratch scripts during development (not needed by the build).
               python3
