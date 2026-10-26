@@ -95,9 +95,7 @@ pub fn serve(pdf: &Path, deliver: impl Fn(ForwardRequest) -> bool + Send + 'stat
 
 fn serve_at(path: PathBuf, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> std::io::Result<Server> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        temzdf_protocol::private_dir(dir)?;
     }
     if UnixStream::connect(&path).is_ok() {
         return Err(std::io::Error::new(std::io::ErrorKind::AddrInUse, "another viewer has this file open"));

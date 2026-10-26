@@ -12,7 +12,7 @@
 pub mod script;
 
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use temzdf_scene::{Effect, Frame, Hints, ImageUpdate};
@@ -150,15 +150,53 @@ fn darwin_user_temp_dir() -> Option<PathBuf> {
     Some(std::ffi::OsString::from_vec(buf).into())
 }
 
-/// Where session sockets live (created, mode 0700).
+/// Where session sockets live (created, ours alone; see [`private_dir`]).
 pub fn sessions_dir() -> io::Result<PathBuf> {
     let dir = runtime_dir().join("temzdf").join("sessions");
-    std::fs::create_dir_all(&dir)?;
-    use std::os::unix::fs::PermissionsExt;
-    for d in [dir.parent().unwrap_or(&dir), &dir] {
-        let _ = std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700));
-    }
+    private_dir(&dir)?;
     Ok(dir)
+}
+
+/// Create `dir` under [`runtime_dir`] and make sure nobody else can reach
+/// into it, as tmux does: every directory from the runtime directory down
+/// must be a real directory (not a symlink) owned by this user, and those
+/// temzdf creates are made mode 0700. Without `$XDG_RUNTIME_DIR` the
+/// runtime directory is in the shared temporary directory, where another
+/// user could create it first and plant a socket: a client attaching to it
+/// would run what that server's effects ask for.
+pub fn private_dir(dir: &Path) -> io::Result<()> {
+    let base = runtime_dir();
+    let ours = base.file_name().is_some_and(|n| *n == *format!("temzdf-{}", rustix::process::getuid().as_raw()));
+    private_dir_in(&base, ours, dir)
+}
+
+/// [`private_dir`] for runtime directory `base`; `base_ours`: temzdf made it
+/// (its mode is set too).
+fn private_dir_in(base: &Path, base_ours: bool, dir: &Path) -> io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    std::fs::create_dir_all(dir)?;
+    let uid = rustix::process::getuid().as_raw();
+    let unsafe_dir = |d: &Path, why: &str| {
+        io::Error::new(io::ErrorKind::PermissionDenied, format!("{}: {why}; remove it and try again", d.display()))
+    };
+    let mut d = dir;
+    loop {
+        let m = std::fs::symlink_metadata(d)?;
+        if m.file_type().is_symlink() || !m.is_dir() {
+            return Err(unsafe_dir(d, "not a directory"));
+        }
+        if m.uid() != uid {
+            return Err(unsafe_dir(d, &format!("owned by user {}, not by you", m.uid())));
+        }
+        let at_base = d == base;
+        if m.mode() & 0o077 != 0 && (!at_base || base_ours) {
+            std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
+        }
+        match d.parent() {
+            Some(p) if !at_base && d.starts_with(base) => d = p,
+            _ => return Ok(()),
+        }
+    }
 }
 
 /// Session names: letters, digits, `.`, `_` and `-`, at most 64 characters.
@@ -176,6 +214,45 @@ pub fn socket_path(name: &str) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_dirs_are_ours_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = std::env::temp_dir().join(format!("temzdf-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        // A runtime directory temzdf made: it and what is below become 0700.
+        let base = tmp.join("ours");
+        std::fs::create_dir(&base).unwrap();
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o777)).unwrap();
+        private_dir_in(&base, true, &base.join("temzdf/sessions")).unwrap();
+        for d in [base.clone(), base.join("temzdf"), base.join("temzdf/sessions")] {
+            assert_eq!(mode(&d), 0o700, "{}", d.display());
+        }
+        // The system's runtime directory keeps its mode.
+        let system = tmp.join("system");
+        std::fs::create_dir(&system).unwrap();
+        std::fs::set_permissions(&system, std::fs::Permissions::from_mode(0o755)).unwrap();
+        private_dir_in(&system, false, &system.join("temzdf")).unwrap();
+        assert_eq!((mode(&system), mode(&system.join("temzdf"))), (0o755, 0o700));
+        // A symlink planted where a directory should be is refused.
+        let elsewhere = tmp.join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        let linked = tmp.join("linked");
+        std::fs::create_dir(&linked).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, linked.join("temzdf")).unwrap();
+        let e = private_dir_in(&linked, true, &linked.join("temzdf/sessions")).unwrap_err();
+        assert!(e.to_string().contains("not a directory"), "{e}");
+        // So is a file.
+        let file = tmp.join("file");
+        std::fs::create_dir(&file).unwrap();
+        std::fs::write(file.join("temzdf"), "").unwrap();
+        assert!(private_dir_in(&file, true, &file.join("temzdf")).is_err());
+        // (Another user's directory cannot be made here; the owner check is
+        // the same path as the symlink check.)
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
     use std::sync::Arc;
     use temzdf_scene::{Cell, CursorShape, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
     use termpix_core::geom::CellSize;
