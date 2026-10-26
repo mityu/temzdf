@@ -481,6 +481,9 @@ impl PdfPane {
     }
 
     fn widget(&mut self, images: &mut Images, key: u32, state: WidgetState, rect: Rect) -> Layer {
+        // A canvas is at least 1x1 (a tiny pane can leave a widget no
+        // room): the image must be as large as what was drawn.
+        let rect = Rect { w: rect.w.max(1), h: rect.h.max(1), ..rect };
         let size = (rect.w, rect.h);
         let fresh = self.widgets.get(&key).is_some_and(|w| w.state == state && w.size == size);
         if !fresh {
@@ -1628,6 +1631,19 @@ mod tests {
         assert!(matches!(s.take_requests()[..], [Request::Copy(_)]));
         let notice = s.notice.clone().unwrap_or_default();
         assert!(notice.contains("1 page(s) not loaded were left out"), "{notice}");
+    }
+
+    #[test]
+    fn tiny_panes_draw_without_panicking() {
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let info = pdf::doc_info(&doc).unwrap();
+        for (cols, rows, cw, ch) in [(1, 1, 1, 1), (2, 1, 10, 20), (90, 1, 10, 1)] {
+            let geometry = Geometry { cols, rows, cell: CellSize { width: cw, height: ch } };
+            let mut s = PdfPane::new("sample.pdf".into(), info.clone(), geometry);
+            s.sidebar_open = true;
+            let mut images = Images::new();
+            s.frame(&mut images);
+        }
     }
 
     #[test]
