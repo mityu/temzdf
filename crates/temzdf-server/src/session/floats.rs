@@ -74,7 +74,7 @@ impl FloatSpec {
     /// on the screen.
     pub(super) fn frame(&self, area: Rect) -> Rect {
         let outer = |e: Extent, whole: u32| match e {
-            Extent::Cells(n) => n + 2,
+            Extent::Cells(n) => n.saturating_add(2),
             Extent::Percent(_) => e.of(whole),
         };
         let w = outer(self.width, area.w).clamp((MIN_COLS + 2).min(area.w), area.w.max(1));
@@ -464,7 +464,7 @@ impl Session {
                 MouseEventKind::Drag(_) => {
                     let frame = d.grip.drag(d.start, col - d.from.0, row - d.from.1);
                     if let Some(f) = self.float_mut(d.pane) {
-                        f.spec = FloatSpec::at(frame, frame.w - 2, frame.h - 2);
+                        f.spec = FloatSpec::at(frame, frame.w.saturating_sub(2), frame.h.saturating_sub(2));
                     }
                     self.relayout();
                     Outcome::Redraw
@@ -525,11 +525,14 @@ impl Session {
                 self.keys.place(layers, OWNER_FRAMES, pane * 16 + n as u32, layer, &covers_px);
             }
             // Lines through the middle of the frame's cells.
-            let (vx, vy) = (((cell.width - BORDER_PX) / 2) as i32, ((cell.height - BORDER_PX) / 2) as i32);
+            let (vx, vy) =
+                ((cell.width.saturating_sub(BORDER_PX) / 2) as i32, (cell.height.saturating_sub(BORDER_PX) / 2) as i32);
             let (x0, y0) = (outer.x + vx, outer.y + vy);
             let (x1, y1) =
                 (outer.right() as i32 - cell.width as i32 + vx, outer.bottom() as i32 - cell.height as i32 + vy);
-            let (w, h) = ((x1 - x0) as u32 + BORDER_PX, (y1 - y0) as u32 + BORDER_PX);
+            // Frames at least a cell each way (a screen smaller than a
+            // float's smallest size squeezes them).
+            let (w, h) = ((x1 - x0).max(0) as u32 + BORDER_PX, (y1 - y0).max(0) as u32 + BORDER_PX);
             let lines = [
                 Rect::new(x0, y0, w, BORDER_PX),
                 Rect::new(x0, y1, w, BORDER_PX),

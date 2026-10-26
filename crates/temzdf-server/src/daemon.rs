@@ -230,7 +230,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     }
                     c.attached = true;
                     c.pending = session.images().snapshot().into_iter().map(|u| (key_of(&u), u)).collect();
-                    (c.geometry, c.hints) = (Some(geometry), Some(hints));
+                    (c.geometry, c.hints) = (usable(geometry), Some(hints));
                     become_latest(&mut session, &mut latest, &clients, id);
                     dirty = true;
                 }
@@ -251,7 +251,9 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     outcome = session.paste(&text);
                 }
                 ClientMsg::Resize(g) => {
-                    if let Some(c) = clients.get_mut(&id) {
+                    if let Some(c) = clients.get_mut(&id)
+                        && let Some(g) = usable(g)
+                    {
                         c.geometry = Some(g);
                     }
                     become_latest(&mut session, &mut latest, &clients, id);
@@ -392,6 +394,12 @@ fn run_action(
 
 /// Input or a new size makes a client the latest: the session follows its
 /// size (and frontend).
+/// A client's terminal size, if it is one to lay panes out in (a client
+/// reporting no rows, columns or cell size is ignored).
+fn usable(g: Geometry) -> Option<Geometry> {
+    (g.cols > 0 && g.rows > 0 && g.cell.width > 0 && g.cell.height > 0).then_some(g)
+}
+
 /// Client `id` drives the session now (it attached, typed, pointed or
 /// resized): the session takes its size, and its frontend's hints when it
 /// was not the latest before. Returns whether anything changed.
@@ -566,6 +574,14 @@ mod tests {
         drop((lock, listener, cleanup));
         assert!(socket.exists(), "the new socket stays");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn empty_sizes_are_ignored() {
+        assert!(usable(DEFAULT_GEOMETRY).is_some());
+        assert!(usable(Geometry { cols: 0, ..DEFAULT_GEOMETRY }).is_none());
+        let no_cell = Geometry { cell: CellSize { width: 0, height: 20 }, ..DEFAULT_GEOMETRY };
+        assert!(usable(no_cell).is_none());
     }
 
     #[test]

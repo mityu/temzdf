@@ -1568,7 +1568,7 @@ impl Session {
             let (x0, y0) = (r.x * cell.width as i32, r.y * cell.height as i32);
             let (w, h) = (r.w * cell.width, r.h * cell.height);
             let focus = id == self.focus;
-            let (vx, vy) = ((cell.width - BORDER_PX) / 2, (cell.height - BORDER_PX) / 2);
+            let (vx, vy) = (cell.width.saturating_sub(BORDER_PX) / 2, cell.height.saturating_sub(BORDER_PX) / 2);
             // The gap cells right of and below the pane (including the corner
             // where gaps cross).
             let (cw, ch) = (cell.width, cell.height);
@@ -2591,5 +2591,23 @@ mod tests {
         assert!(!s.is_starting());
         assert_eq!(s.layout.as_ref().map(|l| l.panes().len()), Some(1));
         assert_eq!(s.floats.len(), 1);
+    }
+
+    #[test]
+    fn floats_on_tiny_screens_and_cells_do_not_overflow() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        let big = ScriptValue::Num(f64::from(u32::MAX));
+        float(&mut s, &["sleep", "30"], &[("width", big.clone()), ("height", big)]);
+        for g in [
+            Geometry { cols: 3, rows: 2, cell: CellSize { width: 1, height: 1 } },
+            Geometry { cols: 1, rows: 1, cell: CellSize { width: 10, height: 20 } },
+        ] {
+            s.resize(g);
+            s.frame();
+        }
+        s.run_command("resize-pane", &[ScriptValue::map([("width", ScriptValue::Num(-5.0))])], None, Instant::now())
+            .unwrap();
+        s.frame();
     }
 }
