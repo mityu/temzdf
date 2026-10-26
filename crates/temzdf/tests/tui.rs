@@ -653,3 +653,74 @@ fn images_from_a_program_show_inside_its_pane() {
     assert!(p.col >= 50, "inside the right pane: {p:?}");
     assert_eq!((p.cols, p.rows), (4, 2), "{p:?}");
 }
+
+/// Cells of the default float on a 100x30 screen: its frame (centred, 80% by
+/// 80%) and its content inside the frame.
+const FLOAT_FRAME: (u16, u16, u16, u16) = (10, 3, 80, 24);
+const FLOAT_CONTENT: (u16, u16, u16, u16) = (11, 4, 78, 22);
+
+/// Whether anything of a lower pane shows inside the default float: a `0`
+/// from the shell below.
+/// A shell prompt at the top left of the default float's content (the
+/// frame's right edge ends the row).
+fn float_prompt(s: &Screen) -> bool {
+    let row = s.row_from(FLOAT_CONTENT.1, FLOAT_CONTENT.0);
+    row.starts_with('$') || row.starts_with("sh-")
+}
+
+fn shows_through(s: &Screen) -> Option<(u16, u16)> {
+    let (x0, y0, w, h) = FLOAT_FRAME;
+    (y0..y0 + h).flat_map(|y| (x0..x0 + w).map(move |x| (x, y))).find(|&(x, y)| s.cell(x, y).text == "0")
+}
+
+#[test]
+fn a_floating_shell_covers_a_shell_and_a_pdf() {
+    let env = Env::new("floats");
+    let mut t = Term::spawn(&[BIN, "-s", "f"], &env.options());
+    t.wait_for("the prompt", prompt);
+    // Zeros all over the left half.
+    t.type_text("clear; for i in $(seq 28); do printf '%049d\\n' 0; done\n");
+    t.wait_for("zeros", |s| s.lines().iter().filter(|l| l.starts_with("0000")).count() >= 25);
+    let pdf = fixture("sample.pdf");
+    env.run(&["action", "-s", "f", "new-pane", &pdf.display().to_string()]);
+    t.wait_for("pages of the PDF", |s| s.images.iter().any(|p| p.col >= 50 && p.cols > 1));
+    env.run(&["action", "-s", "f", "open-float"]);
+    t.wait_for("a prompt in the float", float_prompt);
+    let (cx, cy, cw, ch) = FLOAT_CONTENT;
+    t.type_text("echo inside-$((3*4))\n");
+    let s = t.wait_text("inside-12");
+    assert_eq!(shows_through(&s), None, "the shell below shows through");
+    // No image of the PDF inside the float: only its frame's lines are
+    // images there, and they stay in the frame's cells.
+    let content = |p: &tuitest::Placement| {
+        p.col < (cx + cw) as i32
+            && p.col + p.cols as i32 > cx as i32
+            && p.row < (cy + ch) as i32
+            && p.row + p.rows as i32 > cy as i32
+    };
+    let inside: Vec<_> = s.images.iter().filter(|p| content(p)).collect();
+    assert!(inside.is_empty(), "images inside the float: {inside:?}");
+    assert!(s.images.iter().any(|p| p.col >= 90 && p.cols > 1), "the PDF beside the float still shows");
+}
+
+#[test]
+fn a_floating_shell_inside_tmux() {
+    if !tuitest::have_tmux() {
+        eprintln!("SKIPPED: tmux not found");
+        return;
+    }
+    let env = Env::new("floats-tmux");
+    let mut t = Term::inside_tmux(&["env", "SHELL=/bin/sh", BIN, "-s", "ft"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.type_text("clear; for i in $(seq 28); do printf '%098d\\n' 0; done\n");
+    t.wait_for("zeros", |s| s.lines().iter().filter(|l| l.starts_with("0000")).count() >= 25);
+    env.run(&["action", "-s", "ft", "open-float"]);
+    t.wait_for("a prompt in the float", float_prompt);
+    let (cx, cy, cw, ch) = FLOAT_CONTENT;
+    t.type_text("clear\n");
+    let s = t.wait_for("the float cleared", |s| shows_through(s).is_none());
+    // Its frame is drawn through placeholders; its content is text only.
+    let cells = s.placeholder_cells();
+    assert!(cells.iter().any(|&(x, y)| (x, y) == (FLOAT_FRAME.0, FLOAT_FRAME.1 + 5)), "the frame's left edge");
+    assert!(!cells.iter().any(|&(x, y)| x >= cx && x < cx + cw && y >= cy && y < cy + ch), "nothing over the content");
+}

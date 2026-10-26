@@ -154,6 +154,21 @@ impl Layout {
         walk(&mut self.root, pane)
     }
 
+    /// Put pane `new` where `old` is. False when `old` is not in the layout.
+    pub fn replace(&mut self, old: PaneId, new: PaneId) -> bool {
+        fn walk(n: &mut Node, old: PaneId, new: PaneId) -> bool {
+            match n {
+                Node::Leaf(p) if *p == old => {
+                    *p = new;
+                    true
+                }
+                Node::Leaf(_) => false,
+                Node::Split { a, b, .. } => walk(a, old, new) || walk(b, old, new),
+            }
+        }
+        walk(&mut self.root, old, new)
+    }
+
     /// The pane next to `pane` in `dir`: among those beyond its edge that
     /// overlap it across, the nearest, then the one most in line with it.
     pub fn neighbor(&self, pane: PaneId, dir: Direction, area: Rect) -> Option<PaneId> {

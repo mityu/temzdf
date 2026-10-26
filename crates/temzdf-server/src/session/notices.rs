@@ -29,7 +29,7 @@ pub struct Notice {
 }
 
 /// Terminal cells a character takes (CJK and other wide characters two).
-fn width(c: char) -> usize {
+pub(super) fn width(c: char) -> usize {
     let u = c as u32;
     let wide = (0x1100..=0x115f).contains(&u)
         || (0x2e80..=0xa4cf).contains(&u)

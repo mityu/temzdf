@@ -29,6 +29,7 @@ use crate::layout::{BorderId, Layout, PaneId, Split};
 use temzdf_protocol::script::{FromHost, ScriptValue};
 
 mod commands;
+mod floats;
 mod notices;
 mod script;
 
@@ -191,6 +192,8 @@ enum Spot {
     Split { target: Option<PaneId>, split: Split, before: bool },
     /// Instead of what this pane shows (Vim's `:edit`).
     Replace(PaneId),
+    /// A floating pane, on top of the others.
+    Float(floats::FloatSpec),
 }
 
 struct DocEntry {
@@ -301,7 +304,12 @@ pub struct Session {
     shell: Option<Vec<String>>,
     panes: HashMap<PaneId, PaneEntry>,
     layout: Option<Layout>,
+    /// Floating panes, bottom to top, and whether they are hidden.
+    floats: Vec<floats::Float>,
+    floats_hidden: bool,
     focus: PaneId,
+    /// The tiled pane focused last (where the focus goes when floats hide).
+    tiled_focus: PaneId,
     next_id: u32,
     modes: Modes<Target>,
     matcher: Matcher,
@@ -345,7 +353,10 @@ impl Session {
             shell: None,
             panes: HashMap::new(),
             layout: None,
+            floats: Vec::new(),
+            floats_hidden: false,
             focus: 0,
+            tiled_focus: 0,
             next_id: 1,
             modes,
             matcher: Matcher::default(),
@@ -388,7 +399,10 @@ impl Session {
 
     /// Where a new pane goes: the first one, or beside the focused pane.
     fn next_spot(&self) -> Spot {
-        if self.layout.is_some() {
+        if self.is_float(self.focus) {
+            // Beside a focused float: another float (zellij).
+            Spot::Float(self.cascade())
+        } else if self.layout.is_some() {
             Spot::Split { target: Some(self.focus), split: Split::Horizontal, before: false }
         } else {
             Spot::First
@@ -403,10 +417,12 @@ impl Session {
                 let path = cwd.map_or_else(|| path.clone(), |d| d.join(path));
                 self.open(&path)
             }
-            PaneSpec::Shell => self.open_terminal(&Spawn { argv: None, cwd, env: Vec::new() }, self.next_spot()),
-            PaneSpec::Command(argv) => {
-                self.open_terminal(&Spawn { argv: Some(argv.clone()), cwd, env: Vec::new() }, self.next_spot())
+            PaneSpec::Shell => {
+                self.open_terminal(&Spawn { argv: None, cwd, env: Vec::new() }, self.next_spot()).map(drop)
             }
+            PaneSpec::Command(argv) => self
+                .open_terminal(&Spawn { argv: Some(argv.clone()), cwd, env: Vec::new() }, self.next_spot())
+                .map(drop),
         }
     }
 
@@ -466,6 +482,9 @@ impl Session {
     /// Put pane `id` into the layout at `spot`. Returns its rectangle.
     fn place(&mut self, id: PaneId, spot: Spot) -> Result<Rect> {
         self.dragging = None;
+        if let Spot::Float(spec) = spot {
+            return Ok(self.place_float(id, spec));
+        }
         let area = self.area();
         let (target, split, before) = match spot {
             Spot::Split { target: Some(t), split, before } if self.panes.contains_key(&t) => (Some(t), split, before),
@@ -487,6 +506,10 @@ impl Session {
 
     /// Take pane `id` out of the layout again (its creation failed).
     fn unplace(&mut self, id: PaneId) {
+        if self.is_float(id) {
+            self.floats.retain(|f| f.pane != id);
+            return;
+        }
         if let Some(layout) = self.layout.as_mut()
             && !layout.remove(id)
         {
@@ -721,7 +744,7 @@ impl Session {
     }
 
     /// Start a program in a new terminal pane.
-    fn open_terminal(&mut self, spawn: &Spawn, spot: Spot) -> Result<()> {
+    fn open_terminal(&mut self, spawn: &Spawn, spot: Spot) -> Result<PaneId> {
         let id = self.alloc_id();
         let rect = self.place(id, spot)?;
         let buf = self.alloc_id();
@@ -740,15 +763,26 @@ impl Session {
         };
         self.terms.insert(buf, TermEntry { term: Box::new(term), exited: false });
         self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str("terminal".into())]);
+        self.terminal_pane(id, buf, rect);
+        Ok(id)
+    }
+
+    /// Pane `id`, placed at `rect`, shows terminal `buf`.
+    fn terminal_pane(&mut self, id: PaneId, buf: BufferId, rect: Rect) {
+        let geometry = Geometry { cols: rect.w as u16, rows: rect.h as u16, cell: self.geometry.cell };
         self.panes.insert(id, PaneEntry { kind: Kind::Term { buf, view: TermView::new(geometry) }, rect });
         self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("terminal".into())]);
         self.set_focus(id);
         self.relayout();
-        Ok(())
     }
 
     /// Move the focus, telling terminals that asked for focus reports.
     fn set_focus(&mut self, id: PaneId) {
+        // A focused float comes to the top.
+        self.raise(id);
+        if !self.is_float(id) {
+            self.tiled_focus = id;
+        }
         if id == self.focus {
             return;
         }
@@ -775,30 +809,39 @@ impl Session {
 
     /// Give every pane its rectangle (after the layout or the screen changed).
     fn relayout(&mut self) {
-        let Some(layout) = &self.layout else { return };
-        let cell = self.geometry.cell;
-        for (id, r) in layout.rects(self.area()) {
-            if let Some(e) = self.panes.get_mut(&id) {
-                e.rect = r;
-                let g = Geometry { cols: r.w as u16, rows: r.h as u16, cell };
-                match &mut e.kind {
-                    Kind::Pdf { pane, .. } if g != pane.geometry() => pane.resize(g),
-                    Kind::Pdf { .. } => {}
-                    Kind::Term { view, .. } => view.geometry = g,
-                }
-            }
+        let rects = self.layout.as_ref().map(|l| l.rects(self.area())).unwrap_or_default();
+        for (id, r) in rects {
+            self.set_rect(id, r);
         }
+        self.relayout_floats();
         // Programs get their new size when the drag ends.
         if self.dragging.is_none() {
             self.fit_terms();
         }
     }
 
-    /// A terminal is as large as the largest pane showing it (as in Neovim);
-    /// a hidden one keeps its size.
+    /// Give pane `id` its rectangle (in cells).
+    fn set_rect(&mut self, id: PaneId, r: Rect) {
+        let cell = self.geometry.cell;
+        if let Some(e) = self.panes.get_mut(&id) {
+            e.rect = r;
+            let g = Geometry { cols: r.w as u16, rows: r.h as u16, cell };
+            match &mut e.kind {
+                Kind::Pdf { pane, .. } if g != pane.geometry() => pane.resize(g),
+                Kind::Pdf { .. } => {}
+                Kind::Term { view, .. } => view.geometry = g,
+            }
+        }
+    }
+
+    /// A terminal is as large as the largest pane on screen showing it (as
+    /// in Neovim); a hidden one (or one in hidden floats only) keeps its size.
     fn fit_terms(&mut self) {
         let mut sizes: HashMap<BufferId, (u16, u16)> = HashMap::new();
-        for e in self.panes.values() {
+        for (id, e) in &self.panes {
+            if !self.on_screen(*id) {
+                continue;
+            }
             if let Kind::Term { buf, view } = &e.kind {
                 let s = sizes.entry(*buf).or_default();
                 *s = (s.0.max(view.geometry.cols), s.1.max(view.geometry.rows));
@@ -1125,7 +1168,11 @@ impl Session {
     fn action_inner(&mut self, action: Action, _now: Instant) -> Result<Outcome> {
         match action {
             Action::Split { split, before, root } => {
-                let spot = Spot::Split { target: if root { None } else { Some(self.focus) }, split, before };
+                let spot = if self.is_float(self.focus) {
+                    Spot::Float(self.cascade())
+                } else {
+                    Spot::Split { target: if root { None } else { Some(self.focus) }, split, before }
+                };
                 match self.panes.get(&self.focus).map(|e| &e.kind) {
                     Some(Kind::Pdf { doc, .. }) => {
                         let doc = *doc;
@@ -1141,13 +1188,20 @@ impl Session {
             }
             Action::NewPane { spec, cwd } => self.new_pane(&spec, cwd.as_deref())?,
             Action::MoveFocus(dir) => {
-                if let Some(p) = self.layout.as_ref().and_then(|l| l.neighbor(self.focus, dir, self.area())) {
+                // Within the floats or within the tiled panes.
+                let next = if self.is_float(self.focus) {
+                    self.float_neighbor(dir)
+                } else {
+                    self.layout.as_ref().and_then(|l| l.neighbor(self.focus, dir, self.area()))
+                };
+                if let Some(p) = next {
                     self.set_focus(p);
                 }
             }
             Action::FocusNextPane => {
-                if let Some(next) = self.layout.as_ref().map(|l| l.next(self.focus)) {
-                    self.set_focus(next);
+                let order = self.focus_order();
+                if let Some(i) = order.iter().position(|p| *p == self.focus) {
+                    self.set_focus(order[(i + 1) % order.len()]);
                 }
             }
             Action::ClosePane => return Ok(self.request_close(self.focus)),
@@ -1160,13 +1214,27 @@ impl Session {
     /// Close a pane; its buffer stays, hidden, if no other pane shows it.
     /// Closing the last pane ends the session, hidden buffers or not (as if
     /// every buffer were Vim's `buftype=nofile`).
+    /// A closing float leaves the focus to the float below it, else to the
+    /// last focused tiled pane. The last tiled pane leaves its place to the
+    /// topmost shown float; with none shown, the session ends.
     fn close(&mut self, id: PaneId) -> Outcome {
-        let Some(layout) = self.layout.as_mut() else { return Outcome::Quit };
-        if layout.panes().len() <= 1 {
-            return Outcome::Quit;
-        }
-        let next = layout.next(id);
-        layout.remove(id);
+        let next = if self.is_float(id) {
+            self.floats.retain(|f| f.pane != id);
+            self.shown_floats().last().map_or(self.tiled_focus, |f| f.pane)
+        } else {
+            let top = self.shown_floats().last().map(|f| f.pane);
+            let Some(layout) = self.layout.as_mut() else { return Outcome::Quit };
+            if layout.panes().len() <= 1 {
+                let Some(top) = top else { return Outcome::Quit };
+                layout.replace(id, top);
+                self.floats.retain(|f| f.pane != top);
+                top
+            } else {
+                let next = layout.next(id);
+                layout.remove(id);
+                next
+            }
+        };
         if let Some(e) = self.panes.remove(&id) {
             if id == self.focus
                 && let Some(t) = e.term().and_then(|b| self.terms.get_mut(&b))
@@ -1178,6 +1246,11 @@ impl Session {
         self.event("PaneClosed", vec![ScriptValue::Num(id as f64)]);
         if self.focus == id {
             self.set_focus(next);
+        }
+        if self.tiled_focus == id
+            && let Some(first) = self.layout.as_ref().and_then(|l| l.panes().first().copied())
+        {
+            self.tiled_focus = first;
         }
         for p in [&mut self.hovered, &mut self.captured] {
             if *p == Some(id) {
@@ -1191,16 +1264,18 @@ impl Session {
     }
 
     /// The pane at a screen pixel.
+    /// The shown floats come first, top down, with their frames.
     fn pane_at(&self, x: f32, y: f32) -> Option<PaneId> {
         let cell = self.geometry.cell;
-        self.panes
-            .iter()
-            .find(|(_, e)| {
-                let r = e.rect;
-                let (x0, y0) = (r.x as f32 * cell.width as f32, r.y as f32 * cell.height as f32);
-                x >= x0 && y >= y0 && x < x0 + (r.w * cell.width) as f32 && y < y0 + (r.h * cell.height) as f32
-            })
-            .map(|(id, _)| *id)
+        let inside = |r: &Rect| {
+            let (x0, y0) = (r.x as f32 * cell.width as f32, r.y as f32 * cell.height as f32);
+            x >= x0 && y >= y0 && x < x0 + (r.w * cell.width) as f32 && y < y0 + (r.h * cell.height) as f32
+        };
+        if let Some(f) = self.shown_floats().iter().rev().find(|f| inside(&f.frame)) {
+            return Some(f.pane);
+        }
+        let tiled = self.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
+        tiled.into_iter().find(|id| self.panes.get(id).is_some_and(|e| inside(&e.rect)))
     }
 
     pub fn mouse(&mut self, m: &MouseEvent, now: Instant) -> Outcome {
@@ -1232,6 +1307,21 @@ impl Session {
         }
         if let Some(border) = self.border_mouse(m, under, px, py) {
             return out.merge(border);
+        }
+        // A float's frame: a press focuses (and raises) it, nothing goes to
+        // the pane.
+        if self.captured.is_none()
+            && let Some(p) = under
+            && self.panes.get(&p).is_some_and(|e| {
+                let (col, row) = ((px / cell.width as f32).floor() as i32, (py / cell.height as f32).floor() as i32);
+                !e.rect.contains(col, row)
+            })
+        {
+            if matches!(m.kind, MouseEventKind::Press(_)) {
+                self.set_focus(p);
+                return Outcome::Redraw;
+            }
+            return out;
         }
         match m.kind {
             MouseEventKind::Press(_) => {
@@ -1370,7 +1460,8 @@ impl Session {
         // background, so only the gaps between panes get one (border_layers).
         let mut layers = Vec::new();
         let mut text = Vec::new();
-        let order = self.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
+        let mut order = self.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
+        order.extend(self.shown_floats().iter().map(|f| f.pane));
         let mut needs: HashMap<DocId, Vec<Need>> = HashMap::new();
         let mut cursor = None;
         let mut cursor_shape = CursorShape::Default;
@@ -1426,6 +1517,7 @@ impl Session {
         }
         self.complete = complete;
         self.border_layers(&mut layers);
+        self.float_frames(&mut layers, &mut text);
         self.keys.end_frame();
         for (doc, needs) in needs {
             if let Some(host) = self.docs.get_mut(&doc).and_then(|d| d.host.as_mut()) {
@@ -1439,7 +1531,8 @@ impl Session {
 
     /// Lines in the one-cell gaps between panes; the focused pane's in the accent colour.
     fn border_layers(&mut self, layers: &mut Vec<Layer>) {
-        if self.panes.len() < 2 {
+        let tiled = self.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
+        if tiled.len() < 2 {
             return;
         }
         let covers: Vec<Rect> = self.covers(None).iter().map(|r| self.pixels(r)).collect();
@@ -1448,11 +1541,11 @@ impl Session {
         let accent = termpix_ui::Theme::dark().accent.0;
         let mut lines = Vec::new();
         let mut gaps = Vec::new();
-        for (id, e) in &self.panes {
+        for (id, e) in tiled.iter().filter_map(|id| Some((*id, self.panes.get(id)?))) {
             let r = e.rect;
             let (x0, y0) = (r.x * cell.width as i32, r.y * cell.height as i32);
             let (w, h) = (r.w * cell.width, r.h * cell.height);
-            let focus = *id == self.focus;
+            let focus = id == self.focus;
             let (vx, vy) = ((cell.width - BORDER_PX) / 2, (cell.height - BORDER_PX) / 2);
             // The gap cells right of and below the pane (including the corner
             // where gaps cross).
@@ -1489,12 +1582,6 @@ impl Session {
             let layer = Layer { key: 0, image, src: Rect::new(0, 0, r.w, r.h), dst: r, z };
             self.keys.place(layers, OWNER_SESSION, 1 + i as u32, layer, &covers);
         }
-    }
-
-    /// What covers `pane` (the session's own layers with `None`), in cells:
-    /// nothing yet; floating panes will.
-    fn covers(&self, _pane: Option<PaneId>) -> Vec<Rect> {
-        Vec::new()
     }
 
     /// A rectangle of cells in screen pixels.
@@ -1625,6 +1712,7 @@ fn builtin_modes() -> Modes<Target> {
 mod tests {
     use super::*;
     use crate::keymap::{Act, Stroke, notation};
+    use crate::layout::Direction;
     use temzdf_pdfview::keys::Keymap;
 
     /// What the shipped defaults (runtime/defaults.ts) map, for sessions
@@ -2103,5 +2191,162 @@ mod tests {
         key(&mut s, "L");
         assert_eq!(width(&s, left), 68, "the normal mode stays");
         assert_eq!(s.current_mode(), "normal");
+    }
+
+    /// Open a floating pane running `argv` with `opts`; returns it.
+    fn float(s: &mut Session, argv: &[&str], opts: &[(&str, ScriptValue)]) -> PaneId {
+        let what = ScriptValue::map([(
+            "command",
+            ScriptValue::List(argv.iter().map(|a| ScriptValue::Str((*a).into())).collect()),
+        )]);
+        let opts = ScriptValue::map(opts.iter().cloned());
+        let (pane, _) = s.run_command("open-float", &[what, opts], None, Instant::now()).unwrap();
+        pane.as_num().expect("a pane") as PaneId
+    }
+
+    #[test]
+    fn a_float_covers_the_panes_below_it() {
+        let (mut s, rx) =
+            terminal_session(&["sh", "-c", "for i in 1 2 3 4 5 6 7 8; do printf '%080d\\n' 0; done; sleep 30"]);
+        let zeros = "0".repeat(80);
+        wait_text(&mut s, &rx, |r| r[7] == zeros);
+        let n = |v: f64| ScriptValue::Num(v);
+        let opts = [
+            ("width", n(20.0)),
+            ("height", n(4.0)),
+            ("col", n(5.0)),
+            ("row", n(2.0)),
+            ("title", ScriptValue::Str("pop".into())),
+        ];
+        let pane = float(&mut s, &["sh", "-c", "echo FLOAT; sleep 30"], &opts);
+        assert_eq!((s.focus, s.current_mode()), (pane, "terminal"));
+        // The frame is 22 x 6 cells at (5, 2); the content inside it.
+        assert_eq!(s.panes[&pane].rect, Rect::new(6, 3, 20, 4));
+        let (_, rows) = wait_text(&mut s, &rx, |r| r[3].get(6..11) == Some("FLOAT"));
+        assert_eq!(rows[1], zeros, "above the float");
+        assert_eq!(&rows[2][7..12], " pop ", "the title on the frame");
+        for (y, row) in rows.iter().enumerate().take(8).skip(2) {
+            let inside: String = row.chars().skip(5).take(22).collect();
+            assert!(!inside.contains('0'), "row {y}: the pane below shows through: {row:?}");
+            assert_eq!(row.chars().nth(4), Some('0'), "row {y}: left of the float");
+            assert_eq!(row.chars().nth(27), Some('0'), "row {y}: right of the float");
+        }
+        // The frame is drawn: its lines lie within the float's cells.
+        let frame = s.frame();
+        let outer = s.pixels(&Rect::new(5, 2, 22, 6));
+        let lines = frame.layers.iter().filter(|l| l.z == Z_BORDER_FOCUS).count();
+        assert_eq!(lines, 4, "the focused float's four lines");
+        assert!(frame.layers.iter().filter(|l| l.z == Z_BORDER_FOCUS).all(|l| outer.intersect(&l.dst) == Some(l.dst)));
+        // Its terminal is as large as its content.
+        let buf = s.panes[&pane].buffer();
+        assert_eq!((s.terms[&buf].term.geometry().cols, s.terms[&buf].term.geometry().rows), (20, 4));
+    }
+
+    #[test]
+    fn floats_cascade_raise_take_turns_and_hide_together() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        let tiled = s.focus;
+        let a = float(&mut s, &["sleep", "30"], &[]);
+        // Splitting a float opens another float beside it.
+        s.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
+        let b = s.focus;
+        assert_ne!(b, a);
+        assert_eq!(s.pane_count(), 3);
+        let (fa, fb) = (s.floats[0].frame, s.floats[1].frame);
+        assert_eq!((fb.x, fb.y, fb.w, fb.h), (fa.x + 2, fa.y + 2, fa.w, fa.h), "two cells right and down");
+        // Focus moves among the floats, raising them.
+        s.action(Action::MoveFocus(Direction::Left), Instant::now()).unwrap();
+        assert_eq!((s.focus, s.floats.last().unwrap().pane), (a, a));
+        // The cycle: floats from the top, then the tiled panes.
+        assert_eq!(s.focus_order(), [a, b, tiled]);
+        s.action(Action::FocusNextPane, Instant::now()).unwrap();
+        assert_eq!(s.focus, b);
+        s.action(Action::FocusNextPane, Instant::now()).unwrap();
+        assert_eq!(s.focus, tiled, "a tiled pane takes the focus; the floats stay");
+        assert_eq!(s.covers(Some(tiled)).len(), 2);
+        // Hidden: the focus goes to the tiled pane, nothing covers it.
+        s.action(Action::FocusNextPane, Instant::now()).unwrap();
+        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        assert_eq!((s.focus, s.covers(Some(tiled)).len()), (tiled, 0));
+        assert!(s.pane_at(10.0, 10.0) == Some(tiled), "hidden floats take no clicks");
+        // Shown again: the top float has the focus.
+        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        assert_eq!(s.focus, s.floats.last().unwrap().pane);
+        // Moving and resizing by commands.
+        s.run_command(
+            "float-config",
+            &[
+                ScriptValue::Num(a as f64),
+                ScriptValue::map([("width", ScriptValue::Num(30.0)), ("col", ScriptValue::Num(0.0))]),
+            ],
+            None,
+            Instant::now(),
+        )
+        .unwrap();
+        let fa = s.floats.iter().find(|f| f.pane == a).unwrap().frame;
+        assert_eq!((fa.x, fa.w), (0, 32));
+        s.set_focus(a);
+        s.run_command("resize-pane", &[ScriptValue::Str("left".into()), ScriptValue::Num(5.0)], None, Instant::now())
+            .unwrap();
+        assert_eq!(s.panes[&a].rect.w, 25, "the right edge moved left");
+        let ScriptValue::List(panes) = s.run_command("panes", &[], None, Instant::now()).unwrap().0 else { panic!() };
+        let floating: Vec<bool> = panes.iter().map(|p| p.get("floating") == Some(&ScriptValue::Bool(true))).collect();
+        assert_eq!(floating.iter().filter(|f| **f).count(), 2);
+    }
+
+    #[test]
+    fn the_last_tiled_pane_gives_way_to_a_shown_float() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        let tiled = s.focus;
+        // The last tiled pane does not float.
+        let err = s.run_command("toggle-floating", &[], None, Instant::now()).unwrap_err();
+        assert!(err.contains("last tiled pane"), "{err}");
+        let f = float(&mut s, &["sh", "-c", "echo floating; sleep 30"], &[]);
+        // Hidden floats do not keep the session.
+        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        assert_eq!(s.close(tiled), Outcome::Quit);
+        // Shown, the top float takes the tiled pane's place.
+        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        assert_eq!(s.close(tiled), Outcome::Redraw);
+        assert_eq!((s.layout.as_ref().unwrap().panes(), s.floats.len(), s.focus), (vec![f], 0, f));
+        assert_eq!(s.panes[&f].rect, s.area(), "the whole screen");
+        // A tiled pane floats and comes back beside the focused tiled pane.
+        key(&mut s, "<C-b>%");
+        let right = s.focus;
+        s.run_command("toggle-floating", &[], None, Instant::now()).unwrap();
+        assert!(s.is_float(right));
+        assert_eq!(s.layout.as_ref().unwrap().panes(), [f]);
+        s.run_command("toggle-floating", &[], None, Instant::now()).unwrap();
+        assert!(!s.is_float(right));
+        assert_eq!(s.layout.as_ref().unwrap().panes(), [f, right]);
+    }
+
+    #[test]
+    fn a_floating_terminal_closes_when_its_program_exits() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        let tiled = s.focus;
+        float(&mut s, &["sh", "-c", "sleep 0.2"], &[]);
+        let out = pump(&mut s, &rx, |s| s.floats.is_empty());
+        assert_ne!(out, Outcome::Quit);
+        assert_eq!((s.floats.len(), s.focus), (0, tiled));
+        // The tiled pane to return to closes while a float has the focus.
+        key(&mut s, "<C-b>%");
+        let right = s.focus;
+        float(&mut s, &["sleep", "30"], &[]);
+        assert_eq!(s.close(right), Outcome::Redraw);
+        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        assert_eq!(s.focus, tiled, "hiding the floats focuses a tiled pane that is there");
+        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        assert_eq!(s.floats.len(), 1);
+        assert_eq!(s.focus, s.floats[0].pane);
+        // With no float, toggling floats opens a floating shell.
+        let only = s.focus;
+        s.close(only);
+        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        assert_eq!(s.floats.len(), 1);
+        assert_eq!(s.focus, s.floats[0].pane);
     }
 }

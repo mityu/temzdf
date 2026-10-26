@@ -6,10 +6,13 @@ use std::time::Instant;
 use temzdf_pdfview::keys::Command;
 use temzdf_protocol::script::{CommandSpec, ScriptValue};
 
-use super::{Kind, Outcome, PaneEntry, Session, Spot};
-use crate::action::Action;
+use temzdf_term::Spawn;
+
+use super::floats::{self, FloatSpec, FloatWhat};
+use super::{BufferId, Kind, Outcome, PaneEntry, Session, Spot};
+use crate::action::{Action, PaneSpec};
 use crate::keymap::notation;
-use crate::layout::{Direction, Split};
+use crate::layout::{Direction, PaneId, Split};
 
 /// The session's own commands; the page-view commands follow (see
 /// [`command_specs`]).
@@ -28,6 +31,18 @@ const SESSION: &[(&str, &str, &str)] = &[
         "Move the focused pane's right (bottom) border, else its left (top) one, `cells` cells that way (1 times a mapping's count); or give the pane a size",
     ),
     ("close-pane", "(): void", "Close the focused pane (its buffer stays, hidden)"),
+    (
+        "open-float",
+        "(what?: { buffer: number } | { file: string } | { command: string[] } | null, opts?: { width?: number | string; height?: number | string; col?: number | string; row?: number | string; title?: string; focus?: boolean }): number | null",
+        "Open a floating pane (a new shell by default); sizes in cells (the content's) or \"N%\" of the screen, centred unless col/row; returns the pane (null for a file still opening)",
+    ),
+    (
+        "float-config",
+        "(pane: number | null, opts: { width?: number | string; height?: number | string; col?: number | string; row?: number | string; title?: string; focus?: boolean }): void",
+        "Move or resize a floating pane (the focused one for null), or change its title",
+    ),
+    ("toggle-floats", "(): void", "Show or hide every floating pane; with none, open a floating shell"),
+    ("toggle-floating", "(pane?: number): void", "Turn a pane (the focused one) floating, or tiled again"),
     (
         "buffers",
         "(): { id: number; kind: \"pdf\" | \"terminal\"; name: string; panes: number[]; exited: boolean }[]",
@@ -57,7 +72,11 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("switch-mode", "(mode: string): void", "Enter a mode (pushed on the mode history)"),
     ("exit-mode", "(): void", "Back to the previous mode"),
     ("current-mode", "(): string", "The current mode's name"),
-    ("panes", "(): { id: number; kind: \"pdf\" | \"terminal\"; buffer: number; focused: boolean }[]", "The panes"),
+    (
+        "panes",
+        "(): { id: number; kind: \"pdf\" | \"terminal\"; buffer: number; focused: boolean; floating: boolean; rect: { col: number; row: number; width: number; height: number } }[]",
+        "The panes (rect: the content, in cells)",
+    ),
     ("focused-pane", "(): number | null", "The focused pane's id"),
     ("session-name", "(): string", "The session's name"),
 ];
@@ -129,6 +148,70 @@ impl Session {
                 };
                 let a = Action::split(side, root).map_err(|e| format!("{e:#}"))?;
                 act(self, a)
+            }
+            "open-float" => {
+                let what = match args.first() {
+                    None | Some(ScriptValue::Null) => FloatWhat::Spawn(Spawn::default()),
+                    Some(o @ ScriptValue::Map(_)) => {
+                        if let Some(b) = o.get("buffer").and_then(ScriptValue::as_num) {
+                            FloatWhat::Buffer(b as BufferId)
+                        } else if let Some(f) = o.get("file").and_then(ScriptValue::as_str) {
+                            FloatWhat::File(f.into())
+                        } else if let Some(ScriptValue::List(argv)) = o.get("command") {
+                            let argv = argv.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect();
+                            FloatWhat::Spawn(Spawn { argv: Some(argv), ..Spawn::default() })
+                        } else {
+                            return Err("openFloat: what is { buffer }, { file } or { command }".into());
+                        }
+                    }
+                    // `temzdf action open-float FILE.pdf` or `-- htop`, as new-pane.
+                    Some(_) => {
+                        let mut words = vec!["new-pane".to_owned()];
+                        words.extend(args.iter().filter_map(|a| a.as_str().map(str::to_owned)));
+                        match Action::parse(&words).map_err(|e| format!("{e:#}"))? {
+                            Action::NewPane { spec: PaneSpec::Pdf(p), cwd } => {
+                                FloatWhat::File(cwd.map_or_else(|| p.clone(), |d| d.join(&p)))
+                            }
+                            Action::NewPane { spec: PaneSpec::Command(argv), cwd } => {
+                                FloatWhat::Spawn(Spawn { argv: Some(argv), cwd, ..Spawn::default() })
+                            }
+                            Action::NewPane { cwd, .. } => FloatWhat::Spawn(Spawn { cwd, ..Spawn::default() }),
+                            _ => return Err("openFloat: what to open?".into()),
+                        }
+                    }
+                };
+                let mut spec = FloatSpec::default();
+                let mut title = None;
+                let mut focus = true;
+                if let Some(o) = args.get(1).filter(|o| matches!(o, ScriptValue::Map(_))) {
+                    floats::read_opts(o, &mut spec, &mut title).map_err(|e| format!("openFloat: {e}"))?;
+                    focus = !matches!(o.get("focus"), Some(ScriptValue::Bool(false)));
+                }
+                let pane = self.open_float(what, spec, title, focus).map_err(|e| format!("openFloat: {e}"))?;
+                Ok((pane.map_or(ScriptValue::Null, |p| ScriptValue::Num(p as f64)), Outcome::Redraw))
+            }
+            "float-config" => {
+                let pane = id(0).unwrap_or(self.focus);
+                let o = args.get(1).ok_or("floatConfig: which options?")?;
+                let Some(f) = self.float_mut(pane) else {
+                    return Err(format!("floatConfig: pane {pane} does not float"));
+                };
+                let (mut spec, mut title) = (f.spec, f.title.clone());
+                floats::read_opts(o, &mut spec, &mut title).map_err(|e| format!("floatConfig: {e}"))?;
+                if let Some(f) = self.float_mut(pane) {
+                    (f.spec, f.title) = (spec, title);
+                }
+                self.relayout();
+                ok(Outcome::Redraw)
+            }
+            "toggle-floats" => {
+                self.toggle_floats().map_err(|e| format!("toggleFloats: {e:#}"))?;
+                ok(Outcome::Redraw)
+            }
+            "toggle-floating" => {
+                let pane = id(0).unwrap_or(self.focus);
+                self.toggle_floating(pane).map_err(|e| format!("toggleFloating: {e}"))?;
+                ok(Outcome::Redraw)
             }
             "new-pane" => {
                 let mut words = vec!["new-pane".to_owned()];
@@ -213,11 +296,22 @@ impl Session {
                             Kind::Pdf { .. } => "pdf",
                             Kind::Term { .. } => "terminal",
                         };
+                        let r = e.rect;
                         ScriptValue::map([
                             ("id", ScriptValue::Num(id as f64)),
                             ("kind", ScriptValue::Str(kind.into())),
                             ("buffer", ScriptValue::Num(e.buffer() as f64)),
                             ("focused", ScriptValue::Bool(id == self.focus)),
+                            ("floating", ScriptValue::Bool(self.is_float(id))),
+                            (
+                                "rect",
+                                ScriptValue::map([
+                                    ("col", ScriptValue::Num(r.x as f64)),
+                                    ("row", ScriptValue::Num(r.y as f64)),
+                                    ("width", ScriptValue::Num(r.w as f64)),
+                                    ("height", ScriptValue::Num(r.h as f64)),
+                                ]),
+                            ),
                         ])
                     })
                     .collect();
@@ -239,6 +333,9 @@ impl Session {
     fn resize_pane(&mut self, args: &[ScriptValue], count: Option<usize>) -> Result<(ScriptValue, Outcome), String> {
         let area = self.area();
         let pane = self.focus;
+        if self.is_float(pane) {
+            return self.resize_float_pane(pane, args, count);
+        }
         let Some(layout) = self.layout.as_mut() else { return Ok((ScriptValue::Null, Outcome::None)) };
         let num = |v: Option<&ScriptValue>| match v {
             Some(ScriptValue::Num(n)) => Some(*n),
@@ -271,6 +368,35 @@ impl Session {
             self.relayout();
         }
         Ok((ScriptValue::Null, if moved { Outcome::Redraw } else { Outcome::None }))
+    }
+
+    /// `resizePane` on a float: its right or bottom edge moves, or it gets a size.
+    fn resize_float_pane(
+        &mut self,
+        pane: PaneId,
+        args: &[ScriptValue],
+        count: Option<usize>,
+    ) -> Result<(ScriptValue, Outcome), String> {
+        let num = |v: Option<&ScriptValue>| match v {
+            Some(ScriptValue::Num(n)) => Some(*n as i64),
+            Some(ScriptValue::Str(s)) => s.parse().ok(),
+            _ => None,
+        };
+        match args.first() {
+            Some(o @ ScriptValue::Map(_)) => self.resize_float(pane, num(o.get("width")), num(o.get("height")), true),
+            dir => {
+                let cells = num(args.get(1)).unwrap_or(1) * count.unwrap_or(1) as i64;
+                let (w, h) = match dir.and_then(ScriptValue::as_str) {
+                    Some("left") => (Some(-cells), None),
+                    Some("right") => (Some(cells), None),
+                    Some("up") => (None, Some(-cells)),
+                    Some("down") => (None, Some(cells)),
+                    other => return Err(format!("resizePane: {other:?} is not left, right, up, down or a size")),
+                };
+                self.resize_float(pane, w, h, false);
+            }
+        }
+        Ok((ScriptValue::Null, Outcome::Redraw))
     }
 
     /// `temzdf action NAME ARGS...`: a command by name, its arguments as
