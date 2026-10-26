@@ -89,6 +89,33 @@
             # `temzdf print-types` (crates/temzdf/tests/types.rs).
             typescript
           ];
+          # The GUI client (doc/gui-client.md): what winit and wgpu load at
+          # run time, a software Vulkan driver (Mesa's lavapipe) for offscreen
+          # rendering in tests, and the tools its end-to-end tests drive:
+          # an Xfce window manager on Xvfb, headless sway with grim and wtype
+          # (Wayland), fcitx5 with Mozc (Japanese input, IME tests).
+          guiLibs = with pkgs; [
+            vulkan-loader
+            libxkbcommon
+            wayland
+            libx11
+            libxcursor
+            libxi
+            libxrandr
+          ];
+          gui = with pkgs; [
+            vulkan-tools
+            mesa
+            xfce.xfwm4
+            xwininfo
+            xprop
+            sway
+            grim
+            wtype
+            wlr-randr
+            dbus
+            (kdePackages.fcitx5-with-addons.override { addons = [ fcitx5-mozc ]; })
+          ];
           # Build, test, and drive kitty end to end. Tools that are large or
           # usually installed globally (TeX, other terminals) are in `alldeps`.
           base = {
@@ -120,11 +147,22 @@
                   imagemagick
                   xclip
                 ]
+                ++ gui
               );
             # Found through pkg-config (temzdf-term).
             buildInputs = [ pkgs.libghostty-vt.dev ];
             # mupdf-sys runs bindgen, which needs libclang.
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          }
+          // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            # winit and wgpu open these with dlopen. The real GPU's Vulkan
+            # driver comes from the system (/run/opengl-driver on NixOS).
+            LD_LIBRARY_PATH = lib.makeLibraryPath guiLibs;
+            # Tests render offscreen on lavapipe: VK_DRIVER_FILES=$TEMZDF_LAVAPIPE_ICD.
+            TEMZDF_LAVAPIPE_ICD = "${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${pkgs.stdenv.hostPlatform.uname.processor}.json";
+            # The GUI's default font (UDEV Gothic NF), for tests that must not
+            # depend on the fonts installed on the host.
+            TEMZDF_TEST_FONTS = "${pkgs.udev-gothic-nf}/share/fonts";
           };
           # Just enough LaTeX to build the test fixtures (tests/fixtures/*.tex).
           tex = pkgs.texliveBasic.withPackages (
