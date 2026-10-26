@@ -112,12 +112,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         bail!("invalid session name {name:?}");
     }
     let socket = proto::socket_path(name)?;
-    if probe(&socket).is_some() {
-        bail!("session {name:?} already exists");
-    }
-    let _ = std::fs::remove_file(&socket);
-    let listener = UnixListener::bind(&socket).with_context(|| format!("cannot listen on {}", socket.display()))?;
-    let _cleanup = RemoveOnDrop(socket.clone());
+    let (_lock, listener, _cleanup) = claim_socket(name, &socket)?;
     eprintln!("temzdf server: session {name} on {} (pid {})", socket.display(), std::process::id());
 
     let (tx, rx) = mpsc::channel::<Event>();
@@ -434,17 +429,95 @@ fn start_writer(mut stream: UnixStream, rx: mpsc::Receiver<ServerMsg>) -> Result
     Ok(())
 }
 
-struct RemoveOnDrop(PathBuf);
+/// Take the socket of session `name`: lock the session (`NAME.lock`, held
+/// for the server's life, so two servers started at once cannot both
+/// think the name free and unlink each other's socket), refuse a socket
+/// something answers on (a live session, maybe of another version), and
+/// replace only a stale one.
+fn claim_socket(name: &str, socket: &Path) -> Result<(std::fs::File, UnixListener, RemoveOnDrop)> {
+    let lock_path = socket.with_extension("lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("cannot open {}", lock_path.display()))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => bail!("session {name:?} already exists (or is starting)"),
+        Err(std::fs::TryLockError::Error(e)) => return Err(e).context(format!("cannot lock {}", lock_path.display())),
+    }
+    if UnixStream::connect(socket).is_ok() {
+        if probe(socket).is_some() {
+            bail!("session {name:?} already exists");
+        }
+        bail!("a session {name:?} of another temzdf version is running (end it with that version)");
+    }
+    let _ = std::fs::remove_file(socket);
+    let listener = UnixListener::bind(socket).with_context(|| format!("cannot listen on {}", socket.display()))?;
+    let cleanup = RemoveOnDrop::new(socket);
+    Ok((lock, listener, cleanup))
+}
+
+/// Removes the socket when the server ends, unless another one replaced it
+/// meanwhile (a server that lost its socket must not take the new one's).
+#[derive(Debug)]
+struct RemoveOnDrop {
+    path: PathBuf,
+    id: Option<(u64, u64)>,
+}
+
+impl RemoveOnDrop {
+    fn new(path: &Path) -> Self {
+        Self { path: path.to_owned(), id: file_id(path) }
+    }
+}
+
+fn file_id(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(path).ok().map(|m| (m.dev(), m.ino()))
+}
 
 impl Drop for RemoveOnDrop {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        if self.id.is_some() && file_id(&self.path) == self.id {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sockets_are_claimed_once_and_never_taken_from_a_live_server() {
+        let dir = std::env::temp_dir().join(format!("temzdf-claim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("s.sock");
+        let first = claim_socket("s", &socket).unwrap();
+        // A second server for the same name, started at the same time.
+        let e = claim_socket("s", &socket).unwrap_err();
+        assert!(e.to_string().contains("already exists"), "{e}");
+        drop(first);
+        assert!(!socket.exists(), "the server's own socket goes with it");
+        // Something listens that does not answer as this version: kept.
+        let other = UnixListener::bind(&socket).unwrap();
+        let e = claim_socket("s", &socket).unwrap_err();
+        assert!(e.to_string().contains("another temzdf version"), "{e}");
+        assert!(socket.exists());
+        drop(other);
+        // Stale (nobody listens): replaced.
+        let (lock, listener, cleanup) = claim_socket("s", &socket).unwrap();
+        // Another server's socket replaced ours meanwhile: ours does not
+        // take it along when it ends.
+        std::fs::remove_file(&socket).unwrap();
+        let _theirs = UnixListener::bind(&socket).unwrap();
+        drop((lock, listener, cleanup));
+        assert!(socket.exists(), "the new socket stays");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn nothing_to_send_means_no_short_waits() {
