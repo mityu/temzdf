@@ -228,9 +228,6 @@ impl Tty {
     pub fn open(modes: Modes) -> io::Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
         let original = termios::tcgetattr(&file)?;
-        let mut raw = original.clone();
-        raw.make_raw();
-        termios::tcsetattr(&file, OptionalActions::Flush, &raw)?;
         let restore_fd = file.as_fd().try_clone_to_owned()?;
         // `TERMPIX_TRACE=<path>`: copy of every byte written, for debugging.
         let trace = std::env::var_os("TERMPIX_TRACE").and_then(|p| File::create(p).ok());
@@ -240,6 +237,10 @@ impl Tty {
         let writer = OpenOptions::new().write(true).open("/dev/tty")?;
         rustix::fs::fcntl_setfl(&writer, rustix::fs::OFlags::NONBLOCK)?;
         let out = Output::spawn(writer, trace)?;
+        // Raw mode last: an error before leaves the terminal as it was.
+        let mut raw = original.clone();
+        raw.make_raw();
+        termios::tcsetattr(&file, OptionalActions::Flush, &raw)?;
         *RESTORE.lock().unwrap_or_else(|e| e.into_inner()) = Some(RestoreState {
             fd: restore_fd,
             termios: original,
