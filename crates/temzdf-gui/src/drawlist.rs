@@ -77,6 +77,8 @@ pub struct DrawList {
     pub cursor: Option<Fill>,
     /// The character under a block cursor, drawn over it.
     pub cursor_glyph: Option<Glyph>,
+    /// Glyphs over the marks (an input method's text).
+    pub over_glyphs: Vec<Glyph>,
     pub over: Vec<Image>,
 }
 
@@ -206,6 +208,42 @@ pub fn build(frame: &Frame, grid: Grid, colors: &Colors) -> DrawList {
     list
 }
 
+/// Text an input method is composing, drawn from the text cursor's cell
+/// over whatever is there (the program sees it only once committed):
+/// inverse colours, underlined, wide characters over two cells, cut at the
+/// right edge. The cursor goes after it.
+pub fn preedit(list: &mut DrawList, text: &str, at: (u16, u16), grid: Grid, colors: &Colors) {
+    let (mut col, row) = at;
+    if text.is_empty() || row >= grid.rows {
+        return;
+    }
+    let (fg, bg) = (colors.background, colors.foreground);
+    for c in text.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).clamp(1, 2) as u16;
+        if col + w > grid.cols {
+            break;
+        }
+        let rect = grid.cells(col, row, w as u32);
+        list.marks.push(Fill { rect, color: [bg[0], bg[1], bg[2], 255] });
+        list.marks.extend(decorations(&Attrs { underline: Underline::Single, ..Attrs::default() }, rect, fg));
+        // Drawn with the cursor's character, above the marks.
+        list.over_glyphs.push(Glyph {
+            col,
+            row,
+            text: c.to_string(),
+            width: w as u8,
+            color: fg,
+            bold: false,
+            italic: false,
+        });
+        col += w;
+    }
+    let cell = grid.cells(col.min(grid.cols.saturating_sub(1)), row, 1);
+    let bar = (grid.cell_w / 8).max(2);
+    list.cursor = Some(Fill { rect: Rect::new(cell.x, cell.y, bar, cell.h), color: [bg[0], bg[1], bg[2], 255] });
+    list.cursor_glyph = None;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +311,17 @@ mod tests {
             [(Rect::new(0, 0, 8, 16), [0, 0, 255, 255]), (Rect::new(8, 0, 8, 16), [fg[0], fg[1], fg[2], 255])]
         );
         assert!(list.marks.is_empty(), "the underlined c was written over by z");
+    }
+
+    #[test]
+    fn preedit_text_is_drawn_from_the_cursor_and_cut_at_the_edge() {
+        let colors = Colors::default();
+        let mut list = DrawList::default();
+        preedit(&mut list, "にほんg", (5, 1), GRID, &colors);
+        let glyphs: Vec<(&str, u16, u8)> = list.over_glyphs.iter().map(|g| (g.text.as_str(), g.col, g.width)).collect();
+        assert_eq!(glyphs, [("に", 5, 2), ("ほ", 7, 2)], "ん would pass the edge (10 columns)");
+        assert_eq!(list.marks.iter().filter(|m| m.rect.h == 16).count(), 2, "a background per character");
+        assert_eq!(list.cursor.map(|c| c.rect.x), Some(9 * 8), "after the text");
     }
 
     #[test]

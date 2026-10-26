@@ -179,7 +179,16 @@ impl App {
             _ => return,
         };
         let target = texture.texture.create_view(&Default::default());
-        let list = g.view.draw_list(g.geometry);
+        let mut list = g.view.draw_list(g.geometry);
+        if let Some((col, row)) = g.view.frame.as_ref().and_then(|(_, f)| f.cursor) {
+            crate::drawlist::preedit(
+                &mut list,
+                &self.input.preedit,
+                (col, row),
+                crate::view::grid(g.geometry),
+                &g.view.colors,
+            );
+        }
         g.view.renderer.draw(&list, crate::view::grid(g.geometry), (0, 0), (g.config.width, g.config.height), &target);
         g.window.pre_present_notify();
         g.view.renderer.queue().present(texture);

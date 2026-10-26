@@ -384,7 +384,7 @@ impl Renderer {
         let m = self.metrics;
         let glyph_sets: [Vec<(GlyphKey, &Glyph)>; 2] = [
             list.glyphs.iter().map(|g| (self.glyph_buffer(g), g)).collect(),
-            list.cursor_glyph.iter().map(|g| (self.glyph_buffer(g), g)).collect(),
+            list.cursor_glyph.iter().chain(&list.over_glyphs).map(|g| (self.glyph_buffer(g), g)).collect(),
         ];
         self.viewport.update(&self.queue, Resolution { width: size.0, height: size.1 });
         for (n, set) in glyph_sets.iter().enumerate() {
