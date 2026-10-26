@@ -1,12 +1,13 @@
 # GUI client: groundwork and plan
 
-Status (2026-10-26): research and a plan, nothing implemented. Step 4 of the
-session server's plan (`doc/session-server.md`): a native window
-that attaches to a session as the TTY client does. Toolkit research is in
-`doc/gui-stack.md`; this document narrows it to the client the
-current code needs, lists what must be decided and what is in the way, and
-plans what can be built now. Items marked **(decide)** are for the user;
-each has a recommendation.
+Status (2026-10-27): a plan, nothing implemented. Reviewed against the code
+on 2026-10-27 (tab pages, text-grid chrome, where the client code lives, the
+dev shell); every **(decide)** item is decided as recommended (the user,
+2026-10-27; see "Decisions"). Step 4 of the session server's plan
+(`doc/session-server.md`): a native window that attaches to a session as the
+TTY client does. Toolkit research is in `doc/gui-stack.md`; this document
+narrows it to the client the current code needs, lists what is in the way,
+and plans what can be built now.
 
 ## What the GUI client is
 
@@ -30,10 +31,16 @@ What the TTY client does today and what the GUI does instead:
 | Input | parsed escape sequences into `KeyEvent`/`MouseEvent` | window events translated into the same types |
 | Pacing | `FrameAck` after the terminal took the bytes | `FrameAck` after presenting |
 
-The GUI reuses: the protocol, session discovery and server spawning
-(`client.rs`: `spawn_server`, `resolve`; the attach loop itself is
-TTY-specific), `temzdf-scene` and `termpix-core`'s event types. It needs no
-`termpix`.
+The GUI reuses: the protocol, session discovery and server spawning,
+`temzdf-scene` and `termpix-core`'s event types. It needs no `termpix`.
+Discovery and spawning (`name_for`, `first_pane`, `spawn_server`,
+`resolve` in `crates/temzdf/src/client.rs`) live in the binary crate today,
+so they move to a library first (the attach loop itself is TTY-specific).
+
+Since this plan was written the session gained tab pages: the current tab
+is the session's, the same for every client, and the session composes the
+tab line (a text grid on the top row, clicks handled by the session). The
+GUI draws it like any text and needs no tabs of its own.
 
 ## Gaps in the current protocol and server
 
@@ -96,13 +103,20 @@ change on the server side, testable without a GUI.
    client's geometry, cell size included (decided: tmux's `latest`). A GUI
    at 2x and a terminal over SSH alternate; each switch re-renders tiles at
    the new density. Per-client rendering stays out of the first version.
-10. **Pixel chrome.** Status bar, outline, prompts and link previews are
-    pixels drawn by `termpix-ui` at the cell size the client reports, so
-    they are sharp at any scale but use termpix-ui's font, not the GUI's.
-    Moving chrome to text grids (already planned) fixes that for both
-    clients; not a blocker.
+10. **Pixel chrome.** A PDF pane's status bar, outline, prompts and link
+    previews are pixels drawn by `termpix-ui` at the cell size the client
+    reports, so they are sharp at any scale but use termpix-ui's font, not
+    the GUI's. The session's own chrome is already text grids (float
+    titles, floating messages, the tab line), so the GUI needs its text
+    renderer from the start. Moving the PDF chrome to text grids (planned)
+    fixes the rest for both clients; not a blocker.
 
-## Facts checked for this plan (2026-10-26)
+## Facts checked for this plan (2026-10-26, rechecked 2026-10-27)
+
+Rechecked on crates.io on 2026-10-27: winit 0.31.0-beta.4 is still the
+newest (0.30.13 the stable one), wgpu is 30.0.1, glyphon 0.12.0 depends on
+wgpu ^30 and cosmic-text ^0.19, arboard is 3.7.0.
+
 
 Collected by a research agent; **[V]** verified from the source named, **[I]**
 inferred.
@@ -145,7 +159,34 @@ inferred.
   - Output is stable for a pinned Mesa (the flake pins it) and differs from
     real GPUs in anti-aliasing [I].
 
-## Things to decide
+## Decisions (the user, 2026-10-27: every recommendation)
+
+- Text input (gap 2) goes through the key mappings as keys, one per
+  character, except in pass-through modes (`terminal`), where it is typed.
+- The theme (gap 4) is session options (`o.palette`, `o.foreground`,
+  `o.background`) sent to clients with frames; libghostty answers colour
+  queries from them.
+- Fonts (gap 5) are session options as Neovim's `guifont` (`o.guifont`,
+  `o.guifontwide`), read by GUI clients.
+- Pasting (gap 6) is a mapping to a `paste` command; the client answers the
+  `paste` effect with `ClientMsg::Paste` (the primary selection too).
+- winit 0.31 beta, pinned exactly, updated as betas come.
+- A separate crate and binary, `temzdf-gui`, spawning sessions with
+  `temzdf` (next to itself, else on `PATH`).
+- wgpu from the start, the scene first turned into a plain draw list.
+- No standalone mode: the GUI always attaches to a session (starting one as
+  `attach -c` does).
+- One window per session; the session's tab pages show through its tab
+  line. Several windows per session or a session switcher: later.
+- macOS: Option as Alt by default, a setting for composing characters
+  (kitty's `macos_option_as_alt`); Cmd is `<D-...>`.
+- Closing the window detaches; a configurable action ends the session.
+- Decorations: server-side where the compositor offers them, client-side
+  otherwise; no custom title bar at first.
+
+The items below were the questions and their recommendations.
+
+## Things to decide (decided as recommended, see above)
 
 - **winit version.** **(decide)** 0.30.13 (stable) or 0.31 beta (pinned
   exactly). 0.31 has the IME fixes and the scroll source this client wants,
@@ -170,8 +211,9 @@ Besides the (decide) items above:
   (`temzdf FILE`). Recommended: the GUI always attaches to a session
   (starting one, as `attach -c` does); closing the window detaches, a
   configurable action ends the session.
-- **Window per session.** One window shows one session (as a terminal does).
-  Tabs, several windows per session or a session switcher are later.
+- **Window per session.** One window shows one session (as a terminal does),
+  with the session's tab pages in its tab line. Several windows per session
+  or a session switcher are later.
 - **macOS modifiers.** `<D-...>` (Cmd) already exists in the notation.
   **(decide)** Option as Alt (`<M-...>`) or as a character composer:
   recommended a setting, default "Alt" (what terminal users expect), as
@@ -211,6 +253,13 @@ Besides the (decide) items above:
   software adapter (Mesa lavapipe/llvmpipe), and its output differs from a
   real GPU in anti-aliasing, so comparisons need tolerance or must avoid
   filtering.
+- **The dev shell** has `xvfb-run` but none of the GUI's test tools: the
+  Vulkan loader and Mesa (lavapipe) for offscreen wgpu, headless sway,
+  `grim` and `wtype` for Wayland e2e, `fcitx5` for IME tests. Adding them to
+  `flake.nix` needs the shell (and the agent in it) restarted.
+- **Miri**: the draw list and input translation are plain Rust and run
+  under `scripts/miri.sh`; tests that open a window or a GPU device get
+  `#[cfg_attr(miri, ignore = "...")]`.
 - **NixOS**: wgpu needs the Vulkan loader and drivers at runtime
   (`LD_LIBRARY_PATH` with `vulkan-loader` and `/run/opengl-driver/lib`,
   as `doc/gpu.md` notes); a `nix run` wrapper must set that up.
@@ -261,6 +310,10 @@ window at all.
 
 **G1: a window that shows a session**
 
+0. Move session discovery and spawning (`name_for`, `first_pane`,
+   `spawn_server`, `resolve`) from `crates/temzdf/src/client.rs` into a
+   library both clients use; add the GUI's test tools to the dev shell
+   (Vulkan loader, Mesa lavapipe, sway, grim, wtype, fcitx5; a restart).
 4. Crate `temzdf-gui` (library + binary): connect or spawn a session, Hello
    with the window's geometry, mirror images into textures, draw layers
    (z, clip, scale) and acknowledge frames. Tests: draw-list unit tests,
