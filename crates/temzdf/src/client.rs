@@ -27,7 +27,9 @@ pub fn name_for(file: &Path) -> Result<String> {
     let stem = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let mut base: String =
         stem.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' }).collect();
-    base = base.trim_start_matches('.').chars().take(56).collect();
+    // Room for "-N" while the socket path still fits.
+    let room = proto::max_name_len()?.saturating_sub(4).max(1);
+    base = base.trim_start_matches('.').chars().take(room.min(56)).collect();
     if base.is_empty() {
         base = "temzdf".into();
     }

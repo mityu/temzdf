@@ -208,12 +208,56 @@ pub fn valid_name(name: &str) -> bool {
 }
 
 pub fn socket_path(name: &str) -> io::Result<PathBuf> {
-    Ok(sessions_dir()?.join(format!("{name}.sock")))
+    socket_in(&sessions_dir()?, name)
+}
+
+/// The size of `sockaddr_un`'s path, NUL included.
+#[cfg(target_os = "macos")]
+const SUN_PATH: usize = 104;
+#[cfg(not(target_os = "macos"))]
+const SUN_PATH: usize = 108;
+
+/// The longest session name whose socket path fits (see [`socket_path`]).
+pub fn max_name_len() -> io::Result<usize> {
+    Ok(max_name_in(&sessions_dir()?))
+}
+
+fn max_name_in(dir: &Path) -> usize {
+    // "<dir>/<name>.sock" and the NUL.
+    (SUN_PATH - 1).saturating_sub(dir.as_os_str().len() + "/.sock".len()).min(64)
+}
+
+/// `<dir>/<name>.sock`, or an error saying so when that is longer than a
+/// socket path may be (on macOS the per-user directory leaves about 30
+/// characters for the name).
+fn socket_in(dir: &Path, name: &str) -> io::Result<PathBuf> {
+    if name.len() > max_name_in(dir) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "session name {name:?} is too long for a socket in {} (at most {} characters)",
+                dir.display(),
+                max_name_in(dir)
+            ),
+        ));
+    }
+    Ok(dir.join(format!("{name}.sock")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn socket_paths_fit_a_sockaddr() {
+        let dir = Path::new("/var/folders/xy/abcdefghijklmnopqrstuvwxyz012345/T/temzdf/sessions");
+        let max = max_name_in(dir);
+        let longest = socket_in(dir, &"n".repeat(max)).unwrap();
+        assert!(longest.as_os_str().len() < SUN_PATH, "{} bytes", longest.as_os_str().len());
+        let e = socket_in(dir, &"n".repeat(max + 1)).unwrap_err();
+        assert!(e.to_string().contains(&format!("at most {max} characters")), "{e}");
+        assert_eq!(max_name_in(Path::new("/run/user/1000/temzdf/sessions")), 64, "the name rule's limit");
+    }
 
     #[test]
     fn private_dirs_are_ours_alone() {
