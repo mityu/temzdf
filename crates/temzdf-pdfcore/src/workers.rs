@@ -267,6 +267,9 @@ pub struct RasterPool {
 impl Drop for RasterPool {
     /// Let the threads finish once their current job is done.
     fn drop(&mut self) {
+        // Under the lock: a worker between checking `stop` and waiting would
+        // otherwise miss the notification and wait forever.
+        let _queue = self.shared.0.lock().unwrap_or_else(|e| e.into_inner());
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         self.shared.1.notify_all();
     }
@@ -327,6 +330,19 @@ mod tests {
     use super::*;
     use crate::doc_cache::{TILE, TileKind};
     use crate::pdf::PixelRect;
+
+    #[test]
+    fn dropping_a_pool_ends_its_threads() {
+        // Each worker holds the sink; all of them gone closes the channel.
+        // Dropped at once, the workers are still starting: many rounds give
+        // a lost wakeup a chance to show.
+        for _ in 0..300 {
+            let (tx, rx) = mpsc::channel::<DocEvent>();
+            drop(RasterPool::new(4, channel_sink(tx, |e| e)).unwrap());
+            let end = rx.recv_timeout(std::time::Duration::from_secs(5));
+            assert!(matches!(end, Err(mpsc::RecvTimeoutError::Disconnected)), "a worker is still waiting");
+        }
+    }
 
     /// Raster throughput by pool size. Not a regular test (timing depends on
     /// the machine); run it with
