@@ -94,9 +94,9 @@ enum Cmd {
     /// End every session.
     #[command(alias = "ka")]
     KillAllSessions,
-    /// Run an action in a session: new-pane [FILE | -- COMMAND...],
-    /// split right|down, move-focus left|right|up|down, focus-next-pane,
-    /// close-pane, detach.
+    /// Run a command in a session: any command of the registry (`temzdf
+    /// print-types` lists them), e.g. new-pane [FILE | -- COMMAND...], split
+    /// right|down, move-focus left|right|up|down, close-pane, detach.
     Action {
         /// The session (the only one when left out).
         #[arg(short, long, value_name = "NAME")]

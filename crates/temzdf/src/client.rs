@@ -328,7 +328,7 @@ pub fn list_sessions(verbose: bool) -> Result<()> {
         }
     }
     for name in other {
-        println!("{name}  (another temzdf version; end it with `temzdf kill-session {name}`)");
+        println!("{name}  (another temzdf version; end it with that version's `temzdf kill-session {name}`)");
     }
     Ok(())
 }
@@ -340,9 +340,18 @@ pub fn kill_session(name: &str) -> Result<()> {
     }
 }
 
+/// End every session, those of other versions too when they still take the
+/// request; one that fails does not stop the others.
 pub fn kill_all_sessions() -> Result<()> {
-    for s in daemon::list()? {
-        kill_session(&s.name)?;
+    let (sessions, other) = daemon::list_all()?;
+    let mut failed = Vec::new();
+    for name in sessions.into_iter().map(|s| s.name).chain(other) {
+        if let Err(e) = kill_session(&name) {
+            failed.push(format!("{name}: {e:#}"));
+        }
+    }
+    if !failed.is_empty() {
+        bail!("some sessions did not end:\n{}", failed.join("\n"));
     }
     Ok(())
 }

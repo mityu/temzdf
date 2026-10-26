@@ -37,10 +37,12 @@ What exists:
   (`crates/temzdf/src/client.rs`).
 - Commands follow zellij: `temzdf -s NAME [FILE]` (a shell without FILE),
   `attach [-c] [NAME [FILE]]` (`a`), `list-sessions` (`ls`), `kill-session`
-  (`k`), `kill-all-sessions` (`ka`), `action [-s NAME] new-pane [--cwd DIR]
-  [FILE | -- COMMAND...] | split right|down | move-focus DIR |
-  focus-next-pane | close-pane | detach` (`new-pane` alone opens a shell; the
-  CLI adds `--cwd` with its own directory). Splitting a PDF pane shows the same
+  (`k`), `kill-all-sessions` (`ka`), `action [-s NAME] COMMAND ARGS...`: any
+  command of the registry (`temzdf print-types` lists them), e.g. `new-pane
+  [--cwd DIR] [FILE | -- COMMAND...]`, `split right|down`, `move-focus DIR`,
+  `close-pane`, `detach` (`new-pane` alone opens a shell; the CLI adds `--cwd`
+  with its own directory and resolves file paths there; without `-s`, in a
+  pane, the session of that pane). Splitting a PDF pane shows the same
   document again; splitting a terminal starts another shell in the directory
   the shell reported (OSC 7). `<C-b><C-b>` sends `<C-b>` to the pane.
   Borders drag with the mouse, and `resize-pane` (`+` `-` `<` `>` in the
