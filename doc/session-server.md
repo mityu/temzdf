@@ -3,7 +3,7 @@
 Status (2026-10-26): steps 1 to 3 of the incremental plan below are
 implemented (PDF and terminal panes; terminal panes show text only); see
 "Implementation status". The research it
-builds on is on the `research/notes` branch: `doc/multiplexer.md`,
+builds on: `doc/multiplexer.md`,
 `doc/gui-stack.md`, `doc/webview-viewer.md`, `doc/config-language.md`.
 
 ## Implementation status
@@ -24,8 +24,8 @@ What exists:
   area; when the screen changes size the last pane takes the difference), focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
   buffers as in Vim (what panes show; closing a pane hides its buffer,
   see `doc/config.md`), floating panes over the layout (a stack of framed
-  panes; `doc/config.md`, design in `doc/floating-panes.md` on
-  `research/notes`), `Action`s with a text form, and one composed frame (pane
+  panes; `doc/config.md`, design in `doc/floating-panes.md`),
+  `Action`s with a text form, and one composed frame (pane
   layers moved into their rectangles, clipped, placement keys made unique and
   stable; what a float covers is cut out of the panes below it,
   `crates/temzdf-server/src/clip.rs`, since images cannot be stacked over
@@ -325,7 +325,9 @@ the server receives the request and routes it to the panes showing that PDF.
   into child processes later (the intended end state).
 - **No resurrection**: a server restart loses the sessions.
 - **Configuration**: stays TOML for now; the programmable language
-  (`doc/config-language.md`) is decided later.
+  (`doc/config-language.md`) is decided later. Update 2026-10-26: JavaScript /
+  TypeScript in a separate process replaces TOML; design in
+  `doc/scripting.md`.
 - **Terminal panes**: `libghostty-vt` for VT emulation (temzdf itself behaves
   best in Ghostty among the tested terminals: layered kitty placements work
   there, while WezTerm needed whole-frame compositing); the pty itself comes

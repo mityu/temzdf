@@ -1,7 +1,7 @@
 //! Floating panes: panes outside the layout tree, stacked over it (the last
 //! on top), each in a one-cell frame with a title. They show and hide
 //! together; what lies under a shown float is cut out of the panes below
-//! (see `crate::clip`). Design: `doc/floating-panes.md` on `research/notes`.
+//! (see `crate::clip`). Design: `doc/floating-panes.md`.
 
 use temzdf_scene::{Attrs, Cell, Color, Layer, Pointer, Rect, TextGrid};
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};

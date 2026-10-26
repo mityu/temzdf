@@ -4,7 +4,7 @@ The configuration can be a JavaScript or TypeScript program,
 `$XDG_CONFIG_HOME/temzdf/config.ts` (or `config.js`; both at once is an
 error). It runs in a separate process, the script host. This document
 describes what is implemented; the design, its reasons and the open
-questions are in `doc/scripting.md` on the `research/notes` branch (temzdf
+questions are in `doc/scripting.md` (temzdf
 is meant to feel like Vim/Neovim without editing buffers, with a vimrc-like
 configuration).
 

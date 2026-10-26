@@ -35,17 +35,15 @@ server on one `Session`). Next and open:
   placeholders (tmux inside a pane), animation frames, and images re-emitted
   per client when clients differ in cell size.
 - [ ] Scripting and configuration (JavaScript/TypeScript in a script-host
-  process, replacing the TOML file): design in `doc/scripting.md` on the
-  `research/notes` branch; the host and execution model are implemented
-  (`doc/script-host.md`), and so are modes and key mappings, the shipped
+  process, replacing the TOML file): design in `doc/scripting.md`; the host
+  and execution model are implemented (`doc/script-host.md`), and so are modes and key mappings, the shipped
   defaults in JavaScript, options, `print-types`, floating messages and the
   escape keys (TOML is gone), buffers separated from panes, and terminal
   panes' selection, links and images, pane sizes kept when the screen
   changes size, resizing panes (dragging borders, `resize-pane`), and
   floating panes. Next: default mappings for switching buffers; status and
-  title bars on panes and the window (direction in `doc/floating-panes.md`
-  on `research/notes`). The
-  questions under "Open questions, to decide later" there (modes and
+  title bars on panes and the window (direction in `doc/floating-panes.md`).
+  The questions under "Open questions, to decide later" there (modes and
   mappings, escape hatches, message area, mouse, defaults, layout details,
   hidden buffers, client-side settings, reload, CLI scripting,
   `check-config`) must be decided before or while implementing.

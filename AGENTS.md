@@ -62,10 +62,8 @@ cargo build --workspace
 Run `scripts/check.sh` before every commit. The scripts enter the dev shell by
 themselves when started outside it.
 
-Design notes and research live on the `research/notes` branch.
-`scripts/notes.sh show FILE` reads one from there. To edit them without
-leaving your branch, `scripts/notes.sh open` gives you a worktree and
-`scripts/notes.sh close` removes it again.
+Design notes and research live in `doc/` with the code (they used to be on a
+separate `research/notes` branch, merged in on 2026-10-27).
 
 Behaviour visible on screen (terminal panes, sessions, CLI, keys) is best
 tested in `crates/temzdf/tests/tui.rs`: the real binary behind a simulated
@@ -167,3 +165,7 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/script-host.md`: the JavaScript/TypeScript configuration: the script host, execution model, API.
 - `doc/gpu.md`: GPU rasterisation experiment (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.
 - `doc/known-issues.md`: problems known and left in place, why, and what a fix would take.
+- `doc/scripting.md`: the scripting and configuration design: decisions with the user, open questions.
+- `doc/floating-panes.md`: the floating panes design, and bars on panes and the window.
+- `doc/gui-client.md`: groundwork and plan for a native GUI client (not implemented).
+- Research behind the session server: `doc/multiplexer.md` (what a multiplexer can reuse), `doc/gui-stack.md` (GUI toolkits), `doc/markdown-viewer.md` and `doc/webview-viewer.md` (previewers on `termpix`), `doc/config-language.md` (configuration languages; superseded by `doc/scripting.md`).
