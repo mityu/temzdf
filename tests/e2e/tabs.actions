@@ -1,0 +1,34 @@
+# Tab pages: a shell with a program's image in one, a PDF in the other.
+# Used with:
+#   mkdir -p target/e2e-tabs
+#   scripts/e2e.sh -o target/e2e-tabs tests/e2e/tabs.actions -- sh -c \
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf -s e2e-t; exec sh'
+# Expected (90x30 cells of 10x20 px):
+#   pdf.png    the tab line on the top row (" 1 shell  2 sample.pdf", the
+#              second highlighted), the PDF page below it; nothing of the
+#              shell, its zeros or the gradient
+#   shell.png  after <C-b>gt: the tab line with the first tab highlighted,
+#              the shell with its zeros and the red-to-blue gradient; no part
+#              of the PDF page anywhere
+#   back.png   after a click on the second tab: the PDF page again, no
+#              gradient
+#   one.png    after a middle click on the first tab: no tab line, the PDF
+#              page from the top row
+magick -size 300x300 gradient:red-blue "$outdir/img.png"
+type "clear; for i in \$(seq 12); do printf '%044d\n' 0; done; printf '\033_Ga=T,f=100,t=f,c=30,r=10,q=2;%s\033\\\\' \"\$(printf %s $outdir/img.png | base64 -w0)\"; echo
+"
+pause 1
+target/debug/temzdf action -s e2e-t new-tab target/fixtures/sample.pdf
+pause 2
+shot pdf
+keys ctrl+b g t
+pause 1
+shot shell
+# The second tab's label starts at column 9 (" 1 shell " is 9 cells).
+click 120 10
+pause 1
+shot back
+click 30 10 2
+pause 1
+shot one
+target/debug/temzdf kill-session e2e-t
