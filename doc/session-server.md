@@ -54,7 +54,8 @@ What exists:
   theme applies), wide characters, SGR attributes, cursor shape, keys through
   libghostty's encoder (legacy or kitty keyboard protocol, as the program
   asks), mouse reports when the program tracks the mouse (otherwise the wheel
-  scrolls back through 10000 lines of history), bracketed paste, focus
+  scrolls back through 10000 lines of history, or on the alternate screen,
+  as in less and man, sends arrow keys: alternate scroll, DECSET 1007), bracketed paste, focus
   reports, OSC 52 copies, resizing (to the largest pane showing the
   terminal), mouse selection copied on release, OSC 8 links opened on click,
   `[rows above/history]` while scrolled back, and kitty graphics from

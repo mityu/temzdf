@@ -36,7 +36,9 @@ use libghostty_vt::{RenderState, Terminal, TerminalOptions, focus, key, mouse, p
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use temzdf_scene::{Attrs, Cell, Color, CursorShape, Effect, Frame, Images, Layer, Rect, TextGrid, Underline};
 use termpix_core::geom::Geometry;
-use termpix_core::input::{CoordUnit, KeyEvent, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection};
+use termpix_core::input::{
+    CoordUnit, KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
+};
 
 /// What the pty's reader thread reports.
 pub enum TermEvent {
@@ -402,6 +404,20 @@ impl TermBuffer {
             let mut out = Vec::new();
             if self.mouse_encoder.encode_to_vec(&event, &mut out).is_ok() {
                 self.write(&out);
+            }
+            return redraw;
+        }
+        // Alternate scroll (DECSET 1007): a full-screen program on the
+        // alternate screen (less, man) has no history to scroll; the wheel
+        // sends it arrow keys instead.
+        if let MouseEventKind::Scroll(d @ (ScrollDirection::Up | ScrollDirection::Down)) = m.kind
+            && self.terminal.active_screen().is_ok_and(|s| s == libghostty_vt::screen::Screen::Alternate)
+            && self.terminal.mode(Mode::ALT_SCROLL).unwrap_or(false)
+        {
+            let code = if d == ScrollDirection::Up { KeyCode::Up } else { KeyCode::Down };
+            let arrow = keys::encode(&mut self.key_encoder, &self.terminal, &KeyEvent::new(code, Modifiers::NONE));
+            for _ in 0..WHEEL_ROWS {
+                self.write(&arrow);
             }
             return redraw;
         }
@@ -1050,6 +1066,34 @@ mod tests {
         assert_eq!(images.len(), 2);
         term.release(&mut images);
         assert_eq!(images.len(), 0);
+    }
+
+    #[test]
+    fn the_wheel_sends_arrows_to_programs_on_the_alternate_screen() {
+        // Alternate screen, alternate scroll on, no mouse tracking (as less).
+        let script = "printf '\\033[?1049h\\033[?1007hready'; stty raw -echo; v=$(dd bs=1 count=3 2>/dev/null | od -An -tx1 | tr -d ' '); printf 'got:%s' \"$v\"; sleep 5";
+        let (tx, rx) = mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let sink: Sink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let spawn = Spawn { argv: Some(vec!["sh".into(), "-c".into(), script.into()]), ..Default::default() };
+        let mut term = TermBuffer::spawn(&spawn, GEOMETRY, sink).unwrap();
+        let wait = |term: &mut TermBuffer, needle: &str| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !text(term).iter().any(|l| l.contains(needle)) {
+                assert!(std::time::Instant::now() < deadline, "waiting for {needle}: {:?}", text(term));
+                if let Ok(TermEvent::Output(b)) = rx.recv_timeout(Duration::from_millis(100)) {
+                    term.feed(&b);
+                }
+            }
+        };
+        wait(&mut term, "ready");
+        // Raw mode is on once stty ran; give it a moment.
+        std::thread::sleep(Duration::from_millis(200));
+        term.mouse(&mouse(MouseEventKind::Scroll(ScrollDirection::Up), 0, 0, Modifiers::NONE), false);
+        wait(&mut term, "got:");
+        let rows = text(&mut term);
+        let got = rows.iter().find(|l| l.contains("got:")).cloned().unwrap_or_default();
+        assert!(got.contains("got:1b5b41") || got.contains("got:1b4f41"), "an Up arrow: {rows:?}");
     }
 
     #[test]
