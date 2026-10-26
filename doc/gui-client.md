@@ -184,6 +184,17 @@ inferred.
 - Decorations: server-side where the compositor offers them, client-side
   otherwise; no custom title bar at first.
 
+Also decided (the user, 2026-10-27):
+
+- First target: the user's Xfce (X11, xfwm4). Wayland and macOS follow;
+  e2e tests run xfwm4 on Xvfb first.
+- Default font "UDEV Gothic NF" at 14 (points); no colours given, so the
+  theme defaults are ours (the default foreground and background of the
+  session's chrome, xterm's 256-colour palette).
+- The dev shell already has the tools (`flake.nix`: Vulkan loader,
+  lavapipe as `TEMZDF_LAVAPIPE_ICD`, the font as `TEMZDF_TEST_FONTS`,
+  xfwm4, sway, grim, wtype, fcitx5 with Mozc).
+
 The items below were the questions and their recommendations.
 
 ## Things to decide (decided as recommended, see above)
@@ -253,10 +264,10 @@ Besides the (decide) items above:
   software adapter (Mesa lavapipe/llvmpipe), and its output differs from a
   real GPU in anti-aliasing, so comparisons need tolerance or must avoid
   filtering.
-- **The dev shell** has `xvfb-run` but none of the GUI's test tools: the
-  Vulkan loader and Mesa (lavapipe) for offscreen wgpu, headless sway,
-  `grim` and `wtype` for Wayland e2e, `fcitx5` for IME tests. Adding them to
-  `flake.nix` needs the shell (and the agent in it) restarted.
+- **The dev shell** has the GUI's test tools since 2026-10-27 (the Vulkan
+  loader and lavapipe, xfwm4, headless sway, `grim`, `wtype`, `fcitx5` with
+  Mozc); the `ci` shell has none of them yet, so GPU and window tests skip
+  there.
 - **Miri**: the draw list and input translation are plain Rust and run
   under `scripts/miri.sh`; tests that open a window or a GPU device get
   `#[cfg_attr(miri, ignore = "...")]`.
@@ -312,8 +323,7 @@ window at all.
 
 0. Move session discovery and spawning (`name_for`, `first_pane`,
    `spawn_server`, `resolve`) from `crates/temzdf/src/client.rs` into a
-   library both clients use; add the GUI's test tools to the dev shell
-   (Vulkan loader, Mesa lavapipe, sway, grim, wtype, fcitx5; a restart).
+   library both clients use. (The dev shell's test tools are in place.)
 4. Crate `temzdf-gui` (library + binary): connect or spawn a session, Hello
    with the window's geometry, mirror images into textures, draw layers
    (z, clip, scale) and acknowledge frames. Tests: draw-list unit tests,
