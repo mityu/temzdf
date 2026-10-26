@@ -68,18 +68,25 @@ pub enum SynctexCmd {
 
 /// SyncTeX queries run here: parsing a big `.synctex.gz` takes a while and must
 /// not stall drawing. The file is (re)read lazily on the first query after
-/// start-up or a reload.
+/// start-up, a reload, or a change of the file itself (TeX writes it after the
+/// PDF: a query in between read the old one).
 pub fn spawn_synctex(pdf: PathBuf, events: Sink) -> std::io::Result<Sender<SynctexCmd>> {
     let (tx, rx) = mpsc::channel::<SynctexCmd>();
     std::thread::Builder::new().name("temzdf-synctex".into()).spawn(move || {
         let mut scanner: Option<Scanner> = None;
+        let mut seen = None;
         for cmd in rx {
             if matches!(cmd, SynctexCmd::Reload) {
                 scanner = None;
                 continue;
             }
+            let stamp = synctex_stamp(&pdf);
+            if stamp != seen {
+                scanner = None;
+            }
             if scanner.is_none() {
                 scanner = Scanner::open(&pdf);
+                seen = stamp;
             }
             let Some(s) = scanner.as_mut() else {
                 let name = pdf.with_extension("synctex.gz");
@@ -110,6 +117,15 @@ pub fn spawn_synctex(pdf: PathBuf, events: Sink) -> std::io::Result<Sender<Synct
         }
     })?;
     Ok(tx)
+}
+
+/// The SyncTeX file next to `pdf` as it is now (modification time and size),
+/// to notice it changed.
+fn synctex_stamp(pdf: &Path) -> Option<(std::time::SystemTime, u64)> {
+    ["synctex.gz", "synctex"].iter().find_map(|ext| {
+        let m = std::fs::metadata(pdf.with_extension(ext)).ok()?;
+        Some((m.modified().ok()?, m.len()))
+    })
 }
 
 /// A search request: find `query` on every page, starting at `start_page`.
@@ -330,6 +346,29 @@ mod tests {
     use super::*;
     use crate::doc_cache::{TILE, TileKind};
     use crate::pdf::PixelRect;
+
+    #[test]
+    fn synctex_data_follows_its_file() {
+        let dir = std::env::temp_dir().join(format!("temzdf-synctex-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pdf = dir.join("sample.pdf");
+        std::fs::copy(pdf::fixture("sample.pdf"), &pdf).unwrap();
+        std::fs::copy(pdf::fixture("sample.pdf").with_extension("synctex.gz"), pdf.with_extension("synctex.gz"))
+            .unwrap();
+        let (tx, rx) = mpsc::channel::<DocEvent>();
+        let cmds = spawn_synctex(pdf.clone(), channel_sink(tx, |e| e)).unwrap();
+        let forward = || SynctexCmd::Forward { file: "sample.tex".into(), line: 20, column: 0, page_hint: 0 };
+        let answer = || rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap();
+        cmds.send(forward()).unwrap();
+        assert!(matches!(answer(), DocEvent::ForwardResult(_)));
+        // The file goes (a build without SyncTeX, or TeX about to write a new
+        // one): the data read before is not used any more.
+        std::fs::remove_file(pdf.with_extension("synctex.gz")).unwrap();
+        cmds.send(forward()).unwrap();
+        assert!(matches!(answer(), DocEvent::SynctexFailed(m) if m.contains("no SyncTeX data")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn dropping_a_pool_ends_its_threads() {
