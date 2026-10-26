@@ -269,8 +269,13 @@ impl Parser {
 
     fn csi(&mut self, b: &[u8]) -> Step {
         // ESC [ <params 0x30-0x3f>* <intermediates 0x20-0x2f>* <final 0x40-0x7e>
+        // SGR mouse reports (`CSI <`) carry negative coordinates too: Ghostty
+        // reports the pointer past the window's left or top edge as -3. A
+        // `-` there is part of the parameters, not an intermediate byte (or
+        // the report would break and its rest reach the pane as typed text).
+        let sgr = b.get(2) == Some(&b'<');
         let mut i = 2;
-        while i < b.len() && (0x30..=0x3f).contains(&b[i]) {
+        while i < b.len() && ((0x30..=0x3f).contains(&b[i]) || (sgr && b[i] == b'-')) {
             i += 1;
         }
         let params_end = i;
@@ -840,6 +845,38 @@ mod tests {
         ));
         assert!(matches!(ev[1], Event::Mouse(MouseEvent { kind: MouseEventKind::Release(MouseButton::Left), .. })));
         assert!(matches!(ev[2], Event::Mouse(MouseEvent { kind: MouseEventKind::Move, .. })));
+    }
+
+    #[test]
+    fn sgr_mouse_outside_the_window_is_not_text() {
+        // Ghostty reports motion past the window's left or top edge with
+        // negative pixel coordinates; the reports must not turn into keys
+        // (they reached the focused shell as `<35;-3;251M`).
+        let mut p = Parser::new();
+        p.set_pixel_mouse(true);
+        let ev = p.feed(b"\x1b[<35;-3;251M\x1b[<35;-1;338M\x1b[<35;590;-3M\x1b[<32;1173;-2M");
+        let at: Vec<(MouseEventKind, i32, i32)> = ev
+            .iter()
+            .map(|e| match e {
+                Event::Mouse(m) => (m.kind, m.x, m.y),
+                other => panic!("not a mouse event: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            at,
+            [
+                (MouseEventKind::Move, -3, 251),
+                (MouseEventKind::Move, -1, 338),
+                (MouseEventKind::Move, 590, -3),
+                (MouseEventKind::Drag(MouseButton::Left), 1173, -2),
+            ]
+        );
+        // Split anywhere, too.
+        let mut p = Parser::new();
+        p.set_pixel_mouse(true);
+        let mut ev = p.feed(b"\x1b[<35;-");
+        ev.extend(p.feed(b"3;251M"));
+        assert!(matches!(ev[..], [Event::Mouse(MouseEvent { x: -3, y: 251, .. })]), "{ev:?}");
     }
 
     #[test]

@@ -68,6 +68,12 @@ Known problems:
   (`crates/termpix/src/graphics.rs`). Reproduce with
   `TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf target/fixtures/sample.pdf`
   after switching the level back to 1. Not yet reported upstream.
+- Ghostty (reported by the user, 2026-10-27, more often over SSH) reports
+  SGR-pixel motion past the window's left or top edge with negative
+  coordinates (`CSI <35;-3;251M`). The `-` is not a CSI parameter byte
+  (0x30-0x3f) but an intermediate one, so a parser following ECMA-48 to the
+  letter breaks the report and its rest arrives as typed text; termpix
+  takes `-` as part of the parameters after `CSI <`.
 - Ghostty 1.3.1 with kitty keyboard flags 31 reports Shift+letter as the base
   key plus Shift (e.g. `CSI 103;2u` style with alternates); termpix maps it to the
   produced character (`G`) using the alternate key or associated text.
