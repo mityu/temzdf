@@ -44,6 +44,10 @@ struct Client {
     awaiting: bool,
     /// The sequence number of the last frame sent.
     shown: u64,
+    /// Its terminal's size and frontend, as last reported: they apply
+    /// whenever it becomes the latest client.
+    geometry: Option<Geometry>,
+    hints: Option<Hints>,
 }
 
 impl Client {
@@ -201,7 +205,15 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 start_writer(stream, crx)?;
                 clients.insert(
                     id,
-                    Client { tx: ctx, attached: false, pending: HashMap::new(), awaiting: false, shown: 0 },
+                    Client {
+                        tx: ctx,
+                        attached: false,
+                        pending: HashMap::new(),
+                        awaiting: false,
+                        shown: 0,
+                        geometry: None,
+                        hints: None,
+                    },
                 );
             }
             Some(Event::Gone(id)) => {
@@ -218,23 +230,31 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     }
                     c.attached = true;
                     c.pending = session.images().snapshot().into_iter().map(|u| (key_of(&u), u)).collect();
-                    become_latest(&mut session, &mut latest, id, Some((geometry, Some(hints))));
+                    (c.geometry, c.hints) = (Some(geometry), Some(hints));
+                    become_latest(&mut session, &mut latest, &clients, id);
                     dirty = true;
                 }
                 ClientMsg::Key(k) => {
-                    become_latest(&mut session, &mut latest, id, None);
+                    dirty |= become_latest(&mut session, &mut latest, &clients, id);
                     outcome = session.key(&k, now);
                     if outcome == Outcome::Detach {
                         outcome = detach(&mut clients, id);
                     }
                 }
                 ClientMsg::Mouse(m) => {
+                    dirty |= become_latest(&mut session, &mut latest, &clients, id);
                     outcome = session.mouse(&m, now);
                     dirty |= session.pointer() != shown_pointer;
                 }
-                ClientMsg::Paste(text) => outcome = session.paste(&text),
+                ClientMsg::Paste(text) => {
+                    dirty |= become_latest(&mut session, &mut latest, &clients, id);
+                    outcome = session.paste(&text);
+                }
                 ClientMsg::Resize(g) => {
-                    become_latest(&mut session, &mut latest, id, Some((g, None)));
+                    if let Some(c) = clients.get_mut(&id) {
+                        c.geometry = Some(g);
+                    }
+                    become_latest(&mut session, &mut latest, &clients, id);
                     dirty = true;
                 }
                 ClientMsg::FrameAck(_) => {
@@ -287,6 +307,8 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
             outcome = outcome.merge(run_action(&mut session, &mut clients, id, &words, Instant::now()));
         }
         outcome = outcome.merge(session.poll(Instant::now()));
+        // The latest client left (went, detached): another takes over.
+        dirty |= hand_over(&mut session, &mut latest, &clients);
         match outcome {
             Outcome::Quit => {
                 if let Some(e) = session.error() {
@@ -365,21 +387,43 @@ fn run_action(
 
 /// Input or a new size makes a client the latest: the session follows its
 /// size (and frontend).
+/// Client `id` drives the session now (it attached, typed, pointed or
+/// resized): the session takes its size, and its frontend's hints when it
+/// was not the latest before. Returns whether anything changed.
 fn become_latest(
     session: &mut Session,
     latest: &mut Option<ClientId>,
+    clients: &HashMap<ClientId, Client>,
     id: ClientId,
-    geometry: Option<(Geometry, Option<Hints>)>,
-) {
-    if let Some((g, hints)) = geometry
-        && (*latest != Some(id) || g != session.geometry() || hints.is_some())
+) -> bool {
+    let Some(c) = clients.get(&id).filter(|c| c.attached) else { return false };
+    let new = *latest != Some(id);
+    let mut changed = new;
+    if let Some(g) = c.geometry
+        && g != session.geometry()
     {
         session.resize(g);
-        if let Some(h) = hints {
-            session.set_hints(h);
-        }
+        changed = true;
+    }
+    if new && let Some(h) = c.hints {
+        session.set_hints(h);
     }
     *latest = Some(id);
+    changed
+}
+
+/// The latest client is gone: the attached client that came last takes
+/// over (its size; effects such as copies go to it). Returns whether
+/// anything changed.
+fn hand_over(session: &mut Session, latest: &mut Option<ClientId>, clients: &HashMap<ClientId, Client>) -> bool {
+    if latest.is_some_and(|id| clients.get(&id).is_some_and(|c| c.attached)) {
+        return false;
+    }
+    *latest = None;
+    match clients.iter().filter(|(_, c)| c.attached).map(|(id, _)| *id).max() {
+        Some(id) => become_latest(session, latest, clients, id),
+        None => false,
+    }
 }
 
 fn key_of(u: &ImageUpdate) -> ImageKey {
@@ -517,6 +561,35 @@ mod tests {
         drop((lock, listener, cleanup));
         assert!(socket.exists(), "the new socket stays");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_remaining_client_takes_over_size_and_effects() {
+        let sink: EventSink = Arc::new(|_| true);
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut session = Session::new("t".into(), DEFAULT_GEOMETRY, Hints::default(), settings, sink);
+        let client = |cols, rows| Client {
+            tx: mpsc::channel().0,
+            attached: true,
+            pending: HashMap::new(),
+            awaiting: false,
+            shown: 0,
+            geometry: Some(Geometry { cols, rows, ..DEFAULT_GEOMETRY }),
+            hints: Some(Hints::default()),
+        };
+        let mut clients = HashMap::from([(1, client(80, 24)), (2, client(200, 60))]);
+        let mut latest = None;
+        assert!(become_latest(&mut session, &mut latest, &clients, 1));
+        assert!(become_latest(&mut session, &mut latest, &clients, 2));
+        assert_eq!((latest, session.geometry().cols), (Some(2), 200));
+        assert!(!hand_over(&mut session, &mut latest, &clients), "still there");
+        // The big one detaches: the small one's size applies again.
+        clients.remove(&2);
+        assert!(hand_over(&mut session, &mut latest, &clients));
+        assert_eq!((latest, session.geometry().cols, session.geometry().rows), (Some(1), 80, 24));
+        clients.remove(&1);
+        assert!(!hand_over(&mut session, &mut latest, &clients));
+        assert_eq!(latest, None, "nobody to send effects to");
     }
 
     #[test]
