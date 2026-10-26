@@ -207,6 +207,11 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   gaps, strips from older frames left behind), while one whole-screen image per
   frame works. Probe therefore picks `Backend::composited()` (whole frame) for
   WezTerm and `Backend::composited_strips(2)` for zellij.
+- WezTerm on Linux (user's machine, 2026-10-26): both the shm and the
+  temp-file probes fail, so Composited over direct transfers, which the
+  frontend takes for a slow link (frames capped at one per 200 ms). The cap
+  used to hold text-only frames too: keys typed into a shell echoed up to
+  200 ms late (user report). It now applies only to frames that send pixels.
 - tmux 3.8 inside kitty 0.49.2 (`scripts/e2e.sh -m tmux`, passthrough on, mouse
   on): works with the Placeholders backend. Frames are composited as strips
   and sent as `U=1` virtual images through passthrough (`ESC P tmux; ...`), and
