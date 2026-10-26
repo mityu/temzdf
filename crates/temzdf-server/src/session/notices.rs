@@ -101,6 +101,13 @@ impl Session {
     }
 
     /// The notices as boxes of text cells, stacked down from the top right.
+    /// Where the floating messages are, in cells.
+    pub(super) fn notice_rects(&self) -> Vec<temzdf_scene::Rect> {
+        let rect =
+            |g: &TextGrid| temzdf_scene::Rect::new(g.col as i32, g.row as i32, g.width() as u32, g.rows.len() as u32);
+        self.notice_grids().iter().map(rect).collect()
+    }
+
     pub(super) fn notice_grids(&self) -> Vec<TextGrid> {
         let cols = self.geometry.cols as usize;
         let rows = self.geometry.rows as usize;

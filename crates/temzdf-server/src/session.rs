@@ -2240,7 +2240,7 @@ mod tests {
         let frame = s.frame();
         let outer = s.pixels(&Rect::new(5, 2, 22, 6));
         let lines = frame.layers.iter().filter(|l| l.z == Z_BORDER_FOCUS).count();
-        assert_eq!(lines, 4, "the focused float's four lines");
+        assert_eq!(lines, 5, "the focused float's four lines, the top one in two around the title");
         assert!(frame.layers.iter().filter(|l| l.z == Z_BORDER_FOCUS).all(|l| outer.intersect(&l.dst) == Some(l.dst)));
         // Its terminal is as large as its content.
         let buf = s.panes[&pane].buffer();
@@ -2436,5 +2436,33 @@ mod tests {
         assert_eq!(s.layout.as_ref().unwrap().panes(), [tiled, f]);
         key(&mut s, "<C-b>e");
         assert!(s.is_float(f), "e: floating again");
+    }
+
+    #[test]
+    fn no_image_lies_under_text_drawn_over_it() {
+        // WezTerm draws images over text whatever their z: text over images
+        // (messages, a float's title) needs the images cut out below it.
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        let pct = |p: &str| ScriptValue::Str(p.into());
+        let f = float(
+            &mut s,
+            &["sleep", "30"],
+            &[("width", pct("100%")), ("height", pct("100%")), ("title", pct("title"))],
+        );
+        assert_eq!(s.floats[0].frame, s.area());
+        s.message("a message");
+        let frame = s.frame();
+        let notice = s.notice_rects()[0];
+        let title = Rect::new(2, 0, 7, 1);
+        let rows = screen_text(&frame, GEOMETRY);
+        assert_eq!(&rows[0][2..9], " title ");
+        for r in [notice, title] {
+            let px = s.pixels(&r);
+            let under: Vec<_> = frame.layers.iter().filter(|l| l.dst.intersect(&px).is_some()).collect();
+            assert!(under.is_empty(), "images under the text at {r:?}: {under:?}");
+        }
+        // Around them the frame is drawn.
+        assert!(frame.layers.iter().any(|l| l.dst.y == 0 && l.dst.x == 0), "the frame of float {f}");
     }
 }

@@ -1,0 +1,39 @@
+# Floating panes over a shell with a program's image and over a PDF page.
+# Used with:
+#   mkdir -p target/e2e-floats
+#   scripts/e2e.sh -o target/e2e-floats tests/e2e/floats.actions -- sh -c \
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf -s e2e-f; exec sh'
+# Expected (90x30 cells of 10x20 px):
+#   float.png  a framed float (columns 9-80, rows 3-26, title "shell" on its
+#              top edge, accent-coloured frame) showing "inside the float";
+#              inside it no zeros, no part of the red-to-blue gradient (left
+#              pane) and no part of the PDF page (right pane); both show
+#              around it
+#   moved.png  the float dragged by its title edge to columns 18-89, rows 6-29
+#              (kept on screen): the zeros and the gradient show again at the
+#              top left
+#   notice.png a floating message at the top right ("a notice in a frame"),
+#              readable over the PDF page; the float's title readable on
+#              its frame (in WezTerm too, which draws images over text)
+magick -size 300x300 gradient:red-blue "$outdir/img.png"
+type "clear; for i in \$(seq 12); do printf '%044d\n' 0; done; printf '\033_Ga=T,f=100,t=f,c=30,r=10,q=2;%s\033\\\\' \"\$(printf %s $outdir/img.png | base64 -w0)\"; echo
+"
+pause 1
+target/debug/temzdf action -s e2e-f new-pane target/fixtures/sample.pdf
+pause 2
+keys ctrl+b W
+pause 1
+type "echo inside the float
+"
+pause 1
+shot float
+# The title edge is row 3 (y 60-79); drag it 20 columns right, 4 rows down.
+xdotool mousemove 300 70 mousedown 1 mousemove 400 110 mousemove 500 150
+pause 0.3
+xdotool mouseup 1
+pause 1
+shot moved
+target/debug/temzdf action -s e2e-f message "a notice in a frame"
+pause 0.5
+shot notice
+target/debug/temzdf kill-session e2e-f

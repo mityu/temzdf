@@ -217,6 +217,12 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   text at once (and is acknowledged, so the next one comes).
 - In the e2e harness (Xvfb) WezTerm's shm probe succeeds, unlike on the
   user's desktop; force `TERMPIX_MEDIUM=direct` to reproduce the latter.
+- WezTerm draws images over text whatever their z (#7222), Composited
+  frames included: text the session draws over images (floating messages,
+  a floating pane's title on its frame) was hidden. The session now cuts
+  the images out under such text (`Session::covers`); kitty and Ghostty
+  look the same either way (cells with a background hide images below
+  text there). Seen in `tests/e2e/floats.actions` (`notice.png`).
 - tmux 3.8 inside kitty 0.49.2 (`scripts/e2e.sh -m tmux`, passthrough on, mouse
   on): works with the Placeholders backend. Frames are composited as strips
   and sent as `U=1` virtual images through passthrough (`ESC P tmux; ...`), and

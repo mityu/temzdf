@@ -250,11 +250,15 @@ impl Session {
     }
 
     /// What covers `pane` (the session's own layers with `None`), in cells:
-    /// the frames of the shown floats above it.
+    /// the frames of the shown floats above it, and the floating messages
+    /// (text over everything; WezTerm draws images over text, whatever their
+    /// z, so the images below text that covers them are cut out too).
     pub(super) fn covers(&self, pane: Option<PaneId>) -> Vec<Rect> {
         let floats = self.shown_floats();
         let above = pane.and_then(|p| floats.iter().position(|f| f.pane == p)).map_or(0, |i| i + 1);
-        floats[above..].iter().map(|f| f.frame).collect()
+        let mut covers: Vec<Rect> = floats[above..].iter().map(|f| f.frame).collect();
+        covers.extend(self.notice_rects());
+        covers
     }
 
     /// Put pane `id` on top of the floats. Returns its content rectangle.
@@ -498,19 +502,21 @@ impl Session {
     /// above it: background, lines (accent for the focused one) and title.
     pub(super) fn float_frames(&mut self, layers: &mut Vec<Layer>, text: &mut Vec<TextGrid>) {
         let accent = termpix_ui::Theme::dark().accent.0;
-        let frames: Vec<(usize, PaneId, Rect, String)> = self
+        let frames: Vec<(PaneId, Rect, String)> = self
             .shown_floats()
             .iter()
-            .enumerate()
-            .map(|(i, f)| (i, f.pane, f.frame, f.title.clone().unwrap_or_else(|| self.pane_name(f.pane))))
+            .map(|f| (f.pane, f.frame, f.title.clone().unwrap_or_else(|| self.pane_name(f.pane))))
             .collect();
-        for (i, pane, frame, title) in frames {
-            let covers: Vec<Rect> = self.floats[i + 1..].iter().map(|f| f.frame).collect();
-            let covers_px: Vec<Rect> = covers.iter().map(|r| self.pixels(r)).collect();
+        for (pane, frame, title) in frames {
+            let focus = pane == self.focus;
+            let title = title_grid(&title, frame, focus);
+            let covers = self.covers(Some(pane));
+            // The frame's images also leave the title's cells (see covers).
+            let title_rect = title.as_ref().map(|g| Rect::new(g.col as i32, g.row as i32, g.width() as u32, 1));
+            let covers_px: Vec<Rect> = covers.iter().chain(&title_rect).map(|r| self.pixels(r)).collect();
             let outer = self.pixels(&frame);
             let inner = self.pixels(&content(frame));
             let cell = self.geometry.cell;
-            let focus = pane == self.focus;
             // The frame's cells: four bands around the content.
             for (n, band) in outer.subtract(&inner).into_iter().enumerate() {
                 let image = self.solid(band.w, band.h, BACKGROUND);
@@ -536,7 +542,7 @@ impl Session {
                 let layer = Layer { key: 0, image, src: Rect::new(0, 0, r.w, r.h), dst: r, z };
                 self.keys.place(layers, OWNER_FRAMES, pane * 16 + 8 + n as u32, layer, &covers_px);
             }
-            if let Some(grid) = title_grid(&title, frame, focus) {
+            if let Some(grid) = title {
                 text.extend(crate::clip::text_pieces(grid, &covers));
             }
         }
