@@ -50,7 +50,7 @@ pub fn first_pane(file: Option<&Path>) -> Result<Vec<String>> {
         // Checked here: the server finds out in the background, too late
         // to fail the command.
         Some(f) if !f.exists() => bail!("{}: no such file", f.display()),
-        Some(f) => vec![std::path::absolute(f)?.display().to_string()],
+        Some(f) => vec![utf8(&std::path::absolute(f)?)?],
         None => Vec::new(),
     })
 }
@@ -329,6 +329,12 @@ pub fn action(name: &str, mut words: Vec<String>, timeout: Duration) -> Result<(
     }
 }
 
+/// A path as the protocol carries it (UTF-8): one that is not would arrive
+/// as another path, so it is an error.
+fn utf8(p: &Path) -> Result<String> {
+    p.to_str().map(str::to_owned).with_context(|| format!("{}: paths must be UTF-8 for sessions", p.display()))
+}
+
 /// Paths in `temzdf action` words are the caller's: resolve them against
 /// `cwd` here (the server has its own working directory) and check that
 /// files exist (opening happens later in the server, too late to fail the
@@ -340,15 +346,15 @@ fn resolve_paths(words: &mut Vec<String>, cwd: &Path) -> Result<()> {
         if !p.exists() {
             bail!("{}: no such file", p.display());
         }
-        Ok(p.display().to_string())
+        utf8(&p)
     };
     match words.first().map(String::as_str) {
         Some("new-pane" | "open-float") => {
             if words.get(1).is_none_or(|w| w != "--cwd") {
-                words.splice(1..1, ["--cwd".to_owned(), cwd.display().to_string()]);
+                words.splice(1..1, ["--cwd".to_owned(), utf8(cwd)?]);
             }
             let Some(dir) = words.get(2).map(|d| cwd.join(d)) else { bail!("--cwd: which directory?") };
-            words[2] = dir.display().to_string();
+            words[2] = utf8(&dir)?;
             if let Some(file) = words.get_mut(3)
                 && !file.starts_with('-')
             {
@@ -398,6 +404,10 @@ mod tests {
         let mut words = w(&["split", "right"]);
         resolve_paths(&mut words, &tmp).unwrap();
         assert_eq!(words, w(&["split", "right"]));
+        // A path that is not UTF-8 is refused, not mangled.
+        use std::os::unix::ffi::OsStrExt;
+        let odd = std::ffi::OsStr::from_bytes(b"/tmp/\xff.pdf");
+        assert!(utf8(Path::new(odd)).is_err());
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 }
