@@ -85,6 +85,9 @@ pub struct DocCache {
     lists_requested: HashSet<usize>,
     tiles: HashMap<TileKey, Cached>,
     in_flight: HashSet<TileKey>,
+    /// Renders in flight when the document was forgotten: dropped when
+    /// they arrive (nothing shows it; they would only hold memory).
+    unwanted: HashSet<TileKey>,
     used_bytes: usize,
     /// Clock for least-recently-used eviction, advanced once per composed
     /// frame: when a view that drew at this tick draws again (the views of
@@ -109,6 +112,7 @@ impl DocCache {
             lists_requested: HashSet::new(),
             tiles: HashMap::new(),
             in_flight: HashSet::new(),
+            unwanted: HashSet::new(),
             used_bytes: 0,
             clock: 0,
             views: HashSet::new(),
@@ -184,6 +188,7 @@ impl DocCache {
         for (_, c) in self.tiles.drain() {
             images.remove(c.image);
         }
+        self.unwanted.extend(self.in_flight.iter().copied());
         self.used_bytes = 0;
         self.lists.iter_mut().for_each(|l| *l = None);
     }
@@ -215,6 +220,7 @@ impl DocCache {
     /// A render job was dropped before it ran.
     pub fn render_cancelled(&mut self, key: TileKey) {
         self.in_flight.remove(&key);
+        self.unwanted.remove(&key);
     }
 
     /// Nothing asked for is still being loaded or rendered.
@@ -228,7 +234,7 @@ impl DocCache {
 
     pub fn rendered(&mut self, images: &mut Images, r: Rendered) {
         self.in_flight.remove(&r.key);
-        if r.key.generation != self.generation || self.tiles.contains_key(&r.key) {
+        if self.unwanted.remove(&r.key) || r.key.generation != self.generation || self.tiles.contains_key(&r.key) {
             return;
         }
         let bytes = r.pixels.len();
@@ -315,6 +321,22 @@ mod tests {
         let key = TileKey { generation: cache.generation(), page: 0, kind: TileKind::Tile { scale_q: 1, tx, ty: 0 } };
         cache.rendered(images, Rendered { key, width: 10, height: 10, pixels: vec![0; 400] });
         key
+    }
+
+    #[test]
+    fn tiles_arriving_after_the_document_was_forgotten_are_dropped() {
+        let mut images = Images::new();
+        let bounds = vec![PageBounds { x0: 0.0, y0: 0.0, x1: 100.0, y1: 100.0 }];
+        let mut cache = DocCache::new(bounds);
+        let key =
+            TileKey { generation: cache.generation(), page: 0, kind: TileKind::Tile { scale_q: 1, tx: 0, ty: 0 } };
+        cache.in_flight.insert(key);
+        cache.forget(&mut images);
+        cache.rendered(&mut images, Rendered { key, width: 10, height: 10, pixels: vec![0; 400] });
+        assert!(cache.tiles.is_empty() && images.is_empty(), "nothing shows the document");
+        // Shown again, the same tile is wanted.
+        cache.rendered(&mut images, Rendered { key, width: 10, height: 10, pixels: vec![0; 400] });
+        assert_eq!(cache.tiles.len(), 1);
     }
 
     #[test]
