@@ -1124,6 +1124,14 @@ impl PdfPane {
         };
         match hit {
             Some(h) => self.reveal_hit(h, now),
+            // Not found yet: say so, and (forward) go to the first hit
+            // when it comes, as after Enter.
+            None if !self.search.is_complete() => {
+                if forward {
+                    self.pending_first_hit = Some(self.viewer.top_position());
+                }
+                self.message = Some(format!("Searching: {}", self.search.query));
+            }
             None => self.message = Some(format!("Pattern not found: {}", self.search.query)),
         }
     }
@@ -1554,6 +1562,26 @@ mod tests {
         assert_eq!(s.search.current, None, "a later page may have one");
         s.search_hits(generation, 2, vec![rect(100.0)], now);
         assert_eq!(s.search.current, Some((2, 0)));
+    }
+
+    #[test]
+    fn next_match_before_the_search_finished_waits_for_it() {
+        let mut s = session();
+        let now = Instant::now();
+        for ch in ['/', 'x'] {
+            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
+        }
+        s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
+        let generation = match s.take_requests().last() {
+            Some(Request::Search { generation, .. }) => *generation,
+            other => panic!("{other:?}"),
+        };
+        s.pending_first_hit = None;
+        s.key(&KeyEvent::new(KeyCode::Char('n'), Modifiers::NONE), now);
+        assert!(s.message.as_deref().is_some_and(|m| m.starts_with("Searching")), "{:?}", s.message);
+        let rect = PageRect { x0: 10.0, y0: 100.0, x1: 50.0, y1: 110.0 };
+        s.search_hits(generation, 0, vec![rect], now);
+        assert_eq!(s.search.current, Some((0, 0)), "the hit it waited for");
     }
 
     #[test]
