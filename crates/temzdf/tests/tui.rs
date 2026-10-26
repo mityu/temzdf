@@ -751,3 +751,19 @@ fn a_float_moves_by_its_title_edge_and_a_click_raises_it() {
     t.type_text("echo first-$((2+3))\n");
     t.wait_text("first-5");
 }
+
+#[test]
+fn a_program_that_stops_reading_does_not_stop_the_session() {
+    let env = Env::new("stuck");
+    let mut t = Term::spawn(&[BIN, "-s", "st"], &env.options());
+    t.wait_for("the prompt", prompt);
+    // Raw mode, never reading: its input buffer fills after a few KB.
+    t.type_text("stty raw -echo; echo stuck; sleep 100\n");
+    t.wait_text("stuck");
+    t.paste(&"x".repeat(1 << 20));
+    // Writing that blocked the session thread: nothing went on after it.
+    t.keys(&["C-b", "%"]);
+    t.wait_for("a prompt in the new pane", |s| is_prompt(&s.row_from(0, 50)));
+    t.type_text("echo alive-$((1+2))\n");
+    t.wait_text("alive-3");
+}

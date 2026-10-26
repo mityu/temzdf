@@ -2542,4 +2542,34 @@ mod tests {
         key(&mut s, "<C-b>%");
         assert_eq!(s.pane_count(), 2);
     }
+
+    #[test]
+    fn a_terminal_closes_when_its_program_exits_although_jobs_hold_the_pty() {
+        // The shell leaves a job behind that keeps the pty open. (Linux hangs
+        // the pty up when its session leader exits, so its end of file came
+        // anyway there; the exit is now taken from the process itself.)
+        let (mut s, rx) = terminal_session(&["sh", "-c", "sleep 1000 & echo started"]);
+        let (outcome, rows) = wait_text(&mut s, &rx, |_| false);
+        assert_eq!(outcome, Outcome::Quit, "{rows:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn deleting_a_terminal_ends_a_program_that_ignores_hangups_without_waiting() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "trap '' HUP; echo ready; exec sleep 1000"]);
+        wait_text(&mut s, &rx, |r| r[0] == "ready");
+        let buf = s.panes[&s.focus].buffer();
+        let pid = s.terms[&buf].term.pid().unwrap();
+        key(&mut s, "<C-b>%");
+        let start = Instant::now();
+        s.run_command("delete-buffer", &[ScriptValue::Num(buf as f64)], None, Instant::now()).unwrap();
+        assert!(start.elapsed() < Duration::from_millis(100), "the session waited {:?}", start.elapsed());
+        // Hung up, then killed a second later, and reaped (no zombie).
+        let proc = std::path::PathBuf::from(format!("/proc/{pid}"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while proc.exists() {
+            assert!(Instant::now() < deadline, "{pid} is still there");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }

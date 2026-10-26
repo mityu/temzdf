@@ -14,8 +14,10 @@
 mod graphics;
 pub mod keys;
 
+mod pty;
+
 use std::cell::RefCell;
-use std::io::{self, Read, Write};
+use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,7 +33,7 @@ use libghostty_vt::selection::gesture::{
 use libghostty_vt::style::{StyleColor, Underline as GUnderline};
 use libghostty_vt::terminal::{Mode, Point, PointCoordinate, ScrollViewport};
 use libghostty_vt::{RenderState, Terminal, TerminalOptions, focus, key, mouse, paste};
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use temzdf_scene::{Attrs, Cell, Color, CursorShape, Effect, Frame, Images, Layer, Rect, TextGrid, Underline};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{CoordUnit, KeyEvent, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection};
@@ -39,7 +41,7 @@ use termpix_core::input::{CoordUnit, KeyEvent, Modifiers, MouseButton, MouseEven
 /// What the pty's reader thread reports.
 pub enum TermEvent {
     Output(Vec<u8>),
-    /// The pty closed: the program (and everything it started) exited.
+    /// The program exited (jobs it left may still hold the pty).
     Exited,
 }
 
@@ -93,9 +95,8 @@ pub struct TermBuffer {
     cells_it: CellIterator<'static>,
     key_encoder: key::Encoder<'static>,
     mouse_encoder: mouse::Encoder<'static>,
-    writer: Rc<RefCell<Box<dyn Write + Send>>>,
-    master: Box<dyn MasterPty + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    pty: pty::Pty,
+    input: pty::Input,
     geometry: Geometry,
     /// The text of the viewport, updated from libghostty's dirty rows.
     grid: Vec<Vec<Cell>>,
@@ -136,25 +137,8 @@ impl TermBuffer {
         }
         let child = pair.slave.spawn_command(cmd).map_err(io::Error::other)?;
         drop(pair.slave);
-        let mut reader = pair.master.try_clone_reader().map_err(io::Error::other)?;
-        let writer: Rc<RefCell<Box<dyn Write + Send>>> =
-            Rc::new(RefCell::new(pair.master.take_writer().map_err(io::Error::other)?));
-        std::thread::Builder::new().name("temzdf-pty".into()).spawn(move || {
-            let mut buf = vec![0u8; 64 << 10];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => {
-                        sink(TermEvent::Exited);
-                        return;
-                    }
-                    Ok(n) => {
-                        if !sink(TermEvent::Output(buf[..n].to_vec())) {
-                            return;
-                        }
-                    }
-                }
-            }
-        })?;
+        let pty = pty::Pty::start(pair.master, child, sink)?;
+        let input = pty.input();
 
         let mut terminal = Terminal::new(TerminalOptions {
             cols: geometry.cols.max(1),
@@ -172,10 +156,10 @@ impl TermBuffer {
         let _ = terminal.set_kitty_image_from_shared_mem_allowed(true);
         // Replies to the program's queries (cursor position, device
         // attributes, ...) go back through the pty.
-        let w = writer.clone();
+        let replies = input.clone();
         terminal
             .on_pty_write(move |_, data| {
-                let _ = w.borrow_mut().write_all(data);
+                replies.write(data);
             })
             .map_err(ghostty_err)?;
         let effects: Rc<RefCell<Vec<Effect>>> = Rc::default();
@@ -198,9 +182,8 @@ impl TermBuffer {
             cells_it: CellIterator::new().map_err(ghostty_err)?,
             key_encoder: key::Encoder::new().map_err(ghostty_err)?,
             mouse_encoder: mouse::Encoder::new().map_err(ghostty_err)?,
-            writer,
-            master: pair.master,
-            child,
+            pty,
+            input,
             geometry,
             grid: Vec::new(),
             effects,
@@ -227,22 +210,27 @@ impl TermBuffer {
     /// Output read from the pty.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.terminal.vt_write(bytes);
+        self.pty.consumed(bytes.len());
     }
 
-    /// The pty closed.
+    /// The program exited.
     pub fn set_exited(&mut self) {
         self.exited = true;
-        let _ = self.child.try_wait();
+    }
+
+    /// The program's process id.
+    pub fn pid(&self) -> Option<i32> {
+        self.pty.pid()
     }
 
     pub fn exited(&self) -> bool {
         self.exited
     }
 
+    /// Input for the program; dropped when it has stopped reading for long
+    /// (never blocks the session).
     fn write(&self, bytes: &[u8]) {
-        if !bytes.is_empty() {
-            let _ = self.writer.borrow_mut().write_all(bytes);
-        }
+        self.input.write(bytes);
     }
 
     /// Write `text` to the program as if typed (for scripts, like Vim's
@@ -262,7 +250,7 @@ impl TermBuffer {
             return;
         }
         self.geometry = geometry;
-        let _ = self.master.resize(pty_size(geometry));
+        self.pty.resize(pty_size(geometry));
         let _ =
             self.terminal.resize(geometry.cols.max(1), geometry.rows.max(1), geometry.cell.width, geometry.cell.height);
         self.grid.clear();
@@ -654,14 +642,6 @@ impl TermBuffer {
             title: self.title().unwrap_or_else(|| "shell".into()),
             ..Default::default()
         }
-    }
-}
-
-impl Drop for TermBuffer {
-    fn drop(&mut self) {
-        // Deleting the terminal ends its program (as a closing terminal window does).
-        let _ = self.child.kill();
-        let _ = self.child.try_wait();
     }
 }
 
