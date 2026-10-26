@@ -60,10 +60,13 @@ render() {
 }
 
 render_rev() {
-  local rev=$1 out=$2 root=$PWD tree
-  tree=$(mktemp -d "${TMPDIR:-/tmp}/frames-rev.XXXXXX")
-  git worktree add --quiet --detach "$tree" "$rev" || { rmdir "$tree"; return 1; }
-  trap 'git worktree remove --force "$tree"' RETURN
+  local rev=$1 out=$2 root=$PWD
+  # Global, for the EXIT trap: a failure under `set -e` leaves the script
+  # without returning from here.
+  rev_tree=$(mktemp -d "${TMPDIR:-/tmp}/frames-rev.XXXXXX")
+  git worktree add --quiet --detach "$rev_tree" "$rev" || { rmdir "$rev_tree"; return 1; }
+  trap 'git worktree remove --force "$rev_tree"' EXIT
+  local tree=$rev_tree
   (cd "$tree" && CARGO_TARGET_DIR="$root/target/frames-rev" cargo build --quiet -p temzdf) ||
     { echo "building $rev failed" >&2; return 1; }
   render "$out" target/frames-rev/debug/temzdf
