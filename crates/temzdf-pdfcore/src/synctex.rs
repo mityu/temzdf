@@ -65,8 +65,10 @@ pub struct PdfBox {
 /// iterator, hence `&mut self`.
 pub struct Scanner {
     ptr: synctex_scanner_p,
-    /// Directory of the PDF; relative source names resolve against it.
+    /// Where TeX ran; relative source names resolve against it (see
+    /// [`tex_dir`]), or else against the PDF's directory.
     base: PathBuf,
+    pdf_dir: PathBuf,
 }
 
 // SAFETY: the scanner is only ever used from one thread at a time (it is owned,
@@ -93,8 +95,23 @@ impl Scanner {
         if ptr.is_null() {
             return None;
         }
-        let base = pdf.parent().map(Path::to_path_buf).unwrap_or_default();
-        Some(Self { ptr, base })
+        let pdf_dir = pdf.parent().map(Path::to_path_buf).unwrap_or_default();
+        let mut s = Self { ptr, base: pdf_dir.clone(), pdf_dir };
+        if let Some(dir) = tex_dir(&s.inputs()) {
+            s.base = dir;
+        }
+        Some(s)
+    }
+
+    /// `name` as recorded, made absolute: against where TeX ran, else (the
+    /// file is not there) against the PDF's directory.
+    fn absolute(&self, name: &Path) -> PathBuf {
+        if name.is_absolute() {
+            return normalize(name);
+        }
+        let from_tex = normalize(&self.base.join(name));
+        let from_pdf = normalize(&self.pdf_dir.join(name));
+        if !from_tex.exists() && from_pdf.exists() { from_pdf } else { from_tex }
     }
 
     /// Forward search: the boxes typeset from `line` (1-based) of `source`. The
@@ -161,7 +178,7 @@ impl Scanner {
     /// the same file name.
     fn resolve_input(&self, source: &Path) -> Option<std::ffi::OsString> {
         let inputs = self.inputs();
-        let abs = |p: &Path| normalize(&if p.is_absolute() { p.to_owned() } else { self.base.join(p) });
+        let abs = |p: &Path| self.absolute(p);
         let wanted = normalize(&std::path::absolute(source).unwrap_or_else(|_| source.to_owned()));
         let given = normalize(source);
         let pick = inputs
@@ -194,10 +211,16 @@ impl Scanner {
         }
         // SAFETY: non-null, NUL-terminated, owned by the scanner.
         let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
-        let path = Path::new(&name);
-        let file = if path.is_absolute() { path.to_owned() } else { self.base.join(path) };
-        Some(SourceLocation { file: normalize(&file), line: line as u32, column: column.max(0) as u32 })
+        let file = self.absolute(Path::new(&name));
+        Some(SourceLocation { file, line: line as u32, column: column.max(0) as u32 })
     }
+}
+
+/// Where TeX ran: SyncTeX records the main input as `<that dir>/./<name>`,
+/// and other relative names relative to it, not to the PDF (they differ with
+/// `latexmk -outdir`).
+fn tex_dir(inputs: &[String]) -> Option<PathBuf> {
+    inputs.iter().find_map(|n| n.split_once("/./").map(|(dir, _)| PathBuf::from(dir)).filter(|d| d.is_absolute()))
 }
 
 /// Remove `.` components (SyncTeX records names like `/dir/./main.tex`).
@@ -208,6 +231,21 @@ fn normalize(p: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relative_names_are_relative_to_where_tex_ran() {
+        let inputs = ["/proj/./main.tex".to_owned(), "./ch1.tex".to_owned()];
+        assert_eq!(tex_dir(&inputs), Some(PathBuf::from("/proj")));
+        assert_eq!(tex_dir(&["main.tex".to_owned()]), None);
+        // The fixture is built with -outdir target/fixtures from the
+        // repository root: that is where TeX ran, not the PDF's directory.
+        let s = Scanner::open(&pdf::fixture("sample.pdf")).unwrap();
+        let root = pdf::fixture("sample.tex").parent().unwrap().parent().unwrap().parent().unwrap().to_owned();
+        assert_eq!(s.base, root);
+        assert_eq!(s.absolute(Path::new("./tests/fixtures/sample.tex")), pdf::fixture("sample.tex"));
+        // A name only found next to the PDF still resolves there.
+        assert_eq!(s.absolute(Path::new("sample.pdf")), pdf::fixture("sample.pdf"));
+    }
     use crate::pdf;
 
     fn line_of(text: &str, needle: &str) -> u32 {
