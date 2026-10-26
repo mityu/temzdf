@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use temzdf_term::Spawn;
 
+use super::tabs::FloatTab;
 use super::{
     BACKGROUND, BORDER, BORDER_PX, BufferId, Outcome, Session, Spot, Z_BORDER, Z_BORDER_FOCUS, Z_SESSION_BACKGROUND,
 };
@@ -65,11 +66,21 @@ pub(super) struct FloatSpec {
     /// takes the focus.
     pub title: Option<String>,
     pub focus: bool,
+    /// The tabs it shows on; `None`: the current one when it opens.
+    pub tab: Option<FloatTab>,
 }
 
 impl Default for FloatSpec {
     fn default() -> Self {
-        Self { width: Extent::Percent(80), height: Extent::Percent(80), col: None, row: None, title: None, focus: true }
+        Self {
+            width: Extent::Percent(80),
+            height: Extent::Percent(80),
+            col: None,
+            row: None,
+            title: None,
+            focus: true,
+            tab: None,
+        }
     }
 }
 
@@ -110,6 +121,8 @@ pub(super) struct Float {
     pub frame: Rect,
     /// Shown on the frame instead of the buffer's name.
     pub title: Option<String>,
+    /// The tabs it shows on.
+    pub tab: FloatTab,
     /// Takes the focus (Neovim's `focusable`); not settable yet.
     #[allow(dead_code)]
     pub focusable: bool,
@@ -120,8 +133,8 @@ pub(super) struct Float {
 }
 
 impl Float {
-    pub(super) fn new(pane: PaneId, spec: FloatSpec) -> Self {
-        Self { pane, spec, frame: Rect::default(), title: None, focusable: true, modal: false }
+    pub(super) fn new(pane: PaneId, spec: FloatSpec, tab: FloatTab) -> Self {
+        Self { pane, spec, frame: Rect::default(), title: None, tab, focusable: true, modal: false }
     }
 }
 
@@ -244,14 +257,15 @@ impl Session {
         self.floats.iter_mut().find(|f| f.pane == pane)
     }
 
-    /// The floats on screen, bottom to top (none while they are hidden).
-    pub(super) fn shown_floats(&self) -> &[Float] {
-        if self.floats_hidden { &[] } else { &self.floats }
+    /// The current tab's floats (its own and those on all tabs), bottom to
+    /// top, shown or hidden.
+    pub(super) fn tab_floats(&self) -> Vec<&Float> {
+        self.floats.iter().filter(|f| self.here(f.tab)).collect()
     }
 
-    /// Whether `pane` is on screen: a tiled pane, or a float while floats show.
-    pub(super) fn on_screen(&self, pane: PaneId) -> bool {
-        !self.is_float(pane) || !self.floats_hidden
+    /// The floats on screen, bottom to top (none while they are hidden).
+    pub(super) fn shown_floats(&self) -> Vec<&Float> {
+        if self.floats_hidden { Vec::new() } else { self.tab_floats() }
     }
 
     /// What covers `pane` (the session's own layers with `None`), in cells:
@@ -270,7 +284,8 @@ impl Session {
     pub(super) fn place_float(&mut self, id: PaneId, spec: FloatSpec) -> Rect {
         let frame = spec.frame(self.area());
         let title = spec.title.clone();
-        self.floats.push(Float { frame, title, ..Float::new(id, spec) });
+        let tab = spec.tab.unwrap_or(FloatTab::Only(self.tab_id()));
+        self.floats.push(Float { frame, title, ..Float::new(id, spec, tab) });
         // A new float shows the others too.
         self.floats_hidden = false;
         content(frame)
@@ -307,7 +322,7 @@ impl Session {
         let r = content(f.frame);
         let moved =
             Rect::new(f.frame.x.saturating_add(CASCADE), f.frame.y.saturating_add(CASCADE), f.frame.w, f.frame.h);
-        FloatSpec::at(moved, r.w, r.h)
+        FloatSpec { tab: Some(f.tab), ..FloatSpec::at(moved, r.w, r.h) }
     }
 
     /// Move or resize a float: `cells` added to its width or height
@@ -385,7 +400,7 @@ impl Session {
 
     /// Show or hide every float; with none, open a floating shell.
     pub(super) fn toggle_floats(&mut self) -> anyhow::Result<()> {
-        if self.floats.is_empty() {
+        if self.tab_floats().is_empty() {
             return self.open_terminal(&Spawn::default(), Spot::Float(FloatSpec::default())).map(drop);
         }
         self.floats_hidden = !self.floats_hidden;
@@ -393,7 +408,7 @@ impl Session {
             if self.is_float(self.focus) {
                 self.set_focus(self.tiled_focus);
             }
-        } else if let Some(top) = self.floats.last().map(|f| f.pane) {
+        } else if let Some(top) = self.tab_floats().last().map(|f| f.pane) {
             self.set_focus(top);
         }
         self.relayout();
@@ -435,7 +450,7 @@ impl Session {
     /// The topmost shown float whose frame (not its content) is at cell
     /// (`col`, `row`), and that part of the frame.
     fn grip_at(&self, col: i32, row: i32) -> Option<(PaneId, Grip)> {
-        let f = self.shown_floats().iter().rev().find(|f| f.frame.contains(col, row))?;
+        let f = self.shown_floats().into_iter().rev().find(|f| f.frame.contains(col, row))?;
         if content(f.frame).contains(col, row) {
             return None;
         }

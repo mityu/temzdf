@@ -32,6 +32,7 @@ mod commands;
 mod floats;
 mod notices;
 mod script;
+mod tabs;
 
 pub use commands::command_specs;
 
@@ -318,6 +319,10 @@ pub struct Session {
     focus: PaneId,
     /// The tiled pane focused last (where the focus goes when floats hide).
     tiled_focus: PaneId,
+    /// The tab pages and the current one's index (its state is in the
+    /// fields above; see `tabs`).
+    tabs: Vec<tabs::Tab>,
+    tab: usize,
     next_id: u32,
     modes: Modes<Target>,
     matcher: Matcher,
@@ -370,6 +375,8 @@ impl Session {
             floats_hidden: false,
             focus: 0,
             tiled_focus: 0,
+            tabs: vec![tabs::Tab::new(1)],
+            tab: 0,
             next_id: 1,
             modes,
             matcher: Matcher::default(),
@@ -842,7 +849,8 @@ impl Session {
 
     /// Give every pane its rectangle (after the layout or the screen changed).
     fn relayout(&mut self) {
-        let rects = self.layout.as_ref().map(|l| l.rects(self.area())).unwrap_or_default();
+        let area = self.area();
+        let rects: Vec<(PaneId, Rect)> = self.layouts().flat_map(|(_, l)| l.rects(area)).collect();
         for (id, r) in rects {
             self.set_rect(id, r);
         }
@@ -867,12 +875,12 @@ impl Session {
         }
     }
 
-    /// A terminal is as large as the largest pane on screen showing it (as
+    /// A terminal is as large as the largest pane showing it in any tab (as
     /// in Neovim); a hidden one (or one in hidden floats only) keeps its size.
     fn fit_terms(&mut self) {
         let mut sizes: HashMap<BufferId, (u16, u16)> = HashMap::new();
         for (id, e) in &self.panes {
-            if !self.on_screen(*id) {
+            if !self.shown_anywhere(*id) {
                 continue;
             }
             if let Kind::Term { buf, view } = &e.kind {
