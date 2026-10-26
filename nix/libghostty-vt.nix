@@ -32,6 +32,16 @@ in
         '';
     };
     # This commit builds with Zig 0.15.
-    nativeBuildInputs = map (p: if p == final.zig_0_16 then final.zig_0_15 else p) old.nativeBuildInputs;
+    nativeBuildInputs = map (
+      p: if p == final.zig_0_16 then final.zig_0_15 else p
+    ) old.nativeBuildInputs;
+
+    # The `postPatch` is introduced for libghostty-vt 0.1.0-unstable-2026-08-06
+    # on darwin build by the following commit.  Since we use older version of
+    # libghostty-vt here, the `postPatch` is useless as it causes build failure
+    # on darwin, therefore overwrite the `postPatch` phase to empty for darwin.
+    # This may should be removed when we update the libghostty-vt version.
+    # https://github.com/NixOS/nixpkgs/commit/855ab729d4ad8ade1f694d3250026a22345b3eb4
+    postPatch = if final.stdenv.hostPlatform.isDarwin then "" else old.postPatch;
   });
 }
