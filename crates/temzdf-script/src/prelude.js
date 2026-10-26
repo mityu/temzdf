@@ -157,7 +157,10 @@
   // Delays as browsers take them: not a number is 0; at most 2^31 - 1 ms.
   const delay = (ms) => Math.min(2147483647, Math.max(0, Number(ms) || 0));
   globalThis.setTimeout = (fn, ms = 0, ...args) => host.setTimer(delay(ms), () => fn(...args));
-  globalThis.clearTimeout = (id) => host.clearTimer(id);
+  // Anything but a timer id is ignored, as browsers do (clearTimeout(undefined)).
+  globalThis.clearTimeout = (id) => {
+    if (typeof id === "number") host.clearTimer(id);
+  };
 
   const show = (v) => {
     if (typeof v === "string") return v;
