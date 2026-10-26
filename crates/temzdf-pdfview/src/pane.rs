@@ -888,7 +888,11 @@ impl PdfPane {
 
     /// Show a forward-search result: jump to the first box (unless it is already
     /// comfortably visible) and highlight the boxes briefly.
-    pub fn forward_result(&mut self, boxes: Vec<PdfBox>, now: Instant) {
+    pub fn forward_result(&mut self, mut boxes: Vec<PdfBox>, now: Instant) {
+        // A SyncTeX file older than the PDF (written after it, or left from
+        // a build without SyncTeX) can name pages it no longer has.
+        let pages = self.viewer.page_count();
+        boxes.retain(|b| b.page < pages);
         let Some(first) = boxes.first().copied() else { return };
         // The editor's position wins over a reload anchor still waiting for pages.
         self.text_anchor = None;
@@ -1503,6 +1507,20 @@ mod tests {
         let i = all[..all.find(needle).unwrap()].chars().count() + offset;
         let r = text.chars[i].rect;
         s.viewer.page_to_screen(0, (r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0)
+    }
+
+    #[test]
+    fn forward_results_past_the_last_page_are_ignored() {
+        let mut s = session();
+        let pages = s.viewer.page_count();
+        let rect = PageRect { x0: 10.0, y0: 10.0, x1: 50.0, y1: 20.0 };
+        let top = s.viewer.view_state().top;
+        s.forward_result(vec![PdfBox { page: pages + 3, rect }], Instant::now());
+        assert!(s.flash.is_none());
+        assert_eq!(s.viewer.view_state().top.page, top.page, "no jump");
+        // Valid boxes after an invalid one still count.
+        s.forward_result(vec![PdfBox { page: pages, rect }, PdfBox { page: pages - 1, rect }], Instant::now());
+        assert_eq!(s.flash.as_ref().map(|f| f.0.len()), Some(1));
     }
 
     #[test]
