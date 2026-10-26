@@ -178,8 +178,47 @@ pub enum MouseEventKind {
     /// Motion with no button held (needs mode 1003).
     Move,
     Scroll(ScrollDirection),
+    /// Scrolling by an amount (GUI clients: trackpads, high-resolution
+    /// wheels), in hundredths of `unit`; positive is down and right, as
+    /// `Scroll(Down)` and `Scroll(Right)`.
+    ScrollBy {
+        dx: i32,
+        dy: i32,
+        unit: ScrollUnit,
+        phase: ScrollPhase,
+    },
     /// The pointer left the window (kitty extension to mode 1016).
     Leave,
+}
+
+/// What a [`MouseEventKind::ScrollBy`] amount counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ScrollUnit {
+    /// Pixels of the screen.
+    Pixel,
+    /// Wheel notches (a fraction from high-resolution wheels).
+    Line,
+}
+
+/// Where a [`MouseEventKind::ScrollBy`] comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ScrollPhase {
+    /// A wheel: views may animate it as their own wheel steps.
+    Wheel,
+    /// Fingers on a trackpad: followed exactly.
+    Touch,
+    /// The system's inertia after the fingers left: followed exactly, with
+    /// no inertia of the view's own on top.
+    Momentum,
+}
+
+impl MouseEventKind {
+    /// Any kind of scrolling.
+    pub fn is_scroll(&self) -> bool {
+        matches!(self, Self::Scroll(_) | Self::ScrollBy { .. })
+    }
 }
 
 /// Unit of mouse coordinates, decided by whether mode 1016 is active.

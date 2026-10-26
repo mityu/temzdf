@@ -190,6 +190,8 @@ impl Recorder {
             MouseEventKind::Drag(b) => button(b).map(|b| format!("drag {} {} {b}", m.x, m.y)),
             MouseEventKind::Move => Some(format!("move {} {}", m.x, m.y)),
             MouseEventKind::Leave => Some(format!("leave {} {}", m.x, m.y)),
+            // Only GUI clients send amounts; this viewer runs in a terminal.
+            MouseEventKind::ScrollBy { .. } => None,
             MouseEventKind::Scroll(d) => {
                 let d = match d {
                     ScrollDirection::Up => "up",

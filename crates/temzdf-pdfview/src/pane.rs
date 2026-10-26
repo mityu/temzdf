@@ -11,6 +11,7 @@ use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer};
 use termpix_core::geom::{Geometry, Rect};
 use termpix_core::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
+    ScrollPhase, ScrollUnit,
 };
 use termpix_ui::{Canvas, Color, EditResult, LineInput, ListView, StatusBar, Text, Theme};
 
@@ -173,6 +174,8 @@ pub struct PdfPane {
     /// Selection auto-scroll speed in pixels per second (0 when off).
     autoscroll: f32,
     autoscroll_at: Option<Instant>,
+    /// Wheel notches of `ScrollBy` not yet a whole step (x, y).
+    scroll_rest: (f32, f32),
     /// `[reload] anchor = "text"`: keep the line being read in place on reload.
     pub anchor_by_text: bool,
     /// Page-view key bindings (`[keys]` in the config).
@@ -233,6 +236,7 @@ impl PdfPane {
             selecting: false,
             autoscroll: 0.0,
             autoscroll_at: None,
+            scroll_rest: (0.0, 0.0),
             anchor_by_text: false,
             keymap: Keymap::default(),
             text_anchor: None,
@@ -1344,8 +1348,11 @@ impl PdfPane {
             CoordUnit::Cell => (c as f32 + 0.5) * size as f32,
         };
         self.pointer = (to_px(m.x, cell.width), to_px(m.y, cell.height));
-        if matches!(m.kind, MouseEventKind::Press(_) | MouseEventKind::Scroll(_)) {
+        if matches!(m.kind, MouseEventKind::Press(_)) || m.kind.is_scroll() {
             self.text_anchor = None;
+        }
+        if let MouseEventKind::ScrollBy { dx, dy, unit, phase } = m.kind {
+            return self.scroll_by(m, (dx, dy), unit, phase, now);
         }
         let had_preview = self.preview.is_some();
         if let Some(redraw) = self.preview_mouse(m, now) {
@@ -1366,10 +1373,8 @@ impl PdfPane {
         // The status bar is not the page under it: no links, no selection or
         // drag starts there (the wheel still scrolls; a drag or selection
         // begun on the page goes on).
-        let over_status = y >= self.viewer.view.screen_h
-            && self.drag.is_none()
-            && !self.selecting
-            && !matches!(m.kind, MouseEventKind::Scroll(_));
+        let over_status =
+            y >= self.viewer.view.screen_h && self.drag.is_none() && !self.selecting && !m.kind.is_scroll();
         if over_status {
             self.hover = None;
             self.pointer_shape = Pointer::Default;
@@ -1410,6 +1415,59 @@ impl PdfPane {
             _ => {}
         }
         self.page_mouse(m, now) || redraw
+    }
+
+    /// Scrolling by an amount (see [`MouseEventKind::ScrollBy`]). Wheel
+    /// notches add up and each whole one is a wheel step (outline, preview,
+    /// Ctrl to zoom as for the wheel). Pixels from fingers or the system's
+    /// inertia move the page exactly, with no easing (the system has its
+    /// own); from a wheel they ease. Over the outline or a preview, pixels
+    /// count as notches of three rows.
+    fn scroll_by(
+        &mut self,
+        m: &MouseEvent,
+        (dx, dy): (i32, i32),
+        unit: ScrollUnit,
+        phase: ScrollPhase,
+        now: Instant,
+    ) -> bool {
+        let (dx, dy) = (dx as f32 / 100.0, dy as f32 / 100.0);
+        let (x, y) = self.pointer;
+        let row = 3.0 * self.geometry.cell.height.max(1) as f32;
+        let over_list =
+            self.preview.is_some() || (self.sidebar_open && self.sidebar_rect().contains(x as i32, y as i32));
+        let mods = m.modifiers;
+        if unit == ScrollUnit::Line || over_list || mods.contains(Modifiers::CTRL) {
+            let (lx, ly) = if unit == ScrollUnit::Line { (dx, dy) } else { (dx / row, dy / row) };
+            self.scroll_rest.0 += lx;
+            self.scroll_rest.1 += ly;
+            let steps = |rest: &mut f32| {
+                let whole = rest.trunc();
+                *rest -= whole;
+                whole as i32
+            };
+            let (sx, sy) = (steps(&mut self.scroll_rest.0), steps(&mut self.scroll_rest.1));
+            let mut redraw = false;
+            for (n, pos, neg) in
+                [(sy, ScrollDirection::Down, ScrollDirection::Up), (sx, ScrollDirection::Right, ScrollDirection::Left)]
+            {
+                let dir = if n > 0 { pos } else { neg };
+                for _ in 0..n.unsigned_abs() {
+                    redraw |= self.mouse(&MouseEvent { kind: MouseEventKind::Scroll(dir), ..*m }, now);
+                }
+            }
+            return redraw;
+        }
+        // Shift turns vertical scrolling sideways, as for the wheel.
+        let (dx, dy) = if mods.contains(Modifiers::SHIFT) && dx == 0.0 { (dy, 0.0) } else { (dx, dy) };
+        let v = &mut self.viewer;
+        if phase == ScrollPhase::Wheel {
+            v.scroll_x.scroll_by(dx as f64, now);
+            v.scroll_y.scroll_by(dy as f64, now);
+        } else {
+            v.jump_to(v.view.scroll_x + dx, v.view.scroll_y + dy);
+        }
+        true
     }
 
     fn page_mouse(&mut self, m: &MouseEvent, now: Instant) -> bool {
@@ -1827,6 +1885,51 @@ mod tests {
         };
         assert!(first < second && second < third, "{first} {second} {third}");
         assert!(!s.search_hits(second, 0, Vec::new(), now), "the previous reload's results");
+    }
+
+    fn scroll_by(s: &mut PdfPane, dy: i32, unit: ScrollUnit, phase: ScrollPhase, now: Instant) -> bool {
+        let kind = MouseEventKind::ScrollBy { dx: 0, dy, unit, phase };
+        s.mouse(&MouseEvent { kind, x: 450, y: 300, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE }, now)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn fingers_move_the_page_exactly_and_wheel_amounts_ease() {
+        let mut s = session();
+        let now = Instant::now();
+        let y0 = s.viewer.view.scroll_y;
+        // Fingers and the system's inertia: followed at once, no easing; one
+        // 120 px move or four of 30 px end in the same place.
+        scroll_by(&mut s, 12000, ScrollUnit::Pixel, ScrollPhase::Touch, now);
+        assert_eq!((s.viewer.view.scroll_y - y0, s.is_animating()), (120.0, false));
+        for _ in 0..4 {
+            scroll_by(&mut s, 3000, ScrollUnit::Pixel, ScrollPhase::Momentum, now);
+        }
+        assert_eq!((s.viewer.view.scroll_y - y0, s.is_animating()), (240.0, false));
+        // A wheel's pixels ease to the same amount.
+        scroll_by(&mut s, -24000, ScrollUnit::Pixel, ScrollPhase::Wheel, now);
+        assert!(s.is_animating());
+        s.tick(now + std::time::Duration::from_secs(5));
+        assert_eq!(s.viewer.view.scroll_y, y0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn wheel_notches_add_up_to_wheel_steps() {
+        let (mut a, mut b) = (session(), session());
+        let now = Instant::now();
+        let later = now + std::time::Duration::from_secs(5);
+        mouse(&mut a, MouseEventKind::Scroll(ScrollDirection::Down), (450.0, 300.0));
+        a.tick(later);
+        // Half a notch does nothing yet; the second half is the step.
+        let y0 = b.viewer.view.scroll_y;
+        scroll_by(&mut b, 50, ScrollUnit::Line, ScrollPhase::Wheel, now);
+        b.tick(later);
+        assert_eq!(b.viewer.view.scroll_y, y0);
+        scroll_by(&mut b, 50, ScrollUnit::Line, ScrollPhase::Wheel, now);
+        b.tick(later);
+        assert_eq!(b.viewer.view.scroll_y, a.viewer.view.scroll_y);
+        assert!(b.viewer.view.scroll_y > y0);
     }
 
     #[test]
