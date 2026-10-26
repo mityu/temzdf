@@ -101,6 +101,12 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 session.handle(ev, Instant::now());
             }
             AppEvent::Term(TermEvent::Terminate) => return Ok(()),
+            // Resizes count already (keys wait for the document).
+            AppEvent::Term(ev) => {
+                if let Input::Resized(g) = front.handle(ev)? {
+                    session.resize(g);
+                }
+            }
             _ => {}
         }
     }
