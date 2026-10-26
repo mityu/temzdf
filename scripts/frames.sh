@@ -5,7 +5,14 @@
 # render with the old build, render with the new one, compare.
 #
 # Usage: scripts/frames.sh render OUTDIR [TEMZDF]   (default TEMZDF: target/debug/temzdf)
+#        scripts/frames.sh render-rev REV OUTDIR    (build revision REV, e.g. HEAD, and render)
 #        scripts/frames.sh compare DIR_A DIR_B      (exit 1 on any difference)
+#
+# Typical check of uncommitted changes: render-rev HEAD A; cargo build;
+# render B; compare A B. render-rev builds in a temporary worktree with its
+# own target directory (target/frames-rev, kept for its dependencies): a
+# shared one would leave artifacts of the old sources looking newer than the
+# edited files, and cargo would not rebuild them.
 #
 # Fixtures must exist (scripts/build-fixtures.sh). Re-executes itself inside the
 # Nix dev shell when needed (ImageMagick for `compare`).
@@ -50,6 +57,16 @@ render() {
   echo "rendered ${#scenarios[@]} frames into $out"
 }
 
+render_rev() {
+  local rev=$1 out=$2 root=$PWD tree
+  tree=$(mktemp -d "${TMPDIR:-/tmp}/frames-rev.XXXXXX")
+  git worktree add --quiet --detach "$tree" "$rev" || { rmdir "$tree"; return 1; }
+  trap 'git worktree remove --force "$tree"' RETURN
+  (cd "$tree" && CARGO_TARGET_DIR="$root/target/frames-rev" cargo build --quiet -p temzdf) ||
+    { echo "building $rev failed" >&2; return 1; }
+  render "$out" target/frames-rev/debug/temzdf
+}
+
 compare_dirs() {
   local a=$1 b=$2 failed=0 name diff
   for s in "${scenarios[@]}"; do
@@ -71,9 +88,10 @@ compare_dirs() {
 
 case "${1:-}" in
   render) render "${2:?OUTDIR}" "${3:-}" ;;
+  render-rev) render_rev "${2:?REV}" "${3:?OUTDIR}" ;;
   compare) compare_dirs "${2:?DIR_A}" "${3:?DIR_B}" ;;
   *)
-    echo "usage: $0 render OUTDIR [TEMZDF] | compare DIR_A DIR_B" >&2
+    echo "usage: $0 render OUTDIR [TEMZDF] | render-rev REV OUTDIR | compare DIR_A DIR_B" >&2
     exit 2
     ;;
 esac
