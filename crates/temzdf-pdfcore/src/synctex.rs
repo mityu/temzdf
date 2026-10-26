@@ -91,7 +91,16 @@ impl Scanner {
         let pdf = std::path::absolute(pdf).ok()?;
         let c = CString::new(pdf.as_os_str().as_encoded_bytes()).ok()?;
         // SAFETY: valid NUL-terminated path; a null build directory is allowed.
-        let ptr = unsafe { synctex_scanner_new_with_output_file(c.as_ptr(), std::ptr::null(), 1) };
+        let mut ptr = unsafe { synctex_scanner_new_with_output_file(c.as_ptr(), std::ptr::null(), 1) };
+        // Opened through a symlink: the SyncTeX file is next to the real PDF.
+        if ptr.is_null()
+            && let Ok(real) = std::fs::canonicalize(&pdf)
+            && real != pdf
+            && let Ok(c) = CString::new(real.as_os_str().as_encoded_bytes())
+        {
+            // SAFETY: as above.
+            ptr = unsafe { synctex_scanner_new_with_output_file(c.as_ptr(), std::ptr::null(), 1) };
+        }
         if ptr.is_null() {
             return None;
         }
@@ -178,15 +187,7 @@ impl Scanner {
     /// the same file name.
     fn resolve_input(&self, source: &Path) -> Option<std::ffi::OsString> {
         let inputs = self.inputs();
-        let abs = |p: &Path| self.absolute(p);
-        let wanted = normalize(&std::path::absolute(source).unwrap_or_else(|_| source.to_owned()));
-        let given = normalize(source);
-        let pick = inputs
-            .iter()
-            .find(|n| abs(Path::new(n)) == wanted)
-            .or_else(|| inputs.iter().find(|n| abs(Path::new(n)).ends_with(&given)))
-            .or_else(|| inputs.iter().find(|n| Path::new(n).file_name() == source.file_name()));
-        pick.map(Into::into)
+        choose_input(&inputs, |p| self.absolute(p), source).map(Into::into)
     }
 
     /// Inverse search: the source location that produced the point (`x`, `y`,
@@ -216,6 +217,30 @@ impl Scanner {
     }
 }
 
+/// The recorded input name (of `inputs`) that `source` refers to: the same
+/// file on disk (through symlinks and `..`, ignoring case on macOS), the
+/// same absolute path, one ending with the given path's components, or the
+/// same file name, in that order.
+fn choose_input<'a>(inputs: &'a [String], absolute: impl Fn(&Path) -> PathBuf, source: &Path) -> Option<&'a String> {
+    let wanted = normalize(&std::path::absolute(source).unwrap_or_else(|_| source.to_owned()));
+    let given = normalize(source);
+    let same_file = |a: &Path, b: &Path| {
+        let (Ok(a), Ok(b)) = (std::fs::canonicalize(a), std::fs::canonicalize(b)) else { return false };
+        if cfg!(target_os = "macos") {
+            a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+        } else {
+            a == b
+        }
+    };
+    let abs = |n: &String| absolute(Path::new(n));
+    inputs
+        .iter()
+        .find(|n| same_file(&abs(n), &wanted))
+        .or_else(|| inputs.iter().find(|n| abs(n) == wanted))
+        .or_else(|| inputs.iter().find(|n| abs(n).ends_with(&given)))
+        .or_else(|| inputs.iter().find(|n| Path::new(n).file_name() == source.file_name()))
+}
+
 /// Where TeX ran: SyncTeX records the main input as `<that dir>/./<name>`,
 /// and other relative names relative to it, not to the PDF (they differ with
 /// `latexmk -outdir`).
@@ -231,6 +256,26 @@ fn normalize(p: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inputs_match_the_same_file_through_symlinks() {
+        let dir = std::env::temp_dir().join(format!("temzdf-inputs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for d in ["a", "b"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+            std::fs::write(dir.join(d).join("intro.tex"), "").unwrap();
+        }
+        std::os::unix::fs::symlink(dir.join("b"), dir.join("link")).unwrap();
+        let inputs = vec![format!("{}/./a/intro.tex", dir.display()), "./b/intro.tex".to_owned()];
+        let absolute = |p: &Path| if p.is_absolute() { normalize(p) } else { normalize(&dir.join(p)) };
+        // Through the symlink: b's, not the first intro.tex by name.
+        let picked = choose_input(&inputs, absolute, &dir.join("link/intro.tex"));
+        assert_eq!(picked.map(String::as_str), Some("./b/intro.tex"));
+        // And through `..`.
+        let picked = choose_input(&inputs, absolute, &dir.join("a/../b/intro.tex"));
+        assert_eq!(picked.map(String::as_str), Some("./b/intro.tex"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn relative_names_are_relative_to_where_tex_ran() {
