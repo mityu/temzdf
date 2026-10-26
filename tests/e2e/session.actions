@@ -11,12 +11,12 @@
 #   new-pane.png    a third pane with sample-short.pdf, added by another process
 #   killed.png      the shell, "[session e2e was killed]"
 pause 1
-keys ctrl+s percent
+keys ctrl+b percent
 pause 1.5
 keys j j j
 pause 1
 shot split
-keys ctrl+s d
+keys ctrl+b d
 pause 1
 shot detached
 type "target/debug/temzdf ls > target/e2e-session/ls.txt; target/debug/temzdf attach e2e

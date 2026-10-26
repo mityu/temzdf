@@ -47,7 +47,10 @@ What exists:
   asks), mouse reports when the program tracks the mouse (otherwise the wheel
   scrolls back through 10000 lines of history), bracketed paste, focus
   reports, OSC 52 copies, resizing (to the largest pane showing the
-  terminal). A shown terminal's panes close when its program exits.
+  terminal), mouse selection copied on release, OSC 8 links opened on click,
+  `[rows above/history]` while scrolled back, and kitty graphics from
+  programs (placements become the pane's layers; PNG and every medium kitty
+  takes). A shown terminal's panes close when its program exits.
   Programs get `TERM=xterm-256color`, `COLORTERM=truecolor`,
   `TERM_PROGRAM=temzdf` and `TEMZDF_SESSION_NAME`. The server makes at most
   one frame per 16 ms, so floods of output cost little (`seq 1 500000` takes
@@ -67,8 +70,8 @@ Not yet (in order of the plan, or found on the way):
 - Pixels go through the socket; shared memory for local clients would save
   copies (measure first).
 - One window per session (no tabs).
-- Terminal panes: kitty graphics from programs inside them, a scrollback
-  indicator, selection and copy with the mouse, OSC 8 links.
+- Terminal panes: kitty graphics through Unicode placeholders (tmux inside a
+  pane) and animation frames.
 - Steps 4 to 6: GUI client, web panes, programmable config.
 
 ## Vision

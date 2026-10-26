@@ -9,7 +9,7 @@
 #   split-less.png  the shell left, less showing Cargo.toml on the right (focused)
 #   pdf.png         sample.pdf right of that shell, opened from it
 #                   with `temzdf action new-pane`
-#   flood.png       the middle shell (focused again with C-s h) after `time seq 1 500000`: the last numbers and
+#   flood.png       the middle shell (focused again with C-b h) after `time seq 1 500000`: the last numbers and
 #                   a real time of well under a second
 #   detached.png    the outer shell, "[detached from session e2e-term]"
 #   reattached.png  the same three panes as pdf.png (shell text kept)
@@ -19,7 +19,7 @@ type "ls tests/e2e | head -3; printf '\033[31mred\033[0m \033[32;44mgreen on blu
 "
 pause 1
 shot shell
-keys ctrl+s percent
+keys ctrl+b percent
 pause 1
 type "less Cargo.toml
 "
@@ -31,12 +31,12 @@ type "target/debug/temzdf action new-pane target/fixtures/sample.pdf
 "
 pause 2
 shot pdf
-keys ctrl+s h
+keys ctrl+b h
 type "time seq 1 500000
 "
 pause 3
 shot flood
-keys ctrl+s d
+keys ctrl+b d
 pause 1
 shot detached
 type "target/debug/temzdf attach e2e-term

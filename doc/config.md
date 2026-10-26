@@ -107,7 +107,12 @@ Inside tmux, `<C-b>` is tmux's own prefix: map another key for temzdf (or
 press it twice there).
 
 While a PDF pane's search prompt is open or its outline has the focus, keys
-go to them directly (fixed keys). Mouse handling is built in.
+go to them directly (fixed keys). Mouse handling is built in. In terminal
+panes the left button selects (drag; double click a word, triple click a
+line) and releasing copies to the clipboard (OSC 52 through the client's
+terminal); where the program uses the mouse, hold Shift, or select from the
+`normal` mode. A click on a link a program printed (OSC 8) opens it with
+`linkopener`.
 
 When the script host is down (it exited, or the configuration never finished
 loading), mappings are off and a fixed keymap works: `<C-b>d` detaches,

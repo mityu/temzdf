@@ -28,11 +28,13 @@ gives tests:
   tmux server (passthrough on, no status line, no prefix key) in between; `capture_pane()`
   then shows what tmux itself holds.
 - Input: `key("C-h")`, `keys(&["C-b", "%"])`, `click(col, row)`,
+  `drag((col, row), (col, row))`,
   `type_text("ls\n")`, `paste`,
   `resize(cols, rows)`. Keys are encoded the way the program asked for (legacy
   or the kitty keyboard protocol) by the harness's own translation (a US
   layout, as Ghostty's frontend does), not by the code under test.
-- Output: `screen()` with `lines()`, `cell(x, y)` (text, colours, attributes),
+- Output: `copied()` (what the program put on the clipboard with OSC 52),
+  `screen()` with `lines()`, `cell(x, y)` (text, colours, attributes),
   `cursor`, `images` (kitty placements: cell, size, z) and
   `placeholder_cells()` (images shown through Unicode placeholders, as inside
   tmux).

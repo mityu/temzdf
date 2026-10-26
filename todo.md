@@ -31,18 +31,18 @@ server on one `Session`). Next and open:
   Suspect: the cell size derived from the kernel's pixel size after a resize
   (`Winsize::geometry` divides by rows/cols; padding would skew it, worst at the
   bottom). Needs the terminal, mode and the `resized to geometry` log line.
-- [ ] Terminal panes, the rest: kitty graphics from programs inside them
-  (images re-emitted per client), a scrollback indicator, mouse selection and
-  copy, a place for session messages when no PDF pane is open (they go to the
-  server log now).
+- [ ] Terminal panes, what is left: kitty graphics through Unicode
+  placeholders (tmux inside a pane), animation frames, and images re-emitted
+  per client when clients differ in cell size.
 - [ ] Scripting and configuration (JavaScript/TypeScript in a script-host
   process, replacing the TOML file): design in `doc/scripting.md` on the
   `research/notes` branch; the host and execution model are implemented
   (`doc/script-host.md`), and so are modes and key mappings, the shipped
   defaults in JavaScript, options, `print-types`, floating messages and the
-  escape keys (TOML is gone), and buffers separated from panes. Next: the
-  rest of terminal panes, pane sizes kept on resize (the last pane absorbs
-  changes, decided), default mappings for switching buffers. The
+  escape keys (TOML is gone), buffers separated from panes, and terminal
+  panes' selection, links and images. Next: pane sizes kept on resize (the
+  last pane absorbs changes, decided), default mappings for switching
+  buffers. The
   questions under "Open questions, to decide later" there (modes and
   mappings, escape hatches, message area, mouse, defaults, layout details,
   hidden buffers, client-side settings, reload, CLI scripting,
