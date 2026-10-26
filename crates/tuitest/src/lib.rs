@@ -526,6 +526,9 @@ impl Term {
     }
 
     /// Wait until nothing arrives for `quiet` (e.g. after the last frame).
+    /// A quiet spell does not prove the program is done (a loaded machine
+    /// can pause it longer): wait for what is expected with [`Self::wait_for`]
+    /// and use this only to let trailing output pass.
     pub fn settle(&mut self, quiet: Duration) -> Screen {
         let deadline = Instant::now() + TIMEOUT;
         while self.pump(quiet) && Instant::now() < deadline {}

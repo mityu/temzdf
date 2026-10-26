@@ -166,3 +166,4 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/session-server.md`: the session server design, what is implemented and what comes next.
 - `doc/script-host.md`: the JavaScript/TypeScript configuration: the script host, execution model, API.
 - `doc/gpu.md`: GPU rasterisation experiment (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.
+- `doc/known-issues.md`: problems known and left in place, why, and what a fix would take.
