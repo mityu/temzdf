@@ -279,9 +279,10 @@ if ((${#args[@]} > 0)); then
       --page | --scale) expect_cmd+=("${args[i]}" "${args[i + 1]}") ;;
     esac
   done
-  # kitty blends translucent images itself, in linear light. Inside a
-  # multiplexer temzdf composites frames (sRGB) and kitty only shows them.
-  if [[ $term == kitty && -z $mux ]]; then expect_cmd+=(--linear-blending); fi
+  # kitty and Ghostty blend translucent images themselves, in linear light.
+  # Inside a multiplexer temzdf composites frames (sRGB) and they only show
+  # them.
+  if [[ ($term == kitty || $term == ghostty) && -z $mux ]]; then expect_cmd+=(--linear-blending); fi
 fi
 mkdir -p "$outdir/state"
 rm -f "$outdir/state/temzdf/temzdf.log" "$outdir/expect.txt"
@@ -353,7 +354,10 @@ case $term in
     ;;
   ghostty)
     # Ghostty sizes windows in cells; 10x21 px cells at its default font size.
+    # No decorations or padding: the terminal area starts at the window's
+    # top left, as `expect` needs.
     "${clean_env[@]}" ghostty --config-default-files=false --gtk-single-instance=false \
+      --window-decoration=false --window-padding-x=0 --window-padding-y=0 \
       "--window-width=$((width / 10))" "--window-height=$((height / 21))" -e "$@" >"$outdir/terminal.log" 2>&1 &
     startup=6
     ;;

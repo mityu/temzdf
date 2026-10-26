@@ -68,6 +68,11 @@ Known problems:
   (`crates/termpix/src/graphics.rs`). Reproduce with
   `TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf target/fixtures/sample.pdf`
   after switching the level back to 1. Not yet reported upstream.
+- Ghostty 1.3.1 (Xvfb, 2026-10-28) blends translucent images in linear
+  light, as kitty does (a search highlight over the page matched
+  `--render-frame --linear-blending`, not the sRGB blend). Started with
+  `--window-decoration=false` and zero padding, its terminal area starts at
+  the window's top left, so `scripts/e2e.sh`'s `expect` works there.
 - WezTerm 20260117 (software renderer, Xvfb, 2026-10-28): SGR-pixel
   coordinates are one-based (`xdotool mousemove 450 300` arrives as 451,301;
   kitty reports 450,300), and input arrives in bursts while it renders:
