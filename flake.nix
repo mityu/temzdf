@@ -20,9 +20,29 @@
         "x86_64-linux"
         "aarch64-linux"
       ];
+      # What temzdf-gui's winit and wgpu load with dlopen on Linux (the
+      # real GPU's Vulkan driver comes from the system: /run/opengl-driver
+      # on NixOS).
+      guiLibsFor =
+        pkgs: with pkgs; [
+          vulkan-loader
+          libxkbcommon
+          wayland
+          libx11
+          libxcursor
+          libxi
+          libxrandr
+          libxfixes
+          libxrender
+          libxext
+          libxinerama
+          libxcb
+          libxscrnsaver
+        ];
     in
     {
-      # `nix build` / `nix run`: the viewer. MuPDF and SyncTeX are vendored C
+      # `nix build` / `nix run`: the viewer, and the GUI client (temzdf-gui,
+      # which finds temzdf next to it). MuPDF and SyncTeX are vendored C
       # sources compiled by the crates' build scripts; tests are left to
       # scripts/check.sh because they need TeX to build the fixtures.
       packages = forEachSystem (
@@ -45,11 +65,17 @@
             cargoBuildFlags = [
               "--package"
               "temzdf"
+              "--package"
+              "temzdf-gui"
             ];
             nativeBuildInputs = with pkgs; [
               pkg-config
               clang
+              makeWrapper
             ];
+            postFixup = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+              wrapProgram $out/bin/temzdf-gui --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (guiLibsFor pkgs)}
+            '';
             # libghostty-vt: terminal emulation for terminal panes (temzdf-term).
             buildInputs = [
               pkgs.fontconfig
@@ -94,22 +120,7 @@
           # rendering in tests, and the tools its end-to-end tests drive:
           # an Xfce window manager on Xvfb, headless sway with grim and wtype
           # (Wayland), fcitx5 with Mozc (Japanese input, IME tests).
-          guiLibs = with pkgs; [
-            vulkan-loader
-            libxkbcommon
-            wayland
-            libx11
-            libxcursor
-            libxi
-            libxrandr
-            # winit's X11 backend loads these too.
-            libxfixes
-            libxrender
-            libxext
-            libxinerama
-            libxcb
-            libxscrnsaver
-          ];
+          guiLibs = guiLibsFor pkgs;
           gui = with pkgs; [
             vulkan-tools
             mesa
