@@ -365,3 +365,22 @@ map("normal", "x", () => cmd.message("ran"));
     s.send(ToHost::Call { id: 2, func: 0, args: vec![] });
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 2, result: Ok(()) }));
 }
+
+#[test]
+fn imports_find_typescript_files_as_tsc_does() {
+    let config = r#"import { cmd } from "temzdf";
+import { a } from "./lib/a";
+import { b } from "./lib/b.js";
+import { c } from "./lib";
+cmd.message(a + b + c);
+"#;
+    let mut s = Session::start(&[("config.ts", config)]);
+    std::fs::create_dir_all(s.dir.join("lib")).unwrap();
+    std::fs::write(s.dir.join("lib/a.ts"), "export const a: string = \"a\";\n").unwrap();
+    std::fs::write(s.dir.join("lib/b.ts"), "export const b: string = \"b\";\n").unwrap();
+    std::fs::write(s.dir.join("lib/index.ts"), "export const c: string = \"c\";\n").unwrap();
+    s.load("config.ts");
+    let mut log = Vec::new();
+    ready_ok(s.serve(&mut log));
+    assert_eq!(log, ["load message(abc)"]);
+}

@@ -36,8 +36,10 @@ on("ModeChanged", (old, now) => console.log(`${old} -> ${now}`));
 TypeScript at it (`"paths": { "temzdf": ["./temzdf.d.ts"] }`). TypeScript is
 type-stripped, so only erasable syntax works (no `enum`, no `namespace` with
 values); errors report positions in the source as written. Imports: relative
-paths and `"temzdf"`; no npm packages or Node APIs. `console.log` goes to the
-log.
+paths and `"temzdf"`; no npm packages or Node APIs. Relative imports resolve
+as TypeScript's do: `./util` finds `util.ts` or `util.js`, `./util.js` finds
+`util.ts`, a directory its `index.ts` or `index.js`. `console.log` goes to the
+log, as do promise rejections nothing handled.
 
 ## Modes and keys
 

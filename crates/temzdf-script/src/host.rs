@@ -563,13 +563,34 @@ impl Resolver for Resolve {
         }
         if name.starts_with("./") || name.starts_with("../") || name.starts_with('/') {
             let dir = Path::new(base).parent().unwrap_or(Path::new("."));
-            return Ok(normalize(&dir.join(name)).display().to_string());
+            return Ok(module_file(&normalize(&dir.join(name))).display().to_string());
         }
         Err(Exception::throw_message(
             ctx,
             &format!("cannot import {name:?} from {base}: only \"temzdf\" and relative paths can be imported"),
         ))
     }
+}
+
+/// The file a relative import names, as TypeScript finds it: the path
+/// itself, `x.ts` for `x.js` (TypeScript sources import each other by their
+/// output's name), `x.ts` or `x.js` for `x`, or a directory's `index.ts` or
+/// `index.js`. Nothing found: the path, for the loader to report.
+fn module_file(path: &Path) -> PathBuf {
+    if path.is_file() {
+        return path.to_owned();
+    }
+    let with = |ext: &str| {
+        let mut p = path.as_os_str().to_owned();
+        p.push(ext);
+        PathBuf::from(p)
+    };
+    let mut candidates = Vec::new();
+    if path.extension().is_some_and(|e| e == "js") {
+        candidates.push(path.with_extension("ts"));
+    }
+    candidates.extend([with(".ts"), with(".js"), path.join("index.ts"), path.join("index.js")]);
+    candidates.into_iter().find(|p| p.is_file()).unwrap_or_else(|| path.to_owned())
 }
 
 struct Load;
