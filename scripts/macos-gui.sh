@@ -119,7 +119,9 @@ case $cmd in
     while [[ $# -gt 0 && $1 != -- ]]; do env+=("$1"); shift; done
     [[ ${1:-} == -- ]] || usage
     shift
-    read -r _ dx dy _ _ <<<"$(display_bounds)" || { echo "run 'display start' first" >&2; exit 1; }
+    # Not `read <<<"$(display_bounds)" || ...`: read succeeds on the empty line.
+    bounds=$(display_bounds) || { echo "run 'display start' first" >&2; exit 1; }
+    read -r _ dx dy _ _ <<<"$bounds"
     status=$(mktemp "$PWD/$out/status.XXXXXX")
     rm -f "$status"
     # Relative paths stay relative to here: `open` starts apps in /.
@@ -161,6 +163,7 @@ case $cmd in
   shot)
     [[ $# -eq 2 ]] || usage
     read -r wid _ _ w _ <<<"$(ctl windows "$1" | head -1)"
+    [[ -n $wid ]] || { echo "no window of process $1" >&2; exit 1; }
     screencapture -x -o -l "$wid" "$2"
     sips --resampleWidth "$w" "$2" >/dev/null
     ;;
