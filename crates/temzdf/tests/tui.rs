@@ -585,6 +585,10 @@ fn a_closed_shell_stays_hidden_and_shows_again() {
     t.wait_text("marker-left");
     t.type_text("echo still-$((2+3))\n");
     t.wait_text("still-5");
+    // Closing the last pane ends the session, although a shell runs hidden.
+    t.keys(&["C-b", "x"]);
+    t.wait_text("[session b ended]");
+    assert_eq!(t.wait_exit(), 0);
 }
 
 #[test]

@@ -202,15 +202,12 @@ struct DocEntry {
     _forward: Option<forward::Server>,
     /// How the last pane showed it, for the next one.
     view: Option<ViewState>,
-    /// When it was last hidden (for the most recently shown hidden buffer).
-    hidden_at: u64,
 }
 
 struct TermEntry {
     term: Box<TermBuffer>,
     /// The program ended; the screen stays until the buffer is deleted.
     exited: bool,
-    hidden_at: u64,
 }
 
 enum Kind {
@@ -285,8 +282,6 @@ pub struct Session {
     events: EventSink,
     docs: HashMap<DocId, DocEntry>,
     terms: HashMap<BufferId, TermEntry>,
-    /// Advanced whenever a buffer is hidden.
-    clock: u64,
     /// What a new shell pane runs; `None`: `$SHELL`.
     shell: Option<Vec<String>>,
     panes: HashMap<PaneId, PaneEntry>,
@@ -332,7 +327,6 @@ impl Session {
             events,
             docs: HashMap::new(),
             terms: HashMap::new(),
-            clock: 0,
             shell: None,
             panes: HashMap::new(),
             layout: None,
@@ -439,7 +433,6 @@ impl Session {
                 waiting: vec![spot],
                 _forward: forward_server,
                 view: None,
-                hidden_at: 0,
             },
         );
         Ok(())
@@ -599,7 +592,6 @@ impl Session {
     /// stays, hidden: a document keeps its position (and drops its tiles), a
     /// terminal keeps running; an ended terminal goes.
     fn hide(&mut self, kind: Kind) {
-        self.clock += 1;
         match kind {
             Kind::Pdf { mut pane, doc } => {
                 let state = pane.viewer.view_state();
@@ -608,7 +600,6 @@ impl Session {
                     && let Some(d) = self.docs.get_mut(&doc)
                 {
                     d.view = Some(state);
-                    d.hidden_at = self.clock;
                     if let Some(h) = &d.host {
                         h.doc.borrow_mut().forget(&mut self.images);
                     }
@@ -618,7 +609,6 @@ impl Session {
                 if !self.shown(buf)
                     && let Some(t) = self.terms.get_mut(&buf)
                 {
-                    t.hidden_at = self.clock;
                     t.term.release(&mut self.images);
                     if t.exited {
                         self.remove_buffer(buf);
@@ -626,16 +616,6 @@ impl Session {
                 }
             }
         }
-    }
-
-    /// The most recently shown hidden buffer other than `except`.
-    fn last_hidden(&self, except: Option<BufferId>) -> Option<BufferId> {
-        let docs = self.docs.iter().filter(|(_, d)| d.host.is_some()).map(|(id, d)| (*id, d.hidden_at));
-        let terms = self.terms.iter().map(|(id, t)| (*id, t.hidden_at));
-        docs.chain(terms)
-            .filter(|(id, _)| Some(*id) != except && !self.shown(*id))
-            .max_by_key(|(id, at)| (*at, *id))
-            .map(|(id, _)| id)
     }
 
     /// A terminal's program ended. A shown one closes its panes (unless
@@ -743,7 +723,7 @@ impl Session {
                 bail!("cannot start {}: {e}", spawn.argv.as_ref().map_or("the shell".into(), |a| a.join(" ")));
             }
         };
-        self.terms.insert(buf, TermEntry { term: Box::new(term), exited: false, hidden_at: 0 });
+        self.terms.insert(buf, TermEntry { term: Box::new(term), exited: false });
         self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str("terminal".into())]);
         self.panes.insert(id, PaneEntry { kind: Kind::Term { buf, view: TermView::new(geometry) }, rect });
         self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("terminal".into())]);
@@ -1163,16 +1143,12 @@ impl Session {
     }
 
     /// Close a pane; its buffer stays, hidden, if no other pane shows it.
-    /// The last pane shows the most recently shown hidden buffer instead; with
-    /// none, the session is over.
+    /// Closing the last pane ends the session, hidden buffers or not (as if
+    /// every buffer were Vim's `buftype=nofile`).
     fn close(&mut self, id: PaneId) -> Outcome {
         let Some(layout) = self.layout.as_mut() else { return Outcome::Quit };
         if layout.panes().len() <= 1 {
-            let current = self.panes.get(&id).map(PaneEntry::buffer);
-            return match self.last_hidden(current) {
-                Some(buf) => self.show_in(id, buf).unwrap_or(Outcome::Quit),
-                None => Outcome::Quit,
-            };
+            return Outcome::Quit;
         }
         let next = layout.next(id);
         layout.remove(id);
@@ -1804,11 +1780,13 @@ mod tests {
         let after = s.panes.get_mut(&focus).unwrap().pdf().unwrap().viewer.view_state();
         assert_eq!(after.top.page, before.top.page);
         assert!((after.top.y.unwrap() - before.top.y.unwrap()).abs() < 1.0, "{after:?} {before:?}");
-        // The last pane, closed, shows the most recently shown hidden buffer.
-        assert_eq!(s.close(focus), Outcome::Redraw);
-        assert_eq!(s.panes[&focus].buffer(), first);
-        // Deleting it shows the other; deleting that one ends the session.
-        assert_eq!(s.run_command("delete-buffer", &[], None, Instant::now()).map(|r| r.1), Ok(Outcome::Redraw));
+        // Closing the last pane ends the session, even with a buffer hidden.
+        assert_eq!((s.pane_count(), s.buffer_count()), (1, 2));
+        assert_eq!(s.close(focus), Outcome::Quit);
+        // Deleting the hidden buffer leaves the pane alone; deleting the last
+        // pane's ends the session.
+        let hidden = [ScriptValue::Num(first as f64)];
+        assert_eq!(s.run_command("delete-buffer", &hidden, None, Instant::now()).map(|r| r.1), Ok(Outcome::Redraw));
         assert_eq!((s.buffer_count(), s.panes[&focus].buffer()), (1, doc));
         assert_eq!(s.run_command("delete-buffer", &[], None, Instant::now()).map(|r| r.1), Ok(Outcome::Quit));
     }
@@ -2008,12 +1986,12 @@ mod tests {
         key(&mut s, "hi<CR>");
         let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "got:hi"));
         assert_eq!(rows[0], "first", "{rows:?}");
-        // Its program ends: the buffer goes, and the last pane shows the
-        // hidden shell instead of ending the session.
+        // Its program ends: the last pane closes, and the session ends
+        // although the other shell still runs hidden.
         key(&mut s, "<CR>");
-        let out = pump(&mut s, &rx, |s| !s.terms.contains_key(&first));
-        assert_ne!(out, Outcome::Quit);
-        assert_eq!((s.pane_count(), s.panes[&s.focus].buffer()), (1, second));
+        let out = pump(&mut s, &rx, |s| s.terms[&first].exited);
+        assert_eq!(out, Outcome::Quit);
+        assert!(!s.terms[&second].exited);
     }
 
     #[test]
@@ -2032,9 +2010,11 @@ mod tests {
         let (_, rows) = wait_text(&mut s, &rx, |r| r.get(1).is_some_and(|l| l == "bye"));
         assert_eq!(&rows[..2], ["started", "bye"]);
         // Hidden again, it goes.
-        assert_eq!(s.close(s.focus), Outcome::Redraw);
+        let shown = s.focus;
+        key(&mut s, "<C-b>%");
+        assert_eq!(s.close(shown), Outcome::Redraw);
         assert!(!s.terms.contains_key(&first));
-        assert_eq!(s.buffer_count(), 1);
+        assert_eq!(s.buffer_count(), 2);
     }
 
     #[test]

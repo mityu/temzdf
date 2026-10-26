@@ -151,8 +151,9 @@ terminal pane starts a new shell, `showBuffer` shows the same terminal).
 
 - Closing a pane hides its buffer: a terminal keeps running, a document
   stays open (reloading as it changes) and keeps its position for the next
-  pane that shows it. Closing the last pane shows the most recently shown
-  hidden buffer instead; with none, the session ends.
+  pane that shows it. Closing the last pane ends the session, hidden
+  buffers or not (as if every buffer were Vim's `buftype=nofile`); so does
+  the last pane's program ending.
 - When a shown terminal's program ends, its panes close (unless
   `remainonexit`); a hidden one stays, marked as ended, until it was shown
   and hidden again.
