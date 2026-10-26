@@ -36,7 +36,9 @@
 # sends `q` at the end. It does not check results; inspect the screenshots (or
 # compare pixels) afterwards. The
 # command runs without ZELLIJ/TMUX in its environment so a multiplexer around the
-# harness does not leak into terminal detection. If the terminal process died,
+# harness does not leak into terminal detection, and with its own
+# XDG_RUNTIME_DIR (also for ACTIONS), so its sessions stay apart from the
+# user's and end with the run. If the terminal process died,
 # it prints "TERMINAL CRASHED" and exits 3; failed `expect`s exit 4. Requires the dev shell (kitty,
 # xvfb-run, xdotool, imagemagick; Ghostty from the host); re-executes inside it.
 set -euo pipefail
@@ -185,6 +187,28 @@ case $mux in
     exit 2
     ;;
 esac
+# Sessions get a private runtime directory (short: socket paths are limited),
+# exported so the actions' own `temzdf action`/`kill-session` find them.
+# Removing it on exit ends any session left behind (servers end once their
+# socket is gone), also when an action failed.
+XDG_RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/temzdf-e2e.XXXXXX")
+export XDG_RUNTIME_DIR
+term_pid=
+cleanup() {
+  if [[ -n $term_pid ]]; then
+    kill "$term_pid" 2>/dev/null || true
+    wait "$term_pid" 2>/dev/null || true
+  fi
+  if [[ $mux == tmux ]]; then
+    # The server outlives the terminal; kill-server leaves its socket file.
+    local sock
+    sock=$(tmux -L "e2e-$$" display-message -p '#{socket_path}' 2>/dev/null || true)
+    tmux -L "e2e-$$" kill-server 2>/dev/null || true
+    [[ -n $sock ]] && rm -f -- "$sock"
+  fi
+  rm -rf -- "$XDG_RUNTIME_DIR"
+}
+trap cleanup EXIT
 clean_env=(env -u TEMZDF_LOG_DIR -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state")
 case $term in
   kitty)
@@ -228,14 +252,8 @@ crashed=0
 kill -0 "$term_pid" 2>/dev/null || crashed=1
 xdotool key q || true
 sleep 0.5
-kill "$term_pid" 2>/dev/null || true
-wait "$term_pid" 2>/dev/null || true
-if [[ $mux == tmux ]]; then
-  # The server outlives the terminal; kill-server leaves its socket file.
-  sock=$(tmux -L "e2e-$$" display-message -p '#{socket_path}' 2>/dev/null || true)
-  tmux -L "e2e-$$" kill-server 2>/dev/null || true
-  [[ -n $sock ]] && rm -f -- "$sock"
-fi
+cleanup
+trap - EXIT
 echo "screenshots in $outdir"
 if ((crashed)); then
   echo "TERMINAL CRASHED (see $outdir/terminal.log)"
