@@ -186,13 +186,8 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 let _ = c.tx.send(ServerMsg::Effect(effect));
             }
         }
-        let mut timeout = if session.is_animating() { FRAME } else { Duration::from_secs(3600) };
-        if dirty {
-            timeout = timeout.min(FRAME.saturating_sub(made.elapsed()));
-        }
-        if let Some(due) = session.next_deadline() {
-            timeout = timeout.min(due.saturating_duration_since(Instant::now()));
-        }
+        let can_send = clients.values().any(|c| c.attached && !c.awaiting) && !session.holds_frames();
+        let timeout = wait_for(dirty, session.is_animating(), can_send, made, session.next_deadline(), Instant::now());
         let event = match rx.recv_timeout(timeout) {
             Ok(e) => Some(e),
             Err(RecvTimeoutError::Timeout) => None,
@@ -324,6 +319,28 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     Ok(())
 }
 
+/// How long the main loop may wait for events. A pending frame (`dirty`)
+/// or an animation only shortens the wait while a client can take a frame:
+/// otherwise the next frame waits for an event anyway (an acknowledgement,
+/// a client attaching), and waking up for it would spin.
+fn wait_for(
+    dirty: bool,
+    animating: bool,
+    can_send: bool,
+    made: Instant,
+    deadline: Option<Instant>,
+    now: Instant,
+) -> Duration {
+    let mut timeout = if animating && can_send { FRAME } else { Duration::from_secs(3600) };
+    if dirty && can_send {
+        timeout = timeout.min(FRAME.saturating_sub(now.saturating_duration_since(made)));
+    }
+    if let Some(due) = deadline {
+        timeout = timeout.min(due.saturating_duration_since(now));
+    }
+    timeout
+}
+
 /// Run `temzdf action` words for client `id` and answer it.
 fn run_action(
     session: &mut Session,
@@ -422,5 +439,26 @@ struct RemoveOnDrop(PathBuf);
 impl Drop for RemoveOnDrop {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_to_send_means_no_short_waits() {
+        let now = Instant::now();
+        let made = now - FRAME * 2;
+        let long = Duration::from_secs(3600);
+        // A frame is due and a client can take it: right away.
+        assert_eq!(wait_for(true, false, true, made, None, now), Duration::ZERO);
+        // Nobody can take it (detached, or all awaiting acknowledgements):
+        // no busy loop.
+        assert_eq!(wait_for(true, false, false, made, None, now), long);
+        assert_eq!(wait_for(false, true, false, made, None, now), long);
+        assert_eq!(wait_for(false, true, true, made, None, now), FRAME);
+        // Deadlines (timers, debounces) still count.
+        assert_eq!(wait_for(true, true, false, made, Some(now + FRAME), now), FRAME);
     }
 }
