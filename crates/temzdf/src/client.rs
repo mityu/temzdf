@@ -73,18 +73,26 @@ pub fn spawn_server(
         bail!("session {name:?} already exists (attach with `temzdf attach {name}`)");
     }
     let log = crate::app::log_dir().map(|d| d.join(format!("{name}.log")));
-    let out = match &log {
+    let open_log = |p: &Path| -> Result<std::fs::File> {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .with_context(|| format!("cannot write the session's log {} (see TEMZDF_LOG_DIR)", p.display()))
+    };
+    // Where this run's output starts (for the lines shown if it fails).
+    let mut start = 0;
+    let (out, err) = match &log {
         Some(p) => {
             if let Some(dir) = p.parent() {
-                std::fs::create_dir_all(dir)?;
+                std::fs::create_dir_all(dir)
+                    .with_context(|| format!("cannot make the log directory {} (see TEMZDF_LOG_DIR)", dir.display()))?;
             }
-            std::process::Stdio::from(std::fs::OpenOptions::new().create(true).append(true).open(p)?)
+            rotate_log(p);
+            start = std::fs::metadata(p).map_or(0, |m| m.len());
+            (std::process::Stdio::from(open_log(p)?), std::process::Stdio::from(open_log(p)?))
         }
-        None => std::process::Stdio::null(),
-    };
-    let err = match &log {
-        Some(p) => std::process::Stdio::from(std::fs::OpenOptions::new().append(true).open(p)?),
-        None => std::process::Stdio::null(),
+        None => (std::process::Stdio::null(), std::process::Stdio::null()),
     };
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
     cmd.arg("server");
@@ -107,13 +115,34 @@ pub fn spawn_server(
             return Ok(());
         }
         if let Some(status) = child.try_wait()? {
-            let tail = log.and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
-            let last = tail.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+            let last = log.map(|p| last_lines(&p, start, 3)).unwrap_or_default();
             bail!("the session server exited ({status}):\n{last}");
         }
         std::thread::sleep(Duration::from_millis(25));
     }
+    // Not listening in time: it must not linger (nor stay a zombie).
+    let _ = child.kill();
+    let _ = child.wait();
     bail!("the session server did not start listening")
+}
+
+/// A log over this size starts afresh; the last one stays as `NAME.log.1`.
+const LOG_LIMIT: u64 = 1 << 20;
+
+fn rotate_log(path: &Path) {
+    if std::fs::metadata(path).is_ok_and(|m| m.len() > LOG_LIMIT) {
+        let mut old = path.as_os_str().to_owned();
+        old.push(".1");
+        let _ = std::fs::rename(path, old);
+    }
+}
+
+/// The last `n` lines written to `path` after byte `start`.
+fn last_lines(path: &Path, start: u64, n: usize) -> String {
+    let text = std::fs::read(path).unwrap_or_default();
+    let text = String::from_utf8_lossy(text.get(start as usize..).unwrap_or_default());
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
 /// The session to attach to: `name`, or the only one.
@@ -374,6 +403,23 @@ fn resolve_paths(words: &mut Vec<String>, cwd: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn logs_rotate_and_failures_show_this_runs_lines() {
+        let dir = std::env::temp_dir().join(format!("temzdf-logs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("s.log");
+        std::fs::write(&log, vec![b'x'; LOG_LIMIT as usize + 1]).unwrap();
+        rotate_log(&log);
+        assert!(!log.exists() && dir.join("s.log.1").exists(), "the big log moved aside");
+        std::fs::write(&log, "old run\nold error\n").unwrap();
+        let start = std::fs::metadata(&log).unwrap().len();
+        std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(b"a\nb\nc\nd\n").unwrap();
+        assert_eq!(last_lines(&log, start, 3), "b\nc\nd");
+        assert_eq!(last_lines(&log, start + 6, 3), "d", "only this run's");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn action_paths_are_the_callers() {
