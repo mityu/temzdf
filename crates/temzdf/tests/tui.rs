@@ -214,6 +214,32 @@ fn the_shell_follows_the_window_size() {
 }
 
 #[test]
+fn typed_keys_echo_at_once_with_composited_frames() {
+    // WezTerm's setup: composited frames sent inline, whose rate is capped
+    // (200 ms). The cap held text too: every key showed up to 200 ms late.
+    let env = Env::new("echo");
+    let mut opts = env.options();
+    opts.env.push(("TERMPIX_BACKEND".into(), "composited".into()));
+    opts.env.push(("TERMPIX_MEDIUM".into(), "direct".into()));
+    let mut t = Term::spawn(&[BIN, "-s", "e"], &opts);
+    t.wait_for("the prompt", prompt);
+    let mut typed = String::from("$ ");
+    let mut times = Vec::new();
+    for c in "abcdefghij".chars() {
+        typed.push(c);
+        let start = std::time::Instant::now();
+        t.key(&c.to_string());
+        while !t.screen().lines().iter().any(|l| l.starts_with(&typed)) {
+            assert!(start.elapsed() < tuitest::TIMEOUT, "{c:?} never echoed");
+            t.pump(std::time::Duration::from_millis(1));
+        }
+        times.push(start.elapsed());
+    }
+    times.sort();
+    assert!(times[times.len() / 2] < std::time::Duration::from_millis(100), "echo times: {times:?}");
+}
+
+#[test]
 fn a_pdf_shows_its_pages() {
     let env = Env::new("pdf");
     let pdf = fixture("sample.pdf");

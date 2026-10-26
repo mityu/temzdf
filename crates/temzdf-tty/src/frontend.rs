@@ -60,7 +60,8 @@ pub struct TtyFrontend {
     pointer: Pointer,
     started: Instant,
     first_shown: bool,
-    last_present: Option<Instant>,
+    /// When the last frame that sent pixels was shown.
+    last_pixels: Option<Instant>,
     /// Composited frames resend whole strips of the screen; multiplexers
     /// (zellij 0.45 forwards them uncompressed) and inline links pay for every
     /// one, so their rate is capped. Layered frames are tiny placement updates.
@@ -125,7 +126,7 @@ impl TtyFrontend {
             pointer: Pointer::Default,
             started: Instant::now(),
             first_shown: false,
-            last_present: None,
+            last_pixels: None,
             min_interval,
             retry_soon: false,
             uploading: false,
@@ -175,14 +176,18 @@ impl TtyFrontend {
 
     /// Show a frame, unless it should wait: half-rendered first frames are not
     /// shown (each costs a full upload in Composited mode) until
-    /// `FIRST_FRAME_WAIT`, and the frame-rate cap applies. `complete` says
+    /// `FIRST_FRAME_WAIT`, and the frame-rate cap applies to frames that send
+    /// pixels. `complete` says
     /// whether everything visible is fully rendered.
     pub fn present(&mut self, frame: &Frame, complete: bool) -> Result<Presented> {
         if !self.first_shown && !complete && self.started.elapsed() < FIRST_FRAME_WAIT {
             self.retry_soon = true;
             return Ok(Presented::Waiting);
         }
-        if self.last_present.is_some_and(|t| t.elapsed() < self.min_interval) {
+        // The cap is for frames that send pixels; text alone (a shell echoing
+        // keys) goes out at once.
+        let pixels = self.comp.would_resend(&self.presenter.layers(&frame.layers));
+        if pixels && self.last_pixels.is_some_and(|t| t.elapsed() < self.min_interval) {
             self.retry_soon = true;
             return Ok(Presented::Held);
         }
@@ -192,7 +197,9 @@ impl TtyFrontend {
         }
         self.set_pointer(frame.pointer)?;
         self.first_shown = true;
-        self.last_present = Some(Instant::now());
+        if pixels {
+            self.last_pixels = Some(Instant::now());
+        }
         Ok(Presented::Shown)
     }
 

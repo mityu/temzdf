@@ -121,6 +121,10 @@ pub struct Compositor {
     /// Commands that must be emitted with the next frame (deletions).
     pending: Vec<u8>,
     last_frame: Option<RgbaImage>,
+    /// The layers `last_frame` was composited from, and the images added,
+    /// replaced or removed since: with neither changed, the frame is the same.
+    last_layers: Vec<Layer>,
+    changed_images: HashSet<u32>,
     /// Number of composited strips currently shown.
     strips: u32,
     /// The placeholder text for the current geometry is on screen.
@@ -152,6 +156,8 @@ impl Compositor {
             placed: HashMap::new(),
             pending: Vec::new(),
             last_frame: None,
+            last_layers: Vec::new(),
+            changed_images: HashSet::new(),
             strips: 0,
             placeholder_text: false,
             tmux_passthrough: false,
@@ -208,6 +214,7 @@ impl Compositor {
     }
 
     pub fn remove_image(&mut self, id: ImageId) {
+        self.image_changed(id.0);
         if let Some(img) = self.images.remove(&id.0)
             && img.uploaded
         {
@@ -228,8 +235,15 @@ impl Compositor {
     fn insert_image(&mut self, id: u32, width: u32, height: u32, data: Arc<[u8]>) {
         assert_eq!(data.len(), width as usize * height as usize * 4, "image data must be RGBA8");
         self.images.insert(id, StoredImage { width, height, data, uploaded: false });
+        self.image_changed(id);
         if matches!(self.backend, Backend::Layered) {
             self.not_uploaded.push_back(id);
+        }
+    }
+
+    fn image_changed(&mut self, id: u32) {
+        if !matches!(self.backend, Backend::Layered) {
+            self.changed_images.insert(id);
         }
     }
 
@@ -330,6 +344,19 @@ impl Compositor {
             self.fences.pop_front();
         }
         self.fences.len() >= MAX_FENCES
+    }
+
+    /// Whether showing `layers` means compositing and sending pixels again
+    /// (Composited and Placeholders backends): false when only text changes.
+    pub fn would_resend(&self, layers: &[Layer]) -> bool {
+        match self.backend {
+            Backend::Layered => false,
+            Backend::Composited { .. } | Backend::Placeholders { .. } => {
+                self.last_frame.is_none()
+                    || layers != self.last_layers.as_slice()
+                    || layers.iter().any(|l| self.changed_images.contains(&l.image.0))
+            }
+        }
     }
 
     /// Emit the commands that make the terminal show `layers`. Writes nothing when
@@ -476,6 +503,11 @@ impl Compositor {
         virtual_placements: bool,
         out: &mut Vec<u8>,
     ) -> io::Result<()> {
+        // Blending and comparing a screen of pixels costs milliseconds; text
+        // typed into a terminal pane should not pay for it.
+        if !self.would_resend(layers) {
+            return Ok(());
+        }
         let (w, h) = (self.geometry.width_px(), self.geometry.height_px());
         let mut frame = RgbaImage::new(w, h, background);
         let mut order: Vec<&Layer> = layers.iter().collect();
@@ -533,6 +565,8 @@ impl Compositor {
         }
         self.strips = count;
         self.last_frame = Some(frame);
+        self.last_layers = layers.to_vec();
+        self.changed_images.clear();
         Ok(())
     }
 }
@@ -850,5 +884,25 @@ mod tests {
         let mut again = Vec::new();
         c.present(&[layer(img, 0, 0)], &mut again).unwrap();
         assert!(again.is_empty());
+    }
+
+    #[test]
+    fn composited_resends_only_for_changed_layers_or_their_images() {
+        let mut c = Compositor::new(Backend::composited(), Medium::Direct { compress: false }, geometry());
+        let img = c.add_image(30, 30, test_image());
+        let layers = [layer(img, 0, 0)];
+        assert!(c.would_resend(&layers), "nothing shown yet");
+        c.present(&layers, &mut Vec::new()).unwrap();
+        assert!(!c.would_resend(&layers), "only text would change");
+        let other = c.add_image(30, 30, test_image());
+        assert!(!c.would_resend(&layers), "an image not shown changed");
+        assert!(c.would_resend(&[layer(other, 0, 0)]), "other layers");
+        c.replace_image(img, 30, 30, test_image());
+        assert!(c.would_resend(&layers), "a shown image changed");
+        c.present(&layers, &mut Vec::new()).unwrap();
+        c.set_geometry(Geometry { cols: 20, ..geometry() });
+        assert!(c.would_resend(&layers), "the screen size changed");
+        let layered = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, geometry());
+        assert!(!layered.would_resend(&layers), "layered frames only place images");
     }
 }
