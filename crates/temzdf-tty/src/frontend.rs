@@ -250,11 +250,23 @@ impl TtyFrontend {
         timeout
     }
 
+    /// The terminal's size after a resize: the in-band report (mode 2048,
+    /// pixels included) if that is what came, else the kernel's, keeping the
+    /// cell size when it reports no pixels.
+    fn new_geometry(&self, ev: &TermEvent) -> Result<Option<Geometry>> {
+        if let TermEvent::Input(Event::Resize(r)) = ev
+            && let Some(g) = r.geometry()
+        {
+            return Ok(Some(g));
+        }
+        Ok(self.tty.winsize()?.geometry_or(self.comp.geometry().cell))
+    }
+
     /// Interpret a terminal event.
     pub fn handle(&mut self, ev: TermEvent) -> Result<Input> {
         Ok(match ev {
             TermEvent::Terminate => Input::Terminate,
-            TermEvent::WindowChanged | TermEvent::Input(Event::Resize(_)) => match self.tty.winsize()?.geometry() {
+            TermEvent::WindowChanged | TermEvent::Input(Event::Resize(_)) => match self.new_geometry(&ev)? {
                 Some(g) if g != self.comp.geometry() => {
                     self.comp.set_geometry(g);
                     eprintln!("temzdf: resized to {}", geometry_line(g));

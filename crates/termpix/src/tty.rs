@@ -354,6 +354,16 @@ impl Winsize {
             },
         })
     }
+
+    /// [`Winsize::geometry`], or where the kernel reports no pixel size
+    /// (mosh, WezTerm on WSL, some multiplexers) the new grid with the cell
+    /// size known so far.
+    pub fn geometry_or(&self, cell: CellSize) -> Option<Geometry> {
+        if self.rows == 0 || self.cols == 0 {
+            return None;
+        }
+        Some(self.geometry().unwrap_or(Geometry { cols: self.cols, rows: self.rows, cell }))
+    }
 }
 
 /// Wait until `fd` is readable (or writable), at most `timeout` (`None` =
@@ -539,6 +549,19 @@ mod tests {
         let mut buf = [0u8; 64];
         let n = read_timeout(master.as_fd(), &mut buf, Some(Duration::from_secs(1))).unwrap().unwrap_or(0);
         assert_eq!(&buf[..n], b"RESET");
+    }
+
+    #[test]
+    fn resizes_without_pixel_sizes_keep_the_cell_size() {
+        let cell = CellSize { width: 9, height: 18 };
+        let with_px = Winsize { rows: 30, cols: 100, width_px: 1000, height_px: 600 };
+        assert_eq!(with_px.geometry_or(cell).unwrap().cell, CellSize { width: 10, height: 20 });
+        let without = Winsize { rows: 40, cols: 120, width_px: 0, height_px: 0 };
+        assert_eq!(without.geometry(), None);
+        assert_eq!(without.geometry_or(cell), Some(Geometry { cols: 120, rows: 40, cell }));
+        assert_eq!(Winsize { rows: 0, cols: 0, width_px: 0, height_px: 0 }.geometry_or(cell), None);
+        let report = crate::input::ResizeReport { rows: 40, cols: 120, height_px: 800, width_px: 1200 };
+        assert_eq!(report.geometry(), Some(Geometry { cols: 120, rows: 40, cell: CellSize { width: 10, height: 20 } }));
     }
 
     #[test]

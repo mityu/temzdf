@@ -20,6 +20,20 @@ pub struct ResizeReport {
     pub width_px: u32,
 }
 
+impl ResizeReport {
+    /// The geometry it reports, if complete.
+    pub fn geometry(&self) -> Option<crate::geom::Geometry> {
+        if self.rows == 0 || self.cols == 0 || self.width_px == 0 || self.height_px == 0 {
+            return None;
+        }
+        let cell = crate::geom::CellSize {
+            width: self.width_px / self.cols as u32,
+            height: self.height_px / self.rows as u32,
+        };
+        Some(crate::geom::Geometry { cols: self.cols, rows: self.rows, cell })
+    }
+}
+
 /// A kitty graphics protocol reply: `ESC _G <keys> ; <message> ESC \`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphicsReply {
