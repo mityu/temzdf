@@ -87,7 +87,9 @@ Not yet (in order of the plan, or found on the way):
   copies (measure first).
 - Terminal panes: kitty graphics through Unicode placeholders (tmux inside a
   pane) and animation frames.
-- Steps 4 to 6: GUI client, web panes, programmable config.
+- Step 4, the GUI client, works on X11 (`doc/gui-client.md`); Wayland and
+  macOS are not checked. Step 5, web panes, is next. Step 6 (programmable
+  configuration) is the script host.
 
 ## Vision
 

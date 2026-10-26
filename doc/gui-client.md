@@ -1,13 +1,70 @@
 # GUI client: groundwork and plan
 
-Status (2026-10-27): a plan, nothing implemented. Reviewed against the code
-on 2026-10-27 (tab pages, text-grid chrome, where the client code lives, the
-dev shell); every **(decide)** item is decided as recommended (the user,
-2026-10-27; see "Decisions"). Step 4 of the session server's plan
+Status (2026-10-28): implemented for X11 (the user's Xfce) and checked on
+Xvfb with xfwm4; Wayland, macOS and HiDPI are not checked yet. See
+"Implemented" below. Every **(decide)** item was decided as recommended
+(the user, 2026-10-27; see "Decisions"). Step 4 of the session server's plan
 (`doc/session-server.md`): a native window that attaches to a session as the
 TTY client does. Toolkit research is in `doc/gui-stack.md`; this document
 narrows it to the client the current code needs, lists what is in the way,
 and plans what can be built now.
+
+## Implemented (2026-10-28)
+
+`temzdf-gui [-s NAME] [FILE]` (`crates/temzdf-gui`) attaches to session
+NAME (started with FILE if it does not exist), a new session for FILE, the
+only session, or a new shell; it starts servers with the `temzdf` next to
+it (else on `PATH`). Closing the window detaches. `--render-frame PNG
+[--size WxH] [--scale S]` draws the session offscreen instead.
+
+- **Protocol and server** (G0): `MouseEventKind::ScrollBy` (amounts in
+  hundredths of a pixel or a notch, with the source: wheel, fingers,
+  inertia; PDF pages follow fingers exactly, terminals add rows up),
+  `ClientMsg::Text` (committed input-method text: typed in pass-through
+  modes, keys elsewhere), `ClientMsg::Focus`, the `paste` command with
+  `Effect::Paste`, and `ServerMsg::Appearance` (options `foreground`,
+  `background`, `palette`, `guifont`, `guifontwide`; terminal panes answer
+  OSC 4/10/11 from them). Discovery and spawning moved to
+  `crates/temzdf-client` (and `temzdf-protocol`'s `discovery`).
+- **Drawing** (G1): `drawlist.rs` turns a frame into ordered draws (kitty's
+  z bands, cell backgrounds, glyphs, decorations, cursor, preedit), pure and
+  tested under Miri; `render.rs` executes it with wgpu (textured quads,
+  glyphon in "web" colour mode on non-sRGB targets, so blending matches the
+  mock terminal) into the window or offscreen. Cells come from the font:
+  the advance of `0`, ascent + descent + line gap, rounded up.
+- **Input** (G2): keys as the kitty protocol reports them (`input.rs`,
+  `translate`, tested), pointer events in pixels, wheel and trackpad as
+  `ScrollBy`, focus, IME (preedit drawn at the cursor, the candidate window
+  placed there with `request_ime_update`, commits as `Text`), the clipboard
+  through arboard (primary selection on Linux), links and inverse search
+  through `temzdf-client`. `<C-S-v>` and `<D-v>` paste in terminal panes.
+- **Packaging**: `nix build` builds both binaries and wraps `temzdf-gui`
+  with the libraries winit and wgpu load (`guiLibsFor` in `flake.nix`).
+
+Differences from the plan below:
+
+- No input area in `Frame`: PDF prompts already put `Frame.cursor` at their
+  caret, so the GUI places the input method at the cursor cell.
+- winit's X11 backend loads libXfixes, libXrender, libXext, libXinerama,
+  libxcb and libXss besides the libraries listed first; the dev shell and
+  the package carry them.
+- With fcitx5 over XIM, Mozc draws the composing text in its own window at
+  the cursor (winit's X11 input style); the GUI's own preedit drawing shows
+  where the input method sends preedit (Wayland's text-input, macOS).
+- Default colours (no `foreground` / `background` set): foreground
+  `#d8d8d8`, background `#1e1e1e`, xterm's palette.
+
+Tests: `crates/temzdf-gui/tests/gpu.rs` (offscreen on lavapipe: layers
+against the CPU reference, text in its cells), unit tests of the draw list,
+palette, fonts and key translation, `scripts/e2e.sh -t gui` with
+`tests/e2e/gui.actions` (judged against `--render-frame`) and
+`tests/e2e/gui-ime.actions` (`-I`: fcitx5 with Mozc, committed Japanese and
+a paste reach a shell).
+
+Not done yet: Wayland (sway headless is in the dev shell) and macOS checks,
+HiDPI and fractional scales (`--scale` and `ScaleFactorChanged` exist,
+untested), Option as Alt on macOS, cursor blinking, curly and dotted
+underlines (drawn straight), shared memory for images.
 
 ## What the GUI client is
 

@@ -22,6 +22,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley` + `taffy`). Independent of `termpix` (`termpix-core` only in its tests). |
 | `crates/temzdf-scene` | Library. What a pane shows, frontend-independent: image store and frames of layers, frontend hints, effects. |
 | `crates/temzdf-protocol` | Library. Session protocol: client/server messages, framing, socket locations, finding sessions (`discovery`). |
+| `crates/temzdf-gui` | The GUI client (`temzdf-gui`): a winit window drawing the session with wgpu and glyphon (draw list, renderer, input, IME, clipboard), `--render-frame` offscreen. Uses `temzdf-protocol`, `temzdf-scene`, `temzdf-client`, `termpix-core`; no `termpix`, no server code. See `doc/gui-client.md`. |
 | `crates/temzdf-client` | Library. What every client shares: naming, resolving and starting sessions (`spawn_server`), log locations, carrying out effects (links, inverse search). No terminal or window code. |
 | `crates/temzdf-pdfcore` | Library. PDF backend: MuPDF (`mupdf` crate), display list and tile cache, text, SyncTeX, background workers, reload. No terminal code. |
 | `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings; `Document`/`DocumentHost` shared by the panes on one file (workers, reload, SyncTeX routing). No terminal code. |
@@ -97,6 +98,11 @@ back for one run and restores the file (it refuses a pattern that does not
 match once, and tells a mutation that did not compile or a filter that ran
 no test from a caught one). The
 full testing approach is in `doc/testing.md`.
+
+`scripts/e2e.sh -t gui ... -- target/debug/temzdf-gui FILE` drives the GUI
+client the same way (xfwm4 on Xvfb, lavapipe; `-I` adds fcitx5 with Mozc for
+Japanese input); its GPU tests (`cargo test -p temzdf-gui --test gpu`) run
+offscreen on lavapipe.
 
 `scripts/e2e.sh` is Linux-only. On macOS, `scripts/macos-gui.sh` runs kitty,
 Ghostty or WezTerm in the background on a virtual display and drives them

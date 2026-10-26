@@ -47,8 +47,12 @@ server on one `Session`). Next and open:
   mappings, escape hatches, message area, mouse, defaults, layout details,
   hidden buffers, client-side settings, reload, CLI scripting,
   `check-config`) must be decided before or while implementing.
-- [ ] Step 4: GUI client (winit + wgpu). Step 5: web panes (headless
-  Chromium). Step 6: programmable configuration.
+- [ ] Step 4, the GUI client (`temzdf-gui`, `doc/gui-client.md`): works on
+  X11 (checked on Xvfb with xfwm4, Japanese input through fcitx5 and Mozc).
+  Left: Wayland and macOS checks, HiDPI and fractional scales, Option as
+  Alt, cursor blinking, curly and dotted underlines, shared memory for
+  images (measure the socket first). Step 5: web panes (headless Chromium).
+  (Step 6, programmable configuration, is the script host.)
 
 ## Deferred
 
