@@ -2922,4 +2922,61 @@ mod tests {
         assert_eq!(s.area().y, 0);
         assert!(s.set_option("showtabline", &ScriptValue::Num(3.0)).is_err());
     }
+
+    /// The panes() entry of `pane`.
+    fn pane_info(s: &mut Session, pane: PaneId) -> ScriptValue {
+        let (list, _) = s.run_command("panes", &[], None, Instant::now()).unwrap();
+        let ScriptValue::List(list) = list else { panic!() };
+        list.into_iter().find(|p| p.get("id").and_then(ScriptValue::as_num) == Some(pane as f64)).unwrap()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn floats_show_on_their_tab_or_on_all_and_hide_per_tab() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let own = float(&mut s, &["sleep", "30"], &[]);
+        let all = float(&mut s, &["sleep", "30"], &[("tabpage", ScriptValue::Num(-1.0))]);
+        let shown = |s: &Session| s.shown_floats().iter().map(|f| f.pane).collect::<Vec<_>>();
+        assert_eq!(shown(&s), [own, all]);
+        new_tab(&mut s, &["sleep", "30"]);
+        assert_eq!(shown(&s), [all], "only the float on all tabs");
+        // The stack is one: raising here raises it there.
+        let second = float(&mut s, &["sleep", "30"], &[]);
+        assert_eq!(shown(&s), [all, second]);
+        s.set_focus(all);
+        assert_eq!(shown(&s), [second, all]);
+        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        assert_eq!(shown(&s), [own, all]);
+        // Hiding is per tab; the float on all tabs follows the current one.
+        cmd(&mut s, "toggle-floats", &[], None).unwrap();
+        assert!(shown(&s).is_empty());
+        cmd(&mut s, "goto-tab", &["2"], None).unwrap();
+        assert_eq!(shown(&s), [second, all]);
+        // panes() says where each pane is.
+        assert_eq!(pane_info(&mut s, own).get("tab"), Some(&ScriptValue::Num(1.0)));
+        assert_eq!(pane_info(&mut s, second).get("tab"), Some(&ScriptValue::Num(2.0)));
+        assert_eq!(pane_info(&mut s, all).get("tab"), Some(&ScriptValue::Null));
+        // tabpage moves a float to another tab.
+        let opts = ScriptValue::map([("tabpage", ScriptValue::Num(1.0))]);
+        s.run_command("float-config", &[ScriptValue::Num(second as f64), opts], None, Instant::now()).unwrap();
+        assert_eq!(shown(&s), [all]);
+        assert_ne!(s.focus, second, "the focus stays on this tab");
+        // A float on all tabs becomes a tiled pane of the current tab.
+        s.set_focus(all);
+        cmd(&mut s, "toggle-floating", &[], None).unwrap();
+        assert!(!s.is_float(all));
+        assert_eq!(s.tab_of(all), Some(1));
+        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        assert!(!s.layout.as_ref().unwrap().panes().contains(&all));
+        assert!(
+            s.run_command(
+                "open-float",
+                &[ScriptValue::Null, ScriptValue::map([("tabpage", ScriptValue::Num(5.0))])],
+                None,
+                Instant::now()
+            )
+            .is_err()
+        );
+    }
 }

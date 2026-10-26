@@ -43,13 +43,13 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("close-pane", "(): void", "Close the focused pane (its buffer stays, hidden)"),
     (
         "open-float",
-        "(what?: { buffer: number } | { file: string } | { command: string[] } | null, opts?: { width?: number | string; height?: number | string; col?: number | string; row?: number | string; title?: string; focus?: boolean }): number | null",
-        "Open a floating pane (a new shell by default); sizes in cells (the content's) or \"N%\" of the screen, centred unless col/row; returns the pane (null for a file still opening)",
+        "(what?: { buffer: number } | { file: string } | { command: string[] } | null, opts?: { width?: number | string; height?: number | string; col?: number | string; row?: number | string; title?: string; focus?: boolean; tabpage?: number }): number | null",
+        "Open a floating pane (a new shell by default); sizes in cells (the content's) or \"N%\" of the screen, centred unless col/row; tabpage as Vim's popups (0 the current tab page, -1 all, N tab page N); returns the pane (null for a file still opening)",
     ),
     (
         "float-config",
-        "(pane: number | null, opts: { width?: number | string; height?: number | string; col?: number | string; row?: number | string; title?: string; focus?: boolean }): void",
-        "Move or resize a floating pane (the focused one for null), or change its title",
+        "(pane: number | null, opts: { width?: number | string; height?: number | string; col?: number | string; row?: number | string; title?: string; focus?: boolean; tabpage?: number }): void",
+        "Move or resize a floating pane (the focused one for null), change its title, or the tab pages it shows on (tabpage)",
     ),
     ("toggle-floats", "(): void", "Show or hide every floating pane; with none, open a floating shell"),
     ("toggle-floating", "(pane?: number): void", "Turn a pane (the focused one) floating, or tiled again"),
