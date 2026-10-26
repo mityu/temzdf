@@ -844,10 +844,16 @@ impl PdfPane {
                 (Some(_), _) => Some(self.search_origin.map_or_else(|| self.viewer.top_position(), |o| o.0)),
                 (None, pending) => pending,
             };
+            // A hit before `from` is one found by wrapping around: only when
+            // every page is searched (later pages may have one still).
+            let wrapped = |from: Target, hit: (usize, usize), search: &SearchState| {
+                let y = search.hits[hit.0].get(hit.1).map_or(0.0, |r| r.y0);
+                (hit.0, y) < (from.page, from.y.unwrap_or(0.0))
+            };
             if let Some(from) = from
                 && let Some(hit) = self.search.find_from(from, true)
                 && self.search.hits[hit.0].get(hit.1).is_some()
-                && (self.search.is_complete() || hit.0 == page)
+                && (self.search.is_complete() || (hit.0 == page && !wrapped(from, hit, &self.search)))
             {
                 self.search.current = Some(hit);
                 self.pending_first_hit = None;
@@ -1525,6 +1531,26 @@ mod tests {
         // Valid boxes after an invalid one still count.
         s.forward_result(vec![PdfBox { page: pages, rect }, PdfBox { page: pages - 1, rect }], Instant::now());
         assert_eq!(s.flash.as_ref().map(|f| f.0.len()), Some(1));
+    }
+
+    #[test]
+    fn typing_a_search_does_not_wrap_to_an_earlier_hit_before_the_rest_is_searched() {
+        let mut s = session();
+        let now = Instant::now();
+        s.viewer.goto(Target { page: 1, y: Some(400.0) }, false, now);
+        s.key(&KeyEvent::new(KeyCode::Char('/'), Modifiers::NONE), now);
+        s.key(&KeyEvent::new(KeyCode::Char('x'), Modifiers::NONE), now);
+        let generation = match s.take_requests().as_slice() {
+            [Request::Search { generation, start_page: 1, .. }] => *generation,
+            other => panic!("{other:?}"),
+        };
+        let rect = |y| PageRect { x0: 10.0, y0: y, x1: 50.0, y1: y + 10.0 };
+        // The page the search started on comes first: its only hit is above
+        // where the search began.
+        s.search_hits(generation, 1, vec![rect(10.0)], now);
+        assert_eq!(s.search.current, None, "a later page may have one");
+        s.search_hits(generation, 2, vec![rect(100.0)], now);
+        assert_eq!(s.search.current, Some((2, 0)));
     }
 
     #[test]
