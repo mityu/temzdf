@@ -40,9 +40,9 @@ server on one `Session`). Next and open:
   (`doc/script-host.md`), and so are modes and key mappings, the shipped
   defaults in JavaScript, options, `print-types`, floating messages and the
   escape keys (TOML is gone), buffers separated from panes, and terminal
-  panes' selection, links and images. Next: pane sizes kept on resize (the
-  last pane absorbs changes, decided), default mappings for switching
-  buffers. The
+  panes' selection, links and images, and pane sizes kept when the screen
+  changes size. Next: default mappings for switching buffers, changing pane
+  sizes (a command, dragging borders). The
   questions under "Open questions, to decide later" there (modes and
   mappings, escape hatches, message area, mouse, defaults, layout details,
   hidden buffers, client-side settings, reload, CLI scripting,

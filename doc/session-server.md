@@ -20,7 +20,8 @@ What exists:
   pane on it: one tile cache, links, text, workers, reload), PDF panes in a
   terminal panes (`crates/temzdf-term`: a pty from `portable-pty`, Ghostty's
   terminal emulation from `libghostty-vt`, the screen as scene text cells),
-  all in a binary layout of splits with one-cell borders, focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
+  all in a binary layout of splits with one-cell borders (a split halves its
+  area; when the screen changes size the last pane takes the difference), focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
   buffers as in Vim (what panes show; closing a pane hides its buffer,
   see `doc/config.md`), `Action`s with a text form, and one composed frame (pane layers moved into
   their rectangles, clipped, placement keys made unique and stable).

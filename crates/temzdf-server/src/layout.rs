@@ -1,5 +1,8 @@
 //! Pane layout: a binary tree of splits over the screen, in cells. Panes
-//! side by side or stacked are separated by one cell for the border.
+//! side by side or stacked are separated by one cell for the border. A split
+//! halves its area when made and keeps its first half's size after that: when
+//! the screen changes size, the last (right or bottom) pane takes the
+//! difference, as in Vim.
 
 use termpix_core::geom::Rect;
 
@@ -29,7 +32,13 @@ const MIN_ROWS: u32 = 4;
 #[derive(Clone, Debug, PartialEq)]
 enum Node {
     Leaf(PaneId),
-    Split { split: Split, a: Box<Node>, b: Box<Node> },
+    /// `size`: the width (side by side) or height of `a`, in cells.
+    Split {
+        split: Split,
+        a: Box<Node>,
+        b: Box<Node>,
+        size: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -58,14 +67,14 @@ impl Layout {
         out
     }
 
-    /// Each pane's rectangle in `area` (cells), halves split evenly with a
-    /// one-cell border between them.
+    /// Each pane's rectangle in `area` (cells), with a one-cell border
+    /// between neighbours.
     pub fn rects(&self, area: Rect) -> Vec<(PaneId, Rect)> {
         fn walk(n: &Node, r: Rect, out: &mut Vec<(PaneId, Rect)>) {
             match n {
                 Node::Leaf(p) => out.push((*p, r)),
-                Node::Split { split, a, b } => {
-                    let (ra, rb) = halves(*split, r);
+                Node::Split { split, a, b, size } => {
+                    let (ra, rb) = parts(*split, r, *size);
                     walk(a, ra, out);
                     walk(b, rb, out);
                 }
@@ -98,9 +107,13 @@ impl Layout {
         if !fits(a) || !fits(b) {
             return false;
         }
+        let size = match split {
+            Split::Horizontal => a.w,
+            Split::Vertical => a.h,
+        };
         let join = |old: Node| {
             let (a, b) = if before { (Node::Leaf(new), old) } else { (old, Node::Leaf(new)) };
-            Node::Split { split, a: Box::new(a), b: Box::new(b) }
+            Node::Split { split, a: Box::new(a), b: Box::new(b), size }
         };
         let Some(pane) = target else {
             let old = std::mem::replace(&mut self.root, Node::Leaf(new));
@@ -181,15 +194,27 @@ impl Layout {
 
 /// The two halves of `r` with a one-cell border between them.
 fn halves(split: Split, r: Rect) -> (Rect, Rect) {
+    let extent = match split {
+        Split::Horizontal => r.w,
+        Split::Vertical => r.h,
+    };
+    parts(split, r, extent.saturating_sub(1) / 2)
+}
+
+/// `r` in two with a one-cell border between them, the first `size` cells
+/// wide (or high) if the second keeps its minimum; the second takes the rest.
+fn parts(split: Split, r: Rect, size: u32) -> (Rect, Rect) {
     match split {
         Split::Horizontal => {
-            let a = r.w.saturating_sub(1) / 2;
-            let b = r.w.saturating_sub(1 + a);
+            let room = r.w.saturating_sub(1);
+            let a = size.min(room.saturating_sub(MIN_COLS));
+            let b = room - a;
             (Rect::new(r.x, r.y, a, r.h), Rect::new(r.x + a as i32 + 1, r.y, b, r.h))
         }
         Split::Vertical => {
-            let a = r.h.saturating_sub(1) / 2;
-            let b = r.h.saturating_sub(1 + a);
+            let room = r.h.saturating_sub(1);
+            let a = size.min(room.saturating_sub(MIN_ROWS));
+            let b = room - a;
             (Rect::new(r.x, r.y, r.w, a), Rect::new(r.x, r.y + a as i32 + 1, r.w, b))
         }
     }
@@ -241,6 +266,26 @@ mod tests {
         assert!(l.remove(1));
         assert_eq!(l.rects(AREA), vec![(3, AREA)]);
         assert!(!l.remove(3), "the last pane stays");
+    }
+
+    #[test]
+    fn the_last_pane_takes_a_change_of_the_screen_size() {
+        let mut l = Layout::new(1);
+        l.split(1, 2, Split::Horizontal, AREA);
+        l.split(2, 3, Split::Vertical, AREA);
+        let big = Rect::new(0, 0, 101, 41);
+        assert_eq!(
+            l.rects(big),
+            vec![(1, Rect::new(0, 0, 40, 41)), (2, Rect::new(41, 0, 60, 15)), (3, Rect::new(41, 16, 60, 25))],
+            "the first pane keeps its width, the top right one its height"
+        );
+        // Too small for the sizes: the first panes give up space, down to the
+        // minimum of the last.
+        let small = Rect::new(0, 0, 45, 31);
+        assert_eq!(l.rects(small)[0].1.w, 45 - 1 - MIN_COLS);
+        // New splits halve what they split.
+        l.split(1, 4, Split::Horizontal, big);
+        assert_eq!(l.rects(big)[..2], [(1, Rect::new(0, 0, 19, 41)), (4, Rect::new(20, 0, 20, 41))]);
     }
 
     #[test]

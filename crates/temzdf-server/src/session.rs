@@ -1801,10 +1801,12 @@ mod tests {
         term.feed(&out);
         let resized = term.render();
 
+        // The same layout (panes keep their sizes when the screen changes),
+        // drawn only at the new size.
         let (mut fresh, rx2) = session();
-        fresh.resize(big);
         fresh.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
         fresh.action(Action::Split { split: Split::Vertical, before: false, root: false }, Instant::now()).unwrap();
+        fresh.resize(big);
         let mut comp2 = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, big);
         let (frame2, _) = settle(&mut fresh, &rx2);
         let mut out2 = Vec::new();
