@@ -80,6 +80,22 @@ pub fn run_with_limit(
         let (interrupt, unattended) = (interrupt.clone(), unattended.clone());
         rt.set_interrupt_handler(Some(Box::new(move || interrupt.load(Ordering::SeqCst) || unattended.overdue())));
     }
+    // A promise rejected with nobody to handle it (a timer's async code, a
+    // top-level `Promise.reject`) would fail silently: say so in the log.
+    rt.set_host_promise_rejection_tracker(Some(Box::new(|_ctx, _promise, reason, handled| {
+        if !handled {
+            // An Error: "Name: message" and where (its stack has frames only).
+            let error = reason.as_object().and_then(|o| {
+                let message: String = o.get("message").ok()?;
+                let name: String = o.get("name").unwrap_or_else(|_| "Error".into());
+                let stack: String = o.get("stack").unwrap_or_default();
+                Some(format!("{name}: {message}\n{stack}").trim_end().to_owned())
+            });
+            let text =
+                error.or_else(|| reason.get::<rquickjs::Coerced<String>>().ok().map(|c| c.0)).unwrap_or_default();
+            eprintln!("temzdf script: unhandled promise rejection: {text}");
+        }
+    })));
     rt.set_loader(Resolve, Load);
     let context = Context::full(&rt).map_err(|e| e.to_string())?;
     let st = Rc::new(State {

@@ -796,3 +796,16 @@ fn inside_a_session_temzdf_means_that_session() {
     t.type_text(&format!("clear; {BIN} action message hello-$((4*5))\n"));
     t.wait_text("hello-20");
 }
+
+#[test]
+fn unhandled_promise_rejections_are_logged() {
+    let env = Env::new("reject");
+    env.config(
+        "config.js",
+        "setTimeout(() => { Promise.reject(new Error(\"boom-in-a-timer\")); }, 0);\nasync function f() { throw \"plain-reason\"; }\nf();\n",
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "rj"], &env.options());
+    t.wait_for("the prompt", prompt);
+    let log = env.wait_log("rj", "the rejections", |l| l.contains("boom-in-a-timer") && l.contains("plain-reason"));
+    assert!(log.contains("unhandled promise rejection"), "{log}");
+}
