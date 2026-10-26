@@ -409,7 +409,11 @@ impl Session {
 
     /// Where a new pane goes: the first one, or beside the focused pane.
     fn next_spot(&self) -> Spot {
-        if self.is_float(self.focus) {
+        // The first tiled pane comes first, even after floats opened while
+        // the configuration loaded.
+        if self.layout.is_none() {
+            Spot::First
+        } else if self.is_float(self.focus) {
             // Beside a focused float: another float (zellij).
             Spot::Float(self.cascade())
         } else if self.layout.is_some() {
@@ -927,7 +931,7 @@ impl Session {
                         };
                         let name = entry.name.clone();
                         self.docs.remove(&id);
-                        if self.layout.is_none() {
+                        if self.layout.is_none() && self.floats.is_empty() {
                             self.error = Some(e);
                             return Outcome::Quit;
                         }
@@ -2571,5 +2575,21 @@ mod tests {
             assert!(Instant::now() < deadline, "{pid} is still there");
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    #[test]
+    fn a_float_opened_while_the_configuration_loads_leaves_the_first_pane_tiled() {
+        let (tx, _rx) = mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
+        s.shell = Some(vec!["/bin/sh".into()]);
+        float(&mut s, &["sleep", "30"], &[]);
+        assert!(s.is_starting(), "no tiled pane yet");
+        s.new_pane(&PaneSpec::Shell, None).unwrap();
+        assert!(!s.is_starting());
+        assert_eq!(s.layout.as_ref().map(|l| l.panes().len()), Some(1));
+        assert_eq!(s.floats.len(), 1);
     }
 }
