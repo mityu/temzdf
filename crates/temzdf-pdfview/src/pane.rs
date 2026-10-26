@@ -1352,6 +1352,20 @@ impl PdfPane {
             let uri_cleared = self.hover_uri.take().is_some();
             return self.sidebar_mouse(m, now).unwrap_or(false) || closed || uri_cleared;
         }
+        // The status bar is not the page under it: no links, no selection or
+        // drag starts there (the wheel still scrolls; a drag or selection
+        // begun on the page goes on).
+        let over_status = y >= self.viewer.view.screen_h
+            && self.drag.is_none()
+            && !self.selecting
+            && !matches!(m.kind, MouseEventKind::Scroll(_));
+        if over_status {
+            self.hover = None;
+            self.pointer_shape = Pointer::Default;
+            self.press = None;
+            let uri_cleared = self.hover_uri.take().is_some();
+            return closed || uri_cleared;
+        }
         // Leaving the sidebar clears its hover highlight.
         let mut redraw = self.outline.list.hover.take().is_some() || closed;
         let (x, y) = self.pointer;
@@ -1582,6 +1596,17 @@ mod tests {
         let rect = PageRect { x0: 10.0, y0: 100.0, x1: 50.0, y1: 110.0 };
         s.search_hits(generation, 0, vec![rect], now);
         assert_eq!(s.search.current, Some((0, 0)), "the hit it waited for");
+    }
+
+    #[test]
+    fn the_status_bar_is_not_the_page_under_it() {
+        let mut s = session();
+        let y = s.viewer.view.screen_h + 5.0;
+        let x = s.viewer.origin_x() as f32 + s.viewer.view.screen_w / 2.0;
+        mouse(&mut s, MouseEventKind::Press(MouseButton::Left), (x, y));
+        assert!(s.drag.is_none() && !s.selecting, "nothing starts there");
+        mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (x, y));
+        assert!(s.take_requests().is_empty(), "no link followed");
     }
 
     #[test]
