@@ -9,6 +9,7 @@
 //! show the session) or a single request ([`ClientMsg::Info`],
 //! [`ClientMsg::Kill`], [`ClientMsg::Action`]) answered once.
 
+pub mod discovery;
 pub mod script;
 
 use std::io::{self, Read, Write};

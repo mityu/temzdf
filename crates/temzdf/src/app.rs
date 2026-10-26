@@ -213,24 +213,4 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     Ok(())
 }
 
-/// `$XDG_STATE_HOME/temzdf` (falling back to `~/.local/state/temzdf`).
-pub fn state_dir() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .filter(|v| !v.is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("temzdf"))
-}
-
-/// Where logs go: `$TEMZDF_LOG_DIR`, else the state directory.
-pub fn log_dir() -> Option<PathBuf> {
-    std::env::var_os("TEMZDF_LOG_DIR").filter(|d| !d.is_empty()).map(PathBuf::from).or_else(state_dir)
-}
-
-/// Where the viewer's (or a client's) own output goes while it runs:
-/// `<log dir>/temzdf.log`.
-pub fn log_path() -> Option<PathBuf> {
-    let dir = log_dir()?;
-    let _ = std::fs::create_dir_all(&dir);
-    Some(dir.join("temzdf.log"))
-}
+pub use temzdf_client::log_path;

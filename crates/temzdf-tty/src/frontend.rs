@@ -289,11 +289,10 @@ impl TtyFrontend {
         match effect {
             Effect::Copy(text) => self.tty.write_all(&copy_sequence(&text, self.caps.in_tmux))?,
             Effect::OpenUri { uri, command } => {
-                let default = vec![if cfg!(target_os = "macos") { "open" } else { "xdg-open" }.to_owned()];
-                let command = command.filter(|c| !c.is_empty()).unwrap_or(default);
-                open_uri(&command, &uri, on_failure)
+                let command = command.filter(|c| !c.is_empty()).unwrap_or_else(temzdf_client::default_opener);
+                temzdf_client::open_uri(&command, &uri, on_failure)
             }
-            Effect::RunShell(cmd) => run_shell(&cmd),
+            Effect::RunShell(cmd) => temzdf_client::run_shell(&cmd),
         }
         Ok(())
     }
@@ -308,72 +307,4 @@ fn over_ssh() -> bool {
 
 fn geometry_line(g: Geometry) -> String {
     format!("geometry {}x{} cells of {}x{} px", g.cols, g.rows, g.cell.width, g.cell.height)
-}
-
-/// Run a shell command detached from the terminal (inverse search).
-fn run_shell(cmd: &str) {
-    let child = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    // Reaped when it ends (every inverse search left a zombie before).
-    if let Ok(mut child) = child {
-        std::thread::spawn(move || child.wait());
-    }
-}
-
-/// Links that may be opened: URIs (a scheme first, so never something an
-/// opener could take for an option) of schemes meant for viewing. They come
-/// from documents and from programs in terminal panes, neither trusted.
-fn openable(uri: &str) -> bool {
-    let Some((scheme, _)) = uri.split_once(':') else { return false };
-    matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https" | "mailto" | "ftp" | "file")
-}
-
-/// Open a URI with the configured handler, detached from the terminal. A
-/// handler that cannot start or exits with an error (e.g. `xdg-open` over SSH
-/// without a display) is reported through `on_failure`.
-fn open_uri(command: &[String], uri: &str, on_failure: impl Fn(String) + Send + 'static) {
-    if !openable(uri) {
-        on_failure(format!("not opening {uri}: only http, https, mailto, ftp and file links open"));
-        return;
-    }
-    let Some((program, args)) = command.split_first() else { return };
-    let child = std::process::Command::new(program)
-        .args(args)
-        .arg(uri)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    let uri = uri.to_owned();
-    let fail = move |why: String| on_failure(format!("cannot open {uri}: {why}"));
-    match child {
-        Err(e) => fail(format!("{program}: {e}")),
-        Ok(mut child) => {
-            let program = program.clone();
-            std::thread::spawn(move || match child.wait() {
-                Ok(status) if !status.success() => fail(format!("{program} failed ({status})")),
-                _ => {}
-            });
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_viewing_schemes_open() {
-        for uri in ["https://example.org", "HTTP://x", "mailto:a@b", "file:///tmp/a.pdf", "ftp://h/f"] {
-            assert!(openable(uri), "{uri}");
-        }
-        for uri in ["--help", "-x", "javascript:alert(1)", "smb://h/s", "vscode://cmd", "relative/path", ""] {
-            assert!(!openable(uri), "{uri}");
-        }
-    }
 }

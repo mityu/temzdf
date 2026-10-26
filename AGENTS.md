@@ -21,7 +21,8 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/termpix` | Library. Terminal I/O: tty setup, capability probing, input parsing (SGR-pixel mouse, kitty keyboard), kitty graphics transport, layered compositor, mock terminal for tests; re-exports `termpix-core`. **Knows nothing about PDF.** |
 | `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley` + `taffy`). Independent of `termpix` (`termpix-core` only in its tests). |
 | `crates/temzdf-scene` | Library. What a pane shows, frontend-independent: image store and frames of layers, frontend hints, effects. |
-| `crates/temzdf-protocol` | Library. Session protocol: client/server messages, framing, socket locations. |
+| `crates/temzdf-protocol` | Library. Session protocol: client/server messages, framing, socket locations, finding sessions (`discovery`). |
+| `crates/temzdf-client` | Library. What every client shares: naming, resolving and starting sessions (`spawn_server`), log locations, carrying out effects (links, inverse search). No terminal or window code. |
 | `crates/temzdf-pdfcore` | Library. PDF backend: MuPDF (`mupdf` crate), display list and tile cache, text, SyncTeX, background workers, reload. No terminal code. |
 | `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings; `Document`/`DocumentHost` shared by the panes on one file (workers, reload, SyncTeX routing). No terminal code. |
 | `crates/temzdf-term` | Library. The terminal pane: a program on a pty (`portable-pty`), its output interpreted by `libghostty-vt` (from Nix: `nix/libghostty-vt.nix`), the screen as scene text cells. No `termpix`. |

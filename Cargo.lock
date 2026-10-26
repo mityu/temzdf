@@ -2607,6 +2607,7 @@ dependencies = [
  "anyhow",
  "clap",
  "rustix",
+ "temzdf-client",
  "temzdf-pdfcore",
  "temzdf-pdfview",
  "temzdf-protocol",
@@ -2616,6 +2617,15 @@ dependencies = [
  "temzdf-tty",
  "termpix",
  "tuitest",
+]
+
+[[package]]
+name = "temzdf-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "temzdf-protocol",
+ "temzdf-scene",
 ]
 
 [[package]]
@@ -2717,6 +2727,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "temzdf-client",
  "temzdf-scene",
  "termpix",
 ]

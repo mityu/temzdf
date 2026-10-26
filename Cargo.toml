@@ -11,6 +11,7 @@ members = [
     "crates/temzdf-script",
     "crates/temzdf-tty",
     "crates/temzdf-protocol",
+    "crates/temzdf-client",
     "crates/temzdf-server",
     "crates/temzdf",
     "crates/tuitest",
@@ -34,6 +35,7 @@ temzdf-script = { path = "crates/temzdf-script" }
 temzdf-tty = { path = "crates/temzdf-tty" }
 temzdf-server = { path = "crates/temzdf-server" }
 temzdf-protocol = { path = "crates/temzdf-protocol" }
+temzdf-client = { path = "crates/temzdf-client" }
 tuitest = { path = "crates/tuitest" }
 anyhow = "1.0.104"
 mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "system-fonts"] }
