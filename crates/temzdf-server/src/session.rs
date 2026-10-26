@@ -1303,6 +1303,9 @@ impl Session {
     pub fn pointer(&self) -> Pointer {
         match self.hovered.and_then(|p| self.panes.get(&p)).map(|e| &e.kind) {
             Some(Kind::Pdf { pane, .. }) => pane.pointer(),
+            Some(Kind::Term { buf, .. }) if self.terms.get(buf).is_some_and(|t| t.term.hovering_link()) => {
+                Pointer::Link
+            }
             _ => Pointer::Default,
         }
     }

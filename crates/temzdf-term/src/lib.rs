@@ -81,6 +81,8 @@ struct Selecting {
     autoscroll_at: Option<Instant>,
     /// A selection is shown.
     shown: bool,
+    /// The OSC 8 link under the press, opened if it was a plain click.
+    link: Option<String>,
 }
 
 pub struct TermBuffer {
@@ -101,6 +103,8 @@ pub struct TermBuffer {
     scrolled: bool,
     exited: bool,
     selecting: Selecting,
+    /// The pointer is over an OSC 8 link.
+    hover_link: bool,
     born: Instant,
 }
 
@@ -205,7 +209,9 @@ impl TermBuffer {
                 pointer: (0.0, 0.0),
                 autoscroll_at: None,
                 shown: false,
+                link: None,
             },
+            hover_link: false,
             born: Instant::now(),
         })
     }
@@ -323,14 +329,23 @@ impl TermBuffer {
             CoordUnit::Cell => ((m.x as f32 + 0.5) * cell.width as f32, (m.y as f32 + 0.5) * cell.height as f32),
         };
         let tracking = self.terminal.is_mouse_tracking().unwrap_or(false);
+        let mut redraw = false;
+        if matches!(m.kind, MouseEventKind::Move | MouseEventKind::Drag(_)) {
+            let over = self.link_at(x, y).is_some();
+            redraw = over != std::mem::replace(&mut self.hover_link, over);
+        } else if m.kind == MouseEventKind::Leave {
+            redraw = std::mem::take(&mut self.hover_link);
+        }
         match m.kind {
             MouseEventKind::Press(MouseButton::Left)
                 if !tracking || select || m.modifiers.contains(Modifiers::SHIFT) =>
             {
-                return self.select_press(x, y);
+                return self.select_press(x, y) | redraw;
             }
-            MouseEventKind::Drag(MouseButton::Left) if self.selecting.active => return self.select_drag(x, y),
-            MouseEventKind::Release(MouseButton::Left) if self.selecting.active => return self.select_release(),
+            MouseEventKind::Drag(MouseButton::Left) if self.selecting.active => return self.select_drag(x, y) | redraw,
+            MouseEventKind::Release(MouseButton::Left) if self.selecting.active => {
+                return self.select_release() | redraw;
+            }
             _ => {}
         }
         if tracking {
@@ -348,7 +363,7 @@ impl TermBuffer {
                         ScrollDirection::Right => mouse::Button::Seven,
                     }),
                 ),
-                MouseEventKind::Leave => return false,
+                MouseEventKind::Leave => return redraw,
             };
             let Ok(mut event) = mouse::Event::new() else { return false };
             let mods = keys::mods(m.modifiers);
@@ -370,20 +385,21 @@ impl TermBuffer {
             if self.mouse_encoder.encode_to_vec(&event, &mut out).is_ok() {
                 self.write(&out);
             }
-            return false;
+            return redraw;
         }
-        match m.kind {
-            MouseEventKind::Scroll(ScrollDirection::Up) => {
-                self.terminal.scroll_viewport(ScrollViewport::Delta(-WHEEL_ROWS));
-                self.scrolled = true;
-                true
+        redraw
+            | match m.kind {
+                MouseEventKind::Scroll(ScrollDirection::Up) => {
+                    self.terminal.scroll_viewport(ScrollViewport::Delta(-WHEEL_ROWS));
+                    self.scrolled = true;
+                    true
+                }
+                MouseEventKind::Scroll(ScrollDirection::Down) => {
+                    self.terminal.scroll_viewport(ScrollViewport::Delta(WHEEL_ROWS));
+                    true
+                }
+                _ => false,
             }
-            MouseEventKind::Scroll(ScrollDirection::Down) => {
-                self.terminal.scroll_viewport(ScrollViewport::Delta(WHEEL_ROWS));
-                true
-            }
-            _ => false,
-        }
     }
 
     /// The cell under a terminal pixel, clamped into the screen.
@@ -404,7 +420,31 @@ impl TermBuffer {
         }
     }
 
+    /// The OSC 8 link of the cell under a terminal pixel.
+    fn link_at(&self, x: f32, y: f32) -> Option<String> {
+        let g = self.geometry;
+        if x < 0.0 || y < 0.0 || x >= g.width_px() as f32 || y >= g.height_px() as f32 {
+            return None;
+        }
+        let grid = self.terminal.grid_ref(Point::Viewport(self.cell_at(x, y))).ok()?;
+        let mut buf = vec![0u8; 2048];
+        let n = match grid.hyperlink_uri(&mut buf) {
+            Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                buf.resize(required.max(1 << 16), 0);
+                grid.hyperlink_uri(&mut buf).ok()?
+            }
+            other => other.ok()?,
+        };
+        (n > 0).then(|| String::from_utf8_lossy(&buf[..n]).into_owned())
+    }
+
+    /// The pointer is over a link (for its shape).
+    pub fn hovering_link(&self) -> bool {
+        self.hover_link
+    }
+
     fn select_press(&mut self, x: f32, y: f32) -> bool {
+        self.selecting.link = self.link_at(x, y);
         let at = self.cell_at(x, y);
         let time = self.born.elapsed();
         let distance = self.geometry.cell.width as f64;
@@ -458,9 +498,17 @@ impl TermBuffer {
     fn select_release(&mut self) -> bool {
         let sel = &mut self.selecting;
         let t = &self.terminal;
+        // A plain click on a link opens it.
+        let click = !sel.gesture.dragged(t).unwrap_or(true) && sel.gesture.click_count(t).unwrap_or(0) == 1;
         let _ = sel.release.apply(&mut sel.gesture, t, None);
         sel.active = false;
         sel.autoscroll_at = None;
+        if let Some(uri) = sel.link.take()
+            && click
+        {
+            self.effects.borrow_mut().push(Effect::OpenUri { uri, command: None });
+            return false;
+        }
         if !sel.shown {
             return false;
         }
@@ -890,6 +938,34 @@ mod tests {
         term.mouse(&mouse(MouseEventKind::Drag(LEFT), 2, 0, none), true);
         term.mouse(&mouse(MouseEventKind::Release(LEFT), 2, 0, none), true);
         assert_eq!(copies(&mut term), ["e"]);
+    }
+
+    #[test]
+    fn clicking_a_link_opens_it() {
+        let script = "printf 'see \\033]8;;https://example.org/a\\033\\\\here\\033]8;;\\033\\\\ now'; sleep 5";
+        let (mut term, _) = run(&["sh", "-c", script], |_| {}, |r| r[0] == "see here now");
+        let none = Modifiers::NONE;
+        assert!(term.mouse(&mouse(MouseEventKind::Move, 5, 0, none), false), "the pointer changes");
+        assert!(term.hovering_link());
+        assert!(term.mouse(&mouse(MouseEventKind::Move, 1, 0, none), false));
+        assert!(!term.hovering_link());
+        term.mouse(&mouse(MouseEventKind::Press(LEFT), 5, 0, none), false);
+        term.mouse(&mouse(MouseEventKind::Release(LEFT), 5, 0, none), false);
+        let opened: Vec<_> = term
+            .take_effects()
+            .into_iter()
+            .filter_map(|e| match e {
+                Effect::OpenUri { uri, .. } => Some(uri),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(opened, ["https://example.org/a"]);
+        // Dragging over it selects instead.
+        std::thread::sleep(MULTI_CLICK);
+        term.mouse(&mouse(MouseEventKind::Press(LEFT), 4, 0, none), false);
+        term.mouse(&mouse(MouseEventKind::Drag(LEFT), 8, 0, none), false);
+        term.mouse(&mouse(MouseEventKind::Release(LEFT), 8, 0, none), false);
+        assert_eq!(copies(&mut term), ["here"]);
     }
 
     #[test]
