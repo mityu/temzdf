@@ -68,10 +68,14 @@ pub fn write_cells(out: &mut Vec<u8>, id: u32, image_row: u32, row: u32, col: u3
     for y in 0..rows.min(MAX_CELLS.saturating_sub(image_row)) {
         write!(out, "\x1b[{};{}H", row + y + 1, col + 1).unwrap();
         let row_mark = mark(image_row + y);
-        for x in 0..cols.min(MAX_CELLS) {
+        for x in 0..cols {
             out.extend_from_slice(PLACEHOLDER.encode_utf8(&mut buf).as_bytes());
             out.extend_from_slice(row_mark.encode_utf8(&mut buf).as_bytes());
-            out.extend_from_slice(mark(x).encode_utf8(&mut buf).as_bytes());
+            // Past the last column diacritic, none: a cell without one is
+            // the one left of it plus one (wide screens, 4K under tmux).
+            if x < MAX_CELLS {
+                out.extend_from_slice(mark(x).encode_utf8(&mut buf).as_bytes());
+            }
         }
     }
     out.extend_from_slice(b"\x1b[39m");
@@ -118,6 +122,17 @@ pub fn wrap_for_tmux(bytes: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_wider_than_the_diacritics_go_on() {
+        let mut out = Vec::new();
+        write_cells(&mut out, 1, 0, 0, 0, 1, MAX_CELLS + 3);
+        let text = String::from_utf8(out).unwrap();
+        let cells: Vec<&str> = text.split(PLACEHOLDER).skip(1).collect();
+        assert_eq!(cells.len(), MAX_CELLS as usize + 3, "every column");
+        assert_eq!(cells[MAX_CELLS as usize - 1].chars().count(), 2, "row and column marks");
+        assert_eq!(cells[MAX_CELLS as usize].chars().count(), 1, "the row mark only: the column follows on");
+    }
 
     #[test]
     fn table_matches_the_spec() {
