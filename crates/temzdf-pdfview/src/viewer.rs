@@ -24,6 +24,14 @@ use crate::pdf::{PageBounds, PixelRect, Target};
 /// Thumbnail width in pixels, shown scaled while sharp tiles are missing (and
 /// no tiles of an earlier scale cover them).
 const THUMB_WIDTH: f32 = 320.0;
+/// A thumbnail's longest side at most: very narrow, very tall pages would
+/// otherwise make one of gigabytes.
+const THUMB_MAX: f32 = 2048.0;
+
+/// The scale of a page's thumbnail.
+fn thumb_scale(bounds: PageBounds) -> f32 {
+    (THUMB_WIDTH / bounds.width().max(1.0)).min(THUMB_MAX / bounds.height().max(1.0))
+}
 /// Points kept above a jump target, so the context above it stays visible.
 pub const TARGET_MARGIN: f32 = 4.0 * crate::layout::GAP_PT;
 pub const MIN_SCALE: f32 = 0.1;
@@ -508,7 +516,7 @@ impl Viewer {
 
             // Thumbnail first: it is cheap and covers the page while tiles render.
             let thumb_key = TileKey { generation: self.cache().generation(), page: page as u32, kind: TileKind::Thumb };
-            let thumb_scale = THUMB_WIDTH / bounds.width();
+            let thumb_scale = thumb_scale(bounds);
             let thumb_cached = self.cache().touch(thumb_key);
             if thumb_cached.is_none() && !self.cache().is_in_flight(thumb_key) {
                 let (tw, th) = bounds.pixel_size(thumb_scale);
@@ -797,6 +805,15 @@ impl Viewer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumbnails_stay_small_for_any_page_shape() {
+        let a4 = PageBounds { x0: 0.0, y0: 0.0, x1: 595.0, y1: 842.0 };
+        assert!((320..=321).contains(&a4.pixel_size(thumb_scale(a4)).0), "as wide as before");
+        let ribbon = PageBounds { x0: 0.0, y0: 0.0, x1: 10.0, y1: 14_400.0 };
+        let (w, h) = ribbon.pixel_size(thumb_scale(ribbon));
+        assert!(w <= 320 && h <= 2048, "{w}x{h}");
+    }
     use crate::pdf;
     use temzdf_tty::Presenter;
     use termpix::compositor::{Backend, Compositor};
