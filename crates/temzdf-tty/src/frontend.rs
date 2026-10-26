@@ -312,13 +312,17 @@ fn geometry_line(g: Geometry) -> String {
 
 /// Run a shell command detached from the terminal (inverse search).
 fn run_shell(cmd: &str) {
-    let _ = std::process::Command::new("sh")
+    let child = std::process::Command::new("sh")
         .arg("-c")
         .arg(cmd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+    // Reaped when it ends (every inverse search left a zombie before).
+    if let Ok(mut child) = child {
+        std::thread::spawn(move || child.wait());
+    }
 }
 
 /// Open a URI with the configured handler, detached from the terminal. A
