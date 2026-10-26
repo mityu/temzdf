@@ -703,7 +703,8 @@ impl Session {
     }
 
     /// Delete a buffer: end its program or close its document, and close the
-    /// panes showing it (the last pane shows another buffer instead).
+    /// panes showing it (the last pane: the session ends). `PaneClosePre`
+    /// hooks do not run (the buffer goes either way); `PaneClosed` does.
     fn delete_buffer(&mut self, buf: BufferId) -> Result<Outcome, String> {
         if !self.terms.contains_key(&buf) && !self.docs.contains_key(&buf) {
             return Err(format!("no buffer {buf}"));

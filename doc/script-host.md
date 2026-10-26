@@ -91,7 +91,8 @@ declarations. In short, `import { ... } from "temzdf"`:
   inherit, unmapped, count })`, `feedkeys(keys, { remap })`, `currentMode()`.
 - `o.<option>` reads and sets options.
 - `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,
-  `PaneClosePre(id)`, `PaneClosed(id)`, `PaneFocused(id)`,
+  `PaneClosePre(id)` (not when `deleteBuffer` closes the pane: the buffer
+  goes either way), `PaneClosed(id)`, `PaneFocused(id)`,
   `DocumentReloaded(path)`, `ModeChanged(old, new)`, `BufferCreated(id,
   kind)`, `BufferDeleted(id)`.
 - `dispatch(async (ctx) => ...)` with `ctx.cmd` and `ctx.atomic(fn)`;
