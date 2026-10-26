@@ -45,6 +45,9 @@ pub fn name_for(file: &Path) -> Result<String> {
 /// (made absolute), or a shell.
 pub fn first_pane(file: Option<&Path>) -> Result<Vec<String>> {
     Ok(match file {
+        // Checked here: the server finds out in the background, too late
+        // to fail the command.
+        Some(f) if !f.exists() => bail!("{}: no such file", f.display()),
         Some(f) => vec![std::path::absolute(f)?.display().to_string()],
         None => Vec::new(),
     })
@@ -231,8 +234,9 @@ pub fn attach(name: &str) -> Result<String> {
         Some(ExitReason::Detached) => format!("[detached from session {name}]"),
         Some(ExitReason::SessionEnded) => format!("[session {name} ended]"),
         Some(ExitReason::Killed) => format!("[session {name} was killed]"),
-        Some(ExitReason::Error(e)) => format!("[session {name}: {e}]"),
-        None => format!("[lost session {name}]"),
+        // Failures: an error, so the command's exit status says so.
+        Some(ExitReason::Error(e)) => bail!("[session {name}: {e}]"),
+        None => bail!("[lost session {name}]"),
     })
 }
 

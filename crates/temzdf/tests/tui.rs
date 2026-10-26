@@ -767,3 +767,18 @@ fn a_program_that_stops_reading_does_not_stop_the_session() {
     t.type_text("echo alive-$((1+2))\n");
     t.wait_text("alive-3");
 }
+
+#[test]
+fn sessions_that_cannot_start_fail_the_command() {
+    let env = Env::new("nostart");
+    // A missing file: refused before any server starts.
+    let out = Command::new(BIN).args(["-s", "m", "missing.pdf"]).envs(env.vars()).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no such file"), "{out:?}");
+    // A file that is no PDF: the server says why, and the client fails.
+    let bad = env.path("bad.pdf");
+    std::fs::write(&bad, "not a PDF %%EOF").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "b", &bad.display().to_string()], &env.options());
+    t.wait_text("[session b:");
+    assert_ne!(t.wait_exit(), 0);
+}

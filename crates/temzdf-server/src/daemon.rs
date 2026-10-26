@@ -311,11 +311,16 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         dirty |= hand_over(&mut session, &mut latest, &clients);
         match outcome {
             Outcome::Quit => {
-                if let Some(e) = session.error() {
-                    eprintln!("temzdf server: {e}");
-                }
+                // The first pane could not open: the clients say why.
+                let reason = match session.error() {
+                    Some(e) => {
+                        eprintln!("temzdf server: {e}");
+                        ExitReason::Error(e.to_owned())
+                    }
+                    None => ExitReason::SessionEnded,
+                };
                 for c in clients.values() {
-                    let _ = c.tx.send(ServerMsg::Exit(ExitReason::SessionEnded));
+                    let _ = c.tx.send(ServerMsg::Exit(reason.clone()));
                 }
                 break;
             }
