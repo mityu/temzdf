@@ -528,3 +528,19 @@ fn dragging_in_a_shell_copies_to_the_outer_terminal() {
     t.type_text("x");
     t.wait_for("no selection", |s| !s.cell(3, row).inverse);
 }
+
+#[test]
+fn images_from_a_program_show_inside_its_pane() {
+    let env = Env::new("graphics");
+    let mut t = Term::spawn(&[BIN, "-s", "g"], &env.options());
+    t.wait_for("the prompt", prompt);
+    // The right half (100 columns: 49 + border + 50).
+    t.keys(&["C-b", "%"]);
+    t.wait_for("a prompt in the right pane", |s| is_prompt(&s.row_from(0, 50)));
+    // A 2x2 RGBA image over 4x2 cells, by the kitty graphics protocol.
+    t.type_text("clear; printf '\\033_Ga=T,f=32,s=2,v=2,c=4,r=2,q=2;/wAA/wD/AP8AAP///////w==\\033\\\\'; echo\n");
+    let s = t.wait_for("the image", |s| s.images.iter().any(|p| p.width == 2 && p.height == 2));
+    let p = s.images.iter().find(|p| p.width == 2 && p.height == 2).unwrap();
+    assert!(p.col >= 50, "inside the right pane: {p:?}");
+    assert_eq!((p.cols, p.rows), (4, 2), "{p:?}");
+}

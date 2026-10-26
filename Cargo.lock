@@ -2701,8 +2701,10 @@ dependencies = [
 name = "temzdf-term"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "libghostty-vt",
  "libghostty-vt-sys",
+ "png",
  "portable-pty",
  "temzdf-scene",
  "termpix-core",

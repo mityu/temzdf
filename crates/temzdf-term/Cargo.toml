@@ -7,7 +7,9 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 libghostty-vt = "0.2.2"
+png = "0.18.1"
 # Link the libghostty-vt found by pkg-config (nix/libghostty-vt.nix builds it
 # from the commit these bindings were generated from) instead of building
 # Ghostty with Zig inside cargo.

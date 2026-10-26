@@ -610,6 +610,7 @@ impl Session {
                     && let Some(t) = self.terms.get_mut(&buf)
                 {
                     t.hidden_at = self.clock;
+                    t.term.release(&mut self.images);
                     if t.exited {
                         self.remove_buffer(buf);
                     }
@@ -666,7 +667,9 @@ impl Session {
             if let Some(host) = d.host {
                 host.doc.borrow_mut().release(&mut self.images);
             }
-        } else if self.terms.remove(&buf).is_none() {
+        } else if let Some(mut t) = self.terms.remove(&buf) {
+            t.term.release(&mut self.images);
+        } else {
             return;
         }
         self.event("BufferDeleted", vec![ScriptValue::Num(buf as f64)]);
@@ -1337,7 +1340,14 @@ impl Session {
                     frame
                 }
                 Kind::Term { buf, view } => match self.terms.get_mut(buf) {
-                    Some(t) => view.frame(&mut t.term),
+                    Some(t) => {
+                        let mut frame = view.frame(&mut t.term, &mut self.images);
+                        // Programs' images stay above the session's own layers.
+                        for l in &mut frame.layers {
+                            l.z = l.z.max(Z_BORDER_FOCUS + 1);
+                        }
+                        frame
+                    }
                     None => Frame::default(),
                 },
             };

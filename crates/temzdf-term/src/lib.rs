@@ -11,6 +11,7 @@
 //! everything else (libghostty's handles are `!Send`) happens on the caller's
 //! thread: [`TermBuffer::feed`] the bytes, then build a [`TermView::frame`].
 
+mod graphics;
 pub mod keys;
 
 use std::cell::RefCell;
@@ -31,7 +32,7 @@ use libghostty_vt::style::{StyleColor, Underline as GUnderline};
 use libghostty_vt::terminal::{Mode, Point, PointCoordinate, ScrollViewport};
 use libghostty_vt::{RenderState, Terminal, TerminalOptions, focus, key, mouse, paste};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use temzdf_scene::{Attrs, Cell, Color, CursorShape, Effect, Frame, TextGrid, Underline};
+use temzdf_scene::{Attrs, Cell, Color, CursorShape, Effect, Frame, Images, Layer, Rect, TextGrid, Underline};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{CoordUnit, KeyEvent, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection};
 
@@ -105,6 +106,7 @@ pub struct TermBuffer {
     selecting: Selecting,
     /// The pointer is over an OSC 8 link.
     hover_link: bool,
+    graphics: graphics::Graphics,
     born: Instant,
 }
 
@@ -163,6 +165,11 @@ impl TermBuffer {
         terminal
             .resize(geometry.cols.max(1), geometry.rows.max(1), geometry.cell.width, geometry.cell.height)
             .map_err(ghostty_err)?;
+        // Images from programs (kitty graphics), by any medium kitty takes.
+        terminal.set_kitty_image_storage_limit(graphics::STORAGE_LIMIT).map_err(ghostty_err)?;
+        let _ = terminal.set_kitty_image_from_file_allowed(true);
+        let _ = terminal.set_kitty_image_from_temp_file_allowed(true);
+        let _ = terminal.set_kitty_image_from_shared_mem_allowed(true);
         // Replies to the program's queries (cursor position, device
         // attributes, ...) go back through the pty.
         let w = writer.clone();
@@ -212,6 +219,7 @@ impl TermBuffer {
                 link: None,
             },
             hover_link: false,
+            graphics: graphics::Graphics::new().map_err(ghostty_err)?,
             born: Instant::now(),
         })
     }
@@ -579,6 +587,17 @@ impl TermBuffer {
         (above > 0).then(|| (above, bar.total.saturating_sub(bar.len)))
     }
 
+    /// The images programs placed (kitty graphics) as layers in terminal
+    /// pixels, their pixels in `images`.
+    pub fn layers(&mut self, images: &mut Images) -> Vec<Layer> {
+        self.graphics.layers(&self.terminal, self.geometry.cell, images)
+    }
+
+    /// No pane shows the terminal: its images leave the store.
+    pub fn release(&mut self, images: &mut Images) {
+        self.graphics.release(images);
+    }
+
     /// The whole screen now.
     pub fn frame(&mut self) -> Frame {
         let mut cursor = None;
@@ -662,10 +681,17 @@ impl TermView {
         term.geometry.rows.saturating_sub(self.geometry.rows)
     }
 
-    /// What the view shows: the terminal's bottom left part of the view's size.
-    pub fn frame(&self, term: &mut TermBuffer) -> Frame {
+    /// What the view shows: the terminal's bottom left part of the view's
+    /// size, images included (their pixels in `images`).
+    pub fn frame(&self, term: &mut TermBuffer, images: &mut Images) -> Frame {
         let mut frame = term.frame();
         let top = self.top(term) as usize;
+        let dy = top as i32 * term.geometry.cell.height as i32;
+        frame.layers = term
+            .layers(images)
+            .into_iter()
+            .map(|l| Layer { dst: Rect::new(l.dst.x, l.dst.y - dy, l.dst.w, l.dst.h), ..l })
+            .collect();
         let (cols, rows) = (self.geometry.cols as usize, self.geometry.rows as usize);
         if let Some(grid) = frame.text.first_mut()
             && (top > 0 || grid.rows.len() != rows || grid.rows.first().is_some_and(|r| r.len() != cols))
@@ -861,14 +887,14 @@ mod tests {
     fn smaller_views_show_the_bottom_left() {
         let (mut term, _) = run(&["sh", "-c", "printf 'a\\nb\\nc\\nd\\ne\\nf'; sleep 5"], |_| {}, |r| r[5] == "f");
         let small = TermView::new(Geometry { cols: 3, rows: 2, ..GEOMETRY });
-        let frame = small.frame(&mut term);
+        let frame = small.frame(&mut term, &mut Images::new());
         let rows: Vec<String> =
             frame.text[0].rows.iter().map(|r| r.iter().map(|c| c.text.as_str()).collect()).collect();
         assert_eq!(rows, ["e", "f"]);
         assert_eq!(frame.text[0].rows[0].len(), 3);
         // The cursor is right of f (when libghostty shows it).
         assert!(matches!(frame.cursor, None | Some((1, 1))), "{:?}", frame.cursor);
-        let narrow = TermView::new(Geometry { cols: 1, rows: 2, ..GEOMETRY }).frame(&mut term);
+        let narrow = TermView::new(Geometry { cols: 1, rows: 2, ..GEOMETRY }).frame(&mut term, &mut Images::new());
         assert_eq!(narrow.cursor, None, "outside the view");
     }
 
@@ -969,18 +995,53 @@ mod tests {
     }
 
     #[test]
+    fn images_from_programs_become_layers() {
+        // A 2x2 RGBA image shown over 4x2 cells after "ab", then a 1x1 PNG.
+        let rgba = "/wAA/wD/AP8AAP///////w==";
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPgEpEDAABoAD1UCKP3AAAAAElFTkSuQmCC";
+        let script = format!(
+            "printf 'ab\\033_Ga=T,i=7,f=32,s=2,v=2,c=4,r=2,q=2;{rgba}\\033\\\\\\n\\n\\033_Ga=T,i=8,f=100,q=2;{png}\\033\\\\done'; sleep 5"
+        );
+        let (mut term, _) = run(&["sh", "-c", &script], |_| {}, |r| r.iter().any(|l| l.ends_with("done")));
+        let mut images = Images::new();
+        let view = TermView::new(GEOMETRY);
+        let frame = view.frame(&mut term, &mut images);
+        let mut layers = frame.layers.clone();
+        layers.sort_by_key(|l| l.dst.y);
+        assert_eq!(layers.len(), 2, "{layers:?}");
+        assert_eq!(layers[0].dst, Rect::new(20, 0, 40, 40), "at the cursor, scaled to 4x2 cells");
+        assert_eq!(layers[0].src, Rect::new(0, 0, 2, 2));
+        let (w, h, pixels) = images.get(layers[0].image).map(|i| (i.width, i.height, i.pixels.to_vec())).unwrap();
+        assert_eq!((w, h, &pixels[..8]), (2, 2, &[255, 0, 0, 255, 0, 255, 0, 255][..]));
+        let png_pixels = images.get(layers[1].image).map(|i| i.pixels.to_vec()).unwrap();
+        assert_eq!(png_pixels, [10, 20, 30, 255], "PNG decoded");
+        assert_eq!(layers[1].dst.w, 1);
+        // Placed again next frame: the same images; gone with the terminal.
+        let again = view.frame(&mut term, &mut images);
+        assert_eq!(again.layers.len(), 2);
+        assert_eq!(images.len(), 2);
+        term.release(&mut images);
+        assert_eq!(images.len(), 0);
+    }
+
+    #[test]
     fn scrolled_back_views_say_how_far() {
         let (mut term, _) = run(&["sh", "-c", "seq 1 20; sleep 5"], |_| {}, |r| r.iter().any(|l| l == "20"));
         let view = TermView::new(GEOMETRY);
         let top = |t: &mut TermBuffer| -> String {
-            view.frame(t).text[0].rows[0].iter().map(|c| c.text.as_str()).collect::<String>().trim_end().to_owned()
+            view.frame(t, &mut Images::new()).text[0].rows[0]
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
         };
         assert!(!top(&mut term).contains('['), "at the bottom, nothing");
         term.mouse(&mouse(MouseEventKind::Scroll(ScrollDirection::Up), 0, 0, Modifiers::NONE), false);
         // 20 lines and the prompt line on 6 rows: 15 of history, 3 scrolled.
         let line = top(&mut term);
         assert!(line.ends_with("[3/15]"), "{line:?}");
-        assert!(view.frame(&mut term).text[0].rows[0][39].attrs.inverse);
+        assert!(view.frame(&mut term, &mut Images::new()).text[0].rows[0][39].attrs.inverse);
         term.key(&KeyEvent::new(KeyCode::Char('x'), Modifiers::NONE));
         assert!(!top(&mut term).contains('['), "typing returns to the bottom");
     }
