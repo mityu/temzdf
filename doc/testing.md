@@ -10,7 +10,7 @@ Layers of verification, cheapest first. All of them run without a human.
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
 | Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `scripts/check.sh`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
 | Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
-| Judged e2e | `expect NAME KEYS` in an action file (e.g. `tests/e2e/expect.actions`) | The screen matches what `--render-frame` draws after the same keys (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending. Not PDF rendering itself (both sides use MuPDF). |
+| Judged e2e | `expect NAME [KEYS]` in an action file (e.g. `tests/e2e/expect.actions`, `viewer.actions`) | The screen matches what `--render-frame` draws after the same input, keys or a replay of the keys and mouse input temzdf handled (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending, wheel, drag, clicks, hover. Not PDF rendering itself (both sides use MuPDF). |
 | Real terminal (macOS) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | The same on macOS, step by step instead of action files (`doc/macos.md`). |
 | User | Ghostty / WezTerm on a real desktop | The feel of scrolling and zooming. |
 
@@ -95,28 +95,54 @@ renders.
 
 ## Judged e2e scenarios
 
-`expect NAME KEYS` (see the `scripts/e2e.sh` header) takes a screenshot, reads
-the geometry temzdf logged at startup (`OUTDIR/state/temzdf/temzdf.log`),
-renders the same keys headlessly and compares with ImageMagick (`-fuzz 3%`, no
-pixel may differ). Results go to `OUTDIR/expect.txt`; `NAME.actual.png`,
-`NAME.expected.png` and `NAME.diff.png` show a mismatch. Rules for scenarios:
+`expect` (see the `scripts/e2e.sh` header) takes a screenshot, reads the
+geometry temzdf logged at startup (`OUTDIR/state/temzdf/temzdf.log`), renders
+the same input headlessly and compares with ImageMagick (`-fuzz 3%`, no pixel
+may differ). Results go to `OUTDIR/expect.txt`; `NAME.actual.png`,
+`NAME.expected.png` and `NAME.diff.png` show a mismatch. Two forms:
 
-- Keys only (mouse actions have no headless equivalent yet), and the KEYS
-  argument is the whole sequence since startup.
-- Send scrolling keys one at a time with a pause: quick repeats accelerate in
-  the real terminal (flick) but not headlessly, where every key settles first.
+- `expect NAME KEYS`: `--render-frame --keys=KEYS`, the whole key sequence
+  since startup, each key run to its end. Send scrolling keys one at a time
+  with a pause: quick repeats accelerate in the real terminal (flick) but
+  not here.
+- `expect NAME`: a replay of all the input since startup with its timing
+  (`--render-frame --events`). The input is what temzdf itself handled,
+  recorded through `TEMZDF_RECORD_INPUT` (`OUTDIR/input.txt`), not what the
+  harness sent: terminals deliver late and in bursts (WezTerm turned wheel
+  steps 30 ms apart into 1 to 90 ms), and their pixels differ by one
+  (WezTerm). The replay runs time between inputs in 16 ms steps with the
+  session's timers, so wheel flicks, easing and link previews (after 300 ms
+  resting) come out as in the terminal. It ends as long after temzdf's last
+  input as the screenshot came after the last one sent; pause before
+  `expect` until animations end. The first screen is up, its pages loaded,
+  before the first input (as in the terminal, where the scenario starts
+  seconds later).
+
+Rules for scenarios:
+
+- Only `temzdf [--page N] [--scale S] FILE` (one viewer, no session).
+- Use the helpers (`wheel`, `dragto`, `click`, `move`, `keys`, `type`), not
+  raw xdotool: their input is what reaches temzdf either way, but the
+  harness's own record (`OUTDIR/events.txt`) times the screenshot from it.
+- A moment that depends on rendering speed (the old tiles scaled right
+  after a zoom, before new ones arrive) cannot be judged: the replay waits
+  for the workers after each input. Take a plain `shot` there.
 - Keep Esc apart from the next key: with legacy encoding (tmux) ESC followed
   quickly by another key reads as Alt+key.
-- Works in kitty (blending in linear light, passed as `--linear-blending`),
-  WezTerm, tmux and zellij. Not in Ghostty (its window decorations move the
-  terminal area).
+- Works in kitty and Ghostty (both blend in linear light, passed as
+  `--linear-blending`; Ghostty without decorations, padding or its
+  clipboard toast), WezTerm, and for keys inside tmux and zellij (mouse
+  input is not judged there: multiplexers report cells).
 
 Both sides run the same viewer code, so a bug in viewer state shows up on
 both and passes: zooming anchored at the top-left instead of the pointer did
 (found by the user). Behaviour of the view itself needs unit tests
 (e.g. `session::tests::ctrl_wheel_zooms_around_the_pointer`).
 
-`tests/e2e/expect.actions` passes in all four (2026-10-25). Comparing against
+`tests/e2e/expect.actions` passes in kitty, WezTerm, tmux and zellij
+(2026-10-25) and Ghostty (2026-10-28); `search`, `viewer`, `links`,
+`select` and `preview` (mouse input) pass in kitty, WezTerm and Ghostty
+(2026-10-28). Comparing against
 headless renders already found two bugs: kitty darkened the screen edges of the
 stretched 1x1 background image, and Enter pressed before search results
 arrived left no match selected.

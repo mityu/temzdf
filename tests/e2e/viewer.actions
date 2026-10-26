@@ -1,20 +1,22 @@
 # Used with: scripts/e2e.sh tests/e2e/viewer.actions -- target/debug/temzdf target/fixtures/sample.pdf
-# Expected: start (page 1, fit width), after wheel, zoomed in at the pointer with
-# sharp text once tiles arrive, panned by a drag in the left margin (a drag over
-# text selects instead), and page 3 after `3G`.
+# Judged (expect, mouse input replayed with its timing): start (page 1, fit
+# width), after a flick of the wheel, zoomed in at the pointer with sharp text
+# once tiles arrive, panned by a drag in the left margin (a drag over text
+# selects instead), and page 3 after `3G`. zoom-early (not judged: the replay
+# has its tiles at once) shows the old tiles scaled right after zooming.
 pause 1
-shot start
+expect start
 wheel 5
 pause 1
-shot wheel5
-xdotool mousemove 300 200 keydown ctrl click 4 click 4 click 4 keyup ctrl
+expect wheel5
+wheel -3 300 200 C
 pause 0.05
 shot zoom-early
 pause 1.5
-shot zoom
+expect zoom
 drag 30 400 250
 pause 0.5
-shot drag
+expect drag
 keys 3 shift+g
 pause 1.5
-shot page3
+expect page3

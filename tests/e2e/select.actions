@@ -1,15 +1,13 @@
 # Used with: scripts/e2e.sh tests/e2e/select.actions -- target/debug/temzdf target/fixtures/sample.pdf
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
-# Expected: dragging across the title selects it (blue) and the status bar says
-# "Copied 22 characters" (selected.png); dragging in the margin pans instead
-# (panned.png); the clipboard holds the title (clipboard.txt).
+# Judged (expect): dragging across the title selects it (blue) and the status
+# bar says "Copied 22 characters" (selected); dragging in the margin pans
+# instead (panned). Not judged: the clipboard holds the title (clipboard.txt).
 pause 1
-xdotool mousemove 318 188 mousedown 1
-for x in 360 420 480 540 582; do xdotool mousemove $x 190; sleep 0.05; done
-xdotool mouseup 1
+dragto 318 188 582 190 5
 pause 0.5
-shot selected
+expect selected
 xclip -selection clipboard -o >"$outdir/clipboard.txt" 2>/dev/null || true
 drag 50 400 300
 pause 0.5
-shot panned
+expect panned

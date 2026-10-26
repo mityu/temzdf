@@ -69,11 +69,12 @@ server on one `Session`). Next and open:
 - Markdown viewer reusing `termpix` (webview rendered offscreen).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
-- Judged e2e (`expect` in `scripts/e2e.sh`, `doc/testing.md`) covers key-driven
-  scenarios in kitty, WezTerm, tmux and zellij. Left: mouse actions (wheel and
-  drag go through the kinetic scroll; a headless `--events` list with timing
-  could replay them), Ghostty (find the terminal area below its decorations),
-  and converting more of the existing screenshot scenarios.
+- Judged e2e (`expect` in `scripts/e2e.sh`, `doc/testing.md`) covers keys and
+  mouse input in kitty, WezTerm and Ghostty (keys also in tmux and zellij).
+  Left: scenarios that start a session or a shell (`session`, `terminal`,
+  `floats`, `tabs`, `resize`: `--render-frame` opens one PDF), and the
+  reload and SyncTeX scenarios (they change files or talk to other
+  processes during the run).
 - MuPDF's allocation lock makes text rendering slower with more threads (see
   `doc/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the
   allocator itself, and `mupdf-sys` backs every context with the same static

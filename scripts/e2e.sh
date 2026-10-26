@@ -355,9 +355,10 @@ case $term in
   ghostty)
     # Ghostty sizes windows in cells; 10x21 px cells at its default font size.
     # No decorations or padding: the terminal area starts at the window's
-    # top left, as `expect` needs.
+    # top left, as `expect` needs; no "Copied to clipboard" toast over it.
     "${clean_env[@]}" ghostty --config-default-files=false --gtk-single-instance=false \
       --window-decoration=false --window-padding-x=0 --window-padding-y=0 \
+      --app-notifications=no-clipboard-copy \
       "--window-width=$((width / 10))" "--window-height=$((height / 21))" -e "$@" >"$outdir/terminal.log" 2>&1 &
     startup=6
     ;;

@@ -1,13 +1,14 @@
 # Used with: scripts/e2e.sh tests/e2e/search.actions -- target/debug/temzdf target/fixtures/sample.pdf
-# Expected: typing shows the prompt with incremental highlights (typing.png),
-# Enter + n moves to the next hit (next.png), Esc clears highlights (cleared.png).
+# Judged (expect: each screen compared with --render-frame replaying the same
+# input): typing shows the prompt with incremental highlights (typing),
+# Enter + n moves to the next hit (next), Esc clears highlights (cleared).
 keys slash
 type needle
 pause 0.8
-shot typing
+expect typing
 keys Return n
 pause 0.8
-shot next
+expect next
 keys Escape
 pause 0.5
-shot cleared
+expect cleared
