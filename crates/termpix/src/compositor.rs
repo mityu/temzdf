@@ -366,8 +366,9 @@ impl Compositor {
         match self.backend {
             Backend::Layered => false,
             Backend::Composited { .. } | Backend::Placeholders { .. } => {
+                let layers = &self.within_images(layers);
                 self.last_frame.is_none()
-                    || layers != self.last_layers.as_slice()
+                    || layers != &self.last_layers
                     || layers.iter().any(|l| self.changed_images.contains(&l.image.0))
             }
         }
@@ -386,6 +387,7 @@ impl Compositor {
     /// image cells; see [`Compositor::rewrite_placeholder_text`].
     pub fn present_with(&mut self, layers: &[Layer], text: &[u8], out: &mut Vec<u8>) -> io::Result<()> {
         let mut body = std::mem::take(&mut self.pending);
+        let layers = &self.within_images(layers);
         match self.backend {
             Backend::Layered => self.present_layered(layers, &mut body)?,
             Backend::Composited { background, strip_rows } => {
@@ -423,6 +425,21 @@ impl Compositor {
             out.extend_from_slice(text);
             out.extend_from_slice(SYNC_END);
         }
+    }
+
+    /// Each layer with its source inside its image and its screen rectangle
+    /// shrunk to match: a source past the image's edge shows nothing there,
+    /// in every backend (Layered stretched the rest over it, Composited left
+    /// it transparent).
+    fn within_images(&self, layers: &[Layer]) -> Vec<Layer> {
+        layers
+            .iter()
+            .filter_map(|l| match self.images.get(&l.image.0) {
+                Some(img) => within_image(l, img.width, img.height),
+                // Not added (yet): as it is, skipped where it is drawn.
+                None => Some(*l),
+            })
+            .collect()
     }
 
     fn present_layered(&mut self, layers: &[Layer], out: &mut Vec<u8>) -> io::Result<()> {
@@ -593,6 +610,23 @@ impl Compositor {
         self.changed_images.clear();
         Ok(())
     }
+}
+
+/// `layer` with its source cut to an image of `w` x `h` and its screen
+/// rectangle cut the same way; `None` when no part of the source is in it.
+fn within_image(layer: &Layer, w: u32, h: u32) -> Option<Layer> {
+    let src = layer.src.intersect(&Rect::new(0, 0, w, h))?;
+    if src == layer.src {
+        return Some(*layer);
+    }
+    let fx = layer.dst.w as f64 / layer.src.w.max(1) as f64;
+    let fy = layer.dst.h as f64 / layer.src.h.max(1) as f64;
+    let x0 = (layer.dst.x as f64 + (src.x - layer.src.x) as f64 * fx).round();
+    let y0 = (layer.dst.y as f64 + (src.y - layer.src.y) as f64 * fy).round();
+    let x1 = (layer.dst.x as f64 + (src.right() - layer.src.x as i64) as f64 * fx).round();
+    let y1 = (layer.dst.y as f64 + (src.bottom() - layer.src.y as i64) as f64 * fy).round();
+    let dst = Rect::new(x0 as i32, y0 as i32, ((x1 - x0) as u32).max(1), ((y1 - y0) as u32).max(1));
+    Some(Layer { src, dst, ..*layer })
 }
 
 /// Opaque RGBA goes out as RGB (`f=24`), a quarter fewer bytes to send; images
@@ -768,6 +802,9 @@ mod tests {
             [
                 Layer { key: 1, image: img, src: Rect::new(0, 0, 30, 30), dst: Rect::new(-7, 3, 30, 30), z: 0 },
                 Layer { key: 2, image: img, src: Rect::new(10, 0, 20, 10), dst: Rect::new(40, 50, 20, 10), z: 1 },
+                // Its source half past the image's right edge: only the
+                // left half shows, in every backend.
+                Layer { key: 3, image: img, src: Rect::new(20, 10, 20, 10), dst: Rect::new(0, 60, 20, 10), z: 2 },
             ]
         };
         let mut screens = Vec::new();
