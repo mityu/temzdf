@@ -58,6 +58,30 @@ pub struct Spawn {
     pub env: Vec<(String, String)>,
 }
 
+/// The path in what OSC 7 carries: a `file://host/path` URL, percent-encoded
+/// (spaces, non-ASCII names), or (some shells) a bare path.
+fn path_of_url(url: &str) -> PathBuf {
+    use std::os::unix::ffi::OsStringExt;
+    let path = url.strip_prefix("file://").map_or(url, |rest| rest.find('/').map_or(rest, |i| &rest[i..]));
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        match (bytes[i], bytes.get(i + 1).copied().and_then(hex), bytes.get(i + 2).copied().and_then(hex)) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+            }
+            (b, ..) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    PathBuf::from(std::ffi::OsString::from_vec(out))
+}
+
 /// Lines of scrollback kept per terminal.
 const SCROLLBACK: usize = 10_000;
 /// Rows the wheel scrolls through history per step.
@@ -269,9 +293,7 @@ impl TermBuffer {
     /// The working directory the shell reported (OSC 7), if any.
     pub fn pwd(&self) -> Option<PathBuf> {
         let pwd = self.terminal.pwd().ok().filter(|p| !p.is_empty())?;
-        // OSC 7 carries a file:// URL.
-        let path = pwd.strip_prefix("file://").map_or(pwd, |rest| rest.find('/').map_or(rest, |i| &rest[i..]));
-        Some(PathBuf::from(path))
+        Some(path_of_url(pwd))
     }
 
     /// A key typed while a pane showing it has the focus.
@@ -788,6 +810,14 @@ fn convert(c: &libghostty_vt::render::CellIteration<'_, '_>) -> Cell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn working_directories_from_osc7_are_decoded() {
+        assert_eq!(path_of_url("file://host/home/me/my%20docs/%E6%95%B0"), PathBuf::from("/home/me/my docs/数"));
+        assert_eq!(path_of_url("file:///tmp/a"), PathBuf::from("/tmp/a"));
+        assert_eq!(path_of_url("/plain/path"), PathBuf::from("/plain/path"));
+        assert_eq!(path_of_url("file://h/50%"), PathBuf::from("/50%"), "a lone % stays");
+    }
     use std::sync::mpsc;
     use std::time::Duration;
     use termpix_core::geom::CellSize;
