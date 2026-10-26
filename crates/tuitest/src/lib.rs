@@ -189,9 +189,10 @@ impl Drop for TempDir {
     }
 }
 
-/// A private tmux server (removed on drop).
+/// A private tmux server (removed on drop, with its configuration file).
 struct Tmux {
     socket: String,
+    conf: PathBuf,
 }
 
 impl Tmux {
@@ -213,6 +214,7 @@ impl Drop for Tmux {
                 let _ = std::fs::remove_file(path);
             }
         }
+        let _ = std::fs::remove_file(&self.conf);
     }
 }
 
@@ -272,11 +274,12 @@ impl Term {
         .expect("tmux configuration");
         let mut full: Vec<String> = vec!["tmux".into(), "-L".into(), socket.clone(), "-f".into()];
         full.push(conf.display().to_string());
+        let tmux = Tmux { socket, conf };
         full.push("new-session".into());
         // tmux passes the command to a shell: quote the words.
         full.push(argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "));
         let words: Vec<&str> = full.iter().map(String::as_str).collect();
-        Self::start(&words, opts, Some(Tmux { socket }))
+        Self::start(&words, opts, Some(tmux))
     }
 
     fn start(argv: &[&str], opts: &Options, tmux: Option<Tmux>) -> Self {
@@ -760,5 +763,15 @@ mod tests {
         let mut t = Term::inside_tmux(&["sh", "-c", "echo in-tmux; sleep 30"], &Options::default());
         t.wait_text("in-tmux");
         assert!(t.capture_pane().contains("in-tmux"));
+        // Nothing is left behind: neither the server's socket nor its
+        // configuration file.
+        let tmux = t.tmux.as_ref().unwrap();
+        let out = tmux.cmd().args(["display-message", "-p", "#{socket_path}"]).output().unwrap();
+        let socket = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        let conf = tmux.conf.clone();
+        assert!(socket.exists() && conf.exists());
+        drop(t);
+        assert!(!socket.exists(), "{socket:?} left");
+        assert!(!conf.exists(), "{conf:?} left");
     }
 }
