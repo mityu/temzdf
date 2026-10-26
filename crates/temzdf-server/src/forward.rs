@@ -10,6 +10,8 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// A forward-search request: show what `line` of `file` produced.
@@ -74,16 +76,23 @@ fn send_to(socket: &Path, req: &ForwardRequest) -> std::io::Result<bool> {
     Ok(reply.trim() == "ok")
 }
 
-/// Listening socket; removed from the file system when dropped.
+/// Listening socket; dropped, its thread ends and the socket is removed.
 pub struct Server {
     path: PathBuf,
+    stop: Arc<AtomicBool>,
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
+        // The thread waits in accept: wake it to see it must end.
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = UnixStream::connect(&self.path);
         let _ = std::fs::remove_file(&self.path);
     }
 }
+
+/// How long one connection may take to send its request (others wait).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Listen for requests about `pdf`, handing them to `deliver` (which returns
 /// false once nobody listens any more). Another live viewer of the same file
@@ -102,9 +111,17 @@ fn serve_at(path: PathBuf, deliver: impl Fn(ForwardRequest) -> bool + Send + 'st
     }
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = stop.clone();
     std::thread::Builder::new().name("temzdf-ipc".into()).spawn(move || {
         for stream in listener.incoming() {
+            if stopped.load(Ordering::SeqCst) {
+                return;
+            }
             let Ok(mut stream) = stream else { continue };
+            // A client that sends nothing must not hold the others up.
+            let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
+            let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
             let mut line = String::new();
             let ok = BufReader::new(&stream).read_line(&mut line).is_ok();
             let reply = match ForwardRequest::decode(&line).filter(|_| ok) {
@@ -119,7 +136,7 @@ fn serve_at(path: PathBuf, deliver: impl Fn(ForwardRequest) -> bool + Send + 'st
             let _ = stream.write_all(reply.as_bytes());
         }
     })?;
-    Ok(Server { path })
+    Ok(Server { path, stop })
 }
 
 #[cfg(test)]
@@ -150,8 +167,26 @@ mod tests {
         let req = ForwardRequest { file: "main.tex".into(), line: 42, column: 0 };
         assert!(send_to(&socket, &req).unwrap());
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);
+        // A client that connects and sends nothing does not hold others up.
+        let _silent = UnixStream::connect(&socket).unwrap();
+        let start = std::time::Instant::now();
+        assert!(send_to_patiently(&socket, &req));
+        assert!(start.elapsed() < Duration::from_secs(4), "{:?}", start.elapsed());
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);
         drop(server);
         assert!(!send_to(&socket, &req).unwrap(), "socket removed");
+        // Its thread ended: the delivery function (and its sender) is gone.
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Err(std::sync::mpsc::RecvTimeoutError::Disconnected));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// send_to, waiting longer for the reply than it does.
+    fn send_to_patiently(socket: &Path, req: &ForwardRequest) -> bool {
+        let mut stream = UnixStream::connect(socket).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        stream.write_all(req.encode().as_bytes()).unwrap();
+        let mut reply = String::new();
+        BufReader::new(stream).read_line(&mut reply).unwrap();
+        reply.trim() == "ok"
     }
 }
