@@ -1,0 +1,24 @@
+[package]
+name = "temzdf-gui"
+description = "temzdf's GUI client: a window (winit, wgpu) that attaches to a temzdf session as the terminal client does."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+temzdf-scene.workspace = true
+termpix-core.workspace = true
+wgpu = "30.0.1"
+glyphon = "0.12.0"
+pollster = "0.4.0"
+
+[lints]
+workspace = true
+
+# GPU tests select a software Vulkan driver through the environment before
+# anything else runs, so they have their own main (no test harness threads).
+[[test]]
+name = "gpu"
+harness = false

@@ -12,6 +12,7 @@ members = [
     "crates/temzdf-tty",
     "crates/temzdf-protocol",
     "crates/temzdf-client",
+    "crates/temzdf-gui",
     "crates/temzdf-server",
     "crates/temzdf",
     "crates/tuitest",
