@@ -64,7 +64,9 @@ pub fn translate(k: &KeyEvent) -> Option<Translated> {
             // Ctrl without Shift types nothing: with text, the encoder would
             // send the bare character (C-h as `h`) when the program uses the
             // kitty keyboard protocol.
-            if !(mods.contains(Mods::CTRL) && !mods.contains(Mods::SHIFT)) {
+            // A character of no US key (another layout) has no key to
+            // carry Ctrl: it goes as its text then, rather than not at all.
+            if !(mods.contains(Mods::CTRL) && !mods.contains(Mods::SHIFT)) || key == Key::Unidentified {
                 text = k.text.clone().or_else(|| Some(c.to_string())).filter(|t| !t.chars().any(char::is_control));
             }
             if key == Key::Unidentified && text.is_none() {
@@ -248,6 +250,8 @@ mod tests {
         assert_eq!(s(KeyCode::Char('é'), Modifiers::NONE), "é");
         assert_eq!(s(KeyCode::Up, Modifiers::NONE), "\x1b[A");
         assert_eq!(s(KeyCode::Char('\n'), Modifiers::NONE), "\r");
+        // Ctrl with a character of another layout: not dropped.
+        assert_eq!(s(KeyCode::Char('ф'), Modifiers::CTRL), "\x1b[1092;5u");
     }
 
     /// Programs that turn on the kitty keyboard protocol (fish 4, neovim)
@@ -262,5 +266,6 @@ mod tests {
         assert_eq!(s(KeyCode::Char('%'), Modifiers::SHIFT), "%");
         assert_eq!(s(KeyCode::Char('a'), Modifiers::NONE), "a");
         assert_eq!(s(KeyCode::Escape, Modifiers::NONE), "\x1b[27u");
+        assert_eq!(s(KeyCode::Char('ф'), Modifiers::CTRL), "\x1b[1092;5u");
     }
 }
