@@ -99,16 +99,7 @@ impl Graphics {
 fn rgba(image: &Image<'_>) -> Option<(u32, u32, Vec<u8>)> {
     let (w, h) = (image.width().ok()?, image.height().ok()?);
     let data = image.data().ok()?;
-    let raw: Vec<u8> = match image.compression().ok()? {
-        Compression::None => data.to_vec(),
-        Compression::ZlibDeflate => {
-            let mut out = Vec::new();
-            flate2::read::ZlibDecoder::new(data).read_to_end(&mut out).ok()?;
-            out
-        }
-        _ => return None,
-    };
-    let n = w as usize * h as usize;
+    let n = (w as usize).checked_mul(h as usize)?;
     let channels = match image.format().ok()? {
         ImageFormat::Rgba => 4,
         ImageFormat::Rgb => 3,
@@ -117,8 +108,22 @@ fn rgba(image: &Image<'_>) -> Option<(u32, u32, Vec<u8>)> {
         // PNG is decoded when it arrives; anything else is not ours to show.
         _ => return None,
     };
+    let size = n.checked_mul(channels)?;
+    let raw: Vec<u8> = match image.compression().ok()? {
+        Compression::None => data.to_vec(),
+        Compression::ZlibDeflate => inflate(data, size)?,
+        _ => return None,
+    };
     let pixels = to_rgba(channels, &raw);
     (pixels.len() == n * 4).then_some((w, h, pixels))
+}
+
+/// Inflate zlib `data` that should come to `size` bytes, never past them
+/// (a few kilobytes can inflate to gigabytes).
+fn inflate(data: &[u8], size: usize) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    flate2::read::ZlibDecoder::new(data).take(size as u64 + 1).read_to_end(&mut out).ok()?;
+    (out.len() == size).then_some(out)
 }
 
 /// libghostty decodes PNG images through a callback, per thread.
@@ -173,6 +178,22 @@ fn to_rgba(channels: usize, raw: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inflating_stops_at_the_image_size() {
+        use std::io::Write;
+        let zlib = |raw: &[u8]| {
+            let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+            e.write_all(raw).unwrap();
+            e.finish().unwrap()
+        };
+        assert_eq!(inflate(&zlib(&[7; 16]), 16), Some(vec![7; 16]));
+        assert_eq!(inflate(&zlib(&[7; 15]), 16), None, "too short");
+        // 64 MB of zeros for a 2x2 RGBA image: refused after 17 bytes.
+        let bomb = zlib(&vec![0; 64 << 20]);
+        assert!(bomb.len() < 100_000);
+        assert_eq!(inflate(&bomb, 16), None);
+    }
 
     #[test]
     fn pngs_decode_to_rgba() {
