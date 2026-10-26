@@ -140,6 +140,8 @@ fn main() -> Result<()> {
         Some(Cmd::Action { session, timeout, action }) => {
             let timeout = std::time::Duration::try_from_secs_f64(timeout.max(0.001))
                 .map_err(|_| anyhow::anyhow!("--timeout {timeout}: not a number of seconds"))?;
+            // In a session's pane, that session (as zellij does).
+            let session = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok());
             return client::action(&client::resolve(session.as_deref())?, action, timeout);
         }
         Some(Cmd::PrintTypes) => {

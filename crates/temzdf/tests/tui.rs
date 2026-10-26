@@ -782,3 +782,17 @@ fn sessions_that_cannot_start_fail_the_command() {
     t.wait_text("[session b:");
     assert_ne!(t.wait_exit(), 0);
 }
+
+#[test]
+fn inside_a_session_temzdf_means_that_session() {
+    let env = Env::new("inside");
+    let mut t = Term::spawn(&[BIN, "-s", "in"], &env.options());
+    t.wait_for("the prompt", prompt);
+    // Attaching to the session from its own pane is refused.
+    t.type_text(&format!("{BIN} attach in; echo status=$?\n"));
+    t.wait_text("status=1");
+    assert!(t.screen().contains("inside itself"), "{}", t.screen().text());
+    // Actions without -s go to the session the pane is in.
+    t.type_text(&format!("clear; {BIN} action message hello-$((4*5))\n"));
+    t.wait_text("hello-20");
+}

@@ -312,6 +312,7 @@ impl Term {
             "SSH_CONNECTION",
             "SSH_CLIENT",
             "SSH_TTY",
+            "TEMZDF_SESSION_NAME",
         ] {
             cmd.env_remove(var);
         }

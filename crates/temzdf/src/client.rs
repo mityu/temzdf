@@ -134,6 +134,11 @@ pub fn resolve(name: Option<&str>) -> Result<String> {
 /// Attach this terminal to session `name` until detached or the session ends.
 /// Returns a line to print once the terminal is restored.
 pub fn attach(name: &str) -> Result<String> {
+    // From one of the session's own panes: it would show itself inside
+    // itself, each frame feeding the next.
+    if std::env::var("TEMZDF_SESSION_NAME").is_ok_and(|own| own == name) {
+        bail!("this terminal is in session {name:?}: attaching would show it inside itself");
+    }
     let socket = proto::socket_path(name)?;
     let stream = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
     let _stdio = crate::app::log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
