@@ -1014,8 +1014,11 @@ impl PdfPane {
         }
         let query = self.search.query.clone();
         let current = self.search.current;
+        // Generations only go up: a search from before an earlier reload
+        // must not pass for the new one.
+        let generation = self.search.generation.max(self.search_base);
         self.search = SearchState::new(pages);
-        self.search.generation = self.search_base;
+        self.search.generation = generation;
         if !query.is_empty() {
             self.run_search(query);
             // Remember which hit was current; it is restored as results arrive.
@@ -1673,13 +1676,28 @@ mod tests {
             s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
         }
         s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
-        s.take_requests();
+        // Typing searched for each prefix; the last one counts.
+        let first = match s.take_requests().last() {
+            Some(Request::Search { generation, .. }) => *generation,
+            other => panic!("{other:?}"),
+        };
         s.reload(&mut c, info("sample-short.pdf"));
         assert!(s.sidebar_open);
-        match s.take_requests().as_slice() {
-            [Request::Search { query, doc_generation: 1, .. }] => assert_eq!(query, "needle"),
+        let second = match s.take_requests().as_slice() {
+            [Request::Search { query, doc_generation: 1, generation, .. }] => {
+                assert_eq!(query, "needle");
+                *generation
+            }
             other => panic!("{other:?}"),
-        }
+        };
+        // Each reload's search is new: results of an earlier one are stale.
+        s.reload(&mut c, info("sample-short.pdf"));
+        let third = match s.take_requests().as_slice() {
+            [Request::Search { generation, .. }] => *generation,
+            other => panic!("{other:?}"),
+        };
+        assert!(first < second && second < third, "{first} {second} {third}");
+        assert!(!s.search_hits(second, 0, Vec::new(), now), "the previous reload's results");
     }
 
     #[test]
