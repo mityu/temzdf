@@ -34,8 +34,22 @@ const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
      atomic = t.atomic;\n\
      export default t;\n";
 
+/// How long a timer or a promise job (code nobody waits for, so nobody can
+/// interrupt) may run before it is interrupted.
+pub const UNATTENDED_LIMIT: Duration = Duration::from_secs(10);
+
 /// Run the host until the session goes away or says [`ToHost::Shutdown`].
 pub fn run(input: impl Read + Send + 'static, output: impl Write + 'static) -> Result<(), String> {
+    run_with_limit(input, output, UNATTENDED_LIMIT)
+}
+
+/// [`run`] with another [`UNATTENDED_LIMIT`] (for tests).
+#[doc(hidden)]
+pub fn run_with_limit(
+    input: impl Read + Send + 'static,
+    output: impl Write + 'static,
+    limit: Duration,
+) -> Result<(), String> {
     let interrupt = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
     {
@@ -61,9 +75,10 @@ pub fn run(input: impl Read + Send + 'static, output: impl Write + 'static) -> R
             .map_err(|e| e.to_string())?;
     }
     let rt = Runtime::new().map_err(|e| e.to_string())?;
+    let unattended = Unattended::new(limit);
     {
-        let interrupt = interrupt.clone();
-        rt.set_interrupt_handler(Some(Box::new(move || interrupt.load(Ordering::SeqCst))));
+        let (interrupt, unattended) = (interrupt.clone(), unattended.clone());
+        rt.set_interrupt_handler(Some(Box::new(move || interrupt.load(Ordering::SeqCst) || unattended.overdue())));
     }
     rt.set_loader(Resolve, Load);
     let context = Context::full(&rt).map_err(|e| e.to_string())?;
@@ -74,6 +89,8 @@ pub fn run(input: impl Read + Send + 'static, output: impl Write + 'static) -> R
         next_req: Cell::new(1),
         next_task: Cell::new(1),
         next_timer: Cell::new(1),
+        unattended,
+        used_interrupts: Cell::new(0),
         funcs: RefCell::new(Vec::new()),
         timers: RefCell::new(BTreeMap::new()),
         tokens: RefCell::new(Vec::new()),
@@ -82,7 +99,7 @@ pub fn run(input: impl Read + Send + 'static, output: impl Write + 'static) -> R
     });
     context.with(|ctx| install(&ctx, &st)).map_err(|e| format!("cannot start the scripting API: {e}"))?;
     while !st.gone.get() {
-        context.with(|ctx| while ctx.execute_pending_job() {});
+        context.with(|ctx| st.unattended(|| while ctx.execute_pending_job() {}));
         let next = st.timers.borrow().keys().next().map(|(at, _)| *at);
         let timeout = next.map_or(Duration::from_secs(3600), |at| at.saturating_duration_since(Instant::now()));
         match st.rx.recv_timeout(timeout) {
@@ -93,7 +110,10 @@ pub fn run(input: impl Read + Send + 'static, output: impl Write + 'static) -> R
             }
             Ok(ToHost::Call { id, func, args }) => context.with(|ctx| run_call(&ctx, &st, id, func, args)),
             // Nothing runs: an interrupt or a late answer has nothing to stop.
-            Ok(ToHost::Interrupt) => st.interrupt.store(false, Ordering::SeqCst),
+            Ok(ToHost::Interrupt) => {
+                st.use_interrupt_message();
+                st.interrupt.store(false, Ordering::SeqCst);
+            }
             Ok(ToHost::Reply { .. }) => {}
             Ok(ToHost::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {}
@@ -113,6 +133,10 @@ struct State {
     next_req: Cell<u64>,
     next_task: Cell<TaskId>,
     next_timer: Cell<u64>,
+    unattended: Unattended,
+    /// Interrupts that stopped code nobody waited for: their messages, still
+    /// on their way, must not interrupt the call that runs next.
+    used_interrupts: Cell<u32>,
     funcs: RefCell<Vec<Persistent<Function<'static>>>>,
     timers: RefCell<BTreeMap<(Instant, u64), Persistent<Function<'static>>>>,
     /// The synchronous calls running, innermost last.
@@ -307,6 +331,8 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
                 };
             }
             Ok(ToHost::Call { id, func, args }) => run_call(ctx, st, id, func, args),
+            // One that already stopped a timer is not for this call.
+            Ok(ToHost::Interrupt) if st.use_interrupt_message() => {}
             // The flag is set too: if the script catches this error, the
             // interrupt handler stops it at its next step anyway.
             Ok(ToHost::Interrupt) => return throw("interrupted"),
@@ -349,10 +375,60 @@ fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {
             }
         };
         let Some(f) = due else { return };
-        if let Err(e) = f.restore(ctx).and_then(|f| f.call::<_, ()>(())) {
-            eprintln!("temzdf script: a timer failed: {}", error_of(ctx, e));
+        st.unattended(|| {
+            if let Err(e) = f.restore(ctx).and_then(|f| f.call::<_, ()>(())) {
+                eprintln!("temzdf script: a timer failed: {}", error_of(ctx, e));
+            }
+            while ctx.execute_pending_job() {}
+        });
+    }
+}
+
+/// When code nobody waits for (timers, promise jobs) must stop: see
+/// [`UNATTENDED_LIMIT`].
+#[derive(Clone)]
+struct Unattended {
+    start: Instant,
+    limit: Duration,
+    /// Milliseconds since `start` it must stop at; 0 while none runs.
+    deadline: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl Unattended {
+    fn new(limit: Duration) -> Self {
+        Self { start: Instant::now(), limit, deadline: Arc::default() }
+    }
+
+    fn overdue(&self) -> bool {
+        let d = self.deadline.load(Ordering::SeqCst);
+        d != 0 && self.start.elapsed().as_millis() as u64 > d
+    }
+}
+
+impl State {
+    /// Run code nobody waits for: interrupted past the limit, and an
+    /// interrupt that reached it (the user's <C-c> while a call waited
+    /// behind it) is used up, not left for the next call.
+    fn unattended<R>(&self, f: impl FnOnce() -> R) -> R {
+        let u = &self.unattended;
+        let deadline = (u.start.elapsed() + u.limit).as_millis() as u64;
+        u.deadline.store(deadline.max(1), Ordering::SeqCst);
+        let r = f();
+        u.deadline.store(0, Ordering::SeqCst);
+        if self.tokens.borrow().is_empty() && self.interrupt.swap(false, Ordering::SeqCst) {
+            self.used_interrupts.set(self.used_interrupts.get() + 1);
         }
-        while ctx.execute_pending_job() {}
+        r
+    }
+
+    /// An interrupt message arrived: true if it was used up already (it
+    /// stopped code nobody waited for).
+    fn use_interrupt_message(&self) -> bool {
+        let used = self.used_interrupts.get();
+        if used > 0 {
+            self.used_interrupts.set(used - 1);
+        }
+        used > 0
     }
 }
 

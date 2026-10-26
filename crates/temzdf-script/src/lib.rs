@@ -7,4 +7,4 @@ mod host;
 pub mod strip;
 pub mod types;
 
-pub use host::run;
+pub use host::{UNATTENDED_LIMIT, run, run_with_limit};

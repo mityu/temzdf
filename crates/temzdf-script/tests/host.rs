@@ -17,6 +17,11 @@ struct Session {
 
 impl Session {
     fn start(files: &[(&str, &str)]) -> Self {
+        Self::start_with_limit(files, temzdf_script::UNATTENDED_LIMIT)
+    }
+
+    /// With another limit for timers and promise jobs.
+    fn start_with_limit(files: &[(&str, &str)], limit: Duration) -> Self {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("temzdf-script-test-{}-{n}", std::process::id()));
@@ -27,7 +32,7 @@ impl Session {
         }
         let (server_in, host_out) = UnixStream::pair().unwrap();
         let (host_in, server_out) = UnixStream::pair().unwrap();
-        std::thread::spawn(move || temzdf_script::run(host_in, host_out).unwrap());
+        std::thread::spawn(move || temzdf_script::run_with_limit(host_in, host_out, limit).unwrap());
         server_in.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
         Self { to_host: server_out, from_host: BufReader::new(server_in), dir }
     }
@@ -330,4 +335,33 @@ cmd.message("ok");
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
     assert_eq!(log, ["load message(ok)"]);
+}
+
+#[test]
+fn a_runaway_timer_is_stopped_and_the_call_behind_it_runs() {
+    let config = r#"import { map, cmd } from "temzdf";
+setTimeout(() => { for (;;) {} }, 0);
+map("normal", "x", () => cmd.message("ran"));
+"#;
+    // The user's <C-c>: it stops the timer; the call waiting behind it then
+    // runs (it used to fail as "interrupted").
+    let mut s = Session::start(&[("config.js", config)]);
+    s.load("config.js");
+    let mut log = Vec::new();
+    ready_ok(s.serve(&mut log));
+    std::thread::sleep(Duration::from_millis(100));
+    s.send(ToHost::Call { id: 1, func: 0, args: vec![] });
+    s.send(ToHost::Interrupt);
+    log.clear();
+    match s.serve(&mut log) {
+        FromHost::Done { id: 1, result: Ok(()) } => {}
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(log, ["call1 message(ran)"]);
+    // Nobody pressing <C-c>: the timer is stopped at the limit.
+    let mut s = Session::start_with_limit(&[("config.js", config)], Duration::from_millis(200));
+    s.load("config.js");
+    ready_ok(s.serve(&mut Vec::new()));
+    s.send(ToHost::Call { id: 2, func: 0, args: vec![] });
+    assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 2, result: Ok(()) }));
 }
