@@ -1290,9 +1290,11 @@ impl PdfPane {
 
     /// Run a page-view command (see `keys::Command`), with an optional count.
     pub fn command(&mut self, cmd: Command, count: Option<usize>, now: Instant) -> Action {
+        // How many times (counts saturate; more than 100 is never meant).
+        let n = count.unwrap_or(1).clamp(1, 100);
         let v = &mut self.viewer;
-        let page = v.view.screen_h as f64 * 0.9;
-        let half = v.view.screen_h as f64 * 0.5;
+        let page = v.view.screen_h as f64 * 0.9 * n as f64;
+        let half = v.view.screen_h as f64 * 0.5 * n as f64;
         let centre = (v.view.screen_w / 2.0, v.view.screen_h / 2.0);
         match cmd {
             Command::Quit => return Action::Quit,
@@ -1303,8 +1305,8 @@ impl PdfPane {
             Command::ToggleSidebar => self.toggle_sidebar(),
             Command::ScrollDown => wheel_n(v, 1.0, count, now),
             Command::ScrollUp => wheel_n(v, -1.0, count, now),
-            Command::ScrollRight => v.scroll_x.wheel(1.0, now),
-            Command::ScrollLeft => v.scroll_x.wheel(-1.0, now),
+            Command::ScrollRight => (0..n).for_each(|_| v.scroll_x.wheel(1.0, now)),
+            Command::ScrollLeft => (0..n).for_each(|_| v.scroll_x.wheel(-1.0, now)),
             Command::PageDown => v.scroll_y.scroll_by(page, now),
             Command::PageUp => v.scroll_y.scroll_by(-page, now),
             Command::HalfPageDown => v.scroll_y.scroll_by(half, now),
@@ -1322,12 +1324,12 @@ impl PdfPane {
             }
             Command::Back => self.history(true, now),
             Command::Forward => self.history(false, now),
-            Command::ZoomIn => v.zoom(ZOOM_STEP, centre),
-            Command::ZoomOut => v.zoom(1.0 / ZOOM_STEP, centre),
+            Command::ZoomIn => v.zoom(ZOOM_STEP.powi(n as i32), centre),
+            Command::ZoomOut => v.zoom(1.0 / ZOOM_STEP.powi(n as i32), centre),
             Command::FitWidth => v.fit_width(),
             Command::Search => self.open_search(),
-            Command::NextMatch => self.step_search(true, now),
-            Command::PrevMatch => self.step_search(false, now),
+            Command::NextMatch => (0..n).for_each(|_| self.step_search(true, now)),
+            Command::PrevMatch => (0..n).for_each(|_| self.step_search(false, now)),
         }
         Action::Redraw
     }
@@ -1644,6 +1646,20 @@ mod tests {
             let mut images = Images::new();
             s.frame(&mut images);
         }
+    }
+
+    #[test]
+    fn page_view_commands_take_counts() {
+        let mut s = session();
+        let now = Instant::now();
+        let scale = s.viewer.view.scale;
+        s.command(Command::ZoomIn, Some(2), now);
+        assert!((s.viewer.view.scale - scale * ZOOM_STEP * ZOOM_STEP).abs() < 1e-3, "two steps");
+        let page = s.viewer.view.screen_h as f64 * 0.9;
+        let from = s.viewer.scroll_y.target();
+        s.command(Command::PageDown, Some(2), now);
+        let moved = s.viewer.scroll_y.target() - from;
+        assert!(moved > page * 1.5, "two pages, not one: {moved} vs {page}");
     }
 
     #[test]
