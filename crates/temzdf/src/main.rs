@@ -138,7 +138,8 @@ fn main() -> Result<()> {
         Some(Cmd::KillSession { name }) => return client::kill_session(&name),
         Some(Cmd::KillAllSessions) => return client::kill_all_sessions(),
         Some(Cmd::Action { session, timeout, action }) => {
-            let timeout = std::time::Duration::from_secs_f64(timeout.max(0.001));
+            let timeout = std::time::Duration::try_from_secs_f64(timeout.max(0.001))
+                .map_err(|_| anyhow::anyhow!("--timeout {timeout}: not a number of seconds"))?;
             return client::action(&client::resolve(session.as_deref())?, action, timeout);
         }
         Some(Cmd::PrintTypes) => {

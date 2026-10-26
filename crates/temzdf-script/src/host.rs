@@ -201,7 +201,9 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, ms: f64, f: Function<'js>| {
             let id = s.next_timer.get();
             s.next_timer.set(id + 1);
-            let at = Instant::now() + Duration::from_secs_f64(ms.max(0.0) / 1000.0);
+            // The prelude clamps delays already; NaN and infinities stop here too.
+            let ms = if ms.is_nan() { 0.0 } else { ms.clamp(0.0, 2_147_483_647.0) };
+            let at = Instant::now() + Duration::from_secs_f64(ms / 1000.0);
             s.timers.borrow_mut().insert((at, id), Persistent::save(&ctx, f));
             id as f64
         })?,

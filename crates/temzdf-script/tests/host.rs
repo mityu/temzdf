@@ -308,3 +308,23 @@ fn paths_resolve_relative_to_the_importing_module() {
     ready_ok(s.serve(&mut log));
     assert_eq!(log, ["load message(from n)"]);
 }
+
+#[test]
+fn timers_take_any_delay() {
+    // Infinity, huge and odd delays once panicked the host.
+    let config = r#"import { cmd } from "temzdf";
+const a = setTimeout(() => {}, Infinity);
+const b = setTimeout(() => {}, 1e300);
+setTimeout(() => {}, NaN);
+setTimeout(() => {}, -5);
+setTimeout(() => {}, "x");
+clearTimeout(a);
+clearTimeout(b);
+cmd.message("ok");
+"#;
+    let mut s = Session::start(&[("config.js", config)]);
+    s.load("config.js");
+    let mut log = Vec::new();
+    ready_ok(s.serve(&mut log));
+    assert_eq!(log, ["load message(ok)"]);
+}
