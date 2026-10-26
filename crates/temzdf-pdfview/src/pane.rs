@@ -1199,12 +1199,16 @@ impl PdfPane {
     fn copy_selection(&mut self) {
         let Some(sel) = self.selection.filter(|s| !s.is_empty()) else { return };
         let (p0, p1) = (sel.ordered().0.0, sel.ordered().1.0);
-        for p in p0..=p1 {
-            self.text_of_page(p);
-        }
+        // Text comes from pages' display lists; those not loaded (far
+        // pages, evicted) are left out: say so rather than copy less quietly.
+        let missing = (p0..=p1).filter(|&p| self.text_of_page(p).is_none()).count();
         let text = sel.text(&self.viewer.doc.borrow().texts);
         if !text.is_empty() {
-            self.notice = Some(format!("Copied {} characters", text.chars().count()));
+            let n = text.chars().count();
+            self.notice = Some(match missing {
+                0 => format!("Copied {n} characters"),
+                m => format!("Copied {n} characters; {m} page(s) not loaded were left out"),
+            });
             self.requests.push(Request::Copy(text));
         }
     }
@@ -1607,6 +1611,23 @@ mod tests {
         assert!(s.drag.is_none() && !s.selecting, "nothing starts there");
         mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (x, y));
         assert!(s.take_requests().is_empty(), "no link followed");
+    }
+
+    #[test]
+    fn copies_say_when_pages_not_loaded_were_left_out() {
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let info = pdf::doc_info(&doc).unwrap();
+        let geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
+        let mut s = PdfPane::new("sample.pdf".into(), info, geometry);
+        // Page 1 not loaded.
+        for p in [0, 2] {
+            s.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
+        }
+        s.selection = Some(crate::selection::Selection { anchor: (0, 0), head: (2, 5) });
+        s.copy_selection();
+        assert!(matches!(s.take_requests()[..], [Request::Copy(_)]));
+        let notice = s.notice.clone().unwrap_or_default();
+        assert!(notice.contains("1 page(s) not loaded were left out"), "{notice}");
     }
 
     #[test]
