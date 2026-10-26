@@ -39,6 +39,9 @@ each("pdf", ["<Tab>"], action.toggleSidebar());
 
 // From a pane to the normal mode.
 each("terminal", [prefix], action.switchMode("normal"));
+// GUI clients paste the clipboard with these; a terminal client's terminal
+// pastes with its own keys before they reach temzdf.
+each("terminal", ["<C-S-v>", "<D-v>"], action.paste());
 each("pdf", [prefix], action.switchMode("normal"));
 
 // The normal mode: panes. Moving the focus returns to that pane's mode.

@@ -1896,6 +1896,9 @@ mod tests {
         for mode in ["terminal", "pdf"] {
             m.map(mode, keys("<C-b>"), acts(&[("switch-mode", &[s("normal")])]), false, None);
         }
+        for lhs in ["<C-S-v>", "<D-v>"] {
+            m.map("terminal", keys(lhs), acts(&[("paste", &[])]), false, None);
+        }
         for (key, cmd) in Keymap::default().bindings() {
             let stroke = Stroke::of(&key.event());
             if stroke != keys("<C-c>")[0] {
@@ -3136,5 +3139,16 @@ mod tests {
         assert!(s.set_option("palette", &ScriptValue::List(vec![ScriptValue::Null])).is_err());
         s.set_option("guifontwide", &ScriptValue::Str("Noto Sans CJK JP".into())).unwrap();
         assert_eq!(s.appearance().font_wide.as_deref(), Some("Noto Sans CJK JP"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn ctrl_shift_v_asks_the_client_to_paste() {
+        let (mut s, _rx) = terminal_session(&["sleep", "30"]);
+        s.take_effects();
+        // As the GUI reports it: the base letter with Ctrl and Shift.
+        let k = KeyEvent::new(KeyCode::Char('v'), Modifiers::CTRL | Modifiers::SHIFT);
+        s.key(&k, Instant::now());
+        assert_eq!(s.take_effects(), [temzdf_scene::Effect::Paste { primary: false }]);
     }
 }

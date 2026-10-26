@@ -84,6 +84,7 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | Mode | Keys | Action |
 |---|---|---|
 | `terminal`, `pdf` | `<C-b>` | enter the `normal` mode (the prefix) |
+| `terminal` | `<C-S-v>`, `<D-v>` | paste the clipboard (GUI clients; a terminal client's terminal pastes with its own keys) |
 | `normal` | `%` / `"` | split right / below (the same document, or a new shell) |
 | `normal` | `h` `j` `k` `l`, arrows | move the focus (back to that pane's mode) |
 | `normal` | `+` `-` `<` `>` | the pane taller / shorter / narrower / wider (counts; as Vim's `<C-w>+` ...) |
