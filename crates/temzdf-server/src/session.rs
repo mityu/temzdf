@@ -235,6 +235,9 @@ struct DocEntry {
     /// Panes to create once it opened.
     waiting: Vec<Spot>,
     _forward: Option<forward::Server>,
+    /// A forward search that came while it opened (its socket listens from
+    /// the start: `temzdf --forward` sends one to the session it started).
+    forward_waiting: Option<ForwardRequest>,
     /// How the last pane showed it, for the next one.
     view: Option<ViewState>,
 }
@@ -521,6 +524,7 @@ impl Session {
                 opening: Some(opening),
                 waiting: vec![spot],
                 _forward: forward_server,
+                forward_waiting: None,
                 view: None,
             },
         );
@@ -995,8 +999,12 @@ impl Session {
                         entry.host = Some(opening.finish(info, doc, self.options.host()));
                         self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
                         let Some(entry) = self.docs.get_mut(&id) else { return Outcome::Redraw };
+                        let forward = entry.forward_waiting.take();
                         for spot in std::mem::take(&mut entry.waiting) {
                             self.add_pdf_pane(id, spot);
+                        }
+                        if let Some(req) = forward {
+                            let _ = self.handle_inner(SessionEvent::Forward(id, req), now);
                         }
                     }
                     other => {
@@ -1031,7 +1039,12 @@ impl Session {
             }
             SessionEvent::Forward(id, req) => {
                 let here = self.here_panes();
-                let Some(host) = self.docs.get_mut(&id).and_then(|d| d.host.as_mut()) else { return Outcome::None };
+                let Some(entry) = self.docs.get_mut(&id) else { return Outcome::None };
+                let Some(host) = entry.host.as_mut() else {
+                    // Still opening: for when it has opened.
+                    entry.forward_waiting = Some(req);
+                    return Outcome::None;
+                };
                 let panes = Self::panes_of(&mut self.panes, id, self.focus, &here);
                 if let Some(pane) = panes.first() {
                     host.forward(Forward { file: req.file, line: req.line, column: req.column }, pane);
@@ -2161,6 +2174,33 @@ mod tests {
         key(&mut s, "<C-b>");
         assert_eq!(key(&mut s, "d"), Outcome::Detach);
         assert_eq!(key(&mut s, "q"), Outcome::Quit, "quitting the last pane ends the session");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_forward_search_sent_while_the_document_opens_is_kept() {
+        let (tx, rx) = mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
+        s.open(&pdf::fixture("sample.pdf")).unwrap();
+        // Before it has opened (line 44 is on the last page).
+        let doc = *s.docs.keys().next().unwrap();
+        let req = ForwardRequest { file: "sample.tex".into(), line: 44, column: 0 };
+        s.handle(SessionEvent::Forward(doc, req), Instant::now());
+        while s.is_starting() {
+            let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();
+            s.handle(ev, Instant::now());
+        }
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.focused_pane().unwrap().viewer.current_page() != 2 {
+            assert!(Instant::now() < deadline, "the search was lost");
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(100)) {
+                s.handle(ev, Instant::now());
+            }
+            s.tick(Instant::now());
+        }
     }
 
     #[test]
