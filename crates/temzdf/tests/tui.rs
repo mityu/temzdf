@@ -1178,3 +1178,21 @@ fn sessions_of_another_version_keep_their_names() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("alfa:"), "{out:?}");
     t.wait_text("[session bravo was killed]");
 }
+
+#[test]
+fn starting_a_session_without_a_terminal_leaves_nothing_behind() {
+    use std::os::unix::process::CommandExt;
+    let env = Env::new("notty");
+    let pdf = fixture("sample.pdf").display().to_string();
+    for args in [vec![pdf.as_str()], vec!["--forward", "44:sample.tex", &pdf], vec!["attach", "-c", "x"]] {
+        let mut cmd = Command::new(BIN);
+        cmd.args(&args).envs(env.vars()).stdin(std::process::Stdio::null());
+        // SAFETY: setsid is async-signal-safe; nothing else runs in the child.
+        // A new session: no controlling terminal, as in an editor's job.
+        unsafe { cmd.pre_exec(|| rustix::process::setsid().map(drop).map_err(Into::into)) };
+        let out = cmd.output().unwrap();
+        assert!(!out.status.success(), "{args:?}: {out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("no terminal"), "{out:?}");
+        assert_eq!(env.run(&["ls"]).trim(), "no sessions", "{args:?}");
+    }
+}

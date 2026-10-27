@@ -36,6 +36,18 @@ pub fn spawn_server(
     temzdf_client::spawn_server(&std::env::current_exe()?, name, pane, config_path, editor, clean)
 }
 
+/// Fail unless there is a terminal to attach from (checked before starting
+/// a session: one started and never attached would stay behind, another on
+/// each try, e.g. from an editor's background job).
+pub fn need_terminal() -> Result<()> {
+    std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty").map(drop).map_err(|e| {
+        anyhow::anyhow!(
+            "no terminal to show the session in ({e}): start temzdf in a terminal (or temzdf-gui); \
+             --forward from an editor reaches a session that shows the PDF already"
+        )
+    })
+}
+
 /// Attach this terminal to session `name` until detached or the session ends.
 /// Returns a line to print once the terminal is restored.
 pub fn attach(name: &str) -> Result<String> {

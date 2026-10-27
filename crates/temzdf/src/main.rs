@@ -250,6 +250,7 @@ fn main() -> Result<()> {
             }
             let name = match (name, create, file) {
                 (Some(n), true, file) if temzdf_server::daemon::list()?.iter().all(|s| s.name != n) => {
+                    client::need_terminal()?;
                     client::spawn_server(
                         &n,
                         &client::first_pane(file.as_deref())?,
@@ -338,7 +339,9 @@ enum Naming {
 /// Start a session showing `file` (a shell without), run `started` once its
 /// server listens, and attach to it.
 fn start_session(naming: Naming, file: Option<&std::path::Path>, cli: &Cli, started: impl FnOnce()) -> Result<()> {
+    // A missing file first: the more useful error.
     let pane = client::first_pane(file)?;
+    client::need_terminal()?;
     let spawn = |n: &str| client::spawn_server(n, &pane, cli.config.as_deref(), cli.editor.as_deref(), cli.clean);
     let name = match &naming {
         Naming::Given(n) => temzdf_client::spawn_named(|| Ok(n.clone()), false, spawn)?,

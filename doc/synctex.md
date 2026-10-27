@@ -67,8 +67,9 @@ let g:vimtex_view_general_viewer = 'temzdf'
 let g:vimtex_view_general_options = '--forward @line:@tex @pdf'
 ```
 
-When no viewer is running, that command would try to open one inside vimtex's
-background job, which has no terminal and fails; open the viewer first.
+When no viewer is running, that command would start a session, which needs a
+terminal: inside vimtex's background job it fails ("no terminal") and leaves
+nothing behind; open the viewer first.
 
 To follow the cursor after every successful compile (the editor knows where you
 are in the *new* source, so this keeps the view on what you are editing even
