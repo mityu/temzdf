@@ -78,16 +78,26 @@ pub enum Input {
 pub fn parse_events(text: &str) -> Result<Vec<Timed>> {
     let mut out = Vec::new();
     for (n, line) in text.lines().enumerate() {
-        let line = line.split_once('#').map_or(line, |(l, _)| l).trim();
-        if line.is_empty() {
+        // A comment is a word that starts with `#` (keys may be `#`).
+        let words_of = |line: &str| -> Vec<String> {
+            let mut words: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
+            let keys_at = (words.get(1).map(String::as_str) == Some("key")).then_some(2);
+            if let Some(i) = words.iter().enumerate().position(|(i, w)| w.starts_with('#') && Some(i) != keys_at) {
+                words.truncate(i);
+            }
+            words
+        };
+        let all = words_of(line);
+        if all.is_empty() {
             continue;
         }
-        let bad = || anyhow::anyhow!("line {}: {line:?}", n + 1);
-        let mut words = line.split_whitespace();
+        let bad = || anyhow::anyhow!("line {}: {:?}", n + 1, line.trim());
+        let mut words = all.iter().map(String::as_str);
         let at = Duration::from_millis(words.next().and_then(|w| w.parse().ok()).ok_or_else(bad)?);
         let what = words.next().ok_or_else(bad)?;
         if what == "key" {
-            let keys = line.splitn(3, char::is_whitespace).nth(2).unwrap_or("").trim();
+            // Key notation has no spaces: the keys are one word.
+            let keys = words.next().unwrap_or("");
             out.extend(parse_keys(keys)?.into_iter().map(|k| Timed { at, input: Input::Key(k) }));
             continue;
         }
@@ -341,6 +351,37 @@ fn settle(session: &mut Session, rx: &Receiver<SessionEvent>, now: Instant) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot create files outside its isolation")]
+    fn timelines_with_aligned_columns_and_hashes() {
+        let keys = |text: &str| -> Vec<String> {
+            parse_events(text)
+                .unwrap()
+                .into_iter()
+                .filter_map(|t| match t.input {
+                    Input::Key(k) => Some(temzdf_server::keymap::Stroke::of(&k).notation()),
+                    _ => None,
+                })
+                .collect()
+        };
+        // As the doc comment writes them: columns aligned with spaces.
+        assert_eq!(keys("0     key jj<C-f>\n"), ["j", "j", "<C-f>"]);
+        assert_eq!(keys("0\tkey\tG   # to the end\n# a comment\n"), ["G"]);
+        assert_eq!(keys("0 key #\n"), ["#"]);
+        // What the recorder writes for '#' and Alt+'#' replays as those keys.
+        let path = std::env::temp_dir().join(format!("temzdf-record-hash-{}.txt", std::process::id()));
+        let start = Instant::now();
+        let mut r = Recorder { out: std::io::BufWriter::new(std::fs::File::create(&path).unwrap()), start };
+        let hash = KeyEvent::new(termpix::input::KeyCode::Char('#'), Modifiers::NONE);
+        let alt_hash = KeyEvent::new(termpix::input::KeyCode::Char('#'), Modifiers::ALT);
+        r.key(&hash, start);
+        r.key(&alt_hash, start);
+        drop(r);
+        let back = keys(&std::fs::read_to_string(&path).unwrap());
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(back, ["#", "<M-#>"]);
+    }
 
     #[test]
     fn what_the_recorder_writes_replays_as_the_same_input() {
