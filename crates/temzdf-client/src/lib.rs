@@ -10,6 +10,29 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use temzdf_protocol as proto;
 
+/// Names given to sessions started without one, in order (the NATO phonetic
+/// alphabet, ICAO spellings).
+const NAMES: [&str; 26] = [
+    "alfa", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliett", "kilo", "lima",
+    "mike", "november", "oscar", "papa", "quebec", "romeo", "sierra", "tango", "uniform", "victor", "whiskey", "xray",
+    "yankee", "zulu",
+];
+
+/// A name for a new session nobody named: the first of [`NAMES`] not taken.
+pub fn auto_name() -> Result<String> {
+    let taken: Vec<String> = proto::discovery::list()?.into_iter().map(|i| i.name).collect();
+    Ok(pick_name(&taken))
+}
+
+/// The first of [`NAMES`] not in `taken`; then `alfa-2`, `bravo-2`, ...,
+/// `alfa-3`, and so on.
+fn pick_name(taken: &[String]) -> String {
+    (1..)
+        .flat_map(|round| NAMES.iter().map(move |n| if round == 1 { (*n).to_owned() } else { format!("{n}-{round}") }))
+        .find(|n| !taken.contains(n))
+        .expect("names never run out")
+}
+
 /// A session name from a file name: its stem with characters outside
 /// `[A-Za-z0-9._-]` replaced, and a number appended while the name is taken.
 pub fn name_for(file: &Path) -> Result<String> {
@@ -240,6 +263,20 @@ pub fn open_uri(command: &[String], uri: &str, on_failure: impl Fn(String) + Sen
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn unnamed_sessions_take_the_first_free_word() {
+        let taken = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        assert_eq!(pick_name(&[]), "alfa");
+        assert_eq!(pick_name(&taken(&["alfa", "charlie", "mine"])), "bravo");
+        let all: Vec<String> = NAMES.iter().map(|n| (*n).to_owned()).collect();
+        assert_eq!(pick_name(&all), "alfa-2");
+        let mut more = all.clone();
+        more.push("alfa-2".into());
+        assert_eq!(pick_name(&more), "bravo-2");
+        // Each fits a session name.
+        assert!(NAMES.iter().all(|n| proto::valid_name(n)));
+    }
 
     #[test]
     fn only_viewing_schemes_open() {
