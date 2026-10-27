@@ -158,6 +158,12 @@ impl Session {
 
     /// Go to tab `i`: its focused pane gets the focus (and the mode).
     pub(super) fn enter_tab(&mut self, i: usize) {
+        self.enter_tab_numbered(i, i);
+    }
+
+    /// `enter_tab`, with `TabEntered` naming index `number` (what `i` will
+    /// be once a tab before it is gone).
+    fn enter_tab_numbered(&mut self, i: usize, number: usize) {
         if i == self.tab || i >= self.tabs.len() {
             return;
         }
@@ -175,7 +181,7 @@ impl Session {
         self.over_frame = None;
         let focus = self.focus;
         self.term_focus(focus, true);
-        self.event("TabEntered", vec![ScriptValue::Num((i + 1) as f64)]);
+        self.event("TabEntered", vec![ScriptValue::Num((number + 1) as f64)]);
         if self.panes.contains_key(&focus) && focus != old {
             self.event("PaneFocused", vec![ScriptValue::Num(focus as f64)]);
         }
@@ -194,9 +200,6 @@ impl Session {
         self.enter_tab(self.tab + 1);
     }
 
-    /// Close tab `i` with its panes (its own floats included); their buffers
-    /// stay, hidden. The tab after it becomes current if it was (Vim). The
-    /// last tab: the session ends.
     /// The panes that go with tab `i`: its tiled ones and its own floats.
     pub(super) fn tab_panes(&self, i: usize) -> Vec<PaneId> {
         let id = self.tabs[i].id;
@@ -205,12 +208,20 @@ impl Session {
         panes
     }
 
+    /// Close tab `i` with its panes (its own floats included); their buffers
+    /// stay, hidden. The tab after it becomes current if it was (Vim). The
+    /// last tab: the session ends.
     pub(super) fn remove_tab(&mut self, i: usize) -> Outcome {
         if self.tabs.len() <= 1 {
             return Outcome::Quit;
         }
         if i == self.tab {
-            self.enter_tab(if i + 1 < self.tabs.len() { i + 1 } else { i - 1 });
+            // (Hooks see the tab numbered as it is after the close.)
+            if i + 1 < self.tabs.len() {
+                self.enter_tab_numbered(i + 1, i);
+            } else {
+                self.enter_tab(i - 1);
+            }
         }
         let id = self.tabs[i].id;
         let panes = self.tab_panes(i);

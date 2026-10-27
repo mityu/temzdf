@@ -1150,6 +1150,32 @@ mod tests {
     }
 
     #[test]
+    fn tab_entered_numbers_the_tab_as_it_is_after_a_close() {
+        let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
+        let settings = super::super::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let geometry = termpix_core::geom::Geometry {
+            cols: 80,
+            rows: 24,
+            cell: termpix_core::geom::CellSize { width: 10, height: 20 },
+        };
+        let mut s = Session::new("t".into(), geometry, Default::default(), settings, sink);
+        s.script.hooks.insert("TabEntered".into(), vec![Hook { func: 1, nested: false }]);
+        s.open_tab();
+        s.open_tab();
+        for (closed, entered) in [(0, 1), (2, 2)] {
+            // Tabs 1, 2, 3: close the first (the second is entered, then
+            // numbered 1), or the last (the second is entered).
+            s.enter_tab(closed);
+            s.script_events.clear();
+            let _ = s.remove_tab(closed);
+            assert_eq!(s.tab + 1, entered);
+            let events: Vec<_> = s.script_events.iter().filter(|(n, _)| n == "TabEntered").collect();
+            assert_eq!(events, [&("TabEntered".to_owned(), vec![ScriptValue::Num(entered as f64)])]);
+            s.open_tab();
+        }
+    }
+
+    #[test]
     fn ctrl_c_interrupts_with_lock_keys_on() {
         let key = |m| KeyEvent::new(KeyCode::Char('c'), m);
         assert!(is_interrupt(&key(Modifiers::CTRL)));
