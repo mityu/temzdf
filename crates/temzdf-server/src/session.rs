@@ -598,9 +598,12 @@ impl Session {
             && !layout.remove(id)
         {
             self.layout = None;
-            // A new tab that got no pane goes again.
+            // A new tab that got no pane goes again, back to the tab it
+            // was opened from (`open_tab` put it right after that one).
             if self.tabs.len() > 1 {
-                self.remove_tab(self.tab);
+                let new = self.tab;
+                self.enter_tab(new.saturating_sub(1));
+                self.remove_tab(new);
             }
         }
     }
@@ -3299,6 +3302,19 @@ mod tests {
         let places = s.layouts().filter(|(_, l)| l.panes().contains(&left)).count()
             + s.floats.iter().filter(|f| f.pane == left).count();
         assert_eq!(places, 1, "a pane is in one place");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_tab_that_cannot_start_goes_back_where_it_was() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let one = s.focus;
+        new_tab(&mut s, &["sleep", "30"]);
+        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        let what = ScriptValue::map([("command", ScriptValue::List(vec![ScriptValue::Str("/nonexistent/x".into())]))]);
+        assert!(s.run_command("new-tab", &[what], None, Instant::now()).is_err());
+        assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 0, one));
     }
 
     #[test]
