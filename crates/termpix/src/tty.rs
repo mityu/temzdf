@@ -529,6 +529,9 @@ mod tests {
         let name = ptsname(&master, Vec::new()).unwrap();
         let slave = OpenOptions::new().read(true).write(true).open(name.to_str().unwrap()).unwrap();
         let termios = termios::tcgetattr(&slave).unwrap();
+        // The terminal stays open after the restore, as a program's does
+        // (macOS drops what is unread when the last slave descriptor closes).
+        let _still_open = slave.try_clone().unwrap();
         *RESTORE.lock().unwrap() = Some(RestoreState {
             fd: slave.into(),
             termios,
