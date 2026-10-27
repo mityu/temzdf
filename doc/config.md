@@ -261,7 +261,10 @@ them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `currentTab`, `buffers`, `showBuffer`, `edit`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
 `sendText`, `paste` (the client's clipboard, or `"primary"`; GUI clients:
-terminal clients paste with the terminal's keys), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
+terminal clients paste with the terminal's keys), `fontSize` (GUI
+clients' font: `fontSize(16)` points, `fontSize("+1")` / `fontSize("-1")`
+one point more or less, times a mapping's count, `fontSize()` back to the
+configured `guifont`; terminal clients keep their terminal's font), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
 `search`, ...: every action of the PDF table above, taking the count).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf

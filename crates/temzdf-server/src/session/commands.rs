@@ -80,6 +80,11 @@ const SESSION: &[(&str, &str, &str)] = &[
         "Paste the client's clipboard (or the primary selection) into the focused pane; terminals paste with their own keys",
     ),
     (
+        "font-size",
+        "(size?: number | string): void",
+        "GUI clients: the font size in points (guifont's :h), \"+N\"/\"-N\" points more or less (times a mapping's count), none: back to the configured size",
+    ),
+    (
         "feedkeys",
         "(keys: string, remap?: boolean): void",
         "Keys as if typed, after the running mapping; remap false skips mappings",
@@ -182,6 +187,27 @@ fn read_what(args: &[ScriptValue]) -> Result<FloatWhat, String> {
             }
         }
     })
+}
+
+/// The font sizes `font-size` keeps to, in points.
+const MIN_FONT_POINTS: f64 = 4.0;
+const MAX_FONT_POINTS: f64 = 200.0;
+
+/// The size in a `guifont` value ("Family:h14"; 14 when it names none, as
+/// the GUI client takes it).
+fn font_points(font: &str) -> f64 {
+    font.split(':').skip(1).find_map(|p| p.strip_prefix('h')?.parse().ok()).unwrap_or(14.0)
+}
+
+/// `font` with its size set to `points` (added when it names none).
+fn with_font_points(font: &str, points: f64) -> String {
+    let size = format!("h{}", (points * 100.0).round() / 100.0);
+    let mut parts: Vec<String> = font.split(':').map(str::to_owned).collect();
+    match parts.iter_mut().skip(1).find(|p| p.strip_prefix('h').is_some_and(|n| n.parse::<f64>().is_ok())) {
+        Some(p) => *p = size,
+        None => parts.push(size),
+    }
+    parts.join(":")
 }
 
 /// `cells` times a mapping's `count`, kept within what any screen has
@@ -368,6 +394,10 @@ impl Session {
                 self.notify(super::notices::Kind::Info, &text(0).unwrap_or_default());
                 ok(Outcome::Redraw)
             }
+            "font-size" => {
+                self.font_size(args.first(), count).map_err(|e| format!("fontSize: {e}"))?;
+                ok(Outcome::None)
+            }
             "paste" => {
                 let primary = match text(0).as_deref() {
                     None | Some("clipboard") => false,
@@ -512,6 +542,43 @@ impl Session {
             "session-name" => Ok((ScriptValue::Str(self.name.clone()), Outcome::None)),
             other => Err(format!("no command {other:?}")),
         }
+    }
+
+    /// `font-size`: change the size in `guifont` (and in `guifontwide`
+    /// when it names one), remembering the configured fonts for going back.
+    fn font_size(&mut self, size: Option<&ScriptValue>, count: Option<usize>) -> Result<(), String> {
+        let o = &self.options;
+        let current = font_points(&o.guifont);
+        let points = match size {
+            None | Some(ScriptValue::Null) => {
+                if let Some((font, wide)) = self.configured_fonts.take() {
+                    self.options.guifont = font;
+                    self.options.guifontwide = wide;
+                }
+                return Ok(());
+            }
+            Some(ScriptValue::Num(n)) => *n,
+            Some(ScriptValue::Str(s)) => {
+                let n: f64 = s.trim().parse().map_err(|_| format!("{s:?} is not a size or +N/-N"))?;
+                if s.trim_start().starts_with(['+', '-']) {
+                    current + n * count.unwrap_or(1).min(1000) as f64
+                } else {
+                    n
+                }
+            }
+            Some(other) => return Err(format!("{other:?} is not a size")),
+        };
+        if !points.is_finite() {
+            return Err("the size is not a number".into());
+        }
+        let points = points.clamp(MIN_FONT_POINTS, MAX_FONT_POINTS);
+        self.configured_fonts.get_or_insert_with(|| (o.guifont.clone(), o.guifontwide.clone()));
+        let o = &mut self.options;
+        o.guifont = with_font_points(&o.guifont, points);
+        if let Some(wide) = &mut o.guifontwide {
+            *wide = with_font_points(wide, points);
+        }
+        Ok(())
     }
 
     fn resize_pane(&mut self, args: &[ScriptValue], count: Option<usize>) -> Result<(ScriptValue, Outcome), String> {

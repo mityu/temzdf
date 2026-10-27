@@ -350,6 +350,9 @@ pub struct Session {
     matcher: Matcher,
     history: History,
     options: Options,
+    /// `guifont` and `guifontwide` as configured, while `font-size` has
+    /// changed them (what `font-size` with no size goes back to).
+    configured_fonts: Option<(String, Option<String>)>,
     notices: Vec<notices::Notice>,
     /// The fixed escape keymap (script host down) saw its prefix.
     escape_prefix: bool,
@@ -405,6 +408,7 @@ impl Session {
             matcher: Matcher::default(),
             history: History::new("normal", Options::default().modehistory),
             options: Options::default(),
+            configured_fonts: None,
             notices: Vec::new(),
             escape_prefix: false,
             map_depth: 0,
@@ -1913,6 +1917,39 @@ mod tests {
     use termpix_core::input::Modifiers;
 
     const GEOMETRY: Geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
+
+    #[test]
+    fn font_size_changes_guifont_and_goes_back_to_the_configured_one() {
+        let sink: EventSink = Arc::new(|_| true);
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
+        let font = |s: &Session| (s.appearance().font, s.appearance().font_wide);
+        let run = |s: &mut Session, arg: Option<&str>, count| {
+            let args: Vec<ScriptValue> = arg.map(|a| ScriptValue::Str(a.into())).into_iter().collect();
+            s.run_command("font-size", &args, count, Instant::now()).map(|_| ())
+        };
+        s.set_option("guifont", &ScriptValue::Str("Mono:b:h11".into())).unwrap();
+        s.set_option("guifontwide", &ScriptValue::Str("Wide".into())).unwrap();
+        run(&mut s, Some("+1"), None).unwrap();
+        assert_eq!(font(&s), ("Mono:b:h12".into(), Some("Wide:h12".into())), "the wide font follows");
+        run(&mut s, Some("-2"), Some(3)).unwrap();
+        assert_eq!(font(&s).0, "Mono:b:h6", "times the count");
+        run(&mut s, Some("-100"), None).unwrap();
+        assert_eq!(font(&s).0, "Mono:b:h4", "kept readable");
+        s.run_command("font-size", &[ScriptValue::Num(9.5)], None, Instant::now()).unwrap();
+        assert_eq!(font(&s).0, "Mono:b:h9.5");
+        assert!(run(&mut s, Some("big"), None).is_err());
+        run(&mut s, None, None).unwrap();
+        assert_eq!(font(&s), ("Mono:b:h11".into(), Some("Wide".into())), "back to the configuration");
+        // A size where the value names none; setting the option again
+        // makes that the configured font.
+        s.set_option("guifont", &ScriptValue::Str("Plain".into())).unwrap();
+        run(&mut s, Some("+2"), None).unwrap();
+        assert_eq!(font(&s).0, "Plain:h16", "from the GUI's default of 14");
+        s.set_option("guifont", &ScriptValue::Str("Other:h8".into())).unwrap();
+        run(&mut s, None, None).unwrap();
+        assert_eq!(font(&s).0, "Other:h8");
+    }
 
     fn session() -> (Session, Receiver<SessionEvent>) {
         let (tx, rx) = mpsc::channel();

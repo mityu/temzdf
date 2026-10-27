@@ -812,8 +812,14 @@ impl Session {
                     .collect::<Result<_, String>>()
                     .map_err(|e| format!("o.palette: {e}"))?;
             }
-            "guifont" => o.guifont = text()?.ok_or("o.guifont: expected a string")?,
-            "guifontwide" => o.guifontwide = text()?,
+            "guifont" => {
+                o.guifont = text()?.ok_or("o.guifont: expected a string")?;
+                self.configured_fonts = None;
+            }
+            "guifontwide" => {
+                o.guifontwide = text()?;
+                self.configured_fonts = None;
+            }
             "showtabline" => match value.as_num() {
                 Some(n) if [0.0, 1.0, 2.0].contains(&n) => o.showtabline = n as u8,
                 _ => return Err("o.showtabline: expected 0, 1 or 2".into()),
