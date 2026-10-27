@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use temzdf_protocol::{ClientMsg, ExitReason, VERSION};
@@ -12,7 +13,7 @@ use winit::application::ApplicationHandler;
 use winit::cursor::CursorIcon;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::connection::{Connection, FromServer};
@@ -24,6 +25,8 @@ const INITIAL_SIZE: (u32, u32) = (900, 600);
 
 struct Gpu {
     window: Arc<dyn Window>,
+    /// For a new surface when the old one is lost.
+    instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     view: View,
@@ -61,12 +64,73 @@ impl Acks {
     }
 }
 
+/// A redraw that got no surface texture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Skip {
+    Timeout,
+    Occluded,
+    Outdated,
+    Lost,
+    /// A validation error (reported by wgpu's handler).
+    Other,
+}
+
+/// What the surface needs before the next try.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Rebuild {
+    None,
+    Configure,
+    /// `Lost`: configuring the old surface does not help (wgpu).
+    Recreate,
+}
+
+/// What a skipped redraw does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OnSkip {
+    /// Acknowledge the frame waiting for this draw.
+    ack: bool,
+    rebuild: Rebuild,
+    /// Redraw again after this long.
+    retry: Option<Duration>,
+}
+
+/// Tries at an outdated or lost surface before the frame is let go.
+const SURFACE_TRIES: u32 = 3;
+/// How long a retry that could fail again waits: a timeout comes after
+/// wgpu waited a second (a minimised window on X11 with FIFO), and back to
+/// back they would leave input and the session's messages a turn a second.
+const RETRY_AFTER: Duration = Duration::from_millis(100);
+
+/// What to do about `skip`, the `failures`th in a row (from 1).
+fn on_skip(skip: Skip, failures: u32) -> OnSkip {
+    match skip {
+        // No event follows a timeout: try again, a little later.
+        Skip::Timeout => OnSkip { ack: true, rebuild: Rebuild::None, retry: Some(RETRY_AFTER) },
+        // `Occluded(false)` redraws later.
+        Skip::Occluded | Skip::Other => OnSkip { ack: true, rebuild: Rebuild::None, retry: None },
+        Skip::Outdated | Skip::Lost => {
+            let rebuild = if skip == Skip::Lost { Rebuild::Recreate } else { Rebuild::Configure };
+            // Drawn after the rebuild; while that keeps failing, the session
+            // must not wait for it, nor this loop spin.
+            if failures < SURFACE_TRIES {
+                OnSkip { ack: false, rebuild, retry: Some(Duration::ZERO) }
+            } else {
+                OnSkip { ack: true, rebuild, retry: Some(RETRY_AFTER) }
+            }
+        }
+    }
+}
+
 pub struct App {
     name: String,
     conn: Connection,
     rx: Receiver<FromServer>,
     gpu: Option<Gpu>,
     acks: Acks,
+    /// Redraws in a row that got no texture.
+    skipped: u32,
+    /// A redraw to try then (see `on_skip`).
+    retry_at: Option<Instant>,
     pointer: Pointer,
     /// Why the window closes, for the message after.
     ended: std::sync::Arc<std::sync::Mutex<Option<String>>>,
@@ -122,7 +186,7 @@ impl App {
         let view = View::new(renderer, scale);
         let geometry = view.geometry((config.width, config.height));
         crate::input::enable_ime(window.as_ref());
-        self.gpu = Some(Gpu { window, surface, config, view, geometry });
+        self.gpu = Some(Gpu { window, instance, surface, config, view, geometry });
         let hints = Hints { exact_scaling: true, fast_uploads: true };
         self.send(ClientMsg::Hello { version: VERSION, geometry, hints, inside: None });
         Ok(())
@@ -204,23 +268,43 @@ impl App {
 
     fn redraw(&mut self) {
         let Some(g) = &mut self.gpu else { return };
-        let texture = match g.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                g.surface.configure(g.view.renderer.device(), &g.config);
-                g.window.request_redraw();
+        let skip = match g.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Ok(t),
+            wgpu::CurrentSurfaceTexture::Outdated => Err(Skip::Outdated),
+            wgpu::CurrentSurfaceTexture::Lost => Err(Skip::Lost),
+            wgpu::CurrentSurfaceTexture::Timeout => Err(Skip::Timeout),
+            wgpu::CurrentSurfaceTexture::Occluded => Err(Skip::Occluded),
+            _ => Err(Skip::Other),
+        };
+        let texture = match skip {
+            Ok(t) => t,
+            Err(skip) => {
+                self.skipped += 1;
+                let what = on_skip(skip, self.skipped);
+                match what.rebuild {
+                    Rebuild::None => {}
+                    Rebuild::Configure => g.surface.configure(g.view.renderer.device(), &g.config),
+                    Rebuild::Recreate => match g.instance.create_surface(g.window.clone()) {
+                        Ok(surface) => {
+                            g.surface = surface;
+                            g.surface.configure(g.view.renderer.device(), &g.config);
+                        }
+                        Err(e) => eprintln!("temzdf-gui: cannot make a new surface: {e}"),
+                    },
+                }
+                match what.retry {
+                    Some(Duration::ZERO) => g.window.request_redraw(),
+                    Some(after) => self.retry_at = Some(Instant::now() + after),
+                    None => {}
+                }
+                if what.ack {
+                    let ack = self.acks.redrawn();
+                    self.ack(ack);
+                }
                 return;
             }
-            // Skipped. Occluded before the window says so: `Occluded(false)`
-            // redraws later. A timeout gets no such event, so it tries again.
-            other => {
-                if matches!(other, wgpu::CurrentSurfaceTexture::Timeout) {
-                    g.window.request_redraw();
-                }
-                let ack = self.acks.redrawn();
-                return self.ack(ack);
-            }
         };
+        self.skipped = 0;
         let target = texture.texture.create_view(&Default::default());
         let mut list = g.view.draw_list(g.geometry);
         if let Some((col, row)) = g.view.frame.as_ref().and_then(|(_, f)| f.cursor) {
@@ -275,6 +359,20 @@ impl ApplicationHandler for App {
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.handle_server(event_loop);
+    }
+
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        match self.retry_at {
+            Some(at) if Instant::now() >= at => {
+                self.retry_at = None;
+                if let Some(g) = &self.gpu {
+                    g.window.request_redraw();
+                }
+                event_loop.set_control_flow(ControlFlow::Wait);
+            }
+            Some(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+            None => event_loop.set_control_flow(ControlFlow::Wait),
+        }
     }
 
     fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, _: WindowId, event: WindowEvent) {
@@ -338,6 +436,8 @@ pub fn run(name: String) -> Result<String> {
         rx,
         gpu: None,
         acks: Acks::default(),
+        skipped: 0,
+        retry_at: None,
         pointer: Pointer::Default,
         ended: ended.clone(),
         input,
@@ -349,7 +449,22 @@ pub fn run(name: String) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::Acks;
+    use super::{Acks, OnSkip, RETRY_AFTER, Rebuild, SURFACE_TRIES, Skip, on_skip};
+    use std::time::Duration;
+
+    #[test]
+    fn skipped_redraws_acknowledge_and_retry_as_needed() {
+        let later = Some(RETRY_AFTER);
+        assert_eq!(on_skip(Skip::Timeout, 1), OnSkip { ack: true, rebuild: Rebuild::None, retry: later });
+        assert_eq!(on_skip(Skip::Occluded, 1), OnSkip { ack: true, rebuild: Rebuild::None, retry: None });
+        // Drawn after reconfiguring (a new surface when lost)...
+        let now = Some(Duration::ZERO);
+        assert_eq!(on_skip(Skip::Outdated, 1), OnSkip { ack: false, rebuild: Rebuild::Configure, retry: now });
+        assert_eq!(on_skip(Skip::Lost, 1), OnSkip { ack: false, rebuild: Rebuild::Recreate, retry: now });
+        // ...but not waited for for ever, nor tried as fast as it fails.
+        let last = on_skip(Skip::Lost, SURFACE_TRIES);
+        assert_eq!((last.ack, last.retry), (true, later));
+    }
 
     #[test]
     fn frames_are_acknowledged_once_drawn_or_at_once_while_hidden() {
