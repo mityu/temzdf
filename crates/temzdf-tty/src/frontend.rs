@@ -72,6 +72,9 @@ pub struct TtyFrontend {
     /// The last present was held or found the terminal busy.
     retry_soon: bool,
     uploading: bool,
+    /// The terminal reports resizes in-band (mode 2048): its pixel sizes win
+    /// over the kernel's (see [`resized`]).
+    in_band: bool,
 }
 
 impl TtyFrontend {
@@ -134,6 +137,7 @@ impl TtyFrontend {
             min_interval,
             retry_soon: false,
             uploading: false,
+            in_band: false,
         })
     }
 
@@ -252,16 +256,20 @@ impl TtyFrontend {
         timeout
     }
 
-    /// The terminal's size after a resize: the in-band report (mode 2048,
-    /// pixels included) if that is what came, else the kernel's, keeping the
-    /// cell size when it reports no pixels.
-    fn new_geometry(&self, ev: &TermEvent) -> Result<Option<Geometry>> {
-        if let TermEvent::Input(Event::Resize(r)) = ev
-            && let Some(g) = r.geometry()
-        {
-            return Ok(Some(g));
+    /// The terminal's size after a resize (see [`resized`]).
+    fn new_geometry(&mut self, ev: &TermEvent) -> Result<Option<Geometry>> {
+        let report = match ev {
+            TermEvent::Input(Event::Resize(r)) => r.geometry(),
+            _ => None,
+        };
+        if report.is_some() {
+            self.in_band = true;
         }
-        Ok(self.tty.winsize()?.geometry_or(self.comp.geometry().cell))
+        let kernel = match report {
+            Some(_) => None,
+            None => Some(self.tty.winsize()?),
+        };
+        Ok(resized(report, kernel, self.in_band, self.comp.geometry().cell))
     }
 
     /// Interpret a terminal event.
@@ -314,4 +322,49 @@ fn over_ssh() -> bool {
 
 fn geometry_line(g: Geometry) -> String {
     format!("geometry {}x{} cells of {}x{} px", g.cols, g.rows, g.cell.width, g.cell.height)
+}
+
+/// The size after a resize: an in-band report (mode 2048, pixels included)
+/// if that is what came, else the kernel's `winsize`, keeping the cell size
+/// `cell` when it reports no pixels. One resize comes both ways, in no fixed
+/// order, and the two pixel sizes may differ (padding counted in one only):
+/// once the terminal reports in-band (`in_band`), the kernel gives only the
+/// grid, or the cell size would flip with whichever came last.
+fn resized(
+    report: Option<Geometry>,
+    winsize: Option<tty::Winsize>,
+    in_band: bool,
+    cell: termpix::geom::CellSize,
+) -> Option<Geometry> {
+    if report.is_some() {
+        return report;
+    }
+    let ws = winsize?;
+    if in_band {
+        return (ws.rows > 0 && ws.cols > 0).then_some(Geometry { cols: ws.cols, rows: ws.rows, cell });
+    }
+    ws.geometry_or(cell)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use termpix::geom::CellSize;
+
+    #[test]
+    fn in_band_reports_decide_the_cell_size() {
+        let cell = CellSize { width: 10, height: 20 };
+        let report = Geometry { cols: 120, rows: 40, cell };
+        // The kernel counts 130 more pixels across (11 px cells).
+        let kernel = tty::Winsize { rows: 40, cols: 120, width_px: 1330, height_px: 800 };
+        assert_eq!(resized(Some(report), None, true, cell), Some(report));
+        assert_eq!(resized(None, Some(kernel), true, cell), Some(report), "its grid, not its cells");
+        // Without in-band reports the kernel decides, pixels included.
+        let g = resized(None, Some(kernel), false, cell).unwrap();
+        assert_eq!(g.cell, CellSize { width: 11, height: 20 });
+        // No pixels from the kernel: the cell size known so far.
+        let bare = tty::Winsize { width_px: 0, height_px: 0, ..kernel };
+        assert_eq!(resized(None, Some(bare), false, cell), Some(report));
+        assert_eq!(resized(None, Some(tty::Winsize { rows: 0, ..kernel }), true, cell), None);
+    }
 }

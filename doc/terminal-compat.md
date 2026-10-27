@@ -51,6 +51,12 @@ Known problems:
 - kitty: with mouse tracking on, trackpad deltas are accumulated and emitted as
   one button event per step. Ghostty and Konsole behave similarly.
 - Shift+click bypasses application mouse reporting in most terminals.
+- A resize comes twice where in-band resize (2048) is on: SIGWINCH (the
+  kernel's `winsize`) and the 2048 report, in no fixed order. Their pixel
+  sizes may differ (a terminal counting its padding in one of them; not
+  measured in any terminal yet), so once a 2048 report came, the frontend
+  takes only the grid from the kernel and the cell size from the report
+  (`resized` in `crates/temzdf-tty/src/frontend.rs`).
 - tmux: 1016 passthrough unverified; fall back to cell coordinates.
 
 ## Verified in practice
