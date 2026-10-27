@@ -69,7 +69,9 @@ fi
 
 backup=$(mktemp "${TMPDIR:-/tmp}/mutate-orig.XXXXXX")
 cp -p -- "$file" "$backup"
-trap 'cp -p -- "$backup" "$file"; rm -f -- "$backup"' EXIT
+# Restored with a fresh mtime: the old one is older than the mutated build,
+# and cargo would keep running that.
+trap 'cp -- "$backup" "$file"; touch -- "$file"; rm -f -- "$backup"' EXIT
 trap 'exit 130' INT TERM
 printf '%s' "${content/"$old"/"$new"}" >"$file"
 
