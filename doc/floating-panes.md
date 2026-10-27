@@ -194,7 +194,7 @@ release, as with borders.
 | `open-float` | `openFloat(what?, opts?)` | `what`: `{ buffer }`, `{ file }`, `{ command: [...] }`, default a new shell; `opts`: `width`, `height`, `row`, `col`, `anchor`, `title`, `focus` (default true). Returns the pane id |
 | `float-config` | `floatConfig(pane, opts)` | move or resize (same `opts`) |
 | `toggle-floats` | `toggleFloats()` | show or hide all floats |
-| `toggle-floating` | `toggleFloating(pane?)` | tiled to floating and back |
+| `toggle-floating` | `toggleFloating(pane?)` | tiled to floating and back; a pane of the current tab page only |
 | (existing) | `panes()` | gains `floating: boolean` and the rectangle |
 
 `temzdf action open-float -- htop` and `temzdf action open-float FILE.pdf`

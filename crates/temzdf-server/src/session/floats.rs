@@ -438,8 +438,9 @@ impl Session {
     /// Turn a tiled pane into a float, or a float into a tiled pane beside
     /// the last focused tiled one. The last tiled pane stays.
     pub(super) fn toggle_floating(&mut self, pane: PaneId) -> Result<(), String> {
-        if !self.panes.contains_key(&pane) {
-            return Err(format!("no pane {pane}"));
+        // (Another tab's pane would stay in its layout there.)
+        if !self.panes.contains_key(&pane) || self.tab_of(pane) != Some(self.tab) {
+            return Err(format!("no pane {pane} in this tab"));
         }
         if self.is_float(pane) {
             let target = self.tiled_focus;

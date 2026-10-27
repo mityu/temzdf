@@ -3287,6 +3287,22 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn toggle_floating_keeps_to_the_current_tab() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let left = s.focus;
+        key(&mut s, "<C-b>%");
+        new_tab(&mut s, &["sleep", "30"]);
+        key(&mut s, "<C-b>%");
+        let e = cmd(&mut s, "toggle-floating", &[&left.to_string()], None).unwrap_err();
+        assert!(e.contains("in this tab"), "{e}");
+        let places = s.layouts().filter(|(_, l)| l.panes().contains(&left)).count()
+            + s.floats.iter().filter(|f| f.pane == left).count();
+        assert_eq!(places, 1, "a pane is in one place");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn break_pane_moves_a_pane_to_a_new_tab() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "one");
