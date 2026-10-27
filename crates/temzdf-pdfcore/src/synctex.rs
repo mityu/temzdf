@@ -73,9 +73,19 @@ pub struct Scanner {
 
 // SAFETY: the scanner is only ever used from one thread at a time (it is owned,
 // and all methods take `&mut self`). The library has no thread-local state; its
-// globals are class tables a new scanner copies (read only) and the static
-// buffers of the debugging `*_abstract` functions, which we never call.
+// globals are class tables a new scanner copies (read only), the static
+// buffers of the debugging `*_abstract` functions, which we never call, and
+// the process's locale, which parsing switches (see [`PARSING`]).
 unsafe impl Send for Scanner {}
+
+/// Held while a scanner parses. Parsing reads numbers with
+/// `setlocale(LC_NUMERIC, "C")` around `strtod`, then puts back the locale
+/// whose name it read before: two parses at once (one SyncTeX thread per
+/// document) would race on the process's locale, and the name one saved can
+/// be freed by the other's switch. Queries never parse again (the scanner is
+/// opened with `parse = 1`), so only opening takes it. Nothing else in the
+/// server sets the locale (MuPDF's HarfBuzz only reads `LC_CTYPE`).
+static PARSING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl Drop for Scanner {
     fn drop(&mut self) {
@@ -90,6 +100,7 @@ impl Scanner {
     pub fn open(pdf: &Path) -> Option<Self> {
         let pdf = std::path::absolute(pdf).ok()?;
         let c = CString::new(pdf.as_os_str().as_encoded_bytes()).ok()?;
+        let _parsing = PARSING.lock().unwrap_or_else(|p| p.into_inner());
         // SAFETY: valid NUL-terminated path; a null build directory is allowed.
         let mut ptr = unsafe { synctex_scanner_new_with_output_file(c.as_ptr(), std::ptr::null(), 1) };
         // Opened through a symlink: the SyncTeX file is next to the real PDF.
@@ -101,6 +112,7 @@ impl Scanner {
             // SAFETY: as above.
             ptr = unsafe { synctex_scanner_new_with_output_file(c.as_ptr(), std::ptr::null(), 1) };
         }
+        drop(_parsing);
         if ptr.is_null() {
             return None;
         }
