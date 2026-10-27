@@ -413,6 +413,12 @@ impl Session {
                 self.terminal_pane(id, buf, rect, focus);
                 Some(id)
             }
+            FloatWhat::Buffer(buf) if self.docs.get(&buf).is_some_and(|d| d.host.is_none()) => {
+                // Still opening: the pane comes with the file.
+                let spot = self.pin_spot(spot);
+                self.docs.get_mut(&buf).expect("found").waiting.push(spot);
+                None
+            }
             FloatWhat::Buffer(buf) if self.docs.contains_key(&buf) => self.add_pdf_pane(buf, spot),
             FloatWhat::Buffer(buf) => return Err(format!("no buffer {buf}")),
         })

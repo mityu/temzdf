@@ -242,8 +242,8 @@ struct DocEntry {
     name: String,
     host: Option<DocumentHost>,
     opening: Option<Opening>,
-    /// Panes to create once it opened.
-    waiting: Vec<Spot>,
+    /// Panes to create once it opened, and the tabs they were asked for.
+    waiting: Vec<(Spot, tabs::TabId)>,
     _forward: Option<forward::Server>,
     /// A forward search that came while it opened (its socket listens from
     /// the start: `temzdf --forward` sends one to the session it started).
@@ -510,7 +510,8 @@ impl Session {
             if entry.host.is_some() {
                 self.add_pdf_pane(id, spot);
             } else {
-                entry.waiting.push(spot);
+                let spot = self.pin_spot(spot);
+                self.docs.get_mut(&id).expect("found").waiting.push(spot);
             }
             return Ok(());
         }
@@ -526,6 +527,7 @@ impl Session {
             None
         };
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let spot = self.pin_spot(spot);
         self.docs.insert(
             id,
             DocEntry {
@@ -540,6 +542,38 @@ impl Session {
             },
         );
         Ok(())
+    }
+
+    /// `spot` as asked for now, to wait for a document: a float goes to the
+    /// current tab rather than the one current once the file opened, and a
+    /// pane in the layout to this tab's layout.
+    fn pin_spot(&self, spot: Spot) -> (Spot, tabs::TabId) {
+        let spot = match spot {
+            Spot::Float(spec) if spec.tab.is_none() => {
+                Spot::Float(floats::FloatSpec { tab: Some(tabs::FloatTab::Only(self.tab_id())), ..spec })
+            }
+            spot => spot,
+        };
+        (spot, self.tab_id())
+    }
+
+    /// A pane that waited for document `doc` to open: in the tab it was
+    /// asked for (see `pin_spot`), without taking the focus from this one.
+    fn add_waiting_pane(&mut self, doc: DocId, spot: Spot, tab: tabs::TabId) {
+        if !matches!(spot, Spot::Split { .. }) || tab == self.tab_id() {
+            self.add_pdf_pane(doc, spot);
+            return;
+        }
+        // Its tab closed meanwhile: so did the pane.
+        let Some(i) = self.tab_index(tab) else { return };
+        let here = self.tab;
+        self.swap_tab(i);
+        if let Some(p) = self.add_pdf_pane_focused(doc, spot, false) {
+            // The pane that tab shows focused when entered.
+            (self.focus, self.tiled_focus) = (p, p);
+        }
+        self.swap_tab(here);
+        self.relayout();
     }
 
     fn alloc_id(&mut self) -> u32 {
@@ -611,6 +645,12 @@ impl Session {
 
     /// Create a pane on an open document (or show it in a pane).
     fn add_pdf_pane(&mut self, doc: DocId, spot: Spot) -> Option<PaneId> {
+        let focus = self.takes_focus(&spot);
+        self.add_pdf_pane_focused(doc, spot, focus)
+    }
+
+    /// `add_pdf_pane`, the new pane focused if `focus`.
+    fn add_pdf_pane_focused(&mut self, doc: DocId, spot: Spot, focus: bool) -> Option<PaneId> {
         self.docs.get(&doc)?.host.as_ref()?;
         if let Spot::Replace(p) = spot {
             if let Err(e) = self.show_in(p, doc) {
@@ -619,7 +659,6 @@ impl Session {
             return Some(p);
         }
         let id = self.alloc_id();
-        let focus = self.takes_focus(&spot);
         if let Err(e) = self.place(id, spot) {
             self.message(&e.to_string());
             return None;
@@ -690,7 +729,7 @@ impl Session {
             Kind::Term { buf, view: TermView::new(g) }
         } else if let Some(d) = self.docs.get_mut(&buf) {
             if d.host.is_none() {
-                d.waiting.push(Spot::Replace(pane));
+                d.waiting.push((Spot::Replace(pane), self.tabs[self.tab].id));
                 return Ok(Outcome::None);
             }
             self.pdf_kind(pane, buf).ok_or("the document is not open")?
@@ -1018,8 +1057,8 @@ impl Session {
                         self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
                         let Some(entry) = self.docs.get_mut(&id) else { return Outcome::Redraw };
                         let forward = entry.forward_waiting.take();
-                        for spot in std::mem::take(&mut entry.waiting) {
-                            self.add_pdf_pane(id, spot);
+                        for (spot, tab) in std::mem::take(&mut entry.waiting) {
+                            self.add_waiting_pane(id, spot, tab);
                         }
                         if let Some(req) = forward {
                             let _ = self.handle_inner(SessionEvent::Forward(id, req), now);
@@ -3185,6 +3224,37 @@ mod tests {
         pump(&mut s, &rx, |s| !s.floats.is_empty());
         assert_eq!(s.floats[0].title.as_deref(), Some("paper"));
         assert_eq!(s.focus, tiled, "focus: false");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn panes_waiting_for_a_document_go_to_the_tab_they_were_asked_for() {
+        let sample = temzdf_pdfcore::pdf::fixture("sample.pdf");
+        let opened = |s: &Session| s.docs.values().all(|d| d.host.is_some());
+        // A split, then another tab entered while the file opens.
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        s.open(&sample).unwrap();
+        let other = new_tab(&mut s, &["sleep", "30"]);
+        pump(&mut s, &rx, opened);
+        assert_eq!((s.tab, s.focus), (1, other), "the current tab stays");
+        let first: Vec<_> = s.layouts().filter(|(i, _)| *i == 0).map(|(_, l)| l.panes().len()).collect();
+        assert_eq!(first, [2], "the split went into the first tab");
+        assert_eq!(s.layout.as_ref().unwrap().panes(), [other]);
+        // A float, and a second one on the document still opening.
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "tiled");
+        let file = ScriptValue::map([("file", ScriptValue::Str(sample.display().to_string()))]);
+        s.run_command("open-float", &[file], None, Instant::now()).unwrap();
+        let doc = *s.docs.keys().next().unwrap();
+        let buffer = ScriptValue::map([("buffer", ScriptValue::Num(doc as f64))]);
+        s.run_command("open-float", &[buffer], None, Instant::now()).unwrap();
+        let first_tab = s.tab_id();
+        let other = new_tab(&mut s, &["sleep", "30"]);
+        pump(&mut s, &rx, |s| opened(s) && s.floats.len() == 2);
+        assert_eq!(s.floats.len(), 2, "the buffer's float opened too");
+        assert!(s.floats.iter().all(|f| f.tab == tabs::FloatTab::Only(first_tab)), "on the first tab");
+        assert_eq!((s.tab, s.focus), (1, other));
     }
 
     /// `new-tab` with a command; returns its pane.
