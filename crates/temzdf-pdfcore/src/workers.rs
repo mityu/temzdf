@@ -6,7 +6,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 
 use mupdf::DisplayList;
@@ -148,22 +148,69 @@ fn stamp(file: &Path) -> Option<(std::time::SystemTime, u64)> {
 /// The document's bytes as the document thread last opened them, with that
 /// version's generation: the search thread opens the very same version
 /// (reading the file itself, it could get a newer one, whose page count the
-/// viewer does not know yet).
+/// viewer does not know yet). Once it did, the bytes go (MuPDF keeps its own
+/// copy): memory holds the PDF twice, not three times.
 #[derive(Clone, Default)]
-pub struct Snapshot(Arc<std::sync::Mutex<Option<Version>>>);
+pub struct Snapshot(Arc<Mutex<SnapshotState>>);
 
-/// A generation and its bytes.
-type Version = (u32, Arc<[u8]>);
+#[derive(Default)]
+struct SnapshotState {
+    /// The generation and, until the search thread opened it, its bytes.
+    version: Option<(u32, Option<Arc<[u8]>>)>,
+    /// Documents the search thread has open (for tests).
+    search_docs: usize,
+}
 
 impl Snapshot {
-    fn set(&self, generation: u32, bytes: Arc<[u8]>) {
-        *self.0.lock().unwrap_or_else(|p| p.into_inner()) = Some((generation, bytes));
+    fn lock(&self) -> std::sync::MutexGuard<'_, SnapshotState> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn get(&self) -> Option<Version> {
-        self.0.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    fn set(&self, generation: u32, bytes: Arc<[u8]>) {
+        self.lock().version = Some((generation, Some(bytes)));
+    }
+
+    fn generation(&self) -> Option<u32> {
+        self.lock().version.as_ref().map(|v| v.0)
+    }
+
+    /// The bytes of version `generation`, if that is the snapshot's and
+    /// they were not taken yet.
+    fn bytes(&self, generation: u32) -> Option<Arc<[u8]>> {
+        self.lock().version.as_ref().filter(|v| v.0 == generation)?.1.clone()
+    }
+
+    /// The search thread has version `generation` open: its bytes go.
+    fn opened(&self, generation: u32) {
+        let mut state = self.lock();
+        state.search_docs += 1;
+        if let Some(v) = state.version.as_mut().filter(|v| v.0 == generation) {
+            v.1 = None;
+        }
+    }
+
+    fn closed(&self) {
+        self.lock().search_docs -= 1;
     }
 }
+
+/// The search thread's document: a version of the snapshot, opened.
+struct SearchDoc {
+    generation: u32,
+    doc: pdf::Doc,
+    bounds: Vec<pdf::PageBounds>,
+    snapshot: Snapshot,
+}
+
+impl Drop for SearchDoc {
+    fn drop(&mut self) {
+        self.snapshot.closed();
+    }
+}
+
+/// How often an idle search thread checks whether its document is out of
+/// date (a reload made a new version).
+const STALE_CHECK: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// A search request: find `query` on every page, starting at `start_page`.
 pub struct SearchCmd {
@@ -183,7 +230,7 @@ pub struct SearchCmd {
 pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<SearchCmd>> {
     let (tx, rx) = mpsc::channel::<SearchCmd>();
     std::thread::Builder::new().name("temzdf-search".into()).spawn(move || {
-        let mut doc: Option<(u32, pdf::Doc, Vec<pdf::PageBounds>)> = None;
+        let mut doc: Option<SearchDoc> = None;
         // Each pane's search and how many of its pages are done.
         let mut jobs: Vec<(SearchCmd, usize)> = Vec::new();
         let pane = |c: &SearchCmd| c.generation >> 32;
@@ -193,6 +240,19 @@ pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<
                 jobs.retain(|(j, _)| pane(j) != pane(&cmd));
                 jobs.push((cmd, 0));
             };
+            // Idle with a document open: let go of it once a reload made it
+            // out of date (it would be opened again for a search anyway).
+            while jobs.is_empty() && doc.is_some() {
+                match rx.recv_timeout(STALE_CHECK) {
+                    Ok(c) => take(&mut jobs, c),
+                    Err(RecvTimeoutError::Timeout) => {
+                        if doc.as_ref().is_some_and(|d| snapshot.generation() != Some(d.generation)) {
+                            doc = None;
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
             if jobs.is_empty() {
                 match rx.recv() {
                     Ok(c) => take(&mut jobs, c),
@@ -204,15 +264,19 @@ pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<
             }
             turn %= jobs.len();
             let generation = jobs[turn].0.doc_generation;
-            if doc.as_ref().is_none_or(|d| d.0 != generation) {
+            if doc.as_ref().is_none_or(|d| d.generation != generation) {
+                // The old one goes first: two would be open at once.
+                doc = None;
                 // Only the version the request was made on: another one means
                 // the request is stale (a reload follows with a new one).
                 let opened = snapshot
-                    .get()
-                    .filter(|s| s.0 == generation)
-                    .map(|(_, bytes)| pdf::open_bytes(&bytes).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))));
+                    .bytes(generation)
+                    .map(|bytes| pdf::open_bytes(&bytes).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))));
                 match opened {
-                    Some(Ok((d, b))) => doc = Some((generation, d, b)),
+                    Some(Ok((d, bounds))) => {
+                        snapshot.opened(generation);
+                        doc = Some(SearchDoc { generation, doc: d, bounds, snapshot: snapshot.clone() });
+                    }
                     Some(Err(e)) => {
                         events(DocEvent::SearchFailed(format!("{e:#}")));
                         jobs.remove(turn);
@@ -224,7 +288,7 @@ pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<
                     }
                 }
             }
-            let Some((_, doc, bounds)) = doc.as_ref() else { continue };
+            let Some(SearchDoc { doc, bounds, .. }) = doc.as_ref() else { continue };
             let n = bounds.len();
             let (cmd, done) = &mut jobs[turn];
             if *done >= n {
@@ -505,6 +569,53 @@ mod tests {
             }
         }
         assert!(done.get(&gens[0]).copied().unwrap_or(0) < pages, "replaced by its newer query");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn the_pdf_is_held_twice_at_most() {
+        use std::time::{Duration, Instant};
+        let (tx, rx) = mpsc::channel::<DocEvent>();
+        let sink = channel_sink(tx, |e| e);
+        let snapshot = Snapshot::default();
+        let doc = spawn_document(pdf::fixture("sample.pdf"), sink.clone(), snapshot.clone()).unwrap();
+        let wait = |what: &str, f: &dyn Fn(&DocEvent) -> bool| loop {
+            match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(e) if f(&e) => return e,
+                Ok(_) => {}
+                Err(_) => panic!("no {what}"),
+            }
+        };
+        let pages = match wait("open", &|e| matches!(e, DocEvent::Opened(_))) {
+            DocEvent::Opened(Ok(info)) => info.bounds.len(),
+            _ => panic!("not opened"),
+        };
+        assert!(snapshot.bytes(0).is_some(), "kept for a search");
+        let search = spawn_search(snapshot.clone(), sink).unwrap();
+        let search_all = |doc_generation| {
+            let cmd = SearchCmd { generation: 1, query: "the".into(), start_page: 0, doc_generation };
+            search.send(cmd).unwrap();
+            for _ in 0..pages {
+                wait("hits", &|e| matches!(e, DocEvent::SearchHits { .. }));
+            }
+        };
+        search_all(0);
+        // The search thread's MuPDF copy and the document thread's: no
+        // third in Rust.
+        assert!(snapshot.bytes(0).is_none(), "the bytes went once searched");
+        assert_eq!(snapshot.lock().search_docs, 1);
+        // A reload: the old version the search thread had goes.
+        doc.send(DocCmd::Reload).unwrap();
+        wait("reload", &|e| matches!(e, DocEvent::Reloaded(_)));
+        assert!(snapshot.bytes(1).is_some());
+        let deadline = Instant::now() + STALE_CHECK * 5;
+        while snapshot.lock().search_docs > 0 {
+            assert!(Instant::now() < deadline, "the old version is still open");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        search_all(1);
+        assert!(snapshot.bytes(1).is_none());
+        assert_eq!(snapshot.lock().search_docs, 1);
     }
 
     #[test]

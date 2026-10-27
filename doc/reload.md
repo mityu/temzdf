@@ -35,8 +35,12 @@ Skim (BSD-3, `SKFileUpdateChecker.m`, `SKMainDocument.m`,
    the file, those pages came from a mix of two versions ("found object X
    instead of Y", or another page after xref repair). The file is read whole
    and opened from memory (`pdf::open`): an open document never touches the
-   file again. It costs the PDF's size in memory, twice (the document thread
-   and the search thread each hold a MuPDF copy).
+   file again. It costs the PDF's size in memory, twice: the document
+   thread's MuPDF copy, and the bytes kept for the search thread until it
+   opens its own MuPDF copy from them (MuPDF copies the bytes it opens; the
+   `mupdf` crate cannot open a document on a shared buffer). An idle search
+   thread lets go of a version a reload replaced. While a reload opens the
+   new version, the old one is held as well.
 5. **Viewport.** Save page index + normalized (0..1) top-left of the viewport within
    that page + zoom + horizontal offset. Restore using the *new* page geometry so
    small page-size changes still land correctly. If the page count shrinks, clamp
