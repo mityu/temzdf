@@ -1474,7 +1474,9 @@ impl Session {
         } else {
             let own = tabs::FloatTab::Only(self.tab_id());
             let top = self.shown_floats().into_iter().rev().find(|f| f.tab == own).map(|f| f.pane);
-            let Some(layout) = self.layout.as_mut() else { return Outcome::Quit };
+            // No pane tiled here (should not be): this tab page goes, the
+            // session only with the last one.
+            let Some(layout) = self.layout.as_mut() else { return self.remove_tab(self.tab) };
             if layout.panes().len() <= 1 {
                 let Some(top) = top else { return self.remove_tab(self.tab) };
                 layout.replace(id, top);
@@ -2174,6 +2176,29 @@ mod tests {
         key(&mut s, "<C-b>");
         assert_eq!(key(&mut s, "d"), Outcome::Detach);
         assert_eq!(key(&mut s, "q"), Outcome::Quit, "quitting the last pane ends the session");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_tab_opened_while_the_configuration_loads_leaves_no_tab_page_empty() {
+        let (tx, _rx) = mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
+        s.shell = Some(vec!["/bin/sh".into()]);
+        // config.ts: cmd.newTab({ command: [...] }) at the top level.
+        new_tab(&mut s, &["sleep", "30"]);
+        // Then the session's first pane, once the configuration loaded.
+        s.script.first = Some((PaneSpec::Shell, None));
+        let _ = s.open_first();
+        assert_eq!(s.layouts().count(), s.tabs.len(), "every tab page has a pane");
+        assert_eq!(s.tab, 1, "the configuration's tab page stays current");
+        for n in 1..=s.tabs.len() {
+            cmd(&mut s, "goto-tab", &[&n.to_string()], None).unwrap();
+            assert!(!s.is_starting(), "tab page {n} shows something");
+            assert!(s.panes.contains_key(&s.focus), "tab page {n} has a focus");
+        }
     }
 
     #[test]

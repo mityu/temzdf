@@ -111,7 +111,7 @@ pub struct Bridge {
     /// Loading the configuration, until this time.
     loading: Option<Instant>,
     /// The first pane, created once the configuration has loaded.
-    first: Option<(PaneSpec, Option<PathBuf>)>,
+    pub(super) first: Option<(PaneSpec, Option<PathBuf>)>,
     frames: Vec<Frame>,
     next_call: CallId,
     tasks: HashSet<TaskId>,
@@ -628,10 +628,22 @@ impl Session {
     }
 
     /// Open the first pane (startup) once the configuration has loaded.
-    fn open_first(&mut self) -> Outcome {
+    pub(super) fn open_first(&mut self) -> Outcome {
         self.apply_overrides();
         if let Some((spec, cwd)) = self.script.first.take() {
-            if let Err(e) = self.new_pane(&spec, cwd.as_deref()) {
+            // The configuration may have opened tab pages (`newTab`): the
+            // first pane goes into the first one without a pane, which it
+            // left behind, and the configuration's tab page stays current.
+            let current = self.tab;
+            let empty = (0..self.tabs.len()).find(|&i| !self.layouts().any(|(t, _)| t == i));
+            if let Some(i) = empty {
+                self.enter_tab(i);
+            }
+            let opened = self.new_pane(&spec, cwd.as_deref());
+            if empty.is_some_and(|i| i != current) {
+                self.enter_tab(current);
+            }
+            if let Err(e) = opened {
                 if self.layout.is_none() && self.docs.is_empty() {
                     self.error = Some(format!("{e:#}"));
                     return Outcome::Quit;
