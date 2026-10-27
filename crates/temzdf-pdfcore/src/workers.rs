@@ -73,22 +73,30 @@ pub enum SynctexCmd {
 pub fn spawn_synctex(pdf: PathBuf, events: Sink) -> std::io::Result<Sender<SynctexCmd>> {
     let (tx, rx) = mpsc::channel::<SynctexCmd>();
     std::thread::Builder::new().name("temzdf-synctex".into()).spawn(move || {
-        let mut scanner: Option<Scanner> = None;
+        // The scanner, the SyncTeX file it read, and that file's stamp
+        // from before it was read.
+        let mut scanner: Option<(Scanner, PathBuf)> = None;
         let mut seen = None;
         for cmd in rx {
             if matches!(cmd, SynctexCmd::Reload) {
                 scanner = None;
                 continue;
             }
-            let stamp = synctex_stamp(&pdf);
-            if stamp != seen {
+            if scanner.as_ref().is_some_and(|(_, file)| stamp(file) != seen) {
                 scanner = None;
             }
             if scanner.is_none() {
-                scanner = Scanner::open(&pdf);
-                seen = stamp;
+                // Stamped first: a file rewritten while it is parsed is read
+                // again on the next query.
+                let before: Vec<_> = synctex_files(&pdf).into_iter().map(|f| (stamp(&f), f)).collect();
+                scanner = Scanner::open(&pdf).map(|s| {
+                    let file = s.file().unwrap_or_else(|| pdf.with_extension("synctex.gz"));
+                    (s, file)
+                });
+                seen = scanner.as_ref().and_then(|(_, file)| before.iter().find(|(_, f)| f == file)?.0);
             }
-            let Some(s) = scanner.as_mut() else {
+            let s = scanner.as_mut().map(|(s, _)| s);
+            let Some(s) = s else {
                 let name = pdf.with_extension("synctex.gz");
                 let msg = format!("no SyncTeX data ({} missing; compile with -synctex=1)", name.display());
                 if !events(DocEvent::SynctexFailed(msg)) {
@@ -119,13 +127,22 @@ pub fn spawn_synctex(pdf: PathBuf, events: Sink) -> std::io::Result<Sender<Synct
     Ok(tx)
 }
 
-/// The SyncTeX file next to `pdf` as it is now (modification time and size),
-/// to notice it changed.
-fn synctex_stamp(pdf: &Path) -> Option<(std::time::SystemTime, u64)> {
-    ["synctex.gz", "synctex"].iter().find_map(|ext| {
-        let m = std::fs::metadata(pdf.with_extension(ext)).ok()?;
-        Some((m.modified().ok()?, m.len()))
-    })
+/// Where the SyncTeX file of `pdf` can be (see [`Scanner::open`]): next to
+/// it, or to the real file when `pdf` is a symlink.
+fn synctex_files(pdf: &Path) -> Vec<PathBuf> {
+    let pdf = std::path::absolute(pdf).unwrap_or_else(|_| pdf.to_owned());
+    let real = std::fs::canonicalize(&pdf).ok().filter(|r| *r != pdf);
+    [Some(pdf), real]
+        .into_iter()
+        .flatten()
+        .flat_map(|p| ["synctex", "synctex.gz"].map(|ext| p.with_extension(ext)))
+        .collect()
+}
+
+/// A file as it is now (modification time and size), to notice it changed.
+fn stamp(file: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let m = std::fs::metadata(file).ok()?;
+    Some((m.modified().ok()?, m.len()))
 }
 
 /// The document's bytes as the document thread last opened them, with that
@@ -547,6 +564,36 @@ mod tests {
         // The file goes (a build without SyncTeX, or TeX about to write a new
         // one): the data read before is not used any more.
         std::fs::remove_file(pdf.with_extension("synctex.gz")).unwrap();
+        cmds.send(forward()).unwrap();
+        assert!(matches!(answer(), DocEvent::SynctexFailed(m) if m.contains("no SyncTeX data")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn synctex_data_follows_its_file_through_a_symlink() {
+        let dir = std::env::temp_dir().join(format!("temzdf-synctex-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("build")).unwrap();
+        let real = dir.join("build/sample.pdf");
+        std::fs::copy(pdf::fixture("sample.pdf"), &real).unwrap();
+        std::fs::copy(pdf::fixture("sample.pdf").with_extension("synctex.gz"), real.with_extension("synctex.gz"))
+            .unwrap();
+        let link = dir.join("link.pdf");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let (tx, rx) = mpsc::channel::<DocEvent>();
+        let cmds = spawn_synctex(link.clone(), channel_sink(tx, |e| e)).unwrap();
+        let forward = || SynctexCmd::Forward { file: "sample.tex".into(), line: 20, column: 0, page_hint: 0 };
+        let answer = || rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap();
+        cmds.send(forward()).unwrap();
+        assert!(matches!(answer(), DocEvent::ForwardResult(_)));
+        // The file read is one of those stamped (else it would be read
+        // again for every query).
+        for p in [&link, &real] {
+            let file = Scanner::open(p).unwrap().file().unwrap();
+            assert!(synctex_files(p).contains(&file), "{file:?}");
+        }
+        std::fs::remove_file(real.with_extension("synctex.gz")).unwrap();
         cmds.send(forward()).unwrap();
         assert!(matches!(answer(), DocEvent::SynctexFailed(m) if m.contains("no SyncTeX data")));
         std::fs::remove_dir_all(&dir).unwrap();

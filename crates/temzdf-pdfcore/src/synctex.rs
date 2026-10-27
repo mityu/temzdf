@@ -32,6 +32,7 @@ unsafe extern "C" {
     fn synctex_edit_query(scanner: synctex_scanner_p, page: c_int, h: f32, v: f32) -> c_long;
     fn synctex_scanner_next_result(scanner: synctex_scanner_p) -> synctex_node_p;
     fn synctex_scanner_get_name(scanner: synctex_scanner_p, tag: c_int) -> *const c_char;
+    fn synctex_scanner_get_synctex(scanner: synctex_scanner_p) -> *const c_char;
     fn synctex_node_page(node: synctex_node_p) -> c_int;
     fn synctex_node_box_visible_h(node: synctex_node_p) -> f32;
     fn synctex_node_box_visible_v(node: synctex_node_p) -> f32;
@@ -179,6 +180,20 @@ impl Scanner {
             break;
         }
         out
+    }
+
+    /// The SyncTeX file it read (which of `.synctex` and `.synctex.gz`, next
+    /// to the PDF or, opened through a symlink, to the real one).
+    pub fn file(&self) -> Option<PathBuf> {
+        use std::os::unix::ffi::OsStrExt;
+        // SAFETY: valid scanner; the name is owned by it and NUL-terminated.
+        let p = unsafe { synctex_scanner_get_synctex(self.ptr) };
+        if p.is_null() {
+            return None;
+        }
+        // SAFETY: as above.
+        let name = unsafe { CStr::from_ptr(p) }.to_bytes();
+        (!name.is_empty()).then(|| PathBuf::from(std::ffi::OsStr::from_bytes(name)))
     }
 
     /// Input file names recorded in the SyncTeX file (tags start at 1).
