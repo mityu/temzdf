@@ -292,16 +292,19 @@ mod tests {
         let backlog = Arc::new(Backlog::default());
         let stop = Arc::new(AtomicBool::new(false));
         backlog.reserve(OUTPUT_LIMIT + 1, &stop);
-        let (b, s) = (backlog.clone(), stop.clone());
+        // Whether the session caught up, set just before it does: the reader
+        // must see it once let go (an order, not a time, so a slow thread
+        // start under Miri cannot fail it).
+        let caught_up = Arc::new(AtomicBool::new(false));
+        let (b, s, c) = (backlog.clone(), stop.clone(), caught_up.clone());
         let waiting = std::thread::spawn(move || {
-            let t = std::time::Instant::now();
             b.reserve(10, &s);
-            t.elapsed()
+            c.load(Ordering::SeqCst)
         });
         std::thread::sleep(Duration::from_millis(100));
+        caught_up.store(true, Ordering::SeqCst);
         backlog.consumed(OUTPUT_LIMIT);
-        let waited = waiting.join().unwrap();
-        assert!(waited >= Duration::from_millis(90), "{waited:?}");
+        assert!(waiting.join().unwrap(), "the reader went on while the session was behind");
         // Stopping lets a waiting reader go at once.
         backlog.reserve(OUTPUT_LIMIT, &stop);
         stop.store(true, Ordering::SeqCst);
