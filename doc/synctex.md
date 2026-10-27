@@ -11,7 +11,7 @@ temzdf --forward LINE[:COLUMN]:FILE doc.pdf
 
 If a viewer or a session's pane already has `doc.pdf` open, the request goes to it over a Unix
 socket (`$XDG_RUNTIME_DIR/temzdf/<hash>.sock`; on macOS under the per-user
-`/var/folders/.../T/`; see `crates/temzdf/src/ipc.rs`)
+`/var/folders/.../T/`; see `crates/temzdf-server/src/forward.rs`)
 and the command exits immediately. The viewer scrolls to the matching place
 (unless it is already comfortably visible) and highlights it in red for 1.5 s.
 Otherwise `temzdf` starts a new session showing `doc.pdf` (named as `temzdf

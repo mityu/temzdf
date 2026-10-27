@@ -1213,3 +1213,19 @@ fn closing_a_tab_page_runs_the_close_hooks_of_its_panes() {
     assert_eq!(lines.matches("closing ").count(), 2, "{lines}");
     assert!(env.run(&["ls"]).contains("tc  (1 panes"), "the tab page went");
 }
+
+#[test]
+fn options_a_command_does_not_use_are_named() {
+    let env = Env::new("unused-opts");
+    let out = Command::new(BIN).args(["ls", "--clean"]).envs(env.vars()).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--clean is not used by list-sessions"), "{out:?}");
+    let png = env.path("x.png").display().to_string();
+    let pdf = fixture("sample.pdf").display().to_string();
+    let args = ["standalone", "pdf", &pdf, "--render-frame", &png, "--forward", "1:x.tex", "--clean"];
+    let out = Command::new(BIN).args(args).envs(env.vars()).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--forward is not used by --render-frame"), "{err}");
+    assert!(err.contains("--clean is not used by --render-frame"), "{err}");
+}

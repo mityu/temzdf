@@ -223,7 +223,7 @@ pub fn resolve(name: Option<&str>) -> Result<String> {
     let sessions = proto::discovery::list()?;
     match sessions.as_slice() {
         [one] => Ok(one.name.clone()),
-        [] => bail!("no sessions (start one with `temzdf -s NAME FILE`)"),
+        [] => bail!("no sessions (start one with `temzdf [FILE]`)"),
         many => {
             bail!("several sessions, name one: {}", many.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "))
         }

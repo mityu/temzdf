@@ -163,7 +163,8 @@ enum Cmd {
     /// Print TypeScript declarations of the scripting API (temzdf.d.ts).
     #[command(hide = true)]
     PrintTypes,
-    /// Run a session server (started by `temzdf -s`).
+    /// Run a session server (started when `temzdf`, `attach -c` or
+    /// `--forward` starts a session).
     #[command(hide = true)]
     Server {
         name: String,
@@ -189,16 +190,42 @@ fn session_only_options(cli: &Cli, file: bool) -> Vec<&'static str> {
         .collect()
 }
 
+/// Say which given options `by` (a command) does not use: they are global
+/// in clap, so nothing refuses them.
+fn warn_unused(options: &[&str], by: &str) {
+    for o in options {
+        eprintln!("temzdf: {o} is not used by {by}");
+    }
+}
+
 fn main() -> Result<()> {
     let mut cli = Cli::parse();
     // Flags for starting a session, for warnings when it exists already.
     let start_flags = session_only_options(&cli, false);
     match cli.command.take() {
-        Some(Cmd::Standalone { kind: Standalone::Pdf(args) }) => return standalone_pdf(args, &cli),
-        Some(Cmd::ListSessions { verbose }) => return client::list_sessions(verbose),
-        Some(Cmd::KillSession { name }) => return client::kill_session(&name),
-        Some(Cmd::KillAllSessions) => return client::kill_all_sessions(),
+        Some(Cmd::Standalone { kind: Standalone::Pdf(args) }) => {
+            // A frame is drawn with the shipped configuration, and no
+            // viewer runs to search.
+            if args.render_frame.is_some() {
+                let forward = args.forward.is_some().then_some("--forward");
+                warn_unused(&start_flags.iter().copied().chain(forward).collect::<Vec<_>>(), "--render-frame");
+            }
+            return standalone_pdf(args, &cli);
+        }
+        Some(Cmd::ListSessions { verbose }) => {
+            warn_unused(&start_flags, "list-sessions");
+            return client::list_sessions(verbose);
+        }
+        Some(Cmd::KillSession { name }) => {
+            warn_unused(&start_flags, "kill-session");
+            return client::kill_session(&name);
+        }
+        Some(Cmd::KillAllSessions) => {
+            warn_unused(&start_flags, "kill-all-sessions");
+            return client::kill_all_sessions();
+        }
         Some(Cmd::Action { session, timeout, action }) => {
+            warn_unused(&start_flags, "action");
             let timeout = std::time::Duration::try_from_secs_f64(timeout.max(0.001))
                 .map_err(|_| anyhow::anyhow!("--timeout {timeout}: not a number of seconds"))?;
             // In a session's pane, that session (as zellij does).
@@ -240,6 +267,9 @@ fn main() -> Result<()> {
                 bail!("a FILE is for a new session: attach -c NAME FILE");
             }
             let exists = |n: &str| temzdf_server::daemon::list().is_ok_and(|l| l.iter().any(|s| s.name == n));
+            if name.is_none() {
+                warn_unused(&start_flags, "attach without a NAME (it starts nothing)");
+            }
             if let Some(n) = &name
                 && exists(n)
             {
