@@ -1032,6 +1032,20 @@ impl Session {
                             self.error = Some(e);
                             return Outcome::Quit;
                         }
+                        // The first pane failed but floats opened meanwhile
+                        // (the configuration): the top one is tiled, or the
+                        // session would wait for a first pane forever.
+                        let opening = self.docs.values().any(|d| !d.waiting.is_empty());
+                        if self.layout.is_none()
+                            && !opening
+                            && let Some(top) = self.floats.last().map(|f| f.pane)
+                        {
+                            self.floats.retain(|f| f.pane != top);
+                            self.layout = Some(Layout::new(top));
+                            self.tiled_focus = top;
+                            self.set_focus(top);
+                            self.relayout();
+                        }
                         self.message(&format!("{name}: {e}"));
                     }
                 }
@@ -2745,6 +2759,31 @@ mod tests {
         let opts = ScriptValue::map(opts.iter().cloned());
         let (pane, _) = s.run_command("open-float", &[what, opts], None, Instant::now()).unwrap();
         pane.as_num().expect("a pane") as PaneId
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_float_opened_while_the_first_document_fails_leaves_a_session_that_shows() {
+        let (tx, rx) = mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
+        // The configuration opens a float; then the first pane's PDF fails.
+        let f = float(&mut s, &["sleep", "30"], &[]);
+        let bad = std::env::temp_dir().join(format!("temzdf-bad-{}.pdf", std::process::id()));
+        std::fs::write(&bad, "not a PDF").unwrap();
+        s.open(&bad).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !s.docs.is_empty() {
+            assert!(Instant::now() < deadline, "the document never failed");
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(100)) {
+                s.handle(ev, Instant::now());
+            }
+        }
+        std::fs::remove_file(&bad).unwrap();
+        assert!(!s.is_starting(), "frames are made again");
+        assert!(s.layout.as_ref().is_some_and(|l| l.panes() == [f]), "the float is the tiled pane");
     }
 
     #[test]
