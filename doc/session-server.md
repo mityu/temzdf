@@ -74,8 +74,10 @@ What exists:
   0.14 s in a pane, `tests/e2e/terminal.actions`).
 - Clients: the latest to attach or use it (keys, clicks, scrolling, paste;
   not the pointer merely passing over it, which terminals report even when
-  unfocused, and which is ignored from other clients) sets the session's
-  size and frontend hints; frames are paced per client by acknowledgements, image changes are
+  unfocused, and which is ignored from other clients; not resizing its
+  window either, which window managers do in the background) sets the
+  session's size and frontend hints. Programs are told they have the focus
+  while any attached client's window has it; frames are paced per client by acknowledgements, image changes are
   queued per client (latest wins), late attachers get a snapshot; effects
   (copy, opening links, inverse search) run in the latest client.
 

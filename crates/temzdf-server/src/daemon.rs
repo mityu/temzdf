@@ -49,6 +49,8 @@ struct Client {
     /// whenever it becomes the latest client.
     geometry: Option<Geometry>,
     hints: Option<Hints>,
+    /// Whether its window has the focus, once it said so.
+    focused: Option<bool>,
 }
 
 impl Client {
@@ -86,6 +88,8 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     let mut clients: HashMap<ClientId, Client> = HashMap::new();
     let mut next_client: ClientId = 1;
     let mut latest: Option<ClientId> = None;
+    // What the programs were told last about the clients' focus.
+    let mut told_focus: Option<bool> = None;
     let mut last_frame: Option<(u64, Frame, bool)> = None;
     // How GUI clients look, as last sent.
     let mut looks = session.appearance();
@@ -200,6 +204,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                         shown: 0,
                         geometry: None,
                         hints: None,
+                        focused: None,
                     },
                 );
             }
@@ -243,16 +248,12 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     dirty |= become_latest(&mut session, &mut latest, &clients, id);
                     outcome = session.text(&text, Instant::now());
                 }
-                ClientMsg::Focus(gained) => outcome = session.client_focus(gained),
-                ClientMsg::Resize(g) => {
-                    if let Some(c) = clients.get_mut(&id)
-                        && let Some(g) = usable(g)
-                    {
-                        c.geometry = Some(g);
+                ClientMsg::Focus(gained) => {
+                    if let Some(c) = clients.get_mut(&id) {
+                        c.focused = Some(gained);
                     }
-                    become_latest(&mut session, &mut latest, &clients, id);
-                    dirty = true;
                 }
+                ClientMsg::Resize(g) => dirty |= resized(&mut session, latest, &mut clients, id, g),
                 ClientMsg::FrameAck(_) => {
                     if let Some(c) = clients.get_mut(&id) {
                         c.awaiting = false;
@@ -311,6 +312,10 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         outcome = outcome.merge(session.poll(Instant::now()));
         // The latest client left (went, detached): another takes over.
         dirty |= hand_over(&mut session, &mut latest, &clients);
+        // Programs are told about focus as the clients together have it.
+        if let Some(gained) = focus_change(&clients, &mut told_focus) {
+            outcome = outcome.merge(session.client_focus(gained));
+        }
         match outcome {
             Outcome::Quit => {
                 // The first pane could not open: the clients say why.
@@ -429,6 +434,45 @@ fn become_latest(
     }
     *latest = Some(id);
     changed
+}
+
+/// Client `id`'s window changed size: kept for when it is the latest, and
+/// applied now if it is. Resizing is no use of a client (a tiling window
+/// manager resizes windows in the background): it does not make it the
+/// latest. Returns whether anything changed.
+fn resized(
+    session: &mut Session,
+    latest: Option<ClientId>,
+    clients: &mut HashMap<ClientId, Client>,
+    id: ClientId,
+    g: Geometry,
+) -> bool {
+    let Some(c) = clients.get_mut(&id) else { return false };
+    let Some(g) = usable(g) else { return false };
+    c.geometry = Some(g);
+    if latest != Some(id) || !c.attached || g == session.geometry() {
+        return false;
+    }
+    session.resize(g);
+    true
+}
+
+/// The focus the programs should be told about, when it changed since
+/// `told`: gained while any attached client's window has the focus, lost
+/// when none has. Several windows switching the focus report it over
+/// separate connections in no fixed order, so one client losing it says
+/// nothing alone. Nothing while no client said either.
+fn focus_change(clients: &HashMap<ClientId, Client>, told: &mut Option<bool>) -> Option<bool> {
+    let reported = clients.values().filter(|c| c.attached).filter_map(|c| c.focused);
+    let mut any = None;
+    for f in reported {
+        any = Some(any.unwrap_or(false) || f);
+    }
+    let now = any?;
+    (*told != Some(now)).then(|| {
+        *told = Some(now);
+        now
+    })
 }
 
 /// Whether a mouse event from client `id` is only the pointer passing over
@@ -662,6 +706,7 @@ mod tests {
             shown: 0,
             geometry: None,
             hints: None,
+            focused: None,
         };
         let clients = HashMap::from([(1, client)]);
         let now = Instant::now();
@@ -720,6 +765,7 @@ mod tests {
             shown: 0,
             geometry: Some(Geometry { cols, rows, ..DEFAULT_GEOMETRY }),
             hints: Some(Hints::default()),
+            focused: None,
         };
         let mut clients = HashMap::from([(1, client(80, 24)), (2, client(200, 60))]);
         let mut latest = None;
@@ -734,6 +780,71 @@ mod tests {
         clients.remove(&1);
         assert!(!hand_over(&mut session, &mut latest, &clients));
         assert_eq!(latest, None, "nobody to send effects to");
+    }
+
+    #[test]
+    fn resizing_a_client_does_not_make_it_the_latest() {
+        let sink: EventSink = Arc::new(|_| true);
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut session = Session::new("t".into(), DEFAULT_GEOMETRY, Hints::default(), settings, sink);
+        let client = |cols| Client {
+            tx: mpsc::channel().0,
+            attached: true,
+            pending: HashMap::new(),
+            awaiting: false,
+            shown: 0,
+            geometry: Some(Geometry { cols, ..DEFAULT_GEOMETRY }),
+            hints: Some(Hints::default()),
+            focused: None,
+        };
+        let mut clients = HashMap::from([(1, client(80)), (2, client(100))]);
+        let mut latest = None;
+        become_latest(&mut session, &mut latest, &clients, 1);
+        // A background window resized: kept for later, the session keeps
+        // the latest client's size.
+        assert!(!resized(&mut session, latest, &mut clients, 2, Geometry { cols: 120, ..DEFAULT_GEOMETRY }));
+        assert_eq!((latest, session.geometry().cols), (Some(1), 80));
+        // The latest client resized: the session follows.
+        assert!(resized(&mut session, latest, &mut clients, 1, Geometry { cols: 90, ..DEFAULT_GEOMETRY }));
+        assert_eq!(session.geometry().cols, 90);
+        // An empty size changes nothing.
+        assert!(!resized(&mut session, latest, &mut clients, 1, Geometry { cols: 0, ..DEFAULT_GEOMETRY }));
+        assert_eq!(session.geometry().cols, 90);
+        // Using the other one later brings its new size.
+        become_latest(&mut session, &mut latest, &clients, 2);
+        assert_eq!(session.geometry().cols, 120);
+    }
+
+    #[test]
+    fn programs_have_the_focus_while_any_client_has_it() {
+        let client = |attached, focused| Client {
+            tx: mpsc::channel().0,
+            attached,
+            pending: HashMap::new(),
+            awaiting: false,
+            shown: 0,
+            geometry: None,
+            hints: None,
+            focused,
+        };
+        let mut told = None;
+        let mut clients = HashMap::from([(1, client(true, None)), (2, client(false, Some(true)))]);
+        assert_eq!(focus_change(&clients, &mut told), None, "no attached client said");
+        clients.get_mut(&1).unwrap().focused = Some(true);
+        assert_eq!(focus_change(&clients, &mut told), Some(true));
+        assert_eq!(focus_change(&clients, &mut told), None, "told already");
+        // Switching windows: the new one gains it before the old one loses
+        // it, or after; either way the programs keep the focus.
+        clients.insert(3, client(true, Some(true)));
+        clients.get_mut(&1).unwrap().focused = Some(false);
+        assert_eq!(focus_change(&clients, &mut told), None);
+        clients.get_mut(&3).unwrap().focused = Some(false);
+        assert_eq!(focus_change(&clients, &mut told), Some(false), "none has it");
+        clients.get_mut(&1).unwrap().focused = Some(true);
+        assert_eq!(focus_change(&clients, &mut told), Some(true));
+        // The focused client goes.
+        clients.remove(&1);
+        assert_eq!(focus_change(&clients, &mut told), Some(false));
     }
 
     #[test]
