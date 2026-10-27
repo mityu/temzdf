@@ -276,8 +276,9 @@ pub fn preedit(list: &mut DrawList, text: &str, at: (u16, u16), grid: Grid, colo
         return;
     }
     let (fg, bg) = (colors.background, colors.foreground);
-    for c in text.chars() {
-        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).clamp(1, 2) as u16;
+    // A cell per character as seen (a combining mark goes with its base).
+    for c in unicode_segmentation::UnicodeSegmentation::graphemes(text, true) {
+        let w = unicode_width::UnicodeWidthStr::width(c).clamp(1, 2) as u16;
         if col + w > grid.cols {
             break;
         }
@@ -288,7 +289,7 @@ pub fn preedit(list: &mut DrawList, text: &str, at: (u16, u16), grid: Grid, colo
         list.over_glyphs.push(Glyph {
             col,
             row,
-            text: c.to_string(),
+            text: c.to_owned(),
             width: w as u8,
             color: fg,
             bold: false,
@@ -315,6 +316,19 @@ mod tests {
 
     fn layer(image: ImageKey, z: i32) -> Layer {
         Layer { key: 0, image, src: Rect::new(0, 0, 1, 1), dst: Rect::new(0, 0, 10, 10), z }
+    }
+
+    #[test]
+    fn a_preedit_takes_a_cell_per_character_as_seen() {
+        let colors = Colors::default();
+        let frame = Frame { cursor: Some((0, 0)), ..Frame::default() };
+        let mut list = build(&frame, GRID, &colors);
+        // e with a combining acute accent, a kana with a combining mark,
+        // then a wide character.
+        preedit(&mut list, "e\u{301}か\u{3099}数", (0, 0), GRID, &colors);
+        let glyphs: Vec<_> = list.over_glyphs.iter().map(|g| (g.col, g.text.as_str(), g.width)).collect();
+        assert_eq!(glyphs, [(0, "e\u{301}", 1), (1, "か\u{3099}", 2), (3, "数", 2)]);
+        assert_eq!(list.cursor.unwrap().rect.x, 5 * GRID.cell_w as i32, "after them");
     }
 
     #[test]

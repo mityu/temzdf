@@ -3832,6 +3832,7 @@ dependencies = [
  "temzdf-scene",
  "termpix-core",
  "unicode-script",
+ "unicode-segmentation",
  "unicode-width",
  "wgpu",
  "winit",
