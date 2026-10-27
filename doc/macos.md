@@ -23,6 +23,11 @@ works.
 - Links open with `open` instead of `xdg-open` (`config.rs`).
 - Auto-reload: notify uses FSEvents. Opening the PDF through a symlinked path
   (`/tmp` -> `/private/tmp`) still reloads, since events are matched by name.
+- GUI: while the window is fully covered, minimised or on another Space, wgpu
+  hands out no surface texture (`Occluded`), so nothing is drawn. Frames are
+  then acknowledged undrawn (`Acks` in `crates/temzdf-gui/src/app.rs`) and
+  the window redraws when `WindowEvent::Occluded(false)` comes: waiting for
+  the draw stopped the session's frames to the window until it was resized.
 
 ## Checklist and results
 

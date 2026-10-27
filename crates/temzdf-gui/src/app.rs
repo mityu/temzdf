@@ -32,13 +32,43 @@ struct Gpu {
     geometry: Geometry,
 }
 
+/// When frames are acknowledged: once drawn, or at once while the window
+/// cannot show them (macOS: covered, minimised, on another Space; wgpu then
+/// has no surface texture). The session sends the next frame only after the
+/// acknowledgement, so a frame left waiting for a draw that never comes stops
+/// the window for good.
+#[derive(Default)]
+struct Acks {
+    /// The frame received last and not acknowledged yet.
+    pending: Option<u64>,
+    hidden: bool,
+}
+
+impl Acks {
+    /// Frame `seq` came; returns it if it is to be acknowledged now.
+    fn arrived(&mut self, seq: u64) -> Option<u64> {
+        self.pending = Some(seq);
+        if self.hidden { self.pending.take() } else { None }
+    }
+
+    /// A redraw ran, whether it could draw or not.
+    fn redrawn(&mut self) -> Option<u64> {
+        self.pending.take()
+    }
+
+    /// The window was hidden or shown again; returns a frame to acknowledge.
+    fn set_hidden(&mut self, hidden: bool) -> Option<u64> {
+        self.hidden = hidden;
+        if hidden { self.pending.take() } else { None }
+    }
+}
+
 pub struct App {
     name: String,
     conn: Connection,
     rx: Receiver<FromServer>,
     gpu: Option<Gpu>,
-    /// The frame drawn last and not acknowledged yet.
-    unacked: Option<u64>,
+    acks: Acks,
     pointer: Pointer,
     /// Why the window closes, for the message after.
     ended: std::sync::Arc<std::sync::Mutex<Option<String>>>,
@@ -121,8 +151,9 @@ impl App {
             match g.view.apply(msg) {
                 Applied::Frame(seq, _) => {
                     // Drawn when the window is ready; acknowledged after.
-                    self.unacked = Some(seq);
                     g.window.request_redraw();
+                    let ack = self.acks.arrived(seq);
+                    self.ack(ack);
                 }
                 Applied::Appearance { resized } => {
                     g.window.request_redraw();
@@ -167,6 +198,12 @@ impl App {
         }
     }
 
+    fn ack(&mut self, seq: Option<u64>) {
+        if let Some(seq) = seq {
+            self.send(ClientMsg::FrameAck(seq));
+        }
+    }
+
     fn redraw(&mut self) {
         let Some(g) = &mut self.gpu else { return };
         let texture = match g.surface.get_current_texture() {
@@ -176,7 +213,11 @@ impl App {
                 g.window.request_redraw();
                 return;
             }
-            _ => return,
+            // Occluded (before the window says so), a timeout: skipped.
+            _ => {
+                let ack = self.acks.redrawn();
+                return self.ack(ack);
+            }
         };
         let target = texture.texture.create_view(&Default::default());
         let mut list = g.view.draw_list(g.geometry);
@@ -202,9 +243,8 @@ impl App {
             }
             self.input.set_cursor_cell(f.cursor, g.geometry, g.window.as_ref());
         }
-        if let Some(seq) = self.unacked.take() {
-            self.send(ClientMsg::FrameAck(seq));
-        }
+        let ack = self.acks.redrawn();
+        self.ack(ack);
     }
 }
 
@@ -259,6 +299,14 @@ impl ApplicationHandler for App {
                 self.refit();
             }
             WindowEvent::RedrawRequested => self.redraw(),
+            WindowEvent::Occluded(hidden) => {
+                let ack = self.acks.set_hidden(hidden);
+                self.ack(ack);
+                // The frames that came meanwhile were not drawn.
+                if let (false, Some(g)) = (hidden, &self.gpu) {
+                    g.window.request_redraw();
+                }
+            }
             other => {
                 let Some(g) = &self.gpu else { return };
                 let msgs = self.input.window_event(&other, g.geometry, g.window.as_ref());
@@ -279,8 +327,39 @@ pub fn run(name: String) -> Result<String> {
     let input = crate::input::Input::new();
     // The event loop owns the app; the closing message comes back here.
     let ended = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let app = App { name, conn, rx, gpu: None, unacked: None, pointer: Pointer::Default, ended: ended.clone(), input };
+    let app = App {
+        name,
+        conn,
+        rx,
+        gpu: None,
+        acks: Acks::default(),
+        pointer: Pointer::Default,
+        ended: ended.clone(),
+        input,
+    };
     event_loop.run_app(app)?;
     let line = ended.lock().unwrap_or_else(|p| p.into_inner()).take();
     Ok(line.unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Acks;
+
+    #[test]
+    fn frames_are_acknowledged_once_drawn_or_at_once_while_hidden() {
+        let mut acks = Acks::default();
+        assert_eq!(acks.arrived(1), None, "a shown window draws first");
+        assert_eq!(acks.redrawn(), Some(1));
+        assert_eq!(acks.redrawn(), None, "acknowledged once");
+        // Hidden with a frame waiting for its draw: it is let go.
+        assert_eq!(acks.arrived(2), None);
+        assert_eq!(acks.set_hidden(true), Some(2));
+        // Hidden: no draw comes, the session must not wait for one.
+        assert_eq!(acks.arrived(3), Some(3));
+        assert_eq!(acks.arrived(4), Some(4));
+        assert_eq!(acks.set_hidden(false), None);
+        assert_eq!(acks.arrived(5), None);
+        assert_eq!(acks.redrawn(), Some(5));
+    }
 }
