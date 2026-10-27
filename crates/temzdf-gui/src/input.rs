@@ -220,12 +220,13 @@ pub fn scroll(delta: MouseScrollDelta, source: ScrollSource) -> MouseEventKind {
 pub struct Input {
     mods: Modifiers,
     left_side: bool,
-    /// The button held (drags carry it).
-    held: Option<MouseButton>,
+    /// The buttons held, in the order pressed (drags carry the last).
+    held: Vec<MouseButton>,
     pointer: (i32, i32),
-    /// Text the input method is composing, and where the cursor was.
+    /// Text the input method is composing, and where the cursor was (its
+    /// cell, and the cell size: the candidate window goes there).
     pub preedit: String,
-    ime_cell: Option<(u16, u16)>,
+    ime_cell: Option<((u16, u16), termpix_core::geom::CellSize)>,
     clipboard: Option<arboard::Clipboard>,
 }
 
@@ -245,7 +246,7 @@ impl Input {
         Self {
             mods: Modifiers::NONE,
             left_side: true,
-            held: None,
+            held: Vec::new(),
             pointer: (0, 0),
             preedit: String::new(),
             ime_cell: None,
@@ -277,10 +278,9 @@ impl Input {
 
     /// Put the input method's window at the text cursor's cell.
     pub fn set_cursor_cell(&mut self, cell: Option<(u16, u16)>, g: Geometry, window: &dyn Window) {
-        if cell == self.ime_cell {
+        if !self.ime_moved(cell, g) {
             return;
         }
-        self.ime_cell = cell;
         if let Some((col, row)) = cell {
             let (w, h) = (g.cell.width, g.cell.height);
             let mut data = ImeRequestData::default();
@@ -288,6 +288,33 @@ impl Input {
                 Some((PhysicalPosition::new(col as u32 * w, row as u32 * h).into(), PhysicalSize::new(w, h).into()));
             let _ = window.request_ime_update(ImeRequest::Update(data));
         }
+    }
+
+    /// Whether the cursor's cell moved on the window: another cell, or the
+    /// same at another cell size (font size, scale).
+    fn ime_moved(&mut self, cell: Option<(u16, u16)>, g: Geometry) -> bool {
+        let at = cell.map(|c| (c, g.cell));
+        if at == self.ime_cell {
+            return false;
+        }
+        self.ime_cell = at;
+        true
+    }
+
+    /// A button went down or up.
+    fn button(&mut self, b: MouseButton, pressed: bool) -> MouseEventKind {
+        self.held.retain(|h| *h != b);
+        if pressed {
+            self.held.push(b);
+            MouseEventKind::Press(b)
+        } else {
+            MouseEventKind::Release(b)
+        }
+    }
+
+    /// The pointer moved: a drag while a button is held.
+    fn moved(&self) -> MouseEventKind {
+        self.held.last().map_or(MouseEventKind::Move, |b| MouseEventKind::Drag(*b))
     }
 
     fn mouse(&self, kind: MouseEventKind) -> ClientMsg {
@@ -362,11 +389,7 @@ impl Input {
             }
             WindowEvent::PointerMoved { position, .. } => {
                 self.pointer = (position.x as i32, position.y as i32);
-                let kind = match self.held {
-                    Some(b) => MouseEventKind::Drag(b),
-                    None => MouseEventKind::Move,
-                };
-                vec![self.mouse(kind)]
+                vec![self.mouse(self.moved())]
             }
             WindowEvent::PointerLeft { .. } => vec![self.mouse(MouseEventKind::Leave)],
             WindowEvent::PointerButton { state, button: ButtonSource::Mouse(b), position, .. } => {
@@ -380,13 +403,7 @@ impl Input {
                     W::Forward => MouseButton::Other(9),
                     _ => return Vec::new(),
                 };
-                let kind = if *state == ElementState::Pressed {
-                    self.held = Some(b);
-                    MouseEventKind::Press(b)
-                } else {
-                    self.held = None;
-                    MouseEventKind::Release(b)
-                };
+                let kind = self.button(b, *state == ElementState::Pressed);
                 vec![self.mouse(kind)]
             }
             WindowEvent::MouseWheel { delta, source, .. } => vec![self.mouse(scroll(*delta, *source))],
@@ -447,6 +464,31 @@ mod tests {
             base: None,
         });
         assert_eq!(up.unwrap().kind, KeyEventKind::Release);
+    }
+
+    #[test]
+    fn drags_carry_a_button_still_held() {
+        let mut input = Input::without_clipboard();
+        assert_eq!(input.moved(), MouseEventKind::Move);
+        input.button(MouseButton::Left, true);
+        input.button(MouseButton::Right, true);
+        assert_eq!(input.moved(), MouseEventKind::Drag(MouseButton::Right));
+        // The first one let go: the other is still held.
+        assert_eq!(input.button(MouseButton::Left, false), MouseEventKind::Release(MouseButton::Left));
+        assert_eq!(input.moved(), MouseEventKind::Drag(MouseButton::Right));
+        input.button(MouseButton::Right, false);
+        assert_eq!(input.moved(), MouseEventKind::Move);
+    }
+
+    #[test]
+    fn the_candidate_window_follows_the_cell_size() {
+        use termpix_core::geom::CellSize;
+        let mut input = Input::without_clipboard();
+        let g = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
+        assert!(input.ime_moved(Some((3, 4)), g));
+        assert!(!input.ime_moved(Some((3, 4)), g), "nothing moved");
+        let larger = Geometry { cell: CellSize { width: 12, height: 24 }, ..g };
+        assert!(input.ime_moved(Some((3, 4)), larger), "the same cell, larger");
     }
 
     #[test]
