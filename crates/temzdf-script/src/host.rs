@@ -110,6 +110,8 @@ pub fn run_with_limit(
         funcs: RefCell::new(Vec::new()),
         timers: RefCell::new(BTreeMap::new()),
         tokens: RefCell::new(Vec::new()),
+        open_atomic: RefCell::new(Vec::new()),
+        running_tasks: RefCell::new(std::collections::BTreeSet::new()),
         commands: RefCell::new(Vec::new()),
         gone: Cell::new(false),
     });
@@ -158,6 +160,11 @@ struct State {
     timers: RefCell<BTreeMap<(Instant, u64), Persistent<Function<'static>>>>,
     /// The synchronous calls running, innermost last.
     tokens: RefCell<Vec<Token>>,
+    /// Atomic sections begun and not ended, innermost last, and the
+    /// dispatched tasks not done: an interrupt skips `finally` and promise
+    /// handlers (QuickJS: uncatchable), so they are closed from here.
+    open_atomic: RefCell<Vec<Token>>,
+    running_tasks: RefCell<std::collections::BTreeSet<TaskId>>,
     commands: RefCell<Vec<CommandSpec>>,
     /// The session went away.
     gone: Cell<bool>,
@@ -205,6 +212,7 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
         Function::new(ctx.clone(), move || {
             let task = s.next_task.get();
             s.next_task.set(task + 1);
+            s.running_tasks.borrow_mut().insert(task);
             s.send(&FromHost::TaskStart(task));
             task as f64
         })?,
@@ -220,7 +228,10 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
             if let Err(e) = &result {
                 eprintln!("temzdf script: a dispatched task failed: {e}");
             }
-            s.send(&FromHost::TaskDone { task: task as TaskId, result });
+            // Reported already if an interrupt cut it off (close_cut_off).
+            if s.running_tasks.borrow_mut().remove(&(task as TaskId)) {
+                s.send(&FromHost::TaskDone { task: task as TaskId, result });
+            }
         })?,
     )?;
     for (name, begin) in [("atomicBegin", true), ("atomicEnd", false)] {
@@ -231,6 +242,16 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
                 let Ok(token) = serde_json::from_str::<Token>(&token) else {
                     return Err(Exception::throw_message(&ctx, "atomic: bad token"));
                 };
+                let mut open = s.open_atomic.borrow_mut();
+                if begin {
+                    open.push(token);
+                } else if let Some(i) = open.iter().rposition(|t| *t == token) {
+                    open.remove(i);
+                } else {
+                    // Ended already (close_cut_off).
+                    return Ok(());
+                }
+                drop(open);
                 s.send(&if begin { FromHost::AtomicBegin(token) } else { FromHost::AtomicEnd(token) });
                 Ok(())
             })?,
@@ -479,7 +500,27 @@ impl State {
         if self.tokens.borrow().is_empty() && self.interrupt.swap(false, Ordering::SeqCst) {
             self.used_interrupts.set(self.used_interrupts.get() + 1);
         }
+        self.close_cut_off();
         r
+    }
+
+    /// Atomic sections are synchronous: one still open when no code runs was
+    /// cut off by an interrupt, which skipped its `finally` and its task's
+    /// rejection handler. End it, and its task.
+    fn close_cut_off(&self) {
+        if !self.tokens.borrow().is_empty() {
+            return;
+        }
+        let open: Vec<Token> = self.open_atomic.borrow_mut().drain(..).rev().collect();
+        for token in open {
+            self.send(&FromHost::AtomicEnd(token));
+            if let Token::Task(t) = token
+                && self.running_tasks.borrow_mut().remove(&t)
+            {
+                let result = Err(ScriptError::new("interrupted".to_owned()));
+                self.send(&FromHost::TaskDone { task: t, result });
+            }
+        }
     }
 
     /// An interrupt message arrived: true if it was used up already (it

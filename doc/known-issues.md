@@ -48,10 +48,14 @@ planned work stays in `todo.md`.
 
 - **An interrupted task may not report that it ended (part of SCR-4).** When
   the host interrupts a script (past `UNATTENDED_LIMIT`, or on the session's
-  interrupt), an async task cut off mid-way may never send `taskDone`. Not
-  reproduced. The cost is small: the session keeps that task's id in
-  `script.tasks` (`crates/temzdf-server/src/session/script.rs`) until the
-  host is dropped, and nothing waits on it.
+  interrupt), QuickJS's interrupt is uncatchable: `finally` blocks and promise
+  handlers are skipped, so an async task cut off mid-way never sends
+  `taskDone` itself. Inside `atomic` this used to wedge the session (all input
+  held, SCR-N1); now the host closes an atomic section left open once no code
+  runs (`close_cut_off` in `crates/temzdf-script/src/host.rs`) and ends its
+  task, and the session lets a task's section go on `<C-c>` and on its
+  `taskDone`. A task cut off outside `atomic` still stays in `script.tasks`
+  until the host is dropped; nothing waits on it.
 
 ## Dependencies
 

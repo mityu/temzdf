@@ -467,3 +467,51 @@ map("normal", "w", () => {
     }
     assert_eq!(copied, Some((vec!["copy".to_owned()], MapRhs::Func(1), Some(0))));
 }
+
+/// What the host says about task 1 until it is done.
+fn task_story(s: &mut Session) -> Vec<String> {
+    let mut seen = Vec::new();
+    loop {
+        match s.serve(&mut Vec::new()) {
+            FromHost::Ready(r) => assert!(r.is_ok(), "{r:?}"),
+            FromHost::TaskStart(_) => {}
+            FromHost::AtomicBegin(t) => seen.push(format!("begin {t:?}")),
+            FromHost::AtomicEnd(t) => seen.push(format!("end {t:?}")),
+            FromHost::TaskDone { task, result } => {
+                seen.push(format!("done{task} failed={}", result.is_err()));
+                return seen;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn an_interrupted_atomic_section_still_ends() {
+    // The interrupt skips `finally` (QuickJS: uncatchable): the session
+    // would stay in the atomic section, holding all input, for good.
+    let config = r#"import { dispatch } from "temzdf";
+dispatch(async (ctx) => {
+  await new Promise((r) => setTimeout(r, 30));
+  ctx.atomic(() => { for (;;) {} });
+});
+"#;
+    // At the limit, nobody pressing <C-c>.
+    let mut s = Session::start_with_limit(&[("config.js", config)], Duration::from_millis(200));
+    s.load("config.js");
+    assert_eq!(task_story(&mut s), ["begin Task(1)", "end Task(1)", "done1 failed=true"]);
+    // The user's <C-c> (the session sends it: an atomic section makes it busy).
+    let mut s = Session::start(&[("config.js", config)]);
+    s.load("config.js");
+    let mut begun = false;
+    while !begun {
+        match s.serve(&mut Vec::new()) {
+            FromHost::Ready(r) => assert!(r.is_ok(), "{r:?}"),
+            FromHost::TaskStart(_) => {}
+            FromHost::AtomicBegin(Token::Task(1)) => begun = true,
+            other => panic!("{other:?}"),
+        }
+    }
+    s.send(ToHost::Interrupt);
+    assert_eq!(task_story(&mut s), ["end Task(1)", "done1 failed=true"]);
+}

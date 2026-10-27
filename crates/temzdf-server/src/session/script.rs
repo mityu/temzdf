@@ -287,6 +287,15 @@ impl Session {
             if !self.script.send(&ToHost::Interrupt) && self.script.loading.is_some() {
                 self.finish_loading(Err(ScriptError::new("interrupted")));
             }
+            // A task's atomic section is let go at once: an interrupted one
+            // may never say it ended (the host closes it too).
+            if let Some(Token::Task(t)) = self.script.atomic {
+                self.script.atomic = None;
+                self.script.tasks.remove(&t);
+                if !self.script.busy() {
+                    let _ = self.after_scripts();
+                }
+            }
         } else {
             self.script.held.push_back(Held::Key(k.clone()));
         }
@@ -550,11 +559,17 @@ impl Session {
             }
             FromHost::TaskDone { task, result } => {
                 self.script.tasks.remove(&task);
+                // A task that ended holds no atomic section any more.
+                let released = self.script.atomic == Some(Token::Task(task));
+                if released {
+                    self.script.atomic = None;
+                }
+                let mut out = Outcome::None;
                 if let Err(e) = result {
                     self.script_error(&e);
-                    return Outcome::Redraw;
+                    out = Outcome::Redraw;
                 }
-                Outcome::None
+                if released { out.merge(self.pump()) } else { out }
             }
             FromHost::AtomicBegin(token) => {
                 if self.script.token_valid(token) && self.script.atomic.is_none() {
@@ -1074,6 +1089,29 @@ fn mapping_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ctrl_c_releases_a_tasks_atomic_section_the_host_never_ended() {
+        let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
+        let settings = super::super::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let geometry = termpix_core::geom::Geometry {
+            cols: 80,
+            rows: 24,
+            cell: termpix_core::geom::CellSize { width: 10, height: 20 },
+        };
+        let mut s = Session::new("t".into(), geometry, Default::default(), settings, sink);
+        // A task began an atomic section and was cut off: no AtomicEnd.
+        s.script.tasks.insert(1);
+        s.script.atomic = Some(Token::Task(1));
+        assert!(s.holds_input());
+        s.key(&KeyEvent::new(KeyCode::Char('c'), Modifiers::CTRL), Instant::now());
+        assert!(!s.holds_input(), "<C-c> lets the session go");
+        // And a task's end releases its section.
+        s.script.tasks.insert(2);
+        s.script.atomic = Some(Token::Task(2));
+        let _ = s.handle_script(FromHost::TaskDone { task: 2, result: Err(ScriptError::new("interrupted")) });
+        assert!(!s.holds_input());
+    }
 
     #[test]
     fn ctrl_c_interrupts_with_lock_keys_on() {
