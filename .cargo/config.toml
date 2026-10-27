@@ -1,0 +1,6 @@
+[env]
+# Nix's cc-wrapper warns about any --target other than its own
+# (arm64-apple-darwin). On macOS the cc crate passes arm64-apple-macosx, the
+# same platform under Apple's name, when it compiles the vendored SyncTeX
+# parser, so the warning is noise.
+NIX_CC_WRAPPER_SUPPRESS_TARGET_WARNING = "1"

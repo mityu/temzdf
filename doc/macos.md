@@ -50,9 +50,10 @@ works.
 
 ## Checklist and results
 
-1. Build: `nix develop -c cargo build --workspace` works. The temzdf build
-   script prints a harmless cc-wrapper warning about `--target
-   arm64-apple-macosx`.
+1. Build: `nix develop -c cargo build --workspace` works. Nix's cc-wrapper
+   warns about the `--target arm64-apple-macosx` the cc crate passes for the
+   SyncTeX parser (`temzdf-pdfcore`'s build script); it is harmless and
+   silenced in `.cargo/config.toml`.
 2. `scripts/check.sh` passes (fixtures need `latexmk`: MacTeX, or `nix develop .#alldeps`).
 3. Viewer in kitty, Ghostty and WezTerm: startup, wheel scrolling, Ctrl+wheel
    zoom at the pointer, drag (pan and selection), OSC 52 copy to the macOS
