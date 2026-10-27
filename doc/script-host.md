@@ -86,8 +86,10 @@ declarations. In short, `import { ... } from "temzdf"`:
 
 - `cmd.*` runs registry commands now (synchronous requests); `action.*`
   describes them as data for mappings.
-- `map(modes, lhs, rhs, { nowait, desc })`, `unmap`, `defineMode(name, {
-  inherit, unmapped, count })`, `feedkeys(keys, { remap })`, `currentMode()`.
+- `map(modes, lhs, rhs, { nowait, desc, when, namespace, priority })`,
+  `unmap(modes, lhs, { namespace })`, `defineMode(name, { unmapped, count,
+  transient, keepalive, timeout })`, `getMappings({ mode, namespace })`,
+  `feedkeys(keys, { remap })`, `currentMode()` (doc/keymaps.md).
 - `o.<option>` reads and sets options.
 - `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,
   `PaneClosePre(id)` (not when `deleteBuffer` closes the pane: the buffer

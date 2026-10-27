@@ -1,9 +1,11 @@
 # The key mapping system
 
-Status: design, agreed with the user on 2026-10-28 (the former open
-questions too); not implemented yet.
-What is implemented today is in `doc/config.md` ("Modes and keys") and
-`crates/temzdf-server/src/keymap/`. This document supersedes decision 8
+Status: agreed with the user on 2026-10-28 and implemented the same day,
+except decision 8 (deferred, see there). How to use it is in
+`doc/config.md` ("Modes and keys"); the code is in
+`crates/temzdf-server/src/keymap/` (modes, the matcher), `session.rs`
+(`drive`, `layers`) and `session/script.rs` (conditions through the script
+host). This document supersedes decision 8
 (`inherit`) of `doc/scripting.md`; the rest of that document's decisions on
 keys (notation, sequences, counts, `<C-c>`, feedkeys, escape hatches) still
 hold and are summarised here.
@@ -133,10 +135,14 @@ configurations are written with the same system.
 2. **Several mappings for one key whose conditions hold**: the one
    registered last is tried first (the user's configuration before the
    defaults); an optional `priority` orders them explicitly.
-3. **Overriding and removing**: mappings take a `tag`; mapping the same
-   mode, keys and tag again replaces the mapping, and `unmap` can name a
-   tag. The defaults are tagged.
-4. **Listing**: `getMappings({ mode, tag })`, for help and key hints. Used
+3. **Overriding and removing**: mappings take a `namespace` (named `tag`
+   at first); mapping the same mode, keys and namespace again replaces the
+   mapping, while mappings without one are always added (the user's
+   decision: several conditional mappings of a key need no namespace, and
+   reloading the configuration starts from the built-in modes, so nothing
+   doubles). `unmap` removes a namespace's mappings of the keys, or all of
+   them. The defaults are in the namespace `default`.
+4. **Listing**: `getMappings({ mode, namespace })`, for help and key hints. Used
    to copy one mode's mappings into another it gives a snapshot, not a live
    parent (mappings added later are missing); copying in the `SessionReady`
    hook avoids most of that.
@@ -147,8 +153,15 @@ configurations are written with the same system.
 7. **Sequences across a submode and the mode below**: with `"always"` the
    two form one table (a submode's `g` and the mode below's `gt` wait as in
    Vim); with `"mapped"` only the submode's mappings count.
-8. **Fixed keys of PDF panes** (the search prompt, the outline) become
-   mappings with conditions (the prompt is open, the outline has the focus).
+8. **Fixed keys of PDF panes** (the search prompt, the outline): deferred
+   (the user, 2026-10-28). As conditional mappings, every default mapping
+   of the `pdf` mode would need the condition "the prompt is closed" (else
+   typing `n` or `j` into the prompt runs them), and with JavaScript
+   conditions only, every key in a PDF pane would cost a round trip to the
+   script host. Alternatives: built-in modes entered by `/` and `<Tab>`
+   (unmapped keys going to the prompt), or a declarative condition form
+   the server evaluates itself (decision 1). Until then the pane takes
+   those keys before the mappings, as before.
 9. **The mouse** keeps today's behaviour: in the `normal` mode the left
    button selects in terminal panes even where the program uses the mouse.
 10. **`ModeChanged`** fires when a submode is entered or left too, so a

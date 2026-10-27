@@ -21,13 +21,16 @@ o.synctexeditor = "nvim --server /tmp/nvim.sock --remote-send ':e %{input}<CR>%{
 
 // Page view: J scrolls down (a count still multiplies).
 map("pdf", "J", action.scrollDown(), { desc: "scroll" });
-// A window mode entered from the normal mode.
-defineMode("window", { inherit: "normal", unmapped: "drop" });
+// A window submode entered from the normal mode; the normal mode's keys
+// work in it too.
+defineMode("window", { transient: true, keepalive: "always" });
 map("normal", "w", action.switchMode("window"));
 map("window", "v", [action.split("right"), action.exitMode()]);
 // A script function (synchronous; dispatch() for asynchronous work).
 map("terminal", "<C-b>m", (ctx) => cmd.sendText(`make -j${ctx.count ?? 4}\n`));
-unmap("normal", "x");
+// Only in floating terminal panes.
+map("terminal", "<C-b>q", action.toggleFloating(), { when: (ctx) => ctx.floating });
+unmap("normal", "x", { namespace: "default" });
 on("ModeChanged", (old, now) => console.log(`${old} -> ${now}`));
 ```
 
@@ -51,12 +54,10 @@ Like Vim, temzdf is always in a mode. Built in:
 | `terminal` | to the pane | no | terminal panes (pass-through, like Neovim's Terminal mode) |
 | `pdf` | dropped | yes | PDF panes |
 
-Focusing a pane puts temzdf in that pane's mode. `defineMode(name, {
-inherit, unmapped, count })` makes new modes (or changes built-in ones):
-`inherit` takes another mode's mappings and properties, live, and the mode
-overrides them; `unmap` hides an inherited key. `switchMode` enters a mode on
-the mode history (at most `modehistory` entries), `exitMode` returns to the
-previous one, and below the history there is always `normal`.
+Focusing a pane puts temzdf in that pane's mode. `switchMode` enters a
+mode on the mode history (at most `modehistory` entries), `exitMode` returns
+to the previous one, and below the history there is always `normal`. The
+design is in doc/keymaps.md.
 
 Mappings go from a key sequence to an action, an array of actions (run in
 order by temzdf itself, without the script host, so they are fast and cannot
@@ -65,6 +66,52 @@ describes a command as data; `cmd.<command>(...)` runs one now. Sequences
 work as in Vim: a key that starts a longer mapping waits `timeoutlen`
 milliseconds (unless the shorter mapping has `nowait`); in a pass-through
 mode keys that time out go to the pane.
+
+`map(mode, lhs, rhs, { nowait, desc, when, namespace, priority })`:
+
+- **`when`**: a condition, `(ctx) => boolean`: the mapping exists only
+  while it holds; otherwise the key is looked up as if it were not there
+  (another mapping, else the mode's unmapped keys). `ctx` is the context of
+  the sequence's first key: `pane`, `paneKind` (`"terminal"`, `"pdf"`),
+  `floating`, `mode`, `keys` (typed before). Conditions run in the script
+  host, synchronously, and may only read (`cmd.panes()`, `o.x`, ...); one
+  that throws counts as false. Only keys some conditional mapping could
+  take ask the host. Use conditions for what happens to you (a pane's
+  kind, a state of the program), modes for what you enter on purpose.
+- **Several mappings of a key** are tried by `priority` (higher first),
+  then the last registered first, so the configuration's come before the
+  shipped defaults; the first whose condition holds runs. A disabled
+  longer mapping does not make a key wait.
+- **`namespace`**: mapping the same mode, keys and namespace again
+  replaces that mapping; without a namespace mappings are added. The
+  shipped defaults are in the namespace `"default"`: `unmap(mode, lhs, {
+  namespace: "default" })` removes one, `unmap(mode, lhs)` every mapping of
+  the keys.
+- `getMappings({ mode, namespace })` lists mappings as `map` takes them
+  (functions included): to copy some into another mode, or to show them.
+  It is a snapshot.
+
+`defineMode(name, { unmapped, count, transient, keepalive, timeout })`
+makes a mode (or changes one). Properties left out are the mode below's
+(then `drop` and no counts). A **transient** mode (a submode, as
+kana/vim-submode or Emacs' transient keymaps) sits over the mode it was
+entered from:
+
+- `keepalive: "mapped"` (the default): it stays while its own keys are
+  typed; another key leaves it and is handled again below.
+- `keepalive: "always"`: it stays; keys it does not map go to the modes
+  below it.
+- `keepalive: (ctx) => boolean`: it stays while the condition holds.
+- `timeout`: it is left after that many milliseconds without keys.
+
+A focus change leaves submodes, as it leaves the `normal` mode.
+
+```ts
+defineMode("resize", { transient: true, timeout: 1500 });
+map("resize", "+", action.resizePane("taller"));
+map("resize", "-", action.resizePane("shorter"));
+map("normal", "s", action.switchMode("resize")); // <C-b>s++-
+```
 
 Key notation follows Neovim: `j`, `G`, `%`, `<C-h>`, `<M-x>`, `<D-k>`,
 `<S-Tab>`, `<CR>`, `<Esc>`, `<Space>`, `<BS>`, `<Tab>`, `<lt>`, `<Bar>`,

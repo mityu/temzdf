@@ -184,7 +184,7 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/gpu.md`: GPU rasterisation experiment (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.
 - `doc/known-issues.md`: problems known and left in place, why, and what a fix would take.
 - `doc/scripting.md`: the scripting and configuration design: decisions with the user, open questions.
-- `doc/keymaps.md`: the key mapping system being redesigned: modes, conditions on mappings (`when`), transient modes (submodes); agreed, not implemented yet.
+- `doc/keymaps.md`: the key mapping system: modes, conditions on mappings (`when`), namespaces, transient modes (submodes); decisions and what is deferred.
 - `doc/floating-panes.md`: the floating panes design, and bars on panes and the window.
 - `doc/gui-client.md`: groundwork and plan for a native GUI client (not implemented).
 - Research behind the session server: `doc/multiplexer.md` (what a multiplexer can reuse), `doc/gui-stack.md` (GUI toolkits), `doc/markdown-viewer.md` and `doc/webview-viewer.md` (previewers on `termpix`), `doc/config-language.md` (configuration languages; superseded by `doc/scripting.md`).
