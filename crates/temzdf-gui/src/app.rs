@@ -383,6 +383,9 @@ impl ApplicationHandler for App {
                 self.end(format!("[detached from session {}]", self.name));
                 event_loop.exit();
             }
+            // Minimised, where the system says so with no size (Windows):
+            // the session keeps its size, its terminals their lines.
+            WindowEvent::SurfaceResized(size) if size.width == 0 || size.height == 0 => {}
             WindowEvent::SurfaceResized(size) => {
                 if let Some(g) = &mut self.gpu {
                     // Beyond the GPU's limit (a window across monitors):
