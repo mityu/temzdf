@@ -158,50 +158,71 @@ pub struct SearchCmd {
 }
 
 /// The search worker opens its own copy of the document (the version in
-/// `snapshot`) so long searches do not delay page loading. A newer command
-/// interrupts the current search.
+/// `snapshot`) so long searches do not delay page loading. Each pane (the
+/// generation's upper 32 bits are its search base) has one search: a newer
+/// command of the pane replaces it, and the panes' searches take turns a
+/// page at a time (after a reload every pane searches again).
 pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<SearchCmd>> {
     let (tx, rx) = mpsc::channel::<SearchCmd>();
     std::thread::Builder::new().name("temzdf-search".into()).spawn(move || {
         let mut doc: Option<(u32, pdf::Doc, Vec<pdf::PageBounds>)> = None;
-        let mut pending = None;
+        // Each pane's search and how many of its pages are done.
+        let mut jobs: Vec<(SearchCmd, usize)> = Vec::new();
+        let pane = |c: &SearchCmd| c.generation >> 32;
+        let mut turn = 0;
         loop {
-            let cmd = match pending.take() {
-                Some(c) => c,
-                None => match rx.recv() {
-                    Ok(c) => c,
-                    Err(_) => return,
-                },
+            let take = |jobs: &mut Vec<(SearchCmd, usize)>, cmd: SearchCmd| {
+                jobs.retain(|(j, _)| pane(j) != pane(&cmd));
+                jobs.push((cmd, 0));
             };
-            if doc.as_ref().is_none_or(|d| d.0 != cmd.doc_generation) {
+            if jobs.is_empty() {
+                match rx.recv() {
+                    Ok(c) => take(&mut jobs, c),
+                    Err(_) => return,
+                }
+            }
+            for c in rx.try_iter() {
+                take(&mut jobs, c);
+            }
+            turn %= jobs.len();
+            let generation = jobs[turn].0.doc_generation;
+            if doc.as_ref().is_none_or(|d| d.0 != generation) {
                 // Only the version the request was made on: another one means
                 // the request is stale (a reload follows with a new one).
-                let Some((_, bytes)) = snapshot.get().filter(|s| s.0 == cmd.doc_generation) else { continue };
-                match pdf::open_bytes(&bytes).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))) {
-                    Ok((d, b)) => doc = Some((cmd.doc_generation, d, b)),
-                    Err(e) => {
+                let opened = snapshot
+                    .get()
+                    .filter(|s| s.0 == generation)
+                    .map(|(_, bytes)| pdf::open_bytes(&bytes).and_then(|d| pdf::page_bounds(&d).map(|b| (d, b))));
+                match opened {
+                    Some(Ok((d, b))) => doc = Some((generation, d, b)),
+                    Some(Err(e)) => {
                         events(DocEvent::SearchFailed(format!("{e:#}")));
+                        jobs.remove(turn);
+                        continue;
+                    }
+                    None => {
+                        jobs.remove(turn);
                         continue;
                     }
                 }
             }
             let Some((_, doc, bounds)) = doc.as_ref() else { continue };
             let n = bounds.len();
-            for i in 0..n {
-                // A newer query replaces this one.
-                if let Some(newer) = rx.try_iter().last() {
-                    pending = Some(newer);
-                    break;
-                }
-                let page = (cmd.start_page + i) % n;
-                let ev = match pdf::search_page(doc, page, bounds[page], &cmd.query) {
-                    Ok(rects) => DocEvent::SearchHits { generation: cmd.generation, page, rects },
-                    Err(e) => DocEvent::SearchFailed(format!("{e:#}")),
-                };
-                if !events(ev) {
-                    return;
-                }
+            let (cmd, done) = &mut jobs[turn];
+            if *done >= n {
+                jobs.remove(turn);
+                continue;
             }
+            let page = (cmd.start_page + *done) % n;
+            *done += 1;
+            let ev = match pdf::search_page(doc, page, bounds[page], &cmd.query) {
+                Ok(rects) => DocEvent::SearchHits { generation: cmd.generation, page, rects },
+                Err(e) => DocEvent::SearchFailed(format!("{e:#}")),
+            };
+            if !events(ev) {
+                return;
+            }
+            turn += 1;
         }
     })?;
     Ok(tx)
@@ -435,6 +456,37 @@ mod tests {
         let failed = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
         assert!(matches!(failed, DocEvent::Opened(Err(e)) if e.contains("no such file")));
         assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn searches_of_two_panes_both_complete() {
+        use std::time::Duration;
+        let (tx, rx) = mpsc::channel::<DocEvent>();
+        let sink = channel_sink(tx, |e| e);
+        let snapshot = Snapshot::default();
+        let _doc = spawn_document(pdf::fixture("sample.pdf"), sink.clone(), snapshot.clone()).unwrap();
+        let pages = match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
+            DocEvent::Opened(Ok(info)) => info.bounds.len(),
+            _ => panic!("not opened"),
+        };
+        let search = spawn_search(snapshot, sink).unwrap();
+        // Two panes (search bases 1 << 32 and 2 << 32) re-running their
+        // queries one right after the other, as after a reload; then the
+        // first pane's newer query replaces its own only.
+        let gens = [(1u64 << 32) + 1, (2u64 << 32) + 1, (1u64 << 32) + 2];
+        for generation in gens {
+            search.send(SearchCmd { generation, query: "the".into(), start_page: 0, doc_generation: 0 }).unwrap();
+        }
+        let mut done = std::collections::HashMap::<u64, usize>::new();
+        while gens[1..].iter().any(|g| done.get(g).copied().unwrap_or(0) < pages) {
+            match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(DocEvent::SearchHits { generation, .. }) => *done.entry(generation).or_default() += 1,
+                Ok(_) => {}
+                Err(_) => panic!("pages searched per pane: {done:?} of {pages}"),
+            }
+        }
+        assert!(done.get(&gens[0]).copied().unwrap_or(0) < pages, "replaced by its newer query");
     }
 
     #[test]
