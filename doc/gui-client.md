@@ -63,8 +63,11 @@ a paste reach a shell).
 
 Not done yet: Wayland (sway headless is in the dev shell) and macOS checks,
 HiDPI and fractional scales (`--scale` and `ScaleFactorChanged` exist,
-untested), Option as Alt on macOS, cursor blinking, curly and dotted
-underlines (drawn straight), shared memory for images.
+untested), Option as Alt on macOS, cursor blinking, underline colours
+(SGR 58: the scene's cells do not carry one, so underlines take the text
+colour, in the terminal frontend too), shared memory for images. Curly,
+dotted and dashed underlines are drawn as fills in `drawlist.rs`, their
+pattern following the window's x so neighbouring cells join up.
 
 ## What the GUI client is
 

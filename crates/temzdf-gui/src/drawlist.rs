@@ -136,14 +136,66 @@ fn decorations(a: &Attrs, rect: Rect, color: [u8; 3]) -> Vec<Fill> {
             out.push(line(bottom));
             out.push(line(bottom - thick as i32 * 2));
         }
-        // Curly, dotted and dashed are drawn straight for now.
-        _ => out.push(line(bottom)),
+        Underline::Single => out.push(line(bottom)),
+        Underline::Curly => out.extend(curly(rect, bottom, thick, color)),
+        Underline::Dotted => out.extend(dashes(rect, bottom, thick, thick.max(2), color)),
+        Underline::Dashed => out.extend(dashes(rect, bottom, thick, (rect.h / 4).max(3), color)),
     }
     if a.strikethrough {
         out.push(line(rect.y + rect.h as i32 / 2));
     }
     if a.overline {
         out.push(line(rect.y));
+    }
+    out
+}
+
+/// Pieces `on` pixels long with gaps as long, on a line `thick` high at
+/// `y`. They follow the window's x, not the cell's, so neighbouring cells
+/// continue each other's pattern.
+fn dashes(rect: Rect, y: i32, thick: u32, on: u32, color: [u8; 3]) -> Vec<Fill> {
+    let period = on as i32 * 2;
+    let mut out = Vec::new();
+    let mut x = rect.x;
+    let end = rect.x + rect.w as i32;
+    while x < end {
+        let phase = x.rem_euclid(period);
+        let stop = (x - phase + if phase < on as i32 { on as i32 } else { period }).min(end);
+        if phase < on as i32 {
+            out.push(Fill {
+                rect: Rect::new(x, y, (stop - x) as u32, thick),
+                color: [color[0], color[1], color[2], 255],
+            });
+        }
+        x = stop;
+    }
+    out
+}
+
+/// A wave `thick` high whose lowest point is the underline's place `y`,
+/// one period a cell height long, following the window's x like `dashes`.
+/// Each pixel column reaches its neighbour's height so a thin wave has no
+/// holes; columns of the same span are merged.
+fn curly(rect: Rect, y: i32, thick: u32, color: [u8; 3]) -> Vec<Fill> {
+    let amp = (thick * 2).max(2) as f64;
+    let period = rect.h.max(4) as f64 / 2.0;
+    let top = |x: i32| {
+        let s = (x as f64 / period * std::f64::consts::TAU).sin();
+        y - (amp * (1.0 + s) / 2.0).round() as i32
+    };
+    let mut out: Vec<Fill> = Vec::new();
+    for x in rect.x..rect.x + rect.w as i32 {
+        let (a, b) = (top(x), top(x + 1));
+        let (from, to) = (a.min(b), a.max(b) + thick as i32);
+        match out.last_mut() {
+            Some(f) if f.rect.y == from && f.rect.h == (to - from) as u32 && f.rect.x + f.rect.w as i32 == x => {
+                f.rect.w += 1;
+            }
+            _ => out.push(Fill {
+                rect: Rect::new(x, from, 1, (to - from) as u32),
+                color: [color[0], color[1], color[2], 255],
+            }),
+        }
     }
     out
 }
@@ -311,6 +363,45 @@ mod tests {
             [(Rect::new(0, 0, 8, 16), [0, 0, 255, 255]), (Rect::new(8, 0, 8, 16), [fg[0], fg[1], fg[2], 255])]
         );
         assert!(list.marks.is_empty(), "the underlined c was written over by z");
+    }
+
+    #[test]
+    fn underline_styles_continue_across_cells_and_stay_inside_them() {
+        let rect = |col| GRID.cells(col, 1, 1);
+        let marks = |u, col| decorations(&Attrs { underline: u, ..Attrs::default() }, rect(col), [1, 2, 3]);
+        // Every pixel column of the cell is covered by the wave, and none
+        // leaves the cell.
+        for col in 0..4 {
+            let wave = marks(Underline::Curly, col);
+            let covered: u32 = wave.iter().map(|f| f.rect.w).sum();
+            assert_eq!(covered, GRID.cell_w, "column {col}");
+            let cell = rect(col);
+            for f in &wave {
+                assert!(f.rect.y >= cell.y && f.rect.y + f.rect.h as i32 <= cell.y + cell.h as i32, "{f:?}");
+            }
+            assert!(wave.iter().map(|f| f.rect.y).collect::<std::collections::HashSet<_>>().len() > 1, "it waves");
+        }
+        // Two cells drawn apart are the same as one wide cell: the
+        // pattern follows the window's x (cells 7 wide, which no period
+        // divides).
+        let odd = Grid { cell_w: 7, ..GRID };
+        let pixels = |v: &[Fill]| v.iter().flat_map(|f| f.rect.x..f.rect.x + f.rect.w as i32).collect::<Vec<_>>();
+        for u in [Underline::Dotted, Underline::Dashed, Underline::Curly] {
+            let at = |r| decorations(&Attrs { underline: u, ..Attrs::default() }, r, [1, 2, 3]);
+            let wide = at(odd.cells(0, 1, 2));
+            let apart = [at(odd.cells(0, 1, 1)), at(odd.cells(1, 1, 1))].concat();
+            let spans = |v: &[Fill]| {
+                v.iter()
+                    .flat_map(|f| (f.rect.x..f.rect.x + f.rect.w as i32).map(|x| (x, f.rect.y, f.rect.h)))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(spans(&wide), spans(&apart), "{u:?}");
+        }
+        // Dots and dashes leave gaps; dashes are longer.
+        let dotted = marks(Underline::Dotted, 0);
+        let dashed = marks(Underline::Dashed, 0);
+        assert!(pixels(&dotted).len() < GRID.cell_w as usize && !dotted.is_empty());
+        assert!(dashed.iter().map(|f| f.rect.w).max() > dotted.iter().map(|f| f.rect.w).max());
     }
 
     #[test]

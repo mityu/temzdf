@@ -50,7 +50,8 @@ server on one `Session`). Next and open:
 - [ ] Step 4, the GUI client (`temzdf-gui`, `doc/gui-client.md`): works on
   X11 (checked on Xvfb with xfwm4, Japanese input through fcitx5 and Mozc).
   Left: Wayland and macOS checks, HiDPI and fractional scales, Option as
-  Alt, cursor blinking, curly and dotted underlines, shared memory for
+  Alt, cursor blinking, underline colours (SGR 58, not in the scene's
+  cells yet), shared memory for
   images (measure the socket first). Step 5: web panes (headless Chromium).
   (Step 6, programmable configuration, is the script host.)
 
