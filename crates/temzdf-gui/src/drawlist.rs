@@ -239,7 +239,13 @@ pub fn build(frame: &Frame, grid: Grid, colors: &Colors) -> DrawList {
         }
     }
     if let Some((col, row)) = frame.cursor.filter(|&(c, r)| c < grid.cols && r < grid.rows) {
-        let cell = grid.cells(col, row, 1);
+        // On a wide character (or its right half): the whole of it.
+        let under =
+            list.glyphs.iter().position(|g| g.row == row && g.col <= col && col < g.col + g.width.max(1) as u16);
+        let cell = match under.map(|i| &list.glyphs[i]) {
+            Some(g) => grid.cells(g.col, row, g.width.max(1) as u32),
+            None => grid.cells(col, row, 1),
+        };
         let fg = colors.foreground;
         let color = [fg[0], fg[1], fg[2], 255];
         let bar = (grid.cell_w / 8).max(2);
@@ -248,7 +254,7 @@ pub fn build(frame: &Frame, grid: Grid, colors: &Colors) -> DrawList {
             CursorShape::Underline { .. } => Rect::new(cell.x, cell.y + (cell.h - bar) as i32, cell.w, bar),
             // A block shows the character under it in the background colour.
             CursorShape::Block { .. } | CursorShape::Default => {
-                if let Some(i) = list.glyphs.iter().position(|g| (g.col, g.row) == (col, row)) {
+                if let Some(i) = under {
                     let g = list.glyphs.remove(i);
                     list.cursor_glyph = Some(Glyph { color: colors.background, ..g });
                 }
@@ -431,5 +437,25 @@ mod tests {
         let bar = build(&Frame { cursor_shape: CursorShape::Bar { blink: false }, ..frame }, GRID, &colors);
         assert_eq!(bar.cursor.map(|c| c.rect), Some(Rect::new(8, 16, 2, 16)));
         assert!(bar.cursor_glyph.is_none());
+    }
+
+    #[test]
+    fn a_block_cursor_on_a_wide_character_covers_both_cells() {
+        let colors = Colors::default();
+        let frame = |col| Frame {
+            text: vec![TextGrid { col: 0, row: 0, rows: vec![vec![cell("数", 2), cell("", 0), cell("x", 1)]] }],
+            cursor: Some((col, 0)),
+            cursor_shape: CursorShape::Block { blink: false },
+            ..Frame::default()
+        };
+        // The glyph is drawn in the background colour over the cursor: the
+        // cursor must be under all of it, also from its right half.
+        for col in [0, 1] {
+            let list = build(&frame(col), GRID, &colors);
+            assert_eq!(list.cursor_glyph.as_ref().map(|g| g.width), Some(2), "at {col}");
+            assert_eq!(list.cursor.map(|c| c.rect), Some(Rect::new(0, 0, 16, 16)), "at {col}");
+        }
+        let list = build(&frame(2), GRID, &colors);
+        assert_eq!(list.cursor.map(|c| c.rect), Some(Rect::new(16, 0, 8, 16)));
     }
 }
