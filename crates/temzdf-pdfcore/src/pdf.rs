@@ -58,18 +58,36 @@ pub fn open_bytes(bytes: &[u8]) -> Result<Doc> {
     Ok(PdfDocument::from_bytes(bytes)?)
 }
 
+/// Bytes of padding (whitespace, NULs) after `%%EOF` that [`looks_complete`]
+/// looks past.
+const PADDING: u64 = 64 * 1024;
+
 /// Whether a PDF file looks completely written: `%%EOF` appears within its last
-/// 1024 bytes (the PDF spec allows it anywhere there). This catches most files
-/// still being written by TeX, before trying to parse them. Learned from Skim.
+/// 1024 bytes (the PDF spec allows it anywhere there), not counting padding
+/// of whitespace and NULs after it. This catches most files still being
+/// written by TeX, before trying to parse them; it is a hint for waiting, not
+/// a test of validity. Learned from Skim.
 pub fn looks_complete(path: &Path) -> std::io::Result<bool> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path)?;
     let len = f.metadata()?.len();
-    let tail = len.min(1024);
+    let tail = len.min(1024 + PADDING);
     f.seek(SeekFrom::Start(len - tail))?;
     let mut buf = Vec::with_capacity(tail as usize);
     f.read_to_end(&mut buf)?;
-    Ok(buf.windows(5).any(|w| w == b"%%EOF"))
+    let end = buf.iter().rposition(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x0c' | 0)).map_or(0, |i| i + 1);
+    let body = &buf[..end];
+    Ok(body[body.len().saturating_sub(1024)..].windows(5).any(|w| w == b"%%EOF"))
+}
+
+/// Whether a file does not start like a PDF (`%PDF-` in its first 1024
+/// bytes) although it has some: not one still being written, so not worth
+/// waiting for.
+pub fn not_a_pdf(path: &Path) -> std::io::Result<bool> {
+    use std::io::Read;
+    let mut head = Vec::with_capacity(1024);
+    std::fs::File::open(path)?.take(1024).read_to_end(&mut head)?;
+    Ok(head.len() >= 5 && !head.windows(5).any(|w| w == b"%PDF-"))
 }
 
 /// A point to jump to: a page and an optional y in page space (points from the

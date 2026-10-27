@@ -791,7 +791,9 @@ fn sessions_that_cannot_start_fail_the_command() {
     let bad = env.path("bad.pdf");
     std::fs::write(&bad, "not a PDF %%EOF").unwrap();
     let mut t = Term::spawn(&[BIN, "-s", "b", &bad.display().to_string()], &env.options());
-    t.wait_text("[session b:");
+    // It fails at once: as the attached client, or from the server's log
+    // when it went before the client attached.
+    t.wait_for("the reason", |s| s.contains("[session b:") || s.contains("the session server exited"));
     assert_ne!(t.wait_exit(), 0);
 }
 

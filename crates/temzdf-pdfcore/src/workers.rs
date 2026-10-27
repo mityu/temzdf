@@ -239,18 +239,21 @@ pub fn spawn_document(path: PathBuf, events: Sink, snapshot: Snapshot) -> std::i
                 {
                     return Err(anyhow::anyhow!("cannot open {}: no such file", path.display()));
                 }
+                // Waiting is for files TeX is writing; at the deadline, or for
+                // a file that is no PDF at all, MuPDF has the last word.
+                let last = std::time::Instant::now() >= deadline || pdf::not_a_pdf(&path).unwrap_or(false);
                 let result = match complete {
-                    Ok(true) => open(&path).and_then(|(bytes, doc, info)| {
+                    Ok(complete) if complete || last => open(&path).and_then(|(bytes, doc, info)| {
                         if info.bounds.is_empty() {
                             Err(anyhow::anyhow!("the document has no pages"))
                         } else {
                             Ok((bytes, doc, info))
                         }
                     }),
-                    Ok(false) => Err(anyhow::anyhow!("{} looks incomplete (no %%EOF at its end)", path.display())),
+                    Ok(_) => Err(anyhow::anyhow!("{} looks incomplete (no %%EOF at its end)", path.display())),
                     Err(e) => Err(e.into()),
                 };
-                if result.is_ok() || std::time::Instant::now() >= deadline {
+                if result.is_ok() || last {
                     return result;
                 }
                 std::thread::sleep(FIRST_OPEN_RETRY);
@@ -432,6 +435,44 @@ mod tests {
         let failed = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
         assert!(matches!(failed, DocEvent::Opened(Err(e)) if e.contains("no such file")));
         assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_pdf_with_bytes_after_its_eof_still_opens() {
+        // Valid (the spec allows %%EOF anywhere near the end): only a hint
+        // that TeX is done, never a reason to refuse the file.
+        let dir = std::env::temp_dir().join(format!("temzdf-padded-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let open = |name: &str, bytes: &[u8]| {
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            let (tx, rx) = mpsc::channel::<DocEvent>();
+            let start = std::time::Instant::now();
+            let _cmds = spawn_document(path, channel_sink(tx, |e| e), Snapshot::default()).unwrap();
+            let opened = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+            (opened, start.elapsed())
+        };
+        let mut padded = std::fs::read(pdf::fixture("sample.pdf")).unwrap();
+        padded.extend(std::iter::repeat_n(b' ', 2048));
+        let (opened, took) = open("padded.pdf", &padded);
+        let error = |e: &DocEvent| match e {
+            DocEvent::Opened(Err(e)) => e.clone(),
+            _ => String::new(),
+        };
+        assert!(matches!(opened, DocEvent::Opened(Ok(_))), "refused a complete PDF: {}", error(&opened));
+        assert!(took < std::time::Duration::from_secs(1), "waited {took:?}");
+        // Not a PDF: MuPDF's own error, at once.
+        let (failed, took) = open("notes.txt", b"just some notes, no PDF here\n");
+        assert!(matches!(&failed, DocEvent::Opened(Err(e)) if !e.contains("looks incomplete")), "{}", error(&failed));
+        assert!(took < std::time::Duration::from_secs(1), "waited {took:?}");
+        // Other bytes after %%EOF: waited for, then opened all the same.
+        let mut junk = std::fs::read(pdf::fixture("sample.pdf")).unwrap();
+        junk.extend(std::iter::repeat_n(b'x', 2048));
+        let (opened, took) = open("junk.pdf", &junk);
+        assert!(matches!(opened, DocEvent::Opened(Ok(_))), "{}", error(&opened));
+        assert!(took >= FIRST_OPEN_FOR, "{took:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
