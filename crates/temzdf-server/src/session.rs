@@ -372,7 +372,8 @@ pub struct Session {
     notices: Vec<notices::Notice>,
     /// The fixed escape keymap (script host down) saw its prefix.
     escape_prefix: bool,
-    /// Mappings run since the last typed key (Vim's `maxmapdepth`).
+    /// Mappings run since the matcher last used up its keys (Vim's
+    /// `maxmapdepth`).
     map_depth: usize,
     keys: Keys,
     effects: Vec<Effect>,
@@ -1192,7 +1193,15 @@ impl Session {
         while !self.script.busy() {
             let layers = self.layers();
             match self.matcher.step(&self.modes, &layers, self.options.timeoutlen, now) {
-                Step::Wait(_) => break,
+                Step::Wait(_) => {
+                    // The keys and what they expanded to are used up: the
+                    // next keys (typed or fed by a hook) count from zero,
+                    // as Vim counts per typeahead expansion.
+                    if !self.matcher.has_input() && self.matcher.pending().is_empty() {
+                        self.map_depth = 0;
+                    }
+                    break;
+                }
                 Step::NeedConditions(funcs) => {
                     let ctx = self.key_context(None);
                     self.eval(funcs, vec![ctx]);
@@ -3074,6 +3083,22 @@ mod tests {
         // Ordinary keys work again afterwards.
         key(&mut s, "<C-b>%");
         assert_eq!(s.pane_count(), 2);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn keys_fed_without_typing_do_not_add_up_to_a_recursive_mapping() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "ready");
+        let act = Target::Actions(vec![Act::new("current-mode", vec![])]);
+        s.modes.map("terminal", notation::parse("<F5>").unwrap(), crate::keymap::Mapping::new(act));
+        // As a hook or a timer feeds keys, for hours, with nothing typed.
+        for _ in 0..=MAX_MAP_DEPTH {
+            let fed = ScriptValue::Str("<F5>".into());
+            s.run_command("feedkeys", &[fed], None, Instant::now()).unwrap();
+            let _ = s.drive(Instant::now());
+        }
+        assert!(!s.notices.iter().any(|n| n.text.contains("recursive mapping")));
     }
 
     #[test]
