@@ -863,11 +863,35 @@ impl PdfPane {
                 && (self.search.is_complete() || (hit.0 == page && !wrapped(from, hit, &self.search)))
             {
                 self.search.current = Some(hit);
-                self.pending_first_hit = None;
+                if self.pending_first_hit.take().is_some() {
+                    self.clear_searching();
+                }
                 self.reveal_hit(hit, now);
             }
         }
+        // Done: what was waited for (Enter, `n`, `N`) found nothing, or the
+        // "Searching" message is out of date.
+        if self.search.is_complete() {
+            let waited = self.pending_first_hit.take().is_some() || self.searching_shown();
+            if waited && self.search.total() == 0 {
+                self.message = Some(format!("Pattern not found: {}", self.search.query));
+            } else {
+                self.clear_searching();
+            }
+        }
         true
+    }
+
+    /// Whether the status bar says `step_search`'s "Searching" message.
+    fn searching_shown(&self) -> bool {
+        self.message.as_deref().and_then(|m| m.strip_prefix("Searching: ")) == Some(self.search.query.as_str())
+    }
+
+    /// Drop the "Searching" message: the hit came.
+    fn clear_searching(&mut self) {
+        if self.searching_shown() {
+            self.message = None;
+        }
     }
 
     fn reveal_hit(&mut self, hit: (usize, usize), now: Instant) {
@@ -1675,6 +1699,38 @@ mod tests {
         let rect = PageRect { x0: 10.0, y0: 100.0, x1: 50.0, y1: 110.0 };
         s.search_hits(generation, 0, vec![rect], now);
         assert_eq!(s.search.current, Some((0, 0)), "the hit it waited for");
+        assert_eq!(s.message, None, "found: no longer searching");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_search_that_finished_empty_says_so() {
+        // After Enter alone, `n` and `N`.
+        for step in [None, Some('n'), Some('N')] {
+            let mut s = session();
+            let now = Instant::now();
+            for ch in ['/', 'x'] {
+                s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
+            }
+            s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
+            let generation = match s.take_requests().last() {
+                Some(Request::Search { generation, .. }) => *generation,
+                other => panic!("{other:?}"),
+            };
+            if let Some(ch) = step {
+                // (No first hit awaited from Enter, as after a reload.)
+                s.pending_first_hit = None;
+                s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
+            }
+            for p in 0..s.viewer.page_count() {
+                s.search_hits(generation, p, Vec::new(), now);
+            }
+            assert!(
+                s.message.as_deref().is_some_and(|m| m.starts_with("Pattern not found")),
+                "{step:?}: {:?}",
+                s.message
+            );
+        }
     }
 
     #[test]
