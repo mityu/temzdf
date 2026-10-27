@@ -134,6 +134,11 @@ pub fn spawn_server(
         return Err(NameTaken(name.to_owned()).into());
     }
     let log = log_dir().map(|d| d.join(format!("{name}.log")));
+    // The server reports it to clients (`ls`): it could not, and would look
+    // like another version's.
+    if let Some(p) = &log {
+        utf8(p).context("see TEMZDF_LOG_DIR and XDG_STATE_HOME")?;
+    }
     let open_log = |p: &Path| -> Result<std::fs::File> {
         std::fs::OpenOptions::new()
             .create(true)

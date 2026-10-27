@@ -41,8 +41,9 @@ planned work stays in `todo.md`.
   for the first message, is fixed.)
 - **Paths that are not UTF-8 are refused (CLI-7).** The protocol carries
   paths as strings, so the client refuses such paths with an error
-  (`864d9ac`) instead of mangling them. Carrying them as bytes (`OsString`
-  on Unix) would accept them.
+  (`864d9ac`) instead of mangling them; so does starting a session whose
+  log would be in such a directory (the server reports its log to `ls`).
+  Carrying them as bytes (`OsString` on Unix) would accept them.
 
 ## Script host
 

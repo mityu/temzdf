@@ -1040,6 +1040,19 @@ fn a_file_named_like_an_option_gets_a_session() {
 }
 
 #[test]
+fn a_log_directory_that_is_not_utf8_is_refused_at_once() {
+    let env = Env::new("logdir");
+    // Options take UTF-8 only: the shell makes the name.
+    let script = format!("TEMZDF_LOG_DIR=\"{}/l$(printf '\\377')\" exec {BIN} -s u", env.path("log").display());
+    let start = std::time::Instant::now();
+    let mut t = Term::spawn(&["sh", "-c", &script], &env.options());
+    let s = t.wait_for("the error", |s| s.lines().iter().any(|l| l.contains("UTF-8")));
+    assert!(s.lines().iter().any(|l| l.contains("TEMZDF_LOG_DIR")), "{:?}", s.lines());
+    assert!(start.elapsed() < std::time::Duration::from_secs(4), "no wait for a server");
+    assert!(!session_names(&env).contains(&"u".to_owned()));
+}
+
+#[test]
 fn temzdf_alone_starts_a_session_named_for_it() {
     let env = Env::new("unnamed");
     let mut shell = Term::spawn(&[BIN], &env.options());
