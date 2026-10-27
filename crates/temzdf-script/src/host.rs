@@ -51,9 +51,11 @@ pub fn run_with_limit(
     limit: Duration,
 ) -> Result<(), String> {
     let interrupt = Arc::new(AtomicBool::new(false));
+    let interrupts_sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let (tx, rx) = mpsc::channel();
     {
         let interrupt = interrupt.clone();
+        let interrupts_sent = interrupts_sent.clone();
         let mut input = std::io::BufReader::new(input);
         std::thread::Builder::new()
             .name("script-host-in".into())
@@ -64,6 +66,7 @@ pub fn run_with_limit(
                         _ => ToHost::Shutdown,
                     };
                     if msg == ToHost::Interrupt {
+                        interrupts_sent.fetch_add(1, Ordering::SeqCst);
                         interrupt.store(true, Ordering::SeqCst);
                     }
                     let last = msg == ToHost::Shutdown;
@@ -106,7 +109,9 @@ pub fn run_with_limit(
         next_task: Cell::new(1),
         next_timer: Cell::new(1),
         unattended,
-        used_interrupts: Cell::new(0),
+        interrupts_sent,
+        interrupts_read: Cell::new(0),
+        interrupts_used: Cell::new(0),
         funcs: RefCell::new(Vec::new()),
         timers: RefCell::new(BTreeMap::new()),
         tokens: RefCell::new(Vec::new()),
@@ -117,7 +122,9 @@ pub fn run_with_limit(
     });
     context.with(|ctx| install(&ctx, &st)).map_err(|e| format!("cannot start the scripting API: {e}"))?;
     while !st.gone.get() {
-        context.with(|ctx| st.unattended(|| while ctx.execute_pending_job() {}));
+        // Each job on its own time: one that overran does not cut off the
+        // next ones.
+        while context.with(|ctx| st.unattended(|| ctx.execute_pending_job())) {}
         let next = st.timers.borrow().keys().next().map(|(at, _)| *at);
         let timeout = next.map_or(Duration::from_secs(3600), |at| at.saturating_duration_since(Instant::now()));
         match st.rx.recv_timeout(timeout) {
@@ -130,7 +137,7 @@ pub fn run_with_limit(
             Ok(ToHost::Eval { id, funcs, args }) => context.with(|ctx| run_eval(&ctx, &st, id, &funcs, args)),
             // Nothing runs: an interrupt or a late answer has nothing to stop.
             Ok(ToHost::Interrupt) => {
-                st.use_interrupt_message();
+                st.take_interrupt_message();
                 st.interrupt.store(false, Ordering::SeqCst);
             }
             Ok(ToHost::Reply { .. }) => {}
@@ -153,9 +160,15 @@ struct State {
     next_task: Cell<TaskId>,
     next_timer: Cell<u64>,
     unattended: Unattended,
-    /// Interrupts that stopped code nobody waited for: their messages, still
-    /// on their way, must not interrupt the call that runs next.
-    used_interrupts: Cell<u32>,
+    /// Interrupts by number: those the reader thread passed on (setting the
+    /// flag), those whose message was read here, and the last one used up
+    /// (by the flag stopping code nobody waited for, or by its message
+    /// ending a wait). A message read later for an interrupt used up already
+    /// must not interrupt the call that runs next; one whose message ended a
+    /// wait must not count again when its flag is found.
+    interrupts_sent: Arc<std::sync::atomic::AtomicU64>,
+    interrupts_read: Cell<u64>,
+    interrupts_used: Cell<u64>,
     funcs: RefCell<Vec<Persistent<Function<'static>>>>,
     timers: RefCell<BTreeMap<(Instant, u64), Persistent<Function<'static>>>>,
     /// The synchronous calls running, innermost last.
@@ -377,38 +390,49 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
         "getOption" => HostOp::GetOption { name: text("name") },
         other => return throw(&format!("internal: unknown operation {other}")),
     };
-    let req = st.next_req.get();
-    st.next_req.set(req + 1);
-    st.send(&FromHost::Request { req, token, op });
-    loop {
-        if st.gone.get() {
-            return throw("the session is gone");
-        }
-        match st.rx.recv() {
-            Ok(ToHost::Reply { req: r, result }) if r == req => {
-                return match result {
-                    Ok(v) => Ok(serde_json::to_string(&from_script(&v)).unwrap_or_else(|_| "null".into())),
-                    Err(e) => throw(&e),
-                };
-            }
-            Ok(ToHost::Call { id, func, args }) => run_call(ctx, st, id, func, args),
-            Ok(ToHost::Eval { id, funcs, args }) => run_eval(ctx, st, id, &funcs, args),
-            // One that already stopped a timer is not for this call.
-            Ok(ToHost::Interrupt) if st.use_interrupt_message() => {}
-            // The flag is set too: if the script catches this error, the
-            // interrupt handler stops it at its next step anyway.
-            Ok(ToHost::Interrupt) => return throw("interrupted"),
-            Ok(ToHost::Shutdown) | Err(_) => {
-                st.gone.set(true);
+    // Waiting for the session is not running code: no deadline meanwhile
+    // (calls run here, nested, are attended).
+    let unattended = st.unattended.clone();
+    unattended.paused(|| {
+        let req = st.next_req.get();
+        st.next_req.set(req + 1);
+        st.send(&FromHost::Request { req, token, op });
+        loop {
+            if st.gone.get() {
                 return throw("the session is gone");
             }
-            Ok(other) => eprintln!("temzdf script: unexpected {other:?} while waiting for an answer"),
+            match st.rx.recv() {
+                Ok(ToHost::Reply { req: r, result }) if r == req => {
+                    return match result {
+                        Ok(v) => Ok(serde_json::to_string(&from_script(&v)).unwrap_or_else(|_| "null".into())),
+                        Err(e) => throw(&e),
+                    };
+                }
+                Ok(ToHost::Call { id, func, args }) => run_call(ctx, st, id, func, args),
+                Ok(ToHost::Eval { id, funcs, args }) => run_eval(ctx, st, id, &funcs, args),
+                // One that already stopped a timer is not for this call.
+                Ok(ToHost::Interrupt) if !st.take_interrupt_message() => {}
+                // The flag is set too: if the script catches this error, the
+                // interrupt handler stops it at its next step anyway.
+                Ok(ToHost::Interrupt) => return throw("interrupted"),
+                Ok(ToHost::Shutdown) | Err(_) => {
+                    st.gone.set(true);
+                    return throw("the session is gone");
+                }
+                Ok(other) => eprintln!("temzdf script: unexpected {other:?} while waiting for an answer"),
+            }
         }
-    }
+    })
 }
 
 /// Run a registered function as call `id` and report it done.
 fn run_call(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, func: FuncId, args: Vec<ScriptValue>) {
+    // Someone waits for it (<C-c> interrupts it), even nested in a task's
+    // wait: not on that task's deadline.
+    st.unattended.clone().paused(|| run_call_now(ctx, st, id, func, args));
+}
+
+fn run_call_now(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, func: FuncId, args: Vec<ScriptValue>) {
     let f = st.funcs.borrow().get(func as usize).cloned();
     st.tokens.borrow_mut().push(Token::Call(id));
     let result = match f {
@@ -428,6 +452,10 @@ fn run_call(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, func: FuncId, args: Vec<Scri
 /// Evaluate conditions (registered with `register(fn, what, true)`, which
 /// return booleans) as call `id`, and report their values.
 fn run_eval(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, funcs: &[FuncId], args: Vec<ScriptValue>) {
+    st.unattended.clone().paused(|| run_eval_now(ctx, st, id, funcs, args));
+}
+
+fn run_eval_now(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, funcs: &[FuncId], args: Vec<ScriptValue>) {
     let args = serde_json::to_string(&args.iter().map(from_script).collect::<Vec<_>>()).unwrap_or_default();
     st.tokens.borrow_mut().push(Token::Call(id));
     let mut results = Vec::new();
@@ -461,8 +489,8 @@ fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {
             if let Err(e) = f.restore(ctx).and_then(|f| f.call::<_, ()>(())) {
                 eprintln!("temzdf script: a timer failed: {}", error_of(ctx, e));
             }
-            while ctx.execute_pending_job() {}
         });
+        while st.unattended(|| ctx.execute_pending_job()) {}
     }
 }
 
@@ -479,6 +507,19 @@ struct Unattended {
 impl Unattended {
     fn new(limit: Duration) -> Self {
         Self { start: Instant::now(), limit, deadline: Arc::default() }
+    }
+
+    /// No deadline while `f` runs (a call someone waits for, or a wait for
+    /// the session's answer); after it, the time that was left.
+    fn paused<R>(&self, f: impl FnOnce() -> R) -> R {
+        let now = || self.start.elapsed().as_millis() as u64;
+        let before = self.deadline.swap(0, Ordering::SeqCst);
+        let left = before.saturating_sub(now());
+        let r = f();
+        if before != 0 {
+            self.deadline.store((now() + left).max(1), Ordering::SeqCst);
+        }
+        r
     }
 
     fn overdue(&self) -> bool {
@@ -498,7 +539,8 @@ impl State {
         let r = f();
         u.deadline.store(0, Ordering::SeqCst);
         if self.tokens.borrow().is_empty() && self.interrupt.swap(false, Ordering::SeqCst) {
-            self.used_interrupts.set(self.used_interrupts.get() + 1);
+            let sent = self.interrupts_sent.load(Ordering::SeqCst);
+            self.interrupts_used.set(self.interrupts_used.get().max(sent));
         }
         self.close_cut_off();
         r
@@ -523,14 +565,17 @@ impl State {
         }
     }
 
-    /// An interrupt message arrived: true if it was used up already (it
-    /// stopped code nobody waited for).
-    fn use_interrupt_message(&self) -> bool {
-        let used = self.used_interrupts.get();
-        if used > 0 {
-            self.used_interrupts.set(used - 1);
+    /// An interrupt's message was read: whether it is still to be acted on
+    /// (and now is), rather than used up already (its flag stopped code
+    /// nobody waited for).
+    fn take_interrupt_message(&self) -> bool {
+        let n = self.interrupts_read.get() + 1;
+        self.interrupts_read.set(n);
+        if n <= self.interrupts_used.get() {
+            return false;
         }
-        used > 0
+        self.interrupts_used.set(n);
+        true
     }
 }
 

@@ -515,3 +515,54 @@ dispatch(async (ctx) => {
     s.send(ToHost::Interrupt);
     assert_eq!(task_story(&mut s), ["end Task(1)", "done1 failed=true"]);
 }
+
+#[test]
+fn an_interrupt_a_task_took_is_not_taken_again() {
+    let config = r#"import { dispatch, map, cmd } from "temzdf";
+map("normal", "x", () => { cmd.message("x"); });
+dispatch(async (ctx) => {
+  await new Promise((r) => setTimeout(r, 30));
+  try { ctx.cmd.message("wait"); } catch (e) {}
+});
+"#;
+    let mut s = Session::start(&[("config.js", config)]);
+    s.load("config.js");
+    // Up to the task's command, left unanswered; <C-c> ends its wait.
+    loop {
+        match s.recv() {
+            FromHost::Request { token: Token::Task(1), .. } => break,
+            FromHost::Request { req, .. } => s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) }),
+            _ => {}
+        }
+    }
+    s.send(ToHost::Interrupt);
+    assert!(matches!(s.serve(&mut Vec::new()), FromHost::TaskDone { task: 1, .. }));
+    // A call waiting in a command: the user's next <C-c> must end it.
+    s.send(ToHost::Call { id: 7, func: 0, args: vec![] });
+    let FromHost::Request { token: Token::Call(7), .. } = s.recv() else { panic!() };
+    s.send(ToHost::Interrupt);
+    assert!(matches!(s.recv(), FromHost::Done { id: 7, result: Err(_) }));
+}
+
+#[test]
+fn a_call_inside_a_tasks_wait_gets_its_own_time() {
+    let config = r#"import { dispatch, map } from "temzdf";
+map("normal", "x", () => { const t = Date.now(); while (Date.now() - t < 100) {} });
+dispatch(async (ctx) => { await new Promise((r) => setTimeout(r, 30)); ctx.cmd.message("wait"); });
+"#;
+    let mut s = Session::start_with_limit(&[("config.js", config)], Duration::from_millis(300));
+    s.load("config.js");
+    let req = loop {
+        match s.recv() {
+            FromHost::Request { req, token: Token::Task(1), .. } => break req,
+            FromHost::Request { req, .. } => s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) }),
+            _ => {}
+        }
+    };
+    // The task has waited past the limit when the user's mapping runs.
+    std::thread::sleep(Duration::from_millis(400));
+    s.send(ToHost::Call { id: 9, func: 0, args: vec![] });
+    assert!(matches!(s.recv(), FromHost::Done { id: 9, result: Ok(()) }));
+    s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
+    assert!(matches!(s.serve(&mut Vec::new()), FromHost::TaskDone { task: 1, result: Ok(()) }));
+}
