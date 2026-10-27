@@ -851,16 +851,10 @@ impl PdfPane {
                 (Some(_), _) => Some(self.search_origin.map_or_else(|| self.viewer.top_position(), |o| o.0)),
                 (None, pending) => pending,
             };
-            // A hit before `from` is one found by wrapping around: only when
-            // every page is searched (later pages may have one still).
-            let wrapped = |from: Target, hit: (usize, usize), search: &SearchState| {
-                let y = search.hits[hit.0].get(hit.1).map_or(0.0, |r| r.y0);
-                (hit.0, y) < (from.page, from.y.unwrap_or(0.0))
-            };
             if let Some(from) = from
                 && let Some(hit) = self.search.find_from(from, true)
                 && self.search.hits[hit.0].get(hit.1).is_some()
-                && (self.search.is_complete() || (hit.0 == page && !wrapped(from, hit, &self.search)))
+                && (self.search.is_complete() || (hit.0 == page && !self.wrapped(from, hit, true)))
             {
                 self.search.current = Some(hit);
                 if self.pending_first_hit.take().is_some() {
@@ -880,6 +874,15 @@ impl PdfPane {
             }
         }
         true
+    }
+
+    /// Whether `hit`, found from `from`, was found by wrapping around (it is
+    /// before `from` going `forward`): only right when every page is
+    /// searched, else later pages may have one still.
+    fn wrapped(&self, from: Target, hit: (usize, usize), forward: bool) -> bool {
+        let y = self.search.hits[hit.0].get(hit.1).map_or(0.0, |r| r.y0);
+        let (hit, from) = ((hit.0, y), (from.page, from.y.unwrap_or(0.0)));
+        if forward { hit < from } else { hit > from }
     }
 
     /// Whether the status bar says `step_search`'s "Searching" message.
@@ -1154,7 +1157,10 @@ impl PdfPane {
         let hit = match self.search.current {
             Some(_) => self.search.step(forward),
             None => {
-                let h = self.search.find_from(self.viewer.top_position(), forward);
+                let from = self.viewer.top_position();
+                let h = self.search.find_from(from, forward);
+                // Wrapped while pages are still searched: wait instead.
+                let h = h.filter(|&h| self.search.is_complete() || !self.wrapped(from, h, forward));
                 self.search.current = h;
                 h
             }
@@ -1700,6 +1706,35 @@ mod tests {
         s.search_hits(generation, 0, vec![rect], now);
         assert_eq!(s.search.current, Some((0, 0)), "the hit it waited for");
         assert_eq!(s.message, None, "found: no longer searching");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn next_match_does_not_wrap_while_later_pages_are_searched() {
+        let mut s = session();
+        let now = Instant::now();
+        assert!(s.viewer.page_count() > 2);
+        for ch in ['/', 'x'] {
+            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
+        }
+        s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
+        let generation = match s.take_requests().last() {
+            Some(Request::Search { generation, .. }) => *generation,
+            other => panic!("{other:?}"),
+        };
+        s.pending_first_hit = None;
+        // Page 0 has a hit and is done; the pages after the view are not.
+        let rect = PageRect { x0: 10.0, y0: 100.0, x1: 50.0, y1: 110.0 };
+        s.search_hits(generation, 0, vec![rect], now);
+        s.viewer.goto(Target { page: 1, y: None }, false, now);
+        s.key(&KeyEvent::new(KeyCode::Char('n'), Modifiers::NONE), now);
+        assert_eq!(s.search.current, None, "no jump back to page 0");
+        assert!(s.message.as_deref().is_some_and(|m| m.starts_with("Searching")), "{:?}", s.message);
+        // The later pages have nothing: then it wraps.
+        for p in 1..s.viewer.page_count() {
+            s.search_hits(generation, p, Vec::new(), now);
+        }
+        assert_eq!(s.search.current, Some((0, 0)));
     }
 
     #[test]
