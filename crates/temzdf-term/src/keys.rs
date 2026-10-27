@@ -115,7 +115,10 @@ pub fn encode(encoder: &mut Encoder<'_>, terminal: &Terminal<'_, '_>, k: &KeyEve
     if let Some(text) = t.text {
         event.set_utf8(Some(text));
     }
-    encoder.set_options_from_terminal(terminal);
+    // Alt in our events is Alt: the outer terminal or the GUI already decided
+    // whether Option composes characters. On macOS libghostty would treat it
+    // as composing (Alt+x as `x`) unless told, and the call before resets it.
+    encoder.set_options_from_terminal(terminal).set_macos_option_as_alt(key::OptionAsAlt::True);
     if encoder.encode_to_vec(&event, &mut out).is_err() {
         out.clear();
     }
