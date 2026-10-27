@@ -615,7 +615,7 @@ fn rebind(name: &str, lock: &mut std::fs::File) -> Result<(UnixListener, RemoveO
             .write(true)
             .open(&lock_path)
             .with_context(|| format!("cannot open {}", lock_path.display()))?;
-        match new.try_lock() {
+        match lock_held_briefly(&new) {
             Ok(()) => *lock = new,
             Err(std::fs::TryLockError::WouldBlock) => bail!("another server took session {name:?}"),
             Err(std::fs::TryLockError::Error(e)) => {
@@ -626,6 +626,22 @@ fn rebind(name: &str, lock: &mut std::fs::File) -> Result<(UnixListener, RemoveO
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).with_context(|| format!("cannot listen on {}", socket.display()))?;
     Ok((listener, RemoveOnDrop::new(&socket)))
+}
+
+/// Lock a session's lock file, waiting a moment if it is held: clients
+/// probing a session that does not answer yet take the lock for an instant
+/// to see whether a server holds it (`discovery::probe`), and a server
+/// starting then must not take that for another server.
+fn lock_held_briefly(file: &std::fs::File) -> Result<(), std::fs::TryLockError> {
+    let deadline = Instant::now() + Duration::from_millis(200);
+    loop {
+        match file.try_lock() {
+            Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            result => return result,
+        }
+    }
 }
 
 /// Take the socket of session `name`: lock the session (`NAME.lock`, held
@@ -641,7 +657,7 @@ fn claim_socket(name: &str, socket: &Path) -> Result<(std::fs::File, UnixListene
         .write(true)
         .open(&lock_path)
         .with_context(|| format!("cannot open {}", lock_path.display()))?;
-    match lock.try_lock() {
+    match lock_held_briefly(&lock) {
         Ok(()) => {}
         Err(std::fs::TryLockError::WouldBlock) => bail!("session {name:?} already exists (or is starting)"),
         Err(std::fs::TryLockError::Error(e)) => return Err(e).context(format!("cannot lock {}", lock_path.display())),
@@ -735,7 +751,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let socket = dir.join("s.sock");
+        // A client probing a session that does not answer yet holds the
+        // lock for a moment (`discovery::probe`): not another server.
+        let probing = std::fs::File::create(socket.with_extension("lock")).unwrap();
+        probing.lock().unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            drop(probing);
+        });
         let first = claim_socket("s", &socket).unwrap();
+        release.join().unwrap();
         // A second server for the same name, started at the same time.
         let e = claim_socket("s", &socket).unwrap_err();
         assert!(e.to_string().contains("already exists"), "{e}");
