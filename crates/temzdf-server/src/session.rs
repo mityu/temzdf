@@ -1880,6 +1880,9 @@ mod tests {
             ("-", acts(&[("resize-pane", &[s("shorter")])])),
             ("<lt>", acts(&[("resize-pane", &[s("narrower")])])),
             (">", acts(&[("resize-pane", &[s("wider")])])),
+            ("=", acts(&[("equalize-panes", &[])])),
+            ("<Bar>", acts(&[("maximize-pane", &[s("width")])])),
+            ("_", acts(&[("maximize-pane", &[s("height")])])),
             ("H", acts(&[("move-pane", &[s("left")])])),
             ("J", acts(&[("move-pane", &[s("bottom")])])),
             ("K", acts(&[("move-pane", &[s("top")])])),
@@ -2023,6 +2026,30 @@ mod tests {
         key(&mut s, "<C-b>");
         assert_eq!(key(&mut s, "d"), Outcome::Detach);
         assert_eq!(key(&mut s, "q"), Outcome::Quit, "quitting the last pane ends the session");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn equal_and_maximized_panes_by_the_default_keys() {
+        let (mut s, rx) = session();
+        settle(&mut s, &rx);
+        for _ in 0..2 {
+            key(&mut s, "<C-b>");
+            key(&mut s, "%");
+        }
+        let widths =
+            |s: &Session| s.layout.as_ref().unwrap().panes().iter().map(|p| s.panes[p].rect.w).collect::<Vec<_>>();
+        assert_eq!(widths(&s), [44, 22, 22], "each split halved the focused pane");
+        key(&mut s, "<C-b>");
+        assert_eq!(key(&mut s, "="), Outcome::Redraw);
+        assert_eq!(widths(&s), [29, 30, 29], "90 cells and two borders");
+        assert_eq!(s.current_mode(), "normal", "the keys repeat, as resizing does");
+        assert_eq!(key(&mut s, "<Bar>"), Outcome::Redraw);
+        assert_eq!(widths(&s), [10, 10, 68], "the focused, last pane takes all it can");
+        key(&mut s, "30<Bar>");
+        assert_eq!(widths(&s)[2], 30, "a count is the width");
+        assert_eq!(key(&mut s, "_"), Outcome::None, "nothing stacked with it");
+        assert!(s.run_command("maximize-pane", &[], None, Instant::now()).is_err());
     }
 
     #[test]

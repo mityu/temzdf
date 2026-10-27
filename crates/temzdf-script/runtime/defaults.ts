@@ -57,6 +57,11 @@ each("normal", ["+"], action.resizePane("taller"));
 each("normal", ["-"], action.resizePane("shorter"));
 each("normal", ["<lt>"], action.resizePane("narrower"));
 each("normal", [">"], action.resizePane("wider"));
+// As Vim's <C-w>= | _: every pane the same size; the pane as wide or as
+// high as it can be (with a count: that many cells).
+each("normal", ["="], action.equalizePanes());
+each("normal", ["<Bar>"], action.maximizePane("width"));
+each("normal", ["_"], action.maximizePane("height"));
 // Places as Vim's <C-w>H J K L r R: the pane to an edge of the screen;
 // the panes of its row or column rotated.
 each("normal", ["H"], action.movePane("left"));

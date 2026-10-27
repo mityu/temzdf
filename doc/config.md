@@ -88,6 +88,8 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `normal` | `%` / `"` | split right / below (the same document, or a new shell) |
 | `normal` | `h` `j` `k` `l`, arrows | move the focus (back to that pane's mode) |
 | `normal` | `+` `-` `<` `>` | the pane taller / shorter / narrower / wider (counts; as Vim's `<C-w>+` ...) |
+| `normal` | `=` | every tiled pane the same size (Vim's `<C-w>=`) |
+| `normal` | `\|` / `_` | the pane as wide / as high as the others allow; `{N}\|` N cells wide (Vim's `<C-w>\|` / `<C-w>_`) |
 | `normal` | `H` `J` `K` `L` | move the pane to the left / bottom / top / right edge, the full height or width there (Vim's `<C-w>H` ...) |
 | `normal` | `r` / `R` | rotate the panes in the pane's row or column (Vim's `<C-w>r` / `<C-w>R`; counts) |
 | `normal` | `o` | next pane |
@@ -254,7 +256,7 @@ largest pane in any of them. All clients show the same tab page.
 `cmd.*` and `action.*` share the command registry
 (`crates/temzdf-server/src/session/commands.rs`; `temzdf print-types` lists
 them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
-`focusNextPane`, `resizePane`, `movePane`, `rotatePanes`, `closePane`,
+`focusNextPane`, `resizePane`, `equalizePanes`, `maximizePane`, `movePane`, `rotatePanes`, `closePane`,
 `openFloat`, `floatConfig`,
 `toggleFloats`, `toggleFloating`, `newTab`, `closeTab`, `nextTab`,
 `prevTab`, `gotoTab`, `moveTab`, `renameTab`, `breakPane`, `tabs`,

@@ -462,6 +462,74 @@ impl Layout {
         *size = to as u32;
         to != before
     }
+
+    /// Make the panes the same size, as Vim's `<C-w>=`: across every split
+    /// (only side-by-side ones for `Some(Horizontal)`, stacked ones for
+    /// `Some(Vertical)`), each half gets room for the panes in a row (or
+    /// column) of it, so neighbours in a row come out equal however the
+    /// splits nest. False if nothing changed.
+    pub fn equalize(&mut self, only: Option<Split>, area: Rect) -> bool {
+        fn walk(n: &mut Node, r: Rect, only: Option<Split>) -> bool {
+            let Node::Split { split, a, b, size } = n else { return false };
+            let split = *split;
+            let mut changed = false;
+            if only.is_none_or(|o| o == split) {
+                let extent = match split {
+                    Split::Horizontal => r.w,
+                    Split::Vertical => r.h,
+                };
+                let (ua, ub) = (in_a_row(a, split), in_a_row(b, split));
+                // Units of the same size with one-cell borders between them:
+                // the first half ends where its units do.
+                let want = ((extent as u64 + 1) * ua as u64 * 2 / (ua + ub) as u64).div_ceil(2) as u32;
+                let (lo, hi) = (min_extent(a, split), extent.saturating_sub(1).saturating_sub(min_extent(b, split)));
+                let want = want.saturating_sub(1).clamp(lo, hi.max(lo));
+                changed = *size != want;
+                *size = want;
+            }
+            let (ra, rb) = parts(split, r, *size, min_extent(b, split));
+            let ca = walk(a, ra, only);
+            let cb = walk(b, rb, only);
+            changed | ca | cb
+        }
+        let before = self.rects(area);
+        walk(&mut self.root, area, only);
+        self.rects(area) != before
+    }
+
+    /// Give `pane` all the width (`Horizontal`) or height the other panes'
+    /// minimum sizes leave, as Vim's `<C-w>|` and `<C-w>_`: every split
+    /// across that direction on the way to it leans its way. False if
+    /// nothing changed.
+    pub fn maximize(&mut self, pane: PaneId, split: Split, area: Rect) -> bool {
+        let Some(path) = self.path_to(pane) else { return false };
+        let before = self.rects(area);
+        for i in 0..path.len() {
+            let here = &path[..i];
+            let Some((r, s)) = self.split_rect(here, area) else { continue };
+            if s != split {
+                continue;
+            }
+            let extent = match split {
+                Split::Horizontal => r.w,
+                Split::Vertical => r.h,
+            };
+            // set_size clamps to the other half's minimum.
+            let to = if path[i] { 0 } else { extent as i32 };
+            self.set_size(here, to, area);
+        }
+        self.rects(area) != before
+    }
+}
+
+/// How many panes of `n` stand in a row across `split` (side by side for
+/// `Horizontal`), at most: what `equalize` shares the room by.
+fn in_a_row(n: &Node, split: Split) -> u32 {
+    match n {
+        Node::Leaf(_) => 1,
+        Node::Split { split: s, a, b, .. } if *s == split => in_a_row(a, split) + in_a_row(b, split),
+        Node::Split { a, b, .. } => in_a_row(a, split).max(in_a_row(b, split)),
+    }
 }
 
 /// A border between two panes (or groups of panes): the split it belongs to.
@@ -530,6 +598,51 @@ mod tests {
     }
 
     const AREA: Rect = Rect::new(0, 0, 81, 31);
+
+    fn widths(l: &Layout, area: Rect) -> Vec<(PaneId, u32, u32)> {
+        l.rects(area).into_iter().map(|(p, r)| (p, r.w, r.h)).collect()
+    }
+
+    #[test]
+    fn equalize_shares_by_the_panes_in_a_row() {
+        // 1 | 2 | 3 made by splitting 2 again: 40, 19, 20 wide.
+        let mut l = Layout::new(1);
+        assert!(l.split(1, 2, Split::Horizontal, AREA));
+        assert!(l.split(2, 3, Split::Horizontal, AREA));
+        assert!(l.split(3, 4, Split::Vertical, AREA));
+        assert!(l.move_border(4, Split::Vertical, 5, AREA));
+        assert!(l.equalize(Some(Split::Horizontal), AREA));
+        // 81 = 26 + 1 + 27 + 1 + 26; the stack in the third column is left.
+        assert_eq!(widths(&l, AREA), [(1, 26, 31), (2, 27, 31), (3, 26, 20), (4, 26, 10)]);
+        assert!(l.equalize(None, AREA));
+        assert_eq!(widths(&l, AREA), [(1, 26, 31), (2, 27, 31), (3, 26, 15), (4, 26, 15)]);
+        assert!(!l.equalize(None, AREA), "already equal");
+        // A stack beside a pane takes as much as one pane: half.
+        let mut l = Layout::new(1);
+        assert!(l.split(1, 2, Split::Horizontal, AREA));
+        assert!(l.split(2, 3, Split::Vertical, AREA));
+        assert!(l.move_border(1, Split::Horizontal, 12, AREA));
+        assert!(l.equalize(None, AREA));
+        assert_eq!(widths(&l, AREA), [(1, 40, 31), (2, 40, 15), (3, 40, 15)]);
+    }
+
+    #[test]
+    fn maximize_leaves_the_others_their_minimum() {
+        let mut l = Layout::new(1);
+        assert!(l.split(1, 2, Split::Horizontal, AREA));
+        assert!(l.split(2, 3, Split::Horizontal, AREA));
+        assert!(l.split(1, 4, Split::Vertical, AREA));
+        // The middle pane: the split before it leans right, the one after left.
+        assert!(l.maximize(2, Split::Horizontal, AREA));
+        assert_eq!(
+            widths(&l, AREA),
+            [(1, MIN_COLS, 15), (4, MIN_COLS, 15), (2, 81 - 2 * MIN_COLS - 2, 31), (3, MIN_COLS, 31)]
+        );
+        assert!(!l.maximize(2, Split::Horizontal, AREA), "already");
+        assert!(l.maximize(4, Split::Vertical, AREA));
+        assert_eq!(widths(&l, AREA)[..2], [(1, MIN_COLS, MIN_ROWS), (4, MIN_COLS, 31 - MIN_ROWS - 1)]);
+        assert!(!l.maximize(3, Split::Vertical, AREA), "nothing stacked with it");
+    }
 
     #[test]
     fn splits_share_the_area_with_a_border() {

@@ -31,6 +31,16 @@ const SESSION: &[(&str, &str, &str)] = &[
         "Move the focused pane's right (bottom) border, else its left (top) one, `cells` cells that way (1 times a mapping's count); or make the pane wider, narrower, taller, shorter by `cells` (Vim's <C-w>> < + -); or give it a size",
     ),
     (
+        "equalize-panes",
+        "(only?: \"width\" | \"height\"): void",
+        "Make the tiled panes the same size (only their widths, or heights), as Vim's <C-w>=",
+    ),
+    (
+        "maximize-pane",
+        "(axis: \"width\" | \"height\"): void",
+        "Make the focused pane as wide (high) as the others' minimum sizes allow, as Vim's <C-w>| and <C-w>_; a mapping's count N makes it N cells instead",
+    ),
+    (
         "move-pane",
         "(side: \"left\" | \"right\" | \"top\" | \"bottom\"): void",
         "Move the focused pane to that edge of the screen, the full height or width there (Vim's <C-w>H J K L)",
@@ -367,6 +377,41 @@ impl Session {
             }
             "focus-next-pane" => act(self, Action::FocusNextPane),
             "resize-pane" => self.resize_pane(args, count),
+            "equalize-panes" => {
+                let only = match text(0).as_deref() {
+                    None => None,
+                    Some("width") => Some(Split::Horizontal),
+                    Some("height") => Some(Split::Vertical),
+                    Some(other) => return Err(format!("equalizePanes: {other:?} is not width or height")),
+                };
+                let area = self.area();
+                let changed = self.layout.as_mut().is_some_and(|l| l.equalize(only, area));
+                if changed {
+                    self.relayout();
+                }
+                ok(if changed { Outcome::Redraw } else { Outcome::None })
+            }
+            "maximize-pane" => {
+                let split = match text(0).as_deref() {
+                    Some("width") => Split::Horizontal,
+                    Some("height") => Split::Vertical,
+                    other => return Err(format!("maximizePane: {other:?} is not width or height")),
+                };
+                let pane = self.focus;
+                if self.is_float(pane) {
+                    return Err("maximizePane: the pane is floating (resizePane sizes it)".into());
+                }
+                let area = self.area();
+                let Some(layout) = self.layout.as_mut() else { return ok(Outcome::None) };
+                let changed = match count {
+                    Some(n) => layout.set_pane_size(pane, split, n.min(u16::MAX as usize) as u32, area),
+                    None => layout.maximize(pane, split, area),
+                };
+                if changed {
+                    self.relayout();
+                }
+                ok(if changed { Outcome::Redraw } else { Outcome::None })
+            }
             "close-pane" => ok(self.request_close(self.focus)),
             "buffers" => Ok((self.buffer_list(), Outcome::None)),
             "show-buffer" => {
