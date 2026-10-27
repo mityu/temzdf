@@ -7,13 +7,11 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use glyphon::cosmic_text::FontSystem;
 use temzdf_protocol::{ClientMsg, VERSION};
 use temzdf_scene::Hints;
 use termpix_core::raster::RgbaImage;
 
 use crate::connection::{Connection, FromServer};
-use crate::fonts::FontSpec;
 use crate::render::{Renderer, offscreen_device};
 use crate::view::{Applied, View, grid};
 
@@ -26,8 +24,7 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// Render session `name` on a `size` (pixels) window at `scale` into `out`.
 pub fn render_frame(name: &str, out: &Path, size: (u32, u32), scale: f64) -> Result<()> {
     let (device, queue) = offscreen_device()?;
-    let font = FontSpec::parse(&temzdf_scene::Appearance::default().font);
-    let renderer = Renderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm, FontSystem::new(), font, scale);
+    let renderer = Renderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm, crate::fonts::system(), scale);
     let mut view = View::new(renderer, scale);
     let (conn, rx) = Connection::open(name, || {})?;
     let mut geometry = view.geometry(size);

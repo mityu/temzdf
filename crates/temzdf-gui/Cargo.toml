@@ -21,6 +21,8 @@ winit = "=0.31.0-beta.4"
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }
 clap = { version = "4.6.7", features = ["derive"] }
 unicode-width = "0.2.2"
+sys-locale = "0.3.2"
+unicode-script = "0.5.8"
 
 [lints]
 workspace = true

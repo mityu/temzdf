@@ -7,7 +7,6 @@ use temzdf_scene::{Appearance, Effect, Frame, ImageUpdate};
 use termpix_core::geom::{CellSize, Geometry};
 
 use crate::drawlist::{self, DrawList, Grid};
-use crate::fonts::FontSpec;
 use crate::palette::Colors;
 use crate::render::Renderer;
 
@@ -49,11 +48,7 @@ impl View {
 
     pub fn set_scale(&mut self, scale: f64) {
         self.scale = scale;
-        self.renderer.set_font(FontSpec::parse(&self.appearance.font), self.wide(), scale);
-    }
-
-    fn wide(&self) -> Option<FontSpec> {
-        self.appearance.font_wide.as_deref().map(FontSpec::parse)
+        self.renderer.set_font(&self.appearance.font, &self.appearance.font_wide, scale);
     }
 
     pub fn apply(&mut self, msg: ServerMsg) -> Applied {
@@ -69,13 +64,12 @@ impl View {
                 Applied::Frame(seq, complete)
             }
             ServerMsg::Appearance(a) => {
-                let font_changed =
-                    (a.font.as_str(), &a.font_wide) != (self.appearance.font.as_str(), &self.appearance.font_wide);
+                let font_changed = (&a.font, &a.font_wide) != (&self.appearance.font, &self.appearance.font_wide);
                 self.colors = Colors::new(&a);
                 self.appearance = a;
                 let before = self.renderer.metrics();
                 if font_changed {
-                    self.renderer.set_font(FontSpec::parse(&self.appearance.font), self.wide(), self.scale);
+                    self.renderer.set_font(&self.appearance.font, &self.appearance.font_wide, self.scale);
                 }
                 Applied::Appearance { resized: self.renderer.metrics() != before }
             }

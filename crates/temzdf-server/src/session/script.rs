@@ -813,11 +813,14 @@ impl Session {
                     .map_err(|e| format!("o.palette: {e}"))?;
             }
             "guifont" => {
-                o.guifont = text()?.ok_or("o.guifont: expected a string")?;
+                o.guifont = fonts(value).map_err(|e| format!("o.guifont: {e}"))?;
+                if o.guifont.is_empty() {
+                    return Err("o.guifont: at least one font".into());
+                }
                 self.configured_fonts = None;
             }
             "guifontwide" => {
-                o.guifontwide = text()?;
+                o.guifontwide = fonts(value).map_err(|e| format!("o.guifontwide: {e}"))?;
                 self.configured_fonts = None;
             }
             "showtabline" => match value.as_num() {
@@ -833,7 +836,7 @@ impl Session {
         Ok(())
     }
 
-    fn get_option(&self, name: &str) -> Result<ScriptValue, String> {
+    pub(super) fn get_option(&self, name: &str) -> Result<ScriptValue, String> {
         let o = &self.options;
         let ms = |d: Duration| ScriptValue::Num(d.as_millis() as f64);
         Ok(match name {
@@ -856,11 +859,52 @@ impl Session {
             "foreground" => o.foreground.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "background" => o.background.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "palette" => ScriptValue::List(o.palette.iter().map(|c| ScriptValue::Str(hex(*c))).collect()),
-            "guifont" => ScriptValue::Str(o.guifont.clone()),
-            "guifontwide" => o.guifontwide.clone().map_or(ScriptValue::Null, ScriptValue::Str),
+            "guifont" => font_list(&o.guifont),
+            "guifontwide" => font_list(&o.guifontwide),
             other => return Err(format!("no option {other:?}")),
         })
     }
+}
+
+/// A font list option: `{ font: string, size?: number }[]`.
+fn fonts(v: &ScriptValue) -> Result<Vec<temzdf_scene::FontEntry>, String> {
+    const EXPECTED: &str = "expected a list of { font: string, size?: number }";
+    let ScriptValue::List(l) = v else { return Err(EXPECTED.into()) };
+    l.iter()
+        .map(|entry| {
+            let ScriptValue::Map(fields) = entry else { return Err(EXPECTED.to_owned()) };
+            let field = |k: &str| fields.iter().find(|(name, _)| name == k).map(|(_, v)| v);
+            let family = match field("font") {
+                Some(ScriptValue::Str(s)) if !s.trim().is_empty() => s.trim().to_owned(),
+                _ => return Err(format!("{EXPECTED} (font: a family name)")),
+            };
+            let size = match field("size") {
+                None | Some(ScriptValue::Null) => None,
+                Some(ScriptValue::Num(n)) if n.is_finite() && *n > 0.0 => Some(*n as f32),
+                Some(_) => return Err(format!("size of {family:?}: expected a number of points")),
+            };
+            if let Some((k, _)) = fields.iter().find(|(k, _)| k != "font" && k != "size") {
+                return Err(format!("{family:?}: no field {k:?} (font, size)"));
+            }
+            Ok(temzdf_scene::FontEntry { family, size })
+        })
+        .collect()
+}
+
+/// A font list as scripts see it.
+fn font_list(fonts: &[temzdf_scene::FontEntry]) -> ScriptValue {
+    ScriptValue::List(
+        fonts
+            .iter()
+            .map(|f| {
+                let mut m = vec![("font".to_owned(), ScriptValue::Str(f.family.clone()))];
+                if let Some(size) = f.size {
+                    m.push(("size".to_owned(), ScriptValue::Num(size as f64)));
+                }
+                ScriptValue::Map(m)
+            })
+            .collect(),
+    )
 }
 
 /// A colour option: "#rrggbb", or null for none.

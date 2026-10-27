@@ -21,7 +21,7 @@ use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 9;
+pub const VERSION: u32 = 10;
 /// Larger messages are refused (a frame with every image of a full cache is
 /// about 200 MB).
 const MAX_MESSAGE: usize = 512 << 20;
@@ -48,13 +48,15 @@ pub enum ClientMsg {
     /// Something the frontend could not do (e.g. open a link).
     Report(String),
     Detach,
-    /// Requests answered once (no Hello): describe the session, end it, or run
-    /// an action (its text form, see `temzdf-server`'s `Action`).
+    /// Requests answered once (no Hello): describe the session, end it, run
+    /// an action (its text form, see `temzdf-server`'s `Action`), or tell
+    /// how GUI clients should look (`ServerMsg::Appearance`).
     Info {
         version: u32,
     },
     Kill,
     Action(Vec<String>),
+    GetAppearance,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

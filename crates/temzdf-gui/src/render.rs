@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use glyphon::cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, Style, Weight};
+use glyphon::cosmic_text::{Buffer, FontSystem, Metrics, Shaping, Style, Weight};
 use glyphon::{
     Cache, Color as GlyphColor, ColorMode, Resolution, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer,
     Viewport,
@@ -18,7 +18,8 @@ use temzdf_scene::{Image, ImageKey, Rect};
 use wgpu::util::DeviceExt;
 
 use crate::drawlist::{DrawList, Fill, Glyph, Grid, Image as Layer};
-use crate::fonts::{CellMetrics, FontSpec};
+use crate::fonts::{CellMetrics, Chain};
+use temzdf_scene::FontEntry;
 
 const SHADER: &str = r"
 struct Screen { size: vec2<f32>, _pad: vec2<f32> };
@@ -105,8 +106,8 @@ pub struct Renderer {
     /// Glyphs, and the character over a block cursor.
     text: [TextRenderer; 2],
     glyphs: HashMap<GlyphKey, Buffer>,
-    font: FontSpec,
-    font_wide: Option<FontSpec>,
+    chain: Chain,
+    scale: f64,
     metrics: CellMetrics,
 }
 
@@ -116,7 +117,6 @@ impl Renderer {
         queue: wgpu::Queue,
         format: wgpu::TextureFormat,
         mut fonts: FontSystem,
-        font: FontSpec,
         scale: f64,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -216,7 +216,9 @@ impl Renderer {
             TextRenderer::new(&mut atlas, &device, wgpu::MultisampleState::default(), None),
             TextRenderer::new(&mut atlas, &device, wgpu::MultisampleState::default(), None),
         ];
-        let metrics = crate::fonts::measure(&mut fonts, &font, scale);
+        // The built-in font until the session says which.
+        let chain = Chain::new(&fonts, &[], &[]);
+        let metrics = crate::fonts::measure(&mut fonts, &chain, scale);
         let mut r = Self {
             white: Texture {
                 _texture: dummy(&device),
@@ -238,8 +240,8 @@ impl Renderer {
             viewport,
             text,
             glyphs: HashMap::new(),
-            font,
-            font_wide: None,
+            chain,
+            scale,
             metrics,
         };
         r.white = r.texture(1, 1, &[255, 255, 255, 255]);
@@ -263,10 +265,11 @@ impl Renderer {
         self.metrics
     }
 
-    /// Use `font` (and `wide` for wide characters) at `scale`.
-    pub fn set_font(&mut self, font: FontSpec, wide: Option<FontSpec>, scale: f64) -> CellMetrics {
-        self.metrics = crate::fonts::measure(&mut self.fonts, &font, scale);
-        (self.font, self.font_wide) = (font, wide);
+    /// Use the fonts `font` (and `wide` first for wide characters) at `scale`.
+    pub fn set_font(&mut self, font: &[FontEntry], wide: &[FontEntry], scale: f64) -> CellMetrics {
+        self.chain = Chain::new(&self.fonts, font, wide);
+        self.scale = scale;
+        self.metrics = crate::fonts::measure(&mut self.fonts, &self.chain, scale);
         self.glyphs.clear();
         self.metrics
     }
@@ -318,15 +321,14 @@ impl Renderer {
         let key = (g.text.clone(), g.bold, g.italic, g.width);
         if !self.glyphs.contains_key(&key) {
             let m = self.metrics;
-            let spec = if g.width > 1 { self.font_wide.as_ref().unwrap_or(&self.font) } else { &self.font };
-            let mut attrs: Attrs<'_> = spec.attrs();
+            let (mut attrs, font_px) = self.chain.attrs_for(&mut self.fonts, &g.text, g.width > 1, self.scale);
             if g.bold {
                 attrs = attrs.weight(Weight::BOLD);
             }
             if g.italic {
                 attrs = attrs.style(Style::Italic);
             }
-            let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(m.font_px, m.height as f32));
+            let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(font_px.max(1.0), m.height as f32));
             buffer.set_size(Some((m.width * g.width as u32 * 4) as f32), Some(m.height as f32));
             buffer.set_text(&g.text, &attrs, Shaping::Advanced, None);
             buffer.shape_until_scroll(&mut self.fonts, false);

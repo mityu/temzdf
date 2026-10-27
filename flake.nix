@@ -39,6 +39,26 @@
           libxcb
           libxscrnsaver
         ];
+      # The fonts temzdf-gui embeds (crates/temzdf-gui/build.rs), as WezTerm
+      # bundles them: JetBrains Mono, the default and first fallback, then
+      # Noto Color Emoji and the Nerd Font symbols.
+      bundledFontsFor =
+        pkgs:
+        let
+          jb = style: "${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-${style}.ttf";
+        in
+        pkgs.lib.concatStringsSep ":" (
+          map jb [
+            "Regular"
+            "Bold"
+            "Italic"
+            "BoldItalic"
+          ]
+          ++ [
+            "${pkgs.noto-fonts-color-emoji}/share/fonts/noto/NotoColorEmoji.ttf"
+            "${pkgs.nerd-fonts.symbols-only}/share/fonts/truetype/NerdFonts/Symbols/SymbolsNerdFontMono-Regular.ttf"
+          ]
+        );
     in
     {
       # `nix build` / `nix run`: the viewer, and the GUI client (temzdf-gui,
@@ -102,11 +122,17 @@
                 license = lib.licenses.agpl3Only;
                 mainProgram = "temzdf";
               };
-            }
-            // lib.optionalAttrs pkgs.stdenv.hostPlatform.isStatic {
-              # fontconfig (MuPDF's system fonts) and what it needs, from
-              # their static archives too.
-              PKG_CONFIG_ALL_STATIC = "1";
+              # Environment variables of the build (plain attributes are
+              # not exported).
+              env =
+                lib.optionalAttrs gui {
+                  TEMZDF_BUNDLED_FONTS = bundledFontsFor pkgs;
+                }
+                // lib.optionalAttrs pkgs.stdenv.hostPlatform.isStatic {
+                  # fontconfig (MuPDF's system fonts) and what it needs, from
+                  # their static archives too.
+                  PKG_CONFIG_ALL_STATIC = "1";
+                };
             };
           temzdf = temzdfFor pkgs true;
         in
@@ -192,6 +218,8 @@
             buildInputs = [ pkgs.libghostty-vt.dev ];
             # mupdf-sys runs bindgen, which needs libclang.
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+            # Fonts temzdf-gui embeds (see bundledFontsFor).
+            TEMZDF_BUNDLED_FONTS = bundledFontsFor pkgs;
           }
           // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             # winit and wgpu open these with dlopen. The real GPU's Vulkan
@@ -222,7 +250,7 @@
           # a fixed font set instead of whatever the host has installed.
           ci = pkgs.mkShell {
             nativeBuildInputs = build ++ [ tex ];
-            inherit (base) buildInputs LIBCLANG_PATH;
+            inherit (base) buildInputs LIBCLANG_PATH TEMZDF_BUNDLED_FONTS;
             FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
           };
           # `nix develop .#alldeps`: every tool development of this CLI uses,

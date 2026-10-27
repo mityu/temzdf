@@ -157,8 +157,8 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `showtabline` | `1` | when the tab line shows (Vim's): `0` never, `1` with two tab pages or more, `2` always |
 | `foreground`, `background` | `null` | default colours (`"#rrggbb"`) of GUI clients and terminal panes (programs asking with OSC 10/11 are told); `null`: the client's own. A terminal client's terminal keeps its own |
 | `palette` | `[]` | the first colours of the 256-colour palette (`["#000000", "#cd0000", ...]`), for GUI clients and terminal panes (OSC 4); the rest stay the default |
-| `guifont` | `"UDEV Gothic NF:h14"` | the GUI client's font, as Neovim's `guifont` (`Family:hSIZE`, points) |
-| `guifontwide` | `null` | the GUI client's font for wide (CJK) characters; `null`: `guifont`, then fallbacks |
+| `guifont` | `[{ font: "JetBrains Mono", size: 14 }]` | the GUI client's fonts, `{ font, size? }` (size in points; left out: the first font's, else 14). The first installed one sets the cell size; a character goes to the first font of the list that has it, at that font's size, then (as WezTerm) to the built-in JetBrains Mono, Noto Color Emoji and Symbols Nerd Font Mono, then the system's fonts for its script. A font that is not installed is skipped: `temzdf ls-fonts` shows what the list resolves to |
+| `guifontwide` | `[]` | fonts tried first for wide (CJK) characters, as `guifont` |
 
 ## Buffers
 
@@ -264,9 +264,10 @@ them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
 `sendText`, `paste` (the client's clipboard, or `"primary"`; GUI clients:
 terminal clients paste with the terminal's keys), `fontSize` (GUI
-clients' font: `fontSize(16)` points, `fontSize("+1")` / `fontSize("-1")`
-one point more or less, times a mapping's count, `fontSize()` back to the
-configured `guifont`; terminal clients keep their terminal's font), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
+clients' font: `fontSize(16)` sets the first font of `guifont` to 16 points
+and scales the other sizes given with it, `fontSize("+1")` / `fontSize("-1")`
+one point more or less for each, times a mapping's count, `fontSize()` back to the
+configured sizes; terminal clients keep their terminal's font), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
 `search`, ...: every action of the PDF table above, taking the count).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
@@ -286,3 +287,13 @@ variables:
 | `TERMPIX_MEDIUM` | `direct`, `shm` or `file`: how pixels are transferred (default: detected; `direct` mimics SSH) |
 | `TEMZDF_ZLIB_LEVEL` | zlib level (0-9) of inline transfers, default 2 (do not use 1 with Ghostty 1.3.1, see doc/terminal-compat.md) |
 | `TEMZDF_LOG_DIR` | where logs go (default `$XDG_STATE_HOME/temzdf`): `temzdf.log` for viewers and clients, `NAME.log` for session NAME |
+| `TEMZDF_GUI` | the `temzdf-gui` that `temzdf ls-fonts` runs (default: next to `temzdf`, else on `PATH`) |
+
+`temzdf ls-fonts` shows the fonts GUI clients use, as `wezterm ls-fonts`
+does: each font of `guifont` and `guifontwide` with its file (`<built-in>`
+for the bundled ones) or `not found`, and the fallbacks after them. It
+takes the lists of the configuration, of `-s NAME` (or of the session it
+runs in, as changed there), or `--font NAME[:SIZE]` given (repeated;
+`--font-wide` likewise). `--text TEXT` shows the font of each character of
+TEXT, `--list-system` every font available. It needs `temzdf-gui`, which
+has the fonts built in.

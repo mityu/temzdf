@@ -22,7 +22,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley` + `taffy`). Independent of `termpix` (`termpix-core` only in its tests). |
 | `crates/temzdf-scene` | Library. What a pane shows, frontend-independent: image store and frames of layers, frontend hints, effects. |
 | `crates/temzdf-protocol` | Library. Session protocol: client/server messages, framing, socket locations, finding sessions (`discovery`). |
-| `crates/temzdf-gui` | The GUI client (`temzdf-gui`): a winit window drawing the session with wgpu and glyphon (draw list, renderer, input, IME, clipboard), `--render-frame` offscreen. Uses `temzdf-protocol`, `temzdf-scene`, `temzdf-client`, `termpix-core`; no `termpix`, no server code. See `doc/gui-client.md`. |
+| `crates/temzdf-gui` | The GUI client (`temzdf-gui`): a winit window drawing the session with wgpu and glyphon (draw list, renderer, fonts with built-in fallbacks embedded from nixpkgs, input, IME, clipboard), `--render-frame` offscreen, `ls-fonts`. Uses `temzdf-protocol`, `temzdf-scene`, `temzdf-client`, `termpix-core`; no `termpix`, no server code. See `doc/gui-client.md`. |
 | `crates/temzdf-client` | Library. What every client shares: naming, resolving and starting sessions (`spawn_server`), log locations, carrying out effects (links, inverse search). No terminal or window code. |
 | `crates/temzdf-pdfcore` | Library. PDF backend: MuPDF (`mupdf` crate), display list and tile cache, text, SyncTeX, background workers, reload. No terminal code. |
 | `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings; `Document`/`DocumentHost` shared by the panes on one file (workers, reload, SyncTeX routing). No terminal code. |
@@ -31,7 +31,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-server` | Library. `Session` (panes, layout, focus, modes and key mappings, the command registry, composed frame), the session server process, forward-search sockets. No terminal code. |
 | `crates/temzdf-script` | Library. The script host (`temzdf script-host`): runs `config.ts`/`config.js` in QuickJS (`rquickjs`, TypeScript stripped with swc) and talks to the session over `temzdf-protocol`. The server never links it (child process). |
 | `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
-| `crates/temzdf` | The binary: `temzdf [FILE]` starts a session (named alfa, bravo, ... unless `-s NAME`), session commands and client (zellij names: `attach`, `ls`, `kill-session`, `action`), the standalone viewer (`temzdf standalone pdf`), config, headless `--render-frame`. |
+| `crates/temzdf` | The binary: `temzdf [FILE]` starts a session (named alfa, bravo, ... unless `-s NAME`), session commands and client (zellij names: `attach`, `ls`, `kill-session`, `action`), the standalone viewer (`temzdf standalone pdf`), `ls-fonts`, config, headless `--render-frame`. |
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
 | `todo.md` | Long-running tasks and deferred work. |

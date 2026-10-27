@@ -3,9 +3,7 @@
 //! text by its properties (no stored images to compare with). Skipped when
 //! no adapter is found (the `ci` shell has none).
 
-use glyphon::cosmic_text::{FontSystem, fontdb};
 use temzdf_gui::drawlist::{self, Grid};
-use temzdf_gui::fonts::FontSpec;
 use temzdf_gui::palette::Colors;
 use temzdf_gui::render::{Renderer, offscreen_device};
 use temzdf_scene::{Attrs, Cell, Color, CursorShape, Frame, Images, Layer, Rect, TextGrid};
@@ -28,11 +26,9 @@ fn main() {
             return;
         }
     };
-    let mut db = fontdb::Database::new();
-    db.load_fonts_dir(fonts_dir);
-    let fonts = FontSystem::new_with_locale_and_db("en-US".into(), db);
-    let font = FontSpec::parse("UDEV Gothic NF:h14");
-    let mut r = Renderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm, fonts, font, 1.0);
+    let fonts = temzdf_gui::fonts::from_dir(std::path::Path::new(&fonts_dir));
+    let mut r = Renderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm, fonts, 1.0);
+    r.set_font(&[temzdf_scene::FontEntry { family: "UDEV Gothic NF".into(), size: Some(14.0) }], &[], 1.0);
     layers_match_the_cpu_reference(&mut r);
     text_lands_in_its_cells(&mut r);
     println!("gpu: 2 tests passed");

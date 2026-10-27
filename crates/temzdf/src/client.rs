@@ -171,7 +171,7 @@ fn ended(rx: &mpsc::Receiver<Event>) -> Option<ExitReason> {
 /// How long one-shot requests wait for the session by default.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn request(name: &str, msg: ClientMsg, timeout: Duration) -> Result<ServerMsg> {
+pub fn request(name: &str, msg: ClientMsg, timeout: Duration) -> Result<ServerMsg> {
     let socket = proto::socket_path(name)?;
     let mut s = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
     s.set_read_timeout(Some(timeout))?;

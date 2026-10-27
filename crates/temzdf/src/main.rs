@@ -2,6 +2,7 @@ mod app;
 mod client;
 mod config;
 mod headless;
+mod lsfonts;
 
 use temzdf_server::forward as ipc;
 
@@ -137,6 +138,25 @@ enum Cmd {
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         action: Vec<String>,
     },
+    /// Show the fonts GUI clients use (as `wezterm ls-fonts`): those of the
+    /// configuration, of session NAME, or of the session this runs in.
+    LsFonts {
+        /// The session whose fonts to show.
+        #[arg(short, long, value_name = "NAME")]
+        session: Option<String>,
+        /// Show this font list instead (NAME or NAME:SIZE, repeated).
+        #[arg(long = "font", value_name = "NAME[:SIZE]")]
+        font: Vec<String>,
+        /// The fonts tried first for wide characters, as --font.
+        #[arg(long = "font-wide", value_name = "NAME[:SIZE]")]
+        font_wide: Vec<String>,
+        /// Show which font draws each character of TEXT.
+        #[arg(long)]
+        text: Option<String>,
+        /// List every font available, installed or built in.
+        #[arg(long)]
+        list_system: bool,
+    },
     /// Run the configuration script for a session (started by the session).
     #[command(hide = true)]
     ScriptHost,
@@ -184,6 +204,29 @@ fn main() -> Result<()> {
             // In a session's pane, that session (as zellij does).
             let session = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok());
             return client::action(&client::resolve(session.as_deref())?, action, timeout);
+        }
+        Some(Cmd::LsFonts { session, font, font_wide, text, list_system }) => {
+            let looks = if !font.is_empty() || !font_wide.is_empty() {
+                temzdf_scene::Appearance::default()
+            } else if let Some(name) = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok()) {
+                lsfonts::from_session(&name)?
+            } else {
+                lsfonts::from_configuration(cli.clean, cli.config.as_deref())?
+            };
+            let mut rest = Vec::new();
+            for f in font {
+                rest.extend(["--font".to_owned(), f]);
+            }
+            for f in font_wide {
+                rest.extend(["--font-wide".to_owned(), f]);
+            }
+            if let Some(t) = text {
+                rest.extend(["--text".to_owned(), t]);
+            }
+            if list_system {
+                rest.push("--list-system".into());
+            }
+            return lsfonts::run(&looks, &rest);
         }
         Some(Cmd::PrintTypes) => {
             print!("{}", temzdf_script::types::declarations(&temzdf_server::session::command_specs()));

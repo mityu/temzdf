@@ -273,6 +273,11 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                         let _ = c.tx.send(ServerMsg::Info(info));
                     }
                 }
+                ClientMsg::GetAppearance => {
+                    if let Some(c) = clients.remove(&id) {
+                        let _ = c.tx.send(ServerMsg::Appearance(session.appearance()));
+                    }
+                }
                 ClientMsg::Kill => {
                     if let Some(c) = clients.remove(&id) {
                         let _ = c.tx.send(ServerMsg::Done(Ok(())));

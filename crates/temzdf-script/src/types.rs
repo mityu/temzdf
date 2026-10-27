@@ -91,6 +91,12 @@ declare module "temzdf" {{
   export function feedkeys(keys: string, options?: {{ remap?: boolean }}): void;
   export function currentMode(): string;
 
+  /** A font of o.guifont: a family name, and its size in points (unset: the first font's, else 14). */
+  export interface FontEntry {{
+    font: string;
+    size?: number;
+  }}
+
   export interface Options {{
     /** Milliseconds a key that starts a longer mapping waits. */
     timeoutlen: number;
@@ -126,10 +132,10 @@ declare module "temzdf" {{
     background: string | null;
     /** The first palette colours (#rrggbb), index 0 first; the rest stay the default. */
     palette: string[];
-    /** The GUI font, as Neovim's guifont: Family:h14. */
-    guifont: string;
-    /** The GUI font for wide (CJK) characters; null: the font's own, then fallbacks. */
-    guifontwide: string | null;
+    /** The GUI fonts: the first installed one sets the cell size, the rest fill in what it lacks, then JetBrains Mono, Noto Color Emoji, Symbols Nerd Font Mono and the system's fonts. */
+    guifont: FontEntry[];
+    /** Fonts tried first for wide (CJK) characters; []: none. */
+    guifontwide: FontEntry[];
   }}
   export const o: Options;
 

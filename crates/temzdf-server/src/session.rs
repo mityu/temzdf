@@ -142,9 +142,10 @@ pub struct Options {
     pub foreground: Option<[u8; 3]>,
     pub background: Option<[u8; 3]>,
     pub palette: Vec<[u8; 3]>,
-    /// The GUI font (Neovim's `guifont`), and one for wide characters.
-    pub guifont: String,
-    pub guifontwide: Option<String>,
+    /// The GUI fonts, first choice first, and those tried first for wide
+    /// characters.
+    pub guifont: Vec<temzdf_scene::FontEntry>,
+    pub guifontwide: Vec<temzdf_scene::FontEntry>,
 }
 
 impl Default for Options {
@@ -168,8 +169,8 @@ impl Default for Options {
             foreground: None,
             background: None,
             palette: Vec::new(),
-            guifont: "UDEV Gothic NF:h14".into(),
-            guifontwide: None,
+            guifont: vec![temzdf_scene::FontEntry { family: "JetBrains Mono".into(), size: Some(14.0) }],
+            guifontwide: Vec::new(),
         }
     }
 }
@@ -352,7 +353,7 @@ pub struct Session {
     options: Options,
     /// `guifont` and `guifontwide` as configured, while `font-size` has
     /// changed them (what `font-size` with no size goes back to).
-    configured_fonts: Option<(String, Option<String>)>,
+    configured_fonts: Option<(Vec<temzdf_scene::FontEntry>, Vec<temzdf_scene::FontEntry>)>,
     notices: Vec<notices::Notice>,
     /// The fixed escape keymap (script host down) saw its prefix.
     escape_prefix: bool,
@@ -1926,32 +1927,71 @@ mod tests {
         let sink: EventSink = Arc::new(|_| true);
         let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
         let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
-        let font = |s: &Session| (s.appearance().font, s.appearance().font_wide);
+        // Each list's sizes, `None` where a font names none.
+        let sizes = |s: &Session| {
+            let a = s.appearance();
+            let of = |l: &[temzdf_scene::FontEntry]| l.iter().map(|f| f.size).collect::<Vec<_>>();
+            (of(&a.font), of(&a.font_wide))
+        };
         let run = |s: &mut Session, arg: Option<&str>, count| {
             let args: Vec<ScriptValue> = arg.map(|a| ScriptValue::Str(a.into())).into_iter().collect();
             s.run_command("font-size", &args, count, Instant::now()).map(|_| ())
         };
-        s.set_option("guifont", &ScriptValue::Str("Mono:b:h11".into())).unwrap();
-        s.set_option("guifontwide", &ScriptValue::Str("Wide".into())).unwrap();
+        let fonts = |list: &[(&str, Option<f64>)]| {
+            ScriptValue::List(
+                list.iter()
+                    .map(|(f, size)| {
+                        let mut m = vec![("font".to_owned(), ScriptValue::Str((*f).into()))];
+                        m.extend(size.map(|n| ("size".to_owned(), ScriptValue::Num(n))));
+                        ScriptValue::Map(m)
+                    })
+                    .collect(),
+            )
+        };
+        s.set_option("guifont", &fonts(&[("Mono", Some(11.0)), ("Cjk", Some(12.0)), ("Emoji", None)])).unwrap();
+        s.set_option("guifontwide", &fonts(&[("Wide", None)])).unwrap();
+        assert_eq!(
+            s.get_option("guifont").unwrap(),
+            fonts(&[("Mono", Some(11.0)), ("Cjk", Some(12.0)), ("Emoji", None)])
+        );
         run(&mut s, Some("+1"), None).unwrap();
-        assert_eq!(font(&s), ("Mono:b:h12".into(), Some("Wide:h12".into())), "the wide font follows");
+        assert_eq!(
+            sizes(&s),
+            (vec![Some(12.0), Some(13.0), None], vec![None]),
+            "each named size; the rest follow the first"
+        );
         run(&mut s, Some("-2"), Some(3)).unwrap();
-        assert_eq!(font(&s).0, "Mono:b:h6", "times the count");
+        assert_eq!(sizes(&s).0, [Some(6.0), Some(7.0), None], "times the count");
         run(&mut s, Some("-100"), None).unwrap();
-        assert_eq!(font(&s).0, "Mono:b:h4", "kept readable");
-        s.run_command("font-size", &[ScriptValue::Num(9.5)], None, Instant::now()).unwrap();
-        assert_eq!(font(&s).0, "Mono:b:h9.5");
+        assert_eq!(sizes(&s).0, [Some(4.0), Some(5.0), None], "kept readable, by what the first could take");
+        s.run_command("font-size", &[ScriptValue::Num(8.0)], None, Instant::now()).unwrap();
+        assert_eq!(sizes(&s).0, [Some(8.0), Some(10.0), None], "a size scales them");
         assert!(run(&mut s, Some("big"), None).is_err());
         run(&mut s, None, None).unwrap();
-        assert_eq!(font(&s), ("Mono:b:h11".into(), Some("Wide".into())), "back to the configuration");
-        // A size where the value names none; setting the option again
-        // makes that the configured font.
-        s.set_option("guifont", &ScriptValue::Str("Plain".into())).unwrap();
+        assert_eq!(sizes(&s), (vec![Some(11.0), Some(12.0), None], vec![None]), "back to the configuration");
+        s.run_command("font-size", &[ScriptValue::Num(22.0)], None, Instant::now()).unwrap();
+        assert_eq!(sizes(&s).0, [Some(22.0), Some(24.0), None], "in proportion");
+        // A first font without a size starts from 14; setting the option
+        // again makes that the configured font.
+        s.set_option("guifont", &fonts(&[("Plain", None)])).unwrap();
         run(&mut s, Some("+2"), None).unwrap();
-        assert_eq!(font(&s).0, "Plain:h16", "from the GUI's default of 14");
-        s.set_option("guifont", &ScriptValue::Str("Other:h8".into())).unwrap();
+        assert_eq!(sizes(&s).0, [Some(16.0)], "from the default of 14");
+        s.set_option("guifont", &fonts(&[("Other", Some(8.0))])).unwrap();
         run(&mut s, None, None).unwrap();
-        assert_eq!(font(&s).0, "Other:h8");
+        assert_eq!(sizes(&s).0, [Some(8.0)]);
+        // What is not a font list.
+        for bad in [ScriptValue::Str("Mono:h11".into()), fonts(&[]), ScriptValue::List(vec![ScriptValue::Num(1.0)])] {
+            assert!(s.set_option("guifont", &bad).is_err(), "{bad:?}");
+        }
+        let sized = |v: ScriptValue| {
+            ScriptValue::List(vec![ScriptValue::Map(vec![
+                ("font".into(), ScriptValue::Str("X".into())),
+                ("size".into(), v),
+            ])])
+        };
+        assert!(s.set_option("guifont", &sized(ScriptValue::Num(-1.0))).is_err());
+        assert!(s.set_option("guifont", &sized(ScriptValue::Str("12".into()))).is_err());
+        assert!(s.set_option("guifontwide", &fonts(&[])).is_ok(), "no wide fonts");
     }
 
     fn session() -> (Session, Receiver<SessionEvent>) {
@@ -3198,11 +3238,16 @@ mod tests {
         // Options read back; bad values are refused.
         assert_eq!(s.appearance().background, Some([0x10, 0x20, 0x30]));
         assert_eq!(s.appearance().palette, [[0xff, 0, 0]]);
-        assert_eq!(s.appearance().font, "UDEV Gothic NF:h14");
+        let jetbrains = temzdf_scene::FontEntry { family: "JetBrains Mono".into(), size: Some(14.0) };
+        assert_eq!(s.appearance().font, [jetbrains], "the default");
         assert!(s.set_option("foreground", &ScriptValue::Str("#12345".into())).is_err());
         assert!(s.set_option("palette", &ScriptValue::List(vec![ScriptValue::Null])).is_err());
-        s.set_option("guifontwide", &ScriptValue::Str("Noto Sans CJK JP".into())).unwrap();
-        assert_eq!(s.appearance().font_wide.as_deref(), Some("Noto Sans CJK JP"));
+        let cjk = ScriptValue::Map(vec![("font".into(), ScriptValue::Str("Noto Sans CJK JP".into()))]);
+        s.set_option("guifontwide", &ScriptValue::List(vec![cjk])).unwrap();
+        assert_eq!(
+            s.appearance().font_wide,
+            [temzdf_scene::FontEntry { family: "Noto Sans CJK JP".into(), size: None }]
+        );
     }
 
     #[test]

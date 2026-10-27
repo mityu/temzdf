@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use anyhow::{Context, Result};
-use glyphon::cosmic_text::FontSystem;
 use temzdf_protocol::{ClientMsg, ExitReason, VERSION};
 use temzdf_scene::{Effect, Hints, Pointer};
 use termpix_core::geom::Geometry;
@@ -17,7 +16,6 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::connection::{Connection, FromServer};
-use crate::fonts::FontSpec;
 use crate::render::Renderer;
 use crate::view::{Applied, View, exit_message};
 
@@ -119,8 +117,7 @@ impl App {
         };
         surface.configure(&device, &config);
         let scale = window.scale_factor();
-        let font = FontSpec::parse(&temzdf_scene::Appearance::default().font);
-        let renderer = Renderer::new(device, queue, format, FontSystem::new(), font, scale);
+        let renderer = Renderer::new(device, queue, format, crate::fonts::system(), scale);
         let view = View::new(renderer, scale);
         let geometry = view.geometry((config.width, config.height));
         crate::input::enable_ime(window.as_ref());

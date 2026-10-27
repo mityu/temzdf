@@ -985,7 +985,10 @@ fn hovering_over_another_client_keeps_the_session_size() {
 fn an_attaching_client_is_told_how_to_look() {
     use temzdf_protocol::{ClientMsg, ServerMsg};
     let env = Env::new("appearance");
-    env.config("config.js", "import { o } from \"temzdf\";\no.background = \"#102030\";\no.guifont = \"Mono:h11\";\n");
+    env.config(
+        "config.js",
+        "import { o } from \"temzdf\";\no.background = \"#102030\";\no.guifont = [{ font: \"Mono\", size: 11 }];\n",
+    );
     let mut t = Term::spawn(&[BIN, "-s", "ap"], &env.options());
     t.wait_for("the prompt", prompt);
     // A second client, as a GUI would attach.
@@ -1003,7 +1006,8 @@ fn an_attaching_client_is_told_how_to_look() {
             _ => {}
         }
     };
-    assert_eq!((looks.background, looks.font.as_str()), (Some([0x10, 0x20, 0x30]), "Mono:h11"));
+    let font = temzdf_scene::FontEntry { family: "Mono".into(), size: Some(11.0) };
+    assert_eq!((looks.background, looks.font), (Some([0x10, 0x20, 0x30]), vec![font]));
 }
 
 /// The names `temzdf ls` lists.
@@ -1056,4 +1060,32 @@ fn forward_search_goes_to_the_session_showing_the_pdf_or_starts_one() {
     env.run(&["--forward", "44:sample.tex", &pdf]);
     t.wait_for("page 3 again", on_page_3);
     assert_eq!(session_names(&env), ["alfa"]);
+}
+
+#[test]
+fn ls_fonts_shows_the_configured_fonts_or_a_sessions() {
+    let env = Env::new("ls-fonts");
+    env.config(
+        "config.js",
+        "import { o } from \"temzdf\";\no.guifont = [{ font: \"No Such Font\", size: 12 }, { font: \"Other\" }];\no.guifontwide = [{ font: \"Wide\" }];\n",
+    );
+    // A stand-in for temzdf-gui: what it was asked.
+    let gui = env.path("gui.sh");
+    std::fs::write(&gui, "#!/bin/sh\nprintf '%s|' \"$@\"\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&gui, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let run = |args: &[&str]| {
+        let out = Command::new(BIN).args(args).envs(env.vars()).env("TEMZDF_GUI", &gui).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let configured = "ls-fonts|--font|No Such Font:12|--font|Other|--font-wide|Wide|";
+    assert_eq!(run(&["ls-fonts"]), configured, "the configuration's");
+    assert_eq!(run(&["ls-fonts", "--text", "a"]), format!("{configured}--text|a|"));
+    assert_eq!(run(&["ls-fonts", "--font", "X:9"]), "ls-fonts|--font|X:9|", "given");
+    // A session's, as changed there.
+    let mut t = Term::spawn(&[BIN, "-s", "lf"], &env.options());
+    t.wait_for("the prompt", prompt);
+    env.run(&["action", "-s", "lf", "font-size", "20"]);
+    assert_eq!(run(&["ls-fonts", "-s", "lf"]), "ls-fonts|--font|No Such Font:20|--font|Other|--font-wide|Wide|");
 }

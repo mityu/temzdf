@@ -32,6 +32,17 @@ it (else on `PATH`). Closing the window detaches. `--render-frame PNG
   glyphon in "web" colour mode on non-sRGB targets, so blending matches the
   mock terminal) into the window or offscreen. Cells come from the font:
   the advance of `0`, ascent + descent + line gap, rounded up.
+- **Fonts**: `o.guifont` and `o.guifontwide` are lists of `{ font, size? }`
+  (`fonts.rs`). As WezTerm: the configured fonts, then the built-in
+  JetBrains Mono, Noto Color Emoji and Symbols Nerd Font Mono, then
+  cosmic-text's lists for the script and locale and every installed font.
+  The first installed font sets the cell, so a missing one does not break
+  the grid; each glyph takes the first font of the list that has all its
+  characters, at that font's size. The bundled fonts come from nixpkgs
+  (`bundledFontsFor` in `flake.nix`, `TEMZDF_BUNDLED_FONTS`) and are
+  embedded by `build.rs` (about 14 MB, most of it the emoji font); a build
+  without the variable has none and uses the system's. `temzdf ls-fonts`
+  (`temzdf-gui ls-fonts` behind it) shows what the lists resolve to.
 - **Input** (G2): keys as the kitty protocol reports them (`input.rs`,
   `translate`, tested), pointer events in pixels, wheel and trackpad as
   `ScrollBy`, focus, IME (preedit drawn at the cursor, the candidate window
@@ -229,8 +240,8 @@ inferred.
 - The theme (gap 4) is session options (`o.palette`, `o.foreground`,
   `o.background`) sent to clients with frames; libghostty answers colour
   queries from them.
-- Fonts (gap 5) are session options as Neovim's `guifont` (`o.guifont`,
-  `o.guifontwide`), read by GUI clients.
+- Fonts (gap 5) are session options (`o.guifont`, `o.guifontwide`, lists
+  of `{ font, size? }`), read by GUI clients.
 - Pasting (gap 6) is a mapping to a `paste` command; the client answers the
   `paste` effect with `ClientMsg::Paste` (the primary selection too).
 - winit 0.31 beta, pinned exactly, updated as betas come.
@@ -251,7 +262,8 @@ Also decided (the user, 2026-10-27):
 
 - First target: the user's Xfce (X11, xfwm4). Wayland and macOS follow;
   e2e tests run xfwm4 on Xvfb first.
-- Default font "UDEV Gothic NF" at 14 (points); no colours given, so the
+- Default font "UDEV Gothic NF" at 14 (points), since changed to the
+  built-in JetBrains Mono with WezTerm's fallbacks (2026-10-27); no colours given, so the
   theme defaults are ours (the default foreground and background of the
   session's chrome, xterm's 256-colour palette).
 - The dev shell already has the tools (`flake.nix`: Vulkan loader,

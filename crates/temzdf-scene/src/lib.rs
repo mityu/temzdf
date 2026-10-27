@@ -325,17 +325,36 @@ pub struct Hints {
 /// the scene leaves to the frontend (`Color::Default`, `Color::Indexed`)
 /// and the font. `None` and missing palette entries: the client's own.
 /// Terminal clients ignore it (their terminal decides).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Appearance {
     pub foreground: Option<[u8; 3]>,
     pub background: Option<[u8; 3]>,
     /// Colours of the first palette indices.
     pub palette: Vec<[u8; 3]>,
-    /// As Neovim's `guifont`: "Family:h14" (size in points).
-    pub font: String,
-    /// For wide (CJK) characters; `None`: the font's own, then fallbacks.
-    pub font_wide: Option<String>,
+    /// The fonts, the first that is installed first, the rest as
+    /// fallbacks for what it lacks (before the client's own).
+    pub font: Vec<FontEntry>,
+    /// Fonts tried first for wide (CJK) characters; empty: none.
+    pub font_wide: Vec<FontEntry>,
+}
+
+/// A font of a list (`o.guifont`).
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FontEntry {
+    pub family: String,
+    /// In points; `None`: as [`base_points`] says.
+    pub size: Option<f32>,
+}
+
+/// Points when no font names a size.
+pub const DEFAULT_FONT_POINTS: f32 = 14.0;
+
+/// The size of fonts that name none: that of the first font of `font`
+/// (`o.guifont`), else [`DEFAULT_FONT_POINTS`].
+pub fn base_points(font: &[FontEntry]) -> f32 {
+    font.first().and_then(|f| f.size).unwrap_or(DEFAULT_FONT_POINTS)
 }
 
 /// Something a frontend does on a pane's behalf, in the frontend's own

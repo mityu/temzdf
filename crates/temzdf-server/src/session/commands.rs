@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use temzdf_pdfview::keys::Command;
 use temzdf_protocol::script::{CommandSpec, ScriptValue};
+use temzdf_scene::FontEntry;
 
 use temzdf_term::Spawn;
 
@@ -92,7 +93,7 @@ const SESSION: &[(&str, &str, &str)] = &[
     (
         "font-size",
         "(size?: number | string): void",
-        "GUI clients: the font size in points (guifont's :h), \"+N\"/\"-N\" points more or less (times a mapping's count), none: back to the configured size",
+        "GUI clients: the first guifont's size in points (the other sizes scale with it), \"+N\"/\"-N\" points more or less for every size (times a mapping's count), none: back to the configured sizes",
     ),
     (
         "feedkeys",
@@ -203,21 +204,18 @@ fn read_what(args: &[ScriptValue]) -> Result<FloatWhat, String> {
 const MIN_FONT_POINTS: f64 = 4.0;
 const MAX_FONT_POINTS: f64 = 200.0;
 
-/// The size in a `guifont` value ("Family:h14"; 14 when it names none, as
-/// the GUI client takes it).
-fn font_points(font: &str) -> f64 {
-    font.split(':').skip(1).find_map(|p| p.strip_prefix('h')?.parse().ok()).unwrap_or(14.0)
-}
-
-/// `font` with its size set to `points` (added when it names none).
-fn with_font_points(font: &str, points: f64) -> String {
-    let size = format!("h{}", (points * 100.0).round() / 100.0);
-    let mut parts: Vec<String> = font.split(':').map(str::to_owned).collect();
-    match parts.iter_mut().skip(1).find(|p| p.strip_prefix('h').is_some_and(|n| n.parse::<f64>().is_ok())) {
-        Some(p) => *p = size,
-        None => parts.push(size),
+/// Every size in `font` and `wide` changed by `change`: the first font's
+/// always (it sets the size of fonts that name none), the others' where
+/// they name one.
+fn resize_fonts(font: &mut [FontEntry], wide: &mut [FontEntry], change: impl Fn(f64) -> f64) {
+    let base = temzdf_scene::base_points(font);
+    let resized = |p: f32| ((change(p as f64).clamp(MIN_FONT_POINTS, MAX_FONT_POINTS) * 100.0).round() / 100.0) as f32;
+    if let Some(first) = font.first_mut() {
+        first.size = Some(resized(first.size.unwrap_or(base)));
     }
-    parts.join(":")
+    for f in font.iter_mut().skip(1).chain(wide.iter_mut()) {
+        f.size = f.size.map(resized);
+    }
 }
 
 /// `cells` times a mapping's `count`, kept within what any screen has
@@ -589,11 +587,12 @@ impl Session {
         }
     }
 
-    /// `font-size`: change the size in `guifont` (and in `guifontwide`
-    /// when it names one), remembering the configured fonts for going back.
+    /// `font-size`: change the sizes in `guifont` and `guifontwide` (a size
+    /// sets the first font's and scales the others'; +N adds to each),
+    /// remembering the configured fonts for going back.
     fn font_size(&mut self, size: Option<&ScriptValue>, count: Option<usize>) -> Result<(), String> {
         let o = &self.options;
-        let current = font_points(&o.guifont);
+        let current = temzdf_scene::base_points(&o.guifont) as f64;
         let points = match size {
             None | Some(ScriptValue::Null) => {
                 if let Some((font, wide)) = self.configured_fonts.take() {
@@ -619,9 +618,12 @@ impl Session {
         let points = points.clamp(MIN_FONT_POINTS, MAX_FONT_POINTS);
         self.configured_fonts.get_or_insert_with(|| (o.guifont.clone(), o.guifontwide.clone()));
         let o = &mut self.options;
-        o.guifont = with_font_points(&o.guifont, points);
-        if let Some(wide) = &mut o.guifontwide {
-            *wide = with_font_points(wide, points);
+        let relative = matches!(size, Some(ScriptValue::Str(s)) if s.trim_start().starts_with(['+', '-']));
+        if relative {
+            let delta = points - current;
+            resize_fonts(&mut o.guifont, &mut o.guifontwide, |p| p + delta);
+        } else {
+            resize_fonts(&mut o.guifont, &mut o.guifontwide, |p| p * points / current);
         }
         Ok(())
     }

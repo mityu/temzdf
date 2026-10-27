@@ -10,6 +10,7 @@ pub mod drawlist;
 pub mod fonts;
 pub mod headless;
 pub mod input;
+pub mod lsfonts;
 pub mod palette;
 pub mod render;
 pub mod view;
