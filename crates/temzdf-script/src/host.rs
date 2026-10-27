@@ -85,7 +85,10 @@ pub fn run_with_limit(
     }
     // A promise rejected with nobody to handle it (a timer's async code, a
     // top-level `Promise.reject`) would fail silently: say so in the log.
-    rt.set_host_promise_rejection_tracker(Some(Box::new(|_ctx, _promise, reason, handled| {
+    // While a configuration loads they wait (see `load_config`).
+    let held: Arc<std::sync::Mutex<Option<Vec<String>>>> = Arc::default();
+    let tracker_held = held.clone();
+    rt.set_host_promise_rejection_tracker(Some(Box::new(move |_ctx, _promise, reason, handled| {
         if !handled {
             // An Error: "Name: message" and where (its stack has frames only).
             let error = reason.as_object().and_then(|o| {
@@ -96,7 +99,10 @@ pub fn run_with_limit(
             });
             let text =
                 error.or_else(|| reason.get::<rquickjs::Coerced<String>>().ok().map(|c| c.0)).unwrap_or_default();
-            eprintln!("temzdf script: unhandled promise rejection: {text}");
+            match tracker_held.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+                Some(held) => held.push(text),
+                None => log_rejection(&text),
+            }
         }
     })));
     rt.set_loader(Resolve, Load);
@@ -119,6 +125,7 @@ pub fn run_with_limit(
         running_tasks: RefCell::new(std::collections::BTreeSet::new()),
         commands: RefCell::new(Vec::new()),
         gone: Cell::new(false),
+        held_rejections: held,
     });
     context.with(|ctx| install(&ctx, &st)).map_err(|e| format!("cannot start the scripting API: {e}"))?;
     while !st.gone.get() {
@@ -181,6 +188,8 @@ struct State {
     commands: RefCell<Vec<CommandSpec>>,
     /// The session went away.
     gone: Cell<bool>,
+    /// Unhandled rejections held back while a configuration loads.
+    held_rejections: Arc<std::sync::Mutex<Option<Vec<String>>>>,
 }
 
 impl State {
@@ -582,6 +591,7 @@ impl State {
 /// Evaluate the shipped defaults, then the configuration at `path`.
 fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: Option<&Path>) -> Result<(), ScriptError> {
     st.tokens.borrow_mut().push(Token::Load);
+    *st.held_rejections.lock().unwrap_or_else(|p| p.into_inner()) = Some(Vec::new());
     let result = (|| {
         let fill: Function = ctx.globals().get("__temzdfLoad").map_err(|e| error_of(ctx, e))?;
         fill.call::<_, ()>(()).map_err(|e| error_of(ctx, e))?;
@@ -593,7 +603,23 @@ fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: Option<&Path>) -> Result<(),
     })();
     st.tokens.borrow_mut().pop();
     st.interrupt.store(false, Ordering::SeqCst);
+    let held = st.held_rejections.lock().unwrap_or_else(|p| p.into_inner()).take().unwrap_or_default();
+    for text in rejections_to_log(held, &result) {
+        log_rejection(&text);
+    }
     result
+}
+
+/// Which rejections seen while a configuration loaded go to the log: none
+/// when the load failed, as a module that throws (or is interrupted)
+/// rejects its evaluation's promises, its own and those of the modules
+/// importing it, with what the load reports as its error already.
+fn rejections_to_log(held: Vec<String>, result: &Result<(), ScriptError>) -> Vec<String> {
+    if result.is_err() { Vec::new() } else { held }
+}
+
+fn log_rejection(text: &str) {
+    eprintln!("temzdf script: unhandled promise rejection: {text}");
 }
 
 /// Evaluate one module. Its top level only registers things; a top-level
@@ -755,4 +781,18 @@ fn normalize(p: &Path) -> PathBuf {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_load_error_is_not_logged_again_as_a_rejection() {
+        let held = || vec!["Error: bad config\n    at <anonymous> (config.js:1:7)".to_owned(); 2];
+        let failed = Err(ScriptError::new("Error: bad config"));
+        assert!(rejections_to_log(held(), &failed).is_empty());
+        // A load that went fine: they are rejections nobody handles.
+        assert_eq!(rejections_to_log(held(), &Ok(())).len(), 2);
+    }
 }
