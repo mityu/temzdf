@@ -52,6 +52,10 @@ only session, or a new shell; new sessions without a NAME are named as
   placed there with `request_ime_update`, commits as `Text`), the clipboard
   through arboard (primary selection on Linux), links and inverse search
   through `temzdf-client`. `<C-S-v>` and `<D-v>` paste in terminal panes.
+  Keys held as the window gains the focus (winit reports them as synthetic
+  presses on X11 and Windows) were pressed for another window: they, their
+  repeats and their release are dropped (`Input::keyboard`;
+  `tests/e2e/gui-focus.actions`: Ctrl+D ending a shell in another window).
 - **Packaging**: `nix build` builds both binaries; the libraries winit and
   wgpu load (`guiLibsFor` in `flake.nix`) go into `temzdf-gui`'s RUNPATH, so
   the binary works alone outside the dev shell (on Nix: it needs glibc 2.44

@@ -222,6 +222,8 @@ pub struct Input {
     left_side: bool,
     /// The buttons held, in the order pressed (drags carry the last).
     held: Vec<MouseButton>,
+    /// Keys held already as the window gained the focus (see `keyboard`).
+    foreign: Vec<winit::keyboard::PhysicalKey>,
     pointer: (i32, i32),
     /// Text the input method is composing, and where the cursor was (its
     /// cell, and the cell size: the candidate window goes there).
@@ -247,6 +249,7 @@ impl Input {
             mods: Modifiers::NONE,
             left_side: true,
             held: Vec::new(),
+            foreign: Vec::new(),
             pointer: (0, 0),
             preedit: String::new(),
             ime_cell: None,
@@ -288,6 +291,42 @@ impl Input {
                 Some((PhysicalPosition::new(col as u32 * w, row as u32 * h).into(), PhysicalSize::new(w, h).into()));
             let _ = window.request_ime_update(ImeRequest::Update(data));
         }
+    }
+
+    /// A key went down or up (keys the input method takes do not come here).
+    /// `synthetic`: winit made it up for a key held as the window gained
+    /// the focus (X11, Windows). Such a key was pressed for another window
+    /// (Ctrl+D ending a shell there typed `d` here): it, its repeats while
+    /// still held, and its release are dropped. Made-up releases, as the
+    /// focus goes, end keys the session saw pressed: kept.
+    fn keyboard(&mut self, event: &winit::event::KeyEvent, synthetic: bool) -> Vec<ClientMsg> {
+        let pressed = event.state == ElementState::Pressed;
+        if synthetic && pressed {
+            self.foreign.push(event.physical_key);
+            return Vec::new();
+        }
+        if let Some(i) = self.foreign.iter().position(|k| *k == event.physical_key) {
+            if !pressed {
+                self.foreign.swap_remove(i);
+            }
+            return Vec::new();
+        }
+        self.left_side = event.location != KeyLocation::Right;
+        let key = match &event.logical_key {
+            Key::Character(s) => Logical::Char(s.to_string()),
+            Key::Named(n) => Logical::Named(*n),
+            _ => Logical::Other,
+        };
+        let k = KeyInput {
+            key,
+            text: event.text.as_ref().map(|t| t.to_string()),
+            mods: self.mods,
+            pressed,
+            repeat: event.repeat,
+            left_side: self.left_side,
+            base: base_key(&event.physical_key),
+        };
+        translate(&k).map(ClientMsg::Key).into_iter().collect()
     }
 
     /// Whether the cursor's cell moved on the window: another cell, or the
@@ -352,25 +391,7 @@ impl Input {
                 self.mods = modifiers(m.state());
                 Vec::new()
             }
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Keys the input method takes do not come here.
-                self.left_side = event.location != KeyLocation::Right;
-                let key = match &event.logical_key {
-                    Key::Character(s) => Logical::Char(s.to_string()),
-                    Key::Named(n) => Logical::Named(*n),
-                    _ => Logical::Other,
-                };
-                let k = KeyInput {
-                    key,
-                    text: event.text.as_ref().map(|t| t.to_string()),
-                    mods: self.mods,
-                    pressed: event.state == ElementState::Pressed,
-                    repeat: event.repeat,
-                    left_side: self.left_side,
-                    base: base_key(&event.physical_key),
-                };
-                translate(&k).map(ClientMsg::Key).into_iter().collect()
-            }
+            WindowEvent::KeyboardInput { event, is_synthetic, .. } => self.keyboard(event, *is_synthetic),
             WindowEvent::Ime(ime) => {
                 let (msgs, redraw) = self.ime(ime);
                 if redraw {
@@ -464,6 +485,32 @@ mod tests {
             base: None,
         });
         assert_eq!(up.unwrap().kind, KeyEventKind::Release);
+    }
+
+    #[test]
+    fn keys_held_as_the_window_gains_the_focus_are_not_typed() {
+        use winit::keyboard::{KeyCode as K, PhysicalKey};
+        let d = |state| winit::event::KeyEvent {
+            physical_key: PhysicalKey::Code(K::KeyD),
+            logical_key: Key::Character("d".into()),
+            text: (state == ElementState::Pressed).then(|| "d".into()),
+            location: KeyLocation::Standard,
+            state,
+            repeat: false,
+            text_with_all_modifiers: None,
+            key_without_modifiers: Key::Character("d".into()),
+        };
+        let mut input = Input::without_clipboard();
+        assert!(input.keyboard(&d(ElementState::Pressed), true).is_empty(), "pressed for another window");
+        // Still held: the key repeats, then goes up.
+        let repeat = winit::event::KeyEvent { repeat: true, ..d(ElementState::Pressed) };
+        assert!(input.keyboard(&repeat, false).is_empty(), "its repeats neither");
+        assert!(input.keyboard(&d(ElementState::Released), false).is_empty());
+        let typed = input.keyboard(&d(ElementState::Pressed), false);
+        assert!(matches!(typed[..], [ClientMsg::Key(ref k)] if k.code == KeyCode::Char('d')), "{typed:?}");
+        // The focus going: the release still ends it.
+        let up = input.keyboard(&d(ElementState::Released), true);
+        assert!(matches!(up[..], [ClientMsg::Key(ref k)] if k.kind == KeyEventKind::Release), "{up:?}");
     }
 
     #[test]
