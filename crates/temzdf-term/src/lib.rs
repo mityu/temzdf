@@ -262,8 +262,6 @@ impl TermBuffer {
         self.input.write(bytes);
     }
 
-    /// Write `text` to the program as if typed (for scripts, like Vim's
-    /// `chansend()`).
     /// The default colours (the session's theme): what `Default` and
     /// palette cells mean, and what programs asking (OSC 10, 11, 4) are
     /// told. `None` and missing entries: libghostty's built-in defaults.
@@ -283,6 +281,8 @@ impl TermBuffer {
         }
     }
 
+    /// Write `text` to the program as if typed (for scripts, like Vim's
+    /// `chansend()`).
     pub fn send_text(&mut self, text: &str) -> bool {
         let redraw = self.scroll_to_bottom();
         self.write(text.as_bytes());
