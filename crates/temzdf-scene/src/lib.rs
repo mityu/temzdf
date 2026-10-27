@@ -15,6 +15,8 @@ use std::sync::Arc;
 pub use termpix_core::geom::Rect;
 pub use termpix_core::input;
 
+pub mod theme;
+
 /// An image in an [`Images`] store.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

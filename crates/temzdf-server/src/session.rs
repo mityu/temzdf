@@ -148,6 +148,22 @@ pub struct Options {
     pub guifontwide: Vec<temzdf_scene::FontEntry>,
 }
 
+impl Options {
+    /// The colours terminal panes report (OSC 10, 11, 4): the options', else
+    /// what GUI clients draw (`temzdf_scene::theme`), so the two agree.
+    fn foreground_or_default(&self) -> Option<[u8; 3]> {
+        Some(self.foreground.unwrap_or(temzdf_scene::theme::FOREGROUND))
+    }
+
+    fn background_or_default(&self) -> Option<[u8; 3]> {
+        Some(self.background.unwrap_or(temzdf_scene::theme::BACKGROUND))
+    }
+
+    fn full_palette(&self) -> Vec<[u8; 3]> {
+        temzdf_scene::theme::palette(&self.palette)
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         let scroll = ScrollConfig::default();
@@ -839,7 +855,11 @@ impl Session {
             }
         };
         let mut term = Box::new(term);
-        term.set_colors(self.options.foreground, self.options.background, &self.options.palette);
+        term.set_colors(
+            self.options.foreground_or_default(),
+            self.options.background_or_default(),
+            &self.options.full_palette(),
+        );
         self.terms.insert(buf, TermEntry { term, exited: false });
         self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str("terminal".into())]);
         self.terminal_pane(id, buf, rect, focus);
@@ -1325,7 +1345,7 @@ impl Session {
         self.history.cap = self.options.modehistory;
         let o = &self.options;
         for t in self.terms.values_mut() {
-            t.term.set_colors(o.foreground, o.background, &o.palette);
+            t.term.set_colors(o.foreground_or_default(), o.background_or_default(), &o.full_palette());
         }
     }
 
@@ -3430,6 +3450,22 @@ mod tests {
         s.client_focus(true);
         let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
         assert!(rows.iter().any(|l| l.contains("got: 033 [ O 033 [ I")), "{rows:?}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn unthemed_terminals_report_the_gui_defaults() {
+        // One query at a time: under load two answers may come in two reads.
+        let script = "stty raw -echo min 0 time 20; printf ready; \
+            printf '\\033]4;1;?\\033\\\\'; a=$(dd bs=128 count=1 2>/dev/null | tr -d '\\033'); \
+            printf '\\033]11;?\\033\\\\'; b=$(dd bs=128 count=1 2>/dev/null | tr -d '\\033'); \
+            printf 'got:%s%s' \"$a\" \"$b\"; sleep 30";
+        let (mut s, rx) = terminal_session(&["sh", "-c", script]);
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
+        let all = rows.join("");
+        // xterm's red and the GUI's default background (temzdf_scene::theme).
+        assert!(all.contains("rgb:cdcd/0000/0000"), "{rows:?}");
+        assert!(all.contains("rgb:1e1e/1e1e/1e1e"), "{rows:?}");
     }
 
     #[test]

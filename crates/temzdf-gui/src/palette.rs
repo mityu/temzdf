@@ -5,45 +5,9 @@
 
 use temzdf_scene::{Appearance, Color};
 
-/// The default foreground and background when the session sets none.
-pub const FOREGROUND: [u8; 3] = [0xd8, 0xd8, 0xd8];
-pub const BACKGROUND: [u8; 3] = [0x1e, 0x1e, 0x1e];
-
-/// xterm's 16 base colours.
-const BASE: [[u8; 3]; 16] = [
-    [0x00, 0x00, 0x00],
-    [0xcd, 0x00, 0x00],
-    [0x00, 0xcd, 0x00],
-    [0xcd, 0xcd, 0x00],
-    [0x00, 0x00, 0xee],
-    [0xcd, 0x00, 0xcd],
-    [0x00, 0xcd, 0xcd],
-    [0xe5, 0xe5, 0xe5],
-    [0x7f, 0x7f, 0x7f],
-    [0xff, 0x00, 0x00],
-    [0x00, 0xff, 0x00],
-    [0xff, 0xff, 0x00],
-    [0x5c, 0x5c, 0xff],
-    [0xff, 0x00, 0xff],
-    [0x00, 0xff, 0xff],
-    [0xff, 0xff, 0xff],
-];
-
-/// xterm's colour `i` of 256: the base 16, a 6x6x6 cube, 24 greys.
-pub fn xterm(i: u8) -> [u8; 3] {
-    match i {
-        0..=15 => BASE[i as usize],
-        16..=231 => {
-            let i = i - 16;
-            let level = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
-            [level(i / 36), level(i / 6 % 6), level(i % 6)]
-        }
-        _ => {
-            let v = 8 + 10 * (i - 232);
-            [v, v, v]
-        }
-    }
-}
+/// The default foreground and background and xterm's palette: the same the
+/// session gives terminal panes, so programs asking get what is drawn.
+pub use temzdf_scene::theme::{BACKGROUND, FOREGROUND, xterm};
 
 /// The colours in use: the session's appearance over the defaults.
 #[derive(Clone, Debug, PartialEq, Eq)]
