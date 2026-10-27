@@ -20,7 +20,8 @@ server on one `Session`). Next and open:
 
 - [ ] UI chrome as cell grids in the scene instead of pixels.
 - [ ] Per-client pixel density (every client now gets frames for the latest
-  client's geometry and cell size) and zoom stored relative to the pane width.
+  client's geometry and cell size, programs' images included) and zoom
+  stored relative to the pane width.
 - [ ] Shared memory instead of the socket for local clients' pixels (measure
   the socket first).
 - [ ] A Vim-like command line on the `Action` text form (tab pages are done).
@@ -32,27 +33,20 @@ server on one `Session`). Next and open:
   (`Winsize::geometry` divides by rows/cols; padding would skew it, worst at the
   bottom). Needs the terminal, mode and the `resized to geometry` log line.
 - [ ] Terminal panes, what is left: kitty graphics through Unicode
-  placeholders (tmux inside a pane), animation frames, and images re-emitted
-  per client when clients differ in cell size.
+  placeholders (tmux inside a pane) and animation frames.
 - [ ] Scripting and configuration (JavaScript/TypeScript in a script-host
-  process, replacing the TOML file): design in `doc/scripting.md`; the host
-  and execution model are implemented (`doc/script-host.md`), and so are modes and key mappings, the shipped
-  defaults in JavaScript, options, `print-types`, floating messages and the
-  escape keys (TOML is gone), buffers separated from panes, and terminal
-  panes' selection, links and images, pane sizes kept when the screen
-  changes size, resizing panes (dragging borders, `resize-pane`), and
-  floating panes. Next: default mappings for switching buffers; status and
-  title bars on panes and the window (direction in `doc/floating-panes.md`).
-  The questions under "Open questions, to decide later" there (modes and
-  mappings, escape hatches, message area, mouse, defaults, layout details,
-  hidden buffers, client-side settings, reload, CLI scripting,
-  `check-config`) must be decided before or while implementing.
+  process; `doc/scripting.md`, `doc/script-host.md`, `doc/config.md`): the
+  host, modes and mappings, options, hooks, buffers, floating panes and tab
+  pages are implemented, and every question in `doc/scripting.md` is
+  decided. Decided but not built: `temzdf eval` (27 there) and the
+  escape-hatch menu on non-focusable panes (13). Next: default mappings for
+  switching buffers; status and title bars on panes and the window
+  (direction in `doc/floating-panes.md`).
 - [ ] Step 4, the GUI client (`temzdf-gui`, `doc/gui-client.md`): works on
   X11 (checked on Xvfb with xfwm4, Japanese input through fcitx5 and Mozc).
   Left: Wayland and macOS checks, HiDPI and fractional scales, Option as
   Alt, cursor blinking, underline colours (SGR 58, not in the scene's
-  cells yet), shared memory for
-  images (measure the socket first). Step 5: web panes (headless Chromium).
+  cells yet). Step 5: web panes (headless Chromium).
   (Step 6, programmable configuration, is the script host.)
 
 ## Deferred
@@ -71,7 +65,8 @@ server on one `Session`). Next and open:
   Measure real TikZ/pgfplots documents first; then maybe render such pages
   through a MuPDF-device-to-`vello_cpu` translation.
 - Two-page (spread) layout.
-- Markdown viewer reusing `termpix` (webview rendered offscreen).
+- Markdown viewer: a web pane (step 5 above) showing the rendered document
+  (`doc/markdown-viewer.md`).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
 - Judged e2e (`expect` in `scripts/e2e.sh`, `doc/testing.md`) covers keys and
@@ -91,7 +86,7 @@ server on one `Session`). Next and open:
 - The page thumbnail is misplaced by up to half a cell with the Layered
   backend (terminals scale images to whole cells). It only shows briefly; the
   `StandIn::Composed` path could compose it too.
-- Long text input through `$EDITOR` (do this last):
-  1. Suspend the UI, run `$EDITOR` full screen, resume on exit.
-  2. Later: split the screen and embed the editor (terminal emulation with e.g. `alacritty_terminal`).
-  Short inputs (search, page number, commands) use the built-in one-line input.
+- Long text input through `$EDITOR` (do this last): run it in a floating
+  terminal pane and read the file when it exits (terminal panes and floats
+  exist now). Short inputs (search, page number, commands) use the built-in
+  one-line input.

@@ -11,8 +11,7 @@ configuration).
 Status (2026-10-26): implemented: the execution model, modes and key
 mappings, the shipped defaults, options, generated type definitions,
 floating messages and the escape keys; the TOML configuration is gone. How
-to write a configuration is in `doc/config.md`, buffers included. Not yet:
-pane sizes kept on resize (see `todo.md`).
+to write a configuration is in `doc/config.md`, buffers included.
 
 ## Pieces
 

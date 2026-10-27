@@ -379,9 +379,10 @@ the server receives the request and routes it to the panes showing that PDF.
    that attaches and detaches; several panes on one document. Validates the
    protocol, sharing and resync with existing features; testable with the
    mock terminal.
-3. (done, text only) **Terminal panes**: `portable-pty` + `libghostty-vt`,
-   text in cell grids. temzdf becomes a multiplexer. Images from programs in
-   the panes (re-emitted per client) are still to come.
-4. **GUI client**: wgpu renderer of the same scene, local only.
+3. (done) **Terminal panes**: `portable-pty` + `libghostty-vt`, text in
+   cell grids, programs' kitty graphics as the pane's layers. temzdf
+   becomes a multiplexer.
+4. (done on X11) **GUI client**: wgpu renderer of the same scene, local only.
 5. **Web panes**: headless Chromium process, frames as image layers.
-6. **Programmable config** in the server (language to be decided).
+6. (done) **Programmable config**: JavaScript/TypeScript in the script
+   host (`doc/script-host.md`).
