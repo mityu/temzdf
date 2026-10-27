@@ -23,14 +23,20 @@ works.
 - Links open with `open` instead of `xdg-open` (`config.rs`).
 - Auto-reload: notify uses FSEvents. Opening the PDF through a symlinked path
   (`/tmp` -> `/private/tmp`) still reloads, since events are matched by name.
-- GUI: wgpu sometimes hands out no surface texture, so a redraw draws
-  nothing: `Occluded` while the window is fully covered, minimised or on
-  another Space, but it also happened with the window in front and focused
-  while a terminal client was attached to the same session (which of
-  `Occluded` and `Timeout` came is not known). Frames are then acknowledged
-  undrawn (`Acks` in `crates/temzdf-gui/src/app.rs`), and the window redraws
-  when `WindowEvent::Occluded(false)` comes: waiting for the draw stopped the
-  session's frames to the window until it was resized.
+- GUI: while the window is not visible at all (fully covered, minimised, on
+  another Space, or opened behind another window), wgpu's Metal backend
+  checks `NSWindow.occlusionState` and hands out no surface texture
+  (`Occluded`); winit reports the change as `WindowEvent::Occluded`. A redraw
+  then draws nothing. Before the fix the frame stayed unacknowledged, so the
+  session sent the window no more frames, and nothing redrew when it showed
+  again: the window stayed stale, in front and focused too, until a resize.
+  Traced on macOS 26 (2026-10-27): textures are always handed out while any
+  part of the window is visible, also with a terminal client attached; it
+  was the earlier covering that stopped it. Now frames are acknowledged
+  undrawn while hidden (`Acks` in `crates/temzdf-gui/src/app.rs`),
+  `Occluded(false)` redraws, and a `Timeout` (unlikely: wgpu disables
+  `allowsNextDrawableTimeout`) retries. `tests/macos/gui-redraw.sh` checks
+  it; it fails without the redraw on `Occluded(false)`.
 
 ## Checklist and results
 
@@ -71,6 +77,10 @@ scripts/macos-gui.sh shot "$pid" target/macos-gui/shot.png
 scripts/macos-gui.sh close "$pid"
 scripts/macos-gui.sh display stop
 ```
+
+`launch app -- target/debug/temzdf-gui ...` runs the GUI client the same way
+(started directly, its window moved to the virtual display, the front given
+back); `tests/macos/gui-redraw.sh` is a whole scenario built on it.
 
 It needs the screen recording and accessibility permissions for the terminal
 it runs in. How it works, and why:

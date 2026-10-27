@@ -105,9 +105,11 @@ Japanese input); its GPU tests (`cargo test -p temzdf-gui --test gpu`) run
 offscreen on lavapipe.
 
 `scripts/e2e.sh` is Linux-only. On macOS, `scripts/macos-gui.sh` runs kitty,
-Ghostty or WezTerm in the background on a virtual display and drives them
-(keys, mouse, window screenshots) without disturbing the desktop; see its
-header and `doc/macos.md`.
+Ghostty, WezTerm or `temzdf-gui` (`launch app`) in the background on a
+virtual display and drives them (keys, mouse, window screenshots) without
+disturbing the desktop; see its header and `doc/macos.md`. Scripted macOS
+scenarios are in `tests/macos/` (`gui-redraw.sh`: the GUI redraws after its
+window was covered).
 
 Debugging terminal problems:
 

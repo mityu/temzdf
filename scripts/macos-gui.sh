@@ -12,6 +12,10 @@
 #                              on the virtual display; prints "PID STATUSFILE". The
 #                              window stays open after COMMAND exits; STATUSFILE then
 #                              holds its exit status.
+#   launch app [VAR=VALUE...] -- COMMAND [ARGS...]
+#                              run a GUI program itself (e.g. target/debug/temzdf-gui)
+#                              and move its window to the virtual display; prints
+#                              "PID LOGFILE" (its stdout and stderr)
 #   shot PID OUT.png           screenshot of PID's window, scaled to points, so
 #                              image coordinates are the mouse coordinates below
 #   title PID                  the window title (temzdf shows "FILE — PAGE / PAGES")
@@ -122,6 +126,25 @@ case $cmd in
     # Not `read <<<"$(display_bounds)" || ...`: read succeeds on the empty line.
     bounds=$(display_bounds) || { echo "run 'display start' first" >&2; exit 1; }
     read -r _ dx dy _ _ <<<"$bounds"
+    if [[ $term == app ]]; then
+      # Started directly, not through `open`: it may take the front, which
+      # goes back to where it was once its window is on the virtual display.
+      front=$(ctl front)
+      log=$(mktemp "$PWD/$out/app.XXXXXX")
+      env ${env[@]+"${env[@]}"} "$@" >"$log" 2>&1 &
+      pid=$!
+      for _ in $(seq 100); do
+        [[ -n $(ctl windows "$pid") ]] && break
+        kill -0 "$pid" 2>/dev/null || { echo "$1 exited (log: $log)" >&2; exit 1; }
+        sleep 0.1
+      done
+      [[ -n $(ctl windows "$pid") ]] || { echo "$1 did not open a window" >&2; exit 1; }
+      ctl move "$pid" $((dx + 20)) $((dy + 20))
+      [[ $(ctl front) == "$front" ]] || ctl activate "$front" >/dev/null || true
+      sleep 1
+      echo "$pid $log"
+      exit
+    fi
     status=$(mktemp "$PWD/$out/status.XXXXXX")
     rm -f "$status"
     # Relative paths stay relative to here: `open` starts apps in /.

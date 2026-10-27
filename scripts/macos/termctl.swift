@@ -3,6 +3,7 @@
 //
 //   termctl windows PID                  "WID X Y W H TITLE" per window (global points)
 //   termctl move PID X Y [W H]           move (and resize) PID's windows (accessibility API)
+//   termctl front                        the front app's PID
 //   termctl activate PID                 bring PID to the front; prints the previous front PID
 //   termctl key PID [--global] KEY...    keys: `j`, `G`, `/`, `C-f`, `S-Tab`, `M-Left`, `Return`, ...
 //   termctl type PID [--global] TEXT     printable ASCII, typed with US-layout key codes
@@ -35,6 +36,11 @@ func fail(_ msg: String) -> Never {
 func num(_ i: Int) -> Double {
     guard i < args.count, let v = Double(args[i]) else { fail("expected a number at argument \(i)") }
     return v
+}
+if args.count == 2 && args[1] == "front" {
+    wait(0.05)
+    print(frontPid())
+    exit(0)
 }
 guard args.count >= 3, let pid = pid_t(args[2]) else {
     fail("usage: termctl COMMAND PID ... (see the header of scripts/macos/termctl.swift)")
