@@ -53,23 +53,25 @@ impl Fallback for Fallbacks {
 
 /// The installed fonts and the built-in ones.
 pub fn system() -> FontSystem {
-    with_builtin(|db| db.load_system_fonts())
+    let locale = sys_locale::get_locale().unwrap_or_else(|| "en-US".into());
+    with_builtin(locale, |db| db.load_system_fonts())
 }
 
-/// Only the fonts in `dir`, and the built-in ones (for tests that must not
-/// depend on the host).
+/// Only the fonts in `dir`, and the built-in ones, in the `en-US` locale
+/// (for tests that must not depend on the host, its locale included).
 pub fn from_dir(dir: &std::path::Path) -> FontSystem {
-    with_builtin(|db| db.load_fonts_dir(dir))
+    with_builtin("en-US".into(), |db| db.load_fonts_dir(dir))
 }
 
-fn with_builtin(load: impl FnOnce(&mut fontdb::Database)) -> FontSystem {
+/// `locale` picks the platform fallbacks for Han characters (Japanese,
+/// Chinese or Korean forms).
+fn with_builtin(locale: String, load: impl FnOnce(&mut fontdb::Database)) -> FontSystem {
     let mut db = fontdb::Database::new();
     load(&mut db);
     for data in BUNDLED {
         db.load_font_source(fontdb::Source::Binary(Arc::new(*data)));
     }
     db.set_monospace_family(BUILTIN_FAMILY);
-    let locale = sys_locale::get_locale().unwrap_or_else(|| "en-US".into());
     FontSystem::new_with_locale_and_db_and_fallback(locale, db, Fallbacks::new())
 }
 
@@ -298,7 +300,7 @@ mod tests {
             eprintln!("SKIPPED: built without TEMZDF_BUNDLED_FONTS");
             return None;
         }
-        Some(with_builtin(|_| {}))
+        Some(with_builtin("en-US".into(), |_| {}))
     }
 
     #[test]
