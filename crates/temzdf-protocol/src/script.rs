@@ -121,6 +121,14 @@ pub enum ToHost {
         func: FuncId,
         args: Vec<ScriptValue>,
     },
+    /// Evaluate conditions (`when`, `keepalive`) with `args`; answered by
+    /// [`FromHost::Values`]. Their commands carry [`Token::Call`] with `id`
+    /// and may only read.
+    Eval {
+        id: CallId,
+        funcs: Vec<FuncId>,
+        args: Vec<ScriptValue>,
+    },
     /// The answer to a [`FromHost::Request`].
     Reply {
         req: ReqId,
@@ -145,6 +153,11 @@ pub enum FromHost {
     Done {
         id: CallId,
         result: Result<(), ScriptError>,
+    },
+    /// A [`ToHost::Eval`] finished: each condition's value, in order.
+    Values {
+        id: CallId,
+        results: Vec<Result<bool, ScriptError>>,
     },
     /// `dispatch` started a task; its commands carry [`Token::Task`].
     TaskStart(TaskId),
@@ -174,9 +187,12 @@ pub enum HostOp {
     /// Create a mode, or change a mode's properties (`None` keeps them).
     DefineMode {
         name: String,
-        inherit: Option<String>,
         unmapped: Option<String>,
         count: Option<bool>,
+        transient: Option<bool>,
+        keepalive: Option<Keepalive>,
+        /// Milliseconds; 0: none.
+        timeout: Option<f64>,
     },
     /// Map `keys` (Neovim notation) in each of `modes`.
     Map {
@@ -185,10 +201,20 @@ pub enum HostOp {
         rhs: MapRhs,
         nowait: bool,
         desc: Option<String>,
+        when: Option<FuncId>,
+        namespace: Option<String>,
+        priority: i32,
     },
+    /// Remove `keys`' mappings: those of `namespace`, or all.
     Unmap {
         modes: Vec<String>,
         keys: String,
+        namespace: Option<String>,
+    },
+    /// The mappings of `mode` (every mode when `None`) and `namespace`.
+    GetMappings {
+        mode: Option<String>,
+        namespace: Option<String>,
     },
     SetOption {
         name: String,
@@ -197,6 +223,14 @@ pub enum HostOp {
     GetOption {
         name: String,
     },
+}
+
+/// How long a transient mode stays (`defineMode`'s `keepalive`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Keepalive {
+    Mapped,
+    Always,
+    Func(FuncId),
 }
 
 /// What a mapping runs.
@@ -240,5 +274,36 @@ mod tests {
             result: Err(ScriptError { message: "boom".into(), stack: Some("at f".into()) }),
         });
         round_trip(&ToHost::Reply { req: 1, result: Ok(v) });
+        round_trip(&ToHost::Eval { id: 8, funcs: vec![3, 4], args: vec![] });
+        round_trip(&FromHost::Values {
+            id: 8,
+            results: vec![Ok(true), Err(ScriptError { message: "x".into(), stack: None })],
+        });
+        round_trip(&FromHost::Request {
+            req: 2,
+            token: Token::Load,
+            op: HostOp::Map {
+                modes: vec!["normal".into()],
+                keys: "<Tab>".into(),
+                rhs: MapRhs::Func(1),
+                nowait: false,
+                desc: None,
+                when: Some(2),
+                namespace: Some("default".into()),
+                priority: -1,
+            },
+        });
+        round_trip(&FromHost::Request {
+            req: 3,
+            token: Token::Load,
+            op: HostOp::DefineMode {
+                name: "resize".into(),
+                unmapped: None,
+                count: None,
+                transient: Some(true),
+                keepalive: Some(Keepalive::Func(5)),
+                timeout: Some(1500.0),
+            },
+        });
     }
 }

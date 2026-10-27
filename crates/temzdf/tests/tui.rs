@@ -507,12 +507,15 @@ fn modes_mappings_and_options_from_the_configuration() {
         "config.ts",
         r#"import { action, cmd, defineMode, feedkeys, map, o, on, unmap } from "temzdf";
 o.timeoutlen = 300;
-defineMode("win", { inherit: "normal", unmapped: "drop" });
-map("terminal", "<C-x>w", action.switchMode("win"));
+defineMode("win", { transient: true, keepalive: "always" });
+map("terminal", "<C-x>w", [action.switchMode("normal"), action.switchMode("win")]);
 map("win", "v", [action.split("right"), action.sendText("echo in-new\n")]);
 map("terminal", "<C-x>e", () => cmd.sendText(`echo mode-${cmd.currentMode()}\n`));
 map("terminal", "<C-x>f", () => feedkeys("echo fed<CR>"));
-unmap("normal", "x");
+map("terminal", "<C-x>k", () => cmd.sendText("echo cond-yes\n"), { when: (ctx) => ctx.paneKind === "terminal" });
+map("terminal", "<C-x>k", () => cmd.sendText("echo never\n"), { when: (ctx) => ctx.floating });
+map("terminal", "<C-x>s", () => cmd.sendText("echo side-effect\n"), { when: () => { cmd.split("right"); return true; } });
+unmap("normal", "x", { namespace: "default" });
 on("ModeChanged", (a: string, b: string) => console.log(`mode ${a} ${b}`));
 try { map("terminal", "<C-c>x", action.exitMode()); } catch (e) { console.log(`refused: ${(e as Error).message}`); }
 o.scrollstep = 90;
@@ -531,14 +534,23 @@ try { (o as any).nope = 1; } catch (e) { console.log(`option refused: ${(e as Er
     t.wait_text("mode-terminal");
     t.keys(&["C-x", "f"]);
     t.wait_text("fed");
+    // Conditions: the last registered mapping is tried first, and skipped
+    // while its condition is false.
+    t.keys(&["C-x", "k"]);
+    t.wait_text("cond-yes");
+    assert!(!t.screen().contains("never"));
+    // A condition that tries to change something fails (and is false).
+    t.keys(&["C-x", "s"]);
+    env.wait_log("md", "the refused command", |l| l.contains("may only read"));
     // <C-x> alone times out and goes to the shell; the next key types on.
     t.key("C-x");
     std::thread::sleep(std::time::Duration::from_millis(500));
     t.type_text("echo after-timeout\n");
     t.wait_text("after-timeout");
-    // A user mode inheriting normal: x is unmapped there too (unmap in normal).
+    // A submode over normal ("always"): normal's keys work in it, and x,
+    // unmapped from normal's defaults, is dropped.
     t.keys(&["C-x", "w"]);
-    env.wait_log("md", "the mode change", |l| l.contains("mode terminal win"));
+    env.wait_log("md", "the mode change", |l| l.contains("mode normal win"));
     t.key("x");
     t.key("v");
     t.wait_for("the new pane's command", |s| (0..s.cells.len() as u16).any(|r| s.row_from(r, 50) == "in-new"));

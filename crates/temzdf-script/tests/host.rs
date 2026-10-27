@@ -384,3 +384,86 @@ cmd.message(a + b + c);
     ready_ok(s.serve(&mut log));
     assert_eq!(log, ["load message(abc)"]);
 }
+
+#[test]
+fn conditions_answer_booleans_and_get_mappings_gives_the_functions_back() {
+    let config = r#"
+import { action, cmd, getMappings, map } from "temzdf";
+map("normal", "t", () => cmd.message("t"), { when: (ctx) => ctx.paneKind === "terminal", namespace: "mine" });
+map("normal", "u", action.split("right"), { when: () => { throw new Error("bad"); } });
+map("normal", "v", action.split("right"), { when: (async () => true) as any });
+map("normal", "w", () => {
+  for (const m of getMappings({ mode: "normal", namespace: "mine" })) map("copy", m.lhs, m.rhs, { when: m.when });
+});
+"#;
+    let mut s = Session::start(&[("config.ts", config)]);
+    s.load("config.ts");
+    let mut maps = Vec::new();
+    let ready = loop {
+        match s.recv() {
+            FromHost::Request { req, op, .. } => {
+                if let HostOp::Map { keys, rhs, when, namespace, .. } = &op
+                    && namespace.as_deref() != Some("default")
+                {
+                    maps.push((keys.clone(), rhs.clone(), *when, namespace.clone()));
+                }
+                s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
+            }
+            other => break other,
+        }
+    };
+    ready_ok(ready);
+    // Each condition is registered once, before the mapped function.
+    assert_eq!(maps[0], ("t".into(), MapRhs::Func(1), Some(0), Some("mine".into())));
+    let (when_u, when_v) = (maps[1].2.unwrap(), maps[2].2.unwrap());
+
+    // Values in order: true, an exception, a Promise (refused).
+    let ctx = ScriptValue::map([("paneKind", ScriptValue::Str("terminal".into()))]);
+    s.send(ToHost::Eval { id: 9, funcs: vec![0, when_u, when_v], args: vec![ctx] });
+    match s.recv() {
+        FromHost::Values { id: 9, results } => {
+            assert_eq!(results[0], Ok(true));
+            assert!(results[1].as_ref().is_err_and(|e| e.message.contains("bad")), "{results:?}");
+            assert!(results[2].as_ref().is_err_and(|e| e.message.contains("synchronous")), "{results:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // getMappings gives the functions back: mapping them again reuses
+    // their ids.
+    let w = match &maps[3].1 {
+        MapRhs::Func(f) => *f,
+        other => panic!("{other:?}"),
+    };
+    s.send(ToHost::Call { id: 10, func: w, args: vec![] });
+    let mut copied = None;
+    loop {
+        match s.recv() {
+            FromHost::Request { req, op: HostOp::GetMappings { mode, namespace }, .. } => {
+                assert_eq!((mode.as_deref(), namespace.as_deref()), (Some("normal"), Some("mine")));
+                let func = |f: u32| ScriptValue::map([("func", ScriptValue::Num(f as f64))]);
+                let m = ScriptValue::map([
+                    ("mode", ScriptValue::Str("normal".into())),
+                    ("lhs", ScriptValue::Str("t".into())),
+                    ("rhs", func(1)),
+                    ("when", func(0)),
+                    ("nowait", ScriptValue::Bool(false)),
+                    ("desc", ScriptValue::Null),
+                    ("namespace", ScriptValue::Str("mine".into())),
+                    ("priority", ScriptValue::Num(0.0)),
+                ]);
+                s.send(ToHost::Reply { req, result: Ok(ScriptValue::List(vec![m])) });
+            }
+            FromHost::Request { req, op: HostOp::Map { modes, rhs, when, .. }, .. } => {
+                copied = Some((modes, rhs, when));
+                s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
+            }
+            FromHost::Done { id: 10, result } => {
+                result.unwrap();
+                break;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(copied, Some((vec!["copy".to_owned()], MapRhs::Func(1), Some(0))));
+}

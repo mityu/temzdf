@@ -68,26 +68,68 @@ declare module "temzdf" {{
   }}
   export const action: {{ [K in keyof Commands]: (...args: Parameters<Commands[K]>) => Action }};
 
-  /** What a mapped function gets. */
-  export interface MapContext {{
-    /** The count typed before the keys (`3j`), if any. */
-    count: number | null;
+  /** What conditions (`when`, `keepalive`) get: the context of the first key of the sequence. */
+  export interface KeyContext {{
     /** The focused pane. */
     pane: number;
+    /** Its kind; null without a pane. */
+    paneKind: "terminal" | "pdf" | null;
+    /** Whether it is a floating pane. */
+    floating: boolean;
+    /** The current mode. */
+    mode: string;
+    /** The keys of the sequence typed so far, before this one. */
+    keys: string;
+  }}
+  /** What a mapped function gets. */
+  export interface MapContext extends KeyContext {{
+    /** The count typed before the keys (`3j`), if any. */
+    count: number | null;
   }}
   /** A mapping runs a synchronous function, an action or actions in order. */
   export type Rhs = ((ctx: MapContext) => void) | Action | readonly Action[];
-  export function map(
-    mode: string | readonly string[],
-    lhs: string,
-    rhs: Rhs,
-    options?: {{ nowait?: boolean; desc?: string }},
-  ): void;
-  export function unmap(mode: string | readonly string[], lhs: string): void;
-  export function defineMode(
-    name: string,
-    properties?: {{ inherit?: string; unmapped?: "drop" | "passthrough"; count?: boolean }},
-  ): void;
+  /** A condition: synchronous, without side effects (commands may only read). */
+  export type Condition = (ctx: KeyContext) => boolean;
+  export interface MapOptions {{
+    /** Run the mapping at once even if a longer one starts with its keys. */
+    nowait?: boolean;
+    desc?: string;
+    /** The mapping exists only while this holds (else the key is looked up as if it were not there). */
+    when?: Condition;
+    /** Mapping the same keys with the same namespace again replaces it; without one, mappings are added. */
+    namespace?: string;
+    /** Several mappings of one key are tried by priority (higher first), then the last registered first. */
+    priority?: number;
+  }}
+  export function map(mode: string | readonly string[], lhs: string, rhs: Rhs, options?: MapOptions): void;
+  /** Remove lhs's mappings: those of a namespace, or all. */
+  export function unmap(mode: string | readonly string[], lhs: string, options?: {{ namespace?: string }}): void;
+  export interface ModeProperties {{
+    /** What keys no mapping takes do (default: the mode below's, else drop). */
+    unmapped?: "drop" | "passthrough";
+    /** Whether digits are counts (default: the mode below's, else no). */
+    count?: boolean;
+    /** A submode: entered with switchMode, it sits over the mode it was entered from. */
+    transient?: boolean;
+    /** How long a submode stays: "mapped" while its keys are typed (another key leaves and is handled below), "always" (keys it does not map go to the mode below), or while the condition holds. */
+    keepalive?: "mapped" | "always" | Condition;
+    /** A submode is left after this many milliseconds without keys. */
+    timeout?: number;
+  }}
+  export function defineMode(name: string, properties?: ModeProperties): void;
+  /** A mapping as getMappings gives it (map's arguments). */
+  export interface MappingInfo {{
+    mode: string;
+    lhs: string;
+    rhs: Rhs;
+    when?: Condition;
+    nowait: boolean;
+    desc?: string;
+    namespace?: string;
+    priority: number;
+  }}
+  /** The mappings of a mode (every mode without one), of a namespace when given: a snapshot. */
+  export function getMappings(filter?: {{ mode?: string; namespace?: string }}): MappingInfo[];
   export function feedkeys(keys: string, options?: {{ remap?: boolean }}): void;
   export function currentMode(): string;
 

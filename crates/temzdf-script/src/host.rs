@@ -20,7 +20,7 @@ use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::promise::PromiseState;
 use rquickjs::{Context, Ctx, Exception, Function, Module, Persistent, Runtime, Value};
 use temzdf_protocol::script::{
-    CommandSpec, FromHost, FuncId, HostOp, MapRhs, ScriptError, ScriptValue, TaskId, ToHost, Token,
+    CommandSpec, FromHost, FuncId, HostOp, Keepalive, MapRhs, ScriptError, ScriptValue, TaskId, ToHost, Token,
 };
 
 const PRELUDE: &str = include_str!("prelude.js");
@@ -31,7 +31,7 @@ const DEFAULTS_NAME: &str = "temzdf:defaults";
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
      export const cmd = t.cmd, action = t.action, on = t.on, map = t.map, unmap = t.unmap, defineMode = t.defineMode,\n\
      o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, dispatch = t.dispatch,\n\
-     atomic = t.atomic;\n\
+     atomic = t.atomic, getMappings = t.getMappings;\n\
      export default t;\n";
 
 /// How long a timer or a promise job (code nobody waits for, so nobody can
@@ -125,6 +125,7 @@ pub fn run_with_limit(
                 st.send(&FromHost::Ready(result));
             }
             Ok(ToHost::Call { id, func, args }) => context.with(|ctx| run_call(&ctx, &st, id, func, args)),
+            Ok(ToHost::Eval { id, funcs, args }) => context.with(|ctx| run_eval(&ctx, &st, id, &funcs, args)),
             // Nothing runs: an interrupt or a late answer has nothing to stop.
             Ok(ToHost::Interrupt) => {
                 st.use_interrupt_message();
@@ -300,9 +301,21 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
         },
         "defineMode" => HostOp::DefineMode {
             name: text("name"),
-            inherit: payload.get("inherit").and_then(|v| v.as_str()).map(str::to_owned),
             unmapped: payload.get("unmapped").and_then(|v| v.as_str()).map(str::to_owned),
             count: payload.get("count").and_then(|v| v.as_bool()),
+            transient: payload.get("transient").and_then(|v| v.as_bool()),
+            keepalive: match payload.get("keepalive") {
+                Some(serde_json::Value::String(s)) if s == "mapped" => Some(Keepalive::Mapped),
+                Some(serde_json::Value::String(s)) if s == "always" => Some(Keepalive::Always),
+                Some(serde_json::Value::Number(n)) => Some(Keepalive::Func(n.as_u64().unwrap_or(0) as FuncId)),
+                None | Some(serde_json::Value::Null) => None,
+                Some(other) => {
+                    return throw(&format!(
+                        "defineMode: keepalive {other} is not \"mapped\", \"always\" or a function"
+                    ));
+                }
+            },
+            timeout: payload.get("timeout").and_then(|v| v.as_f64()),
         },
         "map" => HostOp::Map {
             modes: strings(&payload, "modes"),
@@ -324,8 +337,19 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
             },
             nowait: payload.get("nowait").and_then(|v| v.as_bool()).unwrap_or(false),
             desc: payload.get("desc").and_then(|v| v.as_str()).map(str::to_owned),
+            when: payload.get("when").and_then(|v| v.as_u64()).map(|f| f as FuncId),
+            namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
+            priority: payload.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
         },
-        "unmap" => HostOp::Unmap { modes: strings(&payload, "modes"), keys: text("keys") },
+        "unmap" => HostOp::Unmap {
+            modes: strings(&payload, "modes"),
+            keys: text("keys"),
+            namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
+        },
+        "getMappings" => HostOp::GetMappings {
+            mode: payload.get("mode").and_then(|v| v.as_str()).map(str::to_owned),
+            namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
+        },
         "setOption" => {
             HostOp::SetOption { name: text("name"), value: payload.get("value").map_or(ScriptValue::Null, to_script) }
         }
@@ -347,6 +371,7 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
                 };
             }
             Ok(ToHost::Call { id, func, args }) => run_call(ctx, st, id, func, args),
+            Ok(ToHost::Eval { id, funcs, args }) => run_eval(ctx, st, id, &funcs, args),
             // One that already stopped a timer is not for this call.
             Ok(ToHost::Interrupt) if st.use_interrupt_message() => {}
             // The flag is set too: if the script catches this error, the
@@ -377,6 +402,26 @@ fn run_call(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, func: FuncId, args: Vec<Scri
         st.interrupt.store(false, Ordering::SeqCst);
     }
     st.send(&FromHost::Done { id, result });
+}
+
+/// Evaluate conditions (registered with `register(fn, what, true)`, which
+/// return booleans) as call `id`, and report their values.
+fn run_eval(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, funcs: &[FuncId], args: Vec<ScriptValue>) {
+    let args = serde_json::to_string(&args.iter().map(from_script).collect::<Vec<_>>()).unwrap_or_default();
+    st.tokens.borrow_mut().push(Token::Call(id));
+    let mut results = Vec::new();
+    for &func in funcs {
+        let f = st.funcs.borrow().get(func as usize).cloned();
+        results.push(match f {
+            None => Err(ScriptError::new(format!("no function {func}"))),
+            Some(f) => f.restore(ctx).and_then(|f| f.call::<_, bool>((args.clone(),))).map_err(|e| error_of(ctx, e)),
+        });
+    }
+    st.tokens.borrow_mut().pop();
+    if st.tokens.borrow().is_empty() {
+        st.interrupt.store(false, Ordering::SeqCst);
+    }
+    st.send(&FromHost::Values { id, results });
 }
 
 fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {

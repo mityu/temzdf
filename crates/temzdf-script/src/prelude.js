@@ -52,18 +52,34 @@
   };
   const isAction = (a) => a !== null && typeof a === "object" && a[ACTION] === true;
 
-  // Register `fn` as a mapped or hook function: synchronous only.
-  function register(fn, what) {
+  // Functions by the id they were registered under, for getMappings.
+  const registered = [];
+
+  // Register `fn` as a mapped or hook function, or (`condition`) as a
+  // mapping's `when` or a mode's `keepalive`, which gives a boolean:
+  // synchronous only.
+  function register(fn, what, condition = false) {
     if (typeof fn !== "function") throw new TypeError(`${what}: expected a function`);
-    return host.register((argsJson) => {
+    const id = host.register((argsJson) => {
       const r = fn(...JSON.parse(argsJson));
       if (r !== null && typeof r === "object" && typeof r.then === "function") {
         throw new TypeError(
-          `${what}: mapped and hook functions must be synchronous (use dispatch for asynchronous work)`,
+          condition
+            ? `${what}: conditions must be synchronous`
+            : `${what}: mapped and hook functions must be synchronous (use dispatch for asynchronous work)`,
         );
       }
+      return condition ? !!r : undefined;
     });
+    registered[id] = { fn, condition };
+    return id;
   }
+
+  // A function getMappings gave back: its id again, not a new one.
+  const funcId = (f, what, condition) => {
+    const id = registered.findIndex((r) => r !== undefined && r.fn === f && r.condition === condition);
+    return id >= 0 ? id : register(f, what, condition);
+  };
 
   function atomicWith(token, fn) {
     if (typeof fn !== "function") throw new TypeError("atomic: expected a function");
@@ -83,12 +99,21 @@
   const temzdf = {
     cmd: globalCmd,
     action: globalAction,
-    // map(mode | modes, lhs, rhs, { nowait, desc }): rhs is a synchronous
-    // function, an action, or an array of actions.
+    // map(mode | modes, lhs, rhs, { nowait, desc, when, namespace,
+    // priority }): rhs is a synchronous function, an action, or an array of
+    // actions; `when` a synchronous function of the key's context.
     map(modes, lhs, rhs, options = {}) {
-      const payload = { modes, keys: lhs, nowait: !!options.nowait, desc: options.desc ?? null };
+      const payload = {
+        modes,
+        keys: lhs,
+        nowait: !!options.nowait,
+        desc: options.desc ?? null,
+        when: options.when == null ? null : funcId(options.when, `map(${lhs}) when`, true),
+        namespace: options.namespace ?? null,
+        priority: options.priority ?? 0,
+      };
       if (typeof rhs === "function") {
-        payload.func = register(rhs, `map(${lhs})`);
+        payload.func = funcId(rhs, `map(${lhs})`, false);
       } else {
         const list = Array.isArray(rhs) ? rhs : [rhs];
         if (!list.every(isAction)) throw new TypeError(`map(${lhs}): expected a function, an action or actions`);
@@ -96,17 +121,44 @@
       }
       request(current(), "map", payload);
     },
-    unmap(modes, lhs) {
-      request(current(), "unmap", { modes, keys: lhs });
+    // unmap(mode | modes, lhs, { namespace }): that namespace's mappings,
+    // or all of them.
+    unmap(modes, lhs, options = {}) {
+      request(current(), "unmap", { modes, keys: lhs, namespace: options.namespace ?? null });
     },
-    // defineMode(name, { inherit, unmapped: "drop" | "passthrough", count })
+    // defineMode(name, { unmapped: "drop" | "passthrough", count, transient,
+    // keepalive: "mapped" | "always" | (ctx) => boolean, timeout })
     defineMode(name, props = {}) {
+      if ("inherit" in props) {
+        throw new TypeError("defineMode: inherit is gone; a transient mode with keepalive takes the keys of the mode below");
+      }
+      const keepalive =
+        typeof props.keepalive === "function"
+          ? funcId(props.keepalive, `defineMode(${name}) keepalive`, true)
+          : (props.keepalive ?? null);
       request(current(), "defineMode", {
         name,
-        inherit: props.inherit ?? null,
         unmapped: props.unmapped ?? null,
         count: props.count ?? null,
+        transient: props.transient ?? null,
+        keepalive,
+        timeout: props.timeout ?? null,
       });
+    },
+    // getMappings({ mode, namespace }): mappings as map() takes them.
+    getMappings(filter = {}) {
+      const back = (v) => (v !== null && typeof v === "object" && "func" in v ? registered[v.func]?.fn : v);
+      return request(current(), "getMappings", { mode: filter.mode ?? null, namespace: filter.namespace ?? null }).map(
+        (m) => ({
+          ...m,
+          rhs: Array.isArray(m.rhs)
+            ? m.rhs.map((a) => Object.freeze({ [ACTION]: true, name: a.name, args: a.args }))
+            : back(m.rhs),
+          when: m.when === null ? undefined : back(m.when),
+          desc: m.desc ?? undefined,
+          namespace: m.namespace ?? undefined,
+        }),
+      );
     },
     feedkeys(keys, options = {}) {
       return globalCmd.feedkeys(keys, options.remap !== false);

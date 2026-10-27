@@ -1,15 +1,21 @@
 //! Modes, the matcher that turns typed keys into mappings, and the mode
-//! history.
+//! history (doc/keymaps.md).
 //!
 //! A mode has properties: its mappings, what unmapped keys do (drop them or
-//! pass them to the pane) and whether it takes counts. `inherit` takes
-//! another mode's properties, live: lookups walk up to the parent when a key
-//! is pressed, so the order of definitions does not matter. A mode can unmap
-//! an inherited key. A mode and its ancestors form one table for key
-//! sequences, resolved as in Vim: a key that starts a longer mapping waits
-//! (up to `timeoutlen`, unless the shorter mapping is `nowait`); a sequence
-//! that matches nothing runs the longest mapped prefix (or passes on its
-//! first key unmapped) and the rest is looked at again.
+//! pass them to the pane), whether it takes counts, and for a transient
+//! mode (a submode) how long it stays. A key may have several mappings in a
+//! mode: the first whose condition holds runs, in order of priority, then
+//! the last registered first. A mapping whose condition is false is not
+//! there. Conditions are the script's functions, evaluated by the caller
+//! when the matcher asks ([`Step::NeedConditions`]) with the context of the
+//! first key of a sequence, and kept for the rest of it.
+//!
+//! The matcher looks keys up in layers ([`Layers`]): the current mode, and
+//! below a transient mode with `keepalive: "always"` the modes under it.
+//! Sequences resolve as in Vim: a key that starts a longer mapping waits (up
+//! to `timeoutlen`, unless the shorter mapping is `nowait`); a sequence that
+//! matches nothing runs the longest mapped prefix (or passes on its first
+//! key unmapped) and the rest is looked at again.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -18,6 +24,10 @@ use termpix_core::input::{KeyCode, KeyEvent};
 
 use super::notation::Stroke;
 
+/// A condition: the script function deciding whether a mapping exists
+/// (`when`) or a submode stays (`keepalive`).
+pub type Cond = u32;
+
 /// What a mode does with keys it has no mapping for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unmapped {
@@ -25,29 +35,66 @@ pub enum Unmapped {
     Passthrough,
 }
 
-#[derive(Clone, Debug)]
-pub enum Entry<T> {
-    Map {
-        target: T,
-        nowait: bool,
-        desc: Option<String>,
-    },
-    /// Hides an inherited mapping.
-    Unmap,
+/// How long a transient mode stays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Keepalive {
+    /// While its own mappings take the keys; another key leaves it and is
+    /// handled again below.
+    #[default]
+    Mapped,
+    /// Always: keys it does not map are looked up in the modes below.
+    Always,
+    /// While the condition holds (asked at each sequence's first key).
+    Func(Cond),
 }
 
-/// A mode's own properties; `None` takes the parent's (or the default).
+/// One mapping of a key sequence.
+#[derive(Clone, Debug)]
+pub struct Mapping<T> {
+    pub target: T,
+    /// The condition under which it exists; none: always.
+    pub when: Option<Cond>,
+    pub nowait: bool,
+    pub desc: Option<String>,
+    /// Mapping the same keys with the same namespace again replaces it;
+    /// without one, mappings are added.
+    pub namespace: Option<String>,
+    /// Higher first; equal: the last registered first.
+    pub priority: i32,
+    order: u64,
+}
+
+impl<T> Mapping<T> {
+    pub fn new(target: T) -> Self {
+        Self { target, when: None, nowait: false, desc: None, namespace: None, priority: 0, order: 0 }
+    }
+}
+
+/// A mode's own properties; `None`: the mode below decides (the default
+/// when there is none).
 #[derive(Clone, Debug)]
 pub struct ModeDef<T> {
-    pub inherit: Option<String>,
     pub unmapped: Option<Unmapped>,
     pub count: Option<bool>,
-    pub maps: HashMap<Vec<Stroke>, Entry<T>>,
+    /// A submode: sits over the mode it was entered from.
+    pub transient: bool,
+    pub keepalive: Keepalive,
+    /// A transient mode is left after this long without keys.
+    pub timeout: Option<Duration>,
+    /// Each sequence's mappings in the order they are tried.
+    pub maps: HashMap<Vec<Stroke>, Vec<Mapping<T>>>,
 }
 
 impl<T> Default for ModeDef<T> {
     fn default() -> Self {
-        Self { inherit: None, unmapped: None, count: None, maps: HashMap::new() }
+        Self {
+            unmapped: None,
+            count: None,
+            transient: false,
+            keepalive: Keepalive::default(),
+            timeout: None,
+            maps: HashMap::new(),
+        }
     }
 }
 
@@ -55,17 +102,23 @@ impl<T> Default for ModeDef<T> {
 #[derive(Clone, Debug)]
 pub struct Modes<T> {
     defs: HashMap<String, ModeDef<T>>,
+    /// Registration counter: later mappings come first.
+    next: u64,
 }
 
 impl<T> Default for Modes<T> {
     fn default() -> Self {
-        Self { defs: HashMap::new() }
+        Self { defs: HashMap::new(), next: 0 }
     }
 }
 
 impl<T: Clone> Modes<T> {
     pub fn define(&mut self, name: &str) -> &mut ModeDef<T> {
         self.defs.entry(name.to_owned()).or_default()
+    }
+
+    pub fn get(&self, name: &str) -> Option<&ModeDef<T>> {
+        self.defs.get(name)
     }
 
     pub fn exists(&self, name: &str) -> bool {
@@ -78,94 +131,141 @@ impl<T: Clone> Modes<T> {
         v
     }
 
-    pub fn map(&mut self, mode: &str, keys: Vec<Stroke>, target: T, nowait: bool, desc: Option<String>) {
-        self.define(mode).maps.insert(keys, Entry::Map { target, nowait, desc });
-    }
-
-    pub fn unmap(&mut self, mode: &str, keys: Vec<Stroke>) {
-        self.define(mode).maps.insert(keys, Entry::Unmap);
-    }
-
-    /// The mode and its ancestors, nearest first (a cycle or an unknown
-    /// parent ends the chain; [`Modes::check`] reports them).
-    fn chain(&self, mode: &str) -> Vec<&ModeDef<T>> {
-        let mut out = Vec::new();
-        let mut seen = HashSet::new();
-        let mut name = Some(mode);
-        while let Some(n) = name {
-            if !seen.insert(n) {
-                break;
-            }
-            let Some(d) = self.defs.get(n) else { break };
-            out.push(d);
-            name = d.inherit.as_deref();
+    /// Add `m` for `keys` in `mode`; with a namespace it replaces the
+    /// mapping of the same keys and namespace.
+    pub fn map(&mut self, mode: &str, keys: Vec<Stroke>, mut m: Mapping<T>) {
+        m.order = self.next;
+        self.next += 1;
+        let list = self.define(mode).maps.entry(keys).or_default();
+        if m.namespace.is_some() {
+            list.retain(|o| o.namespace != m.namespace);
         }
-        out
+        list.push(m);
+        list.sort_by_key(|o| (std::cmp::Reverse(o.priority), std::cmp::Reverse(o.order)));
     }
 
-    pub fn unmapped(&self, mode: &str) -> Unmapped {
-        self.chain(mode).iter().find_map(|d| d.unmapped).unwrap_or(Unmapped::Drop)
-    }
-
-    pub fn takes_count(&self, mode: &str) -> bool {
-        self.chain(mode).iter().find_map(|d| d.count).unwrap_or(false)
-    }
-
-    /// The mapping for exactly `keys` (the nearest entry decides).
-    pub fn lookup(&self, mode: &str, keys: &[Stroke]) -> Option<(T, bool)> {
-        for d in self.chain(mode) {
-            match d.maps.get(keys) {
-                Some(Entry::Map { target, nowait, .. }) => return Some((target.clone(), *nowait)),
-                Some(Entry::Unmap) => return None,
-                None => {}
+    /// Remove `keys`' mappings in `mode`: those of `namespace`, or all.
+    pub fn unmap(&mut self, mode: &str, keys: &[Stroke], namespace: Option<&str>) {
+        let Some(d) = self.defs.get_mut(mode) else { return };
+        if let Some(list) = d.maps.get_mut(keys) {
+            list.retain(|o| namespace.is_some_and(|n| o.namespace.as_deref() != Some(n)));
+            if list.is_empty() {
+                d.maps.remove(keys);
             }
         }
-        None
     }
 
-    /// Whether a mapping longer than `keys` starts with them.
-    pub fn has_longer(&self, mode: &str, keys: &[Stroke]) -> bool {
-        self.mappings(mode).into_iter().any(|(k, _)| k.len() > keys.len() && k.starts_with(keys))
+    /// `mode`'s mappings (of `namespace` when given), sorted by keys and
+    /// then in the order they are tried.
+    pub fn mappings(&self, mode: &str, namespace: Option<&str>) -> Vec<(Vec<Stroke>, Mapping<T>)> {
+        let Some(d) = self.defs.get(mode) else { return Vec::new() };
+        let mut keys: Vec<&Vec<Stroke>> = d.maps.keys().collect();
+        keys.sort_by_key(|k| k.iter().map(|s| s.notation()).collect::<String>());
+        keys.into_iter()
+            .flat_map(|k| {
+                d.maps[k]
+                    .iter()
+                    .filter(|m| namespace.is_none_or(|n| m.namespace.as_deref() == Some(n)))
+                    .map(move |m| (k.clone(), m.clone()))
+            })
+            .collect()
     }
+}
 
-    /// The mode's effective mappings (its own and inherited ones it does not
-    /// hide), with their descriptions.
-    pub fn mappings(&self, mode: &str) -> Vec<(Vec<Stroke>, Option<String>)> {
-        let mut seen: HashSet<&Vec<Stroke>> = HashSet::new();
-        let mut out = Vec::new();
-        for d in self.chain(mode) {
-            for (k, e) in &d.maps {
-                if seen.insert(k)
-                    && let Entry::Map { desc, .. } = e
-                {
-                    out.push((k.clone(), desc.clone()));
+/// Where the matcher looks keys up: the modes, nearest first, whether
+/// digits are counts, and the rule for leaving a transient mode on top.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Layers {
+    pub modes: Vec<String>,
+    pub count: bool,
+    /// The first mode is transient and stays while its own mappings take
+    /// the keys (`Mapped`) or while the condition holds (`Func`).
+    pub keep: Option<Keepalive>,
+}
+
+impl Layers {
+    /// One mode, no submode rules (tests, plain lookups).
+    pub fn of(mode: &str, count: bool) -> Self {
+        Self { modes: vec![mode.to_owned()], count, keep: None }
+    }
+}
+
+/// The result of a lookup under conditions.
+enum Found<T> {
+    Yes(T, bool),
+    No,
+    /// A condition was not evaluated.
+    Unknown,
+}
+
+/// Whether mapping `m` exists, given the conditions known.
+fn enabled<T>(m: &Mapping<T>, conds: &HashMap<Cond, bool>) -> Option<bool> {
+    match m.when {
+        None => Some(true),
+        Some(c) => conds.get(&c).copied(),
+    }
+}
+
+impl<T: Clone> Modes<T> {
+    /// The mapping for exactly `keys` in `layers` (`only`: the first mode
+    /// alone): the first that exists.
+    fn lookup(&self, layers: &[String], keys: &[Stroke], conds: &HashMap<Cond, bool>) -> Found<T> {
+        for mode in layers {
+            let Some(list) = self.defs.get(mode).and_then(|d| d.maps.get(keys)) else { continue };
+            for m in list {
+                match enabled(m, conds) {
+                    Some(true) => return Found::Yes(m.target.clone(), m.nowait),
+                    Some(false) => {}
+                    None => return Found::Unknown,
                 }
             }
         }
+        Found::No
+    }
+
+    /// Whether a mapping longer than `keys` that exists starts with them.
+    fn has_longer(&self, layers: &[String], keys: &[Stroke], conds: &HashMap<Cond, bool>) -> bool {
+        layers.iter().filter_map(|mode| self.defs.get(mode)).any(|d| {
+            d.maps.iter().any(|(k, list)| {
+                k.len() > keys.len() && k.starts_with(keys) && list.iter().any(|m| enabled(m, conds) == Some(true))
+            })
+        })
+    }
+
+    /// Conditions not known yet of mappings that could take a sequence
+    /// starting with `first` (any of its readings).
+    fn unknown_conditions(&self, layers: &[String], first: Stroke, conds: &HashMap<Cond, bool>) -> Vec<Cond> {
+        let starts: Vec<Stroke> = readings(&[first]).into_iter().map(|r| r[0]).collect();
+        let mut out: Vec<Cond> = layers
+            .iter()
+            .filter_map(|mode| self.defs.get(mode))
+            .flat_map(|d| d.maps.iter())
+            .filter(|(k, _)| k.first().is_some_and(|s| starts.contains(s)))
+            .flat_map(|(_, list)| list.iter().filter_map(|m| m.when))
+            .filter(|c| !conds.contains_key(c))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        out.sort_unstable();
         out
     }
 
-    /// Unknown parents and inheritance cycles.
-    pub fn check(&self) -> Vec<String> {
-        let mut problems = Vec::new();
-        for (name, d) in &self.defs {
-            if let Some(p) = &d.inherit
-                && !self.defs.contains_key(p)
-            {
-                problems.push(format!("mode {name:?} inherits unknown mode {p:?}"));
-            }
-            let mut seen = HashSet::new();
-            let mut n = Some(name.as_str());
-            while let Some(m) = n {
-                if !seen.insert(m) {
-                    problems.push(format!("mode {name:?} inherits itself (through {m:?})"));
-                    break;
-                }
-                n = self.defs.get(m).and_then(|d| d.inherit.as_deref());
-            }
-        }
-        problems.sort();
-        problems
+    /// The mapping for the typed `keys`, trying their [`readings`].
+    fn lookup_typed(
+        &self,
+        layers: &[String],
+        keys: &[Stroke],
+        conds: &HashMap<Cond, bool>,
+    ) -> Option<(T, bool, Vec<Stroke>)> {
+        readings(keys).into_iter().find_map(|r| match self.lookup(layers, &r, conds) {
+            Found::Yes(t, n) => Some((t, n, r)),
+            Found::No | Found::Unknown => None,
+        })
+    }
+
+    /// Whether any reading of `keys` starts a longer mapping.
+    fn has_longer_typed(&self, layers: &[String], keys: &[Stroke], conds: &HashMap<Cond, bool>) -> bool {
+        readings(keys).iter().any(|r| self.has_longer(layers, r, conds))
     }
 }
 
@@ -182,6 +282,12 @@ pub enum Step<T> {
     /// A key without a mapping, for the mode's unmapped behaviour, with the
     /// event as typed (when it was typed rather than fed).
     Unmapped(Stroke, Option<KeyEvent>),
+    /// Evaluate these conditions ([`Matcher::set_conditions`]), then step
+    /// again.
+    NeedConditions(Vec<Cond>),
+    /// Leave the transient mode on top, then step again: the key is looked
+    /// at again below.
+    Leave,
 }
 
 /// The ways to read typed `keys` (each key as itself or as its fallback),
@@ -213,18 +319,6 @@ pub fn readings(keys: &[Stroke]) -> Vec<Vec<Stroke>> {
     out.into_iter().map(|(_, _, v)| v).collect()
 }
 
-impl<T: Clone> Modes<T> {
-    /// The mapping for the typed `keys`, trying their [`readings`].
-    pub fn lookup_typed(&self, mode: &str, keys: &[Stroke]) -> Option<(T, bool, Vec<Stroke>)> {
-        readings(keys).into_iter().find_map(|r| self.lookup(mode, &r).map(|(t, n)| (t, n, r)))
-    }
-
-    /// Whether any reading of `keys` starts a longer mapping.
-    pub fn has_longer_typed(&self, mode: &str, keys: &[Stroke]) -> bool {
-        readings(keys).iter().any(|r| self.has_longer(mode, r))
-    }
-}
-
 /// Typed keys on their way to mappings.
 #[derive(Debug, Default)]
 pub struct Matcher {
@@ -235,6 +329,8 @@ pub struct Matcher {
     count: Option<usize>,
     /// The pending keys timed out: resolve them with what they match.
     expired: bool,
+    /// Conditions evaluated for the sequence being typed.
+    conds: HashMap<Cond, bool>,
 }
 
 impl Matcher {
@@ -268,6 +364,12 @@ impl Matcher {
         self.since = None;
         self.count = None;
         self.expired = false;
+        self.conds.clear();
+    }
+
+    /// Results of conditions the matcher asked for.
+    pub fn set_conditions(&mut self, results: impl IntoIterator<Item = (Cond, bool)>) {
+        self.conds.extend(results);
     }
 
     pub fn pending(&self) -> Vec<Stroke> {
@@ -282,9 +384,10 @@ impl Matcher {
         self.since.map(|t| t + timeout)
     }
 
-    /// The next decision for `mode`. Call until it says [`Step::Wait`];
-    /// mappings that change the mode take effect for the keys after them.
-    pub fn step<T: Clone>(&mut self, modes: &Modes<T>, mode: &str, timeout: Duration, now: Instant) -> Step<T> {
+    /// The next decision for keys in `layers`. Call until it says
+    /// [`Step::Wait`]; mappings that change the mode take effect for the
+    /// keys after them.
+    pub fn step<T: Clone>(&mut self, modes: &Modes<T>, layers: &Layers, timeout: Duration, now: Instant) -> Step<T> {
         if self.since.is_some_and(|t| now >= t + timeout) {
             self.expired = true;
         }
@@ -292,7 +395,7 @@ impl Matcher {
             if self.expired {
                 self.expired = false;
                 self.since = None;
-                if let Some(step) = self.resolve(modes, mode) {
+                if let Some(step) = self.resolve(modes, layers) {
                     return step;
                 }
                 continue;
@@ -310,35 +413,67 @@ impl Matcher {
                 self.count = None;
                 return Step::Unmapped(k, ev);
             }
+            let ls = &layers.modes;
+            if self.pending.is_empty() {
+                // A sequence starts: what may take it, under which conditions.
+                let mut unknown = modes.unknown_conditions(ls, k, &self.conds);
+                if let Some(Keepalive::Func(c)) = layers.keep
+                    && !self.conds.contains_key(&c)
+                {
+                    unknown.push(c);
+                }
+                if !unknown.is_empty() {
+                    self.input.push_front((k, ev, remap));
+                    return Step::NeedConditions(unknown);
+                }
+            }
             // Counts: digits, `0` only after another digit, unless mapped.
             if self.pending.is_empty()
-                && modes.takes_count(mode)
+                && layers.count
                 && let KeyCode::Char(c @ '0'..='9') = k.code
                 && k.mods == termpix_core::input::Modifiers::NONE
                 && (c != '0' || self.count.is_some())
                 && (self.count.is_some()
-                    || (modes.lookup_typed(mode, &[k]).is_none() && !modes.has_longer_typed(mode, &[k])))
+                    || (modes.lookup_typed(ls, &[k], &self.conds).is_none()
+                        && !modes.has_longer_typed(ls, &[k], &self.conds)))
             {
                 let d = c as usize - '0' as usize;
                 self.count = Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(d));
+                self.conds.clear();
                 continue;
+            }
+            if self.pending.is_empty() {
+                let leave = match layers.keep {
+                    Some(Keepalive::Mapped) => {
+                        modes.lookup_typed(&ls[..1], &[k], &self.conds).is_none()
+                            && !modes.has_longer_typed(&ls[..1], &[k], &self.conds)
+                    }
+                    Some(Keepalive::Func(c)) => self.conds.get(&c) == Some(&false),
+                    _ => false,
+                };
+                if leave {
+                    // Looked at again below; a count typed so far stays.
+                    self.input.push_front((k, ev, remap));
+                    return Step::Leave;
+                }
             }
             self.pending.push((k, ev));
             let keys = self.pending();
-            let exact = modes.lookup_typed(mode, &keys);
-            let longer = modes.has_longer_typed(mode, &keys);
+            let exact = modes.lookup_typed(ls, &keys, &self.conds);
+            let longer = modes.has_longer_typed(ls, &keys, &self.conds);
             if let Some((target, nowait, keys)) = exact
                 && (!longer || nowait)
             {
                 self.since = None;
                 self.pending.clear();
+                self.conds.clear();
                 return Step::Run { target, count: self.count.take(), keys };
             }
             if longer {
                 self.since.get_or_insert(now);
             } else {
                 self.since = None;
-                if let Some(step) = self.resolve(modes, mode) {
+                if let Some(step) = self.resolve(modes, layers) {
                     return step;
                 }
             }
@@ -347,18 +482,20 @@ impl Matcher {
 
     /// Pending keys that cannot grow: run the longest mapped prefix, or pass
     /// the first key on unmapped; the rest goes back to the input.
-    fn resolve<T: Clone>(&mut self, modes: &Modes<T>, mode: &str) -> Option<Step<T>> {
+    fn resolve<T: Clone>(&mut self, modes: &Modes<T>, layers: &Layers) -> Option<Step<T>> {
         if self.pending.is_empty() {
             return None;
         }
         let mut items = std::mem::take(&mut self.pending);
         let keys: Vec<Stroke> = items.iter().map(|(k, _)| *k).collect();
-        for n in (1..=keys.len()).rev() {
-            if let Some((target, _, read)) = modes.lookup_typed(mode, &keys[..n]) {
-                let rest = items.split_off(n);
-                self.requeue(rest);
-                return Some(Step::Run { target, count: self.count.take(), keys: read });
-            }
+        let found = (1..=keys.len())
+            .rev()
+            .find_map(|n| modes.lookup_typed(&layers.modes, &keys[..n], &self.conds).map(|(t, _, read)| (n, t, read)));
+        self.conds.clear();
+        if let Some((n, target, read)) = found {
+            let rest = items.split_off(n);
+            self.requeue(rest);
+            return Some(Step::Run { target, count: self.count.take(), keys: read });
         }
         let rest = items.split_off(1);
         self.requeue(rest);
@@ -384,6 +521,11 @@ impl History {
 
     pub fn current(&self) -> &str {
         self.stack.back().map_or(&self.root, String::as_str)
+    }
+
+    /// Every mode of the history, the current one first, the root last.
+    pub fn modes(&self) -> impl Iterator<Item = &str> {
+        self.stack.iter().rev().map(String::as_str).chain(std::iter::once(self.root.as_str()))
     }
 
     /// `switch-mode`: the oldest entries go beyond the cap.
@@ -416,53 +558,73 @@ mod tests {
 
     const T: Duration = Duration::from_millis(1000);
 
+    fn k(s: &str) -> Vec<Stroke> {
+        parse(s).unwrap()
+    }
+
+    fn add(m: &mut Modes<&'static str>, mode: &str, keys: &str, target: &'static str) {
+        m.map(mode, k(keys), Mapping::new(target));
+    }
+
     fn modes() -> Modes<&'static str> {
         let mut m = Modes::default();
-        let k = |s| parse(s).unwrap();
-        let d = m.define("base");
-        d.unmapped = Some(Unmapped::Drop);
-        d.count = Some(true);
-        m.map("base", k("j"), "down", false, None);
-        m.map("base", k("g"), "g", false, None);
-        m.map("base", k("gg"), "top", false, None);
-        m.map("base", k("0"), "fit", false, None);
-        m.map("base", k("x"), "close", false, None);
-        let c = m.define("child");
-        c.inherit = Some("base".into());
-        m.map("child", k("<C-b>"), "prefix", true, None);
-        m.map("child", k("<C-b>%"), "split", false, None);
-        m.unmap("child", k("x"));
-        let t = m.define("term");
-        t.unmapped = Some(Unmapped::Passthrough);
-        m.map("term", k("ab"), "ab", false, None);
+        add(&mut m, "base", "j", "down");
+        add(&mut m, "base", "g", "g");
+        add(&mut m, "base", "gg", "top");
+        add(&mut m, "base", "0", "fit");
+        add(&mut m, "base", "x", "close");
+        m.map("base", k("<C-b>"), Mapping { nowait: true, ..Mapping::new("prefix") });
+        add(&mut m, "base", "<C-b>%", "split");
+        add(&mut m, "term", "ab", "ab");
         m
     }
 
-    /// Feed keys typed at `t0 + ms` and collect what the matcher does.
-    fn run(m: &Modes<&'static str>, mode: &str, keys: &[(&str, u64)], until: u64) -> Vec<String> {
+    /// Feed keys typed at `t0 + ms` in `layers` and collect what the
+    /// matcher does; conditions are answered from `conds`.
+    fn run_in(
+        m: &Modes<&'static str>,
+        layers: &Layers,
+        conds: &[(Cond, bool)],
+        keys: &[(&str, u64)],
+        until: u64,
+    ) -> Vec<String> {
         let t0 = Instant::now();
         let mut matcher = Matcher::default();
         let mut out = Vec::new();
-        let drain = |matcher: &mut Matcher, now: Instant, out: &mut Vec<String>| {
+        let mut layers = layers.clone();
+        let mut drain = |matcher: &mut Matcher, now: Instant, out: &mut Vec<String>| {
             loop {
-                match matcher.step(m, mode, T, now) {
+                match matcher.step(m, &layers, T, now) {
                     Step::Wait(_) => break,
                     Step::Run { target, count, .. } => out.push(match count {
                         Some(c) => format!("{c}{target}"),
                         None => target.to_owned(),
                     }),
                     Step::Unmapped(k, _) => out.push(format!("unmapped {}", k.notation())),
+                    Step::NeedConditions(cs) => {
+                        out.push(format!("ask {cs:?}"));
+                        matcher.set_conditions(cs.iter().map(|c| (*c, conds.iter().any(|(d, v)| d == c && *v))));
+                    }
+                    Step::Leave => {
+                        out.push("leave".into());
+                        layers.modes.remove(0);
+                        layers.keep = None;
+                    }
                 }
             }
         };
         for (s, ms) in keys {
-            for k in parse(s).unwrap() {
-                matcher.push(&k.event());
+            for key in k(s) {
+                matcher.push(&key.event());
             }
             drain(&mut matcher, t0 + Duration::from_millis(*ms), &mut out);
         }
         drain(&mut matcher, t0 + Duration::from_millis(until), &mut out);
         out
+    }
+
+    fn run(m: &Modes<&'static str>, mode: &str, keys: &[(&str, u64)], until: u64) -> Vec<String> {
+        run_in(m, &Layers::of(mode, mode == "base"), &[], keys, until)
     }
 
     #[test]
@@ -473,6 +635,7 @@ mod tests {
         assert_eq!(run(&m, "base", &[("g", 0)], 1001), ["g"], "the shorter mapping after the timeout");
         assert_eq!(run(&m, "base", &[("g", 0), ("j", 10)], 20), ["g", "down"], "a key that does not continue");
         assert_eq!(run(&m, "base", &[("q", 0)], 10), ["unmapped q"]);
+        assert_eq!(run(&m, "base", &[("<C-b>", 0)], 10), ["prefix"], "nowait runs the shorter mapping at once");
     }
 
     #[test]
@@ -482,7 +645,6 @@ mod tests {
         assert_eq!(run(&m, "term", &[("ac", 0)], 10), ["unmapped a", "unmapped c"]);
         assert_eq!(run(&m, "term", &[("ab", 0)], 10), ["ab"]);
         assert_eq!(run(&m, "term", &[("a", 0)], 1001), ["unmapped a"], "timed out");
-        assert_eq!(m.unmapped("term"), Unmapped::Passthrough);
     }
 
     #[test]
@@ -496,65 +658,107 @@ mod tests {
     }
 
     #[test]
-    fn inheritance_is_live_and_unmap_hides() {
+    fn several_mappings_of_a_key_take_turns() {
+        let mut m: Modes<&str> = Modes::default();
+        add(&mut m, "n", "x", "first");
+        add(&mut m, "n", "x", "second");
+        assert_eq!(run(&m, "n", &[("x", 0)], 10), ["second"], "the last registered first");
+        m.map("n", k("x"), Mapping { priority: 1, ..Mapping::new("urgent") });
+        add(&mut m, "n", "x", "third");
+        assert_eq!(run(&m, "n", &[("x", 0)], 10), ["urgent"], "a higher priority first");
+        assert_eq!(m.mappings("n", None).len(), 4, "without a namespace mappings are added");
+        // A namespace replaces its own mapping only.
+        let ns = |t, n: &str| Mapping { namespace: Some(n.into()), ..Mapping::new(t) };
+        m.map("n", k("y"), ns("a", "default"));
+        m.map("n", k("y"), ns("b", "user"));
+        m.map("n", k("y"), ns("c", "default"));
+        let ys: Vec<&str> =
+            m.mappings("n", None).iter().filter(|(k2, _)| *k2 == k("y")).map(|(_, m)| m.target).collect();
+        assert_eq!(ys, ["c", "b"]);
+        assert_eq!(m.mappings("n", Some("user")).len(), 1);
+        // unmap: a namespace's, or all of the key's.
+        m.unmap("n", &k("y"), Some("default"));
+        assert_eq!(run(&m, "n", &[("y", 0)], 10), ["b"]);
+        m.unmap("n", &k("x"), None);
+        assert_eq!(run(&m, "n", &[("x", 0)], 10), ["unmapped x"]);
+    }
+
+    #[test]
+    fn mappings_exist_only_while_their_condition_holds() {
+        let mut m: Modes<&str> = Modes::default();
+        let when = |t, c| Mapping { when: Some(c), ..Mapping::new(t) };
+        add(&mut m, "n", "<Tab>", "plain");
+        m.map("n", k("<Tab>"), when("popup", 7));
+        m.map("n", k("gt"), when("next-tab", 8));
+        add(&mut m, "n", "g", "g");
+        let layers = Layers::of("n", false);
+        assert_eq!(run_in(&m, &layers, &[(7, true)], &[("<Tab>", 0)], 10), ["ask [7]", "popup"]);
+        assert_eq!(run_in(&m, &layers, &[(7, false)], &[("<Tab>", 0)], 10), ["ask [7]", "plain"], "the next one");
+        // Only conditions of mappings that could take the key are asked.
+        assert_eq!(run_in(&m, &layers, &[], &[("q", 0)], 10), ["unmapped q"]);
+        // A disabled longer mapping does not make the key wait.
+        assert_eq!(run_in(&m, &layers, &[(8, false)], &[("g", 0)], 10), ["ask [8]", "g"]);
+        assert_eq!(run_in(&m, &layers, &[(8, true)], &[("g", 0)], 10), ["ask [8]"], "waits for gt");
+        assert_eq!(run_in(&m, &layers, &[(8, true)], &[("gt", 0)], 10), ["ask [8]", "next-tab"]);
+        // Asked once per sequence: a second sequence asks again.
+        assert_eq!(
+            run_in(&m, &layers, &[(7, true)], &[("<Tab><Tab>", 0)], 10),
+            ["ask [7]", "popup", "ask [7]", "popup"]
+        );
+    }
+
+    #[test]
+    fn transient_modes_leave_or_fall_through() {
         let mut m = modes();
-        assert_eq!(run(&m, "child", &[("j", 0)], 10), ["down"], "inherited");
-        assert_eq!(run(&m, "child", &[("x", 0)], 10), ["unmapped x"], "unmapped in the child");
-        assert_eq!(run(&m, "base", &[("x", 0)], 10), ["close"]);
-        assert!(m.takes_count("child") && m.unmapped("child") == Unmapped::Drop, "properties inherited");
-        // A mapping added to the parent later counts in the child.
-        m.map("base", parse("k").unwrap(), "up", false, None);
-        assert_eq!(run(&m, "child", &[("k", 0)], 10), ["up"]);
-        // nowait runs the shorter mapping at once.
-        assert_eq!(run(&m, "child", &[("<C-b>", 0)], 10), ["prefix"]);
-        assert!(m.mappings("child").iter().all(|(k, _)| k != &parse("x").unwrap()));
+        add(&mut m, "resize", "+", "taller");
+        let layers =
+            |keep, modes: &[&str]| Layers { modes: modes.iter().map(|s| (*s).to_owned()).collect(), count: true, keep };
+        // keepalive "mapped": its keys stay; another leaves, handled below.
+        let mapped = layers(Some(Keepalive::Mapped), &["resize", "base"]);
+        assert_eq!(run_in(&m, &mapped, &[], &[("++j", 0)], 10), ["taller", "taller", "leave", "down"]);
+        assert_eq!(run_in(&m, &mapped, &[], &[("3+", 0)], 10), ["3taller"], "a count stays in");
+        // "always": the modes below take what it does not map.
+        let always = layers(None, &["resize", "base"]);
+        assert_eq!(run_in(&m, &always, &[], &[("+j+", 0)], 10), ["taller", "down", "taller"]);
+        // A function: asked at each sequence's first key.
+        let func = layers(Some(Keepalive::Func(5)), &["resize", "base"]);
+        assert_eq!(run_in(&m, &func, &[(5, false)], &[("+", 0)], 10), ["ask [5]", "leave", "unmapped +"]);
+        assert_eq!(run_in(&m, &func, &[(5, true)], &[("+", 0)], 10), ["ask [5]", "taller"]);
     }
 
     #[test]
     fn keys_fed_without_mappings_and_cancel() {
         let m = modes();
+        let base = Layers::of("base", true);
         let mut matcher = Matcher::default();
         let now = Instant::now();
-        matcher.feed_front(&parse("j").unwrap(), false);
-        assert_eq!(matcher.step(&m, "base", T, now), Step::Unmapped(parse("j").unwrap()[0], None));
-        matcher.push(&parse("3").unwrap()[0].event());
-        matcher.push(&parse("g").unwrap()[0].event());
-        assert!(matches!(matcher.step(&m, "base", T, now), Step::Wait(Some(_))));
+        matcher.feed_front(&k("j"), false);
+        assert_eq!(matcher.step(&m, &base, T, now), Step::Unmapped(k("j")[0], None));
+        matcher.push(&k("3")[0].event());
+        matcher.push(&k("g")[0].event());
+        assert!(matches!(matcher.step(&m, &base, T, now), Step::Wait(Some(_))));
         assert_eq!((matcher.count(), matcher.pending().len()), (Some(3), 1));
         matcher.cancel();
         assert_eq!((matcher.count(), matcher.pending().len()), (None, 0));
-        assert_eq!(matcher.step(&m, "base", T, now), Step::Wait(None));
-    }
-
-    #[test]
-    fn checks_report_cycles_and_unknown_parents() {
-        let mut m: Modes<&str> = Modes::default();
-        m.define("a").inherit = Some("b".into());
-        m.define("b").inherit = Some("a".into());
-        m.define("c").inherit = Some("nope".into());
-        let p = m.check();
-        assert!(p.iter().any(|s| s.contains("\"c\" inherits unknown mode \"nope\"")), "{p:?}");
-        assert!(p.iter().any(|s| s.contains("inherits itself")), "{p:?}");
-        assert_eq!(m.unmapped("a"), Unmapped::Drop, "a cycle still resolves");
+        assert_eq!(matcher.step(&m, &base, T, now), Step::Wait(None));
     }
 
     #[test]
     fn typed_keys_try_their_own_form_then_the_fallback() {
         let mut m: Modes<&str> = Modes::default();
-        let k = |s| parse(s).unwrap();
-        m.map("m", k("<Tab>"), "tab", false, None);
-        m.map("m", k("A"), "big-a", false, None);
+        add(&mut m, "m", "<Tab>", "tab");
+        add(&mut m, "m", "A", "big-a");
         let typed = |m: &Modes<&'static str>, s: &str| run(m, "m", &[(s, 0)], 10);
         assert_eq!(typed(&m, "<C-i>"), ["tab"], "<C-i> does what <Tab> does");
         assert_eq!(typed(&m, "<S-a>"), ["big-a"], "Shift+a does what A does");
-        m.map("m", k("<C-i>"), "ctrl-i", false, None);
-        m.map("m", k("<S-a>"), "shift-a", false, None);
+        add(&mut m, "m", "<C-i>", "ctrl-i");
+        add(&mut m, "m", "<S-a>", "shift-a");
         assert_eq!(typed(&m, "<C-i>"), ["ctrl-i"], "unless mapped itself");
         assert_eq!(typed(&m, "<Tab>"), ["tab"]);
         assert_eq!(typed(&m, "<S-a>"), ["shift-a"]);
         assert_eq!(typed(&m, "A"), ["big-a"], "Caps Lock A stays A");
         // Sequences: the reading with the fewest fallbacks wins.
-        m.map("m", k("<Tab>x"), "tab-x", false, None);
+        add(&mut m, "m", "<Tab>x", "tab-x");
         assert_eq!(typed(&m, "<C-i>x"), ["tab-x"]);
         assert_eq!(readings(&k("<S-a><C-i>"))[0], k("<S-a><C-i>"));
         assert_eq!(readings(&k("<S-a><C-i>"))[1], k("<S-a><Tab>"), "keep earlier keys as typed");
@@ -568,6 +772,7 @@ mod tests {
             h.push(m);
         }
         assert_eq!(h.current(), "d");
+        assert_eq!(h.modes().collect::<Vec<_>>(), ["d", "c", "b", "normal"]);
         h.pop();
         h.pop();
         h.pop();

@@ -1,18 +1,36 @@
 // A configuration using the whole scripting API; crates/temzdf/tests/types.rs
 // type checks it against `temzdf print-types`.
-import { action, atomic, cmd, currentMode, defineMode, dispatch, feedkeys, map, o, on, unmap } from "temzdf";
+import {
+  action,
+  atomic,
+  cmd,
+  currentMode,
+  defineMode,
+  dispatch,
+  feedkeys,
+  getMappings,
+  map,
+  o,
+  on,
+  unmap,
+} from "temzdf";
 
 o.timeoutlen = 500;
 o.splitright = false;
 
-defineMode("window", { inherit: "normal", unmapped: "drop", count: true });
+defineMode("window", { unmapped: "drop", count: true, transient: true, keepalive: "always", timeout: 2000 });
+defineMode("resize", { transient: true, keepalive: (ctx) => ctx.paneKind !== null });
 map("normal", "w", action.switchMode("window"));
-map("window", "v", [action.split("right"), action.exitMode()], { desc: "split right" });
-map("window", "q", action.exitMode());
+map("window", "v", [action.split("right"), action.exitMode()], { desc: "split right", namespace: "mine" });
+map("window", "q", action.exitMode(), { priority: 1 });
 map(["pdf", "terminal"], "<C-b>%", (ctx) => {
   cmd.split(ctx.count === null ? "right" : "bottom");
-});
+}, { when: (ctx) => !ctx.floating && ctx.keys === "" });
 unmap("normal", "x");
+unmap("normal", "q", { namespace: "default" });
+for (const m of getMappings({ mode: "normal", namespace: "default" })) {
+  map("resize", m.lhs, m.rhs, { when: m.when, nowait: m.nowait, desc: m.desc });
+}
 
 on("ModeChanged", (old, now) => console.log(`${old} -> ${now} (${currentMode()})`));
 on("PaneOpened", (pane, kind) => {

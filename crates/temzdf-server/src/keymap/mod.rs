@@ -7,7 +7,7 @@ pub mod notation;
 pub use notation::Stroke;
 pub mod modes;
 
-pub use modes::{Entry, History, Matcher, ModeDef, Modes, Step, Unmapped};
+pub use modes::{Cond, History, Keepalive, Layers, Mapping, Matcher, ModeDef, Modes, Step, Unmapped};
 
 use temzdf_protocol::script::{FuncId, ScriptValue};
 

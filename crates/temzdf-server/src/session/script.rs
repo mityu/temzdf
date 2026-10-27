@@ -68,6 +68,8 @@ enum Held {
 enum Frame {
     /// A call sent to the host; waiting for `Done`.
     Call { id: CallId, hook: bool },
+    /// Conditions sent to the host for the matcher; waiting for `Values`.
+    Eval { id: CallId, funcs: Vec<FuncId> },
     /// Hooks still to run (one at a time), at this nesting depth.
     Hooks { queue: VecDeque<(FuncId, Vec<ScriptValue>)>, depth: usize },
     /// An operation to perform once the frames above it are done (after its
@@ -150,7 +152,10 @@ impl Bridge {
     fn token_valid(&self, token: Token) -> bool {
         match token {
             Token::Load => self.loading.is_some(),
-            Token::Call(id) => self.frames.iter().any(|f| matches!(f, Frame::Call { id: c, .. } if *c == id)),
+            Token::Call(id) => self
+                .frames
+                .iter()
+                .any(|f| matches!(f, Frame::Call { id: c, .. } | Frame::Eval { id: c, .. } if *c == id)),
             Token::Task(t) => self.tasks.contains(&t),
         }
     }
@@ -329,6 +334,24 @@ impl Session {
         }
     }
 
+    /// Ask the host for conditions of mappings (`when`) or a submode
+    /// (`keepalive`), with the context of the key being matched; the
+    /// matcher goes on when the values come.
+    pub(super) fn eval(&mut self, funcs: Vec<FuncId>, args: Vec<ScriptValue>) {
+        let id = self.script.next_call;
+        self.script.next_call += 1;
+        if self.script.frames.is_empty() && self.script.atomic.is_none() {
+            self.script.busy_since = Some(Instant::now());
+            self.script.notice_shown = false;
+        }
+        self.script.frames.push(Frame::Eval { id, funcs: funcs.clone() });
+        if !self.script.send(&ToHost::Eval { id, funcs: funcs.clone(), args }) {
+            self.script.frames.pop();
+            // No host: no condition holds.
+            self.matcher.set_conditions(funcs.into_iter().map(|f| (f, false)));
+        }
+    }
+
     /// Record an event for hooks.
     pub(super) fn event(&mut self, name: &str, args: Vec<ScriptValue>) {
         if self.script.hooks.contains_key(name) {
@@ -402,7 +425,7 @@ impl Session {
         loop {
             match self.script.frames.pop() {
                 None => break,
-                Some(f @ Frame::Call { .. }) => {
+                Some(f @ (Frame::Call { .. } | Frame::Eval { .. })) => {
                     self.script.frames.push(f);
                     return out;
                 }
@@ -494,6 +517,33 @@ impl Session {
                 }
                 out.merge(self.pump())
             }
+            FromHost::Values { id, results } => {
+                let funcs = match self.script.frames.last() {
+                    Some(Frame::Eval { id: top, funcs }) if *top == id => funcs.clone(),
+                    _ => {
+                        eprintln!("temzdf: the script host answered conditions {id}, which were not asked");
+                        return Outcome::None;
+                    }
+                };
+                self.script.frames.pop();
+                let mut out = Outcome::None;
+                let mut values = Vec::new();
+                for (i, f) in funcs.into_iter().enumerate() {
+                    // A condition that failed (or was not answered) is false.
+                    let v = match results.get(i) {
+                        Some(Ok(v)) => *v,
+                        Some(Err(e)) => {
+                            self.script_error(e);
+                            out = Outcome::Redraw;
+                            false
+                        }
+                        None => false,
+                    };
+                    values.push((f, v));
+                }
+                self.matcher.set_conditions(values);
+                out.merge(self.pump())
+            }
             FromHost::TaskStart(t) => {
                 self.script.tasks.insert(t);
                 Outcome::None
@@ -548,11 +598,6 @@ impl Session {
             let msg = format!("configuration: {e}");
             eprintln!("temzdf: {msg}");
             self.script.startup_error = Some(e.message);
-        }
-        // Modes are checked once the configuration has defined them all.
-        for problem in self.modes.check() {
-            eprintln!("temzdf: configuration: {problem}");
-            self.script.startup_error.get_or_insert(problem);
         }
         let out = self.open_first();
         out.merge(self.pump())
@@ -628,6 +673,14 @@ impl Session {
             self.script.send(&ToHost::Reply { req, result: Err(e.into()) });
             return Outcome::None;
         }
+        // Conditions only read: what they ask must not change anything.
+        let reading = matches!(token, Token::Call(id)
+            if self.script.frames.iter().any(|f| matches!(f, Frame::Eval { id: e, .. } if *e == id)));
+        if reading && !read_only(&op) {
+            let e = "a condition (when, keepalive) cannot change anything; it may only read";
+            self.script.send(&ToHost::Reply { req, result: Err(e.into()) });
+            return Outcome::None;
+        }
         let depth = match token {
             // Commands of a hook cause only nested hooks.
             Token::Call(_) => self.script.hook_depth(),
@@ -664,7 +717,7 @@ impl Session {
                 self.script.hooks.entry(event).or_default().push(Hook { func, nested });
                 (Ok(ScriptValue::Null), Outcome::None)
             }
-            HostOp::DefineMode { name, inherit, unmapped, count } => {
+            HostOp::DefineMode { name, unmapped, count, transient, keepalive, timeout } => {
                 let unmapped = match unmapped.as_deref() {
                     None => None,
                     Some("drop") => Some(crate::keymap::Unmapped::Drop),
@@ -676,9 +729,23 @@ impl Session {
                         );
                     }
                 };
+                if timeout.is_some_and(|t| !t.is_finite() || t < 0.0) {
+                    return (Err("defineMode: timeout is a number of milliseconds".into()), Outcome::None);
+                }
                 let d = self.modes.define(&name);
-                if inherit.is_some() {
-                    d.inherit = inherit;
+                if let Some(t) = transient {
+                    d.transient = t;
+                }
+                if let Some(k) = keepalive {
+                    use temzdf_protocol::script::Keepalive as K;
+                    d.keepalive = match k {
+                        K::Mapped => crate::keymap::Keepalive::Mapped,
+                        K::Always => crate::keymap::Keepalive::Always,
+                        K::Func(f) => crate::keymap::Keepalive::Func(f),
+                    };
+                }
+                if let Some(t) = timeout {
+                    d.timeout = (t > 0.0).then(|| Duration::from_secs_f64(t / 1000.0));
                 }
                 if unmapped.is_some() {
                     d.unmapped = unmapped;
@@ -688,11 +755,30 @@ impl Session {
                 }
                 (Ok(ScriptValue::Null), Outcome::None)
             }
-            HostOp::Map { modes, keys, rhs, nowait, desc } => match self.script_map(&modes, &keys, rhs, nowait, desc) {
-                Ok(()) => (Ok(ScriptValue::Null), Outcome::None),
-                Err(e) => (Err(e), Outcome::None),
-            },
-            HostOp::Unmap { modes, keys } => {
+            HostOp::Map { modes, keys, rhs, nowait, desc, when, namespace, priority } => {
+                let m = MapSpec { nowait, desc, when, namespace, priority };
+                match self.script_map(&modes, &keys, rhs, m) {
+                    Ok(()) => (Ok(ScriptValue::Null), Outcome::None),
+                    Err(e) => (Err(e), Outcome::None),
+                }
+            }
+            HostOp::GetMappings { mode, namespace } => {
+                let modes = match mode {
+                    Some(m) if !self.modes.exists(&m) => {
+                        return (Err(format!("getMappings: no mode {m:?}")), Outcome::None);
+                    }
+                    Some(m) => vec![m],
+                    None => self.modes.names(),
+                };
+                let mut out = Vec::new();
+                for mode in modes {
+                    for (keys, m) in self.modes.mappings(&mode, namespace.as_deref()) {
+                        out.push(mapping_value(&mode, &keys, &m));
+                    }
+                }
+                (Ok(ScriptValue::List(out)), Outcome::None)
+            }
+            HostOp::Unmap { modes, keys, namespace } => {
                 let keys = match crate::keymap::notation::parse(&keys) {
                     Ok(k) => k,
                     Err(e) => return (Err(format!("unmap: {e:#}")), Outcome::None),
@@ -701,7 +787,7 @@ impl Session {
                     if !self.modes.exists(m) {
                         return (Err(format!("unmap: no mode {m:?}")), Outcome::None);
                     }
-                    self.modes.unmap(m, keys.clone());
+                    self.modes.unmap(m, &keys, namespace.as_deref());
                 }
                 (Ok(ScriptValue::Null), Outcome::None)
             }
@@ -719,16 +805,15 @@ impl Session {
 }
 
 impl Session {
-    /// `map(modes, keys, rhs)` from a script.
+    /// `map(modes, keys, rhs, options)` from a script.
     fn script_map(
         &mut self,
         modes: &[String],
         keys: &str,
         rhs: temzdf_protocol::script::MapRhs,
-        nowait: bool,
-        desc: Option<String>,
+        spec: MapSpec,
     ) -> Result<(), String> {
-        use crate::keymap::{Act, Target, notation};
+        use crate::keymap::{Act, Mapping, Target, notation};
         let keys = notation::parse(keys).map_err(|e| format!("map: {e:#}"))?;
         let ctrl_c = notation::parse("<C-c>").expect("notation");
         if keys.first() == ctrl_c.first() {
@@ -750,7 +835,13 @@ impl Session {
             if !self.modes.exists(m) {
                 return Err(format!("map: no mode {m:?} (create it with defineMode)"));
             }
-            self.modes.map(m, keys.clone(), target.clone(), nowait, desc.clone());
+            let mut mapping = Mapping::new(target.clone());
+            mapping.nowait = spec.nowait;
+            mapping.desc = spec.desc.clone();
+            mapping.when = spec.when;
+            mapping.namespace = spec.namespace.clone();
+            mapping.priority = spec.priority;
+            self.modes.map(m, keys.clone(), mapping);
         }
         Ok(())
     }
@@ -923,6 +1014,61 @@ fn color(v: &ScriptValue) -> Result<Option<[u8; 3]>, String> {
 
 fn hex(c: [u8; 3]) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+/// `map`'s options.
+struct MapSpec {
+    nowait: bool,
+    desc: Option<String>,
+    when: Option<FuncId>,
+    namespace: Option<String>,
+    priority: i32,
+}
+
+/// Whether `op` only reads (what conditions may do).
+fn read_only(op: &HostOp) -> bool {
+    match op {
+        HostOp::GetOption { .. } | HostOp::GetMappings { .. } => true,
+        HostOp::Command { name, .. } => {
+            matches!(name.as_str(), "current-mode" | "panes" | "focused-pane" | "session-name")
+        }
+        _ => false,
+    }
+}
+
+/// A mapping as `getMappings` gives it: functions as `{ func: id }`, which
+/// the host turns back into the functions.
+fn mapping_value(
+    mode: &str,
+    keys: &[crate::keymap::Stroke],
+    m: &crate::keymap::Mapping<crate::keymap::Target>,
+) -> ScriptValue {
+    use crate::keymap::Target;
+    let func = |f: FuncId| ScriptValue::map([("func", ScriptValue::Num(f as f64))]);
+    let rhs = match &m.target {
+        Target::Func(f) => func(*f),
+        Target::Actions(acts) => ScriptValue::List(
+            acts.iter()
+                .map(|a| {
+                    ScriptValue::map([
+                        ("name", ScriptValue::Str(a.name.clone())),
+                        ("args", ScriptValue::List(a.args.clone())),
+                    ])
+                })
+                .collect(),
+        ),
+    };
+    let text = |s: &Option<String>| s.clone().map_or(ScriptValue::Null, ScriptValue::Str);
+    ScriptValue::map([
+        ("mode", ScriptValue::Str(mode.to_owned())),
+        ("lhs", ScriptValue::Str(keys.iter().map(|k| k.notation()).collect())),
+        ("rhs", rhs),
+        ("when", m.when.map_or(ScriptValue::Null, func)),
+        ("nowait", ScriptValue::Bool(m.nowait)),
+        ("desc", text(&m.desc)),
+        ("namespace", text(&m.namespace)),
+        ("priority", ScriptValue::Num(m.priority as f64)),
+    ])
 }
 
 #[cfg(test)]

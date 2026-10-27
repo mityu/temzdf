@@ -1,7 +1,9 @@
 // temzdf's default configuration. The script host loads it before the user's
 // configuration (`--clean` loads only this); the user's can map over or
-// unmap anything here. Built-in modes: `normal` (operating), `terminal`
-// (pass-through, terminal panes) and `pdf` (PDF panes).
+// unmap anything here: its mappings come first (they are registered later),
+// and these are in the namespace "default" (`unmap(mode, lhs, { namespace:
+// "default" })` removes one). Built-in modes: `normal` (operating),
+// `terminal` (pass-through, terminal panes) and `pdf` (PDF panes).
 import { action, map } from "temzdf";
 import type { Action } from "temzdf";
 
@@ -9,7 +11,7 @@ import type { Action } from "temzdf";
 const prefix = "<C-b>";
 
 function each(mode: string, keys: string[], rhs: Action | Action[]): void {
-  for (const k of keys) map(mode, k, rhs);
+  for (const k of keys) map(mode, k, rhs, { namespace: "default" });
 }
 
 // Page view.

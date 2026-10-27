@@ -26,7 +26,7 @@ use termpix_core::scroll::ScrollConfig;
 use crate::action::{Action, PaneSpec};
 use crate::clip;
 use crate::forward::{self, ForwardRequest};
-use crate::keymap::{History, Matcher, Modes, Step, Stroke, Target, Unmapped, notation};
+use crate::keymap::{History, Keepalive, Layers, Matcher, Modes, Step, Stroke, Target, Unmapped, notation};
 use crate::layout::{BorderId, Layout, PaneId, Split};
 use temzdf_protocol::script::{FromHost, ScriptValue};
 
@@ -350,6 +350,8 @@ pub struct Session {
     modes: Modes<Target>,
     matcher: Matcher,
     history: History,
+    /// The last key, or entering a mode: a submode's `timeout` counts from it.
+    last_key: Instant,
     options: Options,
     /// `guifont` and `guifontwide` as configured, while `font-size` has
     /// changed them (what `font-size` with no size goes back to).
@@ -408,6 +410,7 @@ impl Session {
             modes,
             matcher: Matcher::default(),
             history: History::new("normal", Options::default().modehistory),
+            last_key: Instant::now(),
             options: Options::default(),
             configured_fonts: None,
             notices: Vec::new(),
@@ -1056,6 +1059,7 @@ impl Session {
         if self.hold_key(k) {
             return dismissed;
         }
+        self.last_key = now;
         let out = self.key_inner(k, now);
         dismissed.merge(out).merge(self.flush_events())
     }
@@ -1142,9 +1146,19 @@ impl Session {
     fn drive(&mut self, now: Instant) -> Outcome {
         let mut out = Outcome::None;
         while !self.script.busy() {
-            let mode = self.history.current().to_owned();
-            match self.matcher.step(&self.modes, &mode, self.options.timeoutlen, now) {
+            let layers = self.layers();
+            match self.matcher.step(&self.modes, &layers, self.options.timeoutlen, now) {
                 Step::Wait(_) => break,
+                Step::NeedConditions(funcs) => {
+                    let ctx = self.key_context(None);
+                    self.eval(funcs, vec![ctx]);
+                }
+                Step::Leave => {
+                    let old = self.history.current().to_owned();
+                    self.history.pop();
+                    self.mode_changed(&old);
+                    out = out.merge(Outcome::Redraw);
+                }
                 Step::Run { target, count, .. } => {
                     // Mappings that feed keys mapping to themselves (`a` to
                     // `a`, or to `aa`) would run forever, as in Vim.
@@ -1158,7 +1172,7 @@ impl Session {
                     out = out.merge(self.run_target(target, count, now));
                 }
                 Step::Unmapped(stroke, ev) => {
-                    if self.modes.unmapped(&mode) == Unmapped::Passthrough {
+                    if self.unmapped() == Unmapped::Passthrough {
                         let ev = ev.unwrap_or_else(|| stroke.event());
                         out = out.merge(self.send_to_pane(&ev));
                     }
@@ -1186,12 +1200,81 @@ impl Session {
                 out
             }
             Target::Func(func) => {
-                let count = count.map_or(ScriptValue::Null, |c| ScriptValue::Num(c as f64));
-                let ctx = ScriptValue::map([("count", count), ("pane", ScriptValue::Num(self.focus as f64))]);
+                let ctx = self.key_context(Some(count));
                 self.call(func, vec![ctx], false);
                 Outcome::None
             }
         }
+    }
+
+    /// What mapped functions and conditions get: the focused pane, its
+    /// kind, whether it floats, the mode, the keys pending, and (mapped
+    /// functions) the count.
+    fn key_context(&self, count: Option<Option<usize>>) -> ScriptValue {
+        let kind = match self.panes.get(&self.focus).map(|e| &e.kind) {
+            Some(Kind::Pdf { .. }) => ScriptValue::Str("pdf".into()),
+            Some(Kind::Term { .. }) => ScriptValue::Str("terminal".into()),
+            None => ScriptValue::Null,
+        };
+        let keys: String = self.matcher.pending().iter().map(|k| k.notation()).collect();
+        let mut fields = vec![
+            ("pane", ScriptValue::Num(self.focus as f64)),
+            ("paneKind", kind),
+            ("floating", ScriptValue::Bool(self.is_float(self.focus))),
+            ("mode", ScriptValue::Str(self.history.current().to_owned())),
+            ("keys", ScriptValue::Str(keys)),
+        ];
+        if let Some(count) = count {
+            fields.push(("count", count.map_or(ScriptValue::Null, |c| ScriptValue::Num(c as f64))));
+        }
+        ScriptValue::map(fields)
+    }
+
+    /// Where keys are looked up now: the current mode; below a transient
+    /// mode with `keepalive: "always"` the modes under it too, down to the
+    /// first that is not transient.
+    fn layers(&self) -> Layers {
+        let mut modes = Vec::new();
+        let mut keep = None;
+        for (i, name) in self.history.modes().enumerate() {
+            let def = self.modes.get(name);
+            modes.push(name.to_owned());
+            match def {
+                Some(d) if d.transient => match d.keepalive {
+                    Keepalive::Always => continue,
+                    k if i == 0 => {
+                        keep = Some(k);
+                        break;
+                    }
+                    _ => break,
+                },
+                _ => break,
+            }
+        }
+        let count = self.mode_property(|d| d.count).unwrap_or(false);
+        Layers { modes, count, keep }
+    }
+
+    /// A property of the current mode, or of the modes below it where it
+    /// is not given.
+    fn mode_property<P>(&self, get: impl Fn(&crate::keymap::ModeDef<Target>) -> Option<P>) -> Option<P> {
+        self.history.modes().find_map(|m| self.modes.get(m).and_then(&get))
+    }
+
+    /// What unmapped keys do now.
+    fn unmapped(&self) -> Unmapped {
+        self.mode_property(|d| d.unmapped).unwrap_or(Unmapped::Drop)
+    }
+
+    /// The current mode, or the first below it that is not transient.
+    fn base_mode(&self) -> &str {
+        self.history.modes().find(|m| !self.modes.get(m).is_some_and(|d| d.transient)).unwrap_or("normal")
+    }
+
+    /// When the transient mode on top leaves for lack of keys.
+    fn submode_deadline(&self) -> Option<Instant> {
+        let d = self.modes.get(self.history.current())?;
+        Some(self.last_key + d.timeout.filter(|_| d.transient)?)
     }
 
     /// An unmapped key in a pass-through mode goes to the focused pane.
@@ -1264,8 +1347,7 @@ impl Session {
         if self.hold_text(text) {
             return Outcome::None;
         }
-        let mode = self.history.current().to_owned();
-        let out = if self.modes.unmapped(&mode) == Unmapped::Passthrough
+        let out = if self.unmapped() == Unmapped::Passthrough
             && let Some(t) = self.focused_term()
         {
             Outcome::None.or(t.send_text(text))
@@ -1488,7 +1570,7 @@ impl Session {
         let Some(id) = target else { return out };
         // In the operating mode, the left button selects in terminals even
         // when their program tracks the mouse.
-        let select = self.history.current() == "normal";
+        let select = self.base_mode() == "normal";
         let Some(e) = self.panes.get_mut(&id) else { return out };
         let (dx, dy) = match m.unit {
             CoordUnit::Pixel => ((e.rect.x * cell.width as i32), (e.rect.y * cell.height as i32)),
@@ -1789,6 +1871,14 @@ impl Session {
         if self.matcher.deadline(self.options.timeoutlen).is_some_and(|d| now >= d) {
             out = out.merge(self.drive(now));
         }
+        // A submode left alone for its timeout goes.
+        if self.submode_deadline().is_some_and(|d| now >= d) && !self.script.busy() {
+            let old = self.history.current().to_owned();
+            self.history.pop();
+            self.last_key = now;
+            self.mode_changed(&old);
+            out = out.merge(Outcome::Redraw);
+        }
         out.merge(self.flush_events())
     }
 
@@ -1804,6 +1894,7 @@ impl Session {
             .chain(terms)
             .chain(self.script_deadline())
             .chain(self.matcher.deadline(self.options.timeoutlen))
+            .chain(self.submode_deadline())
             .chain(self.notice_deadline())
             .min()
     }
@@ -1899,18 +1990,22 @@ mod tests {
             ("<C-b>", acts(&[("exit-mode", &[]), ("feedkeys", &[s("<C-b>"), ScriptValue::Bool(false)])])),
             ("<Esc>", acts(&[("exit-mode", &[])])),
         ] {
-            m.map("normal", keys(lhs), target, false, None);
+            m.map("normal", keys(lhs), crate::keymap::Mapping::new(target));
         }
         for mode in ["terminal", "pdf"] {
-            m.map(mode, keys("<C-b>"), acts(&[("switch-mode", &[s("normal")])]), false, None);
+            m.map(mode, keys("<C-b>"), crate::keymap::Mapping::new(acts(&[("switch-mode", &[s("normal")])])));
         }
         for lhs in ["<C-S-v>", "<D-v>"] {
-            m.map("terminal", keys(lhs), acts(&[("paste", &[])]), false, None);
+            m.map("terminal", keys(lhs), crate::keymap::Mapping::new(acts(&[("paste", &[])])));
         }
         for (key, cmd) in Keymap::default().bindings() {
             let stroke = Stroke::of(&key.event());
             if stroke != keys("<C-c>")[0] {
-                m.map("pdf", vec![stroke], Target::Actions(vec![Act::new(cmd.name(), vec![])]), false, None);
+                m.map(
+                    "pdf",
+                    vec![stroke],
+                    crate::keymap::Mapping::new(Target::Actions(vec![Act::new(cmd.name(), vec![])])),
+                );
             }
         }
     }
@@ -2066,6 +2161,55 @@ mod tests {
         key(&mut s, "<C-b>");
         assert_eq!(key(&mut s, "d"), Outcome::Detach);
         assert_eq!(key(&mut s, "q"), Outcome::Quit, "quitting the last pane ends the session");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn transient_modes_stay_leave_and_time_out() {
+        use crate::keymap::Mapping;
+        let (mut s, rx) = session();
+        settle(&mut s, &rx);
+        let keys = |x: &str| notation::parse(x).unwrap();
+        let act = |n: &str, a: &[&str]| {
+            Mapping::new(Target::Actions(vec![Act::new(n, a.iter().map(|x| ScriptValue::Str((*x).into())).collect())]))
+        };
+        // doc/keymaps.md's example: + repeats in a submode of normal.
+        let d = s.modes.define("resize");
+        d.transient = true;
+        d.timeout = Some(Duration::from_millis(1500));
+        s.modes.map("resize", keys("+"), act("resize-pane", &["taller"]));
+        s.modes.map("normal", keys("s"), act("switch-mode", &["resize"]));
+        s.modes.define("win").transient = true;
+        s.modes.define("win").keepalive = Keepalive::Always;
+        s.modes.map("normal", keys("w"), act("switch-mode", &["win"]));
+        key(&mut s, "<C-b>\"");
+        let (top, bottom) = {
+            let p = s.layout.as_ref().unwrap().panes();
+            (p[0], p[1])
+        };
+        assert_eq!(s.focus(), bottom);
+        let height = |s: &Session| s.panes[&bottom].rect.h;
+        let before = height(&s);
+        key(&mut s, "<C-b>s++");
+        assert_eq!((height(&s), s.current_mode()), (before + 2, "resize"), "its keys repeat");
+        // keepalive "mapped": another key leaves, and normal handles it.
+        key(&mut s, "k");
+        assert_eq!(s.focus(), top, "k moved the focus up, as in normal");
+        assert_eq!(s.current_mode(), "pdf", "the focus change left the modes");
+        // A timeout leaves too.
+        key(&mut s, "<C-b>s");
+        assert_eq!(s.current_mode(), "resize");
+        assert!(s.next_deadline().is_some_and(|d| d <= Instant::now() + Duration::from_millis(1500)));
+        s.poll(Instant::now() + Duration::from_millis(1600));
+        assert_eq!(s.current_mode(), "normal", "back to the mode below");
+        // keepalive "always": the mode below takes what it does not map,
+        // and it stays.
+        key(&mut s, "w");
+        key(&mut s, "=");
+        assert_eq!(s.current_mode(), "win");
+        // A focus change leaves it, as the normal mode below.
+        key(&mut s, "j");
+        assert_eq!((s.focus(), s.current_mode()), (bottom, "pdf"));
     }
 
     #[test]
@@ -2779,8 +2923,8 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[0] == "ready");
         let feed = |keys: &str| Target::Actions(vec![Act::new("feedkeys", vec![ScriptValue::Str(keys.into())])]);
         let keys = |k: &str| notation::parse(k).unwrap();
-        s.modes.map("normal", keys("a"), feed("a"), false, None);
-        s.modes.map("normal", keys("b"), feed("bb"), false, None);
+        s.modes.map("normal", keys("a"), crate::keymap::Mapping::new(feed("a")));
+        s.modes.map("normal", keys("b"), crate::keymap::Mapping::new(feed("bb")));
         for k in ["a", "b"] {
             let start = Instant::now();
             key(&mut s, &format!("<C-b>{k}"));

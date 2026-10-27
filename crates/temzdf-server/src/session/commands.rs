@@ -467,6 +467,7 @@ impl Session {
                 }
                 let old = self.history.current().to_owned();
                 self.history.push(&mode);
+                self.last_key = now;
                 self.mode_changed(&old);
                 ok(Outcome::Redraw)
             }
