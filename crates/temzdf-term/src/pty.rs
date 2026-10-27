@@ -2,8 +2,9 @@
 //! program does (not reading its input, flooding output, ignoring SIGHUP,
 //! leaving jobs that hold the pty) can stop the session.
 //!
-//! - Input goes through a queue to a writer thread (a full pty blocks only
-//!   that thread; past [`INPUT_LIMIT`] queued bytes, input is dropped).
+//! - Input goes through a queue to a writer thread (a full pty holds up only
+//!   that thread, and only until the terminal goes; past [`INPUT_LIMIT`]
+//!   queued bytes, input is dropped).
 //! - A reader thread sends output, and waits while more than
 //!   [`OUTPUT_LIMIT`] bytes it sent are not consumed yet (backpressure: a
 //!   flood cannot pile up in memory or ahead of the clients' input).
@@ -15,7 +16,7 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::fd::BorrowedFd;
+use std::os::fd::{AsFd, BorrowedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -67,8 +68,10 @@ impl Pty {
         let reader_done = Arc::new((Mutex::new(false), Condvar::new()));
         let pid = child.process_id().map(|p| p as i32);
         {
-            let input = input.clone();
-            std::thread::Builder::new().name("temzdf-pty-write".into()).spawn(move || write_loop(writer, &input))?;
+            let (input, stop) = (input.clone(), stop.clone());
+            std::thread::Builder::new()
+                .name("temzdf-pty-write".into())
+                .spawn(move || write_loop(writer, &input, &stop))?;
         }
         {
             let (sink, backlog, stop, done) = (sink.clone(), backlog.clone(), stop.clone(), reader_done.clone());
@@ -206,11 +209,36 @@ impl Queue {
     }
 }
 
-fn write_loop(mut pty: File, input: &Queue) {
+/// Write the queued input to `pty` until the terminal goes. The writes do
+/// not block: a program that stops reading (or a job that holds the pty and
+/// never reads) would keep this thread, and with it the master, forever,
+/// and the master open keeps that job from seeing the terminal hang up.
+/// (Non-blocking holds for the reader's descriptor too: they share it.)
+fn write_loop(mut pty: impl Write + AsFd, input: &Queue, stop: &AtomicBool) {
+    if rustix::io::ioctl_fionbio(&pty, true).is_err() {
+        return;
+    }
     while let Some(chunk) = input.pop() {
-        // Blocks while the program does not read; only this thread waits.
-        if pty.write_all(&chunk).is_err() {
-            return;
+        let mut rest = &chunk[..];
+        while !rest.is_empty() {
+            if stop.load(Ordering::SeqCst) {
+                return;
+            }
+            match pty.write(rest) {
+                Ok(0) => return,
+                Ok(n) => rest = &rest[n..],
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    // Full: wait for room in slices, as the reader waits.
+                    let mut fds = [rustix::event::PollFd::new(&pty, rustix::event::PollFlags::OUT)];
+                    let timeout = rustix::event::Timespec { tv_sec: 0, tv_nsec: POLL.as_nanos() as _ };
+                    match rustix::event::poll(&mut fds, Some(&timeout)) {
+                        Ok(_) | Err(rustix::io::Errno::INTR) => {}
+                        Err(_) => return,
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return,
+            }
         }
     }
 }
@@ -285,6 +313,28 @@ mod tests {
         assert!(q.push(b"room again"));
         q.close();
         assert_eq!(q.pop(), None, "closed: the writer ends");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot poll file descriptors")]
+    fn a_writer_held_up_by_a_program_not_reading_ends_with_the_terminal() {
+        // A pipe nobody reads stands in for the pty of such a program.
+        let (_unread, pipe) = std::io::pipe().unwrap();
+        let q = Arc::new(Queue::default());
+        assert!(q.push(&vec![b'x'; 1 << 20]), "more than the pipe holds");
+        let stop = Arc::new(AtomicBool::new(false));
+        let (done_tx, done) = std::sync::mpsc::channel();
+        let (wq, ws) = (q.clone(), stop.clone());
+        std::thread::spawn(move || {
+            write_loop(pipe, &wq, &ws);
+            let _ = done_tx.send(());
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(done.try_recv().is_err(), "still writing");
+        // The terminal goes (Pty's drop).
+        stop.store(true, Ordering::SeqCst);
+        q.close();
+        assert!(done.recv_timeout(Duration::from_secs(1)).is_ok(), "the writer ended, its descriptor closed");
     }
 
     #[test]
