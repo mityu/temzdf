@@ -278,10 +278,59 @@ pub fn run_shell(cmd: &str) {
 
 /// Links that may be opened: URIs (a scheme first, so never something an
 /// opener could take for an option) of schemes meant for viewing. They come
-/// from documents and from programs in terminal panes, neither trusted.
+/// from documents and from programs in terminal panes, neither trusted, so a
+/// `file:` link must name a document, not something the opener would run
+/// (see [`viewable_file`]).
 pub fn openable(uri: &str) -> bool {
-    let Some((scheme, _)) = uri.split_once(':') else { return false };
-    matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https" | "mailto" | "ftp" | "file")
+    let Some((scheme, rest)) = uri.split_once(':') else { return false };
+    match scheme.to_ascii_lowercase().as_str() {
+        "http" | "https" | "mailto" | "ftp" => true,
+        "file" => file_path(rest).is_some_and(|p| viewable_file(&p)),
+        _ => false,
+    }
+}
+
+/// The local path of a `file:` URI's rest (`///p`, `//localhost/p`, `/p`),
+/// percent-decoded; none for another host.
+fn file_path(rest: &str) -> Option<PathBuf> {
+    let path = match rest.strip_prefix("//") {
+        Some(r) => {
+            let (host, path) = r.split_at(r.find('/')?);
+            if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
+                return None;
+            }
+            path
+        }
+        None => rest,
+    };
+    let path = path.split(['?', '#']).next()?;
+    let mut bytes = Vec::new();
+    let mut it = path.bytes();
+    while let Some(b) = it.next() {
+        if b == b'%' {
+            let hex = [it.next()?, it.next()?];
+            bytes.push(u8::from_str_radix(std::str::from_utf8(&hex).ok()?, 16).ok()?);
+        } else {
+            bytes.push(b);
+        }
+    }
+    use std::os::unix::ffi::OsStringExt;
+    Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+}
+
+/// Whether a local file is safe to hand to the opener: a regular file (not a
+/// directory: macOS `.app` bundles are those), not executable, and not of a
+/// kind openers launch (`.desktop` on Linux, `.command` on macOS, ...).
+fn viewable_file(path: &Path) -> bool {
+    const LAUNCHED: &[&str] = &[
+        "app", "appimage", "bat", "bin", "cmd", "com", "command", "desktop", "exe", "fish", "inetloc", "jar", "js",
+        "lnk", "msi", "pkg", "pl", "ps1", "py", "rb", "run", "scpt", "sh", "terminal", "tool", "url", "vbs", "webloc",
+        "workflow", "zsh", "bash",
+    ];
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = std::fs::metadata(path) else { return false };
+    let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    meta.is_file() && meta.permissions().mode() & 0o111 == 0 && ext.is_none_or(|e| !LAUNCHED.contains(&e.as_str()))
 }
 
 /// Open a URI with the configured handler, detached from the terminal. A
@@ -289,7 +338,7 @@ pub fn openable(uri: &str) -> bool {
 /// without a display) is reported through `on_failure`.
 pub fn open_uri(command: &[String], uri: &str, on_failure: impl Fn(String) + Send + 'static) {
     if !openable(uri) {
-        on_failure(format!("not opening {uri}: only http, https, mailto, ftp and file links open"));
+        on_failure(format!("not opening {uri}: only http, https, mailto, ftp links and file links to documents open"));
         return;
     }
     let Some((program, args)) = command.split_first() else { return };
@@ -365,12 +414,43 @@ mod tests {
 
     #[test]
     fn only_viewing_schemes_open() {
-        for uri in ["https://example.org", "HTTP://x", "mailto:a@b", "file:///tmp/a.pdf", "ftp://h/f"] {
+        for uri in ["https://example.org", "HTTP://x", "mailto:a@b", "ftp://h/f"] {
             assert!(openable(uri), "{uri}");
         }
         for uri in ["--help", "-x", "javascript:alert(1)", "smb://h/s", "vscode://cmd", "relative/path", ""] {
             assert!(!openable(uri), "{uri}");
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot set file permissions")]
+    fn file_links_open_documents_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("temzdf-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Run.app")).unwrap();
+        let file = |name: &str, mode: u32| {
+            let p = dir.join(name);
+            std::fs::write(&p, "x").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+            format!("file://{}", p.display())
+        };
+        let doc = file("paper with space.pdf", 0o644);
+        assert!(openable(&doc), "{doc}");
+        assert!(openable(&doc.replace(' ', "%20")), "percent-encoded");
+        assert!(openable(&doc.replace("file://", "file://localhost")));
+        for bad in [
+            file("x.command", 0o644),
+            file("app.desktop", 0o644),
+            file("run.SH", 0o644),
+            file("tool", 0o755),
+            format!("file://{}", dir.join("Run.app").display()),
+            format!("file://{}", dir.join("missing.pdf").display()),
+            doc.replace("file://", "file://elsewhere"),
+        ] {
+            assert!(!openable(&bad), "{bad}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

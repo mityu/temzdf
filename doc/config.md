@@ -194,7 +194,7 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `modehistory` | `100` | modes the history keeps |
 | `scrollstep` | `60` | pixels per wheel step, before flick acceleration |
 | `scrollsmoothness` | `60` | easing time constant in milliseconds (smaller is snappier) |
-| `linkopener` | `null` | command opening external links, the URI appended (`["firefox"]`); `null`: `xdg-open` / `open`. Runs in the client; a failure shows as a message. Only `http`, `https`, `mailto`, `ftp` and `file` links open (documents and programs are not trusted) |
+| `linkopener` | `null` | command opening external links, the URI appended (`["firefox"]`); `null`: `xdg-open` / `open`. Runs in the client; a failure shows as a message. Only `http`, `https`, `mailto` and `ftp` links open, and `file` links to existing documents: regular files, not executable, not of a kind openers launch (`.desktop`, `.command`, scripts, ...): documents and programs are not trusted |
 | `linkpreview` | `true` | preview internal links (references, citations, the outline) when the pointer rests on one |
 | `linkpreviewdelay` | `300` | milliseconds before the preview |
 | `reloaddebounce` | `200` | milliseconds after the PDF last changed before reloading |
