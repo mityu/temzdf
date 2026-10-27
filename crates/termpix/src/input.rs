@@ -349,12 +349,12 @@ impl Parser {
                     _ => KeyCode::F(4),
                 };
                 let (modifiers, kind) = mods_and_kind(fields.get(1).copied());
-                Some(Event::Key(KeyEvent { code, modifiers, kind, text: None }))
+                Some(Event::Key(KeyEvent { code, modifiers, kind, text: None, base: None }))
             }
             // `CSI R` is F3 only in the unambiguous forms; `CSI row;col R` is a cursor report.
             b'R' if s.is_empty() || s.starts_with("1;") => {
                 let (modifiers, kind) = mods_and_kind(fields.get(1).copied());
-                Some(Event::Key(KeyEvent { code: KeyCode::F(3), modifiers, kind, text: None }))
+                Some(Event::Key(KeyEvent { code: KeyCode::F(3), modifiers, kind, text: None, base: None }))
             }
             b'Z' => Some(key(KeyCode::Tab, Modifiers::SHIFT)),
             b'I' if s.is_empty() => Some(Event::Focus(true)),
@@ -452,6 +452,7 @@ fn text_key(b: &[u8]) -> Step {
                 modifiers: mods,
                 kind: KeyEventKind::Press,
                 text: Some(ch.to_string()),
+                base: None,
             })
         }
         _ => {
@@ -474,6 +475,7 @@ fn text_key(b: &[u8]) -> Step {
                             modifiers: Modifiers::NONE,
                             kind: KeyEventKind::Press,
                             text: Some(s.to_owned()),
+                            base: None,
                         })),
                     )
                 }
@@ -574,6 +576,7 @@ fn kitty_key(fields: &[&str]) -> Option<Event> {
     let code: u32 = codes.next()?.parse().ok()?;
     // Alternate keys (flag 4): the shifted key, then the base-layout key.
     let shifted = codes.next().and_then(|c| c.parse::<u32>().ok()).and_then(char::from_u32);
+    let base = codes.next().and_then(|c| c.parse::<u32>().ok()).and_then(char::from_u32);
     let (modifiers, kind) = mods_and_kind(fields.get(1).copied());
     let text = fields
         .get(2)
@@ -649,7 +652,7 @@ fn kitty_key(fields: &[&str]) -> Option<Event> {
             }
         }
     };
-    Some(Event::Key(KeyEvent { code, modifiers, kind, text }))
+    Some(Event::Key(KeyEvent { code, modifiers, kind, text, base }))
 }
 
 /// `CSI number ; mods[:event] ~`
@@ -669,7 +672,7 @@ fn tilde_key(fields: &[&str]) -> Option<Event> {
         _ => return None,
     };
     let (modifiers, kind) = mods_and_kind(fields.get(1).copied());
-    Some(Event::Key(KeyEvent { code, modifiers, kind, text: None }))
+    Some(Event::Key(KeyEvent { code, modifiers, kind, text: None, base: None }))
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -777,7 +780,8 @@ mod tests {
                 code: KeyCode::Modifier(ModifierKey::LeftCtrl),
                 modifiers: Modifiers::CTRL,
                 kind: KeyEventKind::Release,
-                text: None
+                text: None,
+                base: None,
             })]
         );
         // Shifted key with alternate codes and associated text: the produced character
@@ -788,9 +792,14 @@ mod tests {
                 code: KeyCode::Char('A'),
                 modifiers: Modifiers::SHIFT,
                 kind: KeyEventKind::Press,
-                text: Some("A".into())
+                text: Some("A".into()),
+                base: None,
             })]
         );
+        // The base-layout key (flag 4's third field): Ctrl+С on a Russian
+        // layout is the C key.
+        let ev = parse(b"\x1b[1089::99;5u");
+        assert!(matches!(&ev[0], Event::Key(KeyEvent { code: KeyCode::Char('с'), base: Some('c'), .. })), "{ev:?}");
         // Shift without alternate keys (flag 4 off) falls back to the associated text;
         // with neither, the base key is kept.
         assert!(matches!(&parse(b"\x1b[103;2;71u")[0], Event::Key(KeyEvent { code: KeyCode::Char('G'), .. })));

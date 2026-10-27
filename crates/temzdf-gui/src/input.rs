@@ -38,6 +38,9 @@ pub struct KeyInput {
     pub pressed: bool,
     pub repeat: bool,
     pub left_side: bool,
+    /// The key in the US layout (from the physical key), for Ctrl+<a
+    /// letter of another layout>.
+    pub base: Option<char>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,7 +79,7 @@ pub fn translate(k: &KeyInput) -> Option<KeyEvent> {
         (Logical::Char(_), false) => k.text.clone().filter(|t| !t.chars().any(char::is_control)),
         _ => None,
     };
-    Some(KeyEvent { code, modifiers: k.mods, kind, text })
+    Some(KeyEvent { code, modifiers: k.mods, kind, text, base: k.base })
 }
 
 fn named(n: NamedKey, left: bool) -> Option<KeyCode> {
@@ -118,6 +121,63 @@ fn named(n: NamedKey, left: bool) -> Option<KeyCode> {
         NamedKey::F10 => KeyCode::F(10),
         NamedKey::F11 => KeyCode::F(11),
         NamedKey::F12 => KeyCode::F(12),
+        _ => return None,
+    })
+}
+
+/// The US-layout character of a physical key (letters, digits and the
+/// punctuation keys), whatever the layout in use.
+fn base_key(key: &winit::keyboard::PhysicalKey) -> Option<char> {
+    use winit::keyboard::{KeyCode as K, PhysicalKey};
+    let PhysicalKey::Code(code) = key else { return None };
+    const LETTERS: [K; 26] = [
+        K::KeyA,
+        K::KeyB,
+        K::KeyC,
+        K::KeyD,
+        K::KeyE,
+        K::KeyF,
+        K::KeyG,
+        K::KeyH,
+        K::KeyI,
+        K::KeyJ,
+        K::KeyK,
+        K::KeyL,
+        K::KeyM,
+        K::KeyN,
+        K::KeyO,
+        K::KeyP,
+        K::KeyQ,
+        K::KeyR,
+        K::KeyS,
+        K::KeyT,
+        K::KeyU,
+        K::KeyV,
+        K::KeyW,
+        K::KeyX,
+        K::KeyY,
+        K::KeyZ,
+    ];
+    const DIGITS: [K; 10] =
+        [K::Digit0, K::Digit1, K::Digit2, K::Digit3, K::Digit4, K::Digit5, K::Digit6, K::Digit7, K::Digit8, K::Digit9];
+    if let Some(i) = LETTERS.iter().position(|k| k == code) {
+        return Some((b'a' + i as u8) as char);
+    }
+    if let Some(i) = DIGITS.iter().position(|k| k == code) {
+        return Some((b'0' + i as u8) as char);
+    }
+    Some(match code {
+        K::Minus => '-',
+        K::Equal => '=',
+        K::BracketLeft => '[',
+        K::BracketRight => ']',
+        K::Backslash => '\\',
+        K::Semicolon => ';',
+        K::Quote => '\'',
+        K::Backquote => '`',
+        K::Comma => ',',
+        K::Period => '.',
+        K::Slash => '/',
         _ => return None,
     })
 }
@@ -252,6 +312,7 @@ impl Input {
                     pressed: event.state == ElementState::Pressed,
                     repeat: event.repeat,
                     left_side: self.left_side,
+                    base: base_key(&event.physical_key),
                 };
                 translate(&k).map(ClientMsg::Key).into_iter().collect()
             }
@@ -306,7 +367,15 @@ mod tests {
     use super::*;
 
     fn key(key: Logical, text: Option<&str>, mods: Modifiers) -> Option<KeyEvent> {
-        translate(&KeyInput { key, text: text.map(Into::into), mods, pressed: true, repeat: false, left_side: true })
+        translate(&KeyInput {
+            key,
+            text: text.map(Into::into),
+            mods,
+            pressed: true,
+            repeat: false,
+            left_side: true,
+            base: None,
+        })
     }
 
     fn ch(s: &str) -> Logical {
@@ -342,8 +411,33 @@ mod tests {
             pressed: false,
             repeat: false,
             left_side: true,
+            base: None,
         });
         assert_eq!(up.unwrap().kind, KeyEventKind::Release);
+    }
+
+    #[test]
+    fn physical_keys_give_the_base_layout_key() {
+        use winit::keyboard::{KeyCode as K, PhysicalKey};
+        let base = |k| base_key(&PhysicalKey::Code(k));
+        assert_eq!(
+            (base(K::KeyC), base(K::Digit7), base(K::Slash), base(K::Enter)),
+            (Some('c'), Some('7'), Some('/'), None)
+        );
+        let k = KeyInput { base: Some('c'), ..ru_ctrl() };
+        assert_eq!(translate(&k).unwrap().base, Some('c'), "carried to the session");
+    }
+
+    fn ru_ctrl() -> KeyInput {
+        KeyInput {
+            key: Logical::Char("с".into()),
+            text: None,
+            mods: Modifiers::CTRL,
+            pressed: true,
+            repeat: false,
+            left_side: true,
+            base: None,
+        }
     }
 
     #[test]

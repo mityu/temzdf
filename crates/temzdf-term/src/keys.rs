@@ -59,8 +59,19 @@ pub fn translate(k: &KeyEvent) -> Option<Translated> {
         KeyCode::Char('\x08' | '\x7f') => Key::Backspace,
         KeyCode::Char('\x1b') => Key::Escape,
         KeyCode::Char(c) => {
-            let (key, base) = char_key(c);
+            let (mut key, base) = char_key(c);
             unshifted = base;
+            // Ctrl with a character of another layout (Ctrl+С on a Russian
+            // one): the key it is on in the base layout, as kitty and Ghostty
+            // do, so Ctrl+C still interrupts a program.
+            if key == Key::Unidentified
+                && mods.contains(Mods::CTRL)
+                && let Some((base_key, base_char)) = k.base.map(char_key)
+                && base_key != Key::Unidentified
+            {
+                key = base_key;
+                unshifted = base_char;
+            }
             // Ctrl without Shift types nothing: with text, the encoder would
             // send the bare character (C-h as `h`) when the program uses the
             // kitty keyboard protocol.
@@ -256,6 +267,19 @@ mod tests {
         assert_eq!(s(KeyCode::Char('\n'), Modifiers::NONE), "\r");
         // Ctrl with a character of another layout: not dropped.
         assert_eq!(s(KeyCode::Char('ф'), Modifiers::CTRL), "\x1b[1092;5u");
+        // With its base-layout key known: that key, Ctrl+C on a Russian layout.
+        assert_eq!(sent_with_base(b"", 'с', 'c', Modifiers::CTRL), "\x03");
+        assert_eq!(sent_with_base(b"", 'в', 'd', Modifiers::CTRL), "\x04");
+    }
+
+    /// `sent` for a character typed on another layout, whose key in the base
+    /// layout is `base`.
+    fn sent_with_base(modes: &[u8], c: char, base: char, m: Modifiers) -> String {
+        let mut terminal = Terminal::new(TerminalOptions { cols: 10, rows: 3, max_scrollback: 0 }).unwrap();
+        terminal.vt_write(modes);
+        let mut encoder = Encoder::new().unwrap();
+        let k = KeyEvent { base: Some(base), ..KeyEvent::new(KeyCode::Char(c), m) };
+        String::from_utf8(encode(&mut encoder, &terminal, &k)).unwrap()
     }
 
     /// Programs that turn on the kitty keyboard protocol (fish 4, neovim)
@@ -272,5 +296,6 @@ mod tests {
         assert_eq!(s(KeyCode::Char('a'), Modifiers::NONE), "a");
         assert_eq!(s(KeyCode::Escape, Modifiers::NONE), "\x1b[27u");
         assert_eq!(s(KeyCode::Char('ф'), Modifiers::CTRL), "\x1b[1092;5u");
+        assert!(sent_with_base(b"\x1b[>1u", 'с', 'c', Modifiers::CTRL).starts_with("\x1b[99"), "the C key");
     }
 }

@@ -141,11 +141,16 @@ pub struct KeyEvent {
     pub kind: KeyEventKind,
     /// Text the key produces (kitty "associated text"), when the terminal reports it.
     pub text: Option<String>,
+    /// The key in the base (US) layout, when known (kitty's alternate keys,
+    /// a GUI's physical key): `c` for Ctrl+С on a Russian layout, so a
+    /// terminal program still gets Ctrl+C.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub base: Option<char>,
 }
 
 impl KeyEvent {
     pub fn new(code: KeyCode, modifiers: Modifiers) -> Self {
-        Self { code, modifiers, kind: KeyEventKind::Press, text: None }
+        Self { code, modifiers, kind: KeyEventKind::Press, text: None, base: None }
     }
 }
 

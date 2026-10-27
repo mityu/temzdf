@@ -127,9 +127,10 @@ pub struct Bridge {
 }
 
 /// `<C-c>`, whatever the lock keys (kitty's keyboard protocol reports Caps
-/// Lock and Num Lock as modifiers).
+/// Lock and Num Lock as modifiers) and the layout (Ctrl+С on a Russian one
+/// is the C key).
 pub(super) fn is_interrupt(k: &KeyEvent) -> bool {
-    k.code == KeyCode::Char('c') && k.modifiers.without_locks() == Modifiers::CTRL
+    (k.code == KeyCode::Char('c') || k.base == Some('c')) && k.modifiers.without_locks() == Modifiers::CTRL
 }
 
 impl Bridge {
@@ -1133,5 +1134,7 @@ mod tests {
         assert!(is_interrupt(&key(Modifiers::CTRL | Modifiers::NUM_LOCK | Modifiers::CAPS_LOCK)));
         assert!(!is_interrupt(&key(Modifiers::CTRL | Modifiers::SHIFT)));
         assert!(!is_interrupt(&key(Modifiers::CAPS_LOCK)));
+        let russian = KeyEvent { base: Some('c'), ..KeyEvent::new(KeyCode::Char('с'), Modifiers::CTRL) };
+        assert!(is_interrupt(&russian), "the C key on another layout");
     }
 }
