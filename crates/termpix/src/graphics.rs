@@ -250,7 +250,7 @@ impl Encoder {
     }
 
     /// The shared-memory objects that may still be read.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn shm_names(&self) -> Vec<String> {
         self.shm.names.iter().map(|(_, _, n)| n.clone()).collect()
     }
