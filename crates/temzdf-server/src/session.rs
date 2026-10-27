@@ -3257,6 +3257,19 @@ mod tests {
         assert_eq!((s.tab, s.focus), (1, other));
     }
 
+    #[test]
+    fn tab_numbers_out_of_range_do_not_wrap_around() {
+        let sink: EventSink = Arc::new(|_| true);
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
+        s.open_tab();
+        let huge = (1u64 << 32) + 1;
+        assert!(s.float_tab(&ScriptValue::Num(huge as f64)).is_err());
+        assert!(s.float_tab(&ScriptValue::Str(huge.to_string())).is_err());
+        assert!(s.run_command("next-tab", &[], Some(huge as usize), Instant::now()).is_err());
+        assert_eq!(s.tab, 1);
+    }
+
     /// `new-tab` with a command; returns its pane.
     fn new_tab(s: &mut Session, argv: &[&str]) -> PaneId {
         let what = ScriptValue::map([(

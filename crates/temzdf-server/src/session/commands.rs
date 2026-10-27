@@ -536,7 +536,7 @@ impl Session {
             }
             "next-tab" => {
                 let i = match count {
-                    Some(n) => self.tab_number(n as u32).map_err(|e| format!("nextTab: {e}"))?,
+                    Some(n) => self.tab_number(n).map_err(|e| format!("nextTab: {e}"))?,
                     None => (self.tab + 1) % self.tabs.len(),
                 };
                 self.enter_tab(i);

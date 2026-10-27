@@ -389,14 +389,14 @@ impl Session {
         Ok(match n {
             -1 => FloatTab::All,
             0 => FloatTab::Only(self.tab_id()),
-            n if n > 0 => FloatTab::Only(self.tabs[self.tab_number(n as u32)?].id),
+            n if n > 0 => FloatTab::Only(self.tabs[self.tab_number(n)?].id),
             n => return Err(format!("tabpage: {n} is not -1, 0 or a tab page")),
         })
     }
 
     /// The index of tab page `n` (counted from 1).
-    pub(super) fn tab_number(&self, n: u32) -> Result<usize, String> {
-        match (n as usize).checked_sub(1) {
+    pub(super) fn tab_number(&self, n: impl TryInto<usize> + std::fmt::Display + Copy) -> Result<usize, String> {
+        match n.try_into().ok().and_then(|n: usize| n.checked_sub(1)) {
             Some(i) if i < self.tabs.len() => Ok(i),
             _ => Err(format!("no tab page {n} (there are {})", self.tabs.len())),
         }
