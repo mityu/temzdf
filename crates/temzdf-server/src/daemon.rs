@@ -51,6 +51,8 @@ struct Client {
     hints: Option<Hints>,
     /// Whether its window has the focus, once it said so.
     focused: Option<bool>,
+    /// The session whose pane it runs in.
+    inside: Option<String>,
 }
 
 impl Client {
@@ -205,6 +207,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                         geometry: None,
                         hints: None,
                         focused: None,
+                        inside: None,
                     },
                 );
             }
@@ -212,7 +215,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 clients.remove(&id);
             }
             Some(Event::Msg(id, msg)) => match msg {
-                ClientMsg::Hello { version, geometry, hints } => {
+                ClientMsg::Hello { version, geometry, hints, inside } => {
                     let Some(c) = clients.get_mut(&id) else { continue };
                     if version != proto::VERSION {
                         let why = format!("client version {version}, server version {}", proto::VERSION);
@@ -222,6 +225,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     }
                     let _ = c.tx.send(ServerMsg::Appearance(session.appearance()));
                     c.attached = true;
+                    c.inside = inside;
                     c.pending = session.images().snapshot().into_iter().map(|u| (key_of(&u), u)).collect();
                     (c.geometry, c.hints) = (usable(geometry), Some(hints));
                     become_latest(&mut session, &mut latest, &clients, id);
@@ -276,6 +280,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                             clients: clients.values().filter(|c| c.attached).count(),
                             files: session.files(),
                             log: log.clone(),
+                            shown_in: shown_in(&clients),
                         };
                         let _ = c.tx.send(ServerMsg::Info(info));
                     }
@@ -434,6 +439,14 @@ fn become_latest(
     }
     *latest = Some(id);
     changed
+}
+
+/// The sessions whose panes attached clients run in (see `SessionInfo`).
+fn shown_in(clients: &HashMap<ClientId, Client>) -> Vec<String> {
+    let mut names: Vec<String> = clients.values().filter(|c| c.attached).filter_map(|c| c.inside.clone()).collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 /// Client `id`'s window changed size: kept for when it is the latest, and
@@ -707,6 +720,7 @@ mod tests {
             geometry: None,
             hints: None,
             focused: None,
+            inside: None,
         };
         let clients = HashMap::from([(1, client)]);
         let now = Instant::now();
@@ -766,6 +780,7 @@ mod tests {
             geometry: Some(Geometry { cols, rows, ..DEFAULT_GEOMETRY }),
             hints: Some(Hints::default()),
             focused: None,
+            inside: None,
         };
         let mut clients = HashMap::from([(1, client(80, 24)), (2, client(200, 60))]);
         let mut latest = None;
@@ -796,6 +811,7 @@ mod tests {
             geometry: Some(Geometry { cols, ..DEFAULT_GEOMETRY }),
             hints: Some(Hints::default()),
             focused: None,
+            inside: None,
         };
         let mut clients = HashMap::from([(1, client(80)), (2, client(100))]);
         let mut latest = None;
@@ -826,6 +842,7 @@ mod tests {
             geometry: None,
             hints: None,
             focused,
+            inside: None,
         };
         let mut told = None;
         let mut clients = HashMap::from([(1, client(true, None)), (2, client(false, Some(true)))]);

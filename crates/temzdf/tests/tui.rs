@@ -812,6 +812,28 @@ fn inside_a_session_temzdf_means_that_session() {
 }
 
 #[test]
+fn a_session_shown_in_another_does_not_show_that_one() {
+    let env = Env::new("nested");
+    let mut t = Term::spawn(&[BIN, "-s", "outer"], &env.options());
+    t.wait_for("the prompt", prompt);
+    // A session nested in outer's pane, by design.
+    t.type_text(&format!("{BIN} -s inner\n"));
+    t.wait_for("inner's prompt", |s| prompt(s) && !s.contains("-s inner"));
+    // Keys reach it once its client took the terminal: until a command runs.
+    for _ in 0..30 {
+        t.type_text("echo in-$((6*7))\n");
+        if t.settle(std::time::Duration::from_millis(300)).contains("in-42") {
+            break;
+        }
+    }
+    t.type_text("clear\n");
+    // From inner's pane, outer (which shows inner) is refused.
+    t.type_text(&format!("{BIN} attach outer; echo status=$?\n"));
+    t.wait_text("status=1");
+    assert!(t.screen().contains("which \"outer\" shows"), "{}", t.screen().text());
+}
+
+#[test]
 fn unhandled_promise_rejections_are_logged() {
     let env = Env::new("reject");
     env.config(
@@ -966,7 +988,8 @@ fn hovering_over_another_client_keeps_the_session_size() {
     let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
     let geometry =
         termpix::geom::Geometry { cols: 60, rows: 20, cell: termpix::geom::CellSize { width: 10, height: 20 } };
-    let hello = ClientMsg::Hello { version: temzdf_protocol::VERSION, geometry, hints: Default::default() };
+    let hello =
+        ClientMsg::Hello { version: temzdf_protocol::VERSION, geometry, hints: Default::default(), inside: None };
     temzdf_protocol::send(&mut s, &hello).unwrap();
     // The width of the next frame (acknowledged), None when none comes.
     let next_width = |s: &mut std::os::unix::net::UnixStream, wait| {
@@ -1011,7 +1034,8 @@ fn an_attaching_client_is_told_how_to_look() {
     s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
     let geometry =
         termpix::geom::Geometry { cols: 80, rows: 24, cell: termpix::geom::CellSize { width: 10, height: 20 } };
-    let hello = ClientMsg::Hello { version: temzdf_protocol::VERSION, geometry, hints: Default::default() };
+    let hello =
+        ClientMsg::Hello { version: temzdf_protocol::VERSION, geometry, hints: Default::default(), inside: None };
     temzdf_protocol::send(&mut s, &hello).unwrap();
     let looks = loop {
         match temzdf_protocol::recv::<ServerMsg>(&mut s).unwrap().unwrap() {

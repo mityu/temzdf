@@ -80,6 +80,10 @@ What exists:
   while any attached client's window has it; frames are paced per client by acknowledgements, image changes are
   queued per client (latest wins), late attachers get a snapshot; effects
   (copy, opening links, inverse search) run in the latest client.
+- Nesting: a client says which session's pane it runs in (`Hello`), and a
+  session lists those of its clients (`SessionInfo::shown_in`). `attach`
+  from a pane refuses that session and every session showing it, directly
+  or through others: the session would show itself inside itself.
 
 Not yet (in order of the plan, or found on the way):
 

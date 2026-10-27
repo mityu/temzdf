@@ -124,7 +124,7 @@ impl App {
         crate::input::enable_ime(window.as_ref());
         self.gpu = Some(Gpu { window, surface, config, view, geometry });
         let hints = Hints { exact_scaling: true, fast_uploads: true };
-        self.send(ClientMsg::Hello { version: VERSION, geometry, hints });
+        self.send(ClientMsg::Hello { version: VERSION, geometry, hints, inside: None });
         Ok(())
     }
 

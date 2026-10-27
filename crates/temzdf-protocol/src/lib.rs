@@ -21,7 +21,7 @@ use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 11;
+pub const VERSION: u32 = 12;
 /// Larger messages are refused (a frame with every image of a full cache is
 /// about 200 MB).
 const MAX_MESSAGE: usize = 512 << 20;
@@ -33,6 +33,8 @@ pub enum ClientMsg {
         version: u32,
         geometry: Geometry,
         hints: Hints,
+        /// The session whose pane the client runs in, if any (nested).
+        inside: Option<String>,
     },
     Key(KeyEvent),
     Mouse(MouseEvent),
@@ -103,6 +105,9 @@ pub struct SessionInfo {
     pub files: Vec<PathBuf>,
     /// Where the server's output goes.
     pub log: Option<PathBuf>,
+    /// The sessions whose panes its attached clients run in: the sessions
+    /// that show this one.
+    pub shown_in: Vec<String>,
 }
 
 /// Write one message.
@@ -340,7 +345,7 @@ mod tests {
     #[test]
     fn messages_round_trip() {
         let geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
-        round_trip(&ClientMsg::Hello { version: VERSION, geometry, hints: Hints::default() });
+        round_trip(&ClientMsg::Hello { version: VERSION, geometry, hints: Hints::default(), inside: Some("a".into()) });
         round_trip(&ClientMsg::Key(KeyEvent::new(KeyCode::Char('s'), Modifiers::CTRL)));
         round_trip(&ClientMsg::Action(vec!["new-pane".into(), "a b.pdf".into()]));
         let mut images = Images::new();

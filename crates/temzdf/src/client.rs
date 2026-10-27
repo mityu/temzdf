@@ -48,13 +48,40 @@ pub fn need_terminal() -> Result<()> {
     })
 }
 
+/// Whether attaching session `target` from a pane of session `own` would
+/// show `target` inside itself: `own` is `target`, or `target` shows `own`,
+/// directly or through the sessions in between (`shown_in` gives the
+/// sessions showing a session).
+fn shows_itself(target: &str, own: &str, shown_in: impl Fn(&str) -> Vec<String>) -> bool {
+    let mut seen = vec![own.to_owned()];
+    let mut i = 0;
+    while let Some(s) = seen.get(i).cloned() {
+        if s == target {
+            return true;
+        }
+        for outer in shown_in(&s) {
+            if !seen.contains(&outer) {
+                seen.push(outer);
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Attach this terminal to session `name` until detached or the session ends.
 /// Returns a line to print once the terminal is restored.
 pub fn attach(name: &str) -> Result<String> {
-    // From one of the session's own panes: it would show itself inside
-    // itself, each frame feeding the next.
-    if std::env::var("TEMZDF_SESSION_NAME").is_ok_and(|own| own == name) {
-        bail!("this terminal is in session {name:?}: attaching would show it inside itself");
+    // From one of the session's own panes, or from a session it shows: it
+    // would show itself inside itself, each frame feeding the next.
+    let inside = std::env::var("TEMZDF_SESSION_NAME").ok();
+    let shown_in = |s: &str| {
+        proto::socket_path(s).ok().and_then(|p| proto::discovery::probe(&p)).map(|i| i.shown_in).unwrap_or_default()
+    };
+    if let Some(own) = &inside
+        && shows_itself(name, own, shown_in)
+    {
+        bail!("this terminal is in session {own:?}, which {name:?} shows: attaching would show it inside itself");
     }
     let socket = proto::socket_path(name)?;
     let stream = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
@@ -75,7 +102,7 @@ pub fn attach(name: &str) -> Result<String> {
     let send = |msg: ClientMsg| -> Result<()> {
         proto::send(&mut *writer.lock().unwrap_or_else(|p| p.into_inner()), &msg).context("lost the session")
     };
-    send(ClientMsg::Hello { version: proto::VERSION, geometry: front.geometry(), hints: front.hints() })?;
+    send(ClientMsg::Hello { version: proto::VERSION, geometry: front.geometry(), hints: front.hints(), inside })?;
     // The latest frame received and not shown yet (its sequence number is
     // acknowledged once it is), and the last one shown (shown again when the
     // terminal lost images).
@@ -303,6 +330,21 @@ fn resolve_paths(words: &mut Vec<String>, cwd: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sessions_do_not_show_themselves_through_others() {
+        // a shows b (a client of b runs in a pane of a), b shows c.
+        let shown_in = |s: &str| match s {
+            "b" => vec!["a".to_owned()],
+            "c" => vec!["b".to_owned(), "c".to_owned()],
+            _ => vec![],
+        };
+        assert!(shows_itself("c", "c", shown_in), "its own pane");
+        assert!(shows_itself("a", "c", shown_in), "from c, a shows c through b");
+        assert!(shows_itself("b", "c", shown_in));
+        assert!(!shows_itself("c", "a", shown_in), "a shows c: c may not show a, a may show c");
+        assert!(!shows_itself("d", "c", shown_in));
+    }
 
     #[test]
     fn action_paths_are_the_callers() {

@@ -399,6 +399,7 @@ mod tests {
             clients: 0,
             files: vec![],
             log: None,
+            shown_in: vec![],
         };
         assert!(started(&info(42), 42));
         assert!(!started(&info(41), 42), "a server started at the same time");
