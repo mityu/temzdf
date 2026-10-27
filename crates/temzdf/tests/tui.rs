@@ -1143,3 +1143,38 @@ fn sessions_started_at_once_get_names_of_their_own() {
     names.sort();
     assert_eq!(names, ["alfa", "bravo"]);
 }
+
+/// A session socket that answers like a server of another temzdf version
+/// (a message this version cannot decode).
+fn other_version_session(env: &Env, name: &str) {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = env.path("run/temzdf/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    for d in [env.path("run/temzdf"), dir.clone()] {
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let listener = std::os::unix::net::UnixListener::bind(dir.join(format!("{name}.sock"))).unwrap();
+    std::thread::spawn(move || {
+        for mut s in listener.incoming().flatten() {
+            let mut buf = [0u8; 256];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(&[3, 0, 0, 0, 0xff, 0xff, 0xff]);
+        }
+    });
+}
+
+#[test]
+fn sessions_of_another_version_keep_their_names() {
+    let env = Env::new("otherver");
+    other_version_session(&env, "alfa");
+    assert!(env.run(&["ls"]).contains("alfa  (another temzdf version"));
+    let mut t = Term::spawn(&[BIN], &env.options());
+    t.wait_for("the prompt", prompt);
+    assert_eq!(session_names(&env), ["bravo", "alfa"], "bravo listed first, then the other version");
+    // kill-all-sessions fails on alfa but still ends bravo.
+    let out = Command::new(BIN).arg("kill-all-sessions").envs(env.vars()).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("alfa:"), "{out:?}");
+    t.wait_text("[session bravo was killed]");
+}

@@ -24,10 +24,12 @@ pub fn auto_name() -> Result<String> {
     Ok(pick_name(|n| is_taken(n)))
 }
 
-/// Whether a session name is in use: a live session, or a server that holds
+/// Whether a session name is in use: a live session (of this temzdf version
+/// or another: its server would refuse the name too), or a server that holds
 /// its lock (starting, not listening yet).
 fn taken_names() -> Result<impl Fn(&str) -> bool> {
-    let live: Vec<String> = proto::discovery::list()?.into_iter().map(|i| i.name).collect();
+    let (sessions, other) = proto::discovery::list_all()?;
+    let live: Vec<String> = sessions.into_iter().map(|i| i.name).chain(other).collect();
     Ok(move |n: &str| live.iter().any(|l| l == n) || proto::discovery::name_locked(n))
 }
 
