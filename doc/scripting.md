@@ -109,6 +109,9 @@ that part follows tmux and zellij (see "Prior art").
 
 ### Key mappings and modes
 
+The redesign agreed on 2026-10-28 (conditions on mappings, transient modes,
+no `inherit`) is in `doc/keymaps.md`, which supersedes decision 8 below.
+
 - A mapping goes from a **key sequence to an action**: a script function, or a
   built-in action given as data (`temzdf.cmd.scroll(1)` returns a description
   the server can run by itself). Built-in actions as data run synchronously in
@@ -544,7 +547,8 @@ change.
 
 ### Modes and mappings
 
-8. *Decided (2026-10-26)*: a mode has **properties**: its mappings, what
+8. *Superseded by `doc/keymaps.md` (2026-10-28), which replaces `inherit`
+   with transient modes.* *Decided (2026-10-26)*: a mode has **properties**: its mappings, what
    unmapped keys do (`drop` or `passthrough`), and whether it takes counts
    (pass-through modes send digits to the pane). **`inherit: <mode>`** takes
    all of another mode's properties, which the mode can then override (like
