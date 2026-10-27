@@ -215,11 +215,12 @@ fn private_dir_in(base: &Path, base_ours: bool, dir: &Path) -> io::Result<()> {
     }
 }
 
-/// Session names: letters, digits, `.`, `_` and `-`, at most 64 characters.
+/// Session names: letters, digits, `.`, `_` and `-`, at most 64 characters,
+/// not starting with `.` (hidden files) or `-` (an option to the server).
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
-        && !name.starts_with('.')
+        && !name.starts_with(['.', '-'])
         && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
@@ -399,5 +400,7 @@ mod tests {
         assert!(valid_name("thesis") && valid_name("my-paper_2.v1"));
         assert!(!valid_name("") && !valid_name("../x") && !valid_name(".hidden") && !valid_name("a b"));
         assert!(!valid_name(&"x".repeat(65)));
+        // The server takes NAME as a positional argument: no option look-alikes.
+        assert!(!valid_name("-foo") && !valid_name("--"));
     }
 }

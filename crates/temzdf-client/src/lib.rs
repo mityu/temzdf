@@ -88,7 +88,8 @@ pub fn name_for(file: &Path) -> Result<String> {
         stem.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' }).collect();
     // Room for "-N" while the socket path still fits.
     let room = proto::max_name_len()?.saturating_sub(4).max(1);
-    base = base.trim_start_matches('.').chars().take(room.min(56)).collect();
+    // (Not an option look-alike: the server takes the name as an argument.)
+    base = base.trim_start_matches(['.', '-']).chars().take(room.min(56)).collect();
     if base.is_empty() {
         base = "temzdf".into();
     }
@@ -126,7 +127,7 @@ pub fn spawn_server(
     clean: bool,
 ) -> Result<()> {
     if !proto::valid_name(name) {
-        bail!("invalid session name {name:?} (letters, digits, '.', '_' and '-')");
+        bail!("invalid session name {name:?} (letters, digits, '.', '_' and '-', not first '.' or '-')");
     }
     let socket = proto::socket_path(name)?;
     if proto::discovery::probe(&socket).is_some() {

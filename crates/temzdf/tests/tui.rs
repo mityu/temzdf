@@ -1030,6 +1030,16 @@ fn session_names(env: &Env) -> Vec<String> {
 }
 
 #[test]
+fn a_file_named_like_an_option_gets_a_session() {
+    let env = Env::new("dash");
+    std::fs::copy(fixture("sample.pdf"), env.path("-draft.pdf")).unwrap();
+    let opts = Options { cwd: Some(env.path("")), ..env.options() };
+    let mut t = Term::spawn(&[BIN, "-s", "./-draft.pdf"], &opts);
+    t.wait_for("pages", |s| !s.images.is_empty());
+    assert_eq!(session_names(&env), ["draft"]);
+}
+
+#[test]
 fn temzdf_alone_starts_a_session_named_for_it() {
     let env = Env::new("unnamed");
     let mut shell = Term::spawn(&[BIN], &env.options());
