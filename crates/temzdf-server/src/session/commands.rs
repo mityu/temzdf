@@ -200,9 +200,10 @@ fn read_what(args: &[ScriptValue]) -> Result<FloatWhat, String> {
     })
 }
 
-/// The font sizes `font-size` keeps to, in points.
-const MIN_FONT_POINTS: f64 = 4.0;
-const MAX_FONT_POINTS: f64 = 200.0;
+/// The font sizes `font-size` and `o.guifont` keep to, in points (larger
+/// glyphs would not fit GUI clients' glyph atlases).
+pub(super) const MIN_FONT_POINTS: f64 = 4.0;
+pub(super) const MAX_FONT_POINTS: f64 = 200.0;
 
 /// Every size in `font` and `wide` changed by `change`: the first font's
 /// always (it sets the size of fonts that name none), the others' where

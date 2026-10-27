@@ -1022,7 +1022,9 @@ fn fonts(v: &ScriptValue) -> Result<Vec<temzdf_scene::FontEntry>, String> {
             };
             let size = match field("size") {
                 None | Some(ScriptValue::Null) => None,
-                Some(ScriptValue::Num(n)) if n.is_finite() && *n > 0.0 => Some(*n as f32),
+                Some(ScriptValue::Num(n)) if n.is_finite() && *n > 0.0 => {
+                    Some(n.clamp(super::commands::MIN_FONT_POINTS, super::commands::MAX_FONT_POINTS) as f32)
+                }
                 Some(_) => return Err(format!("size of {family:?}: expected a number of points")),
             };
             if let Some((k, _)) = fields.iter().find(|(k, _)| k != "font" && k != "size") {
@@ -1173,6 +1175,19 @@ mod tests {
             assert_eq!(events, [&("TabEntered".to_owned(), vec![ScriptValue::Num(entered as f64)])]);
             s.open_tab();
         }
+    }
+
+    #[test]
+    fn font_sizes_stay_within_reason() {
+        let list = |size: f64| {
+            let entry = ScriptValue::map([("font", ScriptValue::Str("x".into())), ("size", ScriptValue::Num(size))]);
+            fonts(&ScriptValue::List(vec![entry])).unwrap()[0].size
+        };
+        assert_eq!(list(12.5), Some(12.5));
+        assert_eq!(list(100000.0), Some(200.0), "glyph atlases past the GPU's limits draw nothing");
+        assert_eq!(list(0.5), Some(4.0));
+        let inf = ScriptValue::map([("font", ScriptValue::Str("x".into())), ("size", ScriptValue::Num(f64::INFINITY))]);
+        assert!(fonts(&ScriptValue::List(vec![inf])).is_err());
     }
 
     #[test]
