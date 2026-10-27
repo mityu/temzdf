@@ -1,4 +1,4 @@
-# Used with: scripts/e2e.sh tests/e2e/links.actions -- target/debug/temzdf target/fixtures/sample.pdf
+# Used with: scripts/e2e.sh tests/e2e/links.actions -- target/debug/temzdf standalone pdf target/fixtures/sample.pdf
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
 # Judged (expect): clicking "3 Filler" in the table of contents jumps to
 # section 3 on page 2 (clicked); Backspace (or Ctrl-o) returns to the table of

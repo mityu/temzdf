@@ -47,7 +47,8 @@
 - `temzdf-server`: `Session` (panes, layout, focus, prefix keys, actions, the
   composed frame) and the session server process.
 - `temzdf`: the binary: standalone viewer, session commands and client,
-  config, headless rendering. The standalone viewer, `--render-frame` and the
+  config, headless rendering. The standalone viewer (`temzdf standalone
+  pdf`), its `--render-frame` and the
   session server all run a `Session`.
 
 This layout prepares the session server (`doc/session-server.md`): backends and

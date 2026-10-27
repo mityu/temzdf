@@ -22,7 +22,7 @@ enum Event {
 }
 
 use temzdf_client::utf8;
-pub use temzdf_client::{first_pane, name_for, resolve};
+pub use temzdf_client::{auto_name, first_pane, name_for, resolve};
 
 /// Start a server for session `name` (see [`temzdf_client::spawn_server`])
 /// with this executable.

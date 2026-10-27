@@ -1,4 +1,4 @@
-# Used with: scripts/e2e.sh tests/e2e/select-autoscroll.actions -- target/debug/temzdf target/fixtures/sample.pdf
+# Used with: scripts/e2e.sh tests/e2e/select-autoscroll.actions -- target/debug/temzdf standalone pdf target/fixtures/sample.pdf
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
 # Expected: dragging from the title into the bottom edge and holding scrolls the
 # page by itself while the selection grows (held.png: blue selection over many

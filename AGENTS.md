@@ -31,7 +31,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-server` | Library. `Session` (panes, layout, focus, modes and key mappings, the command registry, composed frame), the session server process, forward-search sockets. No terminal code. |
 | `crates/temzdf-script` | Library. The script host (`temzdf script-host`): runs `config.ts`/`config.js` in QuickJS (`rquickjs`, TypeScript stripped with swc) and talks to the session over `temzdf-protocol`. The server never links it (child process). |
 | `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
-| `crates/temzdf` | The binary: standalone viewer, session commands and client (zellij names: `-s`, `attach`, `ls`, `kill-session`, `action`), config, headless `--render-frame`. |
+| `crates/temzdf` | The binary: `temzdf [FILE]` starts a session (named alfa, bravo, ... unless `-s NAME`), session commands and client (zellij names: `attach`, `ls`, `kill-session`, `action`), the standalone viewer (`temzdf standalone pdf`), config, headless `--render-frame`. |
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
 | `todo.md` | Long-running tasks and deferred work. |
@@ -87,8 +87,8 @@ Action files in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
 screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. For
 key-driven checks prefer `expect NAME KEYS`, which compares the terminal with
 a headless render and fails the run on a mismatch (`tests/e2e/expect.actions`). See the
-script header for the helpers. `temzdf FILE --render-frame out.png` renders one
-screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/` from
+script header for the helpers. `temzdf standalone pdf FILE --render-frame out.png`
+renders one screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/` from
 `tests/fixtures/*.tex` (tests run it automatically; e2e scenarios need it first).
 For refactorings, `scripts/frames.sh render-rev HEAD A` (the last commit),
 `scripts/frames.sh render B` (your build) and `scripts/frames.sh compare A B`

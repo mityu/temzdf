@@ -1,4 +1,4 @@
-# Used with: scripts/e2e.sh tests/e2e/viewer.actions -- target/debug/temzdf target/fixtures/sample.pdf
+# Used with: scripts/e2e.sh tests/e2e/viewer.actions -- target/debug/temzdf standalone pdf target/fixtures/sample.pdf
 # Judged (expect, mouse input replayed with its timing): start (page 1, fit
 # width), after a flick of the wheel, zoomed in at the pointer with sharp text
 # once tiles arrive, panned by a drag in the left margin (a drag over text

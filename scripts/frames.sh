@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Headless frame regression check: render a fixed set of screens with
-# `temzdf --render-frame` into a directory, or compare two such directories
+# `temzdf standalone pdf --render-frame` into a directory, or compare two such directories
 # pixel by pixel. Used to show that a refactoring leaves the screen unchanged:
 # render with the old build, render with the new one, compare.
 #
@@ -49,12 +49,15 @@ scenarios=(
 render() {
   local out=$1 bin=${2:-target/debug/temzdf} name opts keys
   mkdir -p "$out"
+  # The viewer moved to `temzdf standalone pdf`; older revisions take FILE.
+  local -a viewer=("$bin")
+  "$bin" standalone pdf --help >/dev/null 2>&1 && viewer=("$bin" standalone pdf)
   for s in "${scenarios[@]}"; do
     IFS='|' read -r name opts keys <<<"$s"
     local -a extra=()
     [[ -n "$keys" ]] && extra=("--keys=$keys")
     # shellcheck disable=SC2086
-    "$bin" target/fixtures/sample.pdf --render-frame "$out/$name.png" $opts "${extra[@]}"
+    "${viewer[@]}" target/fixtures/sample.pdf --render-frame "$out/$name.png" $opts "${extra[@]}"
   done
   echo "rendered ${#scenarios[@]} frames into $out"
 }

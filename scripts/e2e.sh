@@ -31,7 +31,8 @@
 #   pause SECONDS
 #   ime on|off         (-I) switch the input method
 #   expect NAME KEYS   save OUTDIR/NAME.png and compare it with the screen
-#                      `temzdf --render-frame` draws for the same geometry after
+#                      `temzdf standalone pdf --render-frame` draws for the
+#                      same geometry after
 #                      KEYS (Vim feedkeys notation, e.g. "3G" or
 #                      "/needle<CR>"; the whole sequence since startup; "" for
 #                      the first screen).
@@ -42,8 +43,9 @@
 #                      times and coordinates count): mouse actions too. Pause
 #                      before it until animations end. Mouse actions are not
 #                      judged inside multiplexers (they report cells).
-#                      Both forms only for COMMAND = temzdf [--page N] [--scale
-#                      S] FILE (possibly after `env VAR=...`) and terminals
+#                      Both forms only for COMMAND = temzdf standalone pdf
+#                      [--page N] [--scale S] FILE (possibly after
+#                      `env VAR=...`) and terminals
 #                      drawing from the window's top-left (kitty, WezTerm,
 #                      Ghostty without decorations). Results go to
 #                      OUTDIR/expect.txt, mismatches to NAME.diff.png; the
@@ -324,7 +326,7 @@ expect_cmd=() expect_file=
 args=("$@")
 while [[ ${#args[@]} -gt 0 && ( ${args[0]} == env || ${args[0]} == *=* ) ]]; do args=("${args[@]:1}"); done
 if ((${#args[@]} > 0)); then
-  expect_cmd=("${args[0]}")
+  expect_cmd=("${args[0]}" standalone pdf)
   expect_file=${args[-1]}
   for ((i = 1; i < ${#args[@]} - 1; i++)); do
     case ${args[i]} in

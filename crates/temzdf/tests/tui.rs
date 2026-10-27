@@ -296,7 +296,7 @@ fn typed_keys_echo_at_once_while_a_pdf_scrolls() {
 fn a_pdf_shows_its_pages() {
     let env = Env::new("pdf");
     let pdf = fixture("sample.pdf");
-    let mut t = Term::spawn(&[BIN, &pdf.display().to_string()], &env.options());
+    let mut t = Term::spawn(&[BIN, "standalone", "pdf", &pdf.display().to_string()], &env.options());
     let s = t.wait_for("pages", |s| !s.images.is_empty());
     assert!(s.images.iter().all(|p| p.col >= 0 && p.row >= 0), "{:?}", s.images);
     t.key("q");
@@ -1004,4 +1004,50 @@ fn an_attaching_client_is_told_how_to_look() {
         }
     };
     assert_eq!((looks.background, looks.font.as_str()), (Some([0x10, 0x20, 0x30]), "Mono:h11"));
+}
+
+/// The names `temzdf ls` lists.
+fn session_names(env: &Env) -> Vec<String> {
+    env.run(&["ls"]).lines().filter_map(|l| l.split_whitespace().next()).map(str::to_owned).collect()
+}
+
+#[test]
+fn temzdf_alone_starts_a_session_named_for_it() {
+    let env = Env::new("unnamed");
+    let mut shell = Term::spawn(&[BIN], &env.options());
+    shell.wait_for("the prompt", prompt);
+    let pdf = fixture("sample.pdf");
+    let mut viewer = Term::spawn(&[BIN, &pdf.display().to_string()], &env.options());
+    viewer.wait_for("pages", |s| !s.images.is_empty());
+    assert_eq!(session_names(&env), ["alfa", "bravo"]);
+    // From a session's pane: one more session, nested.
+    shell.type_text(&format!("{BIN}\n"));
+    let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
+    while session_names(&env).len() < 3 {
+        assert!(std::time::Instant::now() < deadline, "no nested session: {}", shell.screen().text());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(session_names(&env)[2], "charlie");
+    shell.type_text("echo nested-$((3*3))\n");
+    shell.wait_text("nested-9");
+}
+
+#[test]
+fn forward_search_goes_to_the_session_showing_the_pdf_or_starts_one() {
+    let env = Env::new("forward");
+    let pdf = fixture("sample.pdf").display().to_string();
+    // Line 44 is on the last page.
+    let on_page_3 = |s: &Screen| s.title.contains("3 / 3");
+    // Nothing shows it: a new session does, at the place.
+    let mut t = Term::spawn(&[BIN, "--forward", "44:sample.tex", &pdf], &env.options());
+    let s = t.wait_for("page 3", on_page_3);
+    assert!(!s.images.is_empty());
+    assert_eq!(session_names(&env), ["alfa"]);
+    // Back to the first page; a second search goes to that session.
+    t.key("g");
+    t.key("g");
+    t.wait_for("page 1", |s| s.title.contains("1 / 3"));
+    env.run(&["--forward", "44:sample.tex", &pdf]);
+    t.wait_for("page 3 again", on_page_3);
+    assert_eq!(session_names(&env), ["alfa"]);
 }

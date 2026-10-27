@@ -11,12 +11,14 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use termpix::geom::{CellSize, Geometry};
 
-/// Terminal PDF viewer drawn with the kitty graphics protocol.
+/// Terminal PDF viewer drawn with the kitty graphics protocol, in sessions.
 ///
-/// `temzdf FILE` shows FILE in this terminal. With `-s NAME` it runs in a
-/// session that survives detaching (`C-s d`) and can be attached again from
-/// anywhere (`temzdf attach NAME`); without FILE the session starts with a
-/// shell. The session commands follow zellij's names.
+/// `temzdf [FILE]` starts a new session showing FILE (a shell without FILE),
+/// named alfa, bravo, ... unless `-s NAME` names it, and attaches to it. A
+/// session survives detaching (`C-s d`) and can be attached again from
+/// anywhere (`temzdf attach NAME`). `temzdf standalone pdf FILE` shows FILE in
+/// this terminal without a session. The session commands follow zellij's
+/// names.
 #[derive(Parser, Debug)]
 #[command(version, args_conflicts_with_subcommands = true)]
 struct Cli {
@@ -24,11 +26,34 @@ struct Cli {
     command: Option<Cmd>,
     /// PDF file to open.
     file: Option<PathBuf>,
-    /// Start a new session called NAME showing FILE (a shell without FILE;
-    /// named after the file when NAME is the file: `temzdf -s doc.pdf`) and
-    /// attach to it.
+    /// Call the new session NAME (named after the file when NAME is the file:
+    /// `temzdf -s doc.pdf`).
     #[arg(short, long, value_name = "NAME")]
     session: Option<String>,
+    /// SyncTeX forward search: show what LINE[:COLUMN]:FILE produced. Sent to the
+    /// viewer or session that already has the PDF open, or opens it in a new
+    /// session.
+    #[arg(long, value_name = "LINE[:COLUMN]:FILE", requires = "file")]
+    forward: Option<String>,
+    /// SyncTeX inverse search command (Ctrl+click), with %{input}, %{line} and
+    /// %{column} placeholders. Overrides `o.synctexeditor` of the configuration.
+    #[arg(long, value_name = "COMMAND", global = true)]
+    editor: Option<String>,
+    /// Configuration script (default: $XDG_CONFIG_HOME/temzdf/config.ts or
+    /// config.js).
+    #[arg(long, value_name = "FILE", global = true)]
+    config: Option<PathBuf>,
+    /// Do not run the configuration script ($XDG_CONFIG_HOME/temzdf/config.ts
+    /// or config.js).
+    #[arg(long, global = true)]
+    clean: bool,
+}
+
+/// What `temzdf standalone pdf` takes.
+#[derive(clap::Args, Debug)]
+struct PdfArgs {
+    /// PDF file to open.
+    file: PathBuf,
     /// Render one screen to this PNG instead of starting the viewer.
     #[arg(long, value_name = "PNG")]
     render_frame: Option<PathBuf>,
@@ -48,18 +73,6 @@ struct Cli {
     /// viewer that already has the PDF open, or opens it.
     #[arg(long, value_name = "LINE[:COLUMN]:FILE")]
     forward: Option<String>,
-    /// SyncTeX inverse search command (Ctrl+click), with %{input}, %{line} and
-    /// %{column} placeholders. Overrides `o.synctexeditor` of the configuration.
-    #[arg(long, value_name = "COMMAND", global = true)]
-    editor: Option<String>,
-    /// Configuration script (default: $XDG_CONFIG_HOME/temzdf/config.ts or
-    /// config.js).
-    #[arg(long, value_name = "FILE", global = true)]
-    config: Option<PathBuf>,
-    /// Do not run the configuration script ($XDG_CONFIG_HOME/temzdf/config.ts
-    /// or config.js).
-    #[arg(long, global = true)]
-    clean: bool,
     /// For --render-frame: keys to press first, in Vim's feedkeys notation, e.g.
     /// "<Tab>jj<CR>" (see headless.rs).
     #[arg(long, value_name = "KEYS", conflicts_with = "events")]
@@ -75,8 +88,20 @@ struct Cli {
     linear_blending: bool,
 }
 
+/// Viewers that run in this terminal, without a session.
+#[derive(Subcommand, Debug)]
+enum Standalone {
+    /// The PDF viewer.
+    Pdf(PdfArgs),
+}
+
 #[derive(Subcommand, Debug)]
 enum Cmd {
+    /// Run a viewer in this terminal, without a session.
+    Standalone {
+        #[command(subcommand)]
+        kind: Standalone,
+    },
     /// Attach to a session (the only one when NAME is left out).
     #[command(alias = "a")]
     Attach {
@@ -136,20 +161,6 @@ fn parse_pair(s: &str) -> Result<(u32, u32)> {
     Ok((a.parse()?, b.parse()?))
 }
 
-/// An option only the standalone viewer takes, if given.
-fn viewer_only_option(cli: &Cli) -> Option<&'static str> {
-    [
-        (cli.render_frame.is_some(), "--render-frame"),
-        (cli.page.is_some(), "--page"),
-        (cli.scale.is_some(), "--scale"),
-        (cli.forward.is_some(), "--forward"),
-        (cli.keys.is_some(), "--keys"),
-        (cli.events.is_some(), "--events"),
-    ]
-    .into_iter()
-    .find_map(|(given, name)| given.then_some(name))
-}
-
 /// Options that apply only when a session starts, given (`file`: a FILE).
 fn session_only_options(cli: &Cli, file: bool) -> Vec<&'static str> {
     [(file, "FILE"), (cli.editor.is_some(), "--editor"), (cli.config.is_some(), "--config"), (cli.clean, "--clean")]
@@ -159,10 +170,11 @@ fn session_only_options(cli: &Cli, file: bool) -> Vec<&'static str> {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     // Flags for starting a session, for warnings when it exists already.
     let start_flags = session_only_options(&cli, false);
-    match cli.command {
+    match cli.command.take() {
+        Some(Cmd::Standalone { kind: Standalone::Pdf(args) }) => return standalone_pdf(args, &cli),
         Some(Cmd::ListSessions { verbose }) => return client::list_sessions(verbose),
         Some(Cmd::KillSession { name }) => return client::kill_session(&name),
         Some(Cmd::KillAllSessions) => return client::kill_all_sessions(),
@@ -222,49 +234,88 @@ fn main() -> Result<()> {
         }
         None => {}
     }
-    let page = cli.page.map(|p| p.saturating_sub(1));
-    if let Some(name) = &cli.session {
-        if let Some(option) = viewer_only_option(&cli) {
-            bail!("{option} is for the viewer, not sessions (-s)");
+    if let Some(spec) = &cli.forward {
+        let req = ipc::ForwardRequest::parse_spec(spec).with_context(|| format!("bad --forward {spec:?}"))?;
+        let file = cli.file.as_deref().expect("clap requires FILE with --forward");
+        // A viewer or a session's pane has the file open: hand it over.
+        if ipc::send_forward(file, &req)? {
+            return Ok(());
         }
-        // `temzdf -s typo.pdf`: not a name, a file that is not there.
-        if cli.file.is_none() && name.to_ascii_lowercase().ends_with(".pdf") && !std::path::Path::new(name).is_file() {
-            bail!("{name}: no such file");
-        }
-        // `temzdf -s doc.pdf`: the name was the file.
-        let (name, file) = match &cli.file {
-            Some(f) => (name.clone(), Some(f.clone())),
-            None if std::path::Path::new(name).is_file() => {
-                (client::name_for(name.as_ref())?, Some(PathBuf::from(name)))
-            }
-            None => (name.clone(), None),
+        let name = match &cli.session {
+            Some(n) => n.clone(),
+            None => client::auto_name()?,
         };
-        let pane = client::first_pane(file.as_deref())?;
-        client::spawn_server(&name, &pane, cli.config.as_deref(), cli.editor.as_deref(), cli.clean)?;
-        println!("{}", client::attach(&name)?);
-        return Ok(());
+        let file = file.to_owned();
+        return start_session(&name, Some(&file.clone()), &cli, move || {
+            // The pane listens once it has opened the file.
+            std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while std::time::Instant::now() < deadline {
+                    if ipc::send_forward(&file, &req).unwrap_or(false) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            });
+        });
     }
-    let Some(file) = cli.file else { bail!("no PDF file given (see --help)") };
-    if let Some(out) = &cli.render_frame {
-        let (cols, rows) = parse_pair(&cli.size)?;
-        let (cw, ch) = parse_pair(&cli.cell)?;
+    let (name, file) = match &cli.session {
+        Some(name) => {
+            // `temzdf -s typo.pdf`: not a name, a file that is not there.
+            if cli.file.is_none()
+                && name.to_ascii_lowercase().ends_with(".pdf")
+                && !std::path::Path::new(name).is_file()
+            {
+                bail!("{name}: no such file");
+            }
+            // `temzdf -s doc.pdf`: the name was the file.
+            match &cli.file {
+                Some(f) => (name.clone(), Some(f.clone())),
+                None if std::path::Path::new(name).is_file() => {
+                    (client::name_for(name.as_ref())?, Some(PathBuf::from(name)))
+                }
+                None => (name.clone(), None),
+            }
+        }
+        None => (client::auto_name()?, cli.file.clone()),
+    };
+    start_session(&name, file.as_deref(), &cli, || {})
+}
+
+/// Start session `name` showing `file` (a shell without), run `started` once
+/// its server listens, and attach to it.
+fn start_session(name: &str, file: Option<&std::path::Path>, cli: &Cli, started: impl FnOnce()) -> Result<()> {
+    let pane = client::first_pane(file)?;
+    client::spawn_server(name, &pane, cli.config.as_deref(), cli.editor.as_deref(), cli.clean)?;
+    started();
+    println!("{}", client::attach(name)?);
+    Ok(())
+}
+
+/// `temzdf standalone pdf`: the viewer in this terminal, or one frame of it.
+fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
+    let page = args.page.map(|p| p.saturating_sub(1));
+    let file = args.file;
+    if let Some(out) = &args.render_frame {
+        let (cols, rows) = parse_pair(&args.size)?;
+        let (cw, ch) = parse_pair(&args.cell)?;
         let geometry = Geometry { cols: cols as u16, rows: rows as u16, cell: CellSize { width: cw, height: ch } };
         let opts = headless::FrameOptions {
             geometry,
             page,
-            scale: cli.scale,
-            keys: cli.keys.clone(),
-            events: match &cli.events {
+            scale: args.scale,
+            keys: args.keys.clone(),
+            events: match &args.events {
                 Some(f) => Some(headless::parse_events(
                     &std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?,
                 )?),
                 None => None,
             },
-            linear_blending: cli.linear_blending,
+            linear_blending: args.linear_blending,
         };
         return headless::render_frame(&file, out, &opts);
     }
-    let forward = match &cli.forward {
+    let forward = match &args.forward {
         Some(spec) => Some(ipc::ForwardRequest::parse_spec(spec).with_context(|| format!("bad --forward {spec:?}"))?),
         None => None,
     };
@@ -274,10 +325,16 @@ fn main() -> Result<()> {
     {
         return Ok(());
     }
-    let config = cli.config.clone();
     app::run(
         &file,
-        app::Options { page, scale: cli.scale, config, forward, editor: cli.editor.clone(), clean: cli.clean },
+        app::Options {
+            page,
+            scale: args.scale,
+            config: cli.config.clone(),
+            forward,
+            editor: cli.editor.clone(),
+            clean: cli.clean,
+        },
     )
 }
 
@@ -288,8 +345,9 @@ mod tests {
     #[test]
     fn options_that_do_not_apply_are_named() {
         let cli = |args: &[&str]| Cli::try_parse_from(std::iter::once("temzdf").chain(args.iter().copied())).unwrap();
-        assert_eq!(viewer_only_option(&cli(&["-s", "x", "--page", "3"])), Some("--page"));
-        assert_eq!(viewer_only_option(&cli(&["-s", "x"])), None);
+        // The viewer's options are the viewer's.
+        assert!(Cli::try_parse_from(["temzdf", "-s", "x", "--page", "3"]).is_err());
+        assert!(Cli::try_parse_from(["temzdf", "standalone", "pdf", "a.pdf", "--page", "3", "--clean"]).is_ok());
         assert_eq!(
             session_only_options(&cli(&["attach", "x", "--clean", "--editor", "vi"]), true),
             ["FILE", "--editor", "--clean"]

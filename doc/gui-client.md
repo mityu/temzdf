@@ -282,7 +282,7 @@ Besides the (decide) items above:
   a full-window CPU blit at 4K every frame costs too much for smooth
   scrolling.
 - **Standalone mode.** The TTY binary can run without a server
-  (`temzdf FILE`). Recommended: the GUI always attaches to a session
+  (`temzdf standalone pdf FILE`). Recommended: the GUI always attaches to a session
   (starting one, as `attach -c` does); closing the window detaches, a
   configurable action ends the session.
 - **Window per session.** One window shows one session (as a terminal does),

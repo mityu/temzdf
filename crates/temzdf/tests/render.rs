@@ -1,4 +1,4 @@
-//! `--render-frame` with `--events`: a recorded timeline replayed on a
+//! `temzdf standalone pdf --render-frame` with `--events`: a recorded timeline replayed on a
 //! simulated clock gives what the keys give, and timing matters where it
 //! does in a terminal (wheel acceleration, link previews).
 
@@ -22,6 +22,7 @@ fn render(dir: &Path, name: &str, flag: &str, input: &str) -> Vec<u8> {
         input.to_owned()
     };
     let status = Command::new(BIN)
+        .args(["standalone", "pdf"])
         .arg(&pdf)
         .args(["--render-frame", &out.display().to_string(), "--size", "90x30", &format!("{flag}={arg}")])
         .env("TEMZDF_LOG_DIR", dir)
@@ -57,6 +58,7 @@ fn bad_timelines_are_refused_with_the_line() {
     let file = dir.path().join("bad.txt");
     std::fs::write(&file, "0 move 1 2\n10 wiggle 3 4\n").unwrap();
     let out = Command::new(BIN)
+        .args(["standalone", "pdf"])
         .arg(temzdf_pdfcore::pdf::fixture("sample.pdf"))
         .args(["--render-frame", &dir.path().join("x.png").display().to_string()])
         .arg(format!("--events={}", file.display()))

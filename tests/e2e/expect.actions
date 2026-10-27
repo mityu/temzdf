@@ -1,8 +1,8 @@
 # Key-driven scenario judged automatically: each `expect` compares the terminal
-# with the screen `temzdf --render-frame` draws after the same keys, so it
+# with the screen `temzdf standalone pdf --render-frame` draws after the same keys, so it
 # checks the path from viewer state to pixels on screen (placements, crops,
 # updates, stale images), not PDF rendering itself (both sides use MuPDF).
-# Used with: scripts/e2e.sh tests/e2e/expect.actions -- target/debug/temzdf target/fixtures/sample.pdf
+# Used with: scripts/e2e.sh tests/e2e/expect.actions -- target/debug/temzdf standalone pdf target/fixtures/sample.pdf
 # Expected: every line of OUTDIR/expect.txt is PASS (the script exits 4 otherwise).
 pause 1
 expect start ""

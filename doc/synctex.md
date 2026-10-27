@@ -9,13 +9,15 @@ Compile with SyncTeX enabled (`latexmk -pdf -synctex=1`, or `pdflatex
 temzdf --forward LINE[:COLUMN]:FILE doc.pdf
 ```
 
-If a viewer already has `doc.pdf` open, the request goes to it over a Unix
+If a viewer or a session's pane already has `doc.pdf` open, the request goes to it over a Unix
 socket (`$XDG_RUNTIME_DIR/temzdf/<hash>.sock`; on macOS under the per-user
 `/var/folders/.../T/`; see `crates/temzdf/src/ipc.rs`)
 and the command exits immediately. The viewer scrolls to the matching place
 (unless it is already comfortably visible) and highlights it in red for 1.5 s.
-Otherwise `temzdf` starts a viewer in the current terminal and does the search
-once the document is shown.
+Otherwise `temzdf` starts a new session showing `doc.pdf` (named as `temzdf
+FILE` names it, or `-s NAME`), sends the search once the pane listens, and
+attaches. `temzdf standalone pdf --forward ... doc.pdf` starts the standalone
+viewer in the current terminal instead.
 
 `FILE` is matched the way SyncTeX does it: as given, then by its file name.
 

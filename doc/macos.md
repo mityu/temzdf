@@ -80,7 +80,7 @@ Swift tools from `scripts/macos/` into `target/macos-gui/`. A session:
 
 ```sh
 scripts/macos-gui.sh display start
-read -r pid status < <(scripts/macos-gui.sh launch kitty -- target/debug/temzdf target/fixtures/sample.pdf)
+read -r pid status < <(scripts/macos-gui.sh launch kitty -- target/debug/temzdf standalone pdf target/fixtures/sample.pdf)
 scripts/macos-gui.sh key "$pid" G          # or: type "$pid" /needle
 scripts/macos-gui.sh title "$pid"          # sample.pdf — 3 / 3
 scripts/macos-gui.sh click "$pid" 60 72    # window points, as in the screenshot

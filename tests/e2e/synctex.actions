@@ -1,6 +1,6 @@
 # Used with:
 #   mkdir -p target/e2e-sync && cp target/fixtures/sample.{pdf,synctex.gz} target/e2e-sync/
-#   scripts/e2e.sh tests/e2e/synctex.actions -- target/debug/temzdf \
+#   scripts/e2e.sh tests/e2e/synctex.actions -- target/debug/temzdf standalone pdf \
 #     --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf
 # Expected:
 #   forward.png  after `temzdf --forward` from another process: page 2 with the

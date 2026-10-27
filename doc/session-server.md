@@ -32,12 +32,13 @@ What exists:
   stable; what a float covers is cut out of the panes below it,
   `crates/temzdf-server/src/clip.rs`, since images cannot be stacked over
   text).
-- Three ways to run share it: `temzdf FILE` (standalone: the session and the
-  terminal frontend in one process, nothing registered), `--render-frame`
+- Three ways to run share it: `temzdf standalone pdf FILE` (the session and
+  the terminal frontend in one process, nothing registered), its `--render-frame`
   (headless, waits for the workers after each key) and the session server
   (`crates/temzdf-server/src/daemon.rs`) with TTY clients
   (`crates/temzdf/src/client.rs`).
-- Commands follow zellij: `temzdf -s NAME [FILE]` (a shell without FILE),
+- Commands follow zellij: `temzdf [FILE]` starts a session named after the
+  NATO alphabet (alfa, bravo, ...; then alfa-2), `temzdf -s NAME [FILE]` names it (a shell without FILE),
   `attach [-c] [NAME [FILE]]` (`a`), `list-sessions` (`ls`), `kill-session`
   (`k`), `kill-all-sessions` (`ka`), `action [-s NAME] COMMAND ARGS...`: any
   command of the registry (`temzdf print-types` lists them), e.g. `new-pane
@@ -308,7 +309,7 @@ and standalone stays the easy way to test it.
 | `temzdf-term` | terminal pane: `portable-pty` + `libghostty-vt` | `temzdf-scene`, `termpix-core` |
 | `temzdf-web` (later) | web pane: headless Chromium over CDP | `temzdf-scene` |
 | `temzdf-gui` (later) | GUI client: winit + wgpu renderer of the scene | `temzdf-scene` |
-| `temzdf` (binary) | standalone viewer, session subcommands and client, `--forward` for SyncTeX, `--render-frame` | all of the above |
+| `temzdf` (binary) | sessions (`temzdf [FILE]`), session subcommands and client, `--forward` for SyncTeX, the standalone viewer (`temzdf standalone pdf`, `--render-frame`) | all of the above |
 
 Rules, extending today's dependency direction (`temzdf -> termpix-ui ->
 termpix`): `termpix` and `termpix-ui` stay ignorant of PDF and sessions;
