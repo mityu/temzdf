@@ -31,7 +31,34 @@ fn main() {
     r.set_font(&[temzdf_scene::FontEntry { family: "UDEV Gothic NF".into(), size: Some(14.0) }], &[], 1.0);
     layers_match_the_cpu_reference(&mut r);
     text_lands_in_its_cells(&mut r);
-    println!("gpu: 2 tests passed");
+    images_beyond_the_limit_do_not_crash(&mut r);
+    println!("gpu: 3 tests passed");
+}
+
+/// A program in a terminal pane may show an image wider than the GPU takes:
+/// it is scaled down, not a crash (wgpu's default error handler panics).
+fn images_beyond_the_limit_do_not_crash(r: &mut Renderer) {
+    let limit = r.device().limits().max_texture_dimension_2d;
+    let mut images = Images::new();
+    let wide = images.add(limit + 1, 2, vec![255u8; ((limit + 1) * 2 * 4) as usize]);
+    r.set_image(wide, images.get(wide).unwrap());
+    let frame = Frame {
+        layers: vec![Layer {
+            key: 1,
+            image: wide,
+            src: Rect::new(0, 0, limit + 1, 2),
+            dst: Rect::new(0, 0, 32, 4),
+            z: 0,
+        }],
+        ..Frame::default()
+    };
+    let grid = Grid { cols: 4, rows: 1, cell_w: 8, cell_h: 16 };
+    let px = r.draw_offscreen(&drawlist::build(&frame, grid, &Colors::default()), grid, (32, 16)).unwrap();
+    assert_eq!(&px[..4], &[255, 255, 255, 255], "the image, scaled down");
+    // Sizes the GPU cannot draw at are refused, not a crash.
+    assert!(r.draw_offscreen(&drawlist::build(&frame, grid, &Colors::default()), grid, (0, 16)).is_err());
+    assert!(r.draw_offscreen(&drawlist::build(&frame, grid, &Colors::default()), grid, (limit + 1, 16)).is_err());
+    println!("gpu: images beyond the limit are scaled down");
 }
 
 fn layers_match_the_cpu_reference(r: &mut Renderer) {

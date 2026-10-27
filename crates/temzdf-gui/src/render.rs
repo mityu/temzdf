@@ -76,6 +76,8 @@ impl Quad {
 struct Texture {
     _texture: wgpu::Texture,
     bind: wgpu::BindGroup,
+    /// The image's size, which layers' `src` refers to (the texture may be
+    /// smaller: scaled down to the GPU's limit).
     size: (u32, u32),
 }
 
@@ -308,7 +310,12 @@ impl Renderer {
             self.textures.remove(&key);
             return;
         }
-        let t = self.texture(image.width, image.height, &image.pixels);
+        // Beyond the GPU's limit (a program may show a 10000 px image):
+        // scaled down; layers still address it in the image's own pixels.
+        let limit = self.device.limits().max_texture_dimension_2d;
+        let (w, h, pixels) = fit_within(image.width, image.height, &image.pixels, limit);
+        let mut t = self.texture(w, h, &pixels);
+        t.size = (image.width, image.height);
         self.textures.insert(key, t);
     }
 
@@ -480,6 +487,10 @@ impl Renderer {
 
     /// Draw `list` offscreen and read the pixels back (RGBA, `size`).
     pub fn draw_offscreen(&mut self, list: &DrawList, grid: Grid, size: (u32, u32)) -> Result<Vec<u8>> {
+        let limit = self.device.limits().max_texture_dimension_2d;
+        if size.0 == 0 || size.1 == 0 || size.0 > limit || size.1 > limit {
+            anyhow::bail!("{}x{} px: the size must be 1 to {limit} px on each side", size.0, size.1);
+        }
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
             size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
@@ -564,6 +575,49 @@ pub fn offscreen_device() -> Result<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .context("no GPU adapter (for a software one, VK_DRIVER_FILES=$TEMZDF_LAVAPIPE_ICD)")?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+    device_for(&adapter)
+}
+
+/// A device on `adapter` with its full texture size, whose validation
+/// errors are logged: wgpu's default handler panics, and what a program in
+/// a terminal pane shows must not bring the window down.
+pub fn device_for(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)> {
+    let required_limits =
+        wgpu::Limits { max_texture_dimension_2d: adapter.limits().max_texture_dimension_2d, ..wgpu::Limits::default() };
+    let desc = wgpu::DeviceDescriptor { required_limits, ..wgpu::DeviceDescriptor::default() };
+    let (device, queue) = pollster::block_on(adapter.request_device(&desc))?;
+    device.on_uncaptured_error(std::sync::Arc::new(|e| eprintln!("temzdf-gui: GPU error: {e}")));
     Ok((device, queue))
+}
+
+/// `pixels` (RGBA, `w` by `h`) scaled down to fit `limit` on both sides,
+/// averaging the source pixels each one covers; unchanged when they fit.
+fn fit_within(w: u32, h: u32, pixels: &[u8], limit: u32) -> (u32, u32, std::borrow::Cow<'_, [u8]>) {
+    if w <= limit && h <= limit {
+        return (w, h, std::borrow::Cow::Borrowed(pixels));
+    }
+    let k = (w.max(h) as f64 / limit as f64).max(1.0);
+    let (nw, nh) = (((w as f64 / k) as u32).clamp(1, limit), ((h as f64 / k) as u32).clamp(1, limit));
+    let mut out = vec![0u8; (nw * nh * 4) as usize];
+    for y in 0..nh {
+        let (y0, y1) = (y * h / nh, ((y + 1) * h / nh).max(y * h / nh + 1));
+        for x in 0..nw {
+            let (x0, x1) = (x * w / nw, ((x + 1) * w / nw).max(x * w / nw + 1));
+            let mut sum = [0u64; 4];
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let i = ((sy * w + sx) * 4) as usize;
+                    for c in 0..4 {
+                        sum[c] += pixels[i + c] as u64;
+                    }
+                }
+            }
+            let n = ((y1 - y0) * (x1 - x0)) as u64;
+            let o = ((y * nw + x) * 4) as usize;
+            for c in 0..4 {
+                out[o + c] = (sum[c] / n) as u8;
+            }
+        }
+    }
+    (nw, nh, std::borrow::Cow::Owned(out))
 }

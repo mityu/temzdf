@@ -99,16 +99,17 @@ impl App {
             ..Default::default()
         }))
         .context("no GPU adapter for the window")?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+        let (device, queue) = crate::render::device_for(&adapter)?;
         let caps = surface.get_capabilities(&adapter);
         // Blending on the stored values: a non-sRGB format (see render.rs).
         let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
         let size = window.surface_size();
+        let limit = device.limits().max_texture_dimension_2d;
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            width: size.width.max(1),
-            height: size.height.max(1),
+            width: size.width.clamp(1, limit),
+            height: size.height.clamp(1, limit),
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: wgpu::CompositeAlphaMode::Opaque,
             view_formats: vec![],
@@ -286,8 +287,11 @@ impl ApplicationHandler for App {
             }
             WindowEvent::SurfaceResized(size) => {
                 if let Some(g) = &mut self.gpu {
-                    g.config.width = size.width.max(1);
-                    g.config.height = size.height.max(1);
+                    // Beyond the GPU's limit (a window across monitors):
+                    // the surface stays at the limit.
+                    let limit = g.view.renderer.device().limits().max_texture_dimension_2d;
+                    g.config.width = size.width.clamp(1, limit);
+                    g.config.height = size.height.clamp(1, limit);
                     g.surface.configure(g.view.renderer.device(), &g.config);
                     g.window.request_redraw();
                 }
