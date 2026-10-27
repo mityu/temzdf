@@ -92,7 +92,8 @@ declarations. In short, `import { ... } from "temzdf"`:
   `feedkeys(keys, { remap })`, `currentMode()` (doc/keymaps.md).
 - `o.<option>` reads and sets options.
 - `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,
-  `PaneClosePre(id)` (not when `deleteBuffer` closes the pane: the buffer
+  `PaneClosePre(id)` (also for each pane of a tab page `closeTab` or a
+  middle click closes; not when `deleteBuffer` closes the pane: the buffer
   goes either way), `PaneClosed(id)`, `PaneFocused(id)`, `TabEntered(n)`,
   `TabClosed(n)`,
   `DocumentReloaded(path)`, `ModeChanged(old, new)`, `BufferCreated(id,

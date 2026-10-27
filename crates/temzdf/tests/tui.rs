@@ -1196,3 +1196,20 @@ fn starting_a_session_without_a_terminal_leaves_nothing_behind() {
         assert_eq!(env.run(&["ls"]).trim(), "no sessions", "{args:?}");
     }
 }
+
+#[test]
+fn closing_a_tab_page_runs_the_close_hooks_of_its_panes() {
+    let env = Env::new("tabclose");
+    env.config(
+        "config.js",
+        "import { on } from \"temzdf\";\non(\"PaneClosePre\", (id) => console.log(`closing ${id}`));\n",
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "tc"], &env.options());
+    t.wait_for("the prompt", prompt);
+    env.run(&["action", "-s", "tc", "new-tab", "--", "sleep", "30"]);
+    env.run(&["action", "-s", "tc", "split", "right"]);
+    env.run(&["action", "-s", "tc", "close-tab"]);
+    let lines = env.wait_log("tc", "the hooks", |l| l.matches("closing ").count() >= 2);
+    assert_eq!(lines.matches("closing ").count(), 2, "{lines}");
+    assert!(env.run(&["ls"]).contains("tc  (1 panes"), "the tab page went");
+}

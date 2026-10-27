@@ -197,6 +197,14 @@ impl Session {
     /// Close tab `i` with its panes (its own floats included); their buffers
     /// stay, hidden. The tab after it becomes current if it was (Vim). The
     /// last tab: the session ends.
+    /// The panes that go with tab `i`: its tiled ones and its own floats.
+    pub(super) fn tab_panes(&self, i: usize) -> Vec<PaneId> {
+        let id = self.tabs[i].id;
+        let mut panes = self.layouts().find(|(t, _)| *t == i).map(|(_, l)| l.panes()).unwrap_or_default();
+        panes.extend(self.floats.iter().filter(|f| f.tab == FloatTab::Only(id)).map(|f| f.pane));
+        panes
+    }
+
     pub(super) fn remove_tab(&mut self, i: usize) -> Outcome {
         if self.tabs.len() <= 1 {
             return Outcome::Quit;
@@ -205,8 +213,7 @@ impl Session {
             self.enter_tab(if i + 1 < self.tabs.len() { i + 1 } else { i - 1 });
         }
         let id = self.tabs[i].id;
-        let mut panes = self.layouts().find(|(t, _)| *t == i).map(|(_, l)| l.panes()).unwrap_or_default();
-        panes.extend(self.floats.iter().filter(|f| f.tab == FloatTab::Only(id)).map(|f| f.pane));
+        let panes = self.tab_panes(i);
         self.floats.retain(|f| f.tab != FloatTab::Only(id));
         self.tabs.remove(i);
         if i < self.tab {
@@ -423,7 +430,7 @@ impl Session {
                 self.enter_tab(i);
                 Outcome::Redraw
             }
-            (MouseEventKind::Press(MouseButton::Middle), Some(i)) if self.tabs.len() > 1 => self.remove_tab(i),
+            (MouseEventKind::Press(MouseButton::Middle), Some(i)) if self.tabs.len() > 1 => self.request_close_tab(i),
             _ => Outcome::None,
         })
     }

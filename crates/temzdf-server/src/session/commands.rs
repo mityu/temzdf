@@ -532,7 +532,7 @@ impl Session {
                 if self.tabs.len() <= 1 {
                     return Err("closeTab: the last tab page stays (killSession ends the session)".into());
                 }
-                ok(self.remove_tab(i))
+                ok(self.request_close_tab(i))
             }
             "next-tab" => {
                 let i = match count {

@@ -82,6 +82,7 @@ enum Frame {
 
 enum Deferred {
     ClosePane(PaneId),
+    CloseTab(super::tabs::TabId),
 }
 
 struct Hook {
@@ -421,10 +422,32 @@ impl Session {
         self.pump()
     }
 
+    /// Close tab page `i` (`closeTab`, a middle click on the tab line) once
+    /// the `PaneClosePre` hooks of its panes have run, as for closing a pane.
+    pub(super) fn request_close_tab(&mut self, i: usize) -> Outcome {
+        let pre: Vec<(String, Vec<ScriptValue>)> = self
+            .tab_panes(i)
+            .into_iter()
+            .map(|p| ("PaneClosePre".to_owned(), vec![ScriptValue::Num(p as f64)]))
+            .collect();
+        let queue = self.hooks_for(&pre, self.script.hook_depth());
+        if queue.is_empty() || self.script.host.is_none() {
+            return self.remove_tab(i);
+        }
+        let depth = self.script.hook_depth();
+        self.script.frames.push(Frame::Op(Deferred::CloseTab(self.tabs[i].id)));
+        self.script.frames.push(Frame::Hooks { queue, depth });
+        self.pump()
+    }
+
     fn run_deferred(&mut self, op: Deferred) -> Outcome {
         match op {
             Deferred::ClosePane(id) if self.panes.contains_key(&id) => self.close(id),
             Deferred::ClosePane(_) => Outcome::None,
+            Deferred::CloseTab(id) => match self.tab_index(id) {
+                Some(i) if self.tabs.len() > 1 => self.remove_tab(i),
+                _ => Outcome::None,
+            },
         }
     }
 
