@@ -38,8 +38,11 @@ it (else on `PATH`). Closing the window detaches. `--render-frame PNG
   placed there with `request_ime_update`, commits as `Text`), the clipboard
   through arboard (primary selection on Linux), links and inverse search
   through `temzdf-client`. `<C-S-v>` and `<D-v>` paste in terminal panes.
-- **Packaging**: `nix build` builds both binaries and wraps `temzdf-gui`
-  with the libraries winit and wgpu load (`guiLibsFor` in `flake.nix`).
+- **Packaging**: `nix build` builds both binaries; the libraries winit and
+  wgpu load (`guiLibsFor` in `flake.nix`) go into `temzdf-gui`'s RUNPATH, so
+  the binary works alone outside the dev shell (on Nix: it needs glibc 2.44
+  from the same nixpkgs). It cannot be static, unlike `nix build
+  .#temzdf-static`: it must dlopen the system's Vulkan driver.
 
 Differences from the plan below:
 

@@ -45,56 +45,77 @@
       # which finds temzdf next to it). MuPDF and SyncTeX are vendored C
       # sources compiled by the crates' build scripts; tests are left to
       # scripts/check.sh because they need TeX to build the fixtures.
+      #
+      # `nix build .#temzdf-static` (Linux): `temzdf` alone as one static
+      # musl binary that runs on any Linux. temzdf-gui cannot be static: it
+      # must dlopen the system's Vulkan driver and X11/Wayland libraries,
+      # which a static binary cannot; it links nothing but libc already.
       packages = forEachSystem (
         system:
         let
           pkgs = import nixpkgs { inherit system overlays; };
           lib = pkgs.lib;
-          temzdf = pkgs.rustPlatform.buildRustPackage {
-            pname = "temzdf";
-            version = (lib.importTOML ./Cargo.toml).workspace.package.version;
-            src = lib.fileset.toSource {
-              root = ./.;
-              fileset = lib.fileset.unions [
-                ./Cargo.toml
-                ./Cargo.lock
-                ./crates
+          temzdfFor =
+            pkgs: gui:
+            pkgs.rustPlatform.buildRustPackage {
+              pname = "temzdf";
+              version = (lib.importTOML ./Cargo.toml).workspace.package.version;
+              src = lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [
+                  ./Cargo.toml
+                  ./Cargo.lock
+                  ./crates
+                ];
+              };
+              cargoLock.lockFile = ./Cargo.lock;
+              cargoBuildFlags = [
+                "--package"
+                "temzdf"
+              ]
+              ++ lib.optionals gui [
+                "--package"
+                "temzdf-gui"
               ];
+              nativeBuildInputs = with pkgs.buildPackages; [
+                pkg-config
+                clang
+                # mupdf-sys runs bindgen, which needs libclang (and, for
+                # musl, that target's headers: the hook passes them).
+                rustPlatform.bindgenHook
+              ];
+              # In RUNPATH rather than a wrapper script, so the binary works
+              # alone (copied, or a symlink to it) outside the dev shell;
+              # dlopen searches the RUNPATH of the executable that calls it.
+              postFixup = lib.optionalString (gui && pkgs.stdenv.hostPlatform.isLinux) ''
+                patchelf --add-rpath ${lib.makeLibraryPath (guiLibsFor pkgs)} $out/bin/temzdf-gui
+              '';
+              # libghostty-vt: terminal emulation for terminal panes (temzdf-term).
+              buildInputs = [
+                pkgs.fontconfig
+                pkgs.libghostty-vt.dev
+              ];
+              doCheck = false;
+              meta = {
+                description = "Terminal PDF viewer drawn with the kitty graphics protocol";
+                homepage = "https://github.com/mityu/temzdf-cli";
+                license = lib.licenses.agpl3Only;
+                mainProgram = "temzdf";
+              };
+            }
+            // lib.optionalAttrs pkgs.stdenv.hostPlatform.isStatic {
+              # fontconfig (MuPDF's system fonts) and what it needs, from
+              # their static archives too.
+              PKG_CONFIG_ALL_STATIC = "1";
             };
-            cargoLock.lockFile = ./Cargo.lock;
-            cargoBuildFlags = [
-              "--package"
-              "temzdf"
-              "--package"
-              "temzdf-gui"
-            ];
-            nativeBuildInputs = with pkgs; [
-              pkg-config
-              clang
-              makeWrapper
-            ];
-            postFixup = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-              wrapProgram $out/bin/temzdf-gui --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (guiLibsFor pkgs)}
-            '';
-            # libghostty-vt: terminal emulation for terminal panes (temzdf-term).
-            buildInputs = [
-              pkgs.fontconfig
-              pkgs.libghostty-vt.dev
-            ];
-            # mupdf-sys runs bindgen, which needs libclang.
-            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-            doCheck = false;
-            meta = {
-              description = "Terminal PDF viewer drawn with the kitty graphics protocol";
-              homepage = "https://github.com/mityu/temzdf-cli";
-              license = lib.licenses.agpl3Only;
-              mainProgram = "temzdf";
-            };
-          };
+          temzdf = temzdfFor pkgs true;
         in
         {
           inherit temzdf;
           default = temzdf;
+        }
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          temzdf-static = temzdfFor pkgs.pkgsStatic false;
         }
       );
 

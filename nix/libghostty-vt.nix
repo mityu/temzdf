@@ -31,10 +31,17 @@ in
           ${final.lib.concatMapStringsSep "\n" (e: "cp -rL ${e.path} $out/${e.name}") entries}
         '';
     };
-    # This commit builds with Zig 0.15.
+    # This commit builds with Zig 0.15, which runs on the build machine
+    # (`buildPackages`: for pkgsStatic a host Zig would be a musl Zig built
+    # from source, LLVM included).
     nativeBuildInputs = map (
-      p: if p == final.zig_0_16 then final.zig_0_15 else p
+      p: if (p.pname or "") == "zig" then final.buildPackages.zig_0_15 else p
     ) old.nativeBuildInputs;
+    # Zig builds for `native` (the build machine's glibc) unless told the
+    # target: musl for pkgsStatic (`temzdf-static` in flake.nix).
+    zigBuildFlags =
+      old.zigBuildFlags
+      ++ final.lib.optional final.stdenv.hostPlatform.isMusl "-Dtarget=${final.stdenv.hostPlatform.parsed.cpu.name}-linux-musl";
 
     # The `postPatch` is introduced for libghostty-vt 0.1.0-unstable-2026-08-06
     # on darwin build by the following commit.  Since we use older version of
