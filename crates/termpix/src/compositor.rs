@@ -142,9 +142,12 @@ pub struct Compositor {
 const FENCE_IDS: std::ops::Range<u32> = 0x7f_0000..0x7f_ffff;
 /// With this many frames unacknowledged, hold back new ones.
 const MAX_FENCES: usize = 2;
-/// Shared memory and files made for the last this many frames stay (the
-/// terminal may not have read them yet); older ones it did not consume go.
+/// Shared memory and files made for the last this many frames, and for this
+/// long, stay (the terminal may not have read them yet; at 60 frames a
+/// second, 16 frames are a quarter of a second for a terminal falling
+/// behind); older ones it did not consume go.
 const KEEP_SHM_FRAMES: u64 = 16;
+const KEEP_SHM_FOR: Duration = Duration::from_secs(2);
 /// A fence not answered within this time no longer counts (lost reply).
 const FENCE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -413,7 +416,7 @@ impl Compositor {
             }
         }
         // Shared memory of recent frames stays: the terminal may not have read it yet.
-        self.encoder.end_frame(KEEP_SHM_FRAMES);
+        self.encoder.end_frame(KEEP_SHM_FRAMES, KEEP_SHM_FOR);
         Ok(())
     }
 
@@ -917,6 +920,25 @@ mod tests {
         }
         assert!(!c.is_congested(Instant::now()));
         c.encoder_mut().cleanup_shm();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore = "Miri cannot use shared memory")]
+    fn shared_memory_stays_while_frames_go_fast() {
+        let mut c = Compositor::new(Backend::Layered, Medium::SharedMemory, geometry());
+        let img = c.add_image(30, 30, test_image());
+        c.present(&[layer(img, 0, 0)], &mut Vec::new()).unwrap();
+        let first = c.encoder_mut().shm_names()[0].clone();
+        // A kinetic scroll's frames, more than KEEP_SHM_FRAMES, in less
+        // time than a terminal behind may take to read the first.
+        for x in 0..2 * KEEP_SHM_FRAMES as i32 {
+            c.present(&[layer(img, x % 20, 0)], &mut Vec::new()).unwrap();
+        }
+        let on_disk = std::path::Path::new("/dev/shm").join(first.trim_start_matches('/'));
+        assert!(on_disk.exists(), "gone after {} frames in a moment", 2 * KEEP_SHM_FRAMES);
+        c.encoder_mut().cleanup_shm();
+        assert!(!on_disk.exists());
     }
 
     #[test]

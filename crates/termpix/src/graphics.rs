@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
@@ -200,7 +201,7 @@ impl Encoder {
             }
             Medium::TempFile => {
                 let path = write_temp_file(px.data)?;
-                self.shm.files.push((self.shm.frame, path.clone()));
+                self.shm.files.push((self.shm.frame, Instant::now(), path.clone()));
                 write!(keys, ",t=t,S={}", px.data.len()).unwrap();
                 write_command(out, &keys, B64.encode(path.as_os_str().as_encoded_bytes()).as_bytes());
             }
@@ -231,18 +232,27 @@ impl Encoder {
         write_command(out, &keys, b"");
     }
 
-    /// A frame went out: remove the shared-memory objects and files of
-    /// frames before the last `keep` the terminal did not consume (those of
-    /// recent frames may still be on their way, however many one frame made).
-    pub fn end_frame(&mut self, keep: u64) {
+    /// A frame went out: remove the shared-memory objects and files the
+    /// terminal did not consume, of frames before the last `keep` and made
+    /// longer than `min_age` ago (those of recent frames may still be on
+    /// their way, however many one frame made; a terminal falling behind
+    /// fast frames reads them late).
+    pub fn end_frame(&mut self, keep: u64, min_age: Duration) {
         self.shm.frame += 1;
-        self.shm.cleanup(self.shm.frame.saturating_sub(keep));
+        let Some(made_before) = Instant::now().checked_sub(min_age) else { return };
+        self.shm.cleanup(self.shm.frame.saturating_sub(keep), Some(made_before));
     }
 
     /// Remove every shared-memory object and file the terminal did not
     /// consume (on shutdown).
     pub fn cleanup_shm(&mut self) {
-        self.shm.cleanup(u64::MAX);
+        self.shm.cleanup(u64::MAX, None);
+    }
+
+    /// The shared-memory objects that may still be read.
+    #[cfg(test)]
+    pub(crate) fn shm_names(&self) -> Vec<String> {
+        self.shm.names.iter().map(|(_, _, n)| n.clone()).collect()
     }
 }
 
@@ -374,30 +384,32 @@ fn shm_create(data: &[u8]) -> io::Result<String> {
 }
 
 /// Shared-memory objects and temporary files we created, oldest first,
-/// with the frame they were made for.
+/// with the frame they were made for and when.
 #[derive(Debug, Default)]
 struct ShmTracker {
     frame: u64,
-    names: Vec<(u64, String)>,
-    files: Vec<(u64, PathBuf)>,
+    names: Vec<(u64, Instant, String)>,
+    files: Vec<(u64, Instant, PathBuf)>,
 }
 
 impl ShmTracker {
     fn create(&mut self, data: &[u8]) -> io::Result<String> {
         let name = shm_create(data)?;
-        self.names.push((self.frame, name.clone()));
+        self.names.push((self.frame, Instant::now(), name.clone()));
         Ok(name)
     }
 
-    /// Remove what was made for frames before `before`.
-    fn cleanup(&mut self, before: u64) {
-        let old = self.names.iter().take_while(|(f, _)| *f < before).count();
-        for (_, name) in self.names.drain(..old) {
+    /// Remove what was made for frames before `before` and, if given,
+    /// before `made_before`.
+    fn cleanup(&mut self, before: u64, made_before: Option<Instant>) {
+        let old = |f: u64, t: Instant| f < before && made_before.is_none_or(|m| t < m);
+        let n = self.names.iter().take_while(|(f, t, _)| old(*f, *t)).count();
+        for (_, _, name) in self.names.drain(..n) {
             // The terminal unlinks objects it consumed; ENOENT is the normal case.
             let _ = rustix::shm::unlink(name.as_str());
         }
-        let old = self.files.iter().take_while(|(f, _)| *f < before).count();
-        for (_, path) in self.files.drain(..old) {
+        let n = self.files.iter().take_while(|(f, t, _)| old(*f, *t)).count();
+        for (_, _, path) in self.files.drain(..n) {
             let _ = std::fs::remove_file(path);
         }
     }
@@ -442,7 +454,7 @@ mod tests {
         let mut enc = Encoder::new(Medium::TempFile);
         let px = Pixels { width: 1, height: 1, format: PixelFormat::Rgba, data: &[0, 0, 0, 255] };
         enc.transmit(&mut out, 9, px, None).unwrap();
-        let sent = enc.shm.files[0].1.clone();
+        let sent = enc.shm.files[0].2.clone();
         assert!(sent.exists());
         enc.cleanup_shm();
         assert!(!sent.exists());
@@ -616,13 +628,16 @@ mod tests {
         for id in 0..20 {
             enc.transmit(&mut out, id, px(), None).unwrap();
         }
-        let first = std::path::Path::new("/dev/shm").join(enc.shm.names[0].1.trim_start_matches('/'));
-        enc.end_frame(2);
+        let first = std::path::Path::new("/dev/shm").join(enc.shm.names[0].2.trim_start_matches('/'));
+        enc.end_frame(2, Duration::ZERO);
         assert!(first.exists(), "the terminal may not have read it yet");
-        enc.end_frame(2);
+        enc.end_frame(2, Duration::ZERO);
         assert!(first.exists());
-        enc.end_frame(2);
-        assert!(!first.exists(), "two frames later it goes");
+        // Frames went fast: it stays for its time too.
+        enc.end_frame(2, Duration::from_secs(60));
+        assert!(first.exists(), "younger than the time a terminal behind may take");
+        enc.end_frame(2, Duration::ZERO);
+        assert!(!first.exists(), "frames later and old enough, it goes");
         enc.cleanup_shm();
     }
 }
