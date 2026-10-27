@@ -1410,7 +1410,9 @@ impl PdfPane {
             self.pointer_shape = Pointer::Default;
             self.press = None;
             let uri_cleared = self.hover_uri.take().is_some();
-            return closed || uri_cleared;
+            // (The sidebar's highlight too: the pointer may come from there.)
+            let left_sidebar = self.outline.list.hover.take().is_some();
+            return closed || uri_cleared || left_sidebar;
         }
         // Leaving the sidebar clears its hover highlight.
         let mut redraw = self.outline.list.hover.take().is_some() || closed;
@@ -1778,6 +1780,15 @@ mod tests {
         assert!(s.drag.is_none() && !s.selecting, "nothing starts there");
         mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (x, y));
         assert!(s.take_requests().is_empty(), "no link followed");
+        // From the outline straight down into the status bar: its hover goes.
+        s.toggle_sidebar();
+        let side = s.sidebar_rect();
+        let x = (side.x + 5) as f32;
+        let first_row = s.row_height() as f32 * (f32::from(u8::from(s.outline.list.title.is_some())) + 0.5);
+        mouse(&mut s, MouseEventKind::Move, (x, first_row));
+        assert!(s.outline.list.hover.is_some(), "the first outline row is hovered");
+        mouse(&mut s, MouseEventKind::Move, (x, y));
+        assert!(s.outline.list.hover.is_none());
     }
 
     #[test]
