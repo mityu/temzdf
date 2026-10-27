@@ -1053,6 +1053,16 @@ fn a_log_directory_that_is_not_utf8_is_refused_at_once() {
 }
 
 #[test]
+fn a_session_name_that_is_also_a_file_name() {
+    let env = Env::new("namefile");
+    std::fs::write(env.path("build"), "#!/bin/sh\n").unwrap();
+    let opts = Options { cwd: Some(env.path("")), ..env.options() };
+    let mut t = Term::spawn(&[BIN, "-s", "build"], &opts);
+    t.wait_for("the prompt", prompt);
+    assert_eq!(session_names(&env), ["build"]);
+}
+
+#[test]
 fn temzdf_alone_starts_a_session_named_for_it() {
     let env = Env::new("unnamed");
     let mut shell = Term::spawn(&[BIN], &env.options());

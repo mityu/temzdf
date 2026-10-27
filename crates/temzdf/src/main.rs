@@ -335,17 +335,17 @@ fn main() -> Result<()> {
     }
     let (name, file) = match &cli.session {
         Some(name) => {
+            // `-s doc.pdf` names a file (a PDF's name only: `-s build` with a
+            // file `build` here is a session named so).
+            let pdf = name.to_ascii_lowercase().ends_with(".pdf");
             // `temzdf -s typo.pdf`: not a name, a file that is not there.
-            if cli.file.is_none()
-                && name.to_ascii_lowercase().ends_with(".pdf")
-                && !std::path::Path::new(name).is_file()
-            {
+            if cli.file.is_none() && pdf && !std::path::Path::new(name).is_file() {
                 bail!("{name}: no such file");
             }
             // `temzdf -s doc.pdf`: the name was the file.
             match &cli.file {
                 Some(f) => (Naming::Given(name.clone()), Some(f.clone())),
-                None if std::path::Path::new(name).is_file() => {
+                None if pdf && std::path::Path::new(name).is_file() => {
                     (Naming::AfterFile(PathBuf::from(name)), Some(PathBuf::from(name)))
                 }
                 None => (Naming::Given(name.clone()), None),
