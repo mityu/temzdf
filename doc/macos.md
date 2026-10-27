@@ -21,6 +21,16 @@ works.
   that font fallback does not find either. Draw such marks as shapes. CJK
   fallback works.
 - Links open with `open` instead of `xdg-open` (`config.rs`).
+- Terminal panes: on macOS libghostty-vt's key encoder takes Alt for an
+  Option key that composes characters (Alt+x sent as `x`) unless
+  `macos_option_as_alt` is set, and `set_options_from_terminal` resets it.
+  Our key events' Alt is already Alt (the outer terminal or the GUI decided),
+  so `crates/temzdf-term/src/keys.rs` sets it to true.
+- Ptys: closing the last descriptor of a pty's slave side drops the output
+  the master has not read yet (Linux keeps it), so tests keep one open.
+- Miri: `confstr` returns nothing and the user id differs from the owner of
+  the files Miri creates; the tests relying on them are ignored under Miri on
+  macOS.
 - Auto-reload: notify uses FSEvents. Opening the PDF through a symlinked path
   (`/tmp` -> `/private/tmp`) still reloads, since events are matched by name.
 - GUI: while the window is not visible at all (fully covered, minimised, on
