@@ -153,13 +153,13 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `pdf` | `q` | close the pane (see Buffers) |
 | `pdf` | `<Esc>` | clear the selection, else the search, else quit |
 | `pdf` | `j` `k` / `<Down>` `<Up>` | scroll (counts) |
-| `pdf` | `h` `l` / `<Left>` `<Right>` | scroll sideways |
-| `pdf` | `<Space>` `<PageDown>` `<C-f>` / `b` `<PageUp>` | page down / up |
-| `pdf` | `d` / `u` | half a page down / up |
+| `pdf` | `h` `l` / `<Left>` `<Right>` | scroll sideways (counts) |
+| `pdf` | `<Space>` `<PageDown>` `<C-f>` / `b` `<PageUp>` | page down / up (counts) |
+| `pdf` | `d` / `u` | half a page down / up (counts) |
 | `pdf` | `g` `<Home>` / `G` `<End>` | first page / end (or page N with a count) |
-| `pdf` | `<C-o>` `<BS>` `<M-Left>` / `<M-Right>` | link history back / forward |
-| `pdf` | `+` `=` / `-` / `0` `w` | zoom in / out / fit width |
-| `pdf` | `/` / `n` / `N` | search / next / previous match |
+| `pdf` | `<C-o>` `<BS>` `<M-Left>` / `<M-Right>` | link history back / forward (counts) |
+| `pdf` | `+` `=` / `-` / `0` `w` | zoom in / out (counts) / fit width |
+| `pdf` | `/` / `n` / `N` | search / next / previous match (counts) |
 | `pdf` | `y` | copy the selection |
 | `pdf` | `<Tab>` | outline |
 
@@ -316,7 +316,8 @@ and scales the other sizes given with it, `fontSize("+1")` / `fontSize("-1")`
 one point more or less for each, times a mapping's count, `fontSize()` back to the
 configured sizes; terminal clients keep their terminal's font), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
-`search`, ...: every action of the PDF table above, taking the count).
+`search`, ...: every action of the PDF table above, taking the count where it says
+"counts").
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
 action split right`). `resizePane("left", 5)` moves a border of the focused
 pane five cells left (as tmux's `resize-pane -L 5`), `resizePane("wider",

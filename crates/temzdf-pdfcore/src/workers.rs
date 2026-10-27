@@ -153,7 +153,8 @@ pub struct SearchCmd {
     pub generation: u64,
     pub query: String,
     pub start_page: usize,
-    /// Document generation; the worker reopens the file when it changes.
+    /// Document generation: the worker searches that version's snapshot (a
+    /// request for another one than the snapshot holds is stale and dropped).
     pub doc_generation: u32,
 }
 

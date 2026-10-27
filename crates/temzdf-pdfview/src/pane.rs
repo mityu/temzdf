@@ -1328,8 +1328,8 @@ impl PdfPane {
                     None => self.viewer.scroll_y.scroll_by(f64::INFINITY, now),
                 }
             }
-            Command::Back => self.history(true, now),
-            Command::Forward => self.history(false, now),
+            Command::Back => (0..n).for_each(|_| self.history(true, now)),
+            Command::Forward => (0..n).for_each(|_| self.history(false, now)),
             Command::ZoomIn => v.zoom(ZOOM_STEP.powi(n as i32), centre),
             Command::ZoomOut => v.zoom(1.0 / ZOOM_STEP.powi(n as i32), centre),
             Command::FitWidth => v.fit_width(),
@@ -1734,6 +1734,20 @@ mod tests {
         s.command(Command::PageDown, Some(2), now);
         let moved = s.viewer.scroll_y.target() - from;
         assert!(moved > page * 1.5, "two pages, not one: {moved} vs {page}");
+        // The jump history too (Vim's 3<C-o>): three jumps, then back two
+        // entries and forward two.
+        let mut t = now;
+        for page in [1, 2, 3] {
+            s.command(Command::LastPage, Some(page), t);
+            // The jump done: positions are recorded where the view is.
+            t += Duration::from_secs(2);
+            s.tick(t);
+        }
+        let back = s.back.len();
+        s.command(Command::Back, Some(2), now);
+        assert_eq!((s.back.len(), s.forward.len()), (back - 2, 2), "two entries back");
+        s.command(Command::Forward, Some(2), now);
+        assert_eq!((s.back.len(), s.forward.len()), (back, 0));
     }
 
     #[test]
