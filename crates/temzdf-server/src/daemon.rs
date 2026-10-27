@@ -165,7 +165,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
             }
             looks = now_looks;
         }
-        let can_send = clients.values().any(|c| c.attached && !c.awaiting) && !session.holds_frames();
+        let can_send = can_send(&session, &clients);
         let timeout = wait_for(dirty, session.is_animating(), can_send, made, session.next_deadline(), Instant::now())
             .min(SOCKET_CHECK);
         let event = match rx.recv_timeout(timeout) {
@@ -347,6 +347,16 @@ const FIRST_MESSAGE_WITHIN: Duration = Duration::from_secs(10);
 /// or an animation only shortens the wait while a client can take a frame:
 /// otherwise the next frame waits for an event anyway (an acknowledgement,
 /// a client attaching), and waking up for it would spin.
+/// Whether a frame could go out now: some client takes one, and the session
+/// has one to show (not while it starts: no frame is made then, and waiting
+/// on `dirty` alone would spin).
+fn can_send(session: &Session, clients: &HashMap<ClientId, Client>) -> bool {
+    !session.is_starting()
+        && session.error().is_none()
+        && clients.values().any(|c| c.attached && !c.awaiting)
+        && !session.holds_frames()
+}
+
 fn wait_for(
     dirty: bool,
     animating: bool,
@@ -555,6 +565,29 @@ impl Drop for RemoveOnDrop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_starting_session_waits_instead_of_spinning() {
+        let sink: crate::session::EventSink = std::sync::Arc::new(|_| true);
+        let settings = crate::session::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let geometry = Geometry { cols: 80, rows: 24, cell: termpix_core::geom::CellSize { width: 10, height: 20 } };
+        // No pane yet: starting.
+        let session = Session::new("t".into(), geometry, Hints::default(), settings, sink);
+        assert!(session.is_starting());
+        let client = Client {
+            tx: mpsc::channel().0,
+            attached: true,
+            pending: HashMap::new(),
+            awaiting: false,
+            shown: 0,
+            geometry: None,
+            hints: None,
+        };
+        let clients = HashMap::from([(1, client)]);
+        let now = Instant::now();
+        let t = wait_for(true, false, can_send(&session, &clients), now - FRAME * 2, session.next_deadline(), now);
+        assert!(t > Duration::from_millis(100), "{t:?}");
+    }
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri has no Unix sockets")]
