@@ -58,7 +58,7 @@ tests=$(for p in "${packages[@]}"; do
     sed -n "s/: test\$//p" | sed "s/^/$p /"
 done)
 # shellcheck disable=SC2016
-results=$(xargs -P "$(nproc)" -L 1 bash -c '
+results=$(xargs -r -P "$(nproc)" -L 1 bash -c '
   log=$logs/$0.${1//::/-}.log
   if cargo miri test -q --color never -p "$0" $(targets "$0") -- --exact "$1" >"$log" 2>&1; then
     if grep -q "1 ignored" "$log"; then echo IGNORED; else echo PASS; fi

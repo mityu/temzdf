@@ -6,6 +6,8 @@
 # Re-executes inside the Nix dev shell when needed.
 #
 # Usage: scripts/mutate.sh [-n] FILE OLD NEW -- COMMAND [ARGS...]
+#   FILE is relative to the repository root (the script runs from there,
+#   wherever it is started); occurrences of OLD are counted overlapping too.
 #   e.g. scripts/mutate.sh crates/termpix/src/input.rs \
 #          "(sgr && b[i] == b'-')" "false" -- cargo test -p termpix --lib input
 #
@@ -40,8 +42,15 @@ shift 4
 
 # The whole file, trailing newlines included.
 IFS= read -r -d '' content <"$file" || true
-rest=${content//"$old"/}
-count=$(((${#content} - ${#rest}) / ${#old}))
+# Overlapping occurrences count too (`aa` is twice in `aaa`): each search
+# starts one character after the previous match began.
+count=0
+s=$content
+while [[ $s == *"$old"* ]]; do
+  count=$((count + 1))
+  before=${s%%"$old"*}
+  s=${s:$((${#before} + 1))}
+done
 if ((count != 1)); then
   echo "OLD occurs $count times in $file (needs exactly 1)" >&2
   exit 2

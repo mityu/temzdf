@@ -267,12 +267,20 @@ impl Term {
         static N: AtomicU32 = AtomicU32::new(0);
         let socket = format!("tuitest-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
         let conf = std::env::temp_dir().join(format!("{socket}.conf"));
-        std::fs::write(
-            &conf,
-            "set -g allow-passthrough on\nset -g status off\nset -sg escape-time 0\nset -g default-terminal tmux-256color\n\
-             set -g prefix None\nset -g prefix2 None\nunbind C-b\n",
-        )
-        .expect("tmux configuration");
+        // A new file only: the name is predictable in a shared directory,
+        // and an existing one (or a link planted there) is not ours.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&conf)
+            .and_then(|mut f| {
+                std::io::Write::write_all(
+                    &mut f,
+                    b"set -g allow-passthrough on\nset -g status off\nset -sg escape-time 0\nset -g default-terminal tmux-256color\n\
+                      set -g prefix None\nset -g prefix2 None\nunbind C-b\n",
+                )
+            })
+            .expect("tmux configuration");
         let mut full: Vec<String> = vec!["tmux".into(), "-L".into(), socket.clone(), "-f".into()];
         full.push(conf.display().to_string());
         let tmux = Tmux { socket, conf };
