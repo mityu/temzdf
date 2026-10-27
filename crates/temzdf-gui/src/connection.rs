@@ -79,18 +79,20 @@ pub fn temzdf_exe() -> PathBuf {
 /// Returns its name and whether it was started here.
 pub fn session_for(name: Option<&str>, file: Option<&Path>) -> Result<(String, bool)> {
     let exists = |n: &str| proto::discovery::list().is_ok_and(|l| l.iter().any(|s| s.name == n));
-    let start = |n: &str| -> Result<(String, bool)> {
+    // A name of its own (`-s`) taken meanwhile is an error; one picked here
+    // is picked again.
+    let start = |choose: &dyn Fn() -> Result<String>, retry: bool| -> Result<(String, bool)> {
         let pane = temzdf_client::first_pane(file)?;
-        temzdf_client::spawn_server(&temzdf_exe(), n, &pane, None, None, false)?;
-        Ok((n.to_owned(), true))
+        let spawn = |n: &str| temzdf_client::spawn_server(&temzdf_exe(), n, &pane, None, None, false);
+        Ok((temzdf_client::spawn_named(choose, retry, spawn)?, true))
     };
     match (name, file) {
         (Some(n), _) if exists(n) => Ok((n.to_owned(), false)),
-        (Some(n), _) => start(n),
-        (None, Some(f)) => start(&temzdf_client::name_for(f)?),
+        (Some(n), _) => start(&|| Ok(n.to_owned()), false),
+        (None, Some(f)) => start(&|| temzdf_client::name_for(f), true),
         (None, None) => match proto::discovery::list()?.as_slice() {
             [one] => Ok((one.name.clone(), false)),
-            [] => start(&temzdf_client::name_for(Path::new("temzdf"))?),
+            [] => start(&|| temzdf_client::name_for(Path::new("temzdf")), true),
             many => bail!(
                 "several sessions, name one with -s: {}",
                 many.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")

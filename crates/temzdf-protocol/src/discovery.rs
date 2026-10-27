@@ -27,6 +27,12 @@ pub fn probe(socket: &Path) -> Option<SessionInfo> {
     info
 }
 
+/// Whether a server holds the lock of session `name` (it may be starting:
+/// locked, not listening yet).
+pub fn name_locked(name: &str) -> bool {
+    crate::socket_path(name).is_ok_and(|s| locked(&s))
+}
+
 /// Whether a server holds the lock of the session whose socket is `socket`
 /// (`NAME.lock` next to it).
 fn locked(socket: &std::path::Path) -> bool {

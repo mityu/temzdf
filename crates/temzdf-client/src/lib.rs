@@ -20,17 +20,62 @@ const NAMES: [&str; 26] = [
 
 /// A name for a new session nobody named: the first of [`NAMES`] not taken.
 pub fn auto_name() -> Result<String> {
-    let taken: Vec<String> = proto::discovery::list()?.into_iter().map(|i| i.name).collect();
-    Ok(pick_name(&taken))
+    let is_taken = taken_names()?;
+    Ok(pick_name(|n| is_taken(n)))
 }
 
-/// The first of [`NAMES`] not in `taken`; then `alfa-2`, `bravo-2`, ...,
+/// Whether a session name is in use: a live session, or a server that holds
+/// its lock (starting, not listening yet).
+fn taken_names() -> Result<impl Fn(&str) -> bool> {
+    let live: Vec<String> = proto::discovery::list()?.into_iter().map(|i| i.name).collect();
+    Ok(move |n: &str| live.iter().any(|l| l == n) || proto::discovery::name_locked(n))
+}
+
+/// The first of [`NAMES`] not taken; then `alfa-2`, `bravo-2`, ...,
 /// `alfa-3`, and so on.
-fn pick_name(taken: &[String]) -> String {
+fn pick_name(taken: impl Fn(&str) -> bool) -> String {
     (1..)
         .flat_map(|round| NAMES.iter().map(move |n| if round == 1 { (*n).to_owned() } else { format!("{n}-{round}") }))
-        .find(|n| !taken.contains(n))
+        .find(|n| !taken(n))
         .expect("names never run out")
+}
+
+/// `spawn_server` found the name taken by another server (one started at
+/// the same time may win it).
+#[derive(Debug)]
+pub struct NameTaken(pub String);
+
+impl std::fmt::Display for NameTaken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "session {:?} already exists (attach with `temzdf attach {}`)", self.0, self.0)
+    }
+}
+
+impl std::error::Error for NameTaken {}
+
+/// Start a session under a name `choose` gives: again with the next name
+/// when another server took it meanwhile (`retry`, for names temzdf picks),
+/// or the error. Returns the name. See [`spawn_server`].
+pub fn spawn_named(
+    choose: impl Fn() -> Result<String>,
+    retry: bool,
+    spawn: impl Fn(&str) -> Result<()>,
+) -> Result<String> {
+    for _ in 0..20 {
+        let name = choose()?;
+        match spawn(&name) {
+            Ok(()) => return Ok(name),
+            Err(e) if retry && e.downcast_ref::<NameTaken>().is_some() => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    bail!("no free session name (other servers keep taking them)")
+}
+
+/// Whether `info` is the server `spawn_server` started (process `pid`), not
+/// another one that took the name at the same time.
+fn started(info: &proto::SessionInfo, pid: u32) -> bool {
+    info.pid == pid
 }
 
 /// A session name from a file name: its stem with characters outside
@@ -45,10 +90,10 @@ pub fn name_for(file: &Path) -> Result<String> {
     if base.is_empty() {
         base = "temzdf".into();
     }
-    let taken: Vec<String> = proto::discovery::list()?.into_iter().map(|i| i.name).collect();
+    let taken = taken_names()?;
     let mut name = base.clone();
     let mut n = 2;
-    while taken.contains(&name) {
+    while taken(&name) {
         name = format!("{base}-{n}");
         n += 1;
     }
@@ -83,7 +128,7 @@ pub fn spawn_server(
     }
     let socket = proto::socket_path(name)?;
     if proto::discovery::probe(&socket).is_some() {
-        bail!("session {name:?} already exists (attach with `temzdf attach {name}`)");
+        return Err(NameTaken(name.to_owned()).into());
     }
     let log = log_dir().map(|d| d.join(format!("{name}.log")));
     let open_log = |p: &Path| -> Result<std::fs::File> {
@@ -124,10 +169,20 @@ pub fn spawn_server(
     cmd.arg(name).arg("--").args(pane);
     let mut child = cmd.stdin(std::process::Stdio::null()).stdout(out).stderr(err).spawn()?;
     for _ in 0..200 {
-        if proto::discovery::probe(&socket).is_some() {
-            return Ok(());
+        match proto::discovery::probe(&socket) {
+            Some(info) if started(&info, child.id()) => return Ok(()),
+            // Another server started at the same time won the name.
+            Some(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(NameTaken(name.to_owned()).into());
+            }
+            None => {}
         }
         if let Some(status) = child.try_wait()? {
+            if proto::discovery::name_locked(name) {
+                return Err(NameTaken(name.to_owned()).into());
+            }
             let last = log.map(|p| last_lines(&p, start, 3)).unwrap_or_default();
             bail!("the session server exited ({status}):\n{last}");
         }
@@ -266,16 +321,46 @@ mod tests {
 
     #[test]
     fn unnamed_sessions_take_the_first_free_word() {
-        let taken = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
-        assert_eq!(pick_name(&[]), "alfa");
-        assert_eq!(pick_name(&taken(&["alfa", "charlie", "mine"])), "bravo");
-        let all: Vec<String> = NAMES.iter().map(|n| (*n).to_owned()).collect();
-        assert_eq!(pick_name(&all), "alfa-2");
-        let mut more = all.clone();
-        more.push("alfa-2".into());
-        assert_eq!(pick_name(&more), "bravo-2");
+        let taken = |names: &'static [&'static str]| move |n: &str| names.contains(&n);
+        assert_eq!(pick_name(taken(&[])), "alfa");
+        assert_eq!(pick_name(taken(&["alfa", "charlie", "mine"])), "bravo");
+        assert_eq!(pick_name(|n| NAMES.contains(&n)), "alfa-2");
+        assert_eq!(pick_name(|n| NAMES.contains(&n) || n == "alfa-2"), "bravo-2");
         // Each fits a session name.
         assert!(NAMES.iter().all(|n| proto::valid_name(n)));
+    }
+
+    #[test]
+    fn another_server_on_the_socket_is_not_ours() {
+        let info = |pid| proto::SessionInfo {
+            version: proto::VERSION,
+            name: "alfa".into(),
+            pid,
+            tabs: 1,
+            panes: 1,
+            buffers: 1,
+            clients: 0,
+            files: vec![],
+            log: None,
+        };
+        assert!(started(&info(42), 42));
+        assert!(!started(&info(41), 42), "a server started at the same time");
+        // A name another server took is retried with the next one.
+        let names = std::cell::RefCell::new(vec!["bravo", "alfa"]);
+        let spawned = std::cell::RefCell::new(Vec::new());
+        let got = spawn_named(
+            || Ok(names.borrow_mut().pop().unwrap().to_owned()),
+            true,
+            |n| {
+                spawned.borrow_mut().push(n.to_owned());
+                if n == "alfa" { Err(NameTaken(n.into()).into()) } else { Ok(()) }
+            },
+        )
+        .unwrap();
+        assert_eq!((got.as_str(), spawned.borrow().len()), ("bravo", 2));
+        // A name the user gave is not.
+        let e = spawn_named(|| Ok("alfa".into()), false, |n| Err(NameTaken(n.into()).into())).unwrap_err();
+        assert!(e.to_string().contains("already exists"));
     }
 
     #[test]

@@ -1124,3 +1124,22 @@ fn a_session_in_use_outlives_a_removed_socket() {
         assert!(session_names(&env).contains(&"sg".to_owned()), "listening again");
     }
 }
+
+#[test]
+fn sessions_started_at_once_get_names_of_their_own() {
+    let env = Env::new("race");
+    let (a, b) = (env.path("a.pdf"), env.path("b.pdf"));
+    std::fs::copy(fixture("sample.pdf"), &a).unwrap();
+    std::fs::copy(fixture("sample.pdf"), &b).unwrap();
+    // Started together: both see no session yet and want "alfa".
+    let mut ta = Term::spawn(&[BIN, &a.display().to_string()], &env.options());
+    let mut tb = Term::spawn(&[BIN, &b.display().to_string()], &env.options());
+    let sa = ta.wait_for("a's pages", |s| !s.images.is_empty() && s.title.contains(".pdf"));
+    let sb = tb.wait_for("b's pages", |s| !s.images.is_empty() && s.title.contains(".pdf"));
+    // Each client shows its own file, in its own session.
+    assert!(sa.title.starts_with("a.pdf"), "{}", sa.title);
+    assert!(sb.title.starts_with("b.pdf"), "{}", sb.title);
+    let mut names = session_names(&env);
+    names.sort();
+    assert_eq!(names, ["alfa", "bravo"]);
+}

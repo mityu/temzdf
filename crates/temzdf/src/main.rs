@@ -285,11 +285,11 @@ fn main() -> Result<()> {
             return Ok(());
         }
         let name = match &cli.session {
-            Some(n) => n.clone(),
-            None => client::auto_name()?,
+            Some(n) => Naming::Given(n.clone()),
+            None => Naming::Auto,
         };
         let file = file.to_owned();
-        return start_session(&name, Some(&file.clone()), &cli, move || {
+        return start_session(name, Some(&file.clone()), &cli, move || {
             // The pane listens once it has opened the file.
             std::thread::spawn(move || {
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -313,25 +313,40 @@ fn main() -> Result<()> {
             }
             // `temzdf -s doc.pdf`: the name was the file.
             match &cli.file {
-                Some(f) => (name.clone(), Some(f.clone())),
+                Some(f) => (Naming::Given(name.clone()), Some(f.clone())),
                 None if std::path::Path::new(name).is_file() => {
-                    (client::name_for(name.as_ref())?, Some(PathBuf::from(name)))
+                    (Naming::AfterFile(PathBuf::from(name)), Some(PathBuf::from(name)))
                 }
-                None => (name.clone(), None),
+                None => (Naming::Given(name.clone()), None),
             }
         }
-        None => (client::auto_name()?, cli.file.clone()),
+        None => (Naming::Auto, cli.file.clone()),
     };
-    start_session(&name, file.as_deref(), &cli, || {})
+    start_session(name, file.as_deref(), &cli, || {})
 }
 
-/// Start session `name` showing `file` (a shell without), run `started` once
-/// its server listens, and attach to it.
-fn start_session(name: &str, file: Option<&std::path::Path>, cli: &Cli, started: impl FnOnce()) -> Result<()> {
+/// How a new session is named.
+enum Naming {
+    /// By the user (`-s NAME`): taken already is an error.
+    Given(String),
+    /// alfa, bravo, ...: the next one if another server takes it first.
+    Auto,
+    /// After a file (`-s doc.pdf`): doc, doc-2, ...
+    AfterFile(PathBuf),
+}
+
+/// Start a session showing `file` (a shell without), run `started` once its
+/// server listens, and attach to it.
+fn start_session(naming: Naming, file: Option<&std::path::Path>, cli: &Cli, started: impl FnOnce()) -> Result<()> {
     let pane = client::first_pane(file)?;
-    client::spawn_server(name, &pane, cli.config.as_deref(), cli.editor.as_deref(), cli.clean)?;
+    let spawn = |n: &str| client::spawn_server(n, &pane, cli.config.as_deref(), cli.editor.as_deref(), cli.clean);
+    let name = match &naming {
+        Naming::Given(n) => temzdf_client::spawn_named(|| Ok(n.clone()), false, spawn)?,
+        Naming::Auto => temzdf_client::spawn_named(client::auto_name, true, spawn)?,
+        Naming::AfterFile(f) => temzdf_client::spawn_named(|| client::name_for(f), true, spawn)?,
+    };
     started();
-    println!("{}", client::attach(name)?);
+    println!("{}", client::attach(&name)?);
     Ok(())
 }
 
