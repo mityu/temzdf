@@ -283,6 +283,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore = "Miri on macOS gives another user id than the files' owner")]
     fn private_dirs_are_ours_alone() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = std::env::temp_dir().join(format!("temzdf-private-{}", std::process::id()));
@@ -385,6 +386,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[cfg_attr(miri, ignore = "confstr returns nothing under Miri")]
     fn darwin_user_temp_dir_exists() {
         let dir = darwin_user_temp_dir().unwrap();
         assert!(dir.is_dir(), "{dir:?}");
