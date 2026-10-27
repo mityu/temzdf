@@ -72,7 +72,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         bail!("invalid session name {name:?}");
     }
     let socket = proto::socket_path(name)?;
-    let (_lock, listener, _cleanup) = claim_socket(name, &socket)?;
+    let (mut lock, listener, mut cleanup) = claim_socket(name, &socket)?;
     eprintln!("temzdf server: session {name} on {} (pid {})", socket.display(), std::process::id());
 
     let (tx, rx) = mpsc::channel::<Event>();
@@ -80,16 +80,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         let tx = Mutex::new(tx.clone());
         Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(Event::Session(e)).is_ok())
     };
-    {
-        let tx = tx.clone();
-        std::thread::Builder::new().name("temzdf-accept".into()).spawn(move || {
-            for stream in listener.incoming().flatten() {
-                if tx.send(Event::Connected(stream)).is_err() {
-                    return;
-                }
-            }
-        })?;
-    }
+    accept(listener, tx.clone())?;
     let mut session = Session::new(name.to_owned(), DEFAULT_GEOMETRY, Hints::default(), settings, events);
     session.start(first.clone(), None)?;
     let mut clients: HashMap<ClientId, Client> = HashMap::new();
@@ -110,15 +101,30 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     loop {
         // A session nobody can reach (its socket removed, or replaced by
         // another server's) ends: tests' temporary directories go, and
-        // orphans must not live on.
+        // orphans must not live on. One in use carries on (a cleaner of
+        // /tmp or of the runtime directory must not kill its programs),
+        // listening again where it can.
         if socket_checked.elapsed() >= SOCKET_CHECK {
             socket_checked = Instant::now();
-            if !_cleanup.still_ours() {
-                eprintln!("temzdf server: the socket is gone; ending session {name}");
-                for c in clients.values() {
-                    let _ = c.tx.send(ServerMsg::Exit(ExitReason::SessionEnded));
+            let attached = clients.values().filter(|c| c.attached).count();
+            let answered = || UnixStream::connect(&socket).is_ok();
+            match socket_check(cleanup.still_ours(), attached, answered) {
+                SocketCheck::Fine => {}
+                SocketCheck::End => {
+                    eprintln!("temzdf server: the socket is gone; ending session {name}");
+                    for c in clients.values() {
+                        let _ = c.tx.send(ServerMsg::Exit(ExitReason::SessionEnded));
+                    }
+                    break;
                 }
-                break;
+                SocketCheck::Rebind => match rebind(name, &mut lock) {
+                    Ok((listener, c)) => {
+                        cleanup = c;
+                        accept(listener, tx.clone())?;
+                        eprintln!("temzdf server: the socket was gone; listening again on {}", socket.display());
+                    }
+                    Err(e) => eprintln!("temzdf server: the socket is gone and cannot be made again: {e:#}"),
+                },
             }
         }
         // A new frame when something changed and a client can take it; clients
@@ -500,6 +506,71 @@ fn start_writer(mut stream: UnixStream, rx: mpsc::Receiver<ServerMsg>) -> Result
     Ok(())
 }
 
+/// Accept connections on `listener` into the event loop.
+fn accept(listener: UnixListener, tx: Sender<Event>) -> Result<()> {
+    std::thread::Builder::new().name("temzdf-accept".into()).spawn(move || {
+        for stream in listener.incoming().flatten() {
+            if tx.send(Event::Connected(stream)).is_err() {
+                return;
+            }
+        }
+    })?;
+    Ok(())
+}
+
+/// What the periodic socket check does.
+#[derive(Debug, PartialEq)]
+enum SocketCheck {
+    Fine,
+    /// Gone: listen at the path again.
+    Rebind,
+    End,
+}
+
+/// The socket check: a session nobody is attached to ends when its socket
+/// is not its own any more; one in use carries on, and listens again unless
+/// something else answers at the path.
+fn socket_check(still_ours: bool, attached: usize, answered: impl FnOnce() -> bool) -> SocketCheck {
+    if still_ours {
+        SocketCheck::Fine
+    } else if attached == 0 {
+        SocketCheck::End
+    } else if answered() {
+        SocketCheck::Fine
+    } else {
+        SocketCheck::Rebind
+    }
+}
+
+/// Listen for session `name` again after its socket was removed. The lock
+/// (`NAME.lock`) is taken again if its file went too, so no other server
+/// gets the name meanwhile.
+fn rebind(name: &str, lock: &mut std::fs::File) -> Result<(UnixListener, RemoveOnDrop)> {
+    use std::os::unix::fs::MetadataExt;
+    // Makes the directory again if it is gone.
+    let socket = proto::socket_path(name)?;
+    let lock_path = socket.with_extension("lock");
+    let held = lock.metadata().ok().map(|m| (m.dev(), m.ino()));
+    if file_id(&lock_path) != held {
+        let new = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .with_context(|| format!("cannot open {}", lock_path.display()))?;
+        match new.try_lock() {
+            Ok(()) => *lock = new,
+            Err(std::fs::TryLockError::WouldBlock) => bail!("another server took session {name:?}"),
+            Err(std::fs::TryLockError::Error(e)) => {
+                return Err(e).context(format!("cannot lock {}", lock_path.display()));
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket).with_context(|| format!("cannot listen on {}", socket.display()))?;
+    Ok((listener, RemoveOnDrop::new(&socket)))
+}
+
 /// Take the socket of session `name`: lock the session (`NAME.lock`, held
 /// for the server's life, so two servers started at once cannot both
 /// think the name free and unlink each other's socket), refuse a socket
@@ -565,6 +636,15 @@ impl Drop for RemoveOnDrop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_in_use_outlives_its_socket() {
+        let never = || -> bool { panic!("not asked") };
+        assert_eq!(socket_check(true, 0, never), SocketCheck::Fine);
+        assert_eq!(socket_check(false, 0, never), SocketCheck::End, "nobody can reach it");
+        assert_eq!(socket_check(false, 1, || false), SocketCheck::Rebind, "in use: listen again");
+        assert_eq!(socket_check(false, 2, || true), SocketCheck::Fine, "another server there: carry on");
+    }
 
     #[test]
     fn a_starting_session_waits_instead_of_spinning() {

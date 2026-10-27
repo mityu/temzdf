@@ -1103,3 +1103,24 @@ fn ls_fonts_shows_the_configured_fonts_or_a_sessions() {
     env.run(&["action", "-s", "lf", "font-size", "20"]);
     assert_eq!(run(&["ls-fonts", "-s", "lf"]), "ls-fonts|--font|No Such Font:20|--font|Other|--font-wide|Wide|");
 }
+
+#[test]
+fn a_session_in_use_outlives_a_removed_socket() {
+    let env = Env::new("sock-gone");
+    let mut t = Term::spawn(&[BIN, "-s", "sg"], &env.options());
+    t.wait_for("the prompt", prompt);
+    let dir = env.path("run/temzdf/sessions");
+    // A cleaner removes the socket, then the whole directory (the lock too).
+    for round in 0..2 {
+        if round == 0 {
+            std::fs::remove_file(dir.join("sg.sock")).unwrap();
+        } else {
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        // The server checks every 2 s.
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        t.type_text(&format!("echo alive-{round}\n"));
+        t.wait_text(&format!("alive-{round}"));
+        assert!(session_names(&env).contains(&"sg".to_owned()), "listening again");
+    }
+}
