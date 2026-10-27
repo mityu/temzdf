@@ -205,12 +205,6 @@ const MAX_MAP_DEPTH: usize = 1000;
 /// Layer key owner for the session's own layers.
 const OWNER_SESSION: u32 = u32::MAX;
 
-/// Whether a pane put at `spot` takes the focus (a float may be opened
-/// without it).
-fn takes_focus(spot: &Spot) -> bool {
-    !matches!(spot, Spot::Float(s) if !s.focus)
-}
-
 /// Where a pane goes.
 #[derive(Clone, Debug)]
 enum Spot {
@@ -605,7 +599,7 @@ impl Session {
             return Some(p);
         }
         let id = self.alloc_id();
-        let focus = takes_focus(&spot);
+        let focus = self.takes_focus(&spot);
         if let Err(e) = self.place(id, spot) {
             self.message(&e.to_string());
             return None;
@@ -828,7 +822,7 @@ impl Session {
     /// Start a program in a new terminal pane.
     fn open_terminal(&mut self, spawn: &Spawn, spot: Spot) -> Result<PaneId> {
         let id = self.alloc_id();
-        let focus = takes_focus(&spot);
+        let focus = self.takes_focus(&spot);
         let rect = self.place(id, spot)?;
         let buf = self.alloc_id();
         let events = self.events.clone();
@@ -2176,6 +2170,22 @@ mod tests {
         key(&mut s, "<C-b>");
         assert_eq!(key(&mut s, "d"), Outcome::Detach);
         assert_eq!(key(&mut s, "q"), Outcome::Quit, "quitting the last pane ends the session");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_float_for_another_tab_page_does_not_take_the_focus_here() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "one");
+        let one = s.focus;
+        new_tab(&mut s, &["sleep", "30"]);
+        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        let f = float(&mut s, &["sleep", "30"], &[("tabpage", ScriptValue::Num(2.0))]);
+        assert_eq!(s.focus, one, "keys must not go to a pane nobody sees");
+        assert!(s.here_panes().contains(&s.focus));
+        assert!(s.shown_floats().is_empty());
+        cmd(&mut s, "goto-tab", &["2"], None).unwrap();
+        assert!(s.shown_floats().iter().any(|x| x.pane == f), "it shows on its tab page");
     }
 
     #[test]

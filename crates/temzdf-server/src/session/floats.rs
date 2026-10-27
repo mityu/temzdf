@@ -286,9 +286,25 @@ impl Session {
         let title = spec.title.clone();
         let tab = spec.tab.unwrap_or(FloatTab::Only(self.tab_id()));
         self.floats.push(Float { frame, title, ..Float::new(id, spec, tab) });
-        // A new float shows the others too.
-        self.floats_hidden = false;
+        // A new float shows the others of its tab page too.
+        if self.here(tab) {
+            self.floats_hidden = false;
+        } else if let FloatTab::Only(t) = tab
+            && let Some(i) = self.tab_index(t)
+        {
+            self.show_tab_floats(i);
+        }
         content(frame)
+    }
+
+    /// Whether a pane put at `spot` takes the focus: not a float opened
+    /// without it, nor one for another tab page (keys would go to a pane
+    /// nobody sees).
+    pub(super) fn takes_focus(&self, spot: &Spot) -> bool {
+        match spot {
+            Spot::Float(s) => s.focus && s.tab.is_none_or(|t| self.here(t)),
+            _ => true,
+        }
     }
 
     /// Raise a float to the top.
@@ -392,7 +408,7 @@ impl Session {
             }
             FloatWhat::Buffer(buf) if self.terms.contains_key(&buf) => {
                 let id = self.alloc_id();
-                let focus = super::takes_focus(&spot);
+                let focus = self.takes_focus(&spot);
                 let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
                 self.terminal_pane(id, buf, rect, focus);
                 Some(id)

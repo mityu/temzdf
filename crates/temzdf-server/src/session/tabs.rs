@@ -61,6 +61,15 @@ impl Session {
         if i == self.tab { self.floats_hidden } else { self.tabs[i].saved.as_ref().is_some_and(|s| s.floats_hidden) }
     }
 
+    /// Show tab `i`'s floats (a new one opened there).
+    pub(super) fn show_tab_floats(&mut self, i: usize) {
+        if i == self.tab {
+            self.floats_hidden = false;
+        } else if let Some(saved) = self.tabs.get_mut(i).and_then(|t| t.saved.as_mut()) {
+            saved.floats_hidden = false;
+        }
+    }
+
     /// The index of tab `id`.
     pub(super) fn tab_index(&self, id: TabId) -> Option<usize> {
         self.tabs.iter().position(|t| t.id == id)
