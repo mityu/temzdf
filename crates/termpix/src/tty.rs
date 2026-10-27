@@ -422,7 +422,8 @@ pub enum TermEvent {
     Input(Event),
     /// SIGWINCH: re-read the window size.
     WindowChanged,
-    /// SIGTERM / SIGHUP: the application should exit.
+    /// SIGTERM / SIGHUP, or the input thread ended (the terminal went, or
+    /// a bug): the application should exit.
     Terminate,
 }
 
@@ -455,30 +456,59 @@ pub fn spawn_input<T: Send + 'static>(
     INPUT_STOP.store(false, Ordering::SeqCst);
     INPUT_RUNNING.store(true, Ordering::SeqCst);
     std::thread::Builder::new().name("termpix-input".into()).spawn(move || {
-        let mut parser = Parser::new();
-        parser.set_pixel_mouse(pixel_mouse);
-        let mut buf = [0u8; 4096];
-        // Wake up now and then to notice INPUT_STOP.
-        let idle = Duration::from_millis(50);
-        while !INPUT_STOP.load(Ordering::SeqCst) {
-            let pending = parser.has_pending();
-            let timeout = if pending { ESC_TIMEOUT } else { idle };
-            let events = match read_timeout(reader.file.as_fd(), &mut buf, Some(timeout)) {
-                Ok(None) if pending => parser.flush(),
-                Ok(None) => continue,
-                Ok(Some(0)) | Err(_) => break,
-                Ok(Some(n)) => parser.feed(&buf[..n]),
-            };
-            for ev in events {
-                if tx.send(map(TermEvent::Input(ev))).is_err() {
-                    INPUT_RUNNING.store(false, Ordering::SeqCst);
-                    return;
-                }
-            }
-        }
+        input_loop(reader.file.as_fd(), pixel_mouse, &tx, &map, &INPUT_STOP);
         INPUT_RUNNING.store(false, Ordering::SeqCst);
     })?;
     Ok(())
+}
+
+/// Parse input from `fd` into `tx` until `stop` (or nobody listens). Ending
+/// otherwise (a read error, end of file, a panic) leaves the application
+/// without keys, in raw mode where Ctrl-C sends no signal: it is told to
+/// exit ([`TermEvent::Terminate`]).
+fn input_loop<T>(
+    fd: BorrowedFd<'_>,
+    pixel_mouse: bool,
+    tx: &Sender<T>,
+    map: &impl Fn(TermEvent) -> T,
+    stop: &AtomicBool,
+) {
+    /// Sends `Terminate` when dropped armed, unwinding included.
+    struct Guard<'a, T, F: Fn(TermEvent) -> T> {
+        tx: &'a Sender<T>,
+        map: &'a F,
+        armed: bool,
+    }
+    impl<T, F: Fn(TermEvent) -> T> Drop for Guard<'_, T, F> {
+        fn drop(&mut self) {
+            if self.armed {
+                let _ = self.tx.send((self.map)(TermEvent::Terminate));
+            }
+        }
+    }
+    let mut guard = Guard { tx, map, armed: true };
+    let mut parser = Parser::new();
+    parser.set_pixel_mouse(pixel_mouse);
+    let mut buf = [0u8; 4096];
+    // Wake up now and then to notice `stop`.
+    let idle = Duration::from_millis(50);
+    while !stop.load(Ordering::SeqCst) {
+        let pending = parser.has_pending();
+        let timeout = if pending { ESC_TIMEOUT } else { idle };
+        let events = match read_timeout(fd, &mut buf, Some(timeout)) {
+            Ok(None) if pending => parser.flush(),
+            Ok(None) => continue,
+            Ok(Some(0)) | Err(_) => return,
+            Ok(Some(n)) => parser.feed(&buf[..n]),
+        };
+        for ev in events {
+            if tx.send(map(TermEvent::Input(ev))).is_err() {
+                guard.armed = false;
+                return;
+            }
+        }
+    }
+    guard.armed = false;
 }
 
 /// Redirects the process's stdout and stderr (file descriptors 1 and 2) to a
@@ -518,6 +548,23 @@ impl Drop for StdioRedirect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot poll file descriptors")]
+    fn the_application_is_told_when_input_ends() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        // The terminal went (end of file), keys still queued before it.
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        writer.write_all(b"q").unwrap();
+        drop(writer);
+        input_loop(reader.as_fd(), false, &tx, &|e| e, &AtomicBool::new(false));
+        let events: Vec<_> = rx.try_iter().collect();
+        assert!(matches!(events[..], [TermEvent::Input(_), TermEvent::Terminate]), "{events:?}");
+        // Stopped on purpose: nothing.
+        let (reader, _writer) = std::io::pipe().unwrap();
+        input_loop(reader.as_fd(), false, &tx, &|e| e, &AtomicBool::new(true));
+        assert_eq!(rx.try_iter().count(), 0);
+    }
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a tty")]
