@@ -39,7 +39,7 @@ What exists:
   (`crates/temzdf/src/client.rs`).
 - Commands follow zellij: `temzdf [FILE]` starts a session named after the
   NATO alphabet (alfa, bravo, ...; then alfa-2), `temzdf -s NAME [FILE]` names it (a shell without FILE),
-  `attach [-c] [NAME [FILE]]` (`a`), `list-sessions` (`ls`), `kill-session`
+  `attach [-c] [NAME [FILE]]` (`a`), `list-sessions` (`ls`; the session it runs in is marked `(current)`), `kill-session`
   (`k`), `kill-all-sessions` (`ka`), `action [-s NAME] COMMAND ARGS...`: any
   command of the registry (`temzdf print-types` lists them), e.g. `new-pane
   [--cwd DIR] [FILE | -- COMMAND...]`, `split right|down`, `move-focus DIR`,

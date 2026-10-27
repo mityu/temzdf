@@ -1030,6 +1030,12 @@ fn temzdf_alone_starts_a_session_named_for_it() {
     assert_eq!(session_names(&env)[2], "charlie");
     shell.type_text("echo nested-$((3*3))\n");
     shell.wait_text("nested-9");
+    // `ls` marks the session it runs in; from outside, none.
+    shell.type_text(&format!("clear; {BIN} ls\n"));
+    let s = shell.wait_text("(current)");
+    let marked: Vec<String> = s.lines().into_iter().filter(|l| l.contains("(current)")).collect();
+    assert!(marked.len() == 1 && marked[0].starts_with("charlie "), "{marked:?}");
+    assert!(!env.run(&["ls"]).contains("(current)"));
 }
 
 #[test]
