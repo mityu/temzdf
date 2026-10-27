@@ -213,8 +213,12 @@ impl App {
                 g.window.request_redraw();
                 return;
             }
-            // Occluded (before the window says so), a timeout: skipped.
-            _ => {
+            // Skipped. Occluded before the window says so: `Occluded(false)`
+            // redraws later. A timeout gets no such event, so it tries again.
+            other => {
+                if matches!(other, wgpu::CurrentSurfaceTexture::Timeout) {
+                    g.window.request_redraw();
+                }
                 let ack = self.acks.redrawn();
                 return self.ack(ack);
             }
