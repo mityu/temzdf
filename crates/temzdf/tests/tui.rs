@@ -941,6 +941,47 @@ fn the_terminals_focus_reaches_a_program_in_a_session() {
 }
 
 #[test]
+fn hovering_over_another_client_keeps_the_session_size() {
+    use temzdf_protocol::{ClientMsg, ServerMsg};
+    let env = Env::new("hover");
+    let mut t = Term::spawn(&[BIN, "-s", "hv"], &env.options());
+    t.wait_for("the prompt", prompt);
+    // A second client, as a GUI would attach, narrower than the terminal: the
+    // latest client, so the session takes its size.
+    let sock = env.path("run/temzdf/sessions/hv.sock");
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let geometry =
+        termpix::geom::Geometry { cols: 60, rows: 20, cell: termpix::geom::CellSize { width: 10, height: 20 } };
+    let hello = ClientMsg::Hello { version: temzdf_protocol::VERSION, geometry, hints: Default::default() };
+    temzdf_protocol::send(&mut s, &hello).unwrap();
+    // The width of the next frame (acknowledged), None when none comes.
+    let next_width = |s: &mut std::os::unix::net::UnixStream, wait| {
+        s.set_read_timeout(Some(std::time::Duration::from_millis(wait))).unwrap();
+        loop {
+            match temzdf_protocol::recv::<ServerMsg>(&mut *s) {
+                Ok(Some(ServerMsg::Frame { seq, frame, .. })) => {
+                    temzdf_protocol::send(&mut *s, &ClientMsg::FrameAck(seq)).unwrap();
+                    return frame.text.iter().map(|g| g.col + g.width()).max();
+                }
+                Ok(Some(_)) => {}
+                _ => return None,
+            }
+        }
+    };
+    while next_width(&mut s, 10_000).expect("frames for the second client") != 60 {}
+    // The pointer passes over the terminal's window, which is not in use.
+    for col in 10..20 {
+        t.hover(col, 5);
+    }
+    while let Some(w) = next_width(&mut s, 1_000) {
+        assert_eq!(w, 60, "hovering made the terminal the latest client");
+    }
+    // Clicking is using it: its size applies.
+    t.click(10, 5);
+    while next_width(&mut s, 10_000).expect("a frame at the terminal's size") != 100 {}
+}
+
+#[test]
 fn an_attaching_client_is_told_how_to_look() {
     use temzdf_protocol::{ClientMsg, ServerMsg};
     let env = Env::new("appearance");

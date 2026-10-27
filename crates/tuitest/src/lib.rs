@@ -225,6 +225,7 @@ pub fn have_tmux() -> bool {
 
 #[derive(Clone, Copy)]
 enum MouseStep {
+    Move,
     Press,
     Drag,
     Release,
@@ -588,6 +589,12 @@ impl Term {
         ]);
     }
 
+    /// Move the pointer, no button held, to the centre of a cell (sent only
+    /// if the program tracks any motion, mode 1003).
+    pub fn hover(&mut self, col: u16, row: u16) {
+        self.mouse(&[(MouseStep::Move, col, row, 0.5)]);
+    }
+
     /// Turn the mouse wheel by one notch over a cell.
     pub fn wheel(&mut self, col: u16, row: u16, down: bool) {
         self.mouse(&[(if down { MouseStep::WheelDown } else { MouseStep::WheelUp }, col, row, 0.5)]);
@@ -619,14 +626,15 @@ impl Term {
         for &(step, col, row, frac) in steps {
             let position = mouse::Position { x: (col as f32 + frac) * cw as f32, y: (row as f32 + 0.5) * ch as f32 };
             let (action, pressed, button) = match step {
-                MouseStep::Press => (mouse::Action::Press, true, mouse::Button::Left),
-                MouseStep::Drag => (mouse::Action::Motion, true, mouse::Button::Left),
-                MouseStep::Release => (mouse::Action::Release, false, mouse::Button::Left),
-                MouseStep::WheelUp => (mouse::Action::Press, false, mouse::Button::Four),
-                MouseStep::WheelDown => (mouse::Action::Press, false, mouse::Button::Five),
+                MouseStep::Move => (mouse::Action::Motion, false, None),
+                MouseStep::Press => (mouse::Action::Press, true, Some(mouse::Button::Left)),
+                MouseStep::Drag => (mouse::Action::Motion, true, Some(mouse::Button::Left)),
+                MouseStep::Release => (mouse::Action::Release, false, Some(mouse::Button::Left)),
+                MouseStep::WheelUp => (mouse::Action::Press, false, Some(mouse::Button::Four)),
+                MouseStep::WheelDown => (mouse::Action::Press, false, Some(mouse::Button::Five)),
             };
             let mut event = mouse::Event::new().expect("mouse event");
-            event.set_action(action).set_button(Some(button)).set_position(position);
+            event.set_action(action).set_button(button).set_position(position);
             encoder.set_any_button_pressed(pressed);
             let mut bytes = Vec::new();
             if encoder.encode_to_vec(&event, &mut bytes).is_ok() && !bytes.is_empty() {

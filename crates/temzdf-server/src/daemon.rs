@@ -1,6 +1,6 @@
 //! The session server process: one [`Session`] shown to every attached client
 //! over a Unix socket (see `temzdf-protocol`). The latest client to attach or
-//! send input decides the session's size (tmux's `window-size latest`); every
+//! send input (not mere hovering, see [`hovers_elsewhere`]) decides the session's size (tmux's `window-size latest`); every
 //! client gets the same frames, each paced by its own acknowledgements, with
 //! image changes queued per client (latest wins) so a slow client never holds
 //! up the others and catches up with the current state.
@@ -17,6 +17,7 @@ use anyhow::{Context, Result, bail};
 use temzdf_protocol::{self as proto, ClientMsg, ExitReason, ServerMsg, SessionInfo};
 use temzdf_scene::{Frame, Hints, ImageKey, ImageUpdate, Pointer};
 use termpix_core::geom::{CellSize, Geometry};
+use termpix_core::input::MouseEventKind;
 
 use crate::action::PaneSpec;
 use crate::session::{EventSink, Outcome, Session, SessionEvent, Settings};
@@ -222,6 +223,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                         outcome = detach(&mut clients, id);
                     }
                 }
+                ClientMsg::Mouse(m) if hovers_elsewhere(m.kind, latest, id) => {}
                 ClientMsg::Mouse(m) => {
                     dirty |= become_latest(&mut session, &mut latest, &clients, id);
                     outcome = session.mouse(&m, now);
@@ -406,6 +408,15 @@ fn become_latest(
     }
     *latest = Some(id);
     changed
+}
+
+/// Whether a mouse event from client `id` is only the pointer passing over
+/// another client than the latest. Terminals report it over windows that are
+/// not focused (and the GUI's window may be in front), so it is no use of the
+/// client: it must not take the session's size, and its position is on that
+/// client's grid, not the session's. Ignored.
+fn hovers_elsewhere(kind: MouseEventKind, latest: Option<ClientId>, id: ClientId) -> bool {
+    matches!(kind, MouseEventKind::Move | MouseEventKind::Leave) && latest != Some(id)
 }
 
 /// The latest client is gone: the attached client that came last takes
@@ -605,6 +616,26 @@ mod tests {
         clients.remove(&1);
         assert!(!hand_over(&mut session, &mut latest, &clients));
         assert_eq!(latest, None, "nobody to send effects to");
+    }
+
+    #[test]
+    fn only_using_a_client_makes_it_the_latest() {
+        use termpix_core::input::{MouseButton, ScrollDirection};
+        // The pointer passing over another client's window: ignored.
+        assert!(hovers_elsewhere(MouseEventKind::Move, Some(1), 2));
+        assert!(hovers_elsewhere(MouseEventKind::Leave, Some(1), 2));
+        // Over the latest client's: hover effects as usual.
+        assert!(!hovers_elsewhere(MouseEventKind::Move, Some(1), 1));
+        assert!(!hovers_elsewhere(MouseEventKind::Leave, Some(1), 1));
+        // Clicks and scrolling are using the client, wherever they come from.
+        for kind in [
+            MouseEventKind::Press(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Release(MouseButton::Left),
+            MouseEventKind::Scroll(ScrollDirection::Down),
+        ] {
+            assert!(!hovers_elsewhere(kind, Some(1), 2), "{kind:?}");
+        }
     }
 
     #[test]

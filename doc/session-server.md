@@ -71,8 +71,10 @@ What exists:
   `TERM_PROGRAM=temzdf` and `TEMZDF_SESSION_NAME`. The server makes at most
   one frame per 16 ms, so floods of output cost little (`seq 1 500000` takes
   0.14 s in a pane, `tests/e2e/terminal.actions`).
-- Clients: the latest to attach or type sets the session's size and frontend
-  hints; frames are paced per client by acknowledgements, image changes are
+- Clients: the latest to attach or use it (keys, clicks, scrolling, paste;
+  not the pointer merely passing over it, which terminals report even when
+  unfocused, and which is ignored from other clients) sets the session's
+  size and frontend hints; frames are paced per client by acknowledgements, image changes are
   queued per client (latest wins), late attachers get a snapshot; effects
   (copy, opening links, inverse search) run in the latest client.
 
