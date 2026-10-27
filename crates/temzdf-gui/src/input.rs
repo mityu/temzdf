@@ -237,6 +237,11 @@ impl Default for Input {
 
 impl Input {
     pub fn new() -> Self {
+        Self { clipboard: arboard::Clipboard::new().ok(), ..Self::without_clipboard() }
+    }
+
+    /// No clipboard (tests: opening one connects to the display).
+    fn without_clipboard() -> Self {
         Self {
             mods: Modifiers::NONE,
             left_side: true,
@@ -244,7 +249,7 @@ impl Input {
             pointer: (0, 0),
             preedit: String::new(),
             ime_cell: None,
-            clipboard: arboard::Clipboard::new().ok(),
+            clipboard: None,
         }
     }
 
@@ -291,6 +296,29 @@ impl Input {
     }
 
     /// What a window event means for the session.
+    /// An input method event: what goes to the session, and whether the
+    /// window must be drawn again (the composed text changed).
+    pub fn ime(&mut self, ime: &Ime) -> (Vec<ClientMsg>, bool) {
+        match ime {
+            Ime::Preedit(text, _) => {
+                self.preedit = text.clone();
+                (Vec::new(), true)
+            }
+            Ime::Commit(text) => {
+                self.preedit.clear();
+                (vec![ClientMsg::Text(text.clone())], true)
+            }
+            // Turned off (a focus change, macOS switching input sources)
+            // mid-composition: nothing is being composed any more.
+            Ime::Disabled => {
+                let had = !self.preedit.is_empty();
+                self.preedit.clear();
+                (Vec::new(), had)
+            }
+            _ => (Vec::new(), false),
+        }
+    }
+
     pub fn window_event(&mut self, event: &WindowEvent, _g: Geometry, window: &dyn Window) -> Vec<ClientMsg> {
         match event {
             WindowEvent::ModifiersChanged(m) => {
@@ -316,17 +344,22 @@ impl Input {
                 };
                 translate(&k).map(ClientMsg::Key).into_iter().collect()
             }
-            WindowEvent::Ime(Ime::Preedit(text, _)) => {
-                self.preedit = text.clone();
-                window.request_redraw();
-                Vec::new()
+            WindowEvent::Ime(ime) => {
+                let (msgs, redraw) = self.ime(ime);
+                if redraw {
+                    window.request_redraw();
+                }
+                msgs
             }
-            WindowEvent::Ime(Ime::Commit(text)) => {
-                self.preedit.clear();
-                window.request_redraw();
-                vec![ClientMsg::Text(text.clone())]
+            WindowEvent::Focused(gained) => {
+                // A composition does not survive the focus going (Wayland
+                // ends it without a word); its text must not stay drawn.
+                if !gained && !self.preedit.is_empty() {
+                    self.preedit.clear();
+                    window.request_redraw();
+                }
+                vec![ClientMsg::Focus(*gained)]
             }
-            WindowEvent::Focused(gained) => vec![ClientMsg::Focus(*gained)],
             WindowEvent::PointerMoved { position, .. } => {
                 self.pointer = (position.x as i32, position.y as i32);
                 let kind = match self.held {
@@ -414,6 +447,20 @@ mod tests {
             base: None,
         });
         assert_eq!(up.unwrap().kind, KeyEventKind::Release);
+    }
+
+    #[test]
+    fn the_composition_goes_when_the_input_method_turns_off() {
+        let mut input = Input::without_clipboard();
+        let (msgs, redraw) = input.ime(&Ime::Preedit("にほ".into(), None));
+        assert!(msgs.is_empty() && redraw);
+        assert_eq!(input.preedit, "にほ");
+        let (msgs, redraw) = input.ime(&Ime::Disabled);
+        assert!(msgs.is_empty() && redraw, "drawn again without it");
+        assert!(input.preedit.is_empty());
+        input.ime(&Ime::Preedit("に".into(), None));
+        assert_eq!(input.ime(&Ime::Commit("日".into())).0, [ClientMsg::Text("日".into())]);
+        assert!(input.preedit.is_empty());
     }
 
     #[test]
