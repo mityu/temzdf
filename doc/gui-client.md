@@ -1,7 +1,9 @@
 # GUI client: groundwork and plan
 
 Status (2026-10-28): implemented for X11 (the user's Xfce) and checked on
-Xvfb with xfwm4; Wayland, macOS and HiDPI are not checked yet. See
+Xvfb with xfwm4; on macOS used by the user and its redraw after the window
+was covered checked (`tests/macos/gui-redraw.sh`, `doc/macos.md`); Wayland
+and HiDPI are not checked yet. See
 "Implemented" below. Every **(decide)** item was decided as recommended
 (the user, 2026-10-27; see "Decisions"). Step 4 of the session server's plan
 (`doc/session-server.md`): a native window that attaches to a session as the
@@ -13,8 +15,9 @@ and plans what can be built now.
 
 `temzdf-gui [-s NAME] [FILE]` (`crates/temzdf-gui`) attaches to session
 NAME (started with FILE if it does not exist), a new session for FILE, the
-only session, or a new shell; it starts servers with the `temzdf` next to
-it (else on `PATH`). Closing the window detaches. `--render-frame PNG
+only session, or a new shell; new sessions without a NAME are named as
+`temzdf [FILE]` names them (alfa, bravo, ...). It starts servers with the
+`temzdf` next to it (else on `PATH`). Closing the window detaches. `--render-frame PNG
 [--size WxH] [--scale S]` draws the session offscreen instead.
 
 - **Protocol and server** (G0): `MouseEventKind::ScrollBy` (amounts in
@@ -75,9 +78,10 @@ palette, fonts and key translation, `scripts/e2e.sh -t gui` with
 `tests/e2e/gui-ime.actions` (`-I`: fcitx5 with Mozc, committed Japanese and
 a paste reach a shell).
 
-Not done yet: Wayland (sway headless is in the dev shell) and macOS checks,
-HiDPI and fractional scales (`--scale` and `ScaleFactorChanged` exist,
-untested), Option as Alt on macOS, cursor blinking, underline colours
+Not done yet: Wayland (sway headless is in the dev shell) and most macOS
+checks, HiDPI and fractional scales (`--scale` and `ScaleFactorChanged`
+exist, untested), Option as Alt on macOS, cursor blinking, the configurable
+action that ends the session when the window closes (closing detaches), underline colours
 (SGR 58: the scene's cells do not carry one, so underlines take the text
 colour, in the terminal frontend too), shared memory for images. Curly,
 dotted and dashed underlines are drawn as fills in `drawlist.rs`, their
@@ -100,7 +104,7 @@ What the TTY client does today and what the GUI does instead:
 | Image store | mirrored into termpix's compositor | mirrored into GPU textures |
 | Layers | kitty placements or composited strips | textured quads: z order, clipped to their rectangle, scaled |
 | Text grids | escape sequences and characters (only what changed) | glyphs from a font atlas, cell backgrounds, decorations |
-| Cursor, title, pointer | escape sequences | drawn cursor (shape, blink), window title, cursor icon |
+| Cursor, title, pointer | escape sequences | drawn cursor (shape; blinking not yet), window title, cursor icon |
 | Effects | OSC 52 copy, `xdg-open`/`open`, `sh -c` | the native clipboard, the same commands |
 | Input | parsed escape sequences into `KeyEvent`/`MouseEvent` | window events translated into the same types |
 | Pacing | `FrameAck` after the terminal took the bytes | `FrameAck` after presenting |

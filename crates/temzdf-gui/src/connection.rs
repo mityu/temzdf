@@ -89,10 +89,11 @@ pub fn session_for(name: Option<&str>, file: Option<&Path>) -> Result<(String, b
     match (name, file) {
         (Some(n), _) if exists(n) => Ok((n.to_owned(), false)),
         (Some(n), _) => start(&|| Ok(n.to_owned()), false),
-        (None, Some(f)) => start(&|| temzdf_client::name_for(f), true),
+        // Named as `temzdf [FILE]` names sessions: alfa, bravo, ...
+        (None, Some(_)) => start(&temzdf_client::auto_name, true),
         (None, None) => match proto::discovery::list()?.as_slice() {
             [one] => Ok((one.name.clone(), false)),
-            [] => start(&|| temzdf_client::name_for(Path::new("temzdf")), true),
+            [] => start(&temzdf_client::auto_name, true),
             many => bail!(
                 "several sessions, name one with -s: {}",
                 many.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
