@@ -213,6 +213,12 @@ impl Compositor {
 
     /// The next image id: never one of the ids kept for strips and fences,
     /// nor one still in use after the ids went all the way round.
+    ///
+    /// (After the round, an id removed with its delete still queued for the
+    /// next frame could be handed out, and `upload_ahead` send the new image
+    /// before that delete, which then removes it. That takes some 4·10⁹
+    /// images; sending queued deletes ahead would show frames with images
+    /// gone that are still placed, so it is left.)
     fn free_id(&mut self) -> u32 {
         loop {
             let id = self.next_id;
