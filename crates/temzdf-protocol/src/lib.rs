@@ -145,7 +145,7 @@ pub fn recv<T: for<'de> Deserialize<'de>>(r: &mut impl Read) -> io::Result<Optio
 /// temporary directory on macOS, else `<temp dir>/temzdf-<uid>`.
 pub fn runtime_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
-        return dir.into();
+        return within_runtime_dir(dir.into());
     }
     // Not $TMPDIR on macOS: `nix develop` points it at a per-shell directory,
     // so processes started from different shells would miss each other.
@@ -154,6 +154,18 @@ pub fn runtime_dir() -> PathBuf {
         return dir;
     }
     std::env::temp_dir().join(format!("temzdf-{}", rustix::process::getuid().as_raw()))
+}
+
+/// `$XDG_RUNTIME_DIR` (`dir`) if it is a directory of this user's, else (a
+/// container or CI setting it to `/tmp`) `temzdf-<uid>` in it, as in the
+/// shared temporary directory.
+fn within_runtime_dir(dir: PathBuf) -> PathBuf {
+    use std::os::unix::fs::MetadataExt;
+    let uid = rustix::process::getuid().as_raw();
+    match std::fs::metadata(&dir) {
+        Ok(m) if m.is_dir() && m.uid() == uid => dir,
+        _ => dir.join(format!("temzdf-{uid}")),
+    }
 }
 
 /// The per-user temporary directory (`/var/folders/.../T/`, mode 0700),
@@ -198,11 +210,15 @@ fn private_dir_in(base: &Path, base_ours: bool, dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let uid = rustix::process::getuid().as_raw();
     let unsafe_dir = |d: &Path, why: &str| {
-        io::Error::new(io::ErrorKind::PermissionDenied, format!("{}: {why}; remove it and try again", d.display()))
+        // Removing is advice for what temzdf made (or someone planted in
+        // its place), not for the system's runtime directory.
+        let hint = if d == base && !base_ours { "" } else { "; remove it and try again" };
+        io::Error::new(io::ErrorKind::PermissionDenied, format!("{}: {why}{hint}", d.display()))
     };
     let mut d = dir;
     loop {
-        let m = std::fs::symlink_metadata(d)?;
+        // The system's runtime directory may be a symlink (macOS's /tmp).
+        let m = if d == base && !base_ours { std::fs::metadata(d)? } else { std::fs::symlink_metadata(d)? };
         if m.file_type().is_symlink() || !m.is_dir() {
             return Err(unsafe_dir(d, "not a directory"));
         }
@@ -325,8 +341,32 @@ mod tests {
         std::fs::create_dir(&file).unwrap();
         std::fs::write(file.join("temzdf"), "").unwrap();
         assert!(private_dir_in(&file, true, &file.join("temzdf")).is_err());
+        // The system's runtime directory through a symlink (macOS's /tmp).
+        let via = tmp.join("via");
+        std::os::unix::fs::symlink(&system, &via).unwrap();
+        private_dir_in(&via, false, &via.join("temzdf/sessions")).unwrap();
         // (Another user's directory cannot be made here; the owner check is
         // the same path as the symlink check.)
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore = "Miri on macOS gives another user id than the files' owner")]
+    fn a_runtime_directory_not_ours_gets_one_of_ours_inside() {
+        let uid = rustix::process::getuid().as_raw();
+        let tmp = std::env::temp_dir().join(format!("temzdf-runtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert_eq!(within_runtime_dir(tmp.clone()), tmp, "ours: as it is");
+        let link = tmp.with_extension("link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&tmp, &link).unwrap();
+        assert_eq!(within_runtime_dir(link.clone()), link, "ours through a symlink");
+        if uid != 0 {
+            // XDG_RUNTIME_DIR=/ (root's, as /tmp is).
+            assert_eq!(within_runtime_dir("/".into()), Path::new("/").join(format!("temzdf-{uid}")));
+        }
+        std::fs::remove_file(&link).unwrap();
         std::fs::remove_dir_all(&tmp).unwrap();
     }
     use std::sync::Arc;
