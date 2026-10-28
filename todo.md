@@ -58,8 +58,32 @@ server on one `Session`). Next and open:
   through passthrough) work; see `doc/terminal-compat.md`. Left: zellij over SSH
   is still slow (zellij 0.45.1 forwards images uncompressed; a half-resolution
   mode could help), and tmux master's native kitty support (z=0 only) is untested.
-- macOS GUI checks (`scripts/macos-gui.sh`) are driven step by step; action
-  files and `expect` judging as in `scripts/e2e.sh` could be shared.
+- e2e beyond X11 (Wayland, macOS, maybe Windows) without rewriting the
+  action files (discussed 2026-10-29, not started). The action files are
+  already mostly platform-neutral helpers (`keys`, `type`, `click`,
+  `wheel`, `dragto`, `move`, `shot`, `expect`, `check`, in terminal-area
+  pixels); what ties them to X11 is a few raw `xdotool` lines (press and
+  move, Ctrl+click: synctex, floats, resize, terminal-extras) and the
+  inside of `scripts/e2e.sh` (Xvfb, xdotool, `import`, xwininfo). The plan:
+  1. Helpers for those raw lines (button down/up, clicks and drags with
+     modifiers), and input, screenshot and window geometry behind a few
+     functions in `scripts/e2e.sh`, with today's X11 code as one backend.
+  2. A Wayland backend on headless sway: `wtype` for keys and `grim` for
+     screenshots (both in the dev shell), a virtual-pointer tool (e.g.
+     wlrctl) for the mouse. Input injection differs per compositor, so
+     sway only.
+  3. macOS: `scripts/macos-gui.sh` (driven step by step today) behind the
+     same functions, so its scenarios share the action files and `expect`.
+  4. Windows: no bash, so then one small Rust driver for every platform,
+     `enigo` (input; Wayland and libei still experimental behind feature
+     flags) with `xcap` (screen and window capture on X11, Wayland, macOS,
+     Windows), and the action files as one action per line read by a Rust
+     runner.
+  Considered and set aside: VNC as the one layer (vncdotool; Xvnc, wayvnc,
+  macOS screen sharing, a Windows server; tends to need a logged-in
+  desktop on macOS and Windows), PyAutoGUI and nut.js (no Wayland), openQA
+  and Appium (whole VMs or accessibility APIs, a poor fit for pixel-drawn
+  terminals). The `expect` comparisons themselves are platform-neutral.
 - Vector-heavy pages: MuPDF's anti-aliased rasteriser is slow there and
   `vello_cpu` about 20x faster (`doc/gpu.md`; GPU rendering does not pay off).
   Measure real TikZ/pgfplots documents first; then maybe render such pages
@@ -70,11 +94,12 @@ server on one `Session`). Next and open:
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
 - Judged e2e (`expect` in `scripts/e2e.sh`, `doc/testing.md`) covers keys and
-  mouse input in kitty, WezTerm and Ghostty (keys also in tmux and zellij).
-  Left: scenarios that start a session or a shell (`session`, `terminal`,
-  `floats`, `tabs`, `resize`: `--render-frame` opens one PDF), and the
-  reload and SyncTeX scenarios (they change files or talk to other
-  processes during the run).
+  mouse input in kitty, WezTerm and Ghostty (keys also in tmux and zellij);
+  sessions are judged against `temzdf render-session` (text in kitty only),
+  reload against fresh renders, SyncTeX with `check`. Left unjudged: the
+  truncated moment of `reload`, SyncTeX's highlight, the rendering-speed
+  moments (`viewer-stress`, `select-autoscroll`), sessions inside
+  multiplexers, and WezTerm for sessions (untried).
 - MuPDF's allocation lock makes text rendering slower with more threads (see
   `doc/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the
   allocator itself, and `mupdf-sys` backs every context with the same static
