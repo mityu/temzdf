@@ -47,6 +47,11 @@ works.
   `Occluded(false)` redraws, and a `Timeout` (unlikely: wgpu disables
   `allowsNextDrawableTimeout`) retries. `tests/macos/gui-redraw.sh` checks
   it; it fails without the redraw on `Occluded(false)`.
+- GUI font sizes: on macOS a point is a logical pixel (72 dpi, as in
+  Ghostty and kitty), elsewhere points are at 96 dpi (`PIXELS_PER_POINT`
+  in `crates/temzdf-gui/src/fonts.rs`). With 96 dpi everywhere, text came
+  out 4/3 as large as Ghostty's at the same size (2026-10-28; not yet
+  compared on a Mac).
 
 ## Checklist and results
 

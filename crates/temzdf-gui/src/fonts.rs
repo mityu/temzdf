@@ -90,14 +90,19 @@ impl Face {
         Attrs::new().family(Family::Name(&self.family))
     }
 
-    /// The size in physical pixels at `scale` (points at 96 dpi).
+    /// The size in physical pixels at `scale` (see [`PIXELS_PER_POINT`]).
     pub fn pixels(&self, scale: f64) -> f32 {
         pixels(self.points, scale)
     }
 }
 
+/// Logical pixels per point, each platform's convention (as Ghostty's and
+/// kitty's font sizes): on macOS a point is a logical pixel (72 dpi), elsewhere
+/// points are at 96 dpi.
+const PIXELS_PER_POINT: f64 = if cfg!(target_os = "macos") { 1.0 } else { 96.0 / 72.0 };
+
 fn pixels(points: f32, scale: f64) -> f32 {
-    (points as f64 * 96.0 / 72.0 * scale) as f32
+    (points as f64 * PIXELS_PER_POINT * scale) as f32
 }
 
 /// The fonts glyphs are drawn with: the configured lists resolved against
@@ -289,6 +294,12 @@ fn unicode_segmentation_free(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn points_follow_the_platform_convention() {
+        let expected = if cfg!(target_os = "macos") { 30.0 } else { 40.0 };
+        assert_eq!(pixels(15.0, 2.0), expected);
+    }
 
     fn entry(family: &str, size: Option<f32>) -> FontEntry {
         FontEntry { family: family.into(), size }

@@ -46,6 +46,8 @@ only session, or a new shell; new sessions without a NAME are named as
   embedded by `build.rs` (about 14 MB, most of it the emoji font); a build
   without the variable has none and uses the system's. `temzdf ls-fonts`
   (`temzdf-gui ls-fonts` behind it) shows what the lists resolve to.
+  Sizes are points: logical pixels on macOS, 96 dpi elsewhere, as in
+  Ghostty.
 - **Input** (G2): keys as the kitty protocol reports them (`input.rs`,
   `translate`, tested), pointer events in pixels, wheel and trackpad as
   `ScrollBy`, focus, IME (preedit drawn at the cursor, the candidate window
