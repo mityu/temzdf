@@ -52,6 +52,13 @@ pub struct MockTerminal {
     /// Virtual placements (`U=1`): image id -> size in cells.
     virtual_sizes: HashMap<u32, (u32, u32)>,
     blending: Blending,
+    /// Text cursor shown (`CSI ?25 h/l`).
+    cursor_visible: bool,
+    /// Inside a synchronized update (`CSI ?2026 h/l`): the terminal does not draw.
+    synchronized: bool,
+    /// Where the cursor was visible at a moment the terminal may draw.
+    shown_cursors: Vec<(u32, u32)>,
+    last_shown: Option<(u32, u32)>,
 }
 
 fn utf8_len(first: u8) -> Option<usize> {
@@ -90,6 +97,25 @@ impl MockTerminal {
             text: HashMap::new(),
             blending: Blending::Srgb,
             virtual_sizes: HashMap::new(),
+            cursor_visible: true,
+            synchronized: false,
+            shown_cursors: Vec::new(),
+            last_shown: None,
+        }
+    }
+
+    /// The cells (column, row) where the cursor showed at a moment a real
+    /// terminal may draw the screen: between any two sequences or characters
+    /// outside a synchronized update, and when one ends. A cell is listed
+    /// again only after the cursor showed elsewhere. Taking them clears the list.
+    pub fn take_shown_cursors(&mut self) -> Vec<(u32, u32)> {
+        std::mem::take(&mut self.shown_cursors)
+    }
+
+    fn may_draw(&mut self) {
+        if !self.synchronized && self.cursor_visible && self.last_shown != Some(self.cursor) {
+            self.shown_cursors.push(self.cursor);
+            self.last_shown = Some(self.cursor);
         }
     }
 
@@ -130,6 +156,7 @@ impl MockTerminal {
         let buf = std::mem::take(&mut self.buf);
         let mut i = 0;
         while i < buf.len() {
+            self.may_draw();
             if buf[i] != 0x1b {
                 // Text: only Unicode placeholders matter (each takes one cell).
                 let Some(len) = utf8_len(buf[i]) else {
@@ -179,6 +206,14 @@ impl MockTerminal {
                             self.placeholder_cells.clear();
                         }
                         b'm' => self.sgr(&buf[i + 2..end]),
+                        b'h' | b'l' => {
+                            let on = buf[end] == b'h';
+                            match &buf[i + 2..end] {
+                                b"?25" => self.cursor_visible = on,
+                                b"?2026" => self.synchronized = on,
+                                _ => {}
+                            }
+                        }
                         _ => {}
                     }
                     i = end + 1;
@@ -223,6 +258,7 @@ impl MockTerminal {
             }
         }
         self.buf = buf[i..].to_vec();
+        self.may_draw();
     }
 
     /// SGR: only true-colour foreground (`38;2;r;g;b`) and its reset matter.
@@ -458,5 +494,26 @@ impl MockTerminal {
             raster::blit_blended(&mut screen, dst, img, src, self.blending);
         }
         screen
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geom::CellSize;
+
+    #[test]
+    fn the_cursor_shows_only_outside_synchronized_updates() {
+        let g = Geometry { cols: 10, rows: 3, cell: CellSize { width: 8, height: 16 } };
+        let mut t = MockTerminal::new(g, [0, 0, 0, 255]);
+        t.feed(b"\x1b[?25l");
+        assert_eq!(t.take_shown_cursors(), [(0, 0)], "a terminal starts with its cursor shown");
+        t.feed(b"\x1b[1;1Hab\x1b[2;3H\x1b[?25h");
+        assert_eq!(t.take_shown_cursors(), [(2, 1)], "hidden while it moved");
+        // Inside an update only where it ends counts; outside, every step.
+        t.feed(b"\x1b[?2026h\x1b[1;1Hxyz\x1b[2;3H\x1b[?2026l");
+        assert_eq!(t.take_shown_cursors(), [] as [(u32, u32); 0], "back where it was");
+        t.feed(b"\x1b[?2026h\x1b[1;1Hxyz\x1b[?2026l\x1b[2;3H");
+        assert_eq!(t.take_shown_cursors(), [(3, 0), (2, 1)]);
     }
 }

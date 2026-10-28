@@ -92,6 +92,15 @@ snapshots automatically.
 Check that a new test can fail: break the code it covers for a moment and see
 it fail (the keyboard-mode test fails with the C-h bug fixed in 8598211).
 
+What a terminal shows *between* frames (a flicker) does not show on the
+screen a test reads at the end. For those, record what temzdf wrote
+(`TERMPIX_TRACE` in the test's environment) and feed it to
+`termpix::mock::MockTerminal`: `take_shown_cursors` lists where the cursor
+was visible at every moment a terminal may draw (outside synchronized
+updates, and as each ends), so a cursor that blinked elsewhere for a moment
+fails the test whatever the timing
+(`the_cursor_stays_at_the_prompt_while_a_program_rewrites_the_line_above`).
+
 What stays with `scripts/e2e.sh`: differences between real terminals (kitty,
 Ghostty, WezTerm, zellij), transports and placement semantics as each terminal
 implements them, terminal crashes, and pixels compared against headless

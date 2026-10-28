@@ -103,16 +103,20 @@ impl Screen {
         }
         let before = self.text.clear_gone(&frame.text);
         let (text, grids) = (&mut self.text, &frame.text);
+        let (shape, shown) = (&mut self.shape, &mut self.cursor);
         comp.present_with(
             &presenter.layers(&frame.layers),
             &before,
             |placed| {
                 text.redraw_wide(placed);
-                text.render(grids)
+                let mut out = text.render(grids);
+                // Placing images and writing text move the cursor.
+                let moved = !out.is_empty() || !placed.is_empty() || !before.is_empty();
+                out.extend(cursor(shape, shown, frame, moved));
+                out
             },
             &mut self.out,
         )?;
-        self.cursor(frame);
         Ok(&self.out)
     }
 
@@ -131,9 +135,10 @@ impl Screen {
         }
         self.out.clear();
         self.title(frame);
-        let text = self.text.render(&frame.text);
+        let mut text = self.text.render(&frame.text);
+        let moved = !text.is_empty();
+        text.extend(cursor(&mut self.shape, &mut self.cursor, frame, moved));
         comp.present_text(&text, &mut self.out);
-        self.cursor(frame);
         Some(&self.out)
     }
 
@@ -145,33 +150,37 @@ impl Screen {
             self.title = frame.title.clone();
         }
     }
+}
 
-    fn cursor(&mut self, frame: &Frame) {
-        let out = &mut self.out;
-        if frame.cursor_shape != self.shape {
-            let n = match frame.cursor_shape {
-                CursorShape::Default => 0,
-                CursorShape::Block { blink } => 2 - blink as u8,
-                CursorShape::Underline { blink } => 4 - blink as u8,
-                CursorShape::Bar { blink } => 6 - blink as u8,
-            };
-            out.extend_from_slice(format!("\x1b[{n} q").as_bytes());
-            self.shape = frame.cursor_shape;
-        }
-        let cursor = frame.cursor;
-        if cursor != self.cursor {
-            match cursor {
-                Some((col, row)) => out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", row + 1, col + 1).as_bytes()),
-                None => out.extend_from_slice(b"\x1b[?25l"),
-            }
-            self.cursor = cursor;
-        } else if let Some((col, row)) = cursor
-            && !out.is_empty()
-        {
-            // Placing images and writing text move the cursor; put it back.
-            out.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
-        }
+/// The text cursor's shape, place and visibility for `frame`, after what
+/// `moved` it (text written, images placed): the cursor goes back. Written
+/// inside the frame's synchronized update, so the terminal never draws it
+/// where the text was written (a program rewriting the line above its
+/// prompt made it blink at the end of that line).
+fn cursor(shape: &mut CursorShape, shown: &mut Option<(u16, u16)>, frame: &Frame, moved: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    if frame.cursor_shape != *shape {
+        let n = match frame.cursor_shape {
+            CursorShape::Default => 0,
+            CursorShape::Block { blink } => 2 - blink as u8,
+            CursorShape::Underline { blink } => 4 - blink as u8,
+            CursorShape::Bar { blink } => 6 - blink as u8,
+        };
+        out.extend_from_slice(format!("\x1b[{n} q").as_bytes());
+        *shape = frame.cursor_shape;
     }
+    if frame.cursor != *shown {
+        match frame.cursor {
+            Some((col, row)) => out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", row + 1, col + 1).as_bytes()),
+            None => out.extend_from_slice(b"\x1b[?25l"),
+        }
+        *shown = frame.cursor;
+    } else if let Some((col, row)) = frame.cursor
+        && moved
+    {
+        out.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
+    }
+    out
 }
 
 fn is_placeholders(comp: &Compositor) -> bool {
@@ -231,10 +240,11 @@ mod tests {
         let first = String::from_utf8_lossy(screen.render(&frame, &presenter, &mut comp).unwrap()).into_owned();
         assert!(first.starts_with("\x1b]2;ab\x1b\\"), "title without control characters: {first:?}");
         assert!(first.contains("a=T") || first.contains("a=t"), "the image: {first:?}");
-        assert!(first.ends_with("\x1b[4;3H\x1b[?25h"), "cursor shown: {first:?}");
+        assert!(first.contains("\x1b[4;3H\x1b[?25h\x1b[?2026l"), "cursor shown, inside the update: {first:?}");
         assert!(screen.render(&frame, &presenter, &mut comp).unwrap().is_empty(), "nothing changed");
         frame.cursor = None;
-        assert_eq!(screen.render(&frame, &presenter, &mut comp).unwrap(), b"\x1b[?25l");
+        let hidden = String::from_utf8_lossy(screen.render(&frame, &presenter, &mut comp).unwrap()).into_owned();
+        assert!(hidden.starts_with("\x1b[?2026h\x1b[?25l\x1b[?2026l"), "{hidden:?}");
     }
 
     #[test]
@@ -306,6 +316,38 @@ mod tests {
         let blank = out.find("\x1b[1;3H  ").expect("ろ blanked");
         let again = out.rfind('い').expect("い written again");
         assert!(blank < image && image < again, "{out:?}");
+    }
+
+    #[test]
+    fn the_cursor_never_shows_where_the_text_was_written() {
+        // A program rewriting the line above its prompt (a progress line):
+        // the terminal may draw whenever it is not inside a synchronized
+        // update, and the cursor blinked at the end of that line.
+        let g = Geometry { cols: 20, rows: 3, cell: CellSize { width: 8, height: 16 } };
+        let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, g);
+        let presenter = Presenter::new();
+        let line = |s: &str| s.chars().map(|c| Cell { text: c.to_string(), width: 1, ..Cell::default() }).collect();
+        let frame = |first: &str| Frame {
+            text: vec![TextGrid { col: 0, row: 0, rows: vec![line(first), line("input> ")] }],
+            cursor: Some((7, 1)),
+            ..Default::default()
+        };
+        let mut screen = Screen::new();
+        let mut term = termpix::mock::MockTerminal::new(g, [0, 0, 0, 255]);
+        term.feed(b"\x1b[?25l");
+        term.feed(screen.render(&frame("line 1"), &presenter, &mut comp).unwrap());
+        term.take_shown_cursors();
+        for i in 0..3 {
+            term.feed(screen.render(&frame(&format!("line 1: {i}")), &presenter, &mut comp).unwrap());
+        }
+        assert_eq!(term.text_rows()[0], "line 1: 2");
+        assert_eq!(term.take_shown_cursors(), [] as [(u32, u32); 0], "only at the prompt, where it was");
+        // The same for text sent ahead of a frame's images.
+        for i in 3..6 {
+            term.feed(screen.render_text(&frame(&format!("line 1: {i}")), &mut comp).unwrap());
+        }
+        assert_eq!(term.text_rows()[0], "line 1: 5");
+        assert_eq!(term.take_shown_cursors(), [] as [(u32, u32); 0], "text alone");
     }
 
     #[test]

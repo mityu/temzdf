@@ -161,6 +161,34 @@ fn ctrl_keys_reach_programs_in_both_keyboard_modes() {
 }
 
 #[test]
+fn the_cursor_stays_at_the_prompt_while_a_program_rewrites_the_line_above() {
+    // A progress line above a prompt, as a Python script printing
+    // "\033[1A\r\033[2Kline 1: N\033[1B\r" every 0.1 s does (user report):
+    // the cursor blinked between the end of that line and the prompt.
+    let env = Env::new("cursor");
+    let script = "printf 'line 1\\ninput> '; i=0; while [ $i -lt 10 ]; do \
+                  printf '\\033[1A\\r\\033[2Kline 1: %d\\033[1B\\r' $i; sleep 0.1; i=$((i+1)); done; sleep 30";
+    let trace = env.path("trace.bin");
+    let mut opts = env.with_shell_script("progress.sh", script);
+    opts.env.push(("TERMPIX_TRACE".into(), trace.display().to_string()));
+    let mut t = Term::spawn(&[BIN, "-s", "c"], &opts);
+    t.wait_text("line 1: 9");
+    // Everything temzdf wrote to the terminal, through a terminal that notes
+    // where the cursor showed whenever it may have drawn the screen.
+    let bytes = std::fs::read(&trace).unwrap();
+    let g = termpix::geom::Geometry { cols: 100, rows: 30, cell: termpix::geom::CellSize { width: 10, height: 20 } };
+    let mut term = termpix::mock::MockTerminal::new(g, [0, 0, 0, 255]);
+    term.feed(&bytes);
+    let shown = term.take_shown_cursors();
+    // Each rewrite ends at the start of the prompt line ("\r"): from the
+    // first time the cursor showed there on, it stays there.
+    let from = shown.iter().position(|&c| c == (0, 1)).unwrap_or_else(|| panic!("never at the prompt: {shown:?}"));
+    assert_eq!(&shown[from..], [(0, 1)], "the cursor showed elsewhere: {shown:?}");
+    env.run(&["kill-session", "c"]);
+    t.wait_exit();
+}
+
+#[test]
 fn detaching_and_attaching_again_keeps_the_shell() {
     let env = Env::new("detach");
     let mut t = Term::spawn(&[BIN, "-s", "d"], &env.options());
