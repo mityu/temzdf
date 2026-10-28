@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # End-to-end harness: run a command inside a real terminal (kitty, Ghostty or
-# WezTerm) on a virtual X server, drive it with an actions script, and save
-# screenshots.
+# WezTerm) on a virtual X server (or headless sway, -d wayland), drive it
+# with an actions script, and save screenshots.
 #
-# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-m zellij|tmux] [-I] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
+# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-d x11|wayland] [-m zellij|tmux] [-I] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
 #   -t TERM   terminal to run (default kitty); gui: COMMAND is temzdf-gui
 #             itself (e.g. target/debug/temzdf-gui FILE), run under the xfwm4
-#             window manager on lavapipe ($TEMZDF_LAVAPIPE_ICD); the screen
-#             is 100 px larger each way for its decorations
+#             window manager (X11; sway on Wayland) on lavapipe
+#             ($TEMZDF_LAVAPIPE_ICD); on X11 the screen is 100 px larger each
+#             way for its decorations
 #   -I        (gui) Japanese input: fcitx5 with Mozc (its HOME in OUTDIR),
 #             XMODIFIERS set; `ime on` / `ime off` switch it
+#   -d DISP   display server: x11 (default; Xvfb, xdotool, import) or wayland
+#             (headless sway; keys and pointer through crates/wlinput, built
+#             here; screenshots with grim; kitty and gui so far, no -I)
 #   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
 #             frames, a single pane; its config and layout go to OUTDIR/zellij;
 #             tmux: a private server with passthrough and mouse on, no status)
@@ -106,12 +110,14 @@ fi
 
 size=900x600
 term=kitty
+display=x11
 mux=
 ime=
 outdir=target/e2e
-while getopts "t:m:s:o:Ih" opt; do
+while getopts "t:d:m:s:o:Ih" opt; do
   case $opt in
     t) term=$OPTARG ;;
+    d) display=$OPTARG ;;
     m) mux=$OPTARG ;;
     I) ime=1 ;;
     s) size=$OPTARG ;;
@@ -134,11 +140,33 @@ if runs_temzdf "$@" && [[ "$*" != *--clean* ]]; then
   echo "e2e.sh: COMMAND runs temzdf without --clean (it would load your config.ts)" >&2
   exit 2
 fi
+case $display in
+  x11) ;;
+  wayland)
+    if [[ $term != kitty && $term != gui ]]; then
+      echo "e2e.sh: -d wayland runs kitty and gui so far, not $term" >&2
+      exit 2
+    fi
+    if [[ -n $ime ]]; then
+      echo "e2e.sh: -I is X11 only so far" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "e2e.sh: unknown display server $display (x11 or wayland)" >&2
+    exit 2
+    ;;
+esac
 mkdir -p "$outdir"
 outdir=$(realpath "$outdir")
 width=${size%x*}
 height=${size#*x}
 
+if [[ -z "${E2E_INNER:-}" && $display == wayland ]]; then
+  # Headless sway starts below, in the run's own runtime directory.
+  export E2E_INNER=1
+  exec "$self" -t "$term" -d wayland ${mux:+-m "$mux"} -s "$size" -o "$outdir" "$actions" -- "$@"
+fi
 if [[ -z "${E2E_INNER:-}" ]]; then
   export E2E_INNER=1
   screen="${width}x${height}"
@@ -196,7 +224,7 @@ be_shot() { import -window root "$1"; }
 be_clipboard() { xclip -selection clipboard -o 2>/dev/null; }
 be_set_clipboard() { printf %s "$1" | xclip -selection clipboard; }
 # The first visible window of process PID.
-be_window() { xdotool search --sync --onlyvisible --pid "$1" | head -1; }
+be_window() { xdotool search --sync --onlyvisible --pid "$1" | tail -1; }
 be_focus() { xdotool windowfocus --sync "$(be_window "$1")"; }
 # "X Y W H" of PID's window's inside.
 be_window_rect() {
@@ -205,6 +233,66 @@ be_window_rect() {
 }
 # A plain window of another program, for focus to go to; prints its PID.
 be_other_window() { xterm -e sh -c 'sleep 30' >/dev/null 2>&1 & echo $!; }
+# Wayland (headless sway, started below): keys and the pointer through
+# wlinput, one virtual keyboard and pointer for the whole run (wtype and
+# wlrctl make a device per call: clicks and wheel steps got lost, and every
+# key was a focus change); screenshots with grim, windows through swaymsg.
+if [[ $display == wayland ]]; then
+  # A command to wlinput, waiting for its answer.
+  wl() {
+    local answer
+    echo "$*" >&"${WL[1]}"
+    read -r answer <&"${WL[0]}"
+    [[ $answer == ok ]] || { echo "wlinput: $answer ($*)" >&2; return 1; }
+  }
+  be_move() { wl move "$1" "$2"; }
+  be_button() { wl "$1" "$2"; }
+  be_clicks() {
+    local i
+    case $1 in
+      4) wl wheel "-$2" "$3" ;;
+      5) wl wheel "$2" "$3" ;;
+      *)
+        for ((i = 0; i < $2; i++)); do
+          ((i == 0)) || sleep "$(printf '%d.%03d' $(($3 / 1000)) $(($3 % 1000)))"
+          wl down "$1"
+          wl up "$1"
+        done
+        ;;
+    esac
+  }
+  be_key() { wl key "$1"; }
+  be_keydown() { wl keydown "$1"; }
+  be_keyup() { wl keyup "$1"; }
+  be_type() { wl type "${2:-0}" "$1"; }
+  be_shot() { grim "$1"; }
+  be_clipboard() { wl-paste -n 2>/dev/null; }
+  # wl-copy stays to serve the clipboard: nothing of ours may stay open in it.
+  be_set_clipboard() { wl-copy -- "$1" </dev/null >/dev/null 2>&1; }
+  be_window_rect() {
+    swaymsg -t get_tree | python3 -c '
+import json, sys
+def walk(n):
+    if n.get("pid") == int(sys.argv[1]):
+        r = n["rect"]
+        print(r["x"], r["y"], r["width"], r["height"])
+        sys.exit(0)
+    for c in n.get("nodes", []) + n.get("floating_nodes", []):
+        walk(c)
+walk(json.load(sys.stdin))
+sys.exit(1)' "$1"
+  }
+  be_focus() {
+    local i
+    for ((i = 0; i < 50; i++)); do be_window_rect "$1" >/dev/null && break; sleep 0.1; done
+    swaymsg -q "[pid=$1] focus"
+  }
+  # Floating (sway.conf), so the window under test keeps its size.
+  be_other_window() {
+    kitty --config NONE -o linux_display_server=wayland --class e2e-other sh -c 'sleep 30' </dev/null >/dev/null 2>&1 &
+    echo $!
+  }
+fi
 
 shot() { be_shot "$outdir/$1.png"; }
 wheel() {
@@ -579,11 +667,18 @@ XDG_RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/temzdf-e2e.XXXXXX")
 export XDG_RUNTIME_DIR
 # kitty answers `kitten @ get-text` (expect in a session) here.
 kitty_socket=$XDG_RUNTIME_DIR/kitty.sock
-term_pid=
+term_pid= sway_pid=
 cleanup() {
   if [[ -n $term_pid ]]; then
     kill "$term_pid" 2>/dev/null || true
     wait "$term_pid" 2>/dev/null || true
+  fi
+  if [[ -n $sway_pid ]]; then
+    # wlinput ends with its input; sway takes its clients with it.
+    [[ -n ${WL[1]:-} ]] && eval "exec ${WL[1]}>&-"
+    kill "$sway_pid" 2>/dev/null || true
+    wait "$sway_pid" 2>/dev/null || true
+    sway_pid=
   fi
   if [[ $mux == tmux ]]; then
     # The server outlives the terminal; kill-server leaves its socket file.
@@ -595,6 +690,30 @@ cleanup() {
   rm -rf -- "$XDG_RUNTIME_DIR"
 }
 trap cleanup EXIT
+if [[ $display == wayland ]]; then
+  # One output of the window's size: the only window fills it (no borders),
+  # so the terminal area, or the GUI's drawing area, starts at 0,0. The
+  # window other_window opens floats over it instead.
+  cat >"$XDG_RUNTIME_DIR/sway.conf" <<EOF
+output HEADLESS-1 resolution ${width}x${height} position 0 0
+default_border none
+default_floating_border none
+for_window [app_id="e2e-other"] floating enable
+EOF
+  WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 \
+    sway -c "$XDG_RUNTIME_DIR/sway.conf" >"$outdir/sway.log" 2>&1 &
+  sway_pid=$!
+  for ((i = 0; i < 50; i++)); do
+    ls "$XDG_RUNTIME_DIR"/wayland-[0-9] >/dev/null 2>&1 && ls "$XDG_RUNTIME_DIR"/sway-ipc.* >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  WAYLAND_DISPLAY=$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-[0-9] | head -1)")
+  SWAYSOCK=$(ls "$XDG_RUNTIME_DIR"/sway-ipc.* | head -1)
+  export WAYLAND_DISPLAY SWAYSOCK
+  unset DISPLAY
+  cargo build -q -p wlinput
+  coproc WL { target/debug/wlinput --size "${width}x${height}" 2>>"$outdir/wlinput.log"; }
+fi
 clean_env=(env -u TEMZDF_LOG_DIR -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state"
   "TEMZDF_RECORD_INPUT=$outdir/input.txt")
 case $term in
@@ -602,7 +721,7 @@ case $term in
     "${clean_env[@]}" kitty --config NONE -o font_size=12 -o "initial_window_width=$width" \
       -o "initial_window_height=$height" -o window_padding_width=0 -o hide_window_decorations=yes \
       -o remember_window_size=no -o allow_remote_control=socket-only \
-      --listen-on "unix:$kitty_socket" "$@" >"$outdir/terminal.log" 2>&1 &
+      -o "linux_display_server=$display" --listen-on "unix:$kitty_socket" "$@" >"$outdir/terminal.log" 2>&1 &
     startup=3
     ;;
   ghostty)
@@ -616,9 +735,11 @@ case $term in
     startup=6
     ;;
   gui)
-    # A window manager, as on a desktop (decorations, focus).
-    xfwm4 >"$outdir/wm.log" 2>&1 &
-    sleep 1
+    # A window manager, as on a desktop (decorations, focus); sway is one.
+    if [[ $display == x11 ]]; then
+      xfwm4 >"$outdir/wm.log" 2>&1 &
+      sleep 1
+    fi
     gui_env=(VK_DRIVER_FILES="$TEMZDF_LAVAPIPE_ICD")
     if [[ -n $ime ]]; then
       mkdir -p "$outdir/ime/.config/fcitx5"
@@ -653,12 +774,10 @@ sleep "$((startup + mux_startup))"
 if [[ $term == gui ]]; then
   for w in "$@"; do [[ $w == */temzdf-gui ]] && gui_bin=$w && break; done
   temzdf=$(dirname "$gui_bin")/temzdf
-  wid=$(xdotool search --sync --onlyvisible --pid "$term_pid" | tail -1)
-  eval "$(xwininfo -id "$wid" | awk '/Absolute upper-left X/ {print "origin_x=" $4}
-    /Absolute upper-left Y/ {print "origin_y=" $4} /Width:/ {print "win_w=" $2} /Height:/ {print "win_h=" $2}')"
+  read -r origin_x origin_y win_w win_h <<<"$(be_window_rect "$term_pid")"
 fi
 # Without a window manager WezTerm only gets mouse events once focused.
-if [[ $term == wezterm ]]; then
+if [[ $term == wezterm && $display == x11 ]]; then
   xdotool search --class wezterm windowfocus 2>/dev/null || true
   sleep 0.3
 fi
@@ -669,7 +788,7 @@ t0=$(usec)
 source "$actions"
 crashed=0
 kill -0 "$term_pid" 2>/dev/null || crashed=1
-xdotool key q || true
+be_key q || true
 sleep 0.5
 cleanup
 trap - EXIT

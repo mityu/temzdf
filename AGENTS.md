@@ -31,6 +31,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-server` | Library. `Session` (panes, layout, focus, modes and key mappings, the command registry, composed frame), the session server process, forward-search sockets. No terminal code. |
 | `crates/temzdf-script` | Library. The script host (`temzdf script-host`): runs `config.ts`/`config.js` in QuickJS (`rquickjs`, TypeScript stripped with swc) and talks to the session over `temzdf-protocol`. The server never links it (child process). |
 | `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
+| `crates/wlinput` | Test-only tool: one virtual keyboard and pointer on a wlroots compositor, driven by commands on stdin. `scripts/e2e.sh -d wayland` drives headless sway with it. |
 | `crates/temzdf` | The binary: `temzdf [FILE]` starts a session (named alfa, bravo, ... unless `-s NAME`), session commands and client (zellij names: `attach`, `ls`, `kill-session`, `action`), the standalone viewer (`temzdf standalone pdf`), `ls-fonts`, config, headless `--render-frame`. |
 | `doc/` | Design notes and research. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
@@ -107,6 +108,10 @@ full testing approach is in `doc/testing.md`.
 client the same way (xfwm4 on Xvfb, lavapipe; `-I` adds fcitx5 with Mozc for
 Japanese input); its GPU tests (`cargo test -p temzdf-gui --test gpu`) run
 offscreen on lavapipe.
+
+`scripts/e2e.sh -d wayland ...` runs the same scenarios on headless sway
+instead of Xvfb (kitty and the GUI so far; keys and pointer through
+`crates/wlinput`, screenshots with grim).
 
 `scripts/e2e.sh` is Linux-only. On macOS, `scripts/macos-gui.sh` runs kitty,
 Ghostty, WezTerm or `temzdf-gui` (`launch app`) in the background on a

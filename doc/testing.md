@@ -9,7 +9,7 @@ Layers of verification, cheapest first. All of them run without a human.
 | Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal. Read the PNG to check it. `scripts/frames.sh` renders a fixed set and compares two sets pixel by pixel (for refactorings). |
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
 | Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `scripts/check.sh`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
-| Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
+| Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
 | Judged e2e | `expect NAME [KEYS]` in an action file (e.g. `tests/e2e/expect.actions`, `viewer.actions`) | The screen matches what `--render-frame` draws after the same input, keys or a replay of the keys and mouse input temzdf handled (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending, wheel, drag, clicks, hover. Not PDF rendering itself (both sides use MuPDF). |
 | GUI client | `crates/temzdf-gui` unit tests and `--test gpu` (offscreen on lavapipe), `scripts/e2e.sh -t gui [-I]` with `tests/e2e/gui*.actions` | The draw list and key translation; layers and text drawn on a GPU; the window under xfwm4 against `temzdf-gui --render-frame` on the same session; Japanese input through fcitx5 and Mozc; the clipboard. |
 | Real terminal (macOS) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | The same on macOS, step by step instead of action files (`doc/macos.md`); `launch app` runs `temzdf-gui`, and `tests/macos/*.sh` are scripted scenarios. |
@@ -105,6 +105,25 @@ What stays with `scripts/e2e.sh`: differences between real terminals (kitty,
 Ghostty, WezTerm, zellij), transports and placement semantics as each terminal
 implements them, terminal crashes, and pixels compared against headless
 renders.
+
+## X11 and Wayland
+
+Action files use the helpers only (`keys`, `type`, `click`, `down`/`up`,
+`move`, `wheel`, `hold`, `clipboard`, `focus_window`, ...); the helpers
+drive the display server through a few `be_*` functions in
+`scripts/e2e.sh`. `-d x11` (the default): Xvfb, xdotool, `import`, xclip,
+xwininfo, xfwm4 for the GUI. `-d wayland`: headless sway
+(`WLR_BACKENDS=headless`, the pixman renderer, one output of the window's
+size, no borders, so the window starts at 0,0), screenshots with grim,
+windows through `swaymsg`, the clipboard with wl-clipboard, and keys and
+the pointer through `crates/wlinput` (built by the script). Headless sway
+has no input devices, so its own `seat cursor` commands reach no client;
+wtype and wlrctl make a virtual device per call, which lost clicks and
+wheel steps and made every key a focus change. wlinput keeps one virtual
+keyboard (a US layout at the real evdev codes, so kitty's base-layout key
+is right; other characters get free codes as typed) and one virtual
+pointer for the run. kitty and the GUI pass every judged scenario on both
+(2026-10-29); Ghostty and WezTerm on Wayland, and `-I`, are next.
 
 ## Judged e2e scenarios
 

@@ -59,26 +59,19 @@ server on one `Session`). Next and open:
   is still slow (zellij 0.45.1 forwards images uncompressed; a half-resolution
   mode could help), and tmux master's native kitty support (z=0 only) is untested.
 - e2e beyond X11 (Wayland, macOS, maybe Windows) without rewriting the
-  action files (discussed 2026-10-29, not started). The action files are
-  already mostly platform-neutral helpers (`keys`, `type`, `click`,
-  `wheel`, `dragto`, `move`, `shot`, `expect`, `check`, in terminal-area
-  pixels); what ties them to X11 is a few raw `xdotool` lines (press and
-  move, Ctrl+click: synctex, floats, resize, terminal-extras) and the
-  inside of `scripts/e2e.sh` (Xvfb, xdotool, `import`, xwininfo). The plan:
-  1. Helpers for those raw lines (button down/up, clicks and drags with
-     modifiers), and input, screenshot and window geometry behind a few
-     functions in `scripts/e2e.sh`, with today's X11 code as one backend.
-  2. A Wayland backend on headless sway: `wtype` for keys and `grim` for
-     screenshots (both in the dev shell), a virtual-pointer tool (e.g.
-     wlrctl) for the mouse. Input injection differs per compositor, so
-     sway only.
+  action files (discussed 2026-10-29). Done: 1. action files use helpers
+  only, the display server behind `be_*` functions in `scripts/e2e.sh`;
+  2. `-d wayland` on headless sway with `crates/wlinput` (wtype and
+  wlrctl did not do: a virtual device per call), kitty and the GUI
+  (`doc/testing.md`, "X11 and Wayland"). Left: Ghostty and WezTerm on
+  Wayland, `-I` (fcitx5) on Wayland, and:
   3. macOS: `scripts/macos-gui.sh` (driven step by step today) behind the
      same functions, so its scenarios share the action files and `expect`.
-  4. Windows: no bash, so then one small Rust driver for every platform,
-     `enigo` (input; Wayland and libei still experimental behind feature
-     flags) with `xcap` (screen and window capture on X11, Wayland, macOS,
-     Windows), and the action files as one action per line read by a Rust
-     runner.
+  4. Windows: no bash, so then one small Rust driver for every platform
+     (`crates/wlinput` is its Wayland part), `enigo` (input; Wayland and
+     libei still experimental behind feature flags) with `xcap` (screen and
+     window capture on X11, Wayland, macOS, Windows), and the action files
+     as one action per line read by a Rust runner.
   Considered and set aside: VNC as the one layer (vncdotool; Xvnc, wayvnc,
   macOS screen sharing, a Windows server; tends to need a logged-in
   desktop on macOS and Windows), PyAutoGUI and nut.js (no Wayland), openQA

@@ -124,6 +124,16 @@ Known problems:
     the associated text whenever only Shift (or nothing) is held.
   - SGR-pixel coordinates are exact in all three (WezTerm's origin is below
     its tab bar).
+- kitty 0.49.2 on Wayland (headless sway 1.12 with the pixman renderer,
+  2026-10-29, `scripts/e2e.sh -d wayland`): runs on Mesa's software EGL
+  (it only warns "failed to get driver name for fd -1") and passes every
+  judged scenario, as the GUI does. Every new virtual keyboard (one per
+  wtype call) reached kitty as a focus change (`CSI O` then `CSI I`), and
+  `wtype -M shift -k g` arrived as nothing; with one keyboard for the run
+  (`crates/wlinput`) neither happens. With its keys on a US layout's evdev
+  codes kitty reports no base-layout key for them, as for a real keyboard;
+  on arbitrary codes it reported a wrong one (`b` with base `4`), and
+  temzdf takes a base `c` with Ctrl for Ctrl+C.
 
 ## Multiplexers (research 2026-10-25, from zellij main ffb334a and tmux master acee541 sources)
 

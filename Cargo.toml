@@ -16,6 +16,7 @@ members = [
     "crates/temzdf-server",
     "crates/temzdf",
     "crates/tuitest",
+    "crates/wlinput",
 ]
 
 [workspace.package]

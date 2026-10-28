@@ -163,6 +163,8 @@
                           sway
                           grim
                           wtype
+                          # The clipboard on Wayland (scripts/e2e.sh -d wayland).
+                          wl-clipboard
                           wlr-randr
                           dbus
                           (kdePackages.fcitx5-with-addons.override { addons = [ fcitx5-mozc ]; })
