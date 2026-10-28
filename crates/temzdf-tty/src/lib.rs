@@ -101,8 +101,17 @@ impl Screen {
             comp.rewrite_placeholder_text();
             self.text.invalidate();
         }
-        let text = self.text.render(&frame.text);
-        comp.present_with(&presenter.layers(&frame.layers), &text, &mut self.out)?;
+        let before = self.text.clear_gone(&frame.text);
+        let (text, grids) = (&mut self.text, &frame.text);
+        comp.present_with(
+            &presenter.layers(&frame.layers),
+            &before,
+            |placed| {
+                text.redraw_wide(placed);
+                text.render(grids)
+            },
+            &mut self.out,
+        )?;
         self.cursor(frame);
         Ok(&self.out)
     }
@@ -259,6 +268,44 @@ mod tests {
         // Later the images catch up, without writing the text again.
         let rest = String::from_utf8_lossy(screen.render(&frame, &presenter, &mut comp).unwrap()).into_owned();
         assert!(rest.contains("\x1b_G") && !rest.contains('b'), "{rest:?}");
+    }
+
+    #[test]
+    fn text_that_goes_is_blanked_before_the_images_and_wide_text_after_them() {
+        // WezTerm draws an image over a wide character in both its halves, and
+        // drops the wide characters (and the image under text) where it places
+        // one: the screen's image is sent again when a float opens over text.
+        let g = Geometry { cols: 10, rows: 5, cell: CellSize { width: 8, height: 16 } };
+        let mut comp = Compositor::new(Backend::composited(), Medium::Direct { compress: false }, g);
+        let mut images = Images::new();
+        let mut presenter = Presenter::new();
+        let key = images.add(1, 1, vec![255; 4]);
+        presenter.sync(&mut comp, &mut images);
+        let layer = |x| Layer {
+            key: 1,
+            image: key,
+            src: termpix::geom::Rect::new(0, 0, 1, 1),
+            dst: termpix::geom::Rect::new(x, 0, 8, 8),
+            z: 0,
+        };
+        let wide = |t: &str| Cell { text: t.into(), width: 2, ..Cell::default() };
+        let spacer = Cell { width: 0, ..Cell::default() };
+        let row = vec![wide("い"), spacer.clone(), wide("ろ"), spacer];
+        let mut frame = Frame {
+            layers: vec![layer(0)],
+            text: vec![TextGrid { col: 0, row: 0, rows: vec![row] }],
+            ..Default::default()
+        };
+        let mut screen = Screen::new();
+        screen.render(&frame, &presenter, &mut comp).unwrap();
+        // A float over ろ: its cells lose their text, and the image changes.
+        frame.layers = vec![layer(8)];
+        frame.text[0].rows[0].truncate(2);
+        let out = String::from_utf8_lossy(screen.render(&frame, &presenter, &mut comp).unwrap()).into_owned();
+        let image = out.find("\x1b_G").expect("the image is sent again");
+        let blank = out.find("\x1b[1;3H  ").expect("ろ blanked");
+        let again = out.rfind('い').expect("い written again");
+        assert!(blank < image && image < again, "{out:?}");
     }
 
     #[test]

@@ -136,6 +136,17 @@ pub struct Compositor {
     /// Unanswered fence queries (id, when sent); see [`Compositor::is_congested`].
     fences: VecDeque<(u32, Instant)>,
     next_fence: u32,
+    /// The cells the placements written by the present in progress cover.
+    placed_cells: Vec<CellRange>,
+}
+
+/// Cells of the screen: `cols` x `rows` from (`col`, `row`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellRange {
+    pub col: u32,
+    pub row: u32,
+    pub cols: u32,
+    pub rows: u32,
 }
 
 /// Image ids used for fence queries (never stored by the terminal).
@@ -170,6 +181,7 @@ impl Compositor {
             not_uploaded: VecDeque::new(),
             fences: VecDeque::new(),
             next_fence: FENCE_IDS.start,
+            placed_cells: Vec::new(),
         }
     }
 
@@ -386,16 +398,28 @@ impl Compositor {
     /// Emit the commands that make the terminal show `layers`. Writes nothing when
     /// the screen would not change.
     pub fn present(&mut self, layers: &[Layer], out: &mut Vec<u8>) -> io::Result<()> {
-        self.present_with(layers, &[], out)
+        self.present_with(layers, &[], |_| Vec::new(), out)
     }
 
-    /// Like [`Compositor::present`], with `text` (the application's own text
-    /// output: cursor moves, SGR, characters) written after the graphics in the
-    /// same synchronized update, so text and images change together. With the
+    /// Like [`Compositor::present`], with text (the application's own text
+    /// output: cursor moves, SGR, characters) in the same synchronized update,
+    /// so text and images change together: `before` ahead of the graphics,
+    /// `text` after them. Text that goes away belongs in `before`: WezTerm
+    /// draws an image placed over a wide character twice (in both halves),
+    /// and drops the image in a cell text is written to. `text` gets the
+    /// cells this frame placed images on: WezTerm also drops the wide
+    /// characters there, which then have to be written again. With the
     /// Placeholders backend, text written over placeholder cells replaces those
     /// image cells; see [`Compositor::rewrite_placeholder_text`].
-    pub fn present_with(&mut self, layers: &[Layer], text: &[u8], out: &mut Vec<u8>) -> io::Result<()> {
+    pub fn present_with(
+        &mut self,
+        layers: &[Layer],
+        before: &[u8],
+        text: impl FnOnce(&[CellRange]) -> Vec<u8>,
+        out: &mut Vec<u8>,
+    ) -> io::Result<()> {
         let mut body = std::mem::take(&mut self.pending);
+        self.placed_cells.clear();
         let layers = &self.within_images(layers);
         match self.backend {
             Backend::Layered => self.present_layered(layers, &mut body)?,
@@ -409,10 +433,12 @@ impl Compositor {
         if self.tmux_passthrough {
             body = crate::placeholder::wrap_for_tmux(&body);
         }
-        if !body.is_empty() || !text.is_empty() {
+        let text = text(&self.placed_cells);
+        if !body.is_empty() || !text.is_empty() || !before.is_empty() {
             out.extend_from_slice(SYNC_BEGIN);
+            out.extend_from_slice(before);
             out.extend_from_slice(&body);
-            out.extend_from_slice(text);
+            out.extend_from_slice(&text);
             out.extend_from_slice(SYNC_END);
             // Inline transfers can outpace a slow link (SSH): ask the terminal to
             // acknowledge this frame, so callers can wait (see is_congested).
@@ -458,6 +484,7 @@ impl Compositor {
         for layer in layers {
             debug_assert!(layer.key != 0, "layer keys must be non-zero");
             let Some(img) = self.images.get(&layer.image.0) else { continue };
+            let img_size = (img.width, img.height);
             let src = layer.src.intersect(&Rect::new(0, 0, img.width, img.height));
             let (Some(src), Some(vis)) = (src, layer.dst.intersect(&screen)) else { continue };
             seen.insert(layer.key);
@@ -535,6 +562,15 @@ impl Compositor {
             }
             write!(out, "\x1b[{};{}H", row + 1, col + 1)?;
             self.encoder.place(out, layer.image.0, &placement);
+            let (cols, rows) = placement.cells.unwrap_or_else(|| {
+                // Unscaled: the source's pixels from the offset on.
+                let size = placement.src.map_or(img_size, |r| (r.w, r.h));
+                (
+                    (placement.offset.0 + size.0).div_ceil(cell.width.max(1)),
+                    (placement.offset.1 + size.1).div_ceil(cell.height.max(1)),
+                )
+            });
+            self.placed_cells.push(CellRange { col, row, cols, rows });
             self.placed.insert(layer.key, placed);
         }
         let gone: Vec<u32> = self.placed.keys().copied().filter(|k| !seen.contains(k)).collect();
@@ -594,6 +630,13 @@ impl Compositor {
                 }
             } else {
                 write!(out, "\x1b[{};1H", i * strip_h / self.geometry.cell.height.max(1) + 1)?;
+                let ch = self.geometry.cell.height.max(1);
+                self.placed_cells.push(CellRange {
+                    col: 0,
+                    row: y0 / ch,
+                    cols: self.geometry.cols as u32,
+                    rows: (y1 - y0).div_ceil(ch),
+                });
                 // Re-transmitting an id replaces the image and its placement in place.
                 Placement { placement_id: 1, ..Default::default() }
             };
@@ -1012,5 +1055,33 @@ mod tests {
         assert!(c.would_resend(&layers), "the screen size changed");
         let layered = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, geometry());
         assert!(!layered.would_resend(&layers), "layered frames only place images");
+    }
+
+    #[test]
+    fn text_learns_the_cells_this_frame_placed_images_on() {
+        let cells = |c: &mut Compositor, layers: &[Layer]| {
+            let mut got = Vec::new();
+            c.present_with(
+                layers,
+                &[],
+                |placed| {
+                    got = placed.to_vec();
+                    Vec::new()
+                },
+                &mut Vec::new(),
+            )
+            .unwrap();
+            got
+        };
+        let mut c = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, geometry());
+        let img = c.add_image(30, 30, test_image());
+        // 30x30 px from (13, 25): columns 1-4 and rows 1-2 of 10x20 px cells.
+        assert_eq!(cells(&mut c, &[layer(img, 13, 25)]), [CellRange { col: 1, row: 1, cols: 4, rows: 2 }]);
+        assert_eq!(cells(&mut c, &[layer(img, 13, 25)]), [], "nothing placed again");
+        let mut c = Compositor::new(Backend::composited(), Medium::Direct { compress: false }, geometry());
+        let img = c.add_image(30, 30, test_image());
+        let whole = [CellRange { col: 0, row: 0, cols: 8, rows: 4 }];
+        assert_eq!(cells(&mut c, &[layer(img, 13, 25)]), whole, "the screen as one strip");
+        assert_eq!(cells(&mut c, &[layer(img, 13, 25)]), [], "the same frame is not sent again");
     }
 }

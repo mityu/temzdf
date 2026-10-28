@@ -250,6 +250,20 @@ crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
   the images out under such text (`Session::covers`); kitty and Ghostty
   look the same either way (cells with a background hide images below
   text there). Seen in `tests/e2e/floats.actions` (`notice.png`).
+- WezTerm 0-unstable-2026-10-10 and wide characters under images (user
+  report, 2026-10-29; reproduced on Xvfb with `printf` and kitty graphics
+  alone): placing an image (`a=T` or `a=p`) over cells drops the wide
+  characters in them, while ASCII stays; the image is drawn twice over a
+  cell that held a wide character (in both its halves); and writing text
+  into a cell drops the image there. Opening a float sends the screen's
+  Composited image again, so every wide character on the screen went
+  (the poem left of the float, the lines above it), and a second strip of
+  the float's border showed where its frame met wide characters. kitty
+  keeps them all. Now the compositor tells the text writer which cells a
+  frame placed images on (`Compositor::present_with`): our text that goes
+  away is blanked before the images (`TextScreen::clear_gone`), and the
+  wide characters under new placements are written again after them
+  (`TextScreen::redraw_wide`). `tests/e2e/float-wide.actions`.
 - tmux 3.8 inside kitty 0.49.2 (`scripts/e2e.sh -m tmux`, passthrough on, mouse
   on): works with the Placeholders backend. Frames are composited as strips
   and sent as `U=1` virtual images through passthrough (`ESC P tmux; ...`), and

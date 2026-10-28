@@ -1,0 +1,23 @@
+# Wide characters beside a floating pane. WezTerm drops the wide characters
+# in cells an image is placed on, and opening a float sends the screen's
+# image again (the Composited backend): the text left of the float went.
+# Used with:
+#   scripts/e2e.sh -t wezterm -s 800x600 -o target/e2e-float-wide tests/e2e/float-wide.actions -- sh -c \
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-w; exec sh'
+# (also in kitty). Judged: expect for before and float, the text too in
+# kitty and WezTerm. Expected (80x27 cells in WezTerm):
+#   before.png  the iroha poem, seven lines of wide characters, top left
+#   float.png   a float over the middle; the poem's first four columns
+#               (two characters) still show left of it, its first three
+#               lines above it whole
+printf '%s\n' いろはにほへと ちりぬるをわか よたれそつねな らむうゐのおく やまけふこへて あさきゆめみし ゑひもせす \
+  >"$outdir/iroha.txt"
+pause 1
+type "clear; cat $outdir/iroha.txt
+"
+pause 1
+expect before
+keys ctrl+b W
+pause 1.5
+expect float
+target/debug/temzdf kill-session e2e-w

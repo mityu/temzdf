@@ -5,6 +5,7 @@
 use std::fmt::Write as _;
 
 use temzdf_scene::{Attrs, Cell, Color, TextGrid, Underline};
+use termpix::compositor::CellRange;
 
 /// What we last wrote to each cell. `None`: nothing of ours (the cell shows
 /// the images below, or tmux placeholder text).
@@ -13,6 +14,9 @@ pub struct TextScreen {
     cols: u16,
     rows: u16,
     shown: Vec<Option<Cell>>,
+    /// Cells the next render writes even if `shown` matches (see
+    /// [`TextScreen::redraw_wide`]).
+    redraw: Vec<bool>,
 }
 
 /// The pen: the SGR state the terminal is in while writing a run.
@@ -25,7 +29,8 @@ struct Pen {
 
 impl TextScreen {
     pub fn new(cols: u16, rows: u16) -> Self {
-        Self { cols, rows, shown: vec![None; cols as usize * rows as usize] }
+        let n = cols as usize * rows as usize;
+        Self { cols, rows, shown: vec![None; n], redraw: vec![false; n] }
     }
 
     /// The terminal changed size (it may have moved or dropped text): start
@@ -38,6 +43,34 @@ impl TextScreen {
     /// placeholder text): the next render writes every text cell again.
     pub fn invalidate(&mut self) {
         self.shown.fill(None);
+    }
+
+    /// Write the wide characters in `cells` again with the next render (both
+    /// their halves): images were placed there, and some terminals (WezTerm)
+    /// drop the wide characters under a placement. Where the next frame has no
+    /// text, the usual rule applies (our text is cleared).
+    pub fn redraw_wide(&mut self, cells: &[CellRange]) {
+        let cols = self.cols as usize;
+        for r in cells {
+            for y in r.row as usize..(r.row + r.rows).min(self.rows as u32) as usize {
+                for x in r.col as usize..(r.col + r.cols).min(self.cols as u32) as usize {
+                    let i = y * cols + x;
+                    match self.shown[i].as_ref().map(|c| c.width) {
+                        Some(2) => {
+                            self.redraw[i] = true;
+                            if x + 1 < cols {
+                                self.redraw[i + 1] = true;
+                            }
+                        }
+                        Some(0) if x > 0 => {
+                            self.redraw[i] = true;
+                            self.redraw[i - 1] = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     /// The desired cell contents for `grids` (later grids win where they overlap).
@@ -68,6 +101,35 @@ impl TextScreen {
         self.shown.iter().zip(&want).any(|(s, w)| s.is_some() && w.is_none())
     }
 
+    /// Bytes that blank our text where `grids` have none (the images below
+    /// show there again), ahead of the images: see
+    /// [`termpix::compositor::Compositor::present_with`]. [`TextScreen::render`]
+    /// then writes the rest.
+    pub fn clear_gone(&mut self, grids: &[TextGrid]) -> Vec<u8> {
+        let want = self.desired(grids);
+        let cols = self.cols as usize;
+        let mut out = String::new();
+        for y in 0..self.rows as usize {
+            let mut at: Option<usize> = None;
+            for x in 0..cols {
+                let i = y * cols + x;
+                if self.shown[i].is_none() || want[i].is_some() {
+                    continue;
+                }
+                if at != Some(x) {
+                    let _ = write!(out, "\x1b[{};{}H", y + 1, x + 1);
+                }
+                out.push(' ');
+                at = Some(x + 1);
+                self.shown[i] = None;
+            }
+        }
+        if !out.is_empty() {
+            out.insert_str(0, "\x1b[0m");
+        }
+        out.into_bytes()
+    }
+
     /// Bytes that make the terminal show `grids`; empty when it already does.
     pub fn render(&mut self, grids: &[TextGrid]) -> Vec<u8> {
         let want = self.desired(grids);
@@ -84,7 +146,8 @@ impl TextScreen {
             let mut x = 0;
             while x < cols {
                 let i = y * cols + x;
-                if want[i] == self.shown[i] && again != Some(i) {
+                let redraw = self.redraw[i] && want[i].is_some();
+                if want[i] == self.shown[i] && again != Some(i) && !redraw {
                     x += 1;
                     continue;
                 }
@@ -130,6 +193,7 @@ impl TextScreen {
                 }
             }
         }
+        self.redraw.fill(false);
         if pen.is_some() {
             out.push_str("\x1b[0m");
         }
@@ -279,5 +343,27 @@ mod tests {
             MockTerminal::new(Geometry { cols: 4, rows: 2, cell: CellSize { width: 8, height: 16 } }, [0, 0, 0, 255]);
         term.feed(out.as_bytes());
         assert_eq!(term.text_rows(), vec!["", ""], "nothing wrapped onto the next row");
+    }
+
+    #[test]
+    fn wide_characters_under_a_placement_are_written_again() {
+        // WezTerm drops the wide characters in cells an image is placed on.
+        let wide = |t: &str| Cell { text: t.into(), width: 2, ..Cell::default() };
+        let spacer = Cell { width: 0, ..Cell::default() };
+        let row = vec![wide("い"), spacer.clone(), cell("a"), wide("ろ"), spacer.clone(), cell("b")];
+        let g = TextGrid { col: 0, row: 0, rows: vec![row] };
+        let mut t = TextScreen::new(12, 3);
+        t.render(std::slice::from_ref(&g));
+        assert!(t.render(std::slice::from_ref(&g)).is_empty());
+        // An image over columns 1-3: the spacer of い and the first half of ろ.
+        t.redraw_wide(&[CellRange { col: 1, row: 0, cols: 3, rows: 1 }]);
+        let out = String::from_utf8(t.render(std::slice::from_ref(&g))).unwrap();
+        assert_eq!(out, "\x1b[1;1H\x1b[0mい\x1b[1;4Hろ\x1b[0m", "both, whole; not the ASCII a");
+        assert!(t.render(std::slice::from_ref(&g)).is_empty(), "once");
+        // Where the next frame has no text, ours is still cleared.
+        t.redraw_wide(&[CellRange { col: 0, row: 0, cols: 2, rows: 1 }]);
+        let without = TextGrid { col: 2, row: 0, rows: vec![g.rows[0][2..].to_vec()] };
+        let out = String::from_utf8(t.render(&[without])).unwrap();
+        assert_eq!(out, "\x1b[1;1H\x1b[0m  \x1b[0m");
     }
 }
