@@ -13,7 +13,7 @@ type "read l; echo \"got:\$l\" > $outdir/ime.txt
 pause 0.5
 ime on
 pause 0.5
-xdotool type --delay 80 nihonn
+type nihonn 80
 pause 1
 shot composing
 keys Return
@@ -23,7 +23,7 @@ keys Return
 pause 1
 type "read l; echo \"got:\$l\" > $outdir/pasted.txt
 "
-printf pasted | xclip -selection clipboard
+set_clipboard pasted
 pause 0.3
 keys ctrl+shift+v Return
 pause 1

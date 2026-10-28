@@ -7,7 +7,7 @@ pause 1
 dragto 318 188 582 190 5
 pause 0.5
 expect selected
-xclip -selection clipboard -o >"$outdir/clipboard.txt" 2>/dev/null || true
+clipboard >"$outdir/clipboard.txt" || true
 drag 50 400 300
 pause 0.5
 expect panned

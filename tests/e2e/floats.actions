@@ -28,9 +28,11 @@ type "echo inside the float
 pause 1
 expect float
 # The title edge is row 3 (y 60-79); drag it 20 columns right, 4 rows down.
-xdotool mousemove 300 70 mousedown 1 mousemove 400 110 mousemove 500 150
+down 300 70
+move 400 110
+move 500 150
 pause 0.3
-xdotool mouseup 1
+up
 pause 1
 expect moved
 target/debug/temzdf action -s e2e-f message "a notice in a frame"

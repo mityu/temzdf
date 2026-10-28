@@ -19,9 +19,11 @@ type "clear; printf 'select me please\n\033]8;;https://example.org\033\\\\a link
 pause 1.5
 expect image
 # Cells are 10x20 px: "select" is columns 45-50 of the first row.
-xdotool mousemove 451 10 mousedown 1 mousemove 480 10 mousemove 508 10
+down 451 10
+move 480 10
+move 508 10
 pause 0.3
-xdotool mouseup 1
+up
 pause 0.5
 expect selected
 type "seq 1 100

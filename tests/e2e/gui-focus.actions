@@ -11,18 +11,16 @@ type "read l; echo \"got:\$l\" > $outdir/focus.txt
 "
 pause 0.5
 # Another window takes the focus; Ctrl+D goes down there.
-xterm -e sh -c 'sleep 30' &
-other=$!
-other_wid=$(xdotool search --sync --onlyvisible --pid "$other" | head -1)
-xdotool windowfocus --sync "$other_wid"
+other=$(other_window)
+focus_window "$other"
 pause 0.5
-xdotool keydown ctrl keydown d
+hold ctrl d
 pause 0.3
 # It closes with the keys still down: the GUI gets the focus back.
 kill "$other"
-xdotool windowfocus --sync "$wid"
+focus_window "$term_pid"
 pause 0.5
-xdotool keyup d keyup ctrl
+release d ctrl
 pause 0.3
 keys Return
 pause 1

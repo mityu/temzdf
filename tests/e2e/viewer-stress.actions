@@ -6,12 +6,12 @@ wheel 30
 pause 0.5
 wheel -30
 for i in 1 2 3; do
-  xdotool mousemove $((200 * i)) 250 keydown ctrl click 4 click 4 keyup ctrl
+  wheel -2 $((200 * i)) 250 C
   pause 0.7
 done
 wheel 15
 pause 0.7
-xdotool mousemove 400 300 keydown ctrl click 5 click 5 click 5 click 5 click 5 click 5 keyup ctrl
+wheel 6 400 300 C
 pause 1
 keys shift+g
 pause 1.5

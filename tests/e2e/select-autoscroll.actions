@@ -5,10 +5,10 @@
 # lines, the view moved down); releasing copies it (clipboard.txt starts with
 # "temzdf sample document").
 pause 1
-xdotool mousemove 318 188 mousedown 1
-for y in 260 360 460 560 575; do xdotool mousemove 450 $y; sleep 0.05; done
+down 318 188
+for y in 260 360 460 560 575; do move 450 $y; sleep 0.05; done
 pause 1
 shot held
-xdotool mouseup 1
+up
 pause 0.5
-xclip -selection clipboard -o >"$outdir/clipboard.txt" 2>/dev/null || true
+clipboard >"$outdir/clipboard.txt" || true

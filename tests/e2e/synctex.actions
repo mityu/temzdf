@@ -15,7 +15,7 @@ shot forward
 keys g
 pause 1
 rm -f target/e2e-sync/inverse.txt
-xdotool mousemove 450 188 keydown ctrl click 1 keyup ctrl
+click 450 188 1 C
 pause 1
 # The line SyncTeX gives for the title: where \maketitle ends.
 inverse_on_title() {

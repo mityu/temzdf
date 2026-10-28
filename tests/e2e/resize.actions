@@ -12,9 +12,11 @@
 keys ctrl+b percent
 pause 1
 # The border is column 44 (x 440-449).
-xdotool mousemove 445 200 mousedown 1 mousemove 500 200 mousemove 605 200
+down 445 200
+move 500 200
+move 605 200
 pause 0.3
-xdotool mouseup 1
+up
 pause 0.5
 type "clear; stty size
 "

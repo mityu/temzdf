@@ -25,9 +25,16 @@
 #   drag X Y1 Y2       left-drag vertically from Y1 to Y2
 #   dragto X1 Y1 X2 Y2 [STEPS]  left-drag in STEPS moves (default 10), 30 ms apart
 #   click X Y [BTN [MODS]]  click (button 1 by default)
-#   move X Y           move the pointer (hover)
-#   keys KEY...        xdotool key names, e.g. `keys q` or `keys ctrl+f`
-#   type TEXT          type literal text
+#   down X Y [BTN [MODS]], up  press a button there (and MODS), release it;
+#                      `move` in between drags
+#   move X Y           move the pointer (hover, or drag while `down`)
+#   keys KEY...        XKB key names (as xdotool takes them), e.g. `keys q`
+#                      or `keys ctrl+f`
+#   type TEXT [MS]     type literal text (MS between keys)
+#   hold KEY..., release KEY...  keys held across other actions (not recorded)
+#   clipboard, set_clipboard TEXT  read or write the clipboard
+#   other_window       open a plain window of another program, print its PID
+#   focus_window PID   give PID's window the focus ($term_pid: the terminal's)
 #   pause SECONDS
 #   ime on|off         (-I) switch the input method
 #   expect NAME KEYS   save OUTDIR/NAME.png and compare it with the screen
@@ -91,7 +98,10 @@ self=$(realpath "$0")
 cd "$(dirname "$self")/.."
 
 if [[ -z "${IN_NIX_SHELL:-}" ]]; then
-  exec nix develop --quiet -c "$self" "$@" 2> >(grep -v "Git tree .* is dirty" >&2)
+  # The dirty-tree warning off through nix itself: a process substitution
+  # filtering it would leave its pipe open in every child, and a daemon that
+  # outlives the run (mozc_server) kept whatever reads our output waiting.
+  NIX_CONFIG="warn-dirty = false${NIX_CONFIG:+$'\n'$NIX_CONFIG}" exec nix develop --quiet -c "$self" "$@"
 fi
 
 size=900x600
@@ -171,51 +181,102 @@ mod_keys() {
 }
 button_name() { case $1 in 1) echo left ;; 2) echo middle ;; 3) echo right ;; *) echo "bad button $1" >&2; exit 2 ;; esac; }
 
-shot() { import -window root "$outdir/$1.png"; }
+# What depends on the display server (be_*; X11 here): pointer and keys,
+# screenshots, the clipboard, windows. Coordinates are the screen's; key
+# names are XKB keysym names (xdotool's), MODS as for the helpers below.
+be_move() { xdotool mousemove "$1" "$2"; }
+be_button() { xdotool "mouse$1" "$2"; }  # down|up BUTTON
+# N presses of BUTTON, DELAY ms apart, in one go (a wheel flick).
+be_clicks() { xdotool click --repeat "$2" --delay "$3" "$1"; }
+be_key() { xdotool key "$1"; }
+be_keydown() { xdotool keydown "$1"; }
+be_keyup() { xdotool keyup "$1"; }
+be_type() { xdotool type ${2:+--delay "$2"} -- "$1"; }  # TEXT [DELAY_MS]
+be_shot() { import -window root "$1"; }
+be_clipboard() { xclip -selection clipboard -o 2>/dev/null; }
+be_set_clipboard() { printf %s "$1" | xclip -selection clipboard; }
+# The first visible window of process PID.
+be_window() { xdotool search --sync --onlyvisible --pid "$1" | head -1; }
+be_focus() { xdotool windowfocus --sync "$(be_window "$1")"; }
+# "X Y W H" of PID's window's inside.
+be_window_rect() {
+  xwininfo -id "$(be_window "$1")" | awk '/Absolute upper-left X/ {x = $4} /Absolute upper-left Y/ {y = $4}
+    /Width:/ {w = $2} /Height:/ {h = $2} END {print x, y, w, h}'
+}
+# A plain window of another program, for focus to go to; prints its PID.
+be_other_window() { xterm -e sh -c 'sleep 30' >/dev/null 2>&1 & echo $!; }
+
+shot() { be_shot "$outdir/$1.png"; }
 wheel() {
   local n=$1 x=${2:-$((width / 2))} y=${3:-$((height / 2))} mods=${4:-} btn=5 dir=down k
   if ((n < 0)); then btn=4 dir=up n=$((-n)); fi
-  xdotool mousemove $(root "$x" "$y")
+  be_move $(root "$x" "$y")
   record move "$(at "$x" "$y")" $mods
-  for k in $(mod_keys "$mods"); do xdotool keydown "$k"; done
-  # One xdotool call: separate ones take about 0.1 s each, too slow for a
-  # flick. The steps are recorded at the times xdotool spaces them.
+  for k in $(mod_keys "$mods"); do be_keydown "$k"; done
+  # One call: separate ones take about 0.1 s each, too slow for a flick.
+  # The steps are recorded at the times it spaces them.
   local first=$((($(usec) - t0) / 1000)) i
-  xdotool click --repeat "$n" --delay 30 "$btn"
+  be_clicks "$btn" "$n" 30
   for ((i = 0; i < n; i++)); do record -at $((first + 30 * i)) wheel $dir "$(at "$x" "$y")" $mods; done
-  for k in $(mod_keys "$mods"); do xdotool keyup "$k"; done
+  for k in $(mod_keys "$mods"); do be_keyup "$k"; done
+}
+# The button held by `down` (and its MODS), for `move` and `up`.
+held_btn= held_mods= pointer_x=0 pointer_y=0
+down() {
+  local x=$1 y=$2 btn=${3:-1} mods=${4:-} k
+  be_move $(root "$x" "$y")
+  record move "$(at "$x" "$y")" $mods
+  for k in $(mod_keys "$mods"); do be_keydown "$k"; done
+  be_button down "$btn"
+  record press "$(at "$x" "$y")" "$(button_name "$btn")" $mods
+  held_btn=$btn held_mods=$mods pointer_x=$x pointer_y=$y
+}
+up() {
+  local btn=${1:-${held_btn:-1}} k
+  be_button up "$btn"
+  record release "$(at "$pointer_x" "$pointer_y")" "$(button_name "$btn")" $held_mods
+  for k in $(mod_keys "$held_mods"); do be_keyup "$k"; done
+  held_btn= held_mods=
 }
 dragto() {
   local x=$1 y=$2 x2=$3 y2=$4 steps=${5:-10} i px py
-  xdotool mousemove $(root "$x" "$y")
-  record move "$(at "$x" "$y")"
-  xdotool mousedown 1
-  record press "$(at "$x" "$y")" left
+  down "$x" "$y"
   for ((i = 1; i <= steps; i++)); do
     px=$((x + (x2 - x) * i / steps)) py=$((y + (y2 - y) * i / steps))
-    xdotool mousemove $(root "$px" "$py")
-    record drag "$(at "$px" "$py")" left
+    move "$px" "$py"
     sleep 0.03
   done
-  xdotool mouseup 1
-  record release "$(at "$x2" "$y2")" left
+  up
 }
 drag() { dragto "$1" "$2" "$1" "$3"; }
 click() {
   local x=$1 y=$2 btn=${3:-1} mods=${4:-} k b
   b=$(button_name "$btn")
-  xdotool mousemove $(root "$x" "$y")
+  be_move $(root "$x" "$y")
   record move "$(at "$x" "$y")" $mods
-  for k in $(mod_keys "$mods"); do xdotool keydown "$k"; done
-  xdotool click "$btn"
+  for k in $(mod_keys "$mods"); do be_keydown "$k"; done
+  be_clicks "$btn" 1 0
   record press "$(at "$x" "$y")" "$b" $mods
   record release "$(at "$x" "$y")" "$b" $mods
-  for k in $(mod_keys "$mods"); do xdotool keyup "$k"; done
+  for k in $(mod_keys "$mods"); do be_keyup "$k"; done
 }
+# The pointer: a drag while `down` holds a button, else hovering.
 move() {
-  xdotool mousemove $(root "$1" "$2")
-  record move "$(at "$1" "$2")"
+  be_move $(root "$1" "$2")
+  pointer_x=$1 pointer_y=$2
+  if [[ -n $held_btn ]]; then
+    record drag "$(at "$1" "$2")" "$(button_name "$held_btn")" $held_mods
+  else
+    record move "$(at "$1" "$2")"
+  fi
 }
+# Keys held down across other actions (not recorded: for windows and focus).
+hold() { local k; for k in "$@"; do be_keydown "$k"; done; }
+release() { local k; for k in "$@"; do be_keyup "$k"; done; }
+clipboard() { be_clipboard; }
+set_clipboard() { be_set_clipboard "$1"; }
+focus_window() { be_focus "$1"; }
+other_window() { be_other_window; }
 # An xdotool key name in Vim's notation (the names actions use; others
 # stop the run rather than record something else).
 key_notation() {
@@ -247,21 +308,21 @@ key_notation() {
 keys() {
   local k
   for k in "$@"; do
-    xdotool key "$k"
+    be_key "$k"
     record key "$(key_notation "$k")"
   done
 }
 type() {
-  local s=$1 i c out="" line rest
+  local s=$1 delay=${2:-} i c out="" line rest
   # Newlines as the Return key: Ghostty ignores those xdotool types.
   rest=$s
   while [[ $rest == *$'\n'* ]]; do
     line=${rest%%$'\n'*}
-    [[ -n $line ]] && xdotool type -- "$line"
-    xdotool key Return
+    [[ -n $line ]] && be_type "$line" "$delay"
+    be_key Return
     rest=${rest#*$'\n'}
   done
-  [[ -n $rest ]] && xdotool type -- "$rest"
+  [[ -n $rest ]] && be_type "$rest" "$delay"
   for ((i = 0; i < ${#s}; i++)); do
     c=${s:i:1}
     case $c in
