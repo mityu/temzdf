@@ -1,4 +1,5 @@
-# Japanese input in the GUI: fcitx5 with Mozc over XIM, into a shell.
+# Japanese input in the GUI: fcitx5 with Mozc into a shell, over XIM on X11
+# and over input-method-v2 and text-input-v3 on Wayland (add -d wayland).
 # Used with:
 #   cargo build -p temzdf -p temzdf-gui
 #   scripts/e2e.sh -t gui -I -o target/e2e-gui-ime tests/e2e/gui-ime.actions -- \

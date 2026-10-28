@@ -94,7 +94,11 @@ palette, fonts and key translation, `scripts/e2e.sh -t gui` with
 `tests/e2e/gui-ime.actions` (`-I`: fcitx5 with Mozc, committed Japanese and
 a paste reach a shell).
 
-Not done yet: Wayland (sway headless is in the dev shell) and most macOS
+On Wayland (headless sway, `scripts/e2e.sh -d wayland`) the same scenarios
+pass, Japanese input included: fcitx5 attaches through input-method-v2,
+the GUI gets preedit and commits through text-input-v3 (winit), and
+fcitx5's candidate window opens below the cursor (2026-10-29). Not done
+yet: a real Wayland desktop, most macOS
 checks, HiDPI and fractional scales (`--scale` and `ScaleFactorChanged`
 exist, untested), Option as Alt on macOS, cursor blinking, the configurable
 action that ends the session when the window closes (closing detaches), underline colours
@@ -337,7 +341,10 @@ Besides the (decide) items above:
   the IME (fcitx5, ibus); xfwl4 advertises it, sway since 1.9 has it with
   input-method-v2. Preedit drawing, cursor area updates and commit timing
   are where GUI terminals have had bugs; the user types Japanese, so this
-  must be tested early on each platform.
+  must be tested early on each platform. Checked on headless sway 1.12
+  with fcitx5 5.1.23 and Mozc (`tests/e2e/gui-ime.actions -d wayland`):
+  preedit at the cursor, the candidate window below it, the commit and a
+  paste reach the shell.
 - **Fonts**: CJK fallback, wide cells (a CJK glyph spans two cells, the
   scene already marks width), emoji colour glyphs, bold and italic faces,
   and keeping glyphs exactly on the cell grid (no subpixel drift between

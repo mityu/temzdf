@@ -63,8 +63,8 @@ server on one `Session`). Next and open:
   only, the display server behind `be_*` functions in `scripts/e2e.sh`;
   2. `-d wayland` on headless sway with `crates/wlinput` (wtype and
   wlrctl did not do: a virtual device per call), kitty and the GUI
-  (`doc/testing.md`, "X11 and Wayland"), every terminal and the GUI.
-  Left: `-I` (fcitx5) on Wayland, and:
+  (`doc/testing.md`, "X11 and Wayland"), every terminal and the GUI,
+  `-I` (fcitx5) too. Left:
   3. macOS: `scripts/macos-gui.sh` (driven step by step today) behind the
      same functions, so its scenarios share the action files and `expect`.
   4. Windows: no bash, so then one small Rust driver for every platform

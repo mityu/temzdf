@@ -124,7 +124,11 @@ keyboard (a US layout at the real evdev codes, so kitty's base-layout key
 is right; other characters get free codes as typed) and one virtual
 pointer for the run. kitty, Ghostty, WezTerm and the GUI pass every judged
 scenario on both (2026-10-29; Ghostty cannot tell its text, so those checks
-SKIP); `-I` is X11 only so far. WezTerm on X11 failed `viewer`'s wheel and
+SKIP). `-I` (fcitx5 with Mozc) works on both: over XIM on X11, over
+input-method-v2 (sway) and text-input-v3 (the GUI) on Wayland; the run
+ends the fcitx5 and mozc_server it started (Mozc's server daemonizes; a
+leftover one kept a pipe open, see `scripts/check.sh`'s NIX_CONFIG note).
+WezTerm on X11 failed `viewer`'s wheel and
 zoom once in a long run and passed the reruns (it delivers wheel steps
 unevenly).
 
