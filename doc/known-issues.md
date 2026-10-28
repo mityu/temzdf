@@ -58,6 +58,14 @@ planned work stays in `todo.md`.
   `taskDone`. A task cut off outside `atomic` still stays in `script.tasks`
   until the host is dropped; nothing waits on it.
 
+## GUI client
+
+- **A DPI set after `temzdf-gui` started on X11 without one is not
+  followed**: the scale stays 1 (`WINIT_X11_SCALE_FACTOR`, set at start by
+  `crates/temzdf-gui/src/x11scale.rs`) until the window is opened again.
+  Following it would need winit to fall back to 1 itself, or the GUI to
+  watch XSETTINGS and rescale.
+
 ## Dependencies
 
 - **zlib-rs fails Miri's aliasing checks.** Compressing through flate2's

@@ -6,6 +6,12 @@ use temzdf_gui::cli::{Cli, Command, font_entry};
 use temzdf_gui::connection::session_for;
 
 fn main() -> Result<()> {
+    // SAFETY: the first thing the program does, before any other thread
+    // exists.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    unsafe {
+        temzdf_gui::x11scale::default_scale()
+    };
     let cli = Cli::parse();
     if let Some(Command::LsFonts(a)) = &cli.command {
         let font: Vec<_> = a.font.iter().map(|f| font_entry(f)).collect();

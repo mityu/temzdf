@@ -14,3 +14,5 @@ pub mod lsfonts;
 pub mod palette;
 pub mod render;
 pub mod view;
+#[cfg(all(unix, not(target_os = "macos")))]
+pub mod x11scale;

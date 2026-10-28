@@ -56,6 +56,15 @@ only session, or a new shell; new sessions without a NAME are named as
   presses on X11 and Windows) were pressed for another window: they, their
   repeats and their release are dropped (`Input::keyboard`;
   `tests/e2e/gui-focus.actions`: Ctrl+D ending a shell in another window).
+- **Scale on X11**: winit takes it from `WINIT_X11_SCALE_FACTOR`, else the
+  DPI in XSETTINGS (`Xft/DPI`) or the X resources (`Xft.dpi`), else the
+  monitor's pixels per millimetre (17/12 on the user's 3840-pixel, 698 mm
+  monitor with Xfce's custom DPI off). GTK, Qt and GLFW use 1 without a DPI
+  setting, so the window and its text came out larger than Ghostty's;
+  without one `temzdf-gui` sets `WINIT_X11_SCALE_FACTOR=1` before winit
+  starts (`x11scale.rs`). Set the variable to override it. Xvfb reports
+  monitors as 0 mm (winit then uses 1), and resets its properties when the
+  last client leaves unless started with `-noreset`.
 - **Packaging**: `nix build` builds both binaries; the libraries winit and
   wgpu load (`guiLibsFor` in `flake.nix`) go into `temzdf-gui`'s RUNPATH, so
   the binary works alone outside the dev shell (on Nix: it needs glibc 2.44

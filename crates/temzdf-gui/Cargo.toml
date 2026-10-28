@@ -25,6 +25,10 @@ unicode-width = "0.2.2"
 sys-locale = "0.3.2"
 unicode-script = "0.5.8"
 
+# What X11's DPI setting is (src/x11scale.rs); the version winit uses.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11rb = "0.14.0"
+
 [lints]
 workspace = true
 
