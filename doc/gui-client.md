@@ -68,10 +68,10 @@ only session, or a new shell; new sessions without a NAME are named as
   monitors as 0 mm (winit then uses 1), and resets its properties when the
   last client leaves unless started with `-noreset`.
 - **Packaging**: `nix build` builds both binaries; the libraries winit and
-  wgpu load (`guiLibsFor` in `flake.nix`) go into `temzdf-gui`'s RUNPATH, so
+  wgpu load (`guiLibs` in `flake.nix`) go into `temzdf-gui`'s RUNPATH, so
   the binary works alone outside the dev shell (on Nix: it needs glibc 2.44
-  from the same nixpkgs). It cannot be static, unlike `nix build
-  .#temzdf-static`: it must dlopen the system's Vulkan driver.
+  from the same nixpkgs). It cannot be a static binary: it must dlopen the
+  system's Vulkan driver.
 
 Differences from the plan below:
 
