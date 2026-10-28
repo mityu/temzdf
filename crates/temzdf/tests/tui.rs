@@ -89,9 +89,18 @@ impl Env {
         self.log(session).lines().filter_map(|l| l.strip_prefix("temzdf script [log]: ")).map(str::to_owned).collect()
     }
 
+    /// The temzdf binary with this environment, not inside the session the
+    /// tests may run in (`TEMZDF_SESSION_NAME`: temzdf would take that
+    /// session for its own), as `tuitest` starts programs.
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(BIN);
+        cmd.envs(self.vars()).env_remove("TEMZDF_SESSION_NAME");
+        cmd
+    }
+
     /// Run a temzdf command (not attached to a terminal) and return its output.
     fn run(&self, args: &[&str]) -> String {
-        let out = Command::new(BIN).args(args).envs(self.vars()).output().unwrap();
+        let out = self.command().args(args).output().unwrap();
         let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         assert!(out.status.success(), "temzdf {args:?} failed: {text}");
         text
@@ -101,7 +110,7 @@ impl Env {
 impl Drop for Env {
     fn drop(&mut self) {
         // End whatever server a failed test left running.
-        let _ = Command::new(BIN).arg("kill-all-sessions").envs(self.vars()).output();
+        let _ = self.command().arg("kill-all-sessions").output();
     }
 }
 
@@ -387,11 +396,7 @@ fn ctrl_c_interrupts_a_runaway_mapping() {
     std::thread::sleep(std::time::Duration::from_millis(300));
     // While it runs, input is held; `temzdf action` waits too and times out.
     t.type_text("echo lost\n");
-    let out = Command::new(BIN)
-        .args(["action", "-s", "i", "--timeout", "1", "focus-next-pane"])
-        .envs(env.vars())
-        .output()
-        .unwrap();
+    let out = env.command().args(["action", "-s", "i", "--timeout", "1", "focus-next-pane"]).output().unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("within 1.0 s"), "{}", String::from_utf8_lossy(&out.stderr));
     t.key("C-c");
@@ -490,7 +495,7 @@ fn a_click_on_another_pane_only_focuses_it() {
         "-c".into(),
         script.into(),
     ];
-    let out = Command::new(BIN).args(&words).envs(env.vars()).output().unwrap();
+    let out = env.command().args(&words).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     t.wait_for("the tracking program", |s| s.row_from(0, 50).starts_with("tracking"));
     // Focus back to the shell, then click the program's pane: only focus.
@@ -797,7 +802,7 @@ fn a_program_that_stops_reading_does_not_stop_the_session() {
 fn sessions_that_cannot_start_fail_the_command() {
     let env = Env::new("nostart");
     // A missing file: refused before any server starts.
-    let out = Command::new(BIN).args(["-s", "m", "missing.pdf"]).envs(env.vars()).output().unwrap();
+    let out = env.command().args(["-s", "m", "missing.pdf"]).output().unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("no such file"), "{out:?}");
     // A file that is no PDF: the server says why, and the client fails.
@@ -887,9 +892,8 @@ fn a_server_whose_socket_is_gone_ends() {
         }
     }
     let mut server = Kill(
-        Command::new(BIN)
+        env.command()
             .args(["server", "o", "--clean", "--"])
-            .envs(env.vars())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -1159,7 +1163,7 @@ fn ls_fonts_shows_the_configured_fonts_or_a_sessions() {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&gui, std::fs::Permissions::from_mode(0o755)).unwrap();
     let run = |args: &[&str]| {
-        let out = Command::new(BIN).args(args).envs(env.vars()).env("TEMZDF_GUI", &gui).output().unwrap();
+        let out = env.command().args(args).env("TEMZDF_GUI", &gui).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         String::from_utf8(out.stdout).unwrap()
     };
@@ -1243,7 +1247,7 @@ fn sessions_of_another_version_keep_their_names() {
     t.wait_for("the prompt", prompt);
     assert_eq!(session_names(&env), ["bravo", "alfa"], "bravo listed first, then the other version");
     // kill-all-sessions fails on alfa but still ends bravo.
-    let out = Command::new(BIN).arg("kill-all-sessions").envs(env.vars()).output().unwrap();
+    let out = env.command().arg("kill-all-sessions").output().unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("alfa:"), "{out:?}");
     t.wait_text("[session bravo was killed]");
@@ -1255,8 +1259,8 @@ fn starting_a_session_without_a_terminal_leaves_nothing_behind() {
     let env = Env::new("notty");
     let pdf = fixture("sample.pdf").display().to_string();
     for args in [vec![pdf.as_str()], vec!["--forward", "44:sample.tex", &pdf], vec!["attach", "-c", "x"]] {
-        let mut cmd = Command::new(BIN);
-        cmd.args(&args).envs(env.vars()).stdin(std::process::Stdio::null());
+        let mut cmd = env.command();
+        cmd.args(&args).stdin(std::process::Stdio::null());
         // SAFETY: setsid is async-signal-safe; nothing else runs in the child.
         // A new session: no controlling terminal, as in an editor's job.
         unsafe { cmd.pre_exec(|| rustix::process::setsid().map(drop).map_err(Into::into)) };
@@ -1287,13 +1291,13 @@ fn closing_a_tab_page_runs_the_close_hooks_of_its_panes() {
 #[test]
 fn options_a_command_does_not_use_are_named() {
     let env = Env::new("unused-opts");
-    let out = Command::new(BIN).args(["ls", "--clean"]).envs(env.vars()).output().unwrap();
+    let out = env.command().args(["ls", "--clean"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stderr).contains("--clean is not used by list-sessions"), "{out:?}");
     let png = env.path("x.png").display().to_string();
     let pdf = fixture("sample.pdf").display().to_string();
     let args = ["standalone", "pdf", &pdf, "--render-frame", &png, "--forward", "1:x.tex", "--clean"];
-    let out = Command::new(BIN).args(args).envs(env.vars()).output().unwrap();
+    let out = env.command().args(args).output().unwrap();
     assert!(out.status.success(), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("--forward is not used by --render-frame"), "{err}");
