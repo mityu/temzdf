@@ -64,7 +64,9 @@ cargo build --workspace
 
 Run `scripts/check.sh` before every commit. The default dev shell has no Miri (check.sh
 says it skipped it); `nix develop .#enable-miri` has it, and the user runs
-it from time to time. The scripts enter the dev shell by
+it from time to time. To run Miri yourself, `nix develop .#alldeps -c
+scripts/check.sh` (or `-c scripts/miri.sh`) is the one allowed use of
+`nix develop -c`; its toolchain is nightly. The scripts enter the dev shell by
 themselves when started outside it. A unit test Miri cannot run (foreign
 code, ptys, processes, sockets) gets `#[cfg_attr(miri, ignore = "why")]`;
 see "Miri" in `doc/testing.md`.
