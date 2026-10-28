@@ -31,7 +31,7 @@ const DEFAULTS_NAME: &str = "temzdf:defaults";
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
      export const cmd = t.cmd, action = t.action, on = t.on, keymap = t.keymap, defineMode = t.defineMode,\n\
      o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, dispatch = t.dispatch,\n\
-     atomic = t.atomic, getMappings = t.getMappings;\n\
+     atomic = t.atomic;\n\
      export default t;\n";
 
 /// How long a timer or a promise job (code nobody waits for, so nobody can
@@ -396,6 +396,7 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
         "getMappings" => HostOp::GetMappings {
             mode: payload.get("mode").and_then(|v| v.as_str()).map(str::to_owned),
             namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
+            keys: payload.get("lhs").and_then(|v| v.as_str()).map(str::to_owned),
         },
         "setOption" => {
             HostOp::SetOption { name: text("name"), value: payload.get("value").map_or(ScriptValue::Null, to_script) }

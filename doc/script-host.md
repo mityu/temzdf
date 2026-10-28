@@ -88,8 +88,8 @@ declarations. In short, `import { ... } from "temzdf"`:
   describes them as data for mappings.
 - `keymap.add(modes, lhs, rhs, { nowait, desc, when, namespace, priority })`,
   `keymap.remove(modes, lhs, { namespace })`, `keymap.clear({ mode,
-  namespace })`, `defineMode(name, { unmapped, count, transient, keepalive,
-  timeout })`, `getMappings({ mode, namespace })`,
+  namespace })`, `keymap.get({ mode, namespace, lhs })`, `defineMode(name,
+  { unmapped, count, transient, keepalive, timeout })`,
   `feedkeys(keys, { remap })`, `currentMode()` (doc/keymaps.md).
 - `o.<option>` reads and sets options.
 - `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,

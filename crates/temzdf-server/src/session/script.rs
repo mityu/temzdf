@@ -813,18 +813,24 @@ impl Session {
                     Err(e) => (Err(e), Outcome::None),
                 }
             }
-            HostOp::GetMappings { mode, namespace } => {
+            HostOp::GetMappings { mode, namespace, keys } => {
                 let modes = match mode {
                     Some(m) if !self.modes.exists(&m) => {
-                        return (Err(format!("getMappings: no mode {m:?}")), Outcome::None);
+                        return (Err(format!("keymap.get: no mode {m:?}")), Outcome::None);
                     }
                     Some(m) => vec![m],
                     None => self.modes.names(),
                 };
+                let keys = match keys.as_deref().map(crate::keymap::notation::parse).transpose() {
+                    Ok(k) => k,
+                    Err(e) => return (Err(format!("keymap.get: {e:#}")), Outcome::None),
+                };
                 let mut out = Vec::new();
                 for mode in modes {
-                    for (keys, m) in self.modes.mappings(&mode, namespace.as_deref()) {
-                        out.push(mapping_value(&mode, &keys, &m));
+                    for (k, m) in self.modes.mappings(&mode, namespace.as_deref()) {
+                        if keys.as_ref().is_none_or(|keys| *keys == k) {
+                            out.push(mapping_value(&mode, &k, &m));
+                        }
                     }
                 }
                 (Ok(ScriptValue::List(out)), Outcome::None)
@@ -1107,7 +1113,7 @@ fn read_only(op: &HostOp) -> bool {
     }
 }
 
-/// A mapping as `getMappings` gives it: functions as `{ func: id }`, which
+/// A mapping as `keymap.get` gives it: functions as `{ func: id }`, which
 /// the host turns back into the functions.
 fn mapping_value(
     mode: &str,

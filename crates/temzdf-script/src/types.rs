@@ -107,6 +107,8 @@ declare module "temzdf" {{
     remove(mode: string | readonly string[], lhs: string, options?: {{ namespace?: string }}): void;
     /** Remove every mapping of the mode and the namespace (each one left out: all of them). */
     clear(filter?: {{ mode?: string; namespace?: string }}): void;
+    /** The mappings of the mode, the namespace and the keys (each one left out: all of them): a snapshot. */
+    get(filter?: {{ mode?: string; namespace?: string; lhs?: string }}): MappingInfo[];
   }};
   export interface ModeProperties {{
     /** What keys no mapping takes do (default: the mode below's, else drop). */
@@ -121,7 +123,7 @@ declare module "temzdf" {{
     timeout?: number;
   }}
   export function defineMode(name: string, properties?: ModeProperties): void;
-  /** A mapping as getMappings gives it (keymap.add's arguments). */
+  /** A mapping as keymap.get gives it (keymap.add's arguments). */
   export interface MappingInfo {{
     mode: string;
     lhs: string;
@@ -132,8 +134,6 @@ declare module "temzdf" {{
     namespace?: string;
     priority: number;
   }}
-  /** The mappings of a mode (every mode without one), of a namespace when given: a snapshot. */
-  export function getMappings(filter?: {{ mode?: string; namespace?: string }}): MappingInfo[];
   export function feedkeys(keys: string, options?: {{ remap?: boolean }}): void;
   export function currentMode(): string;
 

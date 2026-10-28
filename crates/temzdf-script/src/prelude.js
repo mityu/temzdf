@@ -52,7 +52,7 @@
   };
   const isAction = (a) => a !== null && typeof a === "object" && a[ACTION] === true;
 
-  // Functions by the id they were registered under, for getMappings.
+  // Functions by the id they were registered under, for keymap.get.
   const registered = [];
 
   // Register `fn` as a mapped or hook function, or (`condition`) as a
@@ -75,7 +75,7 @@
     return id;
   }
 
-  // A function getMappings gave back: its id again, not a new one.
+  // A function keymap.get gave back: its id again, not a new one.
   const funcId = (f, what, condition) => {
     const id = registered.findIndex((r) => r !== undefined && r.fn === f && r.condition === condition);
     return id >= 0 ? id : register(f, what, condition);
@@ -132,6 +132,21 @@
       clear(filter = {}) {
         request(current(), "clearMappings", { mode: filter.mode ?? null, namespace: filter.namespace ?? null });
       },
+      // keymap.get({ mode, namespace, lhs }): the mappings as keymap.add()
+      // takes them; one left out is not a filter.
+      get(filter = {}) {
+        const back = (v) => (v !== null && typeof v === "object" && "func" in v ? registered[v.func]?.fn : v);
+        const payload = { mode: filter.mode ?? null, namespace: filter.namespace ?? null, lhs: filter.lhs ?? null };
+        return request(current(), "getMappings", payload).map((m) => ({
+          ...m,
+          rhs: Array.isArray(m.rhs)
+            ? m.rhs.map((a) => Object.freeze({ [ACTION]: true, name: a.name, args: a.args }))
+            : back(m.rhs),
+          when: m.when === null ? undefined : back(m.when),
+          desc: m.desc ?? undefined,
+          namespace: m.namespace ?? undefined,
+        }));
+      },
     }),
     // defineMode(name, { unmapped: "drop" | "passthrough", count, transient,
     // keepalive: "mapped" | "always" | (ctx) => boolean, timeout })
@@ -151,21 +166,6 @@
         keepalive,
         timeout: props.timeout ?? null,
       });
-    },
-    // getMappings({ mode, namespace }): mappings as keymap.add() takes them.
-    getMappings(filter = {}) {
-      const back = (v) => (v !== null && typeof v === "object" && "func" in v ? registered[v.func]?.fn : v);
-      return request(current(), "getMappings", { mode: filter.mode ?? null, namespace: filter.namespace ?? null }).map(
-        (m) => ({
-          ...m,
-          rhs: Array.isArray(m.rhs)
-            ? m.rhs.map((a) => Object.freeze({ [ACTION]: true, name: a.name, args: a.args }))
-            : back(m.rhs),
-          when: m.when === null ? undefined : back(m.when),
-          desc: m.desc ?? undefined,
-          namespace: m.namespace ?? undefined,
-        }),
-      );
     },
     feedkeys(keys, options = {}) {
       return globalCmd.feedkeys(keys, options.remap !== false);

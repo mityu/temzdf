@@ -217,10 +217,12 @@ pub enum HostOp {
         mode: Option<String>,
         namespace: Option<String>,
     },
-    /// The mappings of `mode` (every mode when `None`) and `namespace`.
+    /// The mappings of `mode`, `namespace` and `keys` (Neovim notation);
+    /// `None` is any.
     GetMappings {
         mode: Option<String>,
         namespace: Option<String>,
+        keys: Option<String>,
     },
     SetOption {
         name: String,

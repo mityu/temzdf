@@ -8,7 +8,6 @@ import {
   defineMode,
   dispatch,
   feedkeys,
-  getMappings,
   keymap,
   o,
   on,
@@ -29,7 +28,7 @@ keymap.remove("normal", "x");
 keymap.remove("normal", "q", { namespace: "default" });
 keymap.clear({ mode: "window", namespace: "mine" });
 keymap.clear({ namespace: "nobody" });
-for (const m of getMappings({ mode: "normal", namespace: "default" })) {
+for (const m of keymap.get({ mode: "normal", namespace: "default" })) {
   keymap.add("resize", m.lhs, m.rhs, { when: m.when, nowait: m.nowait, desc: m.desc });
 }
 

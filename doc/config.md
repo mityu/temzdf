@@ -91,9 +91,10 @@ mode keys that time out go to the pane.
   the namespace (as Vim's `:mapclear`); each one left out means all of
   them: `keymap.clear({ namespace: "default" })` removes the shipped
   defaults, `keymap.clear()` every mapping.
-- `getMappings({ mode, namespace })` lists mappings as `keymap.add` takes them
-  (functions included): to copy some into another mode, or to show them.
-  It is a snapshot.
+- `keymap.get({ mode, namespace, lhs })` lists the mappings of the mode,
+  the namespace and the keys (each one left out means all of them) as
+  `keymap.add` takes them (functions included): to copy some into another
+  mode, or to show them. It is a snapshot.
 
 `defineMode(name, { unmapped, count, transient, keepalive, timeout })`
 makes a mode (or changes one). Properties left out are the mode below's

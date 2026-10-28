@@ -399,12 +399,12 @@ cmd.message(a + b + c);
 #[test]
 fn conditions_answer_booleans_and_get_mappings_gives_the_functions_back() {
     let config = r#"
-import { action, cmd, getMappings, keymap } from "temzdf";
+import { action, cmd, keymap } from "temzdf";
 keymap.add("normal", "t", () => cmd.message("t"), { when: (ctx) => ctx.paneKind === "terminal", namespace: "mine" });
 keymap.add("normal", "u", action.split("right"), { when: () => { throw new Error("bad"); } });
 keymap.add("normal", "v", action.split("right"), { when: (async () => true) as any });
 keymap.add("normal", "w", () => {
-  for (const m of getMappings({ mode: "normal", namespace: "mine" })) keymap.add("copy", m.lhs, m.rhs, { when: m.when });
+  for (const m of keymap.get({ mode: "normal", namespace: "mine", lhs: "t" })) keymap.add("copy", m.lhs, m.rhs, { when: m.when });
 });
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
@@ -440,7 +440,7 @@ keymap.add("normal", "w", () => {
         other => panic!("{other:?}"),
     }
 
-    // getMappings gives the functions back: mapping them again reuses
+    // keymap.get gives the functions back: mapping them again reuses
     // their ids.
     let w = match &maps[3].1 {
         MapRhs::Func(f) => *f,
@@ -450,8 +450,11 @@ keymap.add("normal", "w", () => {
     let mut copied = None;
     loop {
         match s.recv() {
-            FromHost::Request { req, op: HostOp::GetMappings { mode, namespace }, .. } => {
-                assert_eq!((mode.as_deref(), namespace.as_deref()), (Some("normal"), Some("mine")));
+            FromHost::Request { req, op: HostOp::GetMappings { mode, namespace, keys }, .. } => {
+                assert_eq!(
+                    (mode.as_deref(), namespace.as_deref(), keys.as_deref()),
+                    (Some("normal"), Some("mine"), Some("t"))
+                );
                 let func = |f: u32| ScriptValue::map([("func", ScriptValue::Num(f as f64))]);
                 let m = ScriptValue::map([
                     ("mode", ScriptValue::Str("normal".into())),

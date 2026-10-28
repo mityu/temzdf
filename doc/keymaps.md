@@ -145,7 +145,8 @@ configurations are written with the same system.
    `map` and `unmap` became `keymap.add` and `keymap.remove`, and
    `keymap.clear({ mode, namespace })` removes every mapping of a mode, a
    namespace or both, as Vim's `:mapclear`.)
-4. **Listing**: `getMappings({ mode, namespace })`, for help and key hints. Used
+4. **Listing**: `getMappings({ mode, namespace })` (now `keymap.get({ mode,
+   namespace, lhs })`, which can also pick the keys), for help and key hints. Used
    to copy one mode's mappings into another it gives a snapshot, not a live
    parent (mappings added later are missing); copying in the `SessionReady`
    hook avoids most of that.

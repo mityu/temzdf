@@ -508,7 +508,7 @@ fn modes_mappings_and_options_from_the_configuration() {
     let env = Env::new("script-modes");
     env.config(
         "config.ts",
-        r#"import { action, cmd, defineMode, feedkeys, getMappings, keymap, o, on } from "temzdf";
+        r#"import { action, cmd, defineMode, feedkeys, keymap, o, on } from "temzdf";
 o.timeoutlen = 300;
 defineMode("win", { transient: true, keepalive: "always" });
 keymap.add("terminal", "<C-x>w", [action.switchMode("normal"), action.switchMode("win")]);
@@ -521,7 +521,10 @@ keymap.add("terminal", "<C-x>s", () => cmd.sendText("echo side-effect\n"), { whe
 keymap.remove("normal", "x", { namespace: "default" });
 keymap.add(["normal", "pdf"], "Q", action.exitMode(), { namespace: "gone" });
 keymap.clear({ namespace: "gone" });
-console.log(`cleared ${getMappings({ namespace: "gone" }).length} ${getMappings({ mode: "pdf", namespace: "default" }).length > 0}`);
+console.log(`cleared ${keymap.get({ namespace: "gone" }).length} ${keymap.get({ mode: "pdf", namespace: "default" }).length > 0}`);
+keymap.add(["normal", "pdf"], "<C-b>z", action.exitMode(), { namespace: "lhs" });
+keymap.add("normal", "<C-b>y", action.exitMode(), { namespace: "lhs" });
+console.log(`by lhs ${keymap.get({ namespace: "lhs", lhs: "<C-b>z" }).map((m) => `${m.mode}:${m.lhs}`).join(",")}`);
 try { keymap.clear({ mode: "nope" }); } catch (e) { console.log(`clear refused: ${(e as Error).message}`); }
 on("ModeChanged", (a: string, b: string) => console.log(`mode ${a} ${b}`));
 try { keymap.add("terminal", "<C-c>x", action.exitMode()); } catch (e) { console.log(`refused: ${(e as Error).message}`); }
@@ -538,6 +541,7 @@ try { (o as any).nope = 1; } catch (e) { console.log(`option refused: ${(e as Er
     env.wait_log("md", "the options", |l| l.contains(r#"options 90 ["true"] text 300"#));
     env.wait_log("md", "the unknown option", |l| l.contains("option refused: no option \"nope\""));
     env.wait_log("md", "a namespace cleared", |l| l.contains("cleared 0 true"));
+    env.wait_log("md", "mappings by keys", |l| l.contains("by lhs normal:<C-b>z,pdf:<C-b>z"));
     env.wait_log("md", "the unknown mode", |l| l.contains("clear refused: keymap.clear: no mode \"nope\""));
     t.keys(&["C-x", "e"]);
     t.wait_text("mode-terminal");
