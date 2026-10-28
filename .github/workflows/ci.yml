@@ -10,6 +10,9 @@ on:
       - '**.md'
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   # rustfmt, clippy (warnings are errors) and tests, fixtures built with TeX
   # from the `ci` dev shell. End-to-end terminal tests stay local (doc/testing.md).
