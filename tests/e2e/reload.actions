@@ -1,6 +1,6 @@
 # Used with:
 #   mkdir -p target/e2e-reload && cp target/fixtures/sample.pdf target/e2e-reload/doc.pdf
-#   scripts/e2e.sh tests/e2e/reload.actions -- target/debug/temzdf standalone pdf target/e2e-reload/doc.pdf
+#   scripts/e2e.sh tests/e2e/reload.actions -- target/debug/temzdf standalone pdf --clean target/e2e-reload/doc.pdf
 # Simulates how LaTeX tools write the PDF. Expected:
 #   before.png     page 2 ("3 Filler"), status 2 / 3
 #   truncated.png  same view; "reloading…" in the status bar, old document still shown

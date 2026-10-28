@@ -2,7 +2,7 @@
 # Used with:
 #   mkdir -p target/e2e-terminal
 #   scripts/e2e.sh -o target/e2e-terminal tests/e2e/terminal.actions -- sh -c \
-#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf -s e2e-term; exec sh'
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-term; exec sh'
 # Expected:
 #   shell.png       a shell filling the window: the listing, "red" in red,
 #                   "green on blue", "数式 wide" (wide characters)

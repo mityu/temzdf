@@ -1,4 +1,4 @@
-# Used with: scripts/e2e.sh tests/e2e/search.actions -- target/debug/temzdf standalone pdf target/fixtures/sample.pdf
+# Used with: scripts/e2e.sh tests/e2e/search.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
 # Judged (expect: each screen compared with --render-frame replaying the same
 # input): typing shows the prompt with incremental highlights (typing),
 # Enter + n moves to the next hit (next), Esc clears highlights (cleared).

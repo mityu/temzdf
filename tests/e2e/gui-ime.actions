@@ -2,7 +2,7 @@
 # Used with:
 #   cargo build -p temzdf -p temzdf-gui
 #   scripts/e2e.sh -t gui -I -o target/e2e-gui-ime tests/e2e/gui-ime.actions -- \
-#     env SHELL=/bin/sh PS1='$ ' target/debug/temzdf-gui
+#     env SHELL=/bin/sh PS1='$ ' target/debug/temzdf-gui --clean
 # Expected: composing.png shows "にほん" being composed at the prompt
 # (Mozc's window at the cursor); ime.txt holds "got:にほん" (committed
 # text reached the shell); pasted.txt holds "got:pasted" (Ctrl+Shift+V

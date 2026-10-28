@@ -3,7 +3,7 @@
 # Used with:
 #   mkdir -p target/e2e-term-extras
 #   scripts/e2e.sh -o target/e2e-term-extras tests/e2e/terminal-extras.actions -- sh -c \
-#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf -s e2e-x; exec sh'
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-x; exec sh'
 # Expected:
 #   image.png     the right pane (C-b %): a red-to-blue gradient of 16x4 cells
 #                 below "select me please" and "a link" (a PNG sent as a file

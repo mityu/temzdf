@@ -2,7 +2,7 @@
 # Used with:
 #   mkdir -p target/e2e-tabs
 #   scripts/e2e.sh -o target/e2e-tabs tests/e2e/tabs.actions -- sh -c \
-#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf -s e2e-t; exec sh'
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-t; exec sh'
 # Expected (90x30 cells of 10x20 px):
 #   pdf.png    the tab line on the top row (" 1 shell  2 sample.pdf", the
 #              second highlighted), the PDF page below it; nothing of the

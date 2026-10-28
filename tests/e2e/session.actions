@@ -1,7 +1,7 @@
 # Used with:
 #   mkdir -p target/e2e-session
 #   scripts/e2e.sh tests/e2e/session.actions -- sh -c \
-#     'target/debug/temzdf -s e2e target/fixtures/sample.pdf; exec sh'
+#     'target/debug/temzdf --clean -s e2e target/fixtures/sample.pdf; exec sh'
 # Expected:
 #   split.png       two panes side by side on the same document, the right
 #                   one focused (accent border), scrolled down three steps

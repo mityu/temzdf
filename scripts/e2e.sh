@@ -54,6 +54,9 @@
 #                      `temzdf-gui --render-frame` attached to the same
 #                      session at that moment (the window's drawing, not the
 #                      session's input handling).
+#   check NAME CMD...  run CMD: PASS NAME when it succeeds, else FAIL
+#                      (OUTDIR/expect.txt, as expect), for what a screenshot
+#                      cannot judge (files, exit statuses).
 #
 # temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log.
 # It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij) and
@@ -63,8 +66,10 @@
 # harness does not leak into terminal detection, and with its own
 # XDG_RUNTIME_DIR (also for ACTIONS), so its sessions stay apart from the
 # user's and end with the run. If the terminal process died,
-# it prints "TERMINAL CRASHED" and exits 3; failed `expect`s exit 4. Requires the dev shell (kitty,
+# it prints "TERMINAL CRASHED" and exits 3; failed `expect`s and `check`s exit 4. Requires the dev shell (kitty,
 # xvfb-run, xdotool, imagemagick; Ghostty from the host); re-executes inside it.
+# A COMMAND that runs temzdf must pass --clean (checked), so scenarios see the
+# shipped defaults rather than the user's config.ts.
 set -euo pipefail
 # Absolute: it re-executes itself after the cd.
 self=$(realpath "$0")
@@ -96,6 +101,11 @@ if [[ $# -lt 3 || $2 != "--" ]]; then
 fi
 actions=$(realpath "$1")
 shift 2
+# Runs of temzdf take the shipped defaults, not the user's config.ts.
+if [[ "$*" == *temzdf* && "$*" != *--clean* ]]; then
+  echo "e2e.sh: COMMAND runs temzdf without --clean (it would load your config.ts)" >&2
+  exit 2
+fi
 mkdir -p "$outdir"
 outdir=$(realpath "$outdir")
 width=${size%x*}
@@ -261,6 +271,15 @@ expect_gui() {
     echo "PASS $name" | tee -a "$outdir/expect.txt"
   else
     echo "FAIL $name: $out pixels differ (see $name.diff.png)" | tee -a "$outdir/expect.txt"
+  fi
+}
+check() {
+  local name=$1
+  shift
+  if "$@"; then
+    echo "PASS $name" | tee -a "$outdir/expect.txt"
+  else
+    echo "FAIL $name: $*" | tee -a "$outdir/expect.txt"
   fi
 }
 expect() {

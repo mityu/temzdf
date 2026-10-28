@@ -99,7 +99,7 @@ match once, and tells a mutation that did not compile or a filter that ran
 no test from a caught one). The
 full testing approach is in `doc/testing.md`.
 
-`scripts/e2e.sh -t gui ... -- target/debug/temzdf-gui FILE` drives the GUI
+`scripts/e2e.sh -t gui ... -- target/debug/temzdf-gui --clean FILE` drives the GUI
 client the same way (xfwm4 on Xvfb, lavapipe; `-I` adds fcitx5 with Mozc for
 Japanese input); its GPU tests (`cargo test -p temzdf-gui --test gpu`) run
 offscreen on lavapipe.

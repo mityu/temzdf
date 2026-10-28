@@ -1,4 +1,4 @@
-# Used with: scripts/e2e.sh tests/e2e/select.actions -- target/debug/temzdf standalone pdf target/fixtures/sample.pdf
+# Used with: scripts/e2e.sh tests/e2e/select.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
 # Judged (expect): dragging across the title selects it (blue) and the status
 # bar says "Copied 22 characters" (selected); dragging in the margin pans

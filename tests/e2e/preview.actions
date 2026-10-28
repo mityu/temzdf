@@ -1,4 +1,4 @@
-# Used with: scripts/e2e.sh tests/e2e/preview.actions -- target/debug/temzdf standalone pdf target/fixtures/sample.pdf
+# Used with: scripts/e2e.sh tests/e2e/preview.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
 # Judged (expect, the timing replayed): resting on "3 Filler" in the table of
 # contents opens a preview of section 3 above it (no room below) with the

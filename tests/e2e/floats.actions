@@ -2,7 +2,7 @@
 # Used with:
 #   mkdir -p target/e2e-floats
 #   scripts/e2e.sh -o target/e2e-floats tests/e2e/floats.actions -- sh -c \
-#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf -s e2e-f; exec sh'
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-f; exec sh'
 # Expected (90x30 cells of 10x20 px):
 #   float.png  a framed float (columns 9-80, rows 3-26, title "shell" on its
 #              top edge, accent-coloured frame) showing "inside the float";

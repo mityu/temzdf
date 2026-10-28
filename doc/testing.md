@@ -121,7 +121,10 @@ may differ). Results go to `OUTDIR/expect.txt`; `NAME.actual.png`,
 
 Rules for scenarios:
 
-- Only `temzdf [--page N] [--scale S] FILE` (one viewer, no session).
+- Only `temzdf standalone pdf --clean [--page N] [--scale S] FILE` (one
+  viewer, no session). `--clean`: the headless side draws with the shipped
+  defaults, so the terminal must too; `scripts/e2e.sh` refuses a COMMAND
+  running temzdf without it.
 - Use the helpers (`wheel`, `dragto`, `click`, `move`, `keys`, `type`), not
   raw xdotool: their input is what reaches temzdf either way, but the
   harness's own record (`OUTDIR/events.txt`) times the screenshot from it.
@@ -134,6 +137,11 @@ Rules for scenarios:
   `--linear-blending`; Ghostty without decorations, padding or its
   clipboard toast), WezTerm, and for keys inside tmux and zellij (mouse
   input is not judged there: multiplexers report cells).
+
+`check NAME CMD...` judges what a screenshot cannot: a command's exit
+status or a file it wrote (`tests/e2e/synctex.actions`: the forward search
+succeeds, Ctrl+click runs the editor on the title's lines). Its results go to
+`OUTDIR/expect.txt` too, and a failure exits 4 as well.
 
 Both sides run the same viewer code, so a bug in viewer state shows up on
 both and passes: zooming anchored at the top-left instead of the pointer did

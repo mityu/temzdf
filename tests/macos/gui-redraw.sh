@@ -40,7 +40,7 @@ read -r _ dx dy _ _ < <($g display start) || true
 [[ -n ${dy:-} ]] || { echo "no virtual display" >&2; exit 2; }
 
 # The GUI starts the session (a shell); a second pane counts.
-read -r gpid _ < <($g launch app -- "$gui" -s "$session")
+read -r gpid _ < <($g launch app -- "$gui" --clean -s "$session")
 target/debug/temzdf action -s "$session" new-pane -- \
   sh -c 'i=0; while :; do i=$((i+1)); echo "tick $i"; sleep 0.3; done'
 read -r kpid _ < <($g launch kitty -- target/debug/temzdf attach "$session")

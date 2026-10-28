@@ -2,7 +2,8 @@
 # (vimtex) does: it must land in the new version.
 # Used with:
 #   mkdir -p target/e2e-sync && cp target/fixtures/sample.{pdf,synctex.gz} target/e2e-sync/
-#   scripts/e2e.sh tests/e2e/synctex-reload.actions -- target/debug/temzdf standalone pdf target/e2e-sync/sample.pdf
+#   scripts/e2e.sh tests/e2e/synctex-reload.actions -- target/debug/temzdf standalone pdf --clean target/e2e-sync/sample.pdf
+# Judged (check): the forward search after the rebuild succeeds (forward).
 # Expected:
 #   forward.png  page 1 of the new version (six "Inserted paragraph" lines) with
 #                the line starting "This document exercises" highlighted in red,
@@ -18,6 +19,6 @@ pause 0.5
 cp target/fixtures/sample-insert.pdf target/e2e-sync/new.pdf
 mv target/e2e-sync/new.pdf target/e2e-sync/sample.pdf
 cp target/fixtures/sample-insert.synctex.gz target/e2e-sync/sample.synctex.gz
-target/debug/temzdf --forward "$line:sample-insert.tex" target/e2e-sync/sample.pdf
+check forward target/debug/temzdf --forward "$line:sample-insert.tex" target/e2e-sync/sample.pdf
 pause 0.8
 shot forward

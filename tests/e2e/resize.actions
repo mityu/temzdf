@@ -3,7 +3,7 @@
 # Used with:
 #   mkdir -p target/e2e-resize
 #   scripts/e2e.sh -o target/e2e-resize tests/e2e/resize.actions -- sh -c \
-#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf -s e2e-r; exec sh'
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-r; exec sh'
 # Expected (90x30 cells of 10x20 px):
 #   dragged.png  the border at column 60: the left pane 60 columns wide, the
 #                right one printing "30 29" (`stty size`)
