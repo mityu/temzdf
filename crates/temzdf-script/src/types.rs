@@ -166,8 +166,8 @@ declare module "temzdf" {{
     synctexeditor: string | null;
     /** A shown terminal whose program ended keeps its panes. */
     remainonexit: boolean;
-    /** When the tab line shows: 0 never, 1 with two tab pages or more, 2 always. */
-    showtabline: 0 | 1 | 2;
+    /** When the tab line shows: "auto" with two tab pages or more. */
+    showtabline: "never" | "auto" | "always";
     /** Default text colour (#rrggbb) for GUI clients and terminal panes; null: the client's. */
     foreground: string | null;
     /** Default background colour (#rrggbb); null: the client's. */

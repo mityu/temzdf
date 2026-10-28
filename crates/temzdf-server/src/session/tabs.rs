@@ -8,7 +8,7 @@ use temzdf_protocol::script::ScriptValue;
 use temzdf_scene::{Attrs, Cell, Color, TextGrid};
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
 
-use super::{BACKGROUND, Outcome, PaneEntry, Session};
+use super::{BACKGROUND, Outcome, PaneEntry, Session, ShowTabline};
 use crate::layout::{Layout, PaneId};
 
 pub(super) type TabId = u32;
@@ -410,9 +410,9 @@ impl Session {
     /// Whether the tab line takes the top row.
     pub(super) fn tabline_shown(&self) -> bool {
         let wanted = match self.options.showtabline {
-            0 => false,
-            1 => self.tabs.len() > 1,
-            _ => true,
+            ShowTabline::Never => false,
+            ShowTabline::Auto => self.tabs.len() > 1,
+            ShowTabline::Always => true,
         };
         wanted && self.geometry.rows > 1
     }

@@ -355,9 +355,10 @@ the server receives the request and routes it to the panes showing that PDF.
   zellij gives each client its own).
 - A tab page's last tiled pane gives way to a shown float of that tab page;
   without one the tab page closes, and the last one ends the session.
-- The tab line follows Vim's `showtabline` (default 1: with two tab pages or
-  more), on the top row: number and focused buffer, or the name given with
-  `rename-tab`. A click goes to a tab page, a middle click closes it.
+- The tab line follows Vim's `showtabline` (default `"auto"`: with two tab
+  pages or more), on the top row: number and focused buffer, or the name
+  given with `rename-tab`. A click goes to a tab page, a middle click closes
+  it.
 - Floats carry Vim's popup `tabpage` (one tab page by default, or all); one
   stack for all, shown or hidden per tab page.
 - Commands as Vim and tmux name them (`new-tab`, `close-tab`, `next-tab`,

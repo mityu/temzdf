@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use temzdf_protocol::script::{CallId, FromHost, FuncId, HostOp, ScriptError, ScriptValue, TaskId, ToHost, Token};
 use termpix_core::input::{KeyCode, KeyEvent, Modifiers, MouseEvent, MouseEventKind};
 
-use super::{Outcome, PaneId, Session, SessionEvent};
+use super::{Outcome, PaneId, Session, SessionEvent, ShowTabline};
 use crate::action::PaneSpec;
 
 /// How to start the script host, and the configuration it loads.
@@ -965,10 +965,14 @@ impl Session {
                 o.guifontwide = fonts(value).map_err(|e| format!("o.guifontwide: {e}"))?;
                 self.configured_fonts = None;
             }
-            "showtabline" => match value.as_num() {
-                Some(n) if [0.0, 1.0, 2.0].contains(&n) => o.showtabline = n as u8,
-                _ => return Err("o.showtabline: expected 0, 1 or 2".into()),
-            },
+            "showtabline" => {
+                o.showtabline = match value.as_str() {
+                    Some("never") => ShowTabline::Never,
+                    Some("auto") => ShowTabline::Auto,
+                    Some("always") => ShowTabline::Always,
+                    _ => return Err("o.showtabline: expected \"never\", \"auto\" or \"always\"".into()),
+                }
+            }
             other => return Err(format!("no option {other:?}")),
         }
         self.apply_options();
@@ -997,7 +1001,14 @@ impl Session {
             "reloadanchor" => ScriptValue::Str(if o.reloadanchor_text { "text" } else { "position" }.into()),
             "synctexeditor" => o.synctexeditor.clone().map_or(ScriptValue::Null, ScriptValue::Str),
             "remainonexit" => ScriptValue::Bool(o.remainonexit),
-            "showtabline" => ScriptValue::Num(o.showtabline as f64),
+            "showtabline" => ScriptValue::Str(
+                match o.showtabline {
+                    ShowTabline::Never => "never",
+                    ShowTabline::Auto => "auto",
+                    ShowTabline::Always => "always",
+                }
+                .into(),
+            ),
             "foreground" => o.foreground.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "background" => o.background.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "palette" => ScriptValue::List(o.palette.iter().map(|c| ScriptValue::Str(hex(*c))).collect()),

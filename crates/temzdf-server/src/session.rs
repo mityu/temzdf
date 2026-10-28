@@ -105,6 +105,15 @@ impl Outcome {
     }
 }
 
+/// When the tab line shows (the option `showtabline`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShowTabline {
+    Never,
+    /// With two tab pages or more.
+    Auto,
+    Always,
+}
+
 /// Options scripts set with `o.<name> = ...` (global for now).
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -134,9 +143,8 @@ pub struct Options {
     /// A shown terminal whose program ended keeps its panes (tmux's
     /// `remain-on-exit`).
     pub remainonexit: bool,
-    /// When the tab line shows (Vim's `showtabline`): 0 never, 1 with two
-    /// tabs or more, 2 always.
-    pub showtabline: u8,
+    /// When the tab line shows (Vim's `showtabline`).
+    pub showtabline: ShowTabline,
     /// Colours for clients and terminal panes (`None`: the client's own),
     /// and the first palette entries.
     pub foreground: Option<[u8; 3]>,
@@ -181,7 +189,7 @@ impl Default for Options {
             reloadanchor_text: false,
             synctexeditor: None,
             remainonexit: false,
-            showtabline: 1,
+            showtabline: ShowTabline::Auto,
             foreground: None,
             background: None,
             palette: Vec::new(),
@@ -3510,12 +3518,14 @@ mod tests {
         assert_eq!(s.area().y, 0);
         assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows);
         // showtabline: always, never.
-        s.set_option("showtabline", &ScriptValue::Num(2.0)).unwrap();
+        s.set_option("showtabline", &ScriptValue::Str("always".into())).unwrap();
         assert_eq!((s.area().y, screen_text(&s.frame(), GEOMETRY)[0].as_str()), (1, " 1 shell"));
-        s.set_option("showtabline", &ScriptValue::Num(0.0)).unwrap();
+        assert_eq!(s.get_option("showtabline"), Ok(ScriptValue::Str("always".into())));
+        s.set_option("showtabline", &ScriptValue::Str("never".into())).unwrap();
         new_tab(&mut s, &["sleep", "30"]);
         assert_eq!(s.area().y, 0);
-        assert!(s.set_option("showtabline", &ScriptValue::Num(3.0)).is_err());
+        assert!(s.set_option("showtabline", &ScriptValue::Str("sometimes".into())).is_err());
+        assert!(s.set_option("showtabline", &ScriptValue::Num(2.0)).is_err());
     }
 
     /// The panes() entry of `pane`.
