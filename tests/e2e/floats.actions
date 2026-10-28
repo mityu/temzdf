@@ -3,7 +3,7 @@
 #   mkdir -p target/e2e-floats
 #   scripts/e2e.sh -o target/e2e-floats tests/e2e/floats.actions -- sh -c \
 #     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-f; exec sh'
-# Expected (90x30 cells of 10x20 px):
+# Judged: expect for each. Expected (90x30 cells of 10x20 px):
 #   float.png  a framed float (columns 9-80, rows 3-26, title "shell" on its
 #              top edge, accent-coloured frame) showing "inside the float";
 #              inside it no zeros, no part of the red-to-blue gradient (left
@@ -26,14 +26,14 @@ pause 1
 type "echo inside the float
 "
 pause 1
-shot float
+expect float
 # The title edge is row 3 (y 60-79); drag it 20 columns right, 4 rows down.
 xdotool mousemove 300 70 mousedown 1 mousemove 400 110 mousemove 500 150
 pause 0.3
 xdotool mouseup 1
 pause 1
-shot moved
+expect moved
 target/debug/temzdf action -s e2e-f message "a notice in a frame"
 pause 0.5
-shot notice
+expect notice
 target/debug/temzdf kill-session e2e-f

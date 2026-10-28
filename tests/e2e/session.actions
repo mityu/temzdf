@@ -2,7 +2,8 @@
 #   mkdir -p target/e2e-session
 #   scripts/e2e.sh tests/e2e/session.actions -- sh -c \
 #     'target/debug/temzdf --clean -s e2e target/fixtures/sample.pdf; exec sh'
-# Expected:
+# Judged: expect for split, reattached and new-pane; check for the messages
+# after detaching and killing, and for `temzdf ls` listing the session. Expected:
 #   split.png       two panes side by side on the same document, the right
 #                   one focused (accent border), scrolled down three steps
 #   detached.png    the shell, "[detached from session e2e]"
@@ -15,17 +16,21 @@ keys ctrl+b percent
 pause 1.5
 keys j j j
 pause 1
-shot split
+expect split
 keys ctrl+b d
 pause 1
 shot detached
+check detached-text screen_contains "[detached from session e2e]"
+rm -f target/e2e-session/ls.txt
 type "target/debug/temzdf ls > target/e2e-session/ls.txt; target/debug/temzdf attach e2e
 "
 pause 2.5
-shot reattached
+check ls grep -q "^e2e .*detached" target/e2e-session/ls.txt
+expect reattached
 target/debug/temzdf action -s e2e new-pane target/fixtures/sample-short.pdf
 pause 2
-shot new-pane
+expect new-pane
 target/debug/temzdf kill-session e2e
 pause 1
 shot killed
+check killed-text screen_contains "[session e2e was killed]"

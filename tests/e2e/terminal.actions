@@ -3,7 +3,9 @@
 #   mkdir -p target/e2e-terminal
 #   scripts/e2e.sh -o target/e2e-terminal tests/e2e/terminal.actions -- sh -c \
 #     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-term; exec sh'
-# Expected:
+# Judged: expect (the screen against the session's frame) for shell,
+# split-less, pdf, flood and reattached; check for the messages after
+# detaching and killing (detached-text, killed-text). Expected:
 #   shell.png       a shell filling the window: the listing, "red" in red,
 #                   "green on blue", "数式 wide" (wide characters)
 #   split-less.png  the shell left, less showing Cargo.toml on the right (focused)
@@ -18,31 +20,33 @@ pause 1
 type "ls tests/e2e | head -3; printf '\033[31mred\033[0m \033[32;44mgreen on blue\033[0m\n'; printf '\\346\\225\\260\\345\\274\\217 wide\\n'
 "
 pause 1
-shot shell
+expect shell
 keys ctrl+b percent
 pause 1
 type "less Cargo.toml
 "
 pause 1
-shot split-less
+expect split-less
 keys q
 pause 0.5
 type "target/debug/temzdf action new-pane target/fixtures/sample.pdf
 "
 pause 2
-shot pdf
+expect pdf
 keys ctrl+b h
 type "time seq 1 500000
 "
 pause 3
-shot flood
+expect flood
 keys ctrl+b d
 pause 1
 shot detached
+check detached-text screen_contains "[detached from session e2e-term]"
 type "target/debug/temzdf attach e2e-term
 "
 pause 2.5
-shot reattached
+expect reattached
 target/debug/temzdf kill-session e2e-term
 pause 1
 shot killed
+check killed-text screen_contains "[session e2e-term was killed]"

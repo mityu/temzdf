@@ -138,6 +138,33 @@ Rules for scenarios:
   clipboard toast), WezTerm, and for keys inside tmux and zellij (mouse
   input is not judged there: multiplexers report cells).
 
+In a session (COMMAND is `temzdf --clean -s NAME ...` rather than the
+standalone viewer, often inside `sh -c`), `expect NAME` takes no keys:
+`temzdf render-session` (hidden) attaches to the session as a terminal
+client of the same geometry and hints (from `temzdf.log`), waits for its
+frame to settle, and writes what a terminal should show: the images through
+the same bytes into the mock terminal (`NAME.expected.png`), the text of the
+cells (`NAME.expected.txt`) and a mask of the cells the terminal draws itself
+(text, backgrounds, the cursor; `NAME.mask.png`). The pixels are compared
+outside the mask, and in kitty the screen's text (`kitten @ get-text`, kitty
+listens on a socket for it) with the expected text (`NAME.text.diff`). This
+judges the terminal client and the terminal: placements, text positions,
+wide characters, images of programs in terminal panes, tab lines and
+floats as drawn. Both sides see the same session, so what the session
+decides (layout, focus, what a reload keeps) is not judged by it; that is
+for `crates/temzdf/tests/tui.rs` and unit tests. Not inside multiplexers;
+Ghostty and WezTerm get the pixels only. `tests/e2e/session.actions`,
+`terminal.actions`, `terminal-extras.actions`, `tabs.actions`,
+`floats.actions` and `resize.actions` use it.
+
+`screen_contains TEXT` (kitty) tells whether the screen shows TEXT, for
+moments outside a session (`check detached screen_contains "[detached from
+session e2e]"`); elsewhere it exits 77 and `check` records SKIP.
+
+`tests/e2e/reload.actions` judges the reload with `expect NAME "2G"`: the
+headless side opens the file as it is on disk at that moment, so the
+screens match only if the reload kept the place.
+
 `check NAME CMD...` judges what a screenshot cannot: a command's exit
 status or a file it wrote (`tests/e2e/synctex.actions`: the forward search
 succeeds, Ctrl+click runs the editor on the title's lines). Its results go to

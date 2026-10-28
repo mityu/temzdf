@@ -3,7 +3,7 @@
 #   mkdir -p target/e2e-tabs
 #   scripts/e2e.sh -o target/e2e-tabs tests/e2e/tabs.actions -- sh -c \
 #     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-t; exec sh'
-# Expected (90x30 cells of 10x20 px):
+# Judged: expect for each. Expected (90x30 cells of 10x20 px):
 #   pdf.png    the tab line on the top row (" 1 shell  2 sample.pdf", the
 #              second highlighted), the PDF page below it; nothing of the
 #              shell, its zeros or the gradient
@@ -20,15 +20,15 @@ type "clear; for i in \$(seq 12); do printf '%044d\n' 0; done; printf '\033_Ga=T
 pause 1
 target/debug/temzdf action -s e2e-t new-tab target/fixtures/sample.pdf
 pause 2
-shot pdf
+expect pdf
 keys ctrl+b g t
 pause 1
-shot shell
+expect shell
 # The second tab's label starts at column 9 (" 1 shell " is 9 cells).
 click 120 10
 pause 1
-shot back
+expect back
 click 30 10 2
 pause 1
-shot one
+expect one
 target/debug/temzdf kill-session e2e-t

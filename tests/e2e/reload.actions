@@ -1,7 +1,9 @@
 # Used with:
 #   mkdir -p target/e2e-reload && cp target/fixtures/sample.pdf target/e2e-reload/doc.pdf
 #   scripts/e2e.sh tests/e2e/reload.actions -- target/debug/temzdf standalone pdf --clean target/e2e-reload/doc.pdf
-# Simulates how LaTeX tools write the PDF. Expected:
+# Simulates how LaTeX tools write the PDF. Judged: expect for before, short
+# and recreated, against the file on disk at that moment after "2G" (the
+# reload kept the place). Expected:
 #   before.png     page 2 ("3 Filler"), status 2 / 3
 #   truncated.png  same view; "reloading…" in the status bar, old document still shown
 #   short.png      after rename-over with the 2-page version: still page 2 (now
@@ -10,16 +12,16 @@
 doc=target/e2e-reload/doc.pdf
 keys 2 shift+g
 pause 1.2
-shot before
+expect before "2G"
 head -c 60000 target/fixtures/sample.pdf >"$doc"
 pause 1.2
 shot truncated
 cp target/fixtures/sample-short.pdf target/e2e-reload/.doc.pdf.tmp
 mv target/e2e-reload/.doc.pdf.tmp "$doc"
 pause 1.5
-shot short
+expect short "2G"
 rm "$doc"
 pause 0.5
 cp target/fixtures/sample.pdf "$doc"
 pause 1.5
-shot recreated
+expect recreated "2G"

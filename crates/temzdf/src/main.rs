@@ -3,6 +3,7 @@ mod client;
 mod config;
 mod headless;
 mod lsfonts;
+mod snapshot;
 
 use temzdf_server::forward as ipc;
 
@@ -160,6 +161,33 @@ enum Cmd {
     /// Run the configuration script for a session (started by the session).
     #[command(hide = true)]
     ScriptHost,
+    /// Draw session NAME's frame as a terminal client of this geometry would
+    /// show it, into a PNG (scripts/e2e.sh compares terminals against it).
+    #[command(hide = true)]
+    RenderSession {
+        name: String,
+        out: PathBuf,
+        /// The screen in cells (COLSxROWS).
+        #[arg(long, value_name = "COLSxROWS")]
+        size: String,
+        /// The cell size in pixels (WxH).
+        #[arg(long, value_name = "WxH")]
+        cell: String,
+        /// The terminal client's hints (from its backend and medium).
+        #[arg(long)]
+        exact_scaling: bool,
+        #[arg(long)]
+        fast_uploads: bool,
+        /// Blend translucent layers in linear light like kitty.
+        #[arg(long)]
+        linear_blending: bool,
+        /// Write the text of the screen here.
+        #[arg(long, value_name = "FILE")]
+        text: Option<PathBuf>,
+        /// Write a mask of the cells the terminal draws itself here.
+        #[arg(long, value_name = "PNG")]
+        mask: Option<PathBuf>,
+    },
     /// Print TypeScript declarations of the scripting API (temzdf.d.ts).
     #[command(hide = true)]
     PrintTypes,
@@ -258,6 +286,28 @@ fn main() -> Result<()> {
         Some(Cmd::PrintTypes) => {
             print!("{}", temzdf_script::types::declarations(&temzdf_server::session::command_specs()));
             return Ok(());
+        }
+        Some(Cmd::RenderSession {
+            name,
+            out,
+            size,
+            cell,
+            exact_scaling,
+            fast_uploads,
+            linear_blending,
+            text,
+            mask,
+        }) => {
+            let (cols, rows) = parse_pair(&size)?;
+            let (cw, ch) = parse_pair(&cell)?;
+            let opts = snapshot::SnapshotOptions {
+                geometry: Geometry { cols: cols as u16, rows: rows as u16, cell: CellSize { width: cw, height: ch } },
+                hints: temzdf_scene::Hints { exact_scaling, fast_uploads },
+                linear_blending,
+                text,
+                mask,
+            };
+            return snapshot::render_session(&name, &out, &opts);
         }
         Some(Cmd::ScriptHost) => {
             return temzdf_script::run(std::io::stdin(), std::io::stdout()).map_err(anyhow::Error::msg);

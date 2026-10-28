@@ -54,9 +54,23 @@
 #                      `temzdf-gui --render-frame` attached to the same
 #                      session at that moment (the window's drawing, not the
 #                      session's input handling).
+#                      When COMMAND is not `temzdf standalone pdf` (a
+#                      session: `temzdf --clean -s NAME ...`, maybe in `sh
+#                      -c`), `expect NAME` compares the screen with `temzdf
+#                      render-session` attached to the session at that moment
+#                      (the session's only one, or $E2E_SESSION): the images
+#                      by pixels outside the cells the terminal draws itself
+#                      (NAME.mask.png), and in kitty the text of the screen
+#                      (`kitten @ get-text`) with the frame's
+#                      (NAME.expected.txt; NAME.text.diff on a mismatch).
+#                      Not inside multiplexers.
 #   check NAME CMD...  run CMD: PASS NAME when it succeeds, else FAIL
 #                      (OUTDIR/expect.txt, as expect), for what a screenshot
-#                      cannot judge (files, exit statuses).
+#                      cannot judge (files, exit statuses); SKIP when CMD
+#                      exits with 77 (it cannot tell in this terminal).
+#   screen_contains TEXT  whether the screen shows TEXT (kitty, through
+#                      `kitten @ get-text`; 77 elsewhere), e.g. `check
+#                      detached screen_contains "[detached from session e2e]"`.
 #
 # temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log.
 # It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij) and
@@ -234,8 +248,16 @@ keys() {
   done
 }
 type() {
-  local s=$1 i c out=""
-  xdotool type -- "$s"
+  local s=$1 i c out="" line rest
+  # Newlines as the Return key: Ghostty ignores those xdotool types.
+  rest=$s
+  while [[ $rest == *$'\n'* ]]; do
+    line=${rest%%$'\n'*}
+    [[ -n $line ]] && xdotool type -- "$line"
+    xdotool key Return
+    rest=${rest#*$'\n'}
+  done
+  [[ -n $rest ]] && xdotool type -- "$rest"
   for ((i = 0; i < ${#s}; i++)); do
     c=${s:i:1}
     case $c in
@@ -273,18 +295,89 @@ expect_gui() {
     echo "FAIL $name: $out pixels differ (see $name.diff.png)" | tee -a "$outdir/expect.txt"
   fi
 }
-check() {
-  local name=$1
-  shift
-  if "$@"; then
+# The lines of a screen's text without trailing blanks, or blank lines at
+# the end.
+screen_lines() {
+  sed 's/[[:space:]]*$//' "$1" | awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }'
+}
+# The session's form of expect: the screen against `temzdf render-session`
+# attached to the session now, as a client like the terminal's.
+expect_session() {
+  local name=$1 session geo cols rows cw ch backend medium out flags=() failed=
+  if [[ -n $mux ]]; then
+    echo "FAIL $name: sessions are not judged inside $mux" | tee -a "$outdir/expect.txt"
+    return
+  fi
+  shot "$name"
+  session=${E2E_SESSION:-$("$temzdf" ls | head -1 | cut -d' ' -f1)}
+  geo=$(grep -oE 'geometry [0-9]+x[0-9]+ cells of [0-9]+x[0-9]+ px with [A-Za-z]+ over [A-Za-z]+' \
+    "$outdir/state/temzdf/temzdf.log" | tail -1) || {
+    echo "FAIL $name: no geometry in temzdf.log" | tee -a "$outdir/expect.txt"
+    return
+  }
+  read -r cols rows cw ch backend medium <<<"$(sed -E \
+    's/geometry ([0-9]+)x([0-9]+) cells of ([0-9]+)x([0-9]+) px with ([A-Za-z]+) over ([A-Za-z]+)/\1 \2 \3 \4 \5 \6/' <<<"$geo")"
+  # The hints the terminal client sent (TtyFrontend::hints).
+  [[ $backend != Layered ]] && flags+=(--exact-scaling)
+  [[ $medium != Direct ]] && flags+=(--fast-uploads)
+  [[ $term == kitty || $term == ghostty ]] && flags+=(--linear-blending)
+  "$temzdf" render-session "$session" "$outdir/$name.expected.png" --size "${cols}x${rows}" --cell "${cw}x${ch}" \
+    --text "$outdir/$name.expected.txt" --mask "$outdir/$name.mask.png" "${flags[@]}" \
+    2>"$outdir/$name.expected.log" || {
+    echo "FAIL $name: render-session failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
+    return
+  }
+  # Pixels where the images show: the cells the terminal draws go black on
+  # both sides.
+  magick "$outdir/$name.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage \
+    "$outdir/$name.mask.png" -composite "$outdir/$name.actual.png"
+  magick "$outdir/$name.expected.png" "$outdir/$name.mask.png" -composite "$outdir/$name.expected.png"
+  out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.actual.png" "$outdir/$name.expected.png" \
+    "$outdir/$name.diff.png" 2>&1 || true)
+  out=${out%% *}
+  if [[ $out == 0 ]]; then
+    rm -f "$outdir/$name.diff.png"
+  else
+    failed="$out pixels differ (see $name.diff.png)"
+  fi
+  # The text, where the terminal can tell it.
+  if [[ $term == kitty ]]; then
+    kitten @ --to "unix:$kitty_socket" get-text --extent screen >"$outdir/$name.actual.txt"
+    if diff <(screen_lines "$outdir/$name.expected.txt") <(screen_lines "$outdir/$name.actual.txt") \
+      >"$outdir/$name.text.diff"; then
+      rm -f "$outdir/$name.text.diff"
+    else
+      failed+="${failed:+; }the text differs (see $name.text.diff)"
+    fi
+  fi
+  if [[ -z $failed ]]; then
     echo "PASS $name" | tee -a "$outdir/expect.txt"
   else
-    echo "FAIL $name: $*" | tee -a "$outdir/expect.txt"
+    echo "FAIL $name: $failed" | tee -a "$outdir/expect.txt"
   fi
+}
+check() {
+  local name=$1 status=0
+  shift
+  "$@" || status=$?
+  case $status in
+    0) echo "PASS $name" | tee -a "$outdir/expect.txt" ;;
+    77) echo "SKIP $name: $term cannot tell" | tee -a "$outdir/expect.txt" ;;
+    *) echo "FAIL $name: $*" | tee -a "$outdir/expect.txt" ;;
+  esac
+}
+# Whether the terminal shows TEXT (kitty; 77 elsewhere: it cannot tell).
+screen_contains() {
+  [[ $term == kitty && -z $mux ]] || return 77
+  kitten @ --to "unix:$kitty_socket" get-text --extent screen | grep -qF -- "$1"
 }
 expect() {
   if [[ $term == gui ]]; then
     expect_gui "$1"
+    return
+  fi
+  if [[ -n $session_mode ]]; then
+    expect_session "$1"
     return
   fi
   local name=$1 keys=${2:-} input geo cols rows cw ch out
@@ -357,6 +450,14 @@ if ((${#args[@]} > 0)); then
   # them.
   if [[ ($term == kitty || $term == ghostty) && -z $mux ]]; then expect_cmd+=(--linear-blending); fi
 fi
+# A session (not the standalone viewer): `expect` attaches to it, with the
+# temzdf COMMAND runs (also inside `sh -c '...'`).
+session_mode=
+if [[ $term != gui && ${args[1]:-} != standalone && "$*" == *temzdf* ]]; then
+  session_mode=1
+  temzdf=$(grep -oE "[^ '\"]*/temzdf( |$)" <<<"$*" | head -1 | tr -d ' ') || true
+  temzdf=$(realpath "${temzdf:-$(command -v temzdf)}")
+fi
 mkdir -p "$outdir/state"
 rm -f "$outdir/state/temzdf/temzdf.log" "$outdir/expect.txt"
 mux_startup=0
@@ -400,6 +501,8 @@ esac
 # socket is gone), also when an action failed.
 XDG_RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/temzdf-e2e.XXXXXX")
 export XDG_RUNTIME_DIR
+# kitty answers `kitten @ get-text` (expect in a session) here.
+kitty_socket=$XDG_RUNTIME_DIR/kitty.sock
 term_pid=
 cleanup() {
   if [[ -n $term_pid ]]; then
@@ -422,7 +525,8 @@ case $term in
   kitty)
     "${clean_env[@]}" kitty --config NONE -o font_size=12 -o "initial_window_width=$width" \
       -o "initial_window_height=$height" -o window_padding_width=0 -o hide_window_decorations=yes \
-      -o remember_window_size=no "$@" >"$outdir/terminal.log" 2>&1 &
+      -o remember_window_size=no -o allow_remote_control=socket-only \
+      --listen-on "unix:$kitty_socket" "$@" >"$outdir/terminal.log" 2>&1 &
     startup=3
     ;;
   ghostty)

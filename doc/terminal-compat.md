@@ -98,6 +98,10 @@ Known problems:
   (what `xdotool type` sends for a newline) as code point 10, i.e.
   `KeyCode::Char('\n')`, not Enter. Terminal panes map control code points
   to their keys (`crates/temzdf-term/src/keys.rs`).
+- Ghostty 1.3.1 (GTK, on Xvfb) ignores that Linefeed keysym altogether: a
+  command typed with `xdotool type "...\n"` never ran
+  (`tests/e2e/session.actions` reattached nothing). `scripts/e2e.sh`'s
+  `type` sends each newline as the Return key instead (2026-10-29).
 - In a terminal pane's pty `C-s` is XOFF while the program leaves flow control
   on (`stty ixon`, the default; interactive shells' line editors usually turn
   it off), as in any terminal: sending `C-s` then pauses the pane's output

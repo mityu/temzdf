@@ -4,7 +4,7 @@
 #   mkdir -p target/e2e-resize
 #   scripts/e2e.sh -o target/e2e-resize tests/e2e/resize.actions -- sh -c \
 #     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-r; exec sh'
-# Expected (90x30 cells of 10x20 px):
+# Judged: expect for each. Expected (90x30 cells of 10x20 px):
 #   dragged.png  the border at column 60: the left pane 60 columns wide, the
 #                right one printing "30 29" (`stty size`)
 #   keys.png     after C-b 5 > (five columns wider): the border at column 55, the right pane
@@ -19,10 +19,10 @@ pause 0.5
 type "clear; stty size
 "
 pause 1
-shot dragged
+expect dragged
 keys ctrl+b 5 greater Escape
 type "clear; stty size
 "
 pause 1
-shot keys
+expect keys
 target/debug/temzdf kill-session e2e-r
