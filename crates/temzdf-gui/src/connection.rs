@@ -76,14 +76,15 @@ pub fn temzdf_exe() -> PathBuf {
 
 /// The session to show: `name` (started with `file` if it does not
 /// exist), else a new one for `file`, else the only one, else a new shell.
-/// Returns its name and whether it was started here.
-pub fn session_for(name: Option<&str>, file: Option<&Path>) -> Result<(String, bool)> {
+/// Returns its name and whether it was started here; one started here runs
+/// no configuration script if `clean`.
+pub fn session_for(name: Option<&str>, file: Option<&Path>, clean: bool) -> Result<(String, bool)> {
     let exists = |n: &str| proto::discovery::list().is_ok_and(|l| l.iter().any(|s| s.name == n));
     // A name of its own (`-s`) taken meanwhile is an error; one picked here
     // is picked again.
     let start = |choose: &dyn Fn() -> Result<String>, retry: bool| -> Result<(String, bool)> {
         let pane = temzdf_client::first_pane(file)?;
-        let spawn = |n: &str| temzdf_client::spawn_server(&temzdf_exe(), n, &pane, None, None, false);
+        let spawn = |n: &str| temzdf_client::spawn_server(&temzdf_exe(), n, &pane, None, None, clean);
         Ok((temzdf_client::spawn_named(choose, retry, spawn)?, true))
     };
     match (name, file) {

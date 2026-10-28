@@ -20,7 +20,7 @@ fn main() -> Result<()> {
         print!("{}", temzdf_gui::lsfonts::report(&mut fonts, &font, &wide, a.text.as_deref(), a.list_system));
         return Ok(());
     }
-    let (name, started) = session_for(cli.session.as_deref(), cli.file.as_deref())?;
+    let (name, started) = session_for(cli.session.as_deref(), cli.file.as_deref(), cli.clean)?;
     if let Some(out) = &cli.render_frame {
         let (w, h) = cli.size.split_once('x').context("--size is WxH")?;
         let size = (w.parse().context("--size width")?, h.parse().context("--size height")?);

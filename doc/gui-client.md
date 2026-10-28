@@ -13,11 +13,12 @@ and plans what can be built now.
 
 ## Implemented (2026-10-28)
 
-`temzdf-gui [-s NAME] [FILE]` (`crates/temzdf-gui`) attaches to session
+`temzdf-gui [-s NAME] [--clean] [FILE]` (`crates/temzdf-gui`) attaches to session
 NAME (started with FILE if it does not exist), a new session for FILE, the
 only session, or a new shell; new sessions without a NAME are named as
 `temzdf [FILE]` names them (alfa, bravo, ...). It starts servers with the
-`temzdf` next to it (else on `PATH`). Closing the window detaches. `--render-frame PNG
+`temzdf` next to it (else on `PATH`). With `--clean` a session it starts runs no
+configuration script, as `temzdf --clean`. Closing the window detaches. `--render-frame PNG
 [--size WxH] [--scale S]` draws the session offscreen instead.
 
 - **Protocol and server** (G0): `MouseEventKind::ScrollBy` (amounts in

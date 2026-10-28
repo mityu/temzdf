@@ -18,6 +18,10 @@ pub struct Cli {
     /// The session to show.
     #[arg(short, long, value_name = "NAME")]
     pub session: Option<String>,
+    /// A session started here does not run the configuration script
+    /// ($XDG_CONFIG_HOME/temzdf/config.ts or config.js), as `temzdf --clean`.
+    #[arg(long)]
+    pub clean: bool,
     /// Draw the session offscreen into this PNG instead of opening a window.
     #[arg(long, value_name = "PNG")]
     pub render_frame: Option<PathBuf>,
