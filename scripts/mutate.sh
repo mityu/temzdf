@@ -23,7 +23,10 @@ self=$(realpath "$0")
 cd "$(dirname "$self")/.."
 
 if [[ -z "${IN_NIX_SHELL:-}" ]]; then
-  exec nix develop --quiet -c "$self" "$@" 2> >(grep -v "Git tree .* is dirty" >&2)
+  # The dirty-tree warning off through nix itself: a process substitution
+  # filtering it would leave its pipe open in every child, and a daemon that
+  # outlives the run (mozc_server) kept whatever reads our output waiting.
+  NIX_CONFIG="warn-dirty = false${NIX_CONFIG:+$'\n'$NIX_CONFIG}" exec nix develop --quiet -c "$self" "$@"
 fi
 
 usage() {
