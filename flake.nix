@@ -92,118 +92,120 @@
                   enableMiri ? false,
                   enableFixedFontSet ? false,
                 }:
-                pkgs.mkShell {
-                  packages =
-                    with pkgs;
-                    [
-                      agent-browser
-                      # Scratch scripts during development (not needed by the build).
-                      python3
-                    ]
-                    ++ (
-                      if enableMiri then
-                        [
-                          (rust-bin.selectLatestNightlyWith (
-                            toolchain:
-                            toolchain.default.override {
-                              extensions = [
-                                "rust-src"
-                                "miri"
-                                "rust-analyzer"
-                                "clippy"
-                              ];
-                            }
-                          ))
-                        ]
-                      else
+                pkgs.mkShell (
+                  {
+                    packages =
+                      with pkgs;
+                      [
+                        agent-browser
+                        # Scratch scripts during development (not needed by the build).
+                        python3
+                      ]
+                      ++ (
+                        if enableMiri then
+                          [
+                            (rust-bin.selectLatestNightlyWith (
+                              toolchain:
+                              toolchain.default.override {
+                                extensions = [
+                                  "rust-src"
+                                  "miri"
+                                  "rust-analyzer"
+                                  "clippy"
+                                ];
+                              }
+                            ))
+                          ]
+                        else
+                          with pkgs;
+                          [
+                            cargo
+                            rustc
+                            rust-analyzer
+                            clippy
+                            rustfmt
+                          ]
+                      )
+                      ++ lib.optionals withTeX [
+                        (pkgs.texliveBasic.withPackages (
+                          ps: with ps; [
+                            latexmk
+                            amsmath
+                            amsfonts
+                            hyperref
+                            geometry
+                          ]
+                        ))
+                      ]
+                      ++ lib.optionals withTerminals (
                         with pkgs;
                         [
-                          cargo
-                          rustc
-                          rust-analyzer
-                          clippy
-                          rustfmt
+                          ghostty
+                          wezterm
+                          zellij
                         ]
-                    )
-                    ++ lib.optionals withTeX [
-                      (pkgs.texliveBasic.withPackages (
-                        ps: with ps; [
-                          latexmk
-                          amsmath
-                          amsfonts
-                          hyperref
-                          geometry
+                      )
+                      ++ lib.optionals isLinux (
+                        with pkgs;
+                        [
+                          # End-to-end testing: run kitty on a virtual X server and drive it.
+                          kitty
+                          xvfb-run
+                          xdotool
+                          imagemagick
+                          xclip
+
+                          vulkan-tools
+                          mesa
+                          xfwm4
+                          xwininfo
+                          xprop
+                          sway
+                          grim
+                          wtype
+                          wlr-randr
+                          dbus
+                          (kdePackages.fcitx5-with-addons.override { addons = [ fcitx5-mozc ]; })
                         ]
-                      ))
-                    ]
-                    ++ lib.optionals withTerminals (
-                      with pkgs;
-                      [
-                        ghostty
-                        wezterm
-                        zellij
-                      ]
-                    )
-                    ++ lib.optionals isLinux (
-                      with pkgs;
-                      [
-                        # End-to-end testing: run kitty on a virtual X server and drive it.
-                        kitty
-                        xvfb-run
-                        xdotool
-                        imagemagick
-                        xclip
+                      );
 
-                        vulkan-tools
-                        mesa
-                        xfwm4
-                        xwininfo
-                        xprop
-                        sway
-                        grim
-                        wtype
-                        wlr-randr
-                        dbus
-                        (kdePackages.fcitx5-with-addons.override { addons = [ fcitx5-mozc ]; })
-                      ]
-                    );
+                    nativeBuildInputs = with pkgs; [
+                      pkg-config
+                      clang
+                      fontconfig
+                      # Tests inside tmux (crates/tuitest, crates/temzdf/tests/tui.rs).
+                      tmux
+                      # Type checking the shipped JavaScript configuration against
+                      # `temzdf print-types` (crates/temzdf/tests/types.rs).
+                      typescript
+                    ];
 
-                  nativeBuildInputs = with pkgs; [
-                    pkg-config
-                    clang
-                    fontconfig
-                    # Tests inside tmux (crates/tuitest, crates/temzdf/tests/tui.rs).
-                    tmux
-                    # Type checking the shipped JavaScript configuration against
-                    # `temzdf print-types` (crates/temzdf/tests/types.rs).
-                    typescript
-                  ];
+                    # Found through pkg-config (temzdf-term).
+                    buildInputs = [ pkgs.libghostty-vt.dev ];
 
-                  # Found through pkg-config (temzdf-term).
-                  buildInputs = [ pkgs.libghostty-vt.dev ];
+                    # mupdf-sys runs bindgen, which needs libclang.
+                    LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
 
-                  # mupdf-sys runs bindgen, which needs libclang.
-                  LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-
-                  # Fonts temzdf-gui embeds (see bundledFontsFor).
-                  TEMZDF_BUNDLED_FONTS = bundleFontPath;
-                }
-                // lib.optionalAttrs enableFixedFontSet {
-                  # `nix develop .#ci`: what scripts/check.sh needs on a bare machine
-                  # (.github/workflows/ci.yml): the toolchain, TeX for the fixtures, and
-                  # a fixed font set instead of whatever the host has installed.
-                  FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
-                }
-                // lib.optionalAttrs isLinux {
-                  # winit and wgpu open these with dlopen. The real GPU's Vulkan
-                  # driver comes from the system (/run/opengl-driver on NixOS).
-                  LD_LIBRARY_PATH = lib.makeLibraryPath guiLibs;
-                  # Tests render offscreen on lavapipe: VK_DRIVER_FILES=$TEMZDF_LAVAPIPE_ICD.
-                  TEMZDF_LAVAPIPE_ICD = "${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${pkgs.stdenv.hostPlatform.uname.processor}.json";
-                  # The GUI's default font (UDEV Gothic NF), for tests that must not
-                  # depend on the fonts installed on the host.
-                  TEMZDF_TEST_FONTS = "${pkgs.udev-gothic-nf}/share/fonts";
-                };
+                    # Fonts temzdf-gui embeds (see bundledFontsFor).
+                    TEMZDF_BUNDLED_FONTS = bundleFontPath;
+                  }
+                  // lib.optionalAttrs enableFixedFontSet {
+                    # `nix develop .#ci`: what scripts/check.sh needs on a bare machine
+                    # (.github/workflows/ci.yml): the toolchain, TeX for the fixtures, and
+                    # a fixed font set instead of whatever the host has installed.
+                    FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
+                  }
+                  // lib.optionalAttrs isLinux {
+                    # winit and wgpu open these with dlopen. The real GPU's Vulkan
+                    # driver comes from the system (/run/opengl-driver on NixOS).
+                    LD_LIBRARY_PATH = lib.makeLibraryPath guiLibs;
+                    # Tests render offscreen on lavapipe: VK_DRIVER_FILES=$TEMZDF_LAVAPIPE_ICD.
+                    TEMZDF_LAVAPIPE_ICD = "${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${pkgs.stdenv.hostPlatform.uname.processor}.json";
+                    # The GUI's default font (UDEV Gothic NF), for tests that must not
+                    # depend on the fonts installed on the host.
+                    TEMZDF_TEST_FONTS = "${pkgs.udev-gothic-nf}/share/fonts";
+                  }
+                );
             in
             {
               default = buildDevShell { };
@@ -214,9 +216,11 @@
               ci = buildDevShell {
                 withTeX = true;
                 enableMiri = true;
+                enableFixedFontSet = true;
               };
               alldeps = buildDevShell {
                 withTeX = true;
+                withTerminals = true;
                 enableMiri = true;
               };
             };
