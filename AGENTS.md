@@ -56,13 +56,15 @@ missing, say so instead of working around it. A tool added to `flake.nix`
 needs the shell, and the agent in it, restarted.
 
 ```sh
-scripts/check.sh            # fmt check + clippy -D warnings + tests + Miri, terse output
+scripts/check.sh            # fmt check + clippy -D warnings + tests (+ Miri where available), terse output
 scripts/check.sh --fix      # same, but apply rustfmt
 scripts/check.sh --no-miri  # without Miri (it takes about a minute and a half)
 cargo build --workspace
 ```
 
-Run `scripts/check.sh` before every commit. The scripts enter the dev shell by
+Run `scripts/check.sh` before every commit. The default dev shell has no Miri (check.sh
+says it skipped it); `nix develop .#enable-miri` has it, and the user runs
+it from time to time. The scripts enter the dev shell by
 themselves when started outside it. A unit test Miri cannot run (foreign
 code, ptys, processes, sockets) gets `#[cfg_attr(miri, ignore = "why")]`;
 see "Miri" in `doc/testing.md`.
