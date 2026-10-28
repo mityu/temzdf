@@ -95,11 +95,11 @@ server on one `Session`). Next and open:
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
 - Judged e2e (`expect` in `scripts/e2e.sh`, `doc/testing.md`) covers keys and
   mouse input in kitty, WezTerm and Ghostty (keys also in tmux and zellij);
-  sessions are judged against `temzdf render-session` (text in kitty only),
-  reload against fresh renders, SyncTeX with `check`. Left unjudged: the
-  truncated moment of `reload`, SyncTeX's highlight, the rendering-speed
-  moments (`viewer-stress`, `select-autoscroll`), sessions inside
-  multiplexers, and WezTerm for sessions (untried).
+  sessions are judged against `temzdf render-session` (the text too in kitty
+  and WezTerm; all pass in both, 2026-10-29), reload against fresh renders,
+  SyncTeX with `check`. Left unjudged: the truncated moment of `reload`,
+  SyncTeX's highlight, the rendering-speed moments (`viewer-stress`,
+  `select-autoscroll`), sessions inside multiplexers, and Ghostty's text.
 - MuPDF's allocation lock makes text rendering slower with more threads (see
   `doc/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the
   allocator itself, and `mupdf-sys` backs every context with the same static

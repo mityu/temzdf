@@ -149,18 +149,21 @@ frame to settle, and writes what a terminal should show: the images through
 the same bytes into the mock terminal (`NAME.expected.png`), the text of the
 cells (`NAME.expected.txt`) and a mask of the cells the terminal draws itself
 (text, backgrounds, the cursor; `NAME.mask.png`). The pixels are compared
-outside the mask, and in kitty the screen's text (`kitten @ get-text`, kitty
-listens on a socket for it) with the expected text (`NAME.text.diff`). This
+outside the mask, and in kitty and WezTerm the screen's text (`kitten @
+get-text`, kitty listens on a socket for it; `wezterm cli get-text` through
+the GUI's own socket, else the CLI starts a mux server of its own) with the
+expected text (`NAME.text.diff`). This
 judges the terminal client and the terminal: placements, text positions,
 wide characters, images of programs in terminal panes, tab lines and
 floats as drawn. Both sides see the same session, so what the session
 decides (layout, focus, what a reload keeps) is not judged by it; that is
 for `crates/temzdf/tests/tui.rs` and unit tests. Not inside multiplexers;
-Ghostty and WezTerm get the pixels only. `tests/e2e/session.actions`,
+Ghostty gets the pixels only. `tests/e2e/session.actions`,
 `terminal.actions`, `terminal-extras.actions`, `tabs.actions`,
-`floats.actions` and `resize.actions` use it.
+`floats.actions`, `resize.actions` and `float-wide.actions` (WezTerm's
+wide characters under images, `doc/terminal-compat.md`) use it.
 
-`screen_contains TEXT` (kitty) tells whether the screen shows TEXT, for
+`screen_contains TEXT` (kitty, WezTerm) tells whether the screen shows TEXT, for
 moments outside a session (`check detached screen_contains "[detached from
 session e2e]"`); elsewhere it exits 77 and `check` records SKIP.
 

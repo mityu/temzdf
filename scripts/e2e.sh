@@ -60,16 +60,17 @@
 #                      render-session` attached to the session at that moment
 #                      (the session's only one, or $E2E_SESSION): the images
 #                      by pixels outside the cells the terminal draws itself
-#                      (NAME.mask.png), and in kitty the text of the screen
-#                      (`kitten @ get-text`) with the frame's
+#                      (NAME.mask.png), and in kitty and WezTerm the text of
+#                      the screen (`kitten @ get-text`, `wezterm cli
+#                      get-text`) with the frame's
 #                      (NAME.expected.txt; NAME.text.diff on a mismatch).
 #                      Not inside multiplexers.
 #   check NAME CMD...  run CMD: PASS NAME when it succeeds, else FAIL
 #                      (OUTDIR/expect.txt, as expect), for what a screenshot
 #                      cannot judge (files, exit statuses); SKIP when CMD
 #                      exits with 77 (it cannot tell in this terminal).
-#   screen_contains TEXT  whether the screen shows TEXT (kitty, through
-#                      `kitten @ get-text`; 77 elsewhere), e.g. `check
+#   screen_contains TEXT  whether the screen shows TEXT (kitty and WezTerm,
+#                      through their get-text; 77 elsewhere), e.g. `check
 #                      detached screen_contains "[detached from session e2e]"`.
 #
 # temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log.
@@ -115,8 +116,11 @@ if [[ $# -lt 3 || $2 != "--" ]]; then
 fi
 actions=$(realpath "$1")
 shift 2
-# Runs of temzdf take the shipped defaults, not the user's config.ts.
-if [[ "$*" == *temzdf* && "$*" != *--clean* ]]; then
+# Runs of temzdf take the shipped defaults, not the user's config.ts. A
+# word naming temzdf or temzdf-gui (also inside `sh -c '...'`), not any
+# path with "temzdf" in it.
+runs_temzdf() { grep -qE "(^|[ /'\"])temzdf(-gui)?( |\$)" <<<"$*"; }
+if runs_temzdf "$@" && [[ "$*" != *--clean* ]]; then
   echo "e2e.sh: COMMAND runs temzdf without --clean (it would load your config.ts)" >&2
   exit 2
 fi
@@ -310,13 +314,14 @@ expect_session() {
   fi
   shot "$name"
   session=${E2E_SESSION:-$("$temzdf" ls | head -1 | cut -d' ' -f1)}
-  geo=$(grep -oE 'geometry [0-9]+x[0-9]+ cells of [0-9]+x[0-9]+ px with [A-Za-z]+ over [A-Za-z]+' \
+  # The backend may come with its settings: "Composited { ... } over Direct".
+  geo=$(grep -oE 'geometry [0-9]+x[0-9]+ cells of [0-9]+x[0-9]+ px with [A-Za-z]+.* over [A-Za-z]+' \
     "$outdir/state/temzdf/temzdf.log" | tail -1) || {
     echo "FAIL $name: no geometry in temzdf.log" | tee -a "$outdir/expect.txt"
     return
   }
   read -r cols rows cw ch backend medium <<<"$(sed -E \
-    's/geometry ([0-9]+)x([0-9]+) cells of ([0-9]+)x([0-9]+) px with ([A-Za-z]+) over ([A-Za-z]+)/\1 \2 \3 \4 \5 \6/' <<<"$geo")"
+    's/geometry ([0-9]+)x([0-9]+) cells of ([0-9]+)x([0-9]+) px with ([A-Za-z]+).* over ([A-Za-z]+)/\1 \2 \3 \4 \5 \6/' <<<"$geo")"
   # The hints the terminal client sent (TtyFrontend::hints).
   [[ $backend != Layered ]] && flags+=(--exact-scaling)
   [[ $medium != Direct ]] && flags+=(--fast-uploads)
@@ -341,8 +346,7 @@ expect_session() {
     failed="$out pixels differ (see $name.diff.png)"
   fi
   # The text, where the terminal can tell it.
-  if [[ $term == kitty ]]; then
-    kitten @ --to "unix:$kitty_socket" get-text --extent screen >"$outdir/$name.actual.txt"
+  if read_screen >"$outdir/$name.actual.txt"; then
     if diff <(screen_lines "$outdir/$name.expected.txt") <(screen_lines "$outdir/$name.actual.txt") \
       >"$outdir/$name.text.diff"; then
       rm -f "$outdir/$name.text.diff"
@@ -366,10 +370,21 @@ check() {
     *) echo "FAIL $name: $*" | tee -a "$outdir/expect.txt" ;;
   esac
 }
-# Whether the terminal shows TEXT (kitty; 77 elsewhere: it cannot tell).
+# The text the terminal shows (kitty, WezTerm); 77 where it cannot tell.
+read_screen() {
+  [[ -z $mux ]] || return 77
+  case $term in
+    kitty) kitten @ --to "unix:$kitty_socket" get-text --extent screen ;;
+    # The GUI's own socket: without it the CLI starts a mux server of its own.
+    wezterm) WEZTERM_UNIX_SOCKET=$(ls "$XDG_RUNTIME_DIR"/wezterm/gui-sock-* | head -1) wezterm cli get-text ;;
+    *) return 77 ;;
+  esac
+}
+# Whether the terminal shows TEXT (77 where it cannot tell).
 screen_contains() {
-  [[ $term == kitty && -z $mux ]] || return 77
-  kitten @ --to "unix:$kitty_socket" get-text --extent screen | grep -qF -- "$1"
+  local text
+  text=$(read_screen) || return
+  grep -qF -- "$1" <<<"$text"
 }
 expect() {
   if [[ $term == gui ]]; then
@@ -453,7 +468,7 @@ fi
 # A session (not the standalone viewer): `expect` attaches to it, with the
 # temzdf COMMAND runs (also inside `sh -c '...'`).
 session_mode=
-if [[ $term != gui && ${args[1]:-} != standalone && "$*" == *temzdf* ]]; then
+if [[ $term != gui && ${args[1]:-} != standalone ]] && runs_temzdf "$@"; then
   session_mode=1
   temzdf=$(grep -oE "[^ '\"]*/temzdf( |$)" <<<"$*" | head -1 | tr -d ' ') || true
   temzdf=$(realpath "${temzdf:-$(command -v temzdf)}")
