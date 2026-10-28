@@ -6,7 +6,7 @@ a vimrc: `$XDG_CONFIG_HOME/temzdf/config.ts` or `config.js` (falling back to
 `--config FILE`. It runs in the script host, a separate process
 (`doc/script-host.md` has the execution model). The shipped defaults
 (`crates/temzdf-script/runtime/defaults.ts`) run first; the configuration can
-map over or unmap anything in them. `--clean` runs only the defaults.
+map over or remove anything in them. `--clean` runs only the defaults.
 
 A broken configuration (a syntax error, an exception, a top-level `await`,
 taking longer than 5 s) is reported in a floating message and the log, and
@@ -14,23 +14,23 @@ temzdf runs with what was registered before the problem (at least the
 defaults).
 
 ```ts
-import { action, cmd, defineMode, map, o, on, unmap } from "temzdf";
+import { action, cmd, defineMode, keymap, o, on } from "temzdf";
 
 o.timeoutlen = 500;
 o.synctexeditor = "nvim --server /tmp/nvim.sock --remote-send ':e %{input}<CR>%{line}G'";
 
 // Page view: J scrolls down (a count still multiplies).
-map("pdf", "J", action.scrollDown(), { desc: "scroll" });
+keymap.add("pdf", "J", action.scrollDown(), { desc: "scroll" });
 // A window submode entered from the normal mode; the normal mode's keys
 // work in it too.
 defineMode("window", { transient: true, keepalive: "always" });
-map("normal", "w", action.switchMode("window"));
-map("window", "v", [action.split("right"), action.exitMode()]);
+keymap.add("normal", "w", action.switchMode("window"));
+keymap.add("window", "v", [action.split("right"), action.exitMode()]);
 // A script function (synchronous; dispatch() for asynchronous work).
-map("terminal", "<C-b>m", (ctx) => cmd.sendText(`make -j${ctx.count ?? 4}\n`));
+keymap.add("terminal", "<C-b>m", (ctx) => cmd.sendText(`make -j${ctx.count ?? 4}\n`));
 // Only in floating terminal panes.
-map("terminal", "<C-b>q", action.toggleFloating(), { when: (ctx) => ctx.floating });
-unmap("normal", "x", { namespace: "default" });
+keymap.add("terminal", "<C-b>q", action.toggleFloating(), { when: (ctx) => ctx.floating });
+keymap.remove("normal", "x", { namespace: "default" });
 on("ModeChanged", (old, now) => console.log(`${old} -> ${now}`));
 ```
 
@@ -67,7 +67,7 @@ work as in Vim: a key that starts a longer mapping waits `timeoutlen`
 milliseconds (unless the shorter mapping has `nowait`); in a pass-through
 mode keys that time out go to the pane.
 
-`map(mode, lhs, rhs, { nowait, desc, when, namespace, priority })`:
+`keymap.add(mode, lhs, rhs, { nowait, desc, when, namespace, priority })`:
 
 - **`when`**: a condition, `(ctx) => boolean`: the mapping exists only
   while it holds; otherwise the key is looked up as if it were not there
@@ -84,10 +84,14 @@ mode keys that time out go to the pane.
   longer mapping does not make a key wait.
 - **`namespace`**: mapping the same mode, keys and namespace again
   replaces that mapping; without a namespace mappings are added. The
-  shipped defaults are in the namespace `"default"`: `unmap(mode, lhs, {
-  namespace: "default" })` removes one, `unmap(mode, lhs)` every mapping of
-  the keys.
-- `getMappings({ mode, namespace })` lists mappings as `map` takes them
+  shipped defaults are in the namespace `"default"`: `keymap.remove(mode,
+  lhs, { namespace: "default" })` removes one, `keymap.remove(mode, lhs)`
+  every mapping of the keys.
+- `keymap.clear({ mode, namespace })` removes every mapping of the mode and
+  the namespace (as Vim's `:mapclear`); each one left out means all of
+  them: `keymap.clear({ namespace: "default" })` removes the shipped
+  defaults, `keymap.clear()` every mapping.
+- `getMappings({ mode, namespace })` lists mappings as `keymap.add` takes them
   (functions included): to copy some into another mode, or to show them.
   It is a snapshot.
 
@@ -108,9 +112,9 @@ A focus change leaves submodes, as it leaves the `normal` mode.
 
 ```ts
 defineMode("resize", { transient: true, timeout: 1500 });
-map("resize", "+", action.resizePane("taller"));
-map("resize", "-", action.resizePane("shorter"));
-map("normal", "s", action.switchMode("resize")); // <C-b>s++-
+keymap.add("resize", "+", action.resizePane("taller"));
+keymap.add("resize", "-", action.resizePane("shorter"));
+keymap.add("normal", "s", action.switchMode("resize")); // <C-b>s++-
 ```
 
 Key notation follows Neovim: `j`, `G`, `%`, `<C-h>`, `<M-x>`, `<D-k>`,
@@ -232,7 +236,7 @@ terminal pane starts a new shell, `showBuffer` shows the same terminal).
 For example, a mapping that shows the next hidden buffer:
 
 ```ts
-map("normal", "n", () => {
+keymap.add("normal", "n", () => {
   const hidden = cmd.buffers().filter((b) => b.panes.length === 0);
   if (hidden.length > 0) cmd.showBuffer(hidden[0].id);
 });

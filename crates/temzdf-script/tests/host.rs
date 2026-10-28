@@ -131,19 +131,30 @@ fn ready_ok(msg: FromHost) {
 #[test]
 fn a_typescript_configuration_registers_and_runs_commands() {
     let config = r#"
-import { cmd, on, map } from "temzdf";
+import { cmd, on, keymap } from "temzdf";
 import { greeting } from "./lib.ts";
 const n: number = 2;
 on("PaneOpened", (pane: number) => cmd.message(`opened ${pane}`));
-map("normal", "t", () => { cmd.split("right"); cmd.newPane(); });
+keymap.add("normal", "t", () => { cmd.split("right"); cmd.newPane(); });
 cmd.message(greeting(n));
+keymap.clear({ namespace: "default" });
+keymap.clear();
 "#;
     let lib = "export function greeting(n: number): string { return `hello ${n}`; }\n";
     let mut s = Session::start(&[("config.ts", config), ("lib.ts", lib)]);
     s.load("config.ts");
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
-    assert_eq!(log, ["load on PaneOpened f0 nested=false", "load map normal t f1", "load message(hello 2)"]);
+    assert_eq!(
+        log,
+        [
+            "load on PaneOpened f0 nested=false",
+            "load map normal t f1",
+            "load message(hello 2)",
+            "load ClearMappings { mode: None, namespace: Some(\"default\") }",
+            "load ClearMappings { mode: None, namespace: None }",
+        ]
+    );
 
     // The prefix mapping: its commands carry its call's token.
     log.clear();
@@ -164,9 +175,9 @@ cmd.message(greeting(n));
 #[test]
 fn hooks_run_nested_inside_the_command_that_caused_them() {
     let config = r#"
-import { cmd, on, map } from "temzdf";
+import { cmd, on, keymap } from "temzdf";
 on("PaneOpened", () => cmd.message("hook"));
-map("normal", "s", () => { cmd.split("right"); cmd.message("after split"); });
+keymap.add("normal", "s", () => { cmd.split("right"); cmd.message("after split"); });
 "#;
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
@@ -187,10 +198,10 @@ map("normal", "s", () => { cmd.split("right"); cmd.message("after split"); });
 
 #[test]
 fn mapped_functions_must_be_synchronous_and_errors_carry_positions() {
-    let config = r#"import { map, cmd } from "temzdf";
-map("normal", "a", async () => {});
-map("normal", "b", () => { throw new Error("boom"); });
-map("normal", "c", () => cmd.message(String(1)));
+    let config = r#"import { keymap, cmd } from "temzdf";
+keymap.add("normal", "a", async () => {});
+keymap.add("normal", "b", () => { throw new Error("boom"); });
+keymap.add("normal", "c", () => cmd.message(String(1)));
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
     s.load("config.ts");
@@ -212,9 +223,9 @@ map("normal", "c", () => cmd.message(String(1)));
 
 #[test]
 fn an_endless_function_is_interrupted_even_if_it_catches() {
-    let config = r#"import { map, cmd } from "temzdf";
-map("normal", "l", () => { for (;;) { try { for (;;) {} } catch (e) {} } });
-map("normal", "w", () => { try { cmd.message("waits"); } catch (e) {} for (;;) {} });
+    let config = r#"import { keymap, cmd } from "temzdf";
+keymap.add("normal", "l", () => { for (;;) { try { for (;;) {} } catch (e) {} } });
+keymap.add("normal", "w", () => { try { cmd.message("waits"); } catch (e) {} for (;;) {} });
 "#;
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
@@ -339,9 +350,9 @@ cmd.message("ok");
 
 #[test]
 fn a_runaway_timer_is_stopped_and_the_call_behind_it_runs() {
-    let config = r#"import { map, cmd } from "temzdf";
+    let config = r#"import { keymap, cmd } from "temzdf";
 setTimeout(() => { for (;;) {} }, 0);
-map("normal", "x", () => cmd.message("ran"));
+keymap.add("normal", "x", () => cmd.message("ran"));
 "#;
     // The user's <C-c>: it stops the timer; the call waiting behind it then
     // runs (it used to fail as "interrupted").
@@ -388,12 +399,12 @@ cmd.message(a + b + c);
 #[test]
 fn conditions_answer_booleans_and_get_mappings_gives_the_functions_back() {
     let config = r#"
-import { action, cmd, getMappings, map } from "temzdf";
-map("normal", "t", () => cmd.message("t"), { when: (ctx) => ctx.paneKind === "terminal", namespace: "mine" });
-map("normal", "u", action.split("right"), { when: () => { throw new Error("bad"); } });
-map("normal", "v", action.split("right"), { when: (async () => true) as any });
-map("normal", "w", () => {
-  for (const m of getMappings({ mode: "normal", namespace: "mine" })) map("copy", m.lhs, m.rhs, { when: m.when });
+import { action, cmd, getMappings, keymap } from "temzdf";
+keymap.add("normal", "t", () => cmd.message("t"), { when: (ctx) => ctx.paneKind === "terminal", namespace: "mine" });
+keymap.add("normal", "u", action.split("right"), { when: () => { throw new Error("bad"); } });
+keymap.add("normal", "v", action.split("right"), { when: (async () => true) as any });
+keymap.add("normal", "w", () => {
+  for (const m of getMappings({ mode: "normal", namespace: "mine" })) keymap.add("copy", m.lhs, m.rhs, { when: m.when });
 });
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
@@ -518,8 +529,8 @@ dispatch(async (ctx) => {
 
 #[test]
 fn an_interrupt_a_task_took_is_not_taken_again() {
-    let config = r#"import { dispatch, map, cmd } from "temzdf";
-map("normal", "x", () => { cmd.message("x"); });
+    let config = r#"import { dispatch, keymap, cmd } from "temzdf";
+keymap.add("normal", "x", () => { cmd.message("x"); });
 dispatch(async (ctx) => {
   await new Promise((r) => setTimeout(r, 30));
   try { ctx.cmd.message("wait"); } catch (e) {}
@@ -546,8 +557,8 @@ dispatch(async (ctx) => {
 
 #[test]
 fn a_call_inside_a_tasks_wait_gets_its_own_time() {
-    let config = r#"import { dispatch, map } from "temzdf";
-map("normal", "x", () => { const t = Date.now(); while (Date.now() - t < 100) {} });
+    let config = r#"import { dispatch, keymap } from "temzdf";
+keymap.add("normal", "x", () => { const t = Date.now(); while (Date.now() - t < 100) {} });
 dispatch(async (ctx) => { await new Promise((r) => setTimeout(r, 30)); ctx.cmd.message("wait"); });
 "#;
     let mut s = Session::start_with_limit(&[("config.js", config)], Duration::from_millis(300));

@@ -99,33 +99,40 @@
   const temzdf = {
     cmd: globalCmd,
     action: globalAction,
-    // map(mode | modes, lhs, rhs, { nowait, desc, when, namespace,
-    // priority }): rhs is a synchronous function, an action, or an array of
-    // actions; `when` a synchronous function of the key's context.
-    map(modes, lhs, rhs, options = {}) {
-      const payload = {
-        modes,
-        keys: lhs,
-        nowait: !!options.nowait,
-        desc: options.desc ?? null,
-        when: options.when == null ? null : funcId(options.when, `map(${lhs}) when`, true),
-        namespace: options.namespace ?? null,
-        priority: options.priority ?? 0,
-      };
-      if (typeof rhs === "function") {
-        payload.func = funcId(rhs, `map(${lhs})`, false);
-      } else {
-        const list = Array.isArray(rhs) ? rhs : [rhs];
-        if (!list.every(isAction)) throw new TypeError(`map(${lhs}): expected a function, an action or actions`);
-        payload.actions = list.map((a) => ({ name: a.name, args: a.args }));
-      }
-      request(current(), "map", payload);
-    },
-    // unmap(mode | modes, lhs, { namespace }): that namespace's mappings,
-    // or all of them.
-    unmap(modes, lhs, options = {}) {
-      request(current(), "unmap", { modes, keys: lhs, namespace: options.namespace ?? null });
-    },
+    keymap: Object.freeze({
+      // keymap.add(mode | modes, lhs, rhs, { nowait, desc, when, namespace,
+      // priority }): rhs is a synchronous function, an action, or an array of
+      // actions; `when` a synchronous function of the key's context.
+      add(modes, lhs, rhs, options = {}) {
+        const payload = {
+          modes,
+          keys: lhs,
+          nowait: !!options.nowait,
+          desc: options.desc ?? null,
+          when: options.when == null ? null : funcId(options.when, `keymap.add(${lhs}) when`, true),
+          namespace: options.namespace ?? null,
+          priority: options.priority ?? 0,
+        };
+        if (typeof rhs === "function") {
+          payload.func = funcId(rhs, `keymap.add(${lhs})`, false);
+        } else {
+          const list = Array.isArray(rhs) ? rhs : [rhs];
+          if (!list.every(isAction)) throw new TypeError(`keymap.add(${lhs}): expected a function, an action or actions`);
+          payload.actions = list.map((a) => ({ name: a.name, args: a.args }));
+        }
+        request(current(), "map", payload);
+      },
+      // keymap.remove(mode | modes, lhs, { namespace }): that namespace's
+      // mappings, or all of them.
+      remove(modes, lhs, options = {}) {
+        request(current(), "unmap", { modes, keys: lhs, namespace: options.namespace ?? null });
+      },
+      // keymap.clear({ mode, namespace }): every mapping of the mode and the
+      // namespace; one left out is not a filter.
+      clear(filter = {}) {
+        request(current(), "clearMappings", { mode: filter.mode ?? null, namespace: filter.namespace ?? null });
+      },
+    }),
     // defineMode(name, { unmapped: "drop" | "passthrough", count, transient,
     // keepalive: "mapped" | "always" | (ctx) => boolean, timeout })
     defineMode(name, props = {}) {
@@ -145,7 +152,7 @@
         timeout: props.timeout ?? null,
       });
     },
-    // getMappings({ mode, namespace }): mappings as map() takes them.
+    // getMappings({ mode, namespace }): mappings as keymap.add() takes them.
     getMappings(filter = {}) {
       const back = (v) => (v !== null && typeof v === "object" && "func" in v ? registered[v.func]?.fn : v);
       return request(current(), "getMappings", { mode: filter.mode ?? null, namespace: filter.namespace ?? null }).map(

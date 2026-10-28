@@ -72,7 +72,7 @@ configurations are written with the same system.
 
 ## Mappings
 
-- `map(mode, lhs, rhs, { when, nowait, desc })`; `rhs` is an action, an
+- `keymap.add(mode, lhs, rhs, { when, nowait, desc })`; `rhs` is an action, an
   array of actions run in order by the server, or a synchronous function, as
   now.
 - **`when`**: the mapping exists only while it returns true. When it is
@@ -116,9 +116,9 @@ configurations are written with the same system.
 
   ```ts
   defineMode("resize", { transient: true, keepalive: "mapped", timeout: 1500 });
-  map("resize", "+", action.resizePane("taller"));
-  map("resize", "-", action.resizePane("shorter"));
-  map("normal", "s", action.switchMode("resize"));
+  keymap.add("resize", "+", action.resizePane("taller"));
+  keymap.add("resize", "-", action.resizePane("shorter"));
+  keymap.add("normal", "s", action.switchMode("resize"));
   ```
 
 ## Unchanged
@@ -141,7 +141,10 @@ configurations are written with the same system.
    decision: several conditional mappings of a key need no namespace, and
    reloading the configuration starts from the built-in modes, so nothing
    doubles). `unmap` removes a namespace's mappings of the keys, or all of
-   them. The defaults are in the namespace `default`.
+   them. The defaults are in the namespace `default`. (Later, 2026-10-28:
+   `map` and `unmap` became `keymap.add` and `keymap.remove`, and
+   `keymap.clear({ mode, namespace })` removes every mapping of a mode, a
+   namespace or both, as Vim's `:mapclear`.)
 4. **Listing**: `getMappings({ mode, namespace })`, for help and key hints. Used
    to copy one mode's mappings into another it gives a snapshot, not a live
    parent (mappings added later are missing); copying in the `SessionReady`

@@ -101,9 +101,13 @@ declare module "temzdf" {{
     /** Several mappings of one key are tried by priority (higher first), then the last registered first. */
     priority?: number;
   }}
-  export function map(mode: string | readonly string[], lhs: string, rhs: Rhs, options?: MapOptions): void;
-  /** Remove lhs's mappings: those of a namespace, or all. */
-  export function unmap(mode: string | readonly string[], lhs: string, options?: {{ namespace?: string }}): void;
+  export const keymap: {{
+    add(mode: string | readonly string[], lhs: string, rhs: Rhs, options?: MapOptions): void;
+    /** Remove lhs's mappings: those of a namespace, or all. */
+    remove(mode: string | readonly string[], lhs: string, options?: {{ namespace?: string }}): void;
+    /** Remove every mapping of the mode and the namespace (each one left out: all of them). */
+    clear(filter?: {{ mode?: string; namespace?: string }}): void;
+  }};
   export interface ModeProperties {{
     /** What keys no mapping takes do (default: the mode below's, else drop). */
     unmapped?: "drop" | "passthrough";
@@ -117,7 +121,7 @@ declare module "temzdf" {{
     timeout?: number;
   }}
   export function defineMode(name: string, properties?: ModeProperties): void;
-  /** A mapping as getMappings gives it (map's arguments). */
+  /** A mapping as getMappings gives it (keymap.add's arguments). */
   export interface MappingInfo {{
     mode: string;
     lhs: string;

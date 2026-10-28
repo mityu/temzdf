@@ -211,6 +211,12 @@ pub enum HostOp {
         keys: String,
         namespace: Option<String>,
     },
+    /// Remove the mappings of `mode` (every mode when `None`) and
+    /// `namespace` (every namespace when `None`).
+    ClearMappings {
+        mode: Option<String>,
+        namespace: Option<String>,
+    },
     /// The mappings of `mode` (every mode when `None`) and `namespace`.
     GetMappings {
         mode: Option<String>,

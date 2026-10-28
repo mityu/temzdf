@@ -829,14 +829,21 @@ impl Session {
                 }
                 (Ok(ScriptValue::List(out)), Outcome::None)
             }
+            HostOp::ClearMappings { mode, namespace } => {
+                if let Some(m) = mode.as_deref().filter(|m| !self.modes.exists(m)) {
+                    return (Err(format!("keymap.clear: no mode {m:?}")), Outcome::None);
+                }
+                self.modes.clear(mode.as_deref(), namespace.as_deref());
+                (Ok(ScriptValue::Null), Outcome::None)
+            }
             HostOp::Unmap { modes, keys, namespace } => {
                 let keys = match crate::keymap::notation::parse(&keys) {
                     Ok(k) => k,
-                    Err(e) => return (Err(format!("unmap: {e:#}")), Outcome::None),
+                    Err(e) => return (Err(format!("keymap.remove: {e:#}")), Outcome::None),
                 };
                 for m in &modes {
                     if !self.modes.exists(m) {
-                        return (Err(format!("unmap: no mode {m:?}")), Outcome::None);
+                        return (Err(format!("keymap.remove: no mode {m:?}")), Outcome::None);
                     }
                     self.modes.unmap(m, &keys, namespace.as_deref());
                 }
@@ -856,7 +863,7 @@ impl Session {
 }
 
 impl Session {
-    /// `map(modes, keys, rhs, options)` from a script.
+    /// `keymap.add(modes, keys, rhs, options)` from a script.
     fn script_map(
         &mut self,
         modes: &[String],
@@ -865,10 +872,10 @@ impl Session {
         spec: MapSpec,
     ) -> Result<(), String> {
         use crate::keymap::{Act, Mapping, Target, notation};
-        let keys = notation::parse(keys).map_err(|e| format!("map: {e:#}"))?;
+        let keys = notation::parse(keys).map_err(|e| format!("keymap.add: {e:#}"))?;
         let ctrl_c = notation::parse("<C-c>").expect("notation");
         if keys.first() == ctrl_c.first() {
-            return Err("map: <C-c> is reserved (it cancels and interrupts)".into());
+            return Err("keymap.add: <C-c> is reserved (it cancels and interrupts)".into());
         }
         let target = match rhs {
             temzdf_protocol::script::MapRhs::Func(f) => Target::Func(f),
@@ -876,7 +883,7 @@ impl Session {
                 let known: Vec<String> = super::command_specs().into_iter().map(|c| c.name).collect();
                 for (name, _) in &list {
                     if !known.contains(name) {
-                        return Err(format!("map: no command {name:?}"));
+                        return Err(format!("keymap.add: no command {name:?}"));
                     }
                 }
                 Target::Actions(list.into_iter().map(|(n, a)| Act { name: n, args: a }).collect())
@@ -884,7 +891,7 @@ impl Session {
         };
         for m in modes {
             if !self.modes.exists(m) {
-                return Err(format!("map: no mode {m:?} (create it with defineMode)"));
+                return Err(format!("keymap.add: no mode {m:?} (create it with defineMode)"));
             }
             let mut mapping = Mapping::new(target.clone());
             mapping.nowait = spec.nowait;

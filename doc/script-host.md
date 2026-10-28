@@ -86,9 +86,10 @@ declarations. In short, `import { ... } from "temzdf"`:
 
 - `cmd.*` runs registry commands now (synchronous requests); `action.*`
   describes them as data for mappings.
-- `map(modes, lhs, rhs, { nowait, desc, when, namespace, priority })`,
-  `unmap(modes, lhs, { namespace })`, `defineMode(name, { unmapped, count,
-  transient, keepalive, timeout })`, `getMappings({ mode, namespace })`,
+- `keymap.add(modes, lhs, rhs, { nowait, desc, when, namespace, priority })`,
+  `keymap.remove(modes, lhs, { namespace })`, `keymap.clear({ mode,
+  namespace })`, `defineMode(name, { unmapped, count, transient, keepalive,
+  timeout })`, `getMappings({ mode, namespace })`,
   `feedkeys(keys, { remap })`, `currentMode()` (doc/keymaps.md).
 - `o.<option>` reads and sets options.
 - `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,

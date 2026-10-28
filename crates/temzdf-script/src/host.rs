@@ -29,7 +29,7 @@ const DEFAULTS: &str = include_str!("../runtime/defaults.ts");
 const DEFAULTS_NAME: &str = "temzdf:defaults";
 /// What `import ... from "temzdf"` gets.
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
-     export const cmd = t.cmd, action = t.action, on = t.on, map = t.map, unmap = t.unmap, defineMode = t.defineMode,\n\
+     export const cmd = t.cmd, action = t.action, on = t.on, keymap = t.keymap, defineMode = t.defineMode,\n\
      o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, dispatch = t.dispatch,\n\
      atomic = t.atomic, getMappings = t.getMappings;\n\
      export default t;\n";
@@ -387,6 +387,10 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
         "unmap" => HostOp::Unmap {
             modes: strings(&payload, "modes"),
             keys: text("keys"),
+            namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
+        },
+        "clearMappings" => HostOp::ClearMappings {
+            mode: payload.get("mode").and_then(|v| v.as_str()).map(str::to_owned),
             namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
         },
         "getMappings" => HostOp::GetMappings {

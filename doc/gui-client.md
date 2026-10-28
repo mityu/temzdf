@@ -168,7 +168,7 @@ change on the server side, testable without a GUI.
 6. **Pasting.** In a terminal the outer terminal pastes (Ctrl-Shift-V,
    Cmd-V) and the client sees bracketed paste. A GUI must pick the key and
    read the clipboard itself. The server cannot read a client's clipboard.
-   Recommended: the key is a mapping like any other (`map("terminal",
+   Recommended: the key is a mapping like any other (`keymap.add("terminal",
    "<D-v>", action.paste())`, `<C-S-v>` on Linux), and `paste` is an effect
    the client answers with `ClientMsg::Paste` (the primary selection too,
    on X11 and Wayland, for middle click).

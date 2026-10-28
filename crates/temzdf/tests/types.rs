@@ -72,10 +72,10 @@ fn mistakes_do_not_type_check() {
     for bad in [
         "import { cmd } from \"temzdf\";\ncmd.split(\"sideways\");\n",
         "import { on } from \"temzdf\";\non(\"NoSuchEvent\", () => {});\n",
-        "import { map } from \"temzdf\";\nmap(\"normal\", \"x\", 42);\n",
+        "import { keymap } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", 42);\n",
         "import { o } from \"temzdf\";\no.timeoutlen = \"slow\";\n",
         "import { defineMode } from \"temzdf\";\ndefineMode(\"m\", { inherit: \"normal\" });\n",
-        "import { map, action } from \"temzdf\";\nmap(\"normal\", \"x\", action.quit(), { when: () => 1 });\n",
+        "import { keymap, action } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", action.quit(), { when: () => 1 });\n",
     ] {
         assert!(check(&[("config.ts", bad)]).is_err(), "should not type check:\n{bad}");
     }

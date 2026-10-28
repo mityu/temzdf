@@ -330,9 +330,9 @@ fn a_mapping_from_a_typescript_configuration() {
     let env = Env::new("script-map");
     env.config(
         "config.ts",
-        r#"import { cmd, map } from "temzdf";
+        r#"import { cmd, keymap } from "temzdf";
 const label: string = "mapped";
-map("normal", "t", (): void => {
+keymap.add("normal", "t", (): void => {
   cmd.split("right");
   cmd.sendText(`echo ${label}-$((40+2))\n`);
 });
@@ -377,7 +377,10 @@ on("PaneClosed", (id) => console.log(`closed ${id}`));
 #[test]
 fn ctrl_c_interrupts_a_runaway_mapping() {
     let env = Env::new("script-interrupt");
-    env.config("config.js", "import { map } from \"temzdf\";\nmap(\"normal\", \"l\", () => { for (;;) {} });\n");
+    env.config(
+        "config.js",
+        "import { keymap } from \"temzdf\";\nkeymap.add(\"normal\", \"l\", () => { for (;;) {} });\n",
+    );
     let mut t = Term::spawn(&[BIN, "-s", "i"], &env.options());
     t.wait_for("the prompt", prompt);
     t.keys(&["C-b", "l"]);
@@ -441,7 +444,7 @@ fn reload_config_registers_again_and_the_session_survives_the_host() {
     let env = Env::new("script-reload");
     env.config(
         "config.js",
-        "import { cmd, map } from \"temzdf\";\nconsole.log(\"loaded\");\nmap(\"normal\", \"e\", () => cmd.sendText(\"echo mapped\\n\"));\n",
+        "import { cmd, keymap } from \"temzdf\";\nconsole.log(\"loaded\");\nkeymap.add(\"normal\", \"e\", () => cmd.sendText(\"echo mapped\\n\"));\n",
     );
     let mut t = Term::spawn(&[BIN, "-s", "r"], &env.options());
     t.wait_for("the prompt", prompt);
@@ -505,19 +508,23 @@ fn modes_mappings_and_options_from_the_configuration() {
     let env = Env::new("script-modes");
     env.config(
         "config.ts",
-        r#"import { action, cmd, defineMode, feedkeys, map, o, on, unmap } from "temzdf";
+        r#"import { action, cmd, defineMode, feedkeys, getMappings, keymap, o, on } from "temzdf";
 o.timeoutlen = 300;
 defineMode("win", { transient: true, keepalive: "always" });
-map("terminal", "<C-x>w", [action.switchMode("normal"), action.switchMode("win")]);
-map("win", "v", [action.split("right"), action.sendText("echo in-new\n")]);
-map("terminal", "<C-x>e", () => cmd.sendText(`echo mode-${cmd.currentMode()}\n`));
-map("terminal", "<C-x>f", () => feedkeys("echo fed<CR>"));
-map("terminal", "<C-x>k", () => cmd.sendText("echo cond-yes\n"), { when: (ctx) => ctx.paneKind === "terminal" });
-map("terminal", "<C-x>k", () => cmd.sendText("echo never\n"), { when: (ctx) => ctx.floating });
-map("terminal", "<C-x>s", () => cmd.sendText("echo side-effect\n"), { when: () => { cmd.split("right"); return true; } });
-unmap("normal", "x", { namespace: "default" });
+keymap.add("terminal", "<C-x>w", [action.switchMode("normal"), action.switchMode("win")]);
+keymap.add("win", "v", [action.split("right"), action.sendText("echo in-new\n")]);
+keymap.add("terminal", "<C-x>e", () => cmd.sendText(`echo mode-${cmd.currentMode()}\n`));
+keymap.add("terminal", "<C-x>f", () => feedkeys("echo fed<CR>"));
+keymap.add("terminal", "<C-x>k", () => cmd.sendText("echo cond-yes\n"), { when: (ctx) => ctx.paneKind === "terminal" });
+keymap.add("terminal", "<C-x>k", () => cmd.sendText("echo never\n"), { when: (ctx) => ctx.floating });
+keymap.add("terminal", "<C-x>s", () => cmd.sendText("echo side-effect\n"), { when: () => { cmd.split("right"); return true; } });
+keymap.remove("normal", "x", { namespace: "default" });
+keymap.add(["normal", "pdf"], "Q", action.exitMode(), { namespace: "gone" });
+keymap.clear({ namespace: "gone" });
+console.log(`cleared ${getMappings({ namespace: "gone" }).length} ${getMappings({ mode: "pdf", namespace: "default" }).length > 0}`);
+try { keymap.clear({ mode: "nope" }); } catch (e) { console.log(`clear refused: ${(e as Error).message}`); }
 on("ModeChanged", (a: string, b: string) => console.log(`mode ${a} ${b}`));
-try { map("terminal", "<C-c>x", action.exitMode()); } catch (e) { console.log(`refused: ${(e as Error).message}`); }
+try { keymap.add("terminal", "<C-c>x", action.exitMode()); } catch (e) { console.log(`refused: ${(e as Error).message}`); }
 o.scrollstep = 90;
 o.linkopener = ["true"];
 o.reloadanchor = "text";
@@ -530,6 +537,8 @@ try { (o as any).nope = 1; } catch (e) { console.log(`option refused: ${(e as Er
     env.wait_log("md", "the refusal", |l| l.contains("refused:") && l.contains("reserved"));
     env.wait_log("md", "the options", |l| l.contains(r#"options 90 ["true"] text 300"#));
     env.wait_log("md", "the unknown option", |l| l.contains("option refused: no option \"nope\""));
+    env.wait_log("md", "a namespace cleared", |l| l.contains("cleared 0 true"));
+    env.wait_log("md", "the unknown mode", |l| l.contains("clear refused: keymap.clear: no mode \"nope\""));
     t.keys(&["C-x", "e"]);
     t.wait_text("mode-terminal");
     t.keys(&["C-x", "f"]);
@@ -565,7 +574,7 @@ fn errors_float_until_the_next_key() {
     let env = Env::new("notice");
     env.config(
         "config.js",
-        "import { cmd, map } from \"temzdf\";\nmap(\"terminal\", \"<C-x>\", () => cmd.moveFocus(\"sideways\"));\n",
+        "import { cmd, keymap } from \"temzdf\";\nkeymap.add(\"terminal\", \"<C-x>\", () => cmd.moveFocus(\"sideways\"));\n",
     );
     let mut t = Term::spawn(&[BIN, "-s", "n"], &env.options());
     t.wait_for("the prompt", prompt);
@@ -911,7 +920,7 @@ fn tabs_switch_by_keys_and_clicks_and_floats_on_all_tabs_follow() {
     let env = Env::new("tabs");
     env.config(
         "config.js",
-        "import { action, map } from \"temzdf\";\nmap(\"normal\", \"F\", action.openFloat(null, { tabpage: -1 }));\n",
+        "import { action, keymap } from \"temzdf\";\nkeymap.add(\"normal\", \"F\", action.openFloat(null, { tabpage: -1 }));\n",
     );
     let mut t = Term::spawn(&[BIN, "-s", "tb"], &env.options());
     t.wait_for("the prompt", prompt);

@@ -155,6 +155,19 @@ impl<T: Clone> Modes<T> {
         }
     }
 
+    /// Remove the mappings of `mode` and `namespace`; `None` is any.
+    pub fn clear(&mut self, mode: Option<&str>, namespace: Option<&str>) {
+        for (name, d) in &mut self.defs {
+            if mode.is_some_and(|m| m != name) {
+                continue;
+            }
+            d.maps.retain(|_, list| {
+                list.retain(|o| namespace.is_some_and(|n| o.namespace.as_deref() != Some(n)));
+                !list.is_empty()
+            });
+        }
+    }
+
     /// `mode`'s mappings (of `namespace` when given), sorted by keys and
     /// then in the order they are tried.
     pub fn mappings(&self, mode: &str, namespace: Option<&str>) -> Vec<(Vec<Stroke>, Mapping<T>)> {
@@ -681,6 +694,40 @@ mod tests {
         assert_eq!(run(&m, "n", &[("y", 0)], 10), ["b"]);
         m.unmap("n", &k("x"), None);
         assert_eq!(run(&m, "n", &[("x", 0)], 10), ["unmapped x"]);
+    }
+
+    #[test]
+    fn clear_removes_the_mappings_of_a_mode_and_a_namespace() {
+        let mut m: Modes<&str> = Modes::default();
+        let ns = |t, n: &str| Mapping { namespace: Some(n.into()), ..Mapping::new(t) };
+        let fill = |m: &mut Modes<&'static str>| {
+            for mode in ["n", "t"] {
+                m.map(mode, k("x"), ns("default x", "default"));
+                m.map(mode, k("y"), ns("user y", "user"));
+                add(m, mode, "z", "plain z");
+            }
+        };
+        let left = |m: &Modes<&'static str>| -> Vec<(&str, &str)> {
+            let mut v: Vec<(&str, &str)> = ["n", "t"]
+                .into_iter()
+                .flat_map(|mode| m.mappings(mode, None).into_iter().map(move |(_, x)| (mode, x.target)))
+                .collect();
+            v.sort();
+            v
+        };
+        fill(&mut m);
+        m.clear(Some("n"), Some("default"));
+        assert_eq!(
+            left(&m),
+            [("n", "plain z"), ("n", "user y"), ("t", "default x"), ("t", "plain z"), ("t", "user y")]
+        );
+        m.clear(None, Some("user"));
+        assert_eq!(left(&m), [("n", "plain z"), ("t", "default x"), ("t", "plain z")]);
+        m.clear(Some("t"), None);
+        assert_eq!(left(&m), [("n", "plain z")]);
+        m.clear(None, None);
+        assert_eq!(left(&m), []);
+        assert!(m.exists("t"), "the modes stay");
     }
 
     #[test]
