@@ -13,7 +13,7 @@
 #             XMODIFIERS set; `ime on` / `ime off` switch it
 #   -d DISP   display server: x11 (default; Xvfb, xdotool, import) or wayland
 #             (headless sway; keys and pointer through crates/wlinput, built
-#             here; screenshots with grim; kitty and gui so far, no -I)
+#             here; screenshots with grim; no -I yet)
 #   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
 #             frames, a single pane; its config and layout go to OUTDIR/zellij;
 #             tmux: a private server with passthrough and mouse on, no status)
@@ -143,10 +143,6 @@ fi
 case $display in
   x11) ;;
   wayland)
-    if [[ $term != kitty && $term != gui ]]; then
-      echo "e2e.sh: -d wayland runs kitty and gui so far, not $term" >&2
-      exit 2
-    fi
     if [[ -n $ime ]]; then
       echo "e2e.sh: -I is X11 only so far" >&2
       exit 2
@@ -206,6 +202,19 @@ mod_keys() {
       *) echo "bad modifier ${m:c:1}" >&2; exit 2 ;;
     esac
   done
+}
+# MODS down before a button or wheel step, up after it, with a moment in
+# between: WezTerm on Wayland took a click that came right after Ctrl as a
+# plain one now and then (a person never presses them a millisecond apart).
+mods_down() {
+  local k
+  for k in $(mod_keys "${1:-}"); do be_keydown "$k"; done
+  [[ -z ${1:-} ]] || sleep 0.05
+}
+mods_up() {
+  local k
+  [[ -z ${1:-} ]] || sleep 0.05
+  for k in $(mod_keys "${1:-}"); do be_keyup "$k"; done
 }
 button_name() { case $1 in 1) echo left ;; 2) echo middle ;; 3) echo right ;; *) echo "bad button $1" >&2; exit 2 ;; esac; }
 
@@ -300,13 +309,13 @@ wheel() {
   if ((n < 0)); then btn=4 dir=up n=$((-n)); fi
   be_move $(root "$x" "$y")
   record move "$(at "$x" "$y")" $mods
-  for k in $(mod_keys "$mods"); do be_keydown "$k"; done
+  mods_down "$mods"
   # One call: separate ones take about 0.1 s each, too slow for a flick.
   # The steps are recorded at the times it spaces them.
   local first=$((($(usec) - t0) / 1000)) i
   be_clicks "$btn" "$n" 30
   for ((i = 0; i < n; i++)); do record -at $((first + 30 * i)) wheel $dir "$(at "$x" "$y")" $mods; done
-  for k in $(mod_keys "$mods"); do be_keyup "$k"; done
+  mods_up "$mods"
 }
 # The button held by `down` (and its MODS), for `move` and `up`.
 held_btn= held_mods= pointer_x=0 pointer_y=0
@@ -314,7 +323,7 @@ down() {
   local x=$1 y=$2 btn=${3:-1} mods=${4:-} k
   be_move $(root "$x" "$y")
   record move "$(at "$x" "$y")" $mods
-  for k in $(mod_keys "$mods"); do be_keydown "$k"; done
+  mods_down "$mods"
   be_button down "$btn"
   record press "$(at "$x" "$y")" "$(button_name "$btn")" $mods
   held_btn=$btn held_mods=$mods pointer_x=$x pointer_y=$y
@@ -323,7 +332,7 @@ up() {
   local btn=${1:-${held_btn:-1}} k
   be_button up "$btn"
   record release "$(at "$pointer_x" "$pointer_y")" "$(button_name "$btn")" $held_mods
-  for k in $(mod_keys "$held_mods"); do be_keyup "$k"; done
+  mods_up "$held_mods"
   held_btn= held_mods=
 }
 dragto() {
@@ -342,11 +351,11 @@ click() {
   b=$(button_name "$btn")
   be_move $(root "$x" "$y")
   record move "$(at "$x" "$y")" $mods
-  for k in $(mod_keys "$mods"); do be_keydown "$k"; done
+  mods_down "$mods"
   be_clicks "$btn" 1 0
   record press "$(at "$x" "$y")" "$b" $mods
   record release "$(at "$x" "$y")" "$b" $mods
-  for k in $(mod_keys "$mods"); do be_keyup "$k"; done
+  mods_up "$mods"
 }
 # The pointer: a drag while `down` holds a button, else hovering.
 move() {
@@ -728,9 +737,13 @@ case $term in
     # Ghostty sizes windows in cells; 10x21 px cells at its default font size.
     # No decorations or padding: the terminal area starts at the window's
     # top left, as `expect` needs; no "Copied to clipboard" toast over it.
-    "${clean_env[@]}" ghostty --config-default-files=false --gtk-single-instance=false \
+    # A black background, as kitty's and the mock terminal's (expect in a
+    # session): its own dark grey showed in blank cells of terminal panes.
+    gdk=()
+    [[ $display == wayland ]] && gdk=(GDK_BACKEND=wayland)
+    "${clean_env[@]}" "${gdk[@]}" ghostty --config-default-files=false --gtk-single-instance=false \
       --window-decoration=false --window-padding-x=0 --window-padding-y=0 \
-      --app-notifications=no-clipboard-copy \
+      --app-notifications=no-clipboard-copy --background=000000 \
       "--window-width=$((width / 10))" "--window-height=$((height / 21))" -e "$@" >"$outdir/terminal.log" 2>&1 &
     startup=6
     ;;
@@ -756,7 +769,8 @@ case $term in
     # -n: ignore the user's wezterm config. The software renderer works on Xvfb.
     # WezTerm sizes windows in cells: 10x22 px at its defaults (more rows would
     # run past the bottom of the virtual screen).
-    "${clean_env[@]}" wezterm -n --config 'front_end="Software"' --config enable_wayland=false \
+    "${clean_env[@]}" wezterm -n --config 'front_end="Software"' \
+      --config "enable_wayland=$([[ $display == wayland ]] && echo true || echo false)" \
       --config 'window_decorations="NONE"' --config enable_tab_bar=false \
       --config 'window_padding={left=0,right=0,top=0,bottom=0}' \
       --config "initial_cols=$((width / 10))" --config "initial_rows=$((height / 22))" \

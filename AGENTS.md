@@ -110,8 +110,8 @@ Japanese input); its GPU tests (`cargo test -p temzdf-gui --test gpu`) run
 offscreen on lavapipe.
 
 `scripts/e2e.sh -d wayland ...` runs the same scenarios on headless sway
-instead of Xvfb (kitty and the GUI so far; keys and pointer through
-`crates/wlinput`, screenshots with grim).
+instead of Xvfb (every terminal and the GUI, not `-I` yet; keys and pointer
+through `crates/wlinput`, screenshots with grim).
 
 `scripts/e2e.sh` is Linux-only. On macOS, `scripts/macos-gui.sh` runs kitty,
 Ghostty, WezTerm or `temzdf-gui` (`launch app`) in the background on a

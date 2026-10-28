@@ -134,6 +134,15 @@ Known problems:
   codes kitty reports no base-layout key for them, as for a real keyboard;
   on arbitrary codes it reported a wrong one (`b` with base `4`), and
   temzdf takes a base `c` with Ctrl for Ctrl+C.
+- Ghostty 1.3.1 and WezTerm 0-unstable-2026-10-10 on the same headless sway
+  (`GDK_BACKEND=wayland`; WezTerm `enable_wayland=true` with its software
+  front end) pass every judged scenario, as on X11. WezTerm took a click
+  that came within a millisecond of Ctrl now and then as a plain one (the
+  modifier state applied after the button), so `scripts/e2e.sh` waits 50 ms
+  between modifiers and buttons. Ghostty's default background (40,44,52)
+  showed in blank cells of terminal panes, where `expect` in a session
+  wants black (kitty's, the mock terminal's): it runs with
+  `--background=000000` there.
 
 ## Multiplexers (research 2026-10-25, from zellij main ffb334a and tmux master acee541 sources)
 

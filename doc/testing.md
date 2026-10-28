@@ -122,8 +122,11 @@ wtype and wlrctl make a virtual device per call, which lost clicks and
 wheel steps and made every key a focus change. wlinput keeps one virtual
 keyboard (a US layout at the real evdev codes, so kitty's base-layout key
 is right; other characters get free codes as typed) and one virtual
-pointer for the run. kitty and the GUI pass every judged scenario on both
-(2026-10-29); Ghostty and WezTerm on Wayland, and `-I`, are next.
+pointer for the run. kitty, Ghostty, WezTerm and the GUI pass every judged
+scenario on both (2026-10-29; Ghostty cannot tell its text, so those checks
+SKIP); `-I` is X11 only so far. WezTerm on X11 failed `viewer`'s wheel and
+zoom once in a long run and passed the reruns (it delivers wheel steps
+unevenly).
 
 ## Judged e2e scenarios
 
