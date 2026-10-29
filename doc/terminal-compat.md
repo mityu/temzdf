@@ -143,6 +143,39 @@ Known problems:
   showed in blank cells of terminal panes, where `expect` in a session
   wants black (kitty's, the mock terminal's): it runs with
   `--background=000000` there.
+- macOS 26, `scripts/e2e.sh -d macos` (2026-10-29; kitty 0.49.2, Ghostty
+  1.4.0, WezTerm 20260117, on a virtual display at scale 1):
+  - Every window gets a 1 px border drawn over its edge, rounded corners,
+    and a title bar separator over the first row below it, on top of what
+    the program draws. Ghostty's cells reach the window's edges.
+  - kitty centres the cell grid in the window (`placement_strategy center`):
+    `top-left` puts it where `expect` crops. kitty reports three wheel steps
+    per notch of a line-scrolling wheel event (whatever
+    `wheel_scroll_multiplier`, and whatever the event's deltas); Ghostty
+    nine, WezTerm one. kitty ignores key events posted to its process (keys
+    go through its remote control).
+  - Ghostty shows the pixels of kitty graphics images as Display P3 values,
+    without converting them from sRGB: (97,175,239) shows as (63,177,245),
+    grey and white stay. Its `window-colorspace` (terminal colours) does
+    not change that. Its default `alpha-blending` on macOS (`native`)
+    blends in Display P3; with `linear-corrected` (Linux's default) and the
+    P3 interpretation applied to `--render-frame`'s output, `expect` matches
+    exactly.
+  - Ghostty binds Option+Left/Right to ESC b / ESC f by default: the program
+    gets `<M-b>`/`<M-f>`, not `<M-Left>`/`<M-Right>`
+    (`keybind = alt+left=unbind` restores them). Unfocused it draws a hollow
+    cursor over images even where the program hides the cursor. With the
+    pointer near the top it shows a split drag handle (three dots, about
+    10x2 px) at the top middle of the terminal, over what the program drew.
+  - Ghostty started in the background (`open -g`) without restoring windows
+    (`window-save-state = never`) opens its first window only once
+    activated; with the saved state it restores the user's windows too.
+  - WezTerm without a title bar (`window_decorations = "NONE"` or
+    `"RESIZE"`) takes the top strip of the window as one: a drag there moves
+    the window instead of reaching the program. Its `cli get-text` needs
+    `--pane-id` (it cannot tell the focused pane of a window in the
+    background); the GUI's socket is
+    `~/.local/share/wezterm/gui-sock-PID`.
 
 ## Multiplexers (research 2026-10-25, from zellij main ffb334a and tmux master acee541 sources)
 

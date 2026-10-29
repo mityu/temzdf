@@ -1,6 +1,8 @@
 # Keys still held when the GUI's window gets the focus are not typed into
 # it (X11 reports them as synthetic presses on focus-in): Ctrl+D ends a
-# shell in another window, which closes and gives the focus back.
+# shell in another window, which closes and gives the focus back. Not run on
+# macOS (-d macos): AppKit sends no such presses, and keys held there would
+# go to whatever window is in front.
 # Used with:
 #   cargo build -p temzdf -p temzdf-gui
 #   scripts/e2e.sh -t gui -o target/e2e-gui-focus tests/e2e/gui-focus.actions -- \

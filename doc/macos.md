@@ -79,9 +79,71 @@ is fine for now.
 
 ## Checking GUI terminals on a Mac without a human
 
-`scripts/e2e.sh` is Linux-only (Xvfb, xdotool). On macOS use
-`scripts/macos-gui.sh` (its header lists the commands); it builds two small
-Swift tools from `scripts/macos/` into `target/macos-gui/`. A session:
+Two tools share the Swift helpers in `scripts/macos/` (built into
+`target/macos-gui/`): `scripts/e2e.sh` runs the action files of
+`tests/e2e/` with their judgements, as on Linux; `scripts/macos-gui.sh`
+drives one terminal step by step, for looking into something by hand.
+Both need the screen recording and accessibility permissions for the
+terminal they run in, and the screen unlocked (a locked screen gives no
+screenshots).
+
+### scripts/e2e.sh -d macos
+
+The default on macOS. The same command lines as on Linux (each action
+file's "Used with:"), e.g.
+
+```sh
+scripts/e2e.sh -t ghostty tests/e2e/expect.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
+```
+
+It takes the front and the pointer while it runs (pointer events go to the
+window under the pointer, so the terminal must be in front), and gives both
+back at the end; do not use the Mac meanwhile. It keeps the display awake
+(`caffeinate`) and puts the user's text clipboard back. How it works, and
+why:
+
+- A virtual display (`vdisp W H 1`) at scale 1, beside the real screen, a
+  little larger than the window: screenshots of it are the terminal's
+  pixels, so `expect` crops and compares them as on Xvfb, and action
+  coordinates mean what they mean there. A menu bar shows on every display,
+  so windows go below it; the drawing area's place comes from `termctl
+  content` (the window without its title bar, whose height the close
+  button's position gives).
+- Terminals start through `open -g -n -a APP --args ...` (Ghostty cannot
+  start otherwise, and none should come to the front), with launchd's
+  environment and `/` as the directory: a script in the run's runtime
+  directory sets this run's environment and directory (not the variables
+  naming the harness's own terminal, which would override the new one's)
+  and waits until the window is on the virtual display before starting the
+  command, so temzdf starts at scale 1 (it would otherwise log the main
+  screen's geometry first). Window sizes follow the macOS cell sizes
+  (Ghostty 8x17 px, WezTerm 7x16 px), so the window is about the size asked
+  for and the coordinates of the action files hit what they aim at. The GUI
+  runs directly.
+- Input: `termctl serve PID` reads one command per line (as `crates/wlinput`
+  on Wayland): pointer moves, button presses, wheel notches (without the
+  system's acceleration), XKB key names (`ctrl+b`, `shift+g`, `percent`),
+  modifiers held for later clicks, typed text. Pointer events are posted
+  globally with the terminal in front; keys go to the terminal's process
+  (Ghostty, the GUI), globally (WezTerm ignores posted keys), or through
+  kitty's remote control (kitty ignores both: its key and text commands).
+  The terminal is brought to the front at the start, as it has the focus on
+  Linux (unfocused, Ghostty draws a hollow cursor over images).
+- Screenshots: `screencapture -R` of the virtual display. macOS draws a
+  1 px border over the edge of every window, rounds its corners, and draws
+  a title bar's separator over the first row below it; `expect` blacks those
+  pixels out on both sides (`NAME.window-mask.png`), since Ghostty's, WezTerm's
+  and the GUI's cells reach the edges.
+- Links are not opened: `open` is replaced for the command by a script that
+  appends what it would open to `OUTDIR/opened.txt` (a browser would open
+  them on the desktop). Clicks that land on a URL are a sign of wrong
+  coordinates.
+- What differs per terminal (kitty's wheel, Ghostty's colours and keys,
+  WezTerm's title bar) is in `doc/terminal-compat.md`.
+
+### scripts/macos-gui.sh
+
+Its header lists the commands. A session:
 
 ```sh
 scripts/macos-gui.sh display start
@@ -98,8 +160,7 @@ scripts/macos-gui.sh display stop
 (started directly, its window moved to the virtual display, the front given
 back); `tests/macos/gui-redraw.sh` is a whole scenario built on it.
 
-It needs the screen recording and accessibility permissions for the terminal
-it runs in. How it works, and why:
+How it works, and why:
 
 - Windows live on a virtual display (`vdisp`, private `CGVirtualDisplay` API as
   used by DeskPad) next to the real screen. kitty redraws nothing while its

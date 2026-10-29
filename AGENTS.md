@@ -113,12 +113,15 @@ offscreen on lavapipe.
 instead of Xvfb (every terminal and the GUI, not `-I` yet; keys and pointer
 through `crates/wlinput`, screenshots with grim).
 
-`scripts/e2e.sh` is Linux-only. On macOS, `scripts/macos-gui.sh` runs kitty,
-Ghostty, WezTerm or `temzdf-gui` (`launch app`) in the background on a
-virtual display and drives them (keys, mouse, window screenshots) without
-disturbing the desktop; see its header and `doc/macos.md`. Scripted macOS
-scenarios are in `tests/macos/` (`gui-redraw.sh`: the GUI redraws after its
-window was covered).
+On macOS `scripts/e2e.sh` (`-d macos`, the default there) runs the same
+action files and judgements in kitty, Ghostty, WezTerm and the GUI on a
+virtual display beside the real screen; it takes the front and the pointer
+for the run and needs the screen unlocked (`doc/macos.md`). For poking at a
+terminal step by step, `scripts/macos-gui.sh` runs kitty, Ghostty, WezTerm
+or `temzdf-gui` (`launch app`) in the background on a virtual display and
+drives them (keys, mouse, window screenshots); see its header. Scripted
+macOS scenarios are in `tests/macos/` (`gui-redraw.sh`: the GUI redraws
+after its window was covered).
 
 Debugging terminal problems:
 

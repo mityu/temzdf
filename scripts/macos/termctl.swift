@@ -2,6 +2,7 @@
 // called by scripts/macos-gui.sh; see doc/macos.md.
 //
 //   termctl windows PID                  "WID X Y W H TITLE" per window (global points)
+//   termctl content PID                  "X Y W H" of its first window without the title bar
 //   termctl move PID X Y [W H]           move (and resize) PID's windows (accessibility API)
 //   termctl front                        the front app's PID
 //   termctl activate PID                 bring PID to the front; prints the previous front PID
@@ -10,6 +11,7 @@
 //   termctl click PID X Y [ctrl|shift|cmd]
 //   termctl drag PID X1 Y1 X2 Y2
 //   termctl scroll PID X Y STEPS [ctrl]  STEPS > 0 scrolls down, one wheel line per step
+//   termctl serve PID [pid|global]       commands on stdin, for scripts/e2e.sh (see Server)
 //
 // Mouse coordinates are points relative to the window's top-left corner,
 // title bar included (as in `screencapture -l -o` scaled to points). Mouse
@@ -75,19 +77,31 @@ func windows(_ pid: pid_t) -> [Win] {
 
 func frontPid() -> pid_t { NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0 }
 
+/// Ask for `pid` in front: as an app (a request macOS may turn down for a
+/// program without a bundle, as temzdf-gui run from the shell), and then
+/// through the accessibility API, which it follows.
+func requestFront(_ pid: pid_t) {
+    NSRunningApplication(processIdentifier: pid)?.activate()
+    for _ in 0..<25 where frontPid() != pid { wait(0.02) }
+    if frontPid() != pid {
+        AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    }
+}
+
 func activate(_ pid: pid_t) {
-    guard let app = NSRunningApplication(processIdentifier: pid) else { fail("no app with pid \(pid)") }
-    app.activate()
+    guard NSRunningApplication(processIdentifier: pid) != nil else { fail("no app with pid \(pid)") }
+    requestFront(pid)
     for _ in 0..<150 where frontPid() != pid { wait(0.02) }
     guard frontPid() == pid else { fail("could not bring \(pid) to the front") }
     wait(0.4)
 }
 
 func giveFrontBack() {
-    guard restoreFront != 0, let app = NSRunningApplication(processIdentifier: restoreFront) else { return }
+    guard restoreFront != 0 else { return }
+    let previous = restoreFront
     restoreFront = 0
-    app.activate()
-    for _ in 0..<150 where frontPid() != app.processIdentifier { wait(0.02) }
+    requestFront(previous)
+    for _ in 0..<150 where frontPid() != previous { wait(0.02) }
 }
 
 /// Run `body` with PID in front, then give the front back (also when PID
@@ -203,14 +217,333 @@ func modifier(_ i: Int) -> CGEventFlags {
     }
 }
 
+// MARK: serve (scripts/e2e.sh -d macos)
+
+// XKB keysym names (as xdotool and scripts/e2e.sh's actions take them) of
+// characters, and of keys that type none.
+let keysymChars: [String: Character] = [
+    "space": " ", "plus": "+", "minus": "-", "equal": "=", "slash": "/", "question": "?", "less": "<",
+    "greater": ">", "colon": ":", "semicolon": ";", "percent": "%", "comma": ",", "period": ".",
+    "apostrophe": "'", "quotedbl": "\"", "exclam": "!", "at": "@", "numbersign": "#", "dollar": "$",
+    "asciicircum": "^", "ampersand": "&", "asterisk": "*", "parenleft": "(", "parenright": ")",
+    "underscore": "_", "bracketleft": "[", "bracketright": "]", "braceleft": "{", "braceright": "}",
+    "backslash": "\\", "bar": "|", "grave": "`", "asciitilde": "~",
+]
+let keysymKeys: [String: CGKeyCode] = [
+    "Return": 36, "Tab": 48, "BackSpace": 51, "Escape": 53, "Delete": 117, "Left": 123, "Right": 124,
+    "Down": 125, "Up": 126, "Home": 115, "End": 119, "Prior": 116, "Page_Up": 116, "Next": 121,
+    "Page_Down": 121, "F1": 122, "F2": 120, "F3": 99, "F4": 118, "F5": 96, "F6": 97, "F7": 98, "F8": 100,
+    "F9": 101, "F10": 109, "F11": 103, "F12": 111,
+]
+/// Modifier names: their flag and key code (the left one).
+let modifierKeys: [String: (CGEventFlags, CGKeyCode)] = [
+    "ctrl": (.maskControl, 59), "control": (.maskControl, 59), "shift": (.maskShift, 56),
+    "alt": (.maskAlternate, 58), "super": (.maskCommand, 55), "cmd": (.maskCommand, 55),
+]
+
+/// An XKB key name, maybe with modifiers (`ctrl+shift+v`, `shift+g`,
+/// `percent`, `Return`): key code, flags, and the text it types.
+func xkbKey(_ spec: String) -> (CGKeyCode, CGEventFlags, String?)? {
+    var parts = spec.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
+    let name = parts.removeLast()
+    var flags: CGEventFlags = []
+    for m in parts {
+        guard let (f, _) = modifierKeys[m.lowercased()] else { return nil }
+        flags.insert(f)
+    }
+    if let code = keysymKeys[name] { return (code, flags, nil) }
+    let c: Character
+    if let named = keysymChars[name] {
+        c = named
+    } else if name.count == 1 {
+        c = name.first!
+    } else {
+        return nil
+    }
+    // Shift with a letter types the capital.
+    var typed = c
+    if flags.contains(.maskShift), let up = String(c).uppercased().first, up != c { typed = up }
+    guard let (code, f) = charKey(typed) else { return nil }
+    let all = flags.union(f)
+    let text = all.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty ? String(typed) : nil
+    return (code, all, text)
+}
+
+/// Serves one command per line on stdin, answering "ok" or an error on
+/// stdout: the input device scripts/e2e.sh drives PID with (as wlinput does
+/// on Wayland). Pointer events go to the window under the pointer, so they
+/// are posted globally with PID in front: the first one brings it there and
+/// it stays for the run (giving the front back between actions sent focus
+/// events, and WezTerm redraws lazily without the focus); `done` gives the
+/// front and the pointer back. Keys go to PID's process (`pid`), or
+/// globally with it in front (`global`: WezTerm). Coordinates are global
+/// points.
+///   move X Y              (a drag while a button is down)
+///   down BTN, up BTN      1 left, 2 middle, 3 right
+///   wheel N DELAY_MS      N line steps (N > 0 down)
+///   key NAME              XKB names: `ctrl+b`, `shift+g`, `percent`, `Return`
+///   keydown NAME, keyup NAME  modifiers stay down for later keys and clicks
+///   type DELAY_MS TEXT    the rest of the line, typed
+///   front                 bring PID to the front now
+///   done
+final class Server {
+    let pid: pid_t
+    let globalKeys: Bool
+    var flags: CGEventFlags = []
+    var pos = CGPoint.zero
+    var held: Set<Int> = []
+    var holding = false
+    var userPointer: CGPoint? = nil
+    var lastDown: (time: Date, pos: CGPoint, count: Int64)? = nil
+
+    init(pid: pid_t, globalKeys: Bool) {
+        self.pid = pid
+        self.globalKeys = globalKeys
+    }
+
+    struct Failure: Error { let message: String }
+
+    /// PID in front, from the first event that needs it until `done`.
+    func front() throws {
+        wait(0.001)
+        if frontPid() == pid { return }
+        if !holding {
+            let previous = frontPid()
+            if previous != 0 { restoreFront = previous }
+            userPointer = CGEvent(source: nil)?.location
+            holding = true
+        }
+        guard NSRunningApplication(processIdentifier: pid) != nil else { throw Failure(message: "no app \(pid)") }
+        requestFront(pid)
+        for _ in 0..<150 where frontPid() != pid { wait(0.02) }
+        guard frontPid() == pid else { throw Failure(message: "could not bring \(pid) to the front") }
+        wait(0.4)
+        // Where the actions left the pointer.
+        if pos != .zero { postMouse(.mouseMoved, button: .left) }
+    }
+
+    func done() {
+        giveFrontBack()
+        if let p = userPointer { CGWarpMouseCursorPosition(p) }
+        holding = false
+        userPointer = nil
+    }
+
+    func postMouse(_ type: CGEventType, button: CGMouseButton, clicks: Int64 = 1) {
+        guard let e = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: pos, mouseButton: button)
+        else { return }
+        e.flags = flags
+        e.setIntegerValueField(.mouseEventClickState, value: clicks)
+        e.post(tap: .cghidEventTap)
+        settle()
+    }
+
+    func button(_ n: Int) throws -> CGMouseButton {
+        switch n {
+        case 1: return .left
+        case 2: return .center
+        case 3: return .right
+        default: throw Failure(message: "bad button \(n)")
+        }
+    }
+
+    func move(_ p: CGPoint) throws {
+        try front()
+        pos = p
+        if held.contains(1) {
+            postMouse(.leftMouseDragged, button: .left)
+        } else if held.contains(3) {
+            postMouse(.rightMouseDragged, button: .right)
+        } else if held.contains(2) {
+            postMouse(.otherMouseDragged, button: .center)
+        } else {
+            postMouse(.mouseMoved, button: .left)
+        }
+    }
+
+    func press(_ n: Int, down: Bool) throws {
+        try front()
+        let b = try button(n)
+        let types: [Int: (CGEventType, CGEventType)] = [
+            1: (.leftMouseDown, .leftMouseUp), 2: (.otherMouseDown, .otherMouseUp), 3: (.rightMouseDown, .rightMouseUp),
+        ]
+        let (dn, upType) = types[n]!
+        // Clicks close together in time and place count up (double clicks).
+        var count: Int64 = 1
+        if down {
+            if let l = lastDown, Date().timeIntervalSince(l.time) < 0.5, abs(l.pos.x - pos.x) < 4,
+                abs(l.pos.y - pos.y) < 4
+            {
+                count = l.count + 1
+            }
+            lastDown = (Date(), pos, count)
+            held.insert(n)
+        } else {
+            count = lastDown?.count ?? 1
+            held.remove(n)
+        }
+        postMouse(down ? dn : upType, button: b, clicks: count)
+    }
+
+    func wheel(_ steps: Int, delayMs: Int) throws {
+        try front()
+        for i in 0..<abs(steps) {
+            if i > 0 { usleep(UInt32(delayMs) * 1000) }
+            let line: Int64 = steps > 0 ? -1 : 1
+            let e = CGEvent(
+                scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: Int32(line), wheel2: 0,
+                wheel3: 0)
+            // One notch of a wheel without acceleration: the system's scroll
+            // speed setting scales the deltas of posted line events too.
+            e?.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: line)
+            e?.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: Double(line))
+            e?.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: line * 10)
+            e?.setIntegerValueField(.scrollWheelEventIsContinuous, value: 0)
+            e?.location = pos
+            e?.flags = flags
+            e?.post(tap: .cghidEventTap)
+            settle()
+        }
+    }
+
+    func postKeyEvent(_ code: CGKeyCode, _ f: CGEventFlags, _ text: String?, down: Bool) throws {
+        if globalKeys { try front() }
+        guard let e = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down) else { return }
+        e.flags = f
+        if let text {
+            let u = Array(text.utf16)
+            e.keyboardSetUnicodeString(stringLength: u.count, unicodeString: u)
+        }
+        if globalKeys { e.post(tap: .cghidEventTap) } else { e.postToPid(pid) }
+        settle()
+    }
+
+    func modifier(_ name: String, down: Bool) throws -> Bool {
+        guard let (f, code) = modifierKeys[name.lowercased()] else { return false }
+        if down { flags.insert(f) } else { flags.remove(f) }
+        if globalKeys { try front() }
+        guard let e = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down) else { return true }
+        e.type = .flagsChanged
+        e.flags = flags
+        if globalKeys { e.post(tap: .cghidEventTap) } else { e.postToPid(pid) }
+        settle()
+        return true
+    }
+
+    func key(_ name: String, down: Bool?) throws {
+        if let down, try modifier(name, down: down) { return }
+        guard let (code, f, text) = xkbKey(name) else { throw Failure(message: "unknown key \(name)") }
+        let all = f.union(flags)
+        let typed = all.intersection([.maskControl, .maskAlternate, .maskCommand]).isEmpty ? text : nil
+        for d in down.map({ [$0] }) ?? [true, false] { try postKeyEvent(code, all, typed, down: d) }
+    }
+
+    func type(_ text: String, delayMs: Int) throws {
+        for (i, c) in text.enumerated() {
+            if i > 0 && delayMs > 0 { usleep(UInt32(delayMs) * 1000) }
+            if let (code, f) = charKey(c) {
+                for d in [true, false] { try postKeyEvent(code, f.union(flags), String(c), down: d) }
+            } else {
+                // No US key types it: the text alone.
+                for d in [true, false] { try postKeyEvent(0, flags, String(c), down: d) }
+            }
+        }
+    }
+
+    func handle(_ line: String) throws {
+        let words = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true).map(String.init)
+        guard let cmd = words.first else { return }
+        func int(_ i: Int) throws -> Int {
+            guard i < words.count, let v = Int(words[i]) else { throw Failure(message: "expected a number") }
+            return v
+        }
+        switch cmd {
+        case "move":
+            let xy = line.split(separator: " ").dropFirst().compactMap { Double($0) }
+            guard xy.count == 2 else { throw Failure(message: "move X Y") }
+            try move(CGPoint(x: xy[0], y: xy[1]))
+        case "down", "up": try press(int(1), down: cmd == "down")
+        case "wheel": try wheel(int(1), delayMs: int(2))
+        case "key", "keydown", "keyup":
+            guard words.count == 2 else { throw Failure(message: "\(cmd) NAME") }
+            try key(words[1], down: cmd == "key" ? nil : cmd == "keydown")
+        case "type":
+            // The text may start with or contain spaces: everything after "type MS ".
+            let afterDelay = line.dropFirst(5).drop(while: { $0 != " " }).dropFirst()
+            try type(String(afterDelay), delayMs: int(1))
+        case "front": try front()
+        case "done": done()
+        default: throw Failure(message: "unknown command \(cmd)")
+        }
+    }
+
+    func run() {
+        while let line = readLine(strippingNewline: true) {
+            do {
+                try handle(line)
+                print("ok")
+            } catch let f as Failure {
+                print(f.message)
+            } catch {
+                print("\(error)")
+            }
+            fflush(stdout)
+        }
+        done()
+    }
+}
+
 // MARK: commands
 
 switch args[1] {
+case "serve":
+    Server(pid: pid, globalKeys: args.count > 3 && args[3] == "global").run()
 case "windows":
     for w in windows(pid) {
         let b = w.bounds
         print(w.id, Int(b.minX), Int(b.minY), Int(b.width), Int(b.height), w.title)
     }
+case "content":
+    // The first window's inside, without a title bar if it has one (a
+    // close button tells: undecorated terminal windows have none). The
+    // content view is not in the accessibility tree, and NSWindow's own
+    // figure (32 on macOS 26) is not what a winit window gets (28): the
+    // buttons sit in the middle of the title bar, which gives its height.
+    guard let w = windows(pid).first else { fail("\(pid) has no window") }
+    let app = AXUIElementCreateApplication(pid)
+    var value: CFTypeRef?
+    AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value)
+    if value == nil {
+        AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+        value = (value as? [AXUIElement])?.first
+    }
+    // Among its children: WezTerm's undecorated window has a hidden one.
+    var children: CFTypeRef?
+    var close: AXUIElement? = nil
+    if let win = value, CFGetTypeID(win) == AXUIElementGetTypeID(),
+        AXUIElementCopyAttributeValue(win as! AXUIElement, kAXChildrenAttribute as CFString, &children) == .success
+    {
+        for c in (children as? [AXUIElement]) ?? [] {
+            var sub: CFTypeRef?
+            AXUIElementCopyAttributeValue(c, kAXSubroleAttribute as CFString, &sub)
+            if (sub as? String) == kAXCloseButtonSubrole as String { close = c }
+        }
+    }
+    var titleBar = 0.0
+    if let button = close {
+        var p = CGPoint.zero
+        var size = CGSize.zero
+        var v: CFTypeRef?
+        if AXUIElementCopyAttributeValue(button, kAXPositionAttribute as CFString, &v) == .success {
+            AXValueGetValue(v as! AXValue, .cgPoint, &p)
+        }
+        if AXUIElementCopyAttributeValue(button, kAXSizeAttribute as CFString, &v) == .success {
+            AXValueGetValue(v as! AXValue, .cgSize, &size)
+        }
+        titleBar = 2 * (p.y + size.height / 2 - w.bounds.minY)
+    }
+    let b = w.bounds
+    print(Int(b.minX), Int(b.minY + titleBar), Int(b.width), Int(b.height - titleBar))
 case "move":
     let app = AXUIElementCreateApplication(pid)
     var value: CFTypeRef?

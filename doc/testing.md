@@ -9,10 +9,10 @@ Layers of verification, cheapest first. All of them run without a human.
 | Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal. Read the PNG to check it. `scripts/frames.sh` renders a fixed set and compares two sets pixel by pixel (for refactorings). |
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
 | Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `scripts/check.sh`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
-| Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
+| Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland\|macos] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
 | Judged e2e | `expect NAME [KEYS]` in an action file (e.g. `tests/e2e/expect.actions`, `viewer.actions`) | The screen matches what `--render-frame` draws after the same input, keys or a replay of the keys and mouse input temzdf handled (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending, wheel, drag, clicks, hover. Not PDF rendering itself (both sides use MuPDF). |
 | GUI client | `crates/temzdf-gui` unit tests and `--test gpu` (offscreen on lavapipe), `scripts/e2e.sh -t gui [-I]` with `tests/e2e/gui*.actions` | The draw list and key translation; layers and text drawn on a GPU; the window under xfwm4 against `temzdf-gui --render-frame` on the same session; Japanese input through fcitx5 and Mozc; the clipboard. |
-| Real terminal (macOS) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | The same on macOS, step by step instead of action files (`doc/macos.md`); `launch app` runs `temzdf-gui`, and `tests/macos/*.sh` are scripted scenarios. |
+| Real terminal (macOS, by hand) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | Poking at a terminal step by step (`doc/macos.md`); `launch app` runs `temzdf-gui`, and `tests/macos/*.sh` are scripted scenarios. `scripts/e2e.sh` runs the action files on macOS too. |
 | User | Ghostty / WezTerm on a real desktop | The feel of scrolling and zooming. |
 
 Action files live in `tests/e2e/`; each starts with a comment saying how to run it
@@ -106,7 +106,7 @@ Ghostty, WezTerm, zellij), transports and placement semantics as each terminal
 implements them, terminal crashes, and pixels compared against headless
 renders.
 
-## X11 and Wayland
+## X11, Wayland and macOS
 
 Action files use the helpers only (`keys`, `type`, `click`, `down`/`up`,
 `move`, `wheel`, `hold`, `clipboard`, `focus_window`, ...); the helpers
@@ -127,6 +127,22 @@ scenario on both (2026-10-29; Ghostty cannot tell its text, so those checks
 SKIP); `-I` is X11 only so far. WezTerm on X11 failed `viewer`'s wheel and
 zoom once in a long run and passed the reruns (it delivers wheel steps
 unevenly).
+
+`-d macos` (the default on macOS): a virtual display at scale 1 beside the
+real screen (`vdisp`), so screenshot pixels are the terminal's as on Xvfb;
+windows start through `open` and move there (the command waits until they
+did, so temzdf starts at scale 1); keys and the pointer through `termctl
+serve` (`scripts/macos/termctl.swift`; kitty's keys through its remote
+control, WezTerm's posted globally), screenshots with `screencapture`, the
+clipboard with pbcopy (the user's text clipboard is put back after), links
+not opened (`open` is replaced; what would open is in `opened.txt`).
+Details and why in `doc/macos.md`; what differs per terminal in
+`doc/terminal-compat.md`. Results on macOS 26 (2026-10-29): WezTerm passes
+every judged scenario (56); kitty all but `viewer`'s zoom (it reports
+three wheel steps per notch, so the zoom is three times as deep and its
+tiles are not there yet after the scenario's pause; they are with a longer
+one); Ghostty all (text checks SKIP); the GUI `gui`. `gui-focus` is X11's
+and not run there; `-I` and multiplexers are not tried there.
 
 ## Judged e2e scenarios
 

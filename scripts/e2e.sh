@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # End-to-end harness: run a command inside a real terminal (kitty, Ghostty or
-# WezTerm) on a virtual X server (or headless sway, -d wayland), drive it
-# with an actions script, and save screenshots.
+# WezTerm) on a virtual X server (or headless sway, -d wayland; a virtual
+# display on macOS, -d macos), drive it with an actions script, and save
+# screenshots.
 #
-# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-d x11|wayland] [-m zellij|tmux] [-I] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
+# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-d x11|wayland|macos] [-m zellij|tmux] [-I] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
 #   -t TERM   terminal to run (default kitty); gui: COMMAND is temzdf-gui
 #             itself (e.g. target/debug/temzdf-gui FILE), run under the xfwm4
 #             window manager (X11; sway on Wayland) on lavapipe
@@ -13,7 +14,15 @@
 #             XMODIFIERS set; `ime on` / `ime off` switch it
 #   -d DISP   display server: x11 (default; Xvfb, xdotool, import) or wayland
 #             (headless sway; keys and pointer through crates/wlinput, built
-#             here; screenshots with grim; no -I yet)
+#             here; screenshots with grim; no -I yet); macos (the default
+#             there): the terminal or the GUI on a virtual display at scale 1
+#             beside the real screen, keys and the pointer through `termctl
+#             serve` (scripts/macos/termctl.swift; the window is in front for
+#             the run, as it has the focus on Linux, and the end gives the
+#             front and the pointer back),
+#             screenshots with screencapture; needs the accessibility and
+#             screen recording permissions, and the screen unlocked
+#             (doc/macos.md)
 #   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
 #             frames, a single pane; its config and layout go to OUTDIR/zellij;
 #             tmux: a private server with passthrough and mouse on, no status)
@@ -111,6 +120,7 @@ fi
 size=900x600
 term=kitty
 display=x11
+[[ $(uname) == Darwin ]] && display=macos
 mux=
 ime=
 outdir=target/e2e
@@ -142,14 +152,14 @@ if runs_temzdf "$@" && [[ "$*" != *--clean* ]]; then
 fi
 case $display in
   x11) ;;
-  wayland)
+  wayland | macos)
     if [[ -n $ime ]]; then
       echo "e2e.sh: -I is X11 only so far" >&2
       exit 2
     fi
     ;;
   *)
-    echo "e2e.sh: unknown display server $display (x11 or wayland)" >&2
+    echo "e2e.sh: unknown display server $display (x11, wayland or macos)" >&2
     exit 2
     ;;
 esac
@@ -163,7 +173,7 @@ if [[ -z "${E2E_INNER:-}" && $display == wayland ]]; then
   export E2E_INNER=1
   exec "$self" -t "$term" -d wayland ${mux:+-m "$mux"} -s "$size" -o "$outdir" "$actions" -- "$@"
 fi
-if [[ -z "${E2E_INNER:-}" ]]; then
+if [[ -z "${E2E_INNER:-}" && $display == x11 ]]; then
   export E2E_INNER=1
   screen="${width}x${height}"
   # The GUI's window has decorations around its drawing area.
@@ -302,6 +312,92 @@ sys.exit(1)' "$1"
     echo $!
   }
 fi
+# macOS (a virtual display started below; disp_x disp_y: its place among the
+# screens, global points, which are its pixels at scale 1): the pointer and
+# keys through `termctl serve` (TC, started once the terminal is up), kitty's
+# keys through its remote control (it ignores key events posted to its
+# process), screenshots of the display, the clipboard with pbcopy/pbpaste.
+if [[ $display == macos ]]; then
+  ctl=target/macos-gui/termctl
+  tc() {
+    local answer
+    echo "$*" >&"${TC[1]}"
+    read -r answer <&"${TC[0]}"
+    [[ $answer == ok ]] || { echo "termctl: $answer ($*)" >&2; return 1; }
+  }
+  be_move() { tc move $((disp_x + $1)) $((disp_y + $2)); }
+  be_button() { tc "$1" "$2"; }
+  be_clicks() {
+    local i
+    case $1 in
+      4) tc wheel "-$2" "$3" ;;
+      5) tc wheel "$2" "$3" ;;
+      *)
+        for ((i = 0; i < $2; i++)); do
+          ((i == 0)) || sleep "$(printf '%d.%03d' $(($3 / 1000)) $(($3 % 1000)))"
+          tc down "$1"
+          tc up "$1"
+        done
+        ;;
+    esac
+  }
+  # An XKB name as kitty's remote control takes it: what types a character
+  # goes as that text (send-key shift+g would lack the shifted key real
+  # typing reports), the rest as a key.
+  kitty_key() {
+    local k=$1 mods="" name c=
+    while [[ $k == *+?* ]]; do mods+="${k%%+*}+"; k=${k#*+}; done
+    case $k in
+      Return) name=enter ;; Escape) name=escape ;; Tab) name=tab ;; BackSpace) name=backspace ;;
+      Delete) name=delete ;; space) name=space c=" " ;; Prior | Page_Up) name=page_up ;; Next | Page_Down) name=page_down ;;
+      plus) c=+ ;; minus) c=- ;; equal) c="=" ;; slash) c=/ ;; question) c="?" ;; less) c="<" ;;
+      greater) c=">" ;; colon) c=: ;; semicolon) c=";" ;; percent) c=% ;; comma) c=, ;; period) c=. ;;
+      ?) c=$k ;;
+      *) name=${k,,} ;;
+    esac
+    if [[ -n $c && ( -z $mods || $mods == shift+ ) ]]; then
+      [[ $mods == shift+ ]] && c=${c^^}
+      kitten @ --to "unix:$kitty_socket" send-text -- "$c"
+    else
+      kitten @ --to "unix:$kitty_socket" send-key "$mods${name:-$c}"
+    fi
+  }
+  be_key() { if [[ $term == kitty ]]; then kitty_key "$1"; else tc key "$1"; fi; }
+  be_keydown() { tc keydown "$1"; }
+  be_keyup() { tc keyup "$1"; }
+  be_type() {
+    local i
+    if [[ $term != kitty ]]; then
+      tc type "${2:-0}" "$1"
+    elif [[ -z ${2:-} ]]; then
+      kitten @ --to "unix:$kitty_socket" send-text -- "$1"
+    else
+      for ((i = 0; i < ${#1}; i++)); do
+        kitten @ --to "unix:$kitty_socket" send-text -- "${1:i:1}"
+        sleep "$(printf '%d.%03d' $(($2 / 1000)) $(($2 % 1000)))"
+      done
+    fi
+  }
+  be_shot() { screencapture -x -R "$disp_x,$disp_y,$disp_w,$disp_h" "$1"; }
+  be_clipboard() { pbpaste; }
+  be_set_clipboard() { printf %s "$1" | pbcopy; }
+  # The window's inside (without a title bar), on the virtual display.
+  be_window_rect() {
+    local x y w h
+    read -r x y w h <<<"$("$ctl" content "$1")"
+    echo "$((x - disp_x)) $((y - disp_y)) $w $h"
+  }
+  be_focus() { "$ctl" activate "$1" >/dev/null; }
+  be_other_window() {
+    local before p
+    before=" $(pgrep -x TextEdit | tr '\n' ' ' || true) "
+    open -g -n -a TextEdit
+    for ((i = 0; i < 50; i++)); do
+      for p in $(pgrep -x TextEdit); do [[ $before == *" $p "* ]] || { echo "$p"; return; }; done
+      sleep 0.1
+    done
+  }
+fi
 
 shot() { be_shot "$outdir/$1.png"; }
 wheel() {
@@ -435,18 +531,56 @@ ime() {
     off) fcitx5-remote -c ;;
   esac
 }
+# Ghostty on macOS shows the pixels of images as Display P3 values (no
+# conversion from sRGB): saturated colours come out more saturated. The
+# expected screen FILE goes through the same, so the comparison stays exact
+# (doc/terminal-compat.md).
+as_terminal_shows() {
+  [[ $display == macos && $term == ghostty ]] || return 0
+  magick "$1" -strip -profile "/System/Library/ColorSync/Profiles/Display P3.icc" \
+    -profile "/System/Library/ColorSync/Profiles/sRGB Profile.icc" -strip "$1"
+}
+# macOS draws a 1 px border over the edge of every window and rounds its
+# corners, and a title bar's separator line over the first row below it:
+# those pixels are not the terminal's (Ghostty's and the GUI's cells reach
+# the window's edges). They go black on both sides of NAME's comparison
+# (NAME.window-mask.png), the W x H area at the drawing area's origin.
+mask_window_edges() {
+  local name=$1 w=$2 h=$3 wid fx fy fw fh ox oy line=()
+  [[ $display == macos ]] || return 0
+  read -r wid fx fy fw fh _ <<<"$("$ctl" windows "$term_pid" | head -1)"
+  screencapture -x -o -l "$wid" "$outdir/$name.window.png"
+  ox=$((disp_x + origin_x - fx)) oy=$((disp_y + origin_y - fy))
+  ((oy > 0)) && line=(-draw "line 0,$oy $((fw - 1)),$oy")
+  # Corners: where the window's own picture is not opaque, and the border
+  # along them one pixel further in.
+  magick "$outdir/$name.window.png" -alpha extract -threshold 99% -negate -morphology Dilate Square:1 \
+    -fill none -stroke white \
+    -draw "rectangle 0,0 $((fw - 1)),$((fh - 1))" "${line[@]}" -crop "${w}x${h}+$ox+$oy" +repage \
+    -background black -alpha shape -strip "$outdir/$name.window-mask.png"
+  rm -f "$outdir/$name.window.png"
+  # Ghostty (1.3) shows a handle for dragging the split (three dots) at the
+  # top middle of the terminal when the pointer comes near the top.
+  if [[ $term == ghostty ]]; then
+    magick "$outdir/$name.window-mask.png" -fill black -draw "rectangle $((w / 2 - 12)),0 $((w / 2 + 12)),7" \
+      "$outdir/$name.window-mask.png"
+  fi
+  magick "$outdir/$name.actual.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.actual.png"
+  magick "$outdir/$name.expected.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.expected.png"
+}
 # The GUI's form of expect: the window against an offscreen render of the
 # same session at this moment.
 expect_gui() {
   local name=$1 session out
   shot "$name"
   session=$("$temzdf" ls | head -1 | cut -d' ' -f1)
-  "${clean_env[@]}" VK_DRIVER_FILES="$TEMZDF_LAVAPIPE_ICD" "$gui_bin" --render-frame "$outdir/$name.expected.png" \
+  "${clean_env[@]}" VK_DRIVER_FILES="${TEMZDF_LAVAPIPE_ICD:-}" "$gui_bin" --render-frame "$outdir/$name.expected.png" \
     -s "$session" --size "${win_w}x${win_h}" 2>"$outdir/$name.expected.log" || {
     echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
     return
   }
   magick "$outdir/$name.png" -crop "${win_w}x${win_h}+$origin_x+$origin_y" +repage "$outdir/$name.actual.png"
+  mask_window_edges "$name" "$win_w" "$win_h"
   out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.actual.png" "$outdir/$name.expected.png" \
     "$outdir/$name.diff.png" 2>&1 || true)
   out=${out%% *}
@@ -490,11 +624,13 @@ expect_session() {
     echo "FAIL $name: render-session failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
     return
   }
+  as_terminal_shows "$outdir/$name.expected.png"
   # Pixels where the images show: the cells the terminal draws go black on
   # both sides.
   magick "$outdir/$name.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage \
     "$outdir/$name.mask.png" -composite "$outdir/$name.actual.png"
   magick "$outdir/$name.expected.png" "$outdir/$name.mask.png" -composite "$outdir/$name.expected.png"
+  mask_window_edges "$name" $((cols * cw)) $((rows * ch))
   out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.actual.png" "$outdir/$name.expected.png" \
     "$outdir/$name.diff.png" 2>&1 || true)
   out=${out%% *}
@@ -534,7 +670,18 @@ read_screen() {
   case $term in
     kitty) kitten @ --to "unix:$kitty_socket" get-text --extent screen ;;
     # The GUI's own socket: without it the CLI starts a mux server of its own.
-    wezterm) WEZTERM_UNIX_SOCKET=$(ls "$XDG_RUNTIME_DIR"/wezterm/gui-sock-* | head -1) wezterm cli get-text ;;
+    wezterm)
+      if [[ $display == macos ]]; then
+        # Started through `open`: its socket is in its own runtime directory,
+        # and the CLI cannot tell the focused pane of a window in the background.
+        local pane
+        export WEZTERM_UNIX_SOCKET=$HOME/.local/share/wezterm/gui-sock-$term_pid
+        pane=$(wezterm cli list --format json | jq '.[0].pane_id') || return
+        wezterm cli get-text --pane-id "$pane"
+      else
+        WEZTERM_UNIX_SOCKET=$(ls "$XDG_RUNTIME_DIR"/wezterm/gui-sock-* | head -1) wezterm cli get-text
+      fi
+      ;;
     *) return 77 ;;
   esac
 }
@@ -591,6 +738,8 @@ expect() {
   }
   # The terminal may have spare pixels right and below the cell grid.
   magick "$outdir/$name.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage "$outdir/$name.actual.png"
+  as_terminal_shows "$outdir/$name.expected.png"
+  mask_window_edges "$name" $((cols * cw)) $((rows * ch))
   out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.actual.png" "$outdir/$name.expected.png" \
     "$outdir/$name.diff.png" 2>&1 || true)
   out=${out%% *}
@@ -672,15 +821,38 @@ esac
 # exported so the actions' own `temzdf action`/`kill-session` find them.
 # Removing it on exit ends any session left behind (servers end once their
 # socket is gone), also when an action failed.
-XDG_RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/temzdf-e2e.XXXXXX")
+# macOS: /tmp itself, as $TMPDIR is long there (sockets are limited to 104
+# bytes, doc/macos.md).
+if [[ $display == macos ]]; then
+  XDG_RUNTIME_DIR=$(mktemp -d /tmp/temzdf-e2e.XXXXXX)
+else
+  XDG_RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/temzdf-e2e.XXXXXX")
+fi
 export XDG_RUNTIME_DIR
 # kitty answers `kitten @ get-text` (expect in a session) here.
 kitty_socket=$XDG_RUNTIME_DIR/kitty.sock
-term_pid= sway_pid=
+term_pid= sway_pid= vdisp_pid= user_clipboard=
 cleanup() {
+  if [[ -n ${TC[1]:-} ]]; then
+    # The front and the pointer back to where they were.
+    tc done || true
+    eval "exec ${TC[1]}>&-"
+  fi
   if [[ -n $term_pid ]]; then
     kill "$term_pid" 2>/dev/null || true
     wait "$term_pid" 2>/dev/null || true
+    # Started through `open`, not a child: wait for it to go.
+    for ((i = 0; i < 50; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.1; done
+  fi
+  if [[ -n $vdisp_pid ]]; then
+    kill "$vdisp_pid" 2>/dev/null || true
+    vdisp_pid=
+  fi
+  # The user's clipboard as it was (text only).
+  if [[ -n $user_clipboard ]]; then
+    pbcopy <"$user_clipboard" || true
+    rm -f "$user_clipboard"
+    user_clipboard=
   fi
   if [[ -n $sway_pid ]]; then
     # wlinput ends with its input; sway takes its clients with it.
@@ -723,8 +895,130 @@ EOF
   cargo build -q -p wlinput
   coproc WL { target/debug/wlinput --size "${width}x${height}" 2>>"$outdir/wlinput.log"; }
 fi
+# macOS: a virtual display at scale 1 (screenshot pixels are points and
+# match the terminal's), with room above the window for the menu bar every
+# display shows, and for the title bars of WezTerm and the GUI.
+menu_bar=40
+if [[ $display == macos ]]; then
+  scripts/macos-gui.sh build
+  # A locked screen takes no input and gives no screenshots, and the
+  # display going to sleep locks it: kept awake while this runs.
+  caffeinate -d -w $$ &
+  screen_w=$width screen_h=$((height + menu_bar))
+  [[ $term == gui || $term == wezterm ]] && screen_w=$((width + 100)) screen_h=$((height + 100 + menu_bar))
+  user_clipboard=$(mktemp)
+  pbpaste >"$user_clipboard" 2>/dev/null || true
+  target/macos-gui/vdisp "$screen_w" "$screen_h" 1 >"$outdir/vdisp.out" 2>&1 &
+  vdisp_pid=$!
+  for ((i = 0; i < 50; i++)); do [[ -s $outdir/vdisp.out ]] && break; sleep 0.1; done
+  read -r _ disp_x disp_y disp_w disp_h <"$outdir/vdisp.out" || true
+  if [[ -z ${disp_h:-} ]]; then
+    echo "e2e.sh: no virtual display: $(cat "$outdir/vdisp.out")" >&2
+    exit 1
+  fi
+fi
 clean_env=(env -u TEMZDF_LOG_DIR -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state"
   "TEMZDF_RECORD_INPUT=$outdir/input.txt")
+if [[ $display == macos ]]; then
+  # `open` starts apps in / with launchd's environment: a script gives the
+  # command this run's environment (without the variables of the terminal
+  # the harness runs in, which would override the new terminal's own) and
+  # directory. In the runtime directory, which goes at the end: it holds
+  # every variable of the environment. The command starts once the window
+  # is on the virtual display (the go file): the terminal opens on the main
+  # screen first, and temzdf would start there at its scale and log that
+  # geometry.
+  launch=$XDG_RUNTIME_DIR/launch.sh go=$XDG_RUNTIME_DIR/go
+  # Links are not opened: `open` (what temzdf opens links with on macOS)
+  # only notes them in OUTDIR/opened.txt. A browser would open them on the
+  # desktop of whoever runs this.
+  mkdir -p "$XDG_RUNTIME_DIR/bin"
+  printf '#!/bin/sh\necho "$*" >> %q\n' "$outdir/opened.txt" >"$XDG_RUNTIME_DIR/bin/open"
+  chmod +x "$XDG_RUNTIME_DIR/bin/open"
+  rm -f "$outdir/opened.txt"
+  {
+    echo '#!/usr/bin/env bash'
+    echo "export PATH=$(printf %q "$XDG_RUNTIME_DIR/bin:$PATH")"
+    for v in $(compgen -e); do
+      case $v in
+        PATH | TERM | TERM_PROGRAM* | COLORTERM | TERMINFO | KITTY_* | WEZTERM_* | GHOSTTY_* | WINDOWID | _ | SHLVL | PWD | OLDPWD) ;;
+        *) printf 'export %s=%q\n' "$v" "${!v}" ;;
+      esac
+    done
+    printf 'cd %q\n' "$PWD"
+    printf 'for ((i = 0; i < 600; i++)); do [[ -e %q ]] && break; sleep 0.05; done\n' "$go"
+    printf 'exec %s"$@"\n' "$(printf '%q ' "${clean_env[@]}")"
+  } >"$launch"
+  chmod +x "$launch"
+  front=$("$ctl" front)
+  case $term in
+    kitty)
+      # Cells from the top left (kitty centres the grid in the window).
+      app=kitty proc=kitty startup=3
+      targs=(--config NONE -o font_size=12 -o "initial_window_width=$width" -o "initial_window_height=$height"
+        -o window_padding_width=0 -o placement_strategy=top-left -o hide_window_decorations=yes
+        -o remember_window_size=no -o allow_remote_control=socket-only --listen-on "unix:$kitty_socket" "$launch")
+      ;;
+    ghostty)
+      # About the window size asked for (cells of 8x17 px here); no restored
+      # windows; Option with
+      # the arrows not bound to moving by words (its default on macOS sends
+      # ESC b and ESC f instead of Alt+Left and Alt+Right). Blending
+      # in linear light as on Linux (linear-corrected, the default there): its
+      # default on macOS (native) blends in
+      # Display P3, which --render-frame cannot draw (doc/terminal-compat.md).
+      app=Ghostty proc=ghostty startup=6
+      targs=(--config-default-files=false --window-save-state=never --quit-after-last-window-closed=true
+        --alpha-blending=linear-corrected --keybind=alt+left=unbind --keybind=alt+right=unbind
+        --window-decoration=false --window-padding-x=0 --window-padding-y=0
+        --app-notifications=no-clipboard-copy --background=000000
+        "--window-width=$((width / 8))" "--window-height=$((height / 17))" -e "$launch")
+      ;;
+    wezterm)
+      # About the window size asked for: cells of 7x16 px here. With a title
+      # bar: without one it takes the top of the window for one, and a drag
+      # there (selecting the first row) moves the window.
+      app=WezTerm proc=wezterm-gui startup=6
+      targs=(-n --config 'window_decorations="TITLE|RESIZE"' --config enable_tab_bar=false
+        --config 'window_padding={left=0,right=0,top=0,bottom=0}'
+        --config "initial_cols=$((width / 7))" --config "initial_rows=$((height / 16))"
+        start --always-new-process --cwd "$PWD" -- "$launch")
+      ;;
+    gui)
+      "${clean_env[@]}" PATH="$XDG_RUNTIME_DIR/bin:$PATH" "$@" >"$outdir/terminal.log" 2>&1 &
+      term_pid=$! startup=5
+      ;;
+    *)
+      echo "unknown terminal: $term" >&2
+      exit 2
+      ;;
+  esac
+  if [[ $term != gui ]]; then
+    before=" $(pgrep -x "$proc" | tr '\n' ' ' || true) "
+    # -g: not to the front (Ghostty opens its window only once activated).
+    open -g -n -a "$app" --stdout "$outdir/terminal.log" --stderr "$outdir/terminal.log" --args "${targs[@]}" "$@"
+  fi
+  for ((i = 0; i < 150; i++)); do
+    if [[ -z $term_pid ]]; then
+      for p in $(pgrep -x "$proc" || true); do [[ $before == *" $p "* ]] || term_pid=$p; done
+    fi
+    if [[ -n $term_pid ]]; then
+      [[ -n $("$ctl" windows "$term_pid") ]] && break
+      ((i % 20 == 10)) && [[ $term == ghostty ]] && { "$ctl" activate "$term_pid" >/dev/null || true; }
+    fi
+    sleep 0.1
+  done
+  if [[ -z $term_pid || -z $("$ctl" windows "$term_pid") ]]; then
+    echo "e2e.sh: $term did not open a window" >&2
+    exit 1
+  fi
+  # Below the menu bar; at scale 1 it draws again at that density, then the
+  # command starts.
+  "$ctl" move "$term_pid" "$disp_x" $((disp_y + menu_bar))
+  [[ $("$ctl" front) == "$front" ]] || "$ctl" activate "$front" >/dev/null || true
+  sleep 0.5
+  touch "$go"
+else
 case $term in
   kitty)
     "${clean_env[@]}" kitty --config NONE -o font_size=12 -o "initial_window_width=$width" \
@@ -783,12 +1077,23 @@ case $term in
     ;;
 esac
 term_pid=$!
+fi
 sleep "$((startup + mux_startup))"
-# The GUI's drawing area: where its window's inside is on the screen.
+# The GUI's drawing area: where its window's inside is on the screen (on
+# macOS every window's: below the menu bar).
 if [[ $term == gui ]]; then
   for w in "$@"; do [[ $w == */temzdf-gui ]] && gui_bin=$w && break; done
   temzdf=$(dirname "$gui_bin")/temzdf
+fi
+if [[ $term == gui || $display == macos ]]; then
   read -r origin_x origin_y win_w win_h <<<"$(be_window_rect "$term_pid")"
+fi
+if [[ $display == macos ]]; then
+  coproc TC { "$ctl" serve "$term_pid" "$([[ $term == wezterm ]] && echo global || echo pid)" 2>>"$outdir/termctl.log"; }
+  # In front for the run, as on Linux, where it has the focus: unfocused,
+  # Ghostty draws a hollow cursor over the images even where the program
+  # hides it.
+  tc front
 fi
 # Without a window manager WezTerm only gets mouse events once focused.
 if [[ $term == wezterm && $display == x11 ]]; then

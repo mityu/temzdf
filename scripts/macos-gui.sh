@@ -6,6 +6,7 @@
 # see doc/macos.md.
 #
 # Usage: scripts/macos-gui.sh COMMAND ...
+#   build                      only build the tools (scripts/e2e.sh -d macos uses them)
 #   display start|stop         create / remove the virtual display (needed by launch)
 #   launch TERM [VAR=VALUE...] -- COMMAND [ARGS...]
 #                              run COMMAND in a new kitty, ghostty or wezterm window
@@ -99,6 +100,7 @@ cmd=${1:-}
 [[ -n $cmd ]] || usage
 shift
 case $cmd in
+  build) ;;
   display)
     case ${1:-} in
       start)
