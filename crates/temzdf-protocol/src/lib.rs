@@ -738,8 +738,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "shared memory")]
     fn shared_memory_smaller_than_announced_is_an_error() {
+        // Past any page rounding: macOS sizes the object in 16 KiB pages.
         let fd = shared::create(&[1; 4096]).unwrap();
-        assert_eq!(shared::map(fd, 8192).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(shared::map(fd, 1 << 20).unwrap_err().kind(), io::ErrorKind::InvalidData);
         let fd = shared::create(&[1, 2, 3, 4]).unwrap();
         assert_eq!(&*shared::map(fd, 4).unwrap(), &[1, 2, 3, 4]);
     }
