@@ -205,13 +205,17 @@ scripts/macos-vm.sh reset         # back to the golden copy, permissions include
   10 minutes, copying and building included. What made it shorter
   (WezTerm's `expect`, `terminal` and `viewer`: 167 s before, 88 s after):
   waiting for the first screen instead of a fixed 6 s (launch to ready
-  8.6 s, now 4.3 s), 2 ms instead of 20 ms after each posted event
+  8.6 s, now about 3.3 s; the screen that must stand still is the
+  window's only: counting the colours of the VM's whole display took
+  0.6 s), 2 ms instead of 20 ms after each posted event
   (typing 125 ms a character in WezTerm, about 20 ms now: `terminal` 74 s,
   now 37 s), one copy, dev shell and build for all the runs, and no fixed
   half second at the end. What is left is mostly the scenarios' own
-  pauses and the `expect` comparisons (about 2 s each, a debug build
-  rendering the expected screen; `e2e-all.sh -R` renders them with release
-  builds, about half the time on Linux).
+  pauses and the `expect` comparisons. A debug build renders an expected
+  screen in about 0.9 s in the VM, a release build (`e2e-all.sh -R`) in
+  0.33 s (the GUI's: 1.0 s and 0.9 s): the whole `e2e-all` went from 665 s
+  to 605 s (2026-10-29, both with the same 116 PASS, 1 FAIL, 4 SKIP, in
+  shared memory and through the socket: `-P`).
 
 ### scripts/macos-gui.sh
 

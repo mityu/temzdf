@@ -617,10 +617,16 @@ wait_ready() {
     done
     phase written
   fi
-  be_shot "$a"
+  # On macOS the window only, where it was put: the whole display (the menu
+  # bar, the desktop) is never of one colour, and a smaller picture takes
+  # less to take and count (a VM counted a whole display in 0.6 s).
+  local shoot=(be_shot)
+  [[ $display == macos ]] &&
+    shoot=(screencapture -x -R "$disp_x,$((disp_y + menu_bar)),$width,$height")
+  "${shoot[@]}" "$a"
   while (($(usec) < deadline)) && kill -0 "$term_pid" 2>/dev/null; do
     sleep 0.15
-    be_shot "$b"
+    "${shoot[@]}" "$b"
     # A screen of one colour is a terminal that has drawn nothing yet (kitty
     # took up to 2 s to show what temzdf had written); every first screen
     # has something on it (a status bar, a prompt).
