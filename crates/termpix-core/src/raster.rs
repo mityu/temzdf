@@ -4,8 +4,61 @@
 
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::geom::Rect;
+
+/// Bytes of pixels, shared without copying: from a `Vec`, an `Arc<[u8]>`, or
+/// anything else that holds bytes (memory shared with another process).
+#[derive(Clone)]
+pub struct Pixels(Arc<dyn AsRef<[u8]> + Send + Sync>);
+
+impl Pixels {
+    /// Pixels held by `owner` (kept alive as long as any clone).
+    pub fn from_owner(owner: impl AsRef<[u8]> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(owner))
+    }
+}
+
+impl std::ops::Deref for Pixels {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        (*self.0).as_ref()
+    }
+}
+
+impl AsRef<[u8]> for Pixels {
+    fn as_ref(&self) -> &[u8] {
+        self
+    }
+}
+
+impl From<Vec<u8>> for Pixels {
+    fn from(v: Vec<u8>) -> Self {
+        Self::from_owner(v)
+    }
+}
+
+impl From<Arc<[u8]>> for Pixels {
+    fn from(v: Arc<[u8]>) -> Self {
+        Self::from_owner(v)
+    }
+}
+
+impl PartialEq for Pixels {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
+impl Eq for Pixels {}
+
+impl std::fmt::Debug for Pixels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Pixels({} bytes)", self.len())
+    }
+}
 
 /// An owned RGBA8 image with straight (non-premultiplied) alpha.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,6 +220,26 @@ pub fn blend_linear(dst: &mut [u8], src: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pixels_from_any_owner_compare_by_their_bytes() {
+        let v = Pixels::from(vec![1u8, 2, 3]);
+        let a = Pixels::from(Arc::<[u8]>::from(vec![1u8, 2, 3]));
+        struct Owner([u8; 3]);
+        impl AsRef<[u8]> for Owner {
+            fn as_ref(&self) -> &[u8] {
+                &self.0
+            }
+        }
+        let o = Pixels::from_owner(Owner([1, 2, 3]));
+        assert_eq!(&*v, &[1, 2, 3]);
+        assert!(v == a && a == o);
+        assert_ne!(v, Pixels::from(vec![1u8, 2]));
+        let c = o.clone();
+        drop(o);
+        assert_eq!(c.len(), 3, "a clone keeps the owner alive");
+        assert_eq!(format!("{c:?}"), "Pixels(3 bytes)");
+    }
 
     #[test]
     fn linear_blending_matches_kitty() {

@@ -4,16 +4,16 @@
 //! [`Images`] store and produces a [`Frame`] of [`Layer`]s referencing images in
 //! it. A frontend (the terminal one in `temzdf-tty`, a GUI later) mirrors the
 //! store by applying [`Images::take_updates`] and draws the layers. Image pixels
-//! are shared ([`Arc`]), so mirroring them costs no copies.
+//! are shared ([`Pixels`]), so mirroring them costs no copies.
 //!
 //! See `doc/session-server.md` for where this is going (several panes, clients
 //! attached through a socket).
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 pub use termpix_core::geom::Rect;
 pub use termpix_core::input;
+pub use termpix_core::raster::Pixels;
 
 pub mod theme;
 
@@ -35,19 +35,19 @@ pub struct Image {
     pub width: u32,
     pub height: u32,
     #[cfg_attr(feature = "serde", serde(with = "bytes"))]
-    pub pixels: Arc<[u8]>,
+    pub pixels: Pixels,
 }
 
 /// Pixels as one byte string on the wire, not a sequence of numbers.
 #[cfg(feature = "serde")]
 mod bytes {
-    use std::sync::Arc;
+    use super::Pixels;
 
-    pub fn serialize<S: serde::Serializer>(v: &Arc<[u8]>, s: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: serde::Serializer>(v: &Pixels, s: S) -> Result<S::Ok, S::Error> {
         serde_bytes::serialize(&**v, s)
     }
 
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Arc<[u8]>, D::Error> {
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Pixels, D::Error> {
         let buf: serde_bytes::ByteBuf = serde::Deserialize::deserialize(d)?;
         Ok(buf.into_vec().into())
     }
@@ -76,7 +76,7 @@ impl Images {
         Self::default()
     }
 
-    pub fn add(&mut self, width: u32, height: u32, pixels: impl Into<Arc<[u8]>>) -> ImageKey {
+    pub fn add(&mut self, width: u32, height: u32, pixels: impl Into<Pixels>) -> ImageKey {
         let key = ImageKey(self.next);
         self.next += 1;
         self.set(key, width, height, pixels.into());
@@ -84,13 +84,13 @@ impl Images {
     }
 
     /// Replace the pixels of an image (it may change size).
-    pub fn replace(&mut self, key: ImageKey, width: u32, height: u32, pixels: impl Into<Arc<[u8]>>) {
+    pub fn replace(&mut self, key: ImageKey, width: u32, height: u32, pixels: impl Into<Pixels>) {
         if self.images.contains_key(&key) {
             self.set(key, width, height, pixels.into());
         }
     }
 
-    fn set(&mut self, key: ImageKey, width: u32, height: u32, pixels: Arc<[u8]>) {
+    fn set(&mut self, key: ImageKey, width: u32, height: u32, pixels: Pixels) {
         debug_assert_eq!(pixels.len(), width as usize * height as usize * 4);
         let image = Image { width, height, pixels };
         self.images.insert(key, image.clone());

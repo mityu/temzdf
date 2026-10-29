@@ -13,7 +13,6 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::geom::{Geometry, Rect};
@@ -98,7 +97,7 @@ pub enum Backend {
 struct StoredImage {
     width: u32,
     height: u32,
-    data: Arc<[u8]>,
+    data: raster::Pixels,
     uploaded: bool,
 }
 
@@ -217,7 +216,7 @@ impl Compositor {
 
     /// Add an RGBA image (straight alpha). It is uploaded lazily, the first time a
     /// frame uses it.
-    pub fn add_image(&mut self, width: u32, height: u32, data: impl Into<Arc<[u8]>>) -> ImageId {
+    pub fn add_image(&mut self, width: u32, height: u32, data: impl Into<raster::Pixels>) -> ImageId {
         let id = self.free_id();
         self.insert_image(id, width, height, data.into());
         ImageId(id)
@@ -242,7 +241,7 @@ impl Compositor {
     }
 
     /// Replace the pixels of an existing image (it may change size).
-    pub fn replace_image(&mut self, id: ImageId, width: u32, height: u32, data: impl Into<Arc<[u8]>>) {
+    pub fn replace_image(&mut self, id: ImageId, width: u32, height: u32, data: impl Into<raster::Pixels>) {
         // Re-transmitting an id makes the terminal drop that image's placements.
         self.placed.retain(|_, p| p.image != id.0);
         self.insert_image(id.0, width, height, data.into());
@@ -267,7 +266,7 @@ impl Compositor {
         self.images.get(&id.0).map(|i| (i.width, i.height))
     }
 
-    fn insert_image(&mut self, id: u32, width: u32, height: u32, data: Arc<[u8]>) {
+    fn insert_image(&mut self, id: u32, width: u32, height: u32, data: raster::Pixels) {
         assert_eq!(data.len(), width as usize * height as usize * 4, "image data must be RGBA8");
         self.images.insert(id, StoredImage { width, height, data, uploaded: false });
         self.image_changed(id);
