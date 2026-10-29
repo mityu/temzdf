@@ -53,7 +53,7 @@ impl View {
 
     pub fn apply(&mut self, msg: ServerMsg) -> Applied {
         match msg {
-            ServerMsg::Frame { seq, updates, frame, complete } => {
+            ServerMsg::Frame { seq, updates, frame, complete, .. } => {
                 let start = std::time::Instant::now();
                 let uploads = updates.len();
                 for u in updates {

@@ -11,18 +11,58 @@ use tuitest::{Options, Screen, TempDir, Term};
 
 const BIN: &str = env!("CARGO_BIN_EXE_temzdf");
 
+/// How clients take frames' pixels from the session (`TEMZDF_PIXELS`).
+#[derive(Clone, Copy, Debug)]
+enum PixelPath {
+    /// In shared memory (the default).
+    Shared,
+    /// Inside the messages on the socket.
+    Socket,
+}
+
+/// Test body `$f(PixelPath)` run both ways, as `$f::shared` and `$f::socket`
+/// (tests whose frames carry pixels: PDF pages, images from programs).
+macro_rules! both_pixel_paths {
+    ($($f:ident),* $(,)?) => {$(
+        mod $f {
+            #[test]
+            fn shared() {
+                super::$f(super::PixelPath::Shared)
+            }
+
+            #[test]
+            fn socket() {
+                super::$f(super::PixelPath::Socket)
+            }
+        }
+    )*};
+}
+
+both_pixel_paths!(
+    splitting_a_terminal_and_opening_a_pdf_beside_it,
+    typed_keys_echo_at_once_while_a_pdf_scrolls,
+    a_floating_shell_covers_a_shell_and_a_pdf,
+    tabs_switch_by_keys_and_clicks_and_floats_on_all_tabs_follow,
+);
+
 /// A test's private environment.
 struct Env {
     dir: TempDir,
+    pixels: PixelPath,
 }
 
 impl Env {
     fn new(label: &str) -> Self {
-        let dir = TempDir::new(label);
+        Self::with_pixels(label, PixelPath::Shared)
+    }
+
+    /// Clients in it take pixels `pixels`' way.
+    fn with_pixels(label: &str, pixels: PixelPath) -> Self {
+        let dir = TempDir::new(&format!("{label}-{pixels:?}"));
         for d in ["run", "config", "state", "log"] {
             std::fs::create_dir_all(dir.path().join(d)).unwrap();
         }
-        Self { dir }
+        Self { dir, pixels }
     }
 
     fn path(&self, sub: &str) -> PathBuf {
@@ -40,6 +80,14 @@ impl Env {
             ("PS1".into(), "$ ".into()),
             // POSIX sh reads this file at startup: no user rc files.
             ("ENV".into(), "/dev/null".into()),
+            (
+                "TEMZDF_PIXELS".into(),
+                match self.pixels {
+                    PixelPath::Shared => "shared",
+                    PixelPath::Socket => "socket",
+                }
+                .into(),
+            ),
         ]
     }
 
@@ -212,9 +260,8 @@ fn detaching_and_attaching_again_keeps_the_shell() {
     assert_eq!(t.wait_exit(), 0);
 }
 
-#[test]
-fn splitting_a_terminal_and_opening_a_pdf_beside_it() {
-    let env = Env::new("split");
+fn splitting_a_terminal_and_opening_a_pdf_beside_it(pixels: PixelPath) {
+    let env = Env::with_pixels("split", pixels);
     let mut t = Term::spawn(&[BIN, "-s", "p"], &env.options());
     t.wait_for("the prompt", prompt);
     t.type_text("echo left-pane\n");
@@ -278,12 +325,11 @@ fn typed_keys_echo_at_once_with_composited_frames() {
     assert!(times[times.len() / 2] < std::time::Duration::from_millis(100), "echo times: {times:?}");
 }
 
-#[test]
-fn typed_keys_echo_at_once_while_a_pdf_scrolls() {
+fn typed_keys_echo_at_once_while_a_pdf_scrolls(pixels: PixelPath) {
     // Composited frames sent inline over SSH, as above, and a PDF beside the
     // shell scrolled by the wheel: its frames send pixels and are capped; the
     // shell's text must not wait for them.
-    let env = Env::new("echo-scroll");
+    let env = Env::with_pixels("echo-scroll", pixels);
     let mut opts = env.options();
     opts.env.push(("TERMPIX_BACKEND".into(), "composited".into()));
     opts.env.push(("TERMPIX_MEDIUM".into(), "direct".into()));
@@ -731,9 +777,8 @@ fn shows_through(s: &Screen) -> Option<(u16, u16)> {
     (y0..y0 + h).flat_map(|y| (x0..x0 + w).map(move |x| (x, y))).find(|&(x, y)| s.cell(x, y).text == "0")
 }
 
-#[test]
-fn a_floating_shell_covers_a_shell_and_a_pdf() {
-    let env = Env::new("floats");
+fn a_floating_shell_covers_a_shell_and_a_pdf(pixels: PixelPath) {
+    let env = Env::with_pixels("floats", pixels);
     let mut t = Term::spawn(&[BIN, "-s", "f"], &env.options());
     t.wait_for("the prompt", prompt);
     // Zeros all over the left half.
@@ -951,9 +996,8 @@ fn tab_line(s: &Screen) -> bool {
     s.lines().first().is_some_and(|l| l.starts_with(" 1 "))
 }
 
-#[test]
-fn tabs_switch_by_keys_and_clicks_and_floats_on_all_tabs_follow() {
-    let env = Env::new("tabs");
+fn tabs_switch_by_keys_and_clicks_and_floats_on_all_tabs_follow(pixels: PixelPath) {
+    let env = Env::with_pixels("tabs", pixels);
     env.config(
         "config.js",
         "import { action, keymap } from \"temzdf\";\nkeymap.add(\"normal\", \"F\", action.openFloat(null, { tabpage: -1 }));\n",
@@ -1033,8 +1077,13 @@ fn hovering_over_another_client_keeps_the_session_size() {
     let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
     let geometry =
         termpix::geom::Geometry { cols: 60, rows: 20, cell: termpix::geom::CellSize { width: 10, height: 20 } };
-    let hello =
-        ClientMsg::Hello { version: temzdf_protocol::VERSION, geometry, hints: Default::default(), inside: None };
+    let hello = ClientMsg::Hello {
+        version: temzdf_protocol::VERSION,
+        geometry,
+        hints: Default::default(),
+        inside: None,
+        shared_memory: false,
+    };
     temzdf_protocol::send(&mut s, &hello).unwrap();
     // The width of the next frame (acknowledged), None when none comes.
     let next_width = |s: &mut std::os::unix::net::UnixStream, wait| {
@@ -1064,6 +1113,65 @@ fn hovering_over_another_client_keeps_the_session_size() {
 }
 
 #[test]
+fn clients_of_one_session_take_pixels_each_their_own_way() {
+    use temzdf_protocol::shared::FdReader;
+    use temzdf_protocol::{ClientMsg, ServerMsg};
+    use temzdf_scene::ImageUpdate;
+    let env = Env::new("pixel-paths");
+    let pdf = fixture("sample.pdf");
+    let mut t = Term::spawn(&[BIN, "-s", "px", &pdf.display().to_string()], &env.options());
+    t.wait_for("the page", |s| !s.images.is_empty());
+    let sock = env.path("run/temzdf/sessions/px.sock");
+    let geometry =
+        termpix::geom::Geometry { cols: 100, rows: 30, cell: termpix::geom::CellSize { width: 10, height: 20 } };
+    // Each client gets every image when it attaches: the first frame with
+    // pixels, as sent (`shared` not mapped yet), with its descriptors.
+    let first_frame = |shared_memory: bool| {
+        let s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+        let hello = ClientMsg::Hello {
+            version: temzdf_protocol::VERSION,
+            geometry,
+            hints: Default::default(),
+            inside: None,
+            shared_memory,
+        };
+        temzdf_protocol::send(&mut &s, &hello).unwrap();
+        let mut r = FdReader::new(s.try_clone().unwrap());
+        loop {
+            match temzdf_protocol::recv::<ServerMsg>(&mut r).unwrap().expect("a frame") {
+                ServerMsg::Frame { updates, shared, .. } if !updates.is_empty() || !shared.is_empty() => {
+                    let fds = std::iter::from_fn(|| r.take_fd()).count();
+                    return (updates, shared, fds);
+                }
+                ServerMsg::Frame { seq, .. } => temzdf_protocol::send(&mut &s, &ClientMsg::FrameAck(seq)).unwrap(),
+                _ => {}
+            }
+        }
+    };
+    let (inline, none, no_fds) = first_frame(false);
+    let (small, shared, fds) = first_frame(true);
+    assert!(none.is_empty() && no_fds == 0, "the socket client gets everything inside the messages");
+    assert!(!shared.is_empty() && fds == shared.len(), "the other gets large images in shared memory");
+    // The same images either way.
+    let sizes = |u: &[ImageUpdate]| {
+        let mut v: Vec<_> = u
+            .iter()
+            .filter_map(|u| match u {
+                ImageUpdate::Set(k, i) => Some((*k, i.width, i.height)),
+                ImageUpdate::Remove(_) => None,
+            })
+            .collect();
+        v.sort_by_key(|x| x.0);
+        v
+    };
+    let mut both = sizes(&small);
+    both.extend(shared.iter().map(|s| (s.key, s.width, s.height)));
+    both.sort_by_key(|x| x.0);
+    assert_eq!(both, sizes(&inline));
+}
+
+#[test]
 fn an_attaching_client_is_told_how_to_look() {
     use temzdf_protocol::{ClientMsg, ServerMsg};
     let env = Env::new("appearance");
@@ -1079,8 +1187,13 @@ fn an_attaching_client_is_told_how_to_look() {
     s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
     let geometry =
         termpix::geom::Geometry { cols: 80, rows: 24, cell: termpix::geom::CellSize { width: 10, height: 20 } };
-    let hello =
-        ClientMsg::Hello { version: temzdf_protocol::VERSION, geometry, hints: Default::default(), inside: None };
+    let hello = ClientMsg::Hello {
+        version: temzdf_protocol::VERSION,
+        geometry,
+        hints: Default::default(),
+        inside: None,
+        shared_memory: false,
+    };
     temzdf_protocol::send(&mut s, &hello).unwrap();
     let looks = loop {
         match temzdf_protocol::recv::<ServerMsg>(&mut s).unwrap().unwrap() {

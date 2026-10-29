@@ -80,6 +80,15 @@ What exists:
   while any attached client's window has it; frames are paced per client by acknowledgements, image changes are
   queued per client (latest wins), late attachers get a snapshot; effects
   (copy, opening links, inverse search) run in the latest client.
+- Pixels: clients that say so in their `Hello` (`TEMZDF_PIXELS`, default
+  `shared`) take the pixels of images of 64 KiB and more in shared memory:
+  one anonymous object per image (a sealed memfd on Linux, an unlinked POSIX
+  object on macOS), its descriptor passed with the frame (`SCM_RIGHTS`), mapped
+  read-only by the client and handed on without a copy (`termpix_core::raster::Pixels`
+  to the GPU or the terminal's image store). Smaller images, more than 250 in a
+  frame, objects that cannot be made, and clients with `TEMZDF_PIXELS=socket`
+  get the pixels inside the message (`temzdf-protocol`'s `send_server`,
+  `recv_server`, `shared.rs`; numbers in `doc/performance.md`).
 - Nesting: a client says which session's pane it runs in (`Hello`), and a
   session lists those of its clients (`SessionInfo::shown_in`). `attach`
   from a pane refuses that session and every session showing it, directly
@@ -92,8 +101,6 @@ Not yet (in order of the plan, or found on the way):
 - Every client gets frames rendered for the latest client's geometry, cell
   size included; per-client pixel density, and zoom stored relative to the
   pane width, are not done (fit-width does follow the pane width).
-- Pixels go through the socket; shared memory for local clients would save
-  copies (measure first).
 - Terminal panes: kitty graphics through Unicode placeholders (tmux inside a
   pane) and animation frames.
 - Step 4, the GUI client, works on X11 (`doc/gui-client.md`); Wayland and
@@ -197,7 +204,8 @@ pixels:
   from programs in terminal panes): image id, source rectangle, destination in
   the client's pixels, z. This is today's `termpix::compositor::Layer`, lifted
   into the protocol. Image data is sent once per client and referenced by id
-  (shared memory for local clients, inline compressed otherwise). The TTY
+  (in shared memory, see "Pixels" above; inline compressed would be for
+  remote clients, which do not exist). The TTY
   client maps layers to kitty placements (or composited strips, or a text
   fallback when the terminal has no graphics); the GUI client to textured
   quads.

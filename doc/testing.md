@@ -89,6 +89,12 @@ particular program in the first pane points `SHELL` at a script
 hand-written expected screens may go to files next to them, but never record
 snapshots automatically.
 
+Clients take pixels in shared memory by default; tests whose frames carry
+pixels run both ways (`both_pixel_paths!`: `NAME::shared` and `NAME::socket`,
+through `Env::with_pixels` and `TEMZDF_PIXELS`), and
+`clients_of_one_session_take_pixels_each_their_own_way` attaches one client of
+each kind to a session. `scripts/e2e.sh -P socket` does the same for e2e runs.
+
 Check that a new test can fail: break the code it covers for a moment and see
 it fail (the keyboard-mode test fails with the C-h bug fixed in 8598211).
 

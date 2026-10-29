@@ -192,11 +192,10 @@ change on the server side, testable without a GUI.
    Focus`) but does not forward them; terminal panes report focus only on
    pane changes. Needed: `ClientMsg::Focus(bool)` for both clients (programs
    like Vim refresh on focus-in).
-8. **Images over the socket.** Every image travels inside postcard frames.
-   A HiDPI window full of tiles is about 30 MB per full redraw; a local
-   socket moves that in a few tens of milliseconds, acceptable at first.
-   Shared memory (`Hints.fast_uploads` already exists) is the later
-   optimisation, measured first (`doc/performance.md` has the method).
+8. **Images in shared memory.** Large images come in shared memory, mapped
+   and uploaded to textures without a copy (`doc/session-server.md`,
+   "Pixels"; `TEMZDF_PIXELS=socket` sends them inside the messages). Measured
+   before and after in `doc/performance.md`, "Session socket".
 9. **One geometry for all clients.** Frames are rendered for the latest
    client's geometry, cell size included (decided: tmux's `latest`). A GUI
    at 2x and a terminal over SSH alternate; each switch re-renders tiles at

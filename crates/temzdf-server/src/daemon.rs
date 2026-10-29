@@ -9,6 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::BufReader;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -43,6 +44,9 @@ struct Client {
     pending: HashMap<ImageKey, ImageUpdate>,
     /// When a frame was sent that is not acknowledged yet.
     awaiting: Option<Instant>,
+    /// It takes pixels in shared memory (its Hello said so); read by its
+    /// writer thread.
+    shared_memory: Arc<AtomicBool>,
     /// The sequence number of the last frame sent.
     shown: u64,
     /// Its terminal's size and frontend, as last reported: they apply
@@ -158,7 +162,13 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
             if let Some((seq, frame, complete)) = &last_frame {
                 for c in clients.values_mut().filter(|c| c.attached && c.awaiting.is_none() && c.shown < *seq) {
                     let updates = c.pending.drain().map(|(_, u)| u).collect();
-                    let msg = ServerMsg::Frame { seq: *seq, updates, frame: frame.clone(), complete: *complete };
+                    let msg = ServerMsg::Frame {
+                        seq: *seq,
+                        updates,
+                        frame: frame.clone(),
+                        complete: *complete,
+                        shared: Vec::new(),
+                    };
                     c.awaiting = c.tx.send(msg).is_ok().then(Instant::now);
                     c.shown = *seq;
                 }
@@ -195,7 +205,8 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 next_client += 1;
                 start_reader(id, &stream, tx.clone())?;
                 let (ctx, crx) = mpsc::channel::<ServerMsg>();
-                start_writer(stream, crx)?;
+                let shared_memory = Arc::new(AtomicBool::new(false));
+                start_writer(stream, crx, shared_memory.clone())?;
                 clients.insert(
                     id,
                     Client {
@@ -203,6 +214,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                         attached: false,
                         pending: HashMap::new(),
                         awaiting: None,
+                        shared_memory,
                         shown: 0,
                         geometry: None,
                         hints: None,
@@ -215,7 +227,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 clients.remove(&id);
             }
             Some(Event::Msg(id, msg)) => match msg {
-                ClientMsg::Hello { version, geometry, hints, inside } => {
+                ClientMsg::Hello { version, geometry, hints, inside, shared_memory } => {
                     let Some(c) = clients.get_mut(&id) else { continue };
                     if version != proto::VERSION {
                         let why = format!("client version {version}, server version {}", proto::VERSION);
@@ -226,6 +238,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     let _ = c.tx.send(ServerMsg::Appearance(session.appearance()));
                     c.attached = true;
                     c.inside = inside;
+                    c.shared_memory.store(shared_memory, Ordering::Relaxed);
                     c.pending = session.images().snapshot().into_iter().map(|u| (key_of(&u), u)).collect();
                     (c.geometry, c.hints) = (usable(geometry), Some(hints));
                     become_latest(&mut session, &mut latest, &clients, id);
@@ -555,15 +568,14 @@ fn start_reader(id: ClientId, stream: &UnixStream, tx: Sender<Event>) -> Result<
     Ok(())
 }
 
-fn start_writer(mut stream: UnixStream, rx: mpsc::Receiver<ServerMsg>) -> Result<()> {
+fn start_writer(stream: UnixStream, rx: mpsc::Receiver<ServerMsg>, shared_memory: Arc<AtomicBool>) -> Result<()> {
     std::thread::Builder::new().name("temzdf-client-out".into()).spawn(move || {
         for msg in rx {
             let exit = matches!(msg, ServerMsg::Exit(_) | ServerMsg::Info(_) | ServerMsg::Done(_));
+            let size = proto::timing().then(|| proto::frame_size(&msg)).flatten();
             let start = Instant::now();
-            let sent = proto::send(&mut stream, &msg);
-            if proto::timing()
-                && let Some((seq, images, bytes)) = proto::frame_size(&msg)
-            {
+            let sent = proto::send_server(&stream, msg, shared_memory.load(Ordering::Relaxed));
+            if let Some((seq, images, bytes)) = size {
                 let ms = proto::ms(start.elapsed());
                 eprintln!("timing: sent frame {seq} ({images} images, {bytes} bytes of pixels) in {ms:.2} ms");
             }
@@ -745,6 +757,7 @@ mod tests {
             attached: true,
             pending: HashMap::new(),
             awaiting: None,
+            shared_memory: Default::default(),
             shown: 0,
             geometry: None,
             hints: None,
@@ -814,6 +827,7 @@ mod tests {
             attached: true,
             pending: HashMap::new(),
             awaiting: None,
+            shared_memory: Default::default(),
             shown: 0,
             geometry: Some(Geometry { cols, rows, ..DEFAULT_GEOMETRY }),
             hints: Some(Hints::default()),
@@ -845,6 +859,7 @@ mod tests {
             attached: true,
             pending: HashMap::new(),
             awaiting: None,
+            shared_memory: Default::default(),
             shown: 0,
             geometry: Some(Geometry { cols, ..DEFAULT_GEOMETRY }),
             hints: Some(Hints::default()),
@@ -876,6 +891,7 @@ mod tests {
             attached,
             pending: HashMap::new(),
             awaiting: None,
+            shared_memory: Default::default(),
             shown: 0,
             geometry: None,
             hints: None,

@@ -33,6 +33,7 @@ pub fn render_frame(name: &str, out: &Path, size: (u32, u32), scale: f64) -> Res
         geometry,
         hints: Hints { exact_scaling: true, fast_uploads: true },
         inside: None,
+        shared_memory: temzdf_protocol::shared_memory_wanted(),
     })?;
     let deadline = Instant::now() + TIMEOUT;
     // When the latest frame was complete: settle from there.

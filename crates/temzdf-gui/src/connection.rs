@@ -28,11 +28,11 @@ impl Connection {
     pub fn open(name: &str, wake: impl Fn() + Send + 'static) -> Result<(Self, Receiver<FromServer>)> {
         let socket = proto::socket_path(name)?;
         let stream = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
-        let mut reader = stream.try_clone()?;
+        let mut reader = proto::shared::FdReader::new(stream.try_clone()?);
         let (tx, rx) = mpsc::channel();
         std::thread::Builder::new().name("temzdf-gui-server".into()).spawn(move || {
             loop {
-                let msg = match proto::recv_timed::<ServerMsg>(&mut reader) {
+                let msg = match proto::recv_server(&mut reader) {
                     Ok(Some((m, took))) => {
                         log_received(&m, took);
                         FromServer::Msg(m)

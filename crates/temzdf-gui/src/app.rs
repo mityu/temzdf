@@ -188,7 +188,8 @@ impl App {
         crate::input::enable_ime(window.as_ref());
         self.gpu = Some(Gpu { window, instance, surface, config, view, geometry });
         let hints = Hints { exact_scaling: true, fast_uploads: true };
-        self.send(ClientMsg::Hello { version: VERSION, geometry, hints, inside: None });
+        let shared_memory = temzdf_protocol::shared_memory_wanted();
+        self.send(ClientMsg::Hello { version: VERSION, geometry, hints, inside: None, shared_memory });
         Ok(())
     }
 

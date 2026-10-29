@@ -89,9 +89,9 @@ pub fn attach(name: &str) -> Result<String> {
     let mut front = crate::app::open_frontend()?;
     let (tx, rx) = mpsc::channel::<Event>();
     front.spawn_input(tx.clone(), Event::Term)?;
-    let mut reader = std::io::BufReader::new(stream.try_clone()?);
+    let mut reader = proto::shared::FdReader::new(stream.try_clone()?);
     std::thread::Builder::new().name("temzdf-server-in".into()).spawn(move || {
-        while let Ok(Some((msg, took))) = proto::recv_timed::<ServerMsg>(&mut reader) {
+        while let Ok(Some((msg, took))) = proto::recv_server(&mut reader) {
             if proto::timing()
                 && let Some((seq, images, bytes)) = proto::frame_size(&msg)
             {
@@ -110,7 +110,13 @@ pub fn attach(name: &str) -> Result<String> {
     let send = |msg: ClientMsg| -> Result<()> {
         proto::send(&mut *writer.lock().unwrap_or_else(|p| p.into_inner()), &msg).context("lost the session")
     };
-    send(ClientMsg::Hello { version: proto::VERSION, geometry: front.geometry(), hints: front.hints(), inside })?;
+    send(ClientMsg::Hello {
+        version: proto::VERSION,
+        geometry: front.geometry(),
+        hints: front.hints(),
+        inside,
+        shared_memory: proto::shared_memory_wanted(),
+    })?;
     // The latest frame received and not shown yet (its sequence number is
     // acknowledged once it is), and the last one shown (shown again when the
     // terminal lost images).
@@ -179,7 +185,7 @@ pub fn attach(name: &str) -> Result<String> {
                 }
                 Input::Handled(false) => {}
             },
-            Event::Server(ServerMsg::Frame { seq, updates, frame, complete }) => {
+            Event::Server(ServerMsg::Frame { seq, updates, frame, complete, .. }) => {
                 front.apply(updates);
                 pending = Some((seq, frame, complete));
             }

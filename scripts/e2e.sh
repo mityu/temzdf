@@ -4,7 +4,7 @@
 # display on macOS, -d macos), drive it with an actions script, and save
 # screenshots.
 #
-# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-d x11|wayland|macos] [-m zellij|tmux] [-I] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
+# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-d x11|wayland|macos] [-m zellij|tmux] [-I] [-P shared|socket] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
 #   -t TERM   terminal to run (default kitty); gui: COMMAND is temzdf-gui
 #             itself (e.g. target/debug/temzdf-gui FILE), run under the xfwm4
 #             window manager (X11; sway on Wayland) on lavapipe
@@ -28,6 +28,9 @@
 #   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
 #             frames, a single pane; its config and layout go to OUTDIR/zellij;
 #             tmux: a private server with passthrough and mouse on, no status)
+#   -P PATH   how temzdf's clients take frames' pixels from the session:
+#             shared (memory, the default) or socket (inside the messages);
+#             sets TEMZDF_PIXELS for COMMAND
 #   -s WxH    window/screen size in pixels (default 900x600)
 #   -o OUTDIR where screenshots and terminal.log go (default: target/e2e)
 #   ACTIONS   bash file sourced after the terminal started; it can use the helpers below.
@@ -130,12 +133,17 @@ display=x11
 mux=
 ime=
 outdir=target/e2e
-while getopts "t:d:m:s:o:Ih" opt; do
+while getopts "t:d:m:s:o:P:Ih" opt; do
   case $opt in
     t) term=$OPTARG ;;
     d) display=$OPTARG ;;
     m) mux=$OPTARG ;;
     I) ime=1 ;;
+    P)
+      [[ $OPTARG == shared || $OPTARG == socket ]] || { echo "e2e.sh: -P shared or socket" >&2; exit 2; }
+      # In the environment, so it survives re-executing (Xvfb, sway).
+      export TEMZDF_PIXELS=$OPTARG
+      ;;
     s) size=$OPTARG ;;
     o) outdir=$OPTARG ;;
     *) sed -n '2,/^set -euo/{/^set -euo/!p}' "$self"; exit 2 ;;

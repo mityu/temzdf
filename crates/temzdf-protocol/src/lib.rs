@@ -11,19 +11,22 @@
 
 pub mod discovery;
 pub mod script;
+pub mod shared;
 
 use std::io::{self, Read, Write};
+use std::os::fd::AsFd;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use temzdf_scene::{Appearance, Effect, Frame, Hints, ImageUpdate};
+use temzdf_scene::{Appearance, Effect, Frame, Hints, Image, ImageKey, ImageUpdate};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 12;
+pub const VERSION: u32 = 13;
 /// Larger messages are refused (a frame with every image of a full cache is
 /// about 200 MB).
 const MAX_MESSAGE: usize = 512 << 20;
@@ -37,6 +40,9 @@ pub enum ClientMsg {
         hints: Hints,
         /// The session whose pane the client runs in, if any (nested).
         inside: Option<String>,
+        /// Frames may bring large images' pixels in shared memory
+        /// ([`recv_server`]), not inside the message.
+        shared_memory: bool,
     },
     Key(KeyEvent),
     Mouse(MouseEvent),
@@ -72,6 +78,10 @@ pub enum ServerMsg {
         updates: Vec<ImageUpdate>,
         frame: Frame,
         complete: bool,
+        /// Images set through shared memory, one descriptor each, in this
+        /// order, with the message. Only on the wire: [`recv_server`] turns
+        /// them into `updates`.
+        shared: Vec<SharedImage>,
     },
     Effect(Effect),
     /// How to look (GUI clients): when attaching and when it changes.
@@ -81,6 +91,14 @@ pub enum ServerMsg {
     Info(SessionInfo),
     /// The answer to an action: `Err` with a message when it failed.
     Done(Result<(), String>),
+}
+
+/// An image whose pixels come in shared memory (`width * height * 4` bytes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedImage {
+    pub key: ImageKey,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +167,68 @@ pub fn recv_timed<T: for<'de> Deserialize<'de>>(r: &mut impl Read) -> io::Result
     }
     let msg = postcard::from_bytes(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(Some((msg, start.elapsed())))
+}
+
+/// Send a message from the server to a client: with `shared_memory` (the
+/// client said so in its Hello), the pixels of a frame's large images go in
+/// shared memory, a descriptor each with the message, instead of inside it
+/// (`shared`); images whose memory cannot be made go inside.
+pub fn send_server(stream: &UnixStream, msg: ServerMsg, shared_memory: bool) -> io::Result<()> {
+    let (msg, fds) = match msg {
+        ServerMsg::Frame { seq, updates, frame, complete, shared } if shared_memory => {
+            let (mut inline, mut fds) = (Vec::new(), Vec::new());
+            let mut shared = shared;
+            for u in updates {
+                match u {
+                    ImageUpdate::Set(key, image)
+                        if image.pixels.len() >= shared::MIN_SHARED && fds.len() < shared::MAX_FDS =>
+                    {
+                        match shared::create(&image.pixels) {
+                            Ok(fd) => {
+                                fds.push(fd);
+                                shared.push(SharedImage { key, width: image.width, height: image.height });
+                            }
+                            Err(_) => inline.push(ImageUpdate::Set(key, image)),
+                        }
+                    }
+                    u => inline.push(u),
+                }
+            }
+            (ServerMsg::Frame { seq, updates: inline, frame, complete, shared }, fds)
+        }
+        msg => (msg, Vec::new()),
+    };
+    let body = postcard::to_stdvec(&msg).map_err(io::Error::other)?;
+    let len = u32::try_from(body.len()).map_err(|_| io::Error::other("message too large"))?;
+    let mut bytes = Vec::with_capacity(4 + body.len());
+    bytes.extend_from_slice(&len.to_le_bytes());
+    bytes.extend_from_slice(&body);
+    let borrowed: Vec<_> = fds.iter().map(|fd| fd.as_fd()).collect();
+    shared::send_with_fds(stream, &bytes, &borrowed)
+}
+
+/// Read a message from the server ([`send_server`]), its shared images
+/// mapped into `updates`; with how long it took once its first bytes came.
+pub fn recv_server(r: &mut shared::FdReader) -> io::Result<Option<(ServerMsg, Duration)>> {
+    let Some((mut msg, took)) = recv_timed::<ServerMsg>(r)? else { return Ok(None) };
+    let start = Instant::now();
+    if let ServerMsg::Frame { updates, shared, .. } = &mut msg {
+        for s in shared.drain(..) {
+            let fd = r
+                .take_fd()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "a shared image without its descriptor"))?;
+            let len = s.width as usize * s.height as usize * 4;
+            let pixels = shared::map(fd, len)?;
+            updates.push(ImageUpdate::Set(s.key, Image { width: s.width, height: s.height, pixels }));
+        }
+    }
+    Ok(Some((msg, took + start.elapsed())))
+}
+
+/// Whether this client takes pixels in shared memory: yes unless
+/// `TEMZDF_PIXELS=socket` (tests pick either way; `doc/config.md`).
+pub fn shared_memory_wanted() -> bool {
+    std::env::var("TEMZDF_PIXELS").map_or(true, |v| v != "socket")
 }
 
 /// Whether to log how long frames take on their way (`TEMZDF_TIMING` set,
@@ -404,6 +484,7 @@ mod tests {
         std::fs::remove_file(&link).unwrap();
         std::fs::remove_dir_all(&tmp).unwrap();
     }
+    use std::collections::HashMap;
     use std::sync::Arc;
     use temzdf_scene::{Cell, CursorShape, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
     use termpix_core::geom::CellSize;
@@ -420,7 +501,13 @@ mod tests {
     #[test]
     fn messages_round_trip() {
         let geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
-        round_trip(&ClientMsg::Hello { version: VERSION, geometry, hints: Hints::default(), inside: Some("a".into()) });
+        round_trip(&ClientMsg::Hello {
+            version: VERSION,
+            geometry,
+            hints: Hints::default(),
+            inside: Some("a".into()),
+            shared_memory: true,
+        });
         round_trip(&ClientMsg::Key(KeyEvent::new(KeyCode::Char('s'), Modifiers::CTRL)));
         round_trip(&ClientMsg::Action(vec!["new-pane".into(), "a b.pdf".into()]));
         let mut images = Images::new();
@@ -441,7 +528,7 @@ mod tests {
             pointer: Pointer::Link,
             title: "doc — 1 / 3".into(),
         };
-        round_trip(&ServerMsg::Frame { seq: 9, updates: images.take_updates(), frame, complete: true });
+        round_trip(&ServerMsg::Frame { seq: 9, updates: images.take_updates(), frame, complete: true, shared: vec![] });
         round_trip(&ServerMsg::Effect(Effect::Copy("x".into())));
         round_trip(&ServerMsg::Exit(ExitReason::Error("bad".into())));
         round_trip(&ServerMsg::Done(Err("no".into())));
@@ -452,10 +539,114 @@ mod tests {
         let px: Arc<[u8]> = vec![7u8; 4096].into();
         let mut images = Images::new();
         images.add(32, 32, px);
-        let msg = ServerMsg::Frame { seq: 0, updates: images.take_updates(), frame: Frame::default(), complete: false };
+        let msg = ServerMsg::Frame {
+            seq: 0,
+            updates: images.take_updates(),
+            frame: Frame::default(),
+            complete: false,
+            shared: vec![],
+        };
         let mut buf = Vec::new();
         send(&mut buf, &msg).unwrap();
         assert!(buf.len() < 4096 + 64, "{} bytes", buf.len());
+    }
+
+    /// A frame of square images of these sides, each of its own pixels.
+    fn frame_of(sizes: &[u32]) -> (ServerMsg, HashMap<ImageKey, Image>) {
+        let mut images = Images::new();
+        for (i, &side) in sizes.iter().enumerate() {
+            let px: Vec<u8> = (0..side * side * 4).map(|b| (b as usize * 7 + i * 13) as u8).collect();
+            images.add(side, side, px);
+        }
+        let updates = images.take_updates();
+        let want = updates
+            .iter()
+            .filter_map(|u| match u {
+                ImageUpdate::Set(k, i) => Some((*k, i.clone())),
+                ImageUpdate::Remove(_) => None,
+            })
+            .collect();
+        (ServerMsg::Frame { seq: 3, updates, frame: Frame::default(), complete: true, shared: vec![] }, want)
+    }
+
+    fn got_images(msg: &ServerMsg) -> HashMap<ImageKey, Image> {
+        let ServerMsg::Frame { updates, shared, .. } = msg else { panic!("{msg:?}") };
+        assert!(shared.is_empty(), "recv_server maps them into updates");
+        updates
+            .iter()
+            .filter_map(|u| match u {
+                ImageUpdate::Set(k, i) => Some((*k, i.clone())),
+                ImageUpdate::Remove(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "sockets and shared memory")]
+    fn frames_arrive_whole_through_shared_memory_or_the_socket() {
+        // 128 px is exactly the smallest size that goes shared; two of the
+        // same size tell their descriptors apart only by their pixels.
+        let (msg, want) = frame_of(&[128, 128, 256, 8]);
+        for shared_memory in [false, true] {
+            let (tx, rx) = UnixStream::pair().unwrap();
+            let mut rx = shared::FdReader::new(rx);
+            // From another thread: a frame can be more than the socket holds.
+            let sender = {
+                let msg = msg.clone();
+                std::thread::spawn(move || {
+                    for m in [msg.clone(), msg, ServerMsg::Done(Ok(()))] {
+                        send_server(&tx, m, shared_memory).unwrap();
+                    }
+                })
+            };
+            // On the wire first: which images went where.
+            let (raw, _) = recv_timed::<ServerMsg>(&mut rx).unwrap().unwrap();
+            let ServerMsg::Frame { updates, shared, .. } = &raw else { panic!() };
+            let (inline, fds) = if shared_memory { (1, 3) } else { (4, 0) };
+            assert_eq!((updates.len(), shared.len()), (inline, fds), "shared_memory: {shared_memory}");
+            for _ in 0..fds {
+                assert!(rx.take_fd().is_some());
+            }
+            assert!(rx.take_fd().is_none());
+            // Then as clients see it: every image at its key.
+            let (got, _) = recv_server(&mut rx).unwrap().unwrap();
+            assert_eq!(got_images(&got), want, "shared_memory: {shared_memory}");
+            assert!(rx.take_fd().is_none(), "no descriptor left over");
+            // Other messages are unchanged.
+            assert_eq!(recv_server(&mut rx).unwrap().unwrap().0, ServerMsg::Done(Ok(())));
+            sender.join().unwrap();
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "sockets and shared memory")]
+    fn images_beyond_the_descriptor_limit_go_inside_the_message() {
+        let sides = vec![128; shared::MAX_FDS + 10];
+        let (msg, want) = frame_of(&sides);
+        let (tx, rx) = UnixStream::pair().unwrap();
+        let mut rx = shared::FdReader::new(rx);
+        let sender = std::thread::spawn(move || send_server(&tx, msg, true).unwrap());
+        let (got, _) = recv_server(&mut rx).unwrap().unwrap();
+        sender.join().unwrap();
+        assert_eq!(got_images(&got), want);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "shared memory")]
+    fn shared_memory_smaller_than_announced_is_an_error() {
+        let fd = shared::create(&[1; 4096]).unwrap();
+        assert_eq!(shared::map(fd, 8192).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        let fd = shared::create(&[1, 2, 3, 4]).unwrap();
+        assert_eq!(&*shared::map(fd, 4).unwrap(), &[1, 2, 3, 4]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[cfg_attr(miri, ignore = "memfd_create")]
+    fn shared_pixels_cannot_change_after_they_were_sent() {
+        let file = std::fs::File::from(shared::create(&[1; 4096]).unwrap());
+        assert!((&file).write_all(&[2]).is_err(), "sealed against writes");
+        assert!(file.set_len(1).is_err(), "and against shrinking");
     }
 
     #[test]
@@ -468,14 +659,15 @@ mod tests {
     }
 
     /// What a frame of N 512 px RGBA tiles costs between the session server
-    /// and a client on this machine, by stage (`doc/performance.md`):
+    /// and a client on this machine, through the socket and through shared
+    /// memory (`doc/performance.md`):
     /// `cargo test --release -p temzdf-protocol socket_throughput -- --ignored --nocapture`.
-    /// `copy` is one memcpy of the pixels, what shared memory would still cost.
+    /// `send` is the server's part, `total` until the client has every
+    /// image and has read all their bytes once (as an upload would); `copy`
+    /// is one memcpy of the pixels into a fresh buffer.
     #[test]
     #[ignore]
     fn socket_throughput() {
-        use std::io::{BufReader, Read, Write};
-        use std::os::unix::net::UnixStream;
         use std::time::{Duration, Instant};
         const TILE: u32 = 512;
         const RUNS: usize = 7;
@@ -483,80 +675,71 @@ mod tests {
             v.sort();
             v[v.len() / 2].as_secs_f64() * 1e3
         };
-        let (mut tx, rx) = UnixStream::pair().unwrap();
-        let mut rx = BufReader::new(rx);
+        let (tx, rx) = UnixStream::pair().unwrap();
+        let mut rx = shared::FdReader::new(rx);
         for n in [1usize, 4, 12, 30] {
             let mut images = Images::new();
             for i in 0..n {
                 let px: Vec<u8> = (0..TILE * TILE * 4).map(|b| (b as usize * 31 + i) as u8).collect();
                 images.add(TILE, TILE, px);
             }
-            let msg =
-                ServerMsg::Frame { seq: 1, updates: images.take_updates(), frame: Frame::default(), complete: true };
-            let bytes = postcard::to_stdvec(&msg).unwrap().len();
-            let (mut ser, mut socket, mut de, mut total, mut copy) = (vec![], vec![], vec![], vec![], vec![]);
-            // The first run warms up the socket and the allocator.
-            for run in 0..=RUNS {
-                let t = Instant::now();
-                let body = postcard::to_stdvec(&msg).unwrap();
-                let d_ser = t.elapsed();
-                // The bytes alone through the socket, into a buffer of the
-                // right size.
-                let sender = {
-                    let mut tx = tx.try_clone().unwrap();
-                    let body = body.clone();
-                    std::thread::spawn(move || tx.write_all(&body).unwrap())
-                };
-                let t = Instant::now();
-                let mut buf = vec![0; body.len()];
-                rx.read_exact(&mut buf).unwrap();
-                let d_socket = t.elapsed();
-                sender.join().unwrap();
-                let t = Instant::now();
-                let back: ServerMsg = postcard::from_bytes(&buf).unwrap();
-                let d_de = t.elapsed();
-                drop(back);
-                // As the server and the clients do it: send on one thread,
-                // recv on another.
-                let sender = {
-                    let mut tx = tx.try_clone().unwrap();
-                    let msg = msg.clone();
-                    std::thread::spawn(move || {
-                        let t = Instant::now();
-                        send(&mut tx, &msg).unwrap();
-                        t
-                    })
-                };
-                let got = recv::<ServerMsg>(&mut rx).unwrap().unwrap();
-                let d_total = sender.join().unwrap().elapsed();
-                assert!(matches!(got, ServerMsg::Frame { .. }));
-                let t = Instant::now();
-                let mut out = vec![0u8; bytes];
-                out.copy_from_slice(&body);
-                std::hint::black_box(&out);
-                let d_copy = t.elapsed();
-                if run > 0 {
-                    ser.push(d_ser);
-                    socket.push(d_socket);
-                    de.push(d_de);
-                    total.push(d_total);
-                    copy.push(d_copy);
+            let updates = images.take_updates();
+            let bytes: usize =
+                updates.iter().map(|u| if let ImageUpdate::Set(_, i) = u { i.pixels.len() } else { 0 }).sum();
+            let msg = ServerMsg::Frame { seq: 1, updates, frame: Frame::default(), complete: true, shared: vec![] };
+            for shared_memory in [false, true] {
+                let (mut send, mut total, mut copy) = (vec![], vec![], vec![]);
+                // The first run warms up the socket and the allocator.
+                for run in 0..=RUNS {
+                    let sender = {
+                        let tx = tx.try_clone().unwrap();
+                        let msg = msg.clone();
+                        std::thread::spawn(move || {
+                            let t = Instant::now();
+                            send_server(&tx, msg, shared_memory).unwrap();
+                            (t, t.elapsed())
+                        })
+                    };
+                    let (got, _) = recv_server(&mut rx).unwrap().unwrap();
+                    let ServerMsg::Frame { updates, .. } = &got else { panic!("{got:?}") };
+                    let sum = updates.iter().fold(0u64, |acc, u| match u {
+                        ImageUpdate::Set(_, i) => i.pixels.iter().step_by(64).fold(acc, |a, &b| a + b as u64),
+                        ImageUpdate::Remove(_) => acc,
+                    });
+                    std::hint::black_box(sum);
+                    let (start, d_send) = sender.join().unwrap();
+                    let d_total = start.elapsed();
+                    let t = Instant::now();
+                    let mut out = vec![0u8; bytes];
+                    let mut at = 0;
+                    if let ServerMsg::Frame { updates, .. } = &msg {
+                        for u in updates {
+                            if let ImageUpdate::Set(_, i) = u {
+                                out[at..at + i.pixels.len()].copy_from_slice(&i.pixels);
+                                at += i.pixels.len();
+                            }
+                        }
+                    }
+                    std::hint::black_box(&out);
+                    let d_copy = t.elapsed();
+                    if run > 0 {
+                        send.push(d_send);
+                        total.push(d_total);
+                        copy.push(d_copy);
+                    }
                 }
+                let total_ms = median(total);
+                eprintln!(
+                    "BENCH tiles={n:2} MB={:5.1} {:6}  send={:6.2} ms  total={:6.2} ms ({:5.0} MB/s)  copy={:5.2} ms",
+                    bytes as f64 / 1e6,
+                    if shared_memory { "shared" } else { "socket" },
+                    median(send),
+                    total_ms,
+                    bytes as f64 / 1e3 / total_ms,
+                    median(copy),
+                );
             }
-            let total_ms = median(total);
-            eprintln!(
-                "BENCH tiles={n:2} MB={:5.1}  serialize={:6.2} ms  socket={:6.2} ms  deserialize={:6.2} ms  \
-                 send+recv={:6.2} ms ({:5.0} MB/s)  copy={:5.2} ms",
-                bytes as f64 / 1e6,
-                median(ser),
-                median(socket),
-                median(de),
-                total_ms,
-                bytes as f64 / 1e3 / total_ms,
-                median(copy),
-            );
         }
-        let _ = tx.flush();
     }
 
     #[cfg(target_os = "macos")]

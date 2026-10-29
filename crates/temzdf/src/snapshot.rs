@@ -44,9 +44,9 @@ pub struct SnapshotOptions {
 pub fn render_session(name: &str, out: &Path, opts: &SnapshotOptions) -> Result<()> {
     let stream = UnixStream::connect(proto::socket_path(name)?).with_context(|| format!("no session {name:?}"))?;
     let (tx, rx) = mpsc::channel();
-    let mut reader = std::io::BufReader::new(stream.try_clone()?);
+    let mut reader = proto::shared::FdReader::new(stream.try_clone()?);
     std::thread::spawn(move || {
-        while let Ok(Some(msg)) = proto::recv::<ServerMsg>(&mut reader) {
+        while let Ok(Some((msg, _))) = proto::recv_server(&mut reader) {
             if tx.send(msg).is_err() {
                 return;
             }
@@ -54,7 +54,13 @@ pub fn render_session(name: &str, out: &Path, opts: &SnapshotOptions) -> Result<
     });
     let mut writer = stream;
     let mut send = |msg: ClientMsg| proto::send(&mut writer, &msg).context("lost the session");
-    send(ClientMsg::Hello { version: proto::VERSION, geometry: opts.geometry, hints: opts.hints, inside: None })?;
+    send(ClientMsg::Hello {
+        version: proto::VERSION,
+        geometry: opts.geometry,
+        hints: opts.hints,
+        inside: None,
+        shared_memory: proto::shared_memory_wanted(),
+    })?;
     // Into the mock terminal, as inline transfers (it reads no shared memory).
     let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, opts.geometry);
     let mut presenter = Presenter::new();
@@ -67,7 +73,7 @@ pub fn render_session(name: &str, out: &Path, opts: &SnapshotOptions) -> Result<
             None => deadline.saturating_duration_since(Instant::now()),
         };
         match rx.recv_timeout(wait) {
-            Ok(ServerMsg::Frame { seq, updates, frame, complete }) => {
+            Ok(ServerMsg::Frame { seq, updates, frame, complete, .. }) => {
                 presenter.apply(&mut comp, updates);
                 latest = Some(frame);
                 send(ClientMsg::FrameAck(seq))?;

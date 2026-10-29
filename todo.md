@@ -22,10 +22,10 @@ server on one `Session`). Next and open:
 - [ ] Per-client pixel density (every client now gets frames for the latest
   client's geometry and cell size, programs' images included) and zoom
   stored relative to the pane width.
-- [ ] Shared memory instead of the socket for local clients' pixels: measured
-  (`doc/performance.md`, "Session socket"), it pays off: heavy frames spend
-  10 to 25 ms of a 30 to 80 ms acknowledgement on the socket at scale 2.
-  Next: the design (`scripts/timing.sh` to compare before and after).
+- [ ] Shared memory for local clients' pixels: done (`doc/session-server.md`,
+  "Pixels"; `TEMZDF_PIXELS=socket` for the old way). Left: why the GUI's
+  uploads at scale 2 got slower on lavapipe (`doc/performance.md`, "With
+  shared memory"); measure on a real GPU and on macOS.
 - [ ] A Vim-like command line on the `Action` text form (tab pages are done).
 - [ ] User report (2026-10-26, deferred): after resizing the terminal window
   with split panes, the bottom-right pane's status bar (file name) stayed where

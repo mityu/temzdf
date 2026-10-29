@@ -98,3 +98,38 @@ clients. Cheaper steps that take part of it: write the pixels straight
 from the images (vectored writes) instead of encoding them into one more
 buffer, and read into a buffer of the announced length (in steps, so a
 bogus length cannot allocate much).
+
+### With shared memory
+
+Large images now come in shared memory (`doc/session-server.md`, "Pixels");
+`TEMZDF_PIXELS=socket` (`scripts/e2e.sh -P socket`) still sends them inside
+the messages, so one build compares both. The benchmark (same command; `send`
+is the server's part, `total` until the client has read every byte once):
+
+| Tiles | MB | socket send / total | shared send / total | Copy |
+|---:|---:|---:|---:|---:|
+| 4 | 4.2 | 6.0 / 7.3 | 3.9 / 4.7 | 1.1 |
+| 12 | 12.6 | 7.8 / 10.1 | 7.4 / 8.4 | 3.6 |
+| 30 | 31.5 | 26.0 / 29.9 | 6.9 / 8.2 | 3.3 |
+
+`tests/e2e/perf.actions`, release builds, Xvfb with lavapipe, 2026-10-29, ms
+(maxima over frames with pixels, and the median acknowledgement):
+
+| Client | Path | send max | recv max | upload / present max | ack median / max |
+|---|---|---:|---:|---:|---:|
+| GUI 900x600 | socket | 18.8 | 9.7 | 6.8 | 6.8 / 37.3 |
+| GUI 900x600 | shared | 4.8 | 0.6 | 6.9 | 6.5 / 21.4 |
+| GUI 1800x1200 at scale 2 | socket | 37.7 | 14.5 | 8.1 | 14.0 / 56.7 |
+| GUI 1800x1200 at scale 2 | shared | 8.3 to 9.8 | 1.0 to 1.3 | 16.7 to 22.3 | 14.2 / 42.7 to 51.5 |
+| kitty 900x600 (`temzdf` client) | socket | 20.9 | 13.9 | 13.9 | 3.2 / 36.2 |
+| kitty 900x600 (`temzdf` client) | shared | 4.0 | 0.6 | 7.8 | 2.2 / 11.0 |
+
+The socket's part is gone: sending is the copy into the shared objects,
+receiving maps them (prefaulted, `populate`, so the receiving thread takes
+the page faults, not the GUI's main thread). The terminal client's worst
+acknowledgement went from 36 to 11 ms. At scale 2 the GUI's uploads to
+lavapipe became slower (up to about 20 ms, from 8) and took back most of
+the gain there; not at scale 1, and not explained yet (page faults are
+ruled out by `populate`; reading the mapping is as fast as the heap in the
+benchmark). Worth measuring on a real GPU with `TEMZDF_TIMING=1` and
+`scripts/timing.sh`, both ways.
