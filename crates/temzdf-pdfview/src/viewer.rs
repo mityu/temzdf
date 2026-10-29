@@ -371,8 +371,11 @@ impl Viewer {
     }
 
     /// The page area was resized: keep the doc point at the top-left in place
-    /// (and re-fit the width in fit-width mode).
+    /// (and re-fit the width in fit-width mode). A scroll on its way (a page
+    /// jump, a forward search) ends where it was going first: settling the
+    /// new size ends animations, and it would have stopped where it was.
     pub fn resize(&mut self, width: u32, height: u32) {
+        self.jump_to(self.scroll_x.target() as f32, self.scroll_y.target() as f32);
         let (dx, dy) = self.view.screen_to_doc(&self.layout, 0.0, 0.0);
         self.view.screen_w = width as f32;
         self.view.screen_h = height as f32;
@@ -900,6 +903,22 @@ mod tests {
         present(&layers, &mut images, &mut out);
         term.feed(&out);
         (early, term.render(), stand_ins)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_resize_does_not_drop_a_scroll_on_its_way() {
+        // A forward search to page 3 of a new session, then its first client
+        // attaching at another size (as on a single CPU, where the PDF opens
+        // first): the session ended on page 1.
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let bounds = pdf::doc_info(&doc).unwrap().bounds;
+        let mut v = Viewer::new(bounds, 900, 560);
+        v.fit_width();
+        v.goto_page(2, true, Instant::now());
+        v.set_area(0, 1000, 580);
+        assert_eq!(v.current_page(), 2, "where the scroll was going");
+        assert!(!v.is_animating());
     }
 
     #[test]
