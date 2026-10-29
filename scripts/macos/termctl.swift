@@ -5,6 +5,8 @@
 //   termctl content PID                  "X Y W H" of its first window without the title bar
 //   termctl move PID X Y [W H]           move (and resize) PID's windows (accessibility API)
 //   termctl front                        the front app's PID
+//   termctl main                         "X Y W H SCALE" of the main display (global points)
+//   termctl permissions [--ask]          whether this process may drive other apps and take screenshots
 //   termctl activate PID                 bring PID to the front; prints the previous front PID
 //   termctl key PID [--global] KEY...    keys: `j`, `G`, `/`, `C-f`, `S-Tab`, `M-Left`, `Return`, ...
 //   termctl type PID [--global] TEXT     printable ASCII, typed with US-layout key codes
@@ -42,6 +44,25 @@ func num(_ i: Int) -> Double {
 if args.count == 2 && args[1] == "front" {
     wait(0.05)
     print(frontPid())
+    exit(0)
+}
+if args.count >= 2 && args[1] == "permissions" {
+    // Asking adds this process's responsible app to both lists in System
+    // Settings (switched off), so that granting is a matter of a switch.
+    if args.count > 2 && args[2] == "--ask" {
+        _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
+        _ = CGRequestScreenCaptureAccess()
+    }
+    let ax = AXIsProcessTrusted()
+    let screen = CGPreflightScreenCaptureAccess()
+    print("accessibility: \(ax ? "yes" : "no")")
+    print("screen recording: \(screen ? "yes" : "no")")
+    exit(ax && screen ? 0 : 1)
+}
+if args.count == 2 && args[1] == "main" {
+    let b = CGDisplayBounds(CGMainDisplayID())
+    let scale = NSScreen.screens.first?.backingScaleFactor ?? 1
+    print(Int(b.minX), Int(b.minY), Int(b.width), Int(b.height), Int(scale))
     exit(0)
 }
 guard args.count >= 3, let pid = pid_t(args[2]) else {

@@ -16,7 +16,8 @@
 #             (headless sway; keys and pointer through crates/wlinput, built
 #             here; screenshots with grim; no -I yet); macos (the default
 #             there): the terminal or the GUI on a virtual display at scale 1
-#             beside the real screen, keys and the pointer through `termctl
+#             beside the real screen (in a VM, scripts/macos-vm.sh: on its own
+#             screen, at scale 1), keys and the pointer through `termctl
 #             serve` (scripts/macos/termctl.swift; the window is in front for
 #             the run, as it has the focus on Linux, and the end gives the
 #             front and the pointer back),
@@ -908,13 +909,24 @@ if [[ $display == macos ]]; then
   [[ $term == gui || $term == wezterm ]] && screen_w=$((width + 100)) screen_h=$((height + 100 + menu_bar))
   user_clipboard=$(mktemp)
   pbpaste >"$user_clipboard" 2>/dev/null || true
-  target/macos-gui/vdisp "$screen_w" "$screen_h" 1 >"$outdir/vdisp.out" 2>&1 &
-  vdisp_pid=$!
-  for ((i = 0; i < 50; i++)); do [[ -s $outdir/vdisp.out ]] && break; sleep 0.1; done
-  read -r _ disp_x disp_y disp_w disp_h <"$outdir/vdisp.out" || true
-  if [[ -z ${disp_h:-} ]]; then
-    echo "e2e.sh: no virtual display: $(cat "$outdir/vdisp.out")" >&2
-    exit 1
+  # In a VM (scripts/macos-vm.sh) its own screen is nobody's desktop: no
+  # virtual display there. E2E_MACOS_DISPLAY=main|virtual decides otherwise.
+  macos_display=${E2E_MACOS_DISPLAY:-$([[ $(sysctl -n kern.hv_vmm_present 2>/dev/null) == 1 ]] && echo main || echo virtual)}
+  if [[ $macos_display == main ]]; then
+    read -r disp_x disp_y disp_w disp_h scale <<<"$(target/macos-gui/termctl main)"
+    if ((scale != 1 || disp_w < screen_w || disp_h < screen_h)); then
+      echo "e2e.sh: the main display (${disp_w}x${disp_h} at scale $scale) needs scale 1 and ${screen_w}x${screen_h} at least" >&2
+      exit 1
+    fi
+  else
+    target/macos-gui/vdisp "$screen_w" "$screen_h" 1 >"$outdir/vdisp.out" 2>&1 &
+    vdisp_pid=$!
+    for ((i = 0; i < 50; i++)); do [[ -s $outdir/vdisp.out ]] && break; sleep 0.1; done
+    read -r _ disp_x disp_y disp_w disp_h <"$outdir/vdisp.out" || true
+    if [[ -z ${disp_h:-} ]]; then
+      echo "e2e.sh: no virtual display: $(cat "$outdir/vdisp.out")" >&2
+      exit 1
+    fi
   fi
 fi
 clean_env=(env -u TEMZDF_LOG_DIR -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state"
@@ -939,7 +951,10 @@ if [[ $display == macos ]]; then
   {
     echo '#!/usr/bin/env bash'
     echo "export PATH=$(printf %q "$XDG_RUNTIME_DIR/bin:$PATH")"
-    for v in $(compgen -e); do
+    # The names from env (compgen is not in a non-interactive bash, as
+    # `nix develop -c` runs); a line of a value with newlines is no name.
+    for v in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u); do
+      [[ -n ${!v+x} ]] || continue
       case $v in
         PATH | TERM | TERM_PROGRAM* | COLORTERM | TERMINFO | KITTY_* | WEZTERM_* | GHOSTTY_* | WINDOWID | _ | SHLVL | PWD | OLDPWD) ;;
         *) printf 'export %s=%q\n' "$v" "${!v}" ;;
@@ -979,7 +994,8 @@ if [[ $display == macos ]]; then
       # bar: without one it takes the top of the window for one, and a drag
       # there (selecting the first row) moves the window.
       app=WezTerm proc=wezterm-gui startup=6
-      targs=(-n --config 'window_decorations="TITLE|RESIZE"' --config enable_tab_bar=false
+      # WebGPU (Metal): a macOS VM has no OpenGL 3.3 (doc/macos.md).
+      targs=(-n --config 'front_end="WebGpu"' --config 'window_decorations="TITLE|RESIZE"' --config enable_tab_bar=false
         --config 'window_padding={left=0,right=0,top=0,bottom=0}'
         --config "initial_cols=$((width / 7))" --config "initial_rows=$((height / 16))"
         start --always-new-process --cwd "$PWD" -- "$launch")
