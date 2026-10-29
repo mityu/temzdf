@@ -140,8 +140,8 @@
 # shipped defaults rather than the user's config.ts.
 set -euo pipefail
 # Absolute: it re-executes itself after the cd.
-self=$(realpath "$0")
-cd "$(dirname "$self")/.."
+self=$(realpath "${BASH_SOURCE[0]}")
+cd "$(dirname "$(dirname "$self")")"
 
 if [[ -z "${IN_NIX_SHELL:-}" ]]; then
   # The dirty-tree warning off through nix itself: a process substitution
@@ -170,12 +170,12 @@ while getopts "t:d:m:s:o:P:Ih" opt; do
       ;;
     s) size=$OPTARG ;;
     o) outdir=$OPTARG ;;
-    *) sed -n '2,/^set -euo/{/^set -euo/!p}' "$self"; exit 2 ;;
+    *) sed -n '2,${ /^set -euo/q; p; }' "$self"; exit 2 ;;
   esac
 done
 shift $((OPTIND - 1))
 if [[ $# -lt 3 || $2 != "--" ]]; then
-  sed -n '2,/^set -euo/{/^set -euo/!p}' "$self"
+  sed -n '2,${ /^set -euo/q; p; }' "$self"
   exit 2
 fi
 actions=$(realpath "$1")

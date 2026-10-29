@@ -37,7 +37,7 @@
 # accessibility permissions for the terminal this runs in. The tools are built
 # into target/macos-gui/. It does not build temzdf.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")"
 
 [[ $(uname) == Darwin ]] || { echo "macOS only; use scripts/e2e.sh elsewhere" >&2; exit 2; }
 
@@ -57,7 +57,7 @@ build termctl
 build vdisp
 ctl() { "$out/termctl" "$@"; }
 
-usage() { sed -n '2,/^set -euo/{/^set -euo/!p}' "$0"; exit 2; }
+usage() { sed -n '2,${ /^set -euo/q; p; }' "$0"; exit 2; }
 
 # The virtual display's "ID X Y W H", empty when it is not running.
 display_bounds() {

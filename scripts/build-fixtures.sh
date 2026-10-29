@@ -11,8 +11,8 @@
 # Usage: scripts/build-fixtures.sh [--force]
 set -euo pipefail
 # Absolute: it re-executes itself after the cd.
-self=$(realpath "$0")
-cd "$(dirname "$self")/.."
+self=$(realpath "${BASH_SOURCE[0]}")
+cd "$(dirname "$(dirname "$self")")"
 
 if [[ -z "${IN_NIX_SHELL:-}" ]]; then
   # The dirty-tree warning off through nix itself: a process substitution

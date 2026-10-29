@@ -27,7 +27,10 @@
 # build temzdf and temzdf-gui first (scripts/macos-vm.sh e2e-all does, in the
 # VM).
 set -uo pipefail
-cd "$(dirname "$0")/.."
+
+# shellcheck disable=SC2164
+# This cd never fails.
+cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")"
 
 terms=() outdir= pass=() display= jobs=1
 while getopts "t:d:P:o:j:Rh" opt; do

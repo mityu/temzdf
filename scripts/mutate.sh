@@ -19,8 +19,8 @@
 # "test result"; any other command is judged by its exit status alone.
 set -euo pipefail
 # Absolute: it re-executes itself after the cd.
-self=$(realpath "$0")
-cd "$(dirname "$self")/.."
+self=$(realpath "${BASH_SOURCE[0]}")
+cd "$(dirname "$(dirname "$self")")"
 
 if [[ -z "${IN_NIX_SHELL:-}" ]]; then
   # The dirty-tree warning off through nix itself: a process substitution
@@ -30,7 +30,7 @@ if [[ -z "${IN_NIX_SHELL:-}" ]]; then
 fi
 
 usage() {
-  sed -n '2,/^set -euo/{/^set -euo/!p}' "$self"
+  sed -n '2,${ /^set -euo/q; p; }' "$self"
   exit 2
 }
 first=1

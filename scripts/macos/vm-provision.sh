@@ -10,12 +10,12 @@
 #   vm-provision.sh check   whether this session may drive apps and take
 #                           screenshots, the display, the tools
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 nix_bin=/nix/var/nix/profiles/default/bin
 
 setup() {
-  if [[ ! -x $nix_bin/nix ]]; then
+  if [[ ! -x "$nix_bin/nix" ]]; then
     curl -fsSL https://nixos.org/nix/install -o /tmp/nix-install
     sh /tmp/nix-install --daemon --yes
   fi
@@ -24,7 +24,7 @@ setup() {
     sudo launchctl kickstart -k system/org.nixos.nix-daemon
     sleep 2
   fi
-  export PATH=$nix_bin:$PATH
+  export PATH="$nix_bin:$PATH"
 
   # Apps, as scripts/e2e.sh opens them (`open -a`); casks are not pinned, so
   # their versions are written down below. Downloads are quarantined: the
@@ -71,7 +71,7 @@ setup() {
 
 check() {
   local ok=0
-  export PATH=$nix_bin:$PATH
+  export PATH="$nix_bin:$PATH"
   nix develop --quiet -c scripts/macos-gui.sh build
   target/macos-gui/termctl permissions || ok=1
   read -r _ _ w h scale <<<"$(target/macos-gui/termctl main)"
@@ -90,5 +90,5 @@ check() {
 case ${1:-} in
   setup) setup ;;
   check) check ;;
-  *) sed -n '2,/^set -euo/{/^set -euo/!p}' "$0"; exit 2 ;;
+  *) sed -n '2,${ /^set -euo/q; p; }' "${BASH_SOURCE[0]}"; exit 2 ;;
 esac

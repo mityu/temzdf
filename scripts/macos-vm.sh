@@ -33,7 +33,7 @@
 # leave it up for the next one, and for looking into a failure.
 # Requires Apple Silicon and Tart (in the dev shell on macOS).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")"
 
 [[ $(uname) == Darwin ]] || { echo "macos-vm.sh: macOS only" >&2; exit 2; }
 
@@ -51,10 +51,12 @@ out=target/macos-vm
 share=temzdf
 # Where the guest sees the repository, and its own copy of it.
 guest_share="/Volumes/My Shared Files/$share"
+# shellcheck disable=SC2016
+# This $HOME should point the homedirectory in VM, so do NOT expand it here.
 guest_tree='$HOME/temzdf'
 mkdir -p "$out"
 
-usage() { sed -n '2,${ /^set -euo/q; p; }' "$0"; exit 2; }
+usage() { sed -n '2,${ /^set -euo/q; p; }' "${BASH_SOURCE[0]}"; exit 2; }
 
 # The VM's state in `tart list`: running, stopped, or nothing.
 state() { tart list --source local | awk -v n="$1" '$2 == n { print $NF }'; }
