@@ -523,12 +523,14 @@ pub struct StdioRedirect {
 }
 
 impl StdioRedirect {
-    /// Append stdout and stderr to `log` (created if missing).
+    /// Append stdout and stderr to `log` (created if missing, 0600).
     pub fn to_file(log: &std::path::Path) -> io::Result<Self> {
+        use std::os::unix::fs::OpenOptionsExt;
         if let Some(dir) = log.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let file = OpenOptions::new().create(true).append(true).open(log)?;
+        // Only the user's: what a program prints can say more than it should.
+        let file = OpenOptions::new().create(true).append(true).mode(0o600).open(log)?;
         let saved_out = rustix::io::dup(rustix::stdio::stdout())?;
         let saved_err = rustix::io::dup(rustix::stdio::stderr())?;
         rustix::stdio::dup2_stdout(&file)?;

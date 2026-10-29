@@ -140,18 +140,14 @@ pub fn spawn_server(
         utf8(p).context("see TEMZDF_LOG_DIR and XDG_STATE_HOME")?;
     }
     let open_log = |p: &Path| -> Result<std::fs::File> {
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(p)
-            .with_context(|| format!("cannot write the session's log {} (see TEMZDF_LOG_DIR)", p.display()))
+        open_log(p).with_context(|| format!("cannot write the session's log {} (see TEMZDF_LOG_DIR)", p.display()))
     };
     // Where this run's output starts (for the lines shown if it fails).
     let mut start = 0;
     let (out, err) = match &log {
         Some(p) => {
             if let Some(dir) = p.parent() {
-                std::fs::create_dir_all(dir)
+                make_log_dir(dir)
                     .with_context(|| format!("cannot make the log directory {} (see TEMZDF_LOG_DIR)", dir.display()))?;
             }
             rotate_log(p);
@@ -209,8 +205,59 @@ pub fn rotate_log(path: &Path) {
     if std::fs::metadata(path).is_ok_and(|m| m.len() > LOG_LIMIT) {
         let mut old = path.as_os_str().to_owned();
         old.push(".1");
-        let _ = std::fs::rename(path, old);
+        let _ = std::fs::rename(path, &old);
+        let _ = make_private(Path::new(&old), 0o600);
     }
+}
+
+/// Logs are the user's alone: they name the files opened and where the
+/// sessions' sockets are. A log directory made here is 0700; the default one
+/// (`$XDG_STATE_HOME/temzdf`) becomes 0700 if it is not, while a
+/// `TEMZDF_LOG_DIR` the user made keeps its mode.
+pub fn make_log_dir(dir: &Path) -> std::io::Result<()> {
+    let default =
+        std::env::var_os("TEMZDF_LOG_DIR").is_none_or(|d| d.is_empty()) && state_dir().as_deref() == Some(dir);
+    private_dir(dir, default)
+}
+
+/// `dir` and its parents; `dir` itself 0700 when made here, or when it is
+/// there already and `tighten`.
+fn private_dir(dir: &Path, tighten: bool) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && dir.is_dir() => {
+            if tighten {
+                make_private(dir, 0o700)
+            } else {
+                Ok(())
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Take group's and others' permissions away from `path` (ours), leaving at
+/// most `mode`.
+fn make_private(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let now = std::fs::metadata(path)?.permissions().mode() & 0o7777;
+    if now & !mode != 0 {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(now & mode))?;
+    }
+    Ok(())
+}
+
+/// Open log `path` for appending: made 0600, or made so if it was readable
+/// by others (logs written before temzdf made them private).
+pub fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(path)?;
+    make_private(path, 0o600)?;
+    Ok(file)
 }
 
 /// The last `n` lines written to `path` after byte `start`.
@@ -260,8 +307,11 @@ pub fn log_dir() -> Option<PathBuf> {
 /// `<log dir>/temzdf.log`.
 pub fn log_path() -> Option<PathBuf> {
     let dir = log_dir()?;
-    let _ = std::fs::create_dir_all(&dir);
-    Some(dir.join("temzdf.log"))
+    let _ = make_log_dir(&dir);
+    let path = dir.join("temzdf.log");
+    // Made private here; the caller opens it again.
+    let _ = open_log(&path);
+    Some(path)
 }
 
 /// The system's handler for links (`OpenUri` without a command).
@@ -419,6 +469,39 @@ mod tests {
         // A name the user gave is not.
         let e = spawn_named(|| Ok("alfa".into()), false, |n| Err(NameTaken(n.into()).into())).unwrap_err();
         assert!(e.to_string().contains("already exists"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot set file permissions")]
+    fn logs_are_the_users_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let tmp = std::env::temp_dir().join(format!("temzdf-private-logs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // Made here: the directory 0700 (its missing parents as usual), the
+        // file 0600.
+        let dir = tmp.join("state/temzdf");
+        private_dir(&dir, false).unwrap();
+        assert_eq!(mode(&dir), 0o700);
+        let log = dir.join("s.log");
+        drop(open_log(&log).unwrap());
+        assert_eq!(mode(&log), 0o600);
+        // Written before temzdf made them private: the default directory and
+        // the logs become so; a directory the user chose keeps its mode.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o644)).unwrap();
+        private_dir(&dir, false).unwrap();
+        assert_eq!(mode(&dir), 0o755, "the user's choice");
+        private_dir(&dir, true).unwrap();
+        assert_eq!(mode(&dir), 0o700, "the default one");
+        drop(open_log(&log).unwrap());
+        assert_eq!(mode(&log), 0o600);
+        // A rotated log stays private too.
+        std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(&log, vec![b'x'; LOG_LIMIT as usize + 1]).unwrap();
+        rotate_log(&log);
+        assert_eq!(mode(&dir.join("s.log.1")), 0o600);
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
