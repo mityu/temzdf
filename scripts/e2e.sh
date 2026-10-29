@@ -102,9 +102,11 @@
 # command runs without ZELLIJ/TMUX in its environment so a multiplexer around the
 # harness does not leak into terminal detection, and with its own
 # XDG_RUNTIME_DIR (also for ACTIONS), so its sessions stay apart from the
-# user's and end with the run. If the terminal process died,
-# it prints "TERMINAL CRASHED" and exits 3; failed `expect`s and `check`s exit 4. Requires the dev shell (kitty,
-# xvfb-run, xdotool, imagemagick; Ghostty from the host); re-executes inside it.
+# user's and end with the run. If the terminal process died, it prints
+# "TERMINAL CRASHED" and exits 3; failed `expect`s and `check`s exit 4; a
+# command that ended while starting, or no window, exits 1. Requires the dev
+# shell (kitty, xvfb-run, xdotool, imagemagick; Ghostty from the host);
+# re-executes inside it.
 # A COMMAND that runs temzdf must pass --clean (checked), so scenarios see the
 # shipped defaults rather than the user's config.ts.
 set -euo pipefail
@@ -248,12 +250,15 @@ be_type() { xdotool type ${2:+--delay "$2"} -- "$1"; }  # TEXT [DELAY_MS]
 be_shot() { import -window root "$1"; }
 be_clipboard() { xclip -selection clipboard -o 2>/dev/null; }
 be_set_clipboard() { printf %s "$1" | xclip -selection clipboard; }
-# The first visible window of process PID.
-be_window() { xdotool search --sync --onlyvisible --pid "$1" | tail -1; }
+# The first visible window of process PID, waited for up to 10 s.
+be_window() { timeout 10 xdotool search --sync --onlyvisible --pid "$1" | tail -1; }
 be_focus() { xdotool windowfocus --sync "$(be_window "$1")"; }
 # "X Y W H" of PID's window's inside.
 be_window_rect() {
-  xwininfo -id "$(be_window "$1")" | awk '/Absolute upper-left X/ {x = $4} /Absolute upper-left Y/ {y = $4}
+  local id
+  id=$(be_window "$1")
+  [[ -n $id ]] || return 1
+  xwininfo -id "$id" | awk '/Absolute upper-left X/ {x = $4} /Absolute upper-left Y/ {y = $4}
     /Width:/ {w = $2} /Height:/ {h = $2} END {print x, y, w, h}'
 }
 # A plain window of another program, for focus to go to; prints its PID.
@@ -1103,6 +1108,13 @@ esac
 term_pid=$!
 fi
 sleep "$((startup + mux_startup))"
+# A command that ends at once (a missing file, a bad option) leaves no window
+# to wait for.
+if ! kill -0 "$term_pid" 2>/dev/null; then
+  echo "e2e.sh: $term ended while starting; the end of its output:" >&2
+  tail -n 20 "$outdir/terminal.log" >&2
+  exit 1
+fi
 # The GUI's drawing area: where its window's inside is on the screen (on
 # macOS every window's: below the menu bar).
 if [[ $term == gui ]]; then
@@ -1110,7 +1122,11 @@ if [[ $term == gui ]]; then
   temzdf=$(dirname "$gui_bin")/temzdf
 fi
 if [[ $term == gui || $display == macos ]]; then
-  read -r origin_x origin_y win_w win_h <<<"$(be_window_rect "$term_pid")"
+  read -r origin_x origin_y win_w win_h <<<"$(be_window_rect "$term_pid")" || true
+  if [[ -z ${win_h:-} ]]; then
+    echo "e2e.sh: no window of $term" >&2
+    exit 1
+  fi
 fi
 if [[ $display == macos ]]; then
   coproc TC { "$ctl" serve "$term_pid" "$([[ $term == wezterm ]] && echo global || echo pid)" 2>>"$outdir/termctl.log"; }
