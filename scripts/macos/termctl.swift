@@ -69,7 +69,10 @@ guard args.count >= 3, let pid = pid_t(args[2]) else {
     fail("usage: termctl COMMAND PID ... (see the header of scripts/macos/termctl.swift)")
 }
 
-func settle() { usleep(20000) }
+/// The pause after each posted event (TERMCTL_SETTLE_MS, default 20):
+/// scripts/e2e.sh asks for less, for fast typing.
+let settleMicros = useconds_t((Double(ProcessInfo.processInfo.environment["TERMCTL_SETTLE_MS"] ?? "") ?? 20) * 1000)
+func settle() { usleep(settleMicros) }
 
 /// Sleep while running the run loop, which keeps NSWorkspace's view of the
 /// frontmost app current.

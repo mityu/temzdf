@@ -94,9 +94,11 @@
 #                      through their get-text; 77 elsewhere), e.g. `check
 #                      detached screen_contains "[detached from session e2e]"`.
 #
-# temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log.
-# It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij) and
-# sends `q` at the end. It does not check results; inspect the screenshots (or
+# temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log;
+# when each phase of the run began goes to OUTDIR/timing.txt (milliseconds).
+# It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij;
+# on macOS only until temzdf logged its geometry and the screen stood still
+# for 150 ms, at most that long) and sends `q` at the end. It does not check results; inspect the screenshots (or
 # compare pixels) afterwards. The
 # command runs without ZELLIJ/TMUX in its environment so a multiplexer around the
 # harness does not leak into terminal detection, and with its own
@@ -569,6 +571,34 @@ mask_window_edges() {
   magick "$outdir/$name.actual.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.actual.png"
   magick "$outdir/$name.expected.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.expected.png"
 }
+# Wait until the first screen is up, at most LIMIT seconds (the fixed wait
+# used elsewhere): temzdf's geometry line in its log (it is drawing), then
+# the screen unchanged over 150 ms (the first frame and its tiles are there).
+wait_ready() {
+  local limit=$1 deadline log=$outdir/state/temzdf/temzdf.log a=$outdir/ready.a.png b=$outdir/ready.b.png
+  shift
+  deadline=$(($(usec) + limit * 1000000))
+  if [[ $term != gui ]] && runs_temzdf "$@"; then
+    until grep -qs 'geometry .* cells of' "$log"; do
+      (($(usec) < deadline)) || break
+      sleep 0.05
+    done
+    phase geometry
+  fi
+  be_shot "$a"
+  while (($(usec) < deadline)); do
+    sleep 0.15
+    be_shot "$b"
+    if cmp -s "$a" "$b"; then
+      rm -f "$a" "$b"
+      phase ready
+      return
+    fi
+    mv "$b" "$a"
+  done
+  rm -f "$a" "$b"
+  phase ready "(timed out)"
+}
 # The GUI's form of expect: the window against an offscreen render of the
 # same session at this moment.
 expect_gui() {
@@ -783,6 +813,12 @@ if [[ $term != gui && ${args[1]:-} != standalone ]] && runs_temzdf "$@"; then
 fi
 mkdir -p "$outdir/state"
 rm -f "$outdir/state/temzdf/temzdf.log" "$outdir/expect.txt"
+# When each phase began, in milliseconds since this point
+# (OUTDIR/timing.txt): for seeing where a run spends its time.
+timing0=$(usec)
+: >"$outdir/timing.txt"
+phase() { echo "$((($(usec) - timing0) / 1000)) $*" >>"$outdir/timing.txt"; }
+phase launch
 mux_startup=0
 case $mux in
   "") ;;
@@ -843,7 +879,7 @@ cleanup() {
     kill "$term_pid" 2>/dev/null || true
     wait "$term_pid" 2>/dev/null || true
     # Started through `open`, not a child: wait for it to go.
-    for ((i = 0; i < 50; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.1; done
+    for ((i = 0; i < 100; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.05; done
   fi
   if [[ -n $vdisp_pid ]]; then
     kill "$vdisp_pid" 2>/dev/null || true
@@ -1028,6 +1064,7 @@ if [[ $display == macos ]]; then
     echo "e2e.sh: $term did not open a window" >&2
     exit 1
   fi
+  phase window
   # Below the menu bar; at scale 1 it draws again at that density, then the
   # command starts.
   "$ctl" move "$term_pid" "$disp_x" $((disp_y + menu_bar))
@@ -1094,7 +1131,14 @@ case $term in
 esac
 term_pid=$!
 fi
-sleep "$((startup + mux_startup))"
+# Until the first screen is up: on macOS as soon as it is (below), at most
+# as long as elsewhere.
+if [[ $display == macos ]]; then
+  wait_ready $((startup + mux_startup)) "$@"
+else
+  sleep "$((startup + mux_startup))"
+  phase ready
+fi
 # The GUI's drawing area: where its window's inside is on the screen (on
 # macOS every window's: below the menu bar).
 if [[ $term == gui ]]; then
@@ -1105,7 +1149,11 @@ if [[ $term == gui || $display == macos ]]; then
   read -r origin_x origin_y win_w win_h <<<"$(be_window_rect "$term_pid")"
 fi
 if [[ $display == macos ]]; then
-  coproc TC { "$ctl" serve "$term_pid" "$([[ $term == wezterm ]] && echo global || echo pid)" 2>>"$outdir/termctl.log"; }
+  # 2 ms after each event (not 20): typing at about 4 ms a character.
+  coproc TC {
+    TERMCTL_SETTLE_MS=${E2E_SETTLE_MS:-2} "$ctl" serve "$term_pid" "$([[ $term == wezterm ]] && echo global || echo pid)" \
+      2>>"$outdir/termctl.log"
+  }
   # In front for the run, as on Linux, where it has the focus: unfocused,
   # Ghostty draws a hollow cursor over the images even where the program
   # hides it.
@@ -1119,14 +1167,22 @@ fi
 # The recorded times start here (the first screen is up).
 : >"$events"
 t0=$(usec)
+phase actions
 # shellcheck source=/dev/null
 source "$actions"
+phase quit
 crashed=0
 kill -0 "$term_pid" 2>/dev/null || crashed=1
 be_key q || true
-sleep 0.5
+if [[ $display == macos ]]; then
+  # As long as the terminal takes to go, at most the half second used elsewhere.
+  for ((i = 0; i < 10; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.05; done
+else
+  sleep 0.5
+fi
 cleanup
 trap - EXIT
+phase done
 echo "screenshots in $outdir"
 if ((crashed)); then
   echo "TERMINAL CRASHED (see $outdir/terminal.log)"
