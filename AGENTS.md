@@ -187,7 +187,7 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
 - `doc/testing.md`: how to verify changes without a human.
 - `doc/synctex.md`: forward/inverse search, editor setup, vendored parser.
 - `doc/config.md`: the configuration (JavaScript/TypeScript): modes, key notation, default mappings, options, commands, environment variables (keep in sync with `crates/temzdf-script/runtime/defaults.ts` and the registry in `crates/temzdf-server/src/session/commands.rs`).
-- `doc/performance.md`: measurements (raster pool, display lists, transfer) and the benchmark to rerun.
+- `doc/performance.md`: measurements (raster pool, display lists, transfer, the session socket) and the benchmarks to rerun (`scripts/timing.sh` reads `TEMZDF_TIMING` logs).
 - `doc/macos.md`: macOS specifics, verification results, and how to drive GUI terminals there.
 - `doc/session-server.md`: the session server design, what is implemented and what comes next.
 - `doc/script-host.md`: the JavaScript/TypeScript configuration: the script host, execution model, API.

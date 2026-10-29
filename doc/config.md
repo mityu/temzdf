@@ -340,6 +340,7 @@ variables:
 | `TERMPIX_MEDIUM` | `direct`, `shm` or `file`: how pixels are transferred (default: detected; `direct` mimics SSH) |
 | `TEMZDF_ZLIB_LEVEL` | zlib level (0-9) of inline transfers, default 2 (do not use 1 with Ghostty 1.3.1, see doc/terminal-compat.md) |
 | `TEMZDF_LOG_DIR` | where logs go (default `$XDG_STATE_HOME/temzdf`): `temzdf.log` for viewers and clients, `NAME.log` for session NAME |
+| `TEMZDF_TIMING` | set: the session server and clients log how long frames take (`timing:` lines; `scripts/timing.sh`, `doc/performance.md`) |
 | `TEMZDF_GUI` | the `temzdf-gui` that `temzdf ls-fonts` runs (default: next to `temzdf`, else on `PATH`) |
 
 `temzdf ls-fonts` shows the fonts GUI clients use, as `wezterm ls-fonts`

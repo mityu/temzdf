@@ -32,8 +32,11 @@ impl Connection {
         let (tx, rx) = mpsc::channel();
         std::thread::Builder::new().name("temzdf-gui-server".into()).spawn(move || {
             loop {
-                let msg = match proto::recv::<ServerMsg>(&mut reader) {
-                    Ok(Some(m)) => FromServer::Msg(m),
+                let msg = match proto::recv_timed::<ServerMsg>(&mut reader) {
+                    Ok(Some((m, took))) => {
+                        log_received(&m, took);
+                        FromServer::Msg(m)
+                    }
                     _ => FromServer::Gone,
                 };
                 let gone = matches!(msg, FromServer::Gone);
@@ -52,6 +55,18 @@ impl Connection {
     pub fn send(&self, msg: &ClientMsg) -> std::io::Result<()> {
         let mut w = self.writer.lock().unwrap_or_else(|p| p.into_inner());
         proto::send(&mut *w, msg)
+    }
+}
+
+/// With `TEMZDF_TIMING`: how long a frame took to read and decode.
+fn log_received(msg: &ServerMsg, took: std::time::Duration) {
+    if proto::timing()
+        && let Some((seq, images, bytes)) = proto::frame_size(msg)
+    {
+        eprintln!(
+            "timing: received frame {seq} ({images} images, {bytes} bytes of pixels) in {:.2} ms",
+            proto::ms(took)
+        );
     }
 }
 

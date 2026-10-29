@@ -14,6 +14,8 @@ pub mod script;
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use temzdf_scene::{Appearance, Effect, Frame, Hints, ImageUpdate};
@@ -121,12 +123,19 @@ pub fn send<T: Serialize>(w: &mut impl Write, msg: &T) -> io::Result<()> {
 
 /// Read one message; `Ok(None)` at a clean end of the stream.
 pub fn recv<T: for<'de> Deserialize<'de>>(r: &mut impl Read) -> io::Result<Option<T>> {
+    Ok(recv_timed(r)?.map(|(msg, _)| msg))
+}
+
+/// [`recv`], with how long the message took once its first bytes came
+/// (reading and decoding, not waiting for it).
+pub fn recv_timed<T: for<'de> Deserialize<'de>>(r: &mut impl Read) -> io::Result<Option<(T, Duration)>> {
     let mut len = [0u8; 4];
     match r.read_exact(&mut len) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(e) => return Err(e),
     }
+    let start = Instant::now();
     let len = u32::from_le_bytes(len) as usize;
     if len > MAX_MESSAGE {
         return Err(io::Error::new(io::ErrorKind::InvalidData, format!("message of {len} bytes")));
@@ -138,7 +147,33 @@ pub fn recv<T: for<'de> Deserialize<'de>>(r: &mut impl Read) -> io::Result<Optio
     if body.len() < len {
         return Err(io::ErrorKind::UnexpectedEof.into());
     }
-    postcard::from_bytes(&body).map(Some).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    let msg = postcard::from_bytes(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    Ok(Some((msg, start.elapsed())))
+}
+
+/// Whether to log how long frames take on their way (`TEMZDF_TIMING` set,
+/// to anything): the server and the clients write `timing:` lines to their
+/// logs (`doc/performance.md`, "Session socket").
+pub fn timing() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("TEMZDF_TIMING").is_some_and(|v| !v.is_empty()))
+}
+
+/// A frame message's sequence number, images set and their bytes of
+/// pixels, for timing logs.
+pub fn frame_size(msg: &ServerMsg) -> Option<(u64, usize, usize)> {
+    let ServerMsg::Frame { seq, updates, .. } = msg else { return None };
+    let set = updates.iter().filter_map(|u| match u {
+        ImageUpdate::Set(_, image) => Some(image.pixels.len()),
+        ImageUpdate::Remove(_) => None,
+    });
+    let (images, bytes) = set.fold((0, 0), |(n, b), len| (n + 1, b + len));
+    Some((*seq, images, bytes))
+}
+
+/// Milliseconds, for timing logs.
+pub fn ms(d: Duration) -> f64 {
+    d.as_secs_f64() * 1e3
 }
 
 /// The per-user directory for sockets: `$XDG_RUNTIME_DIR`, else the per-user
@@ -430,6 +465,98 @@ mod tests {
         assert!(recv::<ClientMsg>(&mut huge.as_slice()).is_err());
         let garbled = [3u8, 0, 0, 0, 0xff, 0xff, 0xff];
         assert!(recv::<ClientMsg>(&mut garbled.as_slice()).is_err());
+    }
+
+    /// What a frame of N 512 px RGBA tiles costs between the session server
+    /// and a client on this machine, by stage (`doc/performance.md`):
+    /// `cargo test --release -p temzdf-protocol socket_throughput -- --ignored --nocapture`.
+    /// `copy` is one memcpy of the pixels, what shared memory would still cost.
+    #[test]
+    #[ignore]
+    fn socket_throughput() {
+        use std::io::{BufReader, Read, Write};
+        use std::os::unix::net::UnixStream;
+        use std::time::{Duration, Instant};
+        const TILE: u32 = 512;
+        const RUNS: usize = 7;
+        let median = |mut v: Vec<Duration>| {
+            v.sort();
+            v[v.len() / 2].as_secs_f64() * 1e3
+        };
+        let (mut tx, rx) = UnixStream::pair().unwrap();
+        let mut rx = BufReader::new(rx);
+        for n in [1usize, 4, 12, 30] {
+            let mut images = Images::new();
+            for i in 0..n {
+                let px: Vec<u8> = (0..TILE * TILE * 4).map(|b| (b as usize * 31 + i) as u8).collect();
+                images.add(TILE, TILE, px);
+            }
+            let msg =
+                ServerMsg::Frame { seq: 1, updates: images.take_updates(), frame: Frame::default(), complete: true };
+            let bytes = postcard::to_stdvec(&msg).unwrap().len();
+            let (mut ser, mut socket, mut de, mut total, mut copy) = (vec![], vec![], vec![], vec![], vec![]);
+            // The first run warms up the socket and the allocator.
+            for run in 0..=RUNS {
+                let t = Instant::now();
+                let body = postcard::to_stdvec(&msg).unwrap();
+                let d_ser = t.elapsed();
+                // The bytes alone through the socket, into a buffer of the
+                // right size.
+                let sender = {
+                    let mut tx = tx.try_clone().unwrap();
+                    let body = body.clone();
+                    std::thread::spawn(move || tx.write_all(&body).unwrap())
+                };
+                let t = Instant::now();
+                let mut buf = vec![0; body.len()];
+                rx.read_exact(&mut buf).unwrap();
+                let d_socket = t.elapsed();
+                sender.join().unwrap();
+                let t = Instant::now();
+                let back: ServerMsg = postcard::from_bytes(&buf).unwrap();
+                let d_de = t.elapsed();
+                drop(back);
+                // As the server and the clients do it: send on one thread,
+                // recv on another.
+                let sender = {
+                    let mut tx = tx.try_clone().unwrap();
+                    let msg = msg.clone();
+                    std::thread::spawn(move || {
+                        let t = Instant::now();
+                        send(&mut tx, &msg).unwrap();
+                        t
+                    })
+                };
+                let got = recv::<ServerMsg>(&mut rx).unwrap().unwrap();
+                let d_total = sender.join().unwrap().elapsed();
+                assert!(matches!(got, ServerMsg::Frame { .. }));
+                let t = Instant::now();
+                let mut out = vec![0u8; bytes];
+                out.copy_from_slice(&body);
+                std::hint::black_box(&out);
+                let d_copy = t.elapsed();
+                if run > 0 {
+                    ser.push(d_ser);
+                    socket.push(d_socket);
+                    de.push(d_de);
+                    total.push(d_total);
+                    copy.push(d_copy);
+                }
+            }
+            let total_ms = median(total);
+            eprintln!(
+                "BENCH tiles={n:2} MB={:5.1}  serialize={:6.2} ms  socket={:6.2} ms  deserialize={:6.2} ms  \
+                 send+recv={:6.2} ms ({:5.0} MB/s)  copy={:5.2} ms",
+                bytes as f64 / 1e6,
+                median(ser),
+                median(socket),
+                median(de),
+                total_ms,
+                bytes as f64 / 1e3 / total_ms,
+                median(copy),
+            );
+        }
+        let _ = tx.flush();
     }
 
     #[cfg(target_os = "macos")]

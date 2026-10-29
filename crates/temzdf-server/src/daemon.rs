@@ -41,8 +41,8 @@ struct Client {
     attached: bool,
     /// Image changes not sent yet (the latest for each image).
     pending: HashMap<ImageKey, ImageUpdate>,
-    /// A frame was sent and not acknowledged yet.
-    awaiting: bool,
+    /// When a frame was sent that is not acknowledged yet.
+    awaiting: Option<Instant>,
     /// The sequence number of the last frame sent.
     shown: u64,
     /// Its terminal's size and frontend, as last reported: they apply
@@ -139,7 +139,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
             if dirty
                 && made.elapsed() >= FRAME
                 && !session.holds_frames()
-                && clients.values().any(|c| c.attached && !c.awaiting)
+                && clients.values().any(|c| c.attached && c.awaiting.is_none())
             {
                 made = Instant::now();
                 let frame = session.frame();
@@ -156,10 +156,10 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 session.images().take_updates();
             }
             if let Some((seq, frame, complete)) = &last_frame {
-                for c in clients.values_mut().filter(|c| c.attached && !c.awaiting && c.shown < *seq) {
+                for c in clients.values_mut().filter(|c| c.attached && c.awaiting.is_none() && c.shown < *seq) {
                     let updates = c.pending.drain().map(|(_, u)| u).collect();
                     let msg = ServerMsg::Frame { seq: *seq, updates, frame: frame.clone(), complete: *complete };
-                    c.awaiting = c.tx.send(msg).is_ok();
+                    c.awaiting = c.tx.send(msg).is_ok().then(Instant::now);
                     c.shown = *seq;
                 }
             }
@@ -202,7 +202,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                         tx: ctx,
                         attached: false,
                         pending: HashMap::new(),
-                        awaiting: false,
+                        awaiting: None,
                         shown: 0,
                         geometry: None,
                         hints: None,
@@ -258,9 +258,14 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     }
                 }
                 ClientMsg::Resize(g) => dirty |= resized(&mut session, latest, &mut clients, id, g),
-                ClientMsg::FrameAck(_) => {
-                    if let Some(c) = clients.get_mut(&id) {
-                        c.awaiting = false;
+                ClientMsg::FrameAck(seq) => {
+                    if let Some(sent) = clients.get_mut(&id).and_then(|c| c.awaiting.take())
+                        && proto::timing()
+                    {
+                        eprintln!(
+                            "timing: client {id} acknowledged frame {seq} {:.2} ms after it was queued",
+                            proto::ms(sent.elapsed())
+                        );
                     }
                 }
                 ClientMsg::Report(m) => {
@@ -369,7 +374,7 @@ const FIRST_MESSAGE_WITHIN: Duration = Duration::from_secs(10);
 fn can_send(session: &Session, clients: &HashMap<ClientId, Client>) -> bool {
     !session.is_starting()
         && session.error().is_none()
-        && clients.values().any(|c| c.attached && !c.awaiting)
+        && clients.values().any(|c| c.attached && c.awaiting.is_none())
         && !session.holds_frames()
 }
 
@@ -554,7 +559,15 @@ fn start_writer(mut stream: UnixStream, rx: mpsc::Receiver<ServerMsg>) -> Result
     std::thread::Builder::new().name("temzdf-client-out".into()).spawn(move || {
         for msg in rx {
             let exit = matches!(msg, ServerMsg::Exit(_) | ServerMsg::Info(_) | ServerMsg::Done(_));
-            if proto::send(&mut stream, &msg).is_err() || exit {
+            let start = Instant::now();
+            let sent = proto::send(&mut stream, &msg);
+            if proto::timing()
+                && let Some((seq, images, bytes)) = proto::frame_size(&msg)
+            {
+                let ms = proto::ms(start.elapsed());
+                eprintln!("timing: sent frame {seq} ({images} images, {bytes} bytes of pixels) in {ms:.2} ms");
+            }
+            if sent.is_err() || exit {
                 let _ = stream.shutdown(std::net::Shutdown::Both);
                 return;
             }
@@ -731,7 +744,7 @@ mod tests {
             tx: mpsc::channel().0,
             attached: true,
             pending: HashMap::new(),
-            awaiting: false,
+            awaiting: None,
             shown: 0,
             geometry: None,
             hints: None,
@@ -800,7 +813,7 @@ mod tests {
             tx: mpsc::channel().0,
             attached: true,
             pending: HashMap::new(),
-            awaiting: false,
+            awaiting: None,
             shown: 0,
             geometry: Some(Geometry { cols, rows, ..DEFAULT_GEOMETRY }),
             hints: Some(Hints::default()),
@@ -831,7 +844,7 @@ mod tests {
             tx: mpsc::channel().0,
             attached: true,
             pending: HashMap::new(),
-            awaiting: false,
+            awaiting: None,
             shown: 0,
             geometry: Some(Geometry { cols, ..DEFAULT_GEOMETRY }),
             hints: Some(Hints::default()),
@@ -862,7 +875,7 @@ mod tests {
             tx: mpsc::channel().0,
             attached,
             pending: HashMap::new(),
-            awaiting: false,
+            awaiting: None,
             shown: 0,
             geometry: None,
             hints: None,

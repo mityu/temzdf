@@ -1,0 +1,41 @@
+# What frames cost between the session server and a client (the GUI or a
+# terminal): run with TEMZDF_TIMING=1 in the environment, then read the
+# `timing:` lines with scripts/timing.sh OUTDIR (doc/performance.md,
+# "Session socket").
+# Used with:
+#   cargo build --release -p temzdf -p temzdf-gui
+#   TEMZDF_TIMING=1 scripts/e2e.sh -t gui -o target/e2e-perf-gui tests/e2e/perf.actions -- \
+#     target/release/temzdf-gui --clean target/fixtures/sample.pdf
+#   TEMZDF_TIMING=1 scripts/e2e.sh -o target/e2e-perf-kitty tests/e2e/perf.actions -- \
+#     target/release/temzdf --clean target/fixtures/sample.pdf
+# HiDPI on X11: WINIT_X11_SCALE_FACTOR=2 and -s 1800x1200 (the GUI).
+# Not judged. Covers the heavy moments: the first screen, zooming in and out
+# by steps, jumping to the last page and back, paging down, scrolling, and a
+# reload of the whole document.
+pause 2
+keys plus
+pause 1
+keys plus
+pause 1
+keys plus
+pause 1
+keys minus
+pause 1
+keys minus
+pause 1
+keys minus
+pause 1
+keys shift+g
+pause 1
+keys g g
+pause 1
+keys space
+pause 1
+keys space
+pause 1
+wheel 10
+pause 1
+wheel -10
+pause 1
+touch target/fixtures/sample.pdf
+pause 2

@@ -54,11 +54,17 @@ impl View {
     pub fn apply(&mut self, msg: ServerMsg) -> Applied {
         match msg {
             ServerMsg::Frame { seq, updates, frame, complete } => {
+                let start = std::time::Instant::now();
+                let uploads = updates.len();
                 for u in updates {
                     match u {
                         ImageUpdate::Set(k, image) => self.renderer.set_image(k, &image),
                         ImageUpdate::Remove(k) => self.renderer.remove_image(k),
                     }
+                }
+                if uploads > 0 && temzdf_protocol::timing() {
+                    let ms = temzdf_protocol::ms(start.elapsed());
+                    eprintln!("timing: uploaded the images of frame {seq} in {ms:.2} ms");
                 }
                 self.frame = Some((seq, frame));
                 Applied::Frame(seq, complete)

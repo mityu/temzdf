@@ -91,7 +91,15 @@ pub fn attach(name: &str) -> Result<String> {
     front.spawn_input(tx.clone(), Event::Term)?;
     let mut reader = std::io::BufReader::new(stream.try_clone()?);
     std::thread::Builder::new().name("temzdf-server-in".into()).spawn(move || {
-        while let Ok(Some(msg)) = proto::recv::<ServerMsg>(&mut reader) {
+        while let Ok(Some((msg, took))) = proto::recv_timed::<ServerMsg>(&mut reader) {
+            if proto::timing()
+                && let Some((seq, images, bytes)) = proto::frame_size(&msg)
+            {
+                eprintln!(
+                    "timing: received frame {seq} ({images} images, {bytes} bytes of pixels) in {:.2} ms",
+                    proto::ms(took)
+                );
+            }
             if tx.send(Event::Server(msg)).is_err() {
                 return;
             }
@@ -112,7 +120,12 @@ pub fn attach(name: &str) -> Result<String> {
         if let Some((seq, frame, complete)) = &mut pending
             && front.ready()
         {
-            match front.present(frame, *complete)? {
+            let start = std::time::Instant::now();
+            let presented = front.present(frame, *complete)?;
+            if proto::timing() && *seq > 0 {
+                eprintln!("timing: presented frame {seq} ({presented:?}) in {:.2} ms", proto::ms(start.elapsed()));
+            }
+            match presented {
                 Presented::Shown => {
                     if *seq > 0 && send(ClientMsg::FrameAck(*seq)).is_err() {
                         break ended(&rx);
