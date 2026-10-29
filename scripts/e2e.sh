@@ -10,11 +10,13 @@
 #             window manager (X11; sway on Wayland) on lavapipe
 #             ($TEMZDF_LAVAPIPE_ICD); on X11 the screen is 100 px larger each
 #             way for its decorations
-#   -I        (gui) Japanese input: fcitx5 with Mozc (its HOME in OUTDIR),
-#             XMODIFIERS set; `ime on` / `ime off` switch it
+#   -I        (gui) Japanese input: fcitx5 with Mozc (its HOME in OUTDIR,
+#             ended with the run), over XIM on X11 (XMODIFIERS), over
+#             input-method-v2 and text-input-v3 on Wayland; `ime on` /
+#             `ime off` switch it
 #   -d DISP   display server: x11 (default; Xvfb, xdotool, import) or wayland
 #             (headless sway; keys and pointer through crates/wlinput, built
-#             here; screenshots with grim; no -I yet); macos (the default
+#             here; screenshots with grim); macos (the default
 #             there): the terminal or the GUI on a virtual display at scale 1
 #             beside the real screen, keys and the pointer through `termctl
 #             serve` (scripts/macos/termctl.swift; the window is in front for
@@ -152,9 +154,10 @@ if runs_temzdf "$@" && [[ "$*" != *--clean* ]]; then
 fi
 case $display in
   x11) ;;
-  wayland | macos)
+  wayland) ;;
+  macos)
     if [[ -n $ime ]]; then
-      echo "e2e.sh: -I is X11 only so far" >&2
+      echo "e2e.sh: -I is X11 and Wayland only so far" >&2
       exit 2
     fi
     ;;
@@ -169,9 +172,12 @@ width=${size%x*}
 height=${size#*x}
 
 if [[ -z "${E2E_INNER:-}" && $display == wayland ]]; then
-  # Headless sway starts below, in the run's own runtime directory.
+  # Headless sway starts below, in the run's own runtime directory. An
+  # input method needs a session bus.
   export E2E_INNER=1
-  exec "$self" -t "$term" -d wayland ${mux:+-m "$mux"} -s "$size" -o "$outdir" "$actions" -- "$@"
+  bus=()
+  [[ -n $ime ]] && bus=(dbus-run-session --)
+  exec "${bus[@]}" "$self" -t "$term" -d wayland ${mux:+-m "$mux"} ${ime:+-I} -s "$size" -o "$outdir" "$actions" -- "$@"
 fi
 if [[ -z "${E2E_INNER:-}" && $display == x11 ]]; then
   export E2E_INNER=1
@@ -838,6 +844,18 @@ cleanup() {
     tc done || true
     eval "exec ${TC[1]}>&-"
   fi
+  if [[ -n $ime ]]; then
+    # fcitx5 and the mozc_server it starts outlive the run (Mozc's server
+    # daemonizes): end those of this run, known by their HOME.
+    fcitx5-remote -e 2>/dev/null || true
+    local p
+    for p in /proc/[0-9]*; do
+      [[ -O $p/environ ]] || continue
+      if tr '\0' '\n' 2>/dev/null <"$p/environ" | grep -qxF "HOME=$outdir/ime"; then
+        kill "${p#/proc/}" 2>/dev/null || true
+      fi
+    done
+  fi
   if [[ -n $term_pid ]]; then
     kill "$term_pid" 2>/dev/null || true
     wait "$term_pid" 2>/dev/null || true
@@ -1052,9 +1070,11 @@ case $term in
       mkdir -p "$outdir/ime/.config/fcitx5"
       printf '[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=mozc\n\n[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n[Groups/0/Items/1]\nName=mozc\nLayout=\n\n[GroupOrder]\n0=Default\n' \
         >"$outdir/ime/.config/fcitx5/profile"
+      # On X11 through XIM; on Wayland sway hands it the keys
+      # (input-method-v2) and the GUI gets the text (text-input-v3).
       HOME="$outdir/ime" XDG_CONFIG_HOME="$outdir/ime/.config" fcitx5 -d --replace >"$outdir/ime.log" 2>&1
       sleep 2
-      gui_env+=(XMODIFIERS=@im=fcitx)
+      [[ $display == x11 ]] && gui_env+=(XMODIFIERS=@im=fcitx)
     fi
     "${clean_env[@]}" "${gui_env[@]}" "$@" >"$outdir/terminal.log" 2>&1 &
     startup=5

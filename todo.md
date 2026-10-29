@@ -64,10 +64,10 @@ server on one `Session`). Next and open:
   2. `-d wayland` on headless sway with `crates/wlinput` (wtype and
   wlrctl did not do: a virtual device per call), kitty and the GUI
   (`doc/testing.md`, "X11, Wayland and macOS"), every terminal and the
-  GUI; 3. `-d macos` (`termctl serve` and a virtual display at scale 1;
-  `doc/macos.md`), every terminal and the GUI. Left: `-I` (fcitx5) on
-  Wayland, kitty's `viewer` zoom on macOS (three wheel reports per notch
-  make it deeper than its pause allows), and:
+  GUI, `-I` (fcitx5) too; 3. `-d macos` (`termctl serve` and a virtual
+  display at scale 1; `doc/macos.md`), every terminal and the GUI. Left:
+  kitty's `viewer` zoom on macOS (three wheel reports per notch make it
+  deeper than its pause allows), and:
   4. Windows: no bash, so then one small Rust driver for every platform
      (`crates/wlinput` is its Wayland part), `enigo` (input; Wayland and
      libei still experimental behind feature flags) with `xcap` (screen and
