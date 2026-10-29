@@ -55,8 +55,15 @@ if ((${#terms[@]} == 0)); then
   [[ -z $in_vm ]] && terms=(kitty "${terms[@]}")
 fi
 
-# The terminal scenarios, in a stable order.
-judged=(session terminal terminal-extras tabs floats resize float-wide expect links preview search select viewer synctex reload)
+# The terminal scenarios, in a stable order, and the GUI's. Not on macOS:
+# gui-focus (AppKit sends no presses for keys held on focus-in) and gui-ime
+# (-I, fcitx5, is Linux's).
+judged=(session terminal terminal-extras tabs floats resize float-wide expect links preview search select viewer synctex
+  synctex-reload reload)
+gui_judged=(gui gui-focus gui-ime)
+if [[ $(uname) == Darwin ]]; then
+  gui_judged=(gui)
+fi
 
 # A session's command: a shell that starts session NAME and stays after.
 session() { cmd=(sh -c "SHELL=/bin/sh PS1=\"\$ \" target/debug/temzdf --clean -s $1; exec sh"); }
@@ -83,12 +90,21 @@ scenario() {
       rm -f target/e2e-sync/inverse.txt
       pdf --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf
       ;;
+    synctex-reload)
+      mkdir -p target/e2e-sync-reload
+      cp target/fixtures/sample.pdf target/fixtures/sample.synctex.gz target/e2e-sync-reload/
+      pdf target/e2e-sync-reload/sample.pdf
+      ;;
     reload)
       mkdir -p target/e2e-reload
       cp target/fixtures/sample.pdf target/e2e-reload/doc.pdf
       pdf target/e2e-reload/doc.pdf
       ;;
     gui) cmd=(target/debug/temzdf-gui --clean target/fixtures/sample.pdf) ;;
+    gui-focus | gui-ime)
+      cmd=(env SHELL=/bin/sh 'PS1=$ ' target/debug/temzdf-gui --clean)
+      if [[ $1 == gui-ime ]]; then opts=(-I); fi
+      ;;
     expect | links | preview | search | select | viewer) pdf ;;
     *)
       echo "e2e-all.sh: no command for scenario $1" >&2
@@ -106,7 +122,11 @@ run_one() {
   local t=$1 s=$2 out=$outdir/$1/$2 t0=$SECONDS rc p=0 f=0 k=0
   rm -rf "$out"
   mkdir -p "$out"
-  scenario "$s" || { echo "$t $s: no command" >"$out.line"; return; }
+  if ! scenario "$s"; then
+    echo "$t $s: no command" >"$out.line"
+    ((jobs > 1)) || cat "$out.line"
+    return
+  fi
   scripts/e2e.sh -t "$t" "${pass[@]}" "${opts[@]}" -o "$out" "tests/e2e/$s.actions" -- "${cmd[@]}" >"$out.log" 2>&1
   rc=$?
   if [[ -f $out/expect.txt ]]; then
@@ -133,13 +153,13 @@ for t in "${terms[@]}"; do
   if (($# > 0)); then
     list=("$@")
   elif [[ $t == gui ]]; then
-    list=(gui)
+    list=("${gui_judged[@]}")
   else
     list=("${judged[@]}")
   fi
   for s in "${list[@]}"; do
-    # The GUI runs its own scenario only, terminals not that one.
-    if [[ $t == gui && $s != gui ]] || [[ $t != gui && $s == gui ]]; then continue; fi
+    # The GUI runs its own scenarios only (gui*), terminals not those.
+    if [[ $t == gui && $s != gui* ]] || [[ $t != gui && $s == gui* ]]; then continue; fi
     [[ -n ${in_terms[$s]:-} ]] || order+=("$s")
     in_terms[$s]+="$t "
     rm -f "$outdir/$t/$s.line" "$outdir/$t/$s.counts"

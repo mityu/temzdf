@@ -7,7 +7,7 @@
 #   cargo build -p temzdf -p temzdf-gui
 #   scripts/e2e.sh -t gui -o target/e2e-gui-focus tests/e2e/gui-focus.actions -- \
 #     env SHELL=/bin/sh PS1='$ ' target/debug/temzdf-gui --clean
-# Expected: focus.txt holds "got:" (not "got:d").
+# Judged (check): focus.txt holds "got:" (not "got:d") (focus).
 pause 1
 type "read l; echo \"got:\$l\" > $outdir/focus.txt
 "
@@ -27,3 +27,4 @@ pause 0.3
 keys Return
 pause 1
 shot done
+check focus grep -qx "got:" "$outdir/focus.txt"

@@ -178,8 +178,8 @@ Details and why in `doc/macos.md`; what differs per terminal in
 every judged scenario (56); kitty all but `viewer`'s zoom (it reports
 three wheel steps per notch, so the zoom is three times as deep and its
 tiles are not there yet after the scenario's pause; they are with a longer
-one); Ghostty all (text checks SKIP); the GUI `gui`. `gui-focus` is X11's
-and not run there; `-I` and multiplexers are not tried there.
+one); Ghostty all (text checks SKIP); the GUI `gui`. `gui-focus` (X11's and
+Wayland's synthetic presses on focus-in) is not run there; `-I` and multiplexers are not tried there.
 `scripts/macos-vm.sh` runs the same in a macOS VM, on its own screen, so
 the host's pointer stays free ("Running in a VM" in `doc/macos.md`).
 
@@ -189,7 +189,11 @@ script) in the given terminals and sums up PASS/FAIL/SKIP per scenario;
 `scripts/macos-vm.sh e2e-all` runs it in the VM in one go. Each run writes
 when its phases began to `OUTDIR/timing.txt` (launch, window, written,
 ready, actions, `expect NAME` and `expected NAME` around each headless
-render, quit, done; milliseconds), for seeing where the time goes.
+render, quit, done; milliseconds), for seeing where the time goes. The
+GUI's scenarios are `gui`, `gui-focus` and `gui-ime` (with `-I`; the last two
+not on macOS); `gui-focus` and `gui-ime` judge what the shell wrote with
+`check` (`focus.txt`, `ime.txt`, `pasted.txt`); `gui-ime`'s composing screen
+stays unjudged.
 
 What makes the runs quick, on every display:
 
@@ -213,7 +217,8 @@ X11, kitty, Ghostty, WezTerm and the GUI (46 runs, 175 checks; 28 hardware
 threads, 2026-10-29): 884 s before; 678 s waiting for the first screen
 (starting took 232 s of it, then 33 s); 630 s with `-R`; 165 s with
 `-j 4`, 88 s with `-j 8`, everything passing (`-j 8` twice more on X11
-and Wayland too). Wayland: 683 s before.
+and Wayland too). Wayland: 683 s before. With `gui-focus`, `gui-ime` and
+`synctex-reload` added (182 checks): 96 s on X11, 65 s on Wayland (`-R -j 8`).
 
 ## Judged e2e scenarios
 
