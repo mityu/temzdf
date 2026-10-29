@@ -160,12 +160,37 @@ and not run there; `-I` and multiplexers are not tried there.
 `scripts/macos-vm.sh` runs the same in a macOS VM, on its own screen, so
 the host's pointer stays free ("Running in a VM" in `doc/macos.md`).
 
-`scripts/e2e-all.sh [-t TERM]... [SCENARIO...]` runs the judged scenarios
-(each with its "Used with:" command, kept in the script) in the given
-terminals and sums up PASS/FAIL/SKIP per scenario; `scripts/macos-vm.sh
-e2e-all` runs it in the VM in one go. Each run writes when its phases
-began to `OUTDIR/timing.txt` (launch, window, geometry, ready, actions,
-quit, done; milliseconds), for seeing where the time goes.
+`scripts/e2e-all.sh [-t TERM]... [-d DISP] [-P PATH] [-j N] [-R] [SCENARIO...]`
+runs the judged scenarios (each with its "Used with:" command, kept in the
+script) in the given terminals and sums up PASS/FAIL/SKIP per scenario;
+`scripts/macos-vm.sh e2e-all` runs it in the VM in one go. Each run writes
+when its phases began to `OUTDIR/timing.txt` (launch, window, written,
+ready, actions, `expect NAME` and `expected NAME` around each headless
+render, quit, done; milliseconds), for seeing where the time goes.
+
+What makes the runs quick, on every display:
+
+- The first screen is waited for, not a fixed 3 to 6 s: temzdf logs
+  `first complete frame written` once its first complete frame has left
+  the writer (`temzdf-tty`), then the screen must stand still for 150 ms
+  and not be of one colour (kitty took up to 2 s to show what temzdf had
+  written: a black screen stood still). The old time is the limit. Inside
+  a multiplexer the fixed wait stays: images that reach tmux before its
+  client is attached show only later.
+- The end waits for the terminal to go (at most half a second).
+- `-R`: `expect`'s headless renders with release builds
+  (`E2E_RENDERER`, `E2E_GUI_RENDERER` of `scripts/e2e.sh`; `-R` builds
+  them), about 300 ms each instead of 630 on Linux.
+- `-j N` (Linux): N scenarios at once, each with its own Xvfb (display
+  300 + slot: `xvfb-run -a` gave two runs started together the same
+  display, and kitty crashed) or sway. A scenario runs in its terminals
+  one after another, as some use fixed paths (`target/e2e-sync`, ...).
+
+X11, kitty, Ghostty, WezTerm and the GUI (46 runs, 175 checks; 28 hardware
+threads, 2026-10-29): 884 s before; 678 s waiting for the first screen
+(starting took 232 s of it, then 33 s); 630 s with `-R`; 165 s with
+`-j 4`, 88 s with `-j 8`, everything passing (`-j 8` twice more on X11
+and Wayland too). Wayland: 683 s before.
 
 ## Judged e2e scenarios
 

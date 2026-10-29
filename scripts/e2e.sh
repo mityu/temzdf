@@ -101,9 +101,14 @@
 #
 # temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log;
 # when each phase of the run began goes to OUTDIR/timing.txt (milliseconds).
-# It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij;
-# on macOS only until temzdf logged its geometry and the screen stood still
-# for 150 ms, at most that long) and sends `q` at the end. It does not check results; inspect the screenshots (or
+# It waits for the first screen (temzdf's log says its first complete frame
+# was written, then the screen stands still for 150 ms; at most 3 s, 6 s for
+# Ghostty and WezTerm, 5 s for the GUI; inside a multiplexer that long, 3 s
+# more in zellij, 1 s in tmux) and sends `q` at the end, waiting up to half a second for the
+# terminal to go. E2E_RENDERER (a temzdf) and E2E_GUI_RENDERER (a temzdf-gui)
+# draw `expect`'s headless renders instead of COMMAND's builds (release
+# builds are quicker; scripts/e2e-all.sh -R); E2E_XVFB_DISPLAY picks the
+# Xvfb display number instead of a free one. It does not check results; inspect the screenshots (or
 # compare pixels) afterwards. The
 # command runs without ZELLIJ/TMUX in its environment so a multiplexer around the
 # harness does not leak into terminal detection, without TEMZDF_SESSION_NAME
@@ -202,7 +207,12 @@ if [[ -z "${E2E_INNER:-}" && $display == x11 ]]; then
   # An input method needs a session bus.
   bus=()
   [[ -n $ime ]] && bus=(dbus-run-session --)
-  exec xvfb-run -a -s "-screen 0 ${screen}x24" "${bus[@]}" "$self" -t "$term" ${mux:+-m "$mux"} ${ime:+-I} \
+  # A free display number (-a), or E2E_XVFB_DISPLAY's: runs started at the
+  # same moment can pick the same free one (scripts/e2e-all.sh -j gives each
+  # its own).
+  server=(-a)
+  [[ -n ${E2E_XVFB_DISPLAY:-} ]] && server=(-n "$E2E_XVFB_DISPLAY")
+  exec xvfb-run "${server[@]}" -s "-screen 0 ${screen}x24" "${bus[@]}" "$self" -t "$term" ${mux:+-m "$mux"} ${ime:+-I} \
     -s "$size" -o "$outdir" "$actions" -- "$@"
 fi
 
@@ -592,25 +602,29 @@ mask_window_edges() {
   magick "$outdir/$name.actual.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.actual.png"
   magick "$outdir/$name.expected.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.expected.png"
 }
-# Wait until the first screen is up, at most LIMIT seconds (the fixed wait
-# used elsewhere): temzdf's geometry line in its log (it is drawing), then
-# the screen unchanged over 150 ms (the first frame and its tiles are there).
+# Wait until the first screen is up, at most LIMIT seconds (what a fixed wait
+# took before): temzdf's log saying it wrote a complete first frame (when
+# the command runs temzdf in the terminal), then the screen unchanged over
+# 150 ms and not of one colour (the terminal has drawn it). Returns at
+# once when the terminal (or the GUI) ended.
 wait_ready() {
   local limit=$1 deadline log=$outdir/state/temzdf/temzdf.log a=$outdir/ready.a.png b=$outdir/ready.b.png
-  shift
   deadline=$(($(usec) + limit * 1000000))
-  if [[ $term != gui ]] && runs_temzdf "$@"; then
-    until grep -qs 'geometry .* cells of' "$log"; do
-      (($(usec) < deadline)) || break
+  if [[ -n $temzdf_in_terminal ]]; then
+    until grep -qs 'first complete frame written' "$log"; do
+      (($(usec) < deadline)) && kill -0 "$term_pid" 2>/dev/null || break
       sleep 0.05
     done
-    phase geometry
+    phase written
   fi
   be_shot "$a"
-  while (($(usec) < deadline)); do
+  while (($(usec) < deadline)) && kill -0 "$term_pid" 2>/dev/null; do
     sleep 0.15
     be_shot "$b"
-    if cmp -s "$a" "$b"; then
+    # A screen of one colour is a terminal that has drawn nothing yet (kitty
+    # took up to 2 s to show what temzdf had written); every first screen
+    # has something on it (a status bar, a prompt).
+    if cmp -s "$a" "$b" && (($(magick "$b" -format %k info:) > 1)); then
       rm -f "$a" "$b"
       phase ready
       return
@@ -626,11 +640,13 @@ expect_gui() {
   local name=$1 session out
   shot "$name"
   session=$("$temzdf" ls | head -1 | cut -d' ' -f1)
-  "${clean_env[@]}" VK_DRIVER_FILES="${TEMZDF_LAVAPIPE_ICD:-}" "$gui_bin" --render-frame "$outdir/$name.expected.png" \
+  phase "expect $name"
+  "${clean_env[@]}" VK_DRIVER_FILES="${TEMZDF_LAVAPIPE_ICD:-}" "${E2E_GUI_RENDERER:-$gui_bin}" --render-frame "$outdir/$name.expected.png" \
     -s "$session" --size "${win_w}x${win_h}" 2>"$outdir/$name.expected.log" || {
     echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
     return
   }
+  phase "expected $name"
   magick "$outdir/$name.png" -crop "${win_w}x${win_h}+$origin_x+$origin_y" +repage "$outdir/$name.actual.png"
   mask_window_edges "$name" "$win_w" "$win_h"
   out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.actual.png" "$outdir/$name.expected.png" \
@@ -670,12 +686,14 @@ expect_session() {
   [[ $backend != Layered ]] && flags+=(--exact-scaling)
   [[ $medium != Direct ]] && flags+=(--fast-uploads)
   [[ $term == kitty || $term == ghostty ]] && flags+=(--linear-blending)
-  "$temzdf" render-session "$session" "$outdir/$name.expected.png" --size "${cols}x${rows}" --cell "${cw}x${ch}" \
-    --text "$outdir/$name.expected.txt" --mask "$outdir/$name.mask.png" "${flags[@]}" \
+  phase "expect $name"
+  "${E2E_RENDERER:-$temzdf}" render-session "$session" "$outdir/$name.expected.png" --size "${cols}x${rows}" \
+    --cell "${cw}x${ch}" --text "$outdir/$name.expected.txt" --mask "$outdir/$name.mask.png" "${flags[@]}" \
     2>"$outdir/$name.expected.log" || {
     echo "FAIL $name: render-session failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
     return
   }
+  phase "expected $name"
   as_terminal_shows "$outdir/$name.expected.png"
   # Pixels where the images show: the cells the terminal draws go black on
   # both sides.
@@ -783,11 +801,13 @@ expect() {
   }
   read -r cols rows cw ch <<<"$(sed -E 's/geometry ([0-9]+)x([0-9]+) cells of ([0-9]+)x([0-9]+) px/\1 \2 \3 \4/' <<<"$geo")"
   # --keys=...: key lists may start with "-" (zoom out).
+  phase "expect $name"
   "${expect_cmd[@]}" --render-frame "$outdir/$name.expected.png" --size "${cols}x${rows}" \
     --cell "${cw}x${ch}" "${input[@]}" "$expect_file" 2>"$outdir/$name.expected.log" || {
     echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
     return
   }
+  phase "expected $name"
   # The terminal may have spare pixels right and below the cell grid.
   magick "$outdir/$name.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage "$outdir/$name.actual.png"
   as_terminal_shows "$outdir/$name.expected.png"
@@ -812,7 +832,7 @@ expect_cmd=() expect_file=
 args=("$@")
 while [[ ${#args[@]} -gt 0 && ( ${args[0]} == env || ${args[0]} == *=* ) ]]; do args=("${args[@]:1}"); done
 if ((${#args[@]} > 0)); then
-  expect_cmd=("${args[0]}" standalone pdf)
+  expect_cmd=("${E2E_RENDERER:-${args[0]}}" standalone pdf)
   expect_file=${args[-1]}
   for ((i = 1; i < ${#args[@]} - 1; i++)); do
     case ${args[i]} in
@@ -840,6 +860,10 @@ timing0=$(usec)
 : >"$outdir/timing.txt"
 phase() { echo "$((($(usec) - timing0) / 1000)) $*" >>"$outdir/timing.txt"; }
 phase launch
+# temzdf runs in the terminal (not the GUI): its log says when its first
+# screen is shown (wait_ready). Decided before a multiplexer wraps COMMAND.
+temzdf_in_terminal=
+[[ $term != gui ]] && runs_temzdf "$@" && temzdf_in_terminal=1
 mux_startup=0
 case $mux in
   "") ;;
@@ -1170,13 +1194,15 @@ case $term in
 esac
 term_pid=$!
 fi
-# Until the first screen is up: on macOS as soon as it is (below), at most
-# as long as elsewhere.
-if [[ $display == macos ]]; then
-  wait_ready $((startup + mux_startup)) "$@"
-else
+# Until the first screen is up, at most the time startup used to take.
+# Inside a multiplexer the whole of it: temzdf's first images can reach tmux
+# before its client is attached, and show only later (the first `expect`
+# saw a black screen now and then).
+if [[ -n $mux ]]; then
   sleep "$((startup + mux_startup))"
   phase ready
+else
+  wait_ready $((startup + mux_startup))
 fi
 # A command that ends at once (a missing file, a bad option) leaves no window
 # to wait for.
@@ -1224,12 +1250,8 @@ phase quit
 crashed=0
 kill -0 "$term_pid" 2>/dev/null || crashed=1
 be_key q || true
-if [[ $display == macos ]]; then
-  # As long as the terminal takes to go, at most the half second used elsewhere.
-  for ((i = 0; i < 10; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.05; done
-else
-  sleep 0.5
-fi
+# As long as the terminal takes to go, at most half a second.
+for ((i = 0; i < 10; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.05; done
 cleanup
 trap - EXIT
 phase done

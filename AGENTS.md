@@ -113,6 +113,11 @@ offscreen on lavapipe.
 instead of Xvfb (every terminal and the GUI, `-I` too; keys and pointer
 through `crates/wlinput`, screenshots with grim).
 
+Every judged scenario in every terminal and the GUI, summed up:
+`scripts/e2e-all.sh -R -j 8` (about a minute and a half; `-d wayland` for
+sway; `-R` renders the comparisons with release builds, `-j` runs
+scenarios at once). `gui-focus` and `gui-ime` (`-I`) are not in it.
+
 On macOS `scripts/e2e.sh` (`-d macos`, the default there) runs the same
 action files and judgements in kitty, Ghostty, WezTerm and the GUI on a
 virtual display beside the real screen; it takes the front and the pointer

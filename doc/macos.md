@@ -210,7 +210,8 @@ scripts/macos-vm.sh reset         # back to the golden copy, permissions include
   now 37 s), one copy, dev shell and build for all the runs, and no fixed
   half second at the end. What is left is mostly the scenarios' own
   pauses and the `expect` comparisons (about 2 s each, a debug build
-  rendering the expected screen).
+  rendering the expected screen; `e2e-all.sh -R` renders them with release
+  builds, about half the time on Linux).
 
 ### scripts/macos-gui.sh
 
