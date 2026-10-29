@@ -145,6 +145,8 @@
                           zellij
                         ]
                       )
+                      # Screenshots compared in scripts/e2e.sh (expect), on Linux and macOS.
+                      ++ [ pkgs.imagemagick ]
                       ++ lib.optionals isLinux (
                         with pkgs;
                         [
@@ -152,7 +154,6 @@
                           kitty
                           xvfb-run
                           xdotool
-                          imagemagick
                           xclip
 
                           vulkan-tools
