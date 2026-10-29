@@ -904,22 +904,23 @@ mod tests {
 
     /// Run `argv` in a pane and feed it until `done` holds for its text (or
     /// the program exits). Returns the pane and its rows.
-    fn run(
-        argv: &[&str],
-        mut input: impl FnMut(&mut TermBuffer),
-        done: impl Fn(&[String]) -> bool,
-    ) -> (TermBuffer, Vec<String>) {
+    /// Run `argv` in a pane; its output comes on the receiver ([`wait`]).
+    fn start(argv: &[&str]) -> (TermBuffer, mpsc::Receiver<TermEvent>) {
         let (tx, rx) = mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
         let sink: Sink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
         let spawn = Spawn { argv: Some(argv.iter().map(|s| s.to_string()).collect()), ..Default::default() };
-        let mut pane = TermBuffer::spawn(&spawn, GEOMETRY, sink).unwrap();
-        input(&mut pane);
+        (TermBuffer::spawn(&spawn, GEOMETRY, sink).unwrap(), rx)
+    }
+
+    /// Feed the program's output until the screen's rows satisfy `done`, the
+    /// program exits or 10 s pass; returns the rows.
+    fn wait(pane: &mut TermBuffer, rx: &mpsc::Receiver<TermEvent>, done: impl Fn(&[String]) -> bool) -> Vec<String> {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            let rows = text(&mut pane);
+            let rows = text(pane);
             if done(&rows) || pane.exited() || std::time::Instant::now() > deadline {
-                return (pane, rows);
+                return rows;
             }
             match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(TermEvent::Output(b)) => pane.feed(&b),
@@ -927,6 +928,18 @@ mod tests {
                 Err(_) => {}
             }
         }
+    }
+
+    /// Run `argv`, send it `input` at once, and wait until `done`.
+    fn run(
+        argv: &[&str],
+        mut input: impl FnMut(&mut TermBuffer),
+        done: impl Fn(&[String]) -> bool,
+    ) -> (TermBuffer, Vec<String>) {
+        let (mut pane, rx) = start(argv);
+        input(&mut pane);
+        let rows = wait(&mut pane, &rx, done);
+        (pane, rows)
     }
 
     fn text(pane: &mut TermBuffer) -> Vec<String> {
@@ -963,17 +976,17 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn keys_reach_the_program() {
-        let (_, rows) = run(
-            &["sh", "-c", "stty -echo; read line; echo \"got:$line\"; sleep 5"],
-            |p| {
-                for c in "hi".chars() {
-                    p.key(&KeyEvent::new(KeyCode::Char(c), Modifiers::NONE));
-                }
-                p.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE));
-            },
-            |r| r.iter().any(|l| l.contains("got:")),
-        );
-        assert!(rows.iter().any(|l| l == "got:hi"), "{rows:?}");
+        // Keys only once echo is off: typed while stty ran, some would be
+        // echoed and some not, and "got:hi" could land on the row of an
+        // echoed "h" without its newline.
+        let (mut pane, rx) = start(&["sh", "-c", "stty -echo; echo ready; read line; echo \"got:$line\"; sleep 5"]);
+        wait(&mut pane, &rx, |r| r[0] == "ready");
+        for c in "hi".chars() {
+            pane.key(&KeyEvent::new(KeyCode::Char(c), Modifiers::NONE));
+        }
+        pane.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE));
+        let rows = wait(&mut pane, &rx, |r| r.iter().any(|l| l.contains("got:")));
+        assert_eq!(&rows[..2], ["ready", "got:hi"]);
     }
 
     #[test]
@@ -1141,27 +1154,12 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn the_wheel_sends_arrows_to_programs_on_the_alternate_screen() {
         // Alternate screen, alternate scroll on, no mouse tracking (as less).
-        let script = "printf '\\033[?1049h\\033[?1007hready'; stty raw -echo; v=$(dd bs=1 count=3 2>/dev/null | od -An -tx1 | tr -d ' '); printf 'got:%s' \"$v\"; sleep 5";
-        let (tx, rx) = mpsc::channel();
-        let tx = std::sync::Mutex::new(tx);
-        let sink: Sink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
-        let spawn = Spawn { argv: Some(vec!["sh".into(), "-c".into(), script.into()]), ..Default::default() };
-        let mut term = TermBuffer::spawn(&spawn, GEOMETRY, sink).unwrap();
-        let wait = |term: &mut TermBuffer, needle: &str| {
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
-            while !text(term).iter().any(|l| l.contains(needle)) {
-                assert!(std::time::Instant::now() < deadline, "waiting for {needle}: {:?}", text(term));
-                if let Ok(TermEvent::Output(b)) = rx.recv_timeout(Duration::from_millis(100)) {
-                    term.feed(&b);
-                }
-            }
-        };
-        wait(&mut term, "ready");
-        // Raw mode is on once stty ran; give it a moment.
-        std::thread::sleep(Duration::from_millis(200));
+        // "ready" once stty ran: raw mode is on for the arrows.
+        let script = "printf '\\033[?1049h\\033[?1007h'; stty raw -echo; printf ready; v=$(dd bs=1 count=3 2>/dev/null | od -An -tx1 | tr -d ' '); printf 'got:%s' \"$v\"; sleep 5";
+        let (mut term, rx) = start(&["sh", "-c", script]);
+        wait(&mut term, &rx, |r| r.iter().any(|l| l.contains("ready")));
         term.mouse(&mouse(MouseEventKind::Scroll(ScrollDirection::Up), 0, 0, Modifiers::NONE), false);
-        wait(&mut term, "got:");
-        let rows = text(&mut term);
+        let rows = wait(&mut term, &rx, |r| r.iter().any(|l| l.contains("got:")));
         let got = rows.iter().find(|l| l.contains("got:")).cloned().unwrap_or_default();
         assert!(got.contains("got:1b5b41") || got.contains("got:1b4f41"), "an Up arrow: {rows:?}");
     }
