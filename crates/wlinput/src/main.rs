@@ -277,7 +277,8 @@ mod linux {
 /// the shift level as there (so terminals that report the base-layout key,
 /// kitty's keyboard protocol, see the real one: temzdf takes a base 'c'
 /// with Ctrl for Ctrl+C), and other characters added at free codes as they
-/// are typed.
+/// are typed. Built and tested everywhere; used only on Linux.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod keymap {
     use anyhow::{Result, bail};
 
