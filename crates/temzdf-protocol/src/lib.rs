@@ -463,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "Miri's getuid is always 1000, not the files' owner unless that is 1000 (GHA, macOS)")]
+    #[cfg_attr(miri, ignore = "Miri's getuid is always 1000, that does not always match the user's actual uid.")]
     fn private_dirs_are_ours_alone() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = std::env::temp_dir().join(format!("temzdf-private-{}", std::process::id()));
