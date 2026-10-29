@@ -133,3 +133,36 @@ the gain there; not at scale 1, and not explained yet (page faults are
 ruled out by `populate`; reading the mapping is as fast as the heap in the
 benchmark). Worth measuring on a real GPU with `TEMZDF_TIMING=1` and
 `scripts/timing.sh`, both ways.
+
+### The socket without copies
+
+Without shared memory (`TEMZDF_PIXELS=socket`, and images that cannot go
+there) a frame's images of 4 KiB and more no longer go through the encoder:
+their bytes follow the message as they are, written from the images in one
+vectored write, and the client reads each into a buffer of exactly its size
+that becomes the image (two copies, into and out of the kernel, instead of
+four). Same procedure before (`2573137`) and after, release builds,
+nothing else running, the median of 3 runs of each (ms; the benchmark's
+own figures are medians of 7):
+
+| Benchmark (socket rows) | send before | send after | total before | total after |
+|---|---:|---:|---:|---:|
+| 4 tiles, 4.2 MB | 5.13 | 1.85 | 6.17 | 2.06 |
+| 12 tiles, 12.6 MB | 7.94 | 3.49 | 10.11 | 4.12 |
+| 30 tiles, 31.5 MB | 25.85 | 6.65 | 29.83 | 7.83 |
+
+The 3 runs of 30 tiles spanned 29.5 to 30.1 ms before and 7.8 to 8.0 after.
+
+| `perf.actions -P socket` | send max | recv max | heaviest 5 frames, send + recv | ack median / max |
+|---|---:|---:|---:|---:|
+| GUI 900x600, before | 17.5 | 11.2 | 15.2 | 5.7 / 34.6 |
+| GUI 900x600, after | 8.7 | 8.6 | 8.4 | 5.4 / 25.0 |
+| GUI at scale 2, before | 30.8 | 13.2 | 31.0 | 13.8 / 51.3 |
+| GUI at scale 2, after | 12.8 | 12.8 | 9.6 | 12.6 / 47.7 |
+| kitty, before | 14.3 | 12.3 | 18.1 | 3.4 / 22.6 |
+| kitty, after | 7.4 | 7.5 | 9.5 | 2.8 / 11.9 |
+
+The socket now costs about what shared memory does on heavy frames (the
+benchmark's 30 tiles: 7.8 ms against 8.2), as the copies left are the same
+size; shared memory still saves the kernel's buffers and the client's
+allocation.

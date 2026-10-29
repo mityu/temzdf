@@ -86,26 +86,37 @@ pub fn map(fd: OwnedFd, len: usize) -> io::Result<Pixels> {
     Ok(Pixels::from_owner(map))
 }
 
-/// Write `bytes` to `stream`, the descriptors `fds` with its first part.
-pub fn send_with_fds(stream: &UnixStream, bytes: &[u8], fds: &[BorrowedFd<'_>]) -> io::Result<()> {
-    let mut written = 0;
-    if !fds.is_empty() {
-        let mut space = vec![MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_FDS))];
-        let mut control = SendAncillaryBuffer::new(&mut space);
-        if !control.push(SendAncillaryMessage::ScmRights(fds)) {
-            return Err(io::Error::other(format!("{} descriptors in one message", fds.len())));
-        }
-        written = loop {
-            match rustix::net::sendmsg(stream, &[IoSlice::new(bytes)], &mut control, SendFlags::empty()) {
-                Ok(n) => break n,
-                Err(rustix::io::Errno::INTR) => {}
-                Err(e) => return Err(e.into()),
-            }
-        };
+/// Write `parts` to `stream` in order, the descriptors `fds` with the first
+/// bytes. `parts` is used up (advanced past what was written).
+pub fn send_with_fds(stream: &UnixStream, mut parts: &mut [IoSlice<'_>], fds: &[BorrowedFd<'_>]) -> io::Result<()> {
+    // Writes take at most this many parts at a time (IOV_MAX on Linux and
+    // macOS).
+    const MAX_PARTS: usize = 1024;
+    let mut space =
+        vec![MaybeUninit::uninit(); if fds.is_empty() { 0 } else { rustix::cmsg_space!(ScmRights(MAX_FDS)) }];
+    let mut control = SendAncillaryBuffer::new(&mut space);
+    if !fds.is_empty() && !control.push(SendAncillaryMessage::ScmRights(fds)) {
+        return Err(io::Error::other(format!("{} descriptors in one message", fds.len())));
     }
-    let mut stream = stream;
-    stream.write_all(&bytes[written..])?;
-    stream.flush()
+    let mut first = !fds.is_empty();
+    while !parts.is_empty() {
+        let some = &parts[..parts.len().min(MAX_PARTS)];
+        let n = if first {
+            rustix::net::sendmsg(stream, some, &mut control, SendFlags::empty()).map_err(io::Error::from)
+        } else {
+            (&mut &*stream).write_vectored(some)
+        };
+        match n {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(n) => {
+                first = false;
+                IoSlice::advance_slices(&mut parts, n);
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 /// A socket's reading side that keeps the descriptors arriving with the
@@ -113,11 +124,17 @@ pub fn send_with_fds(stream: &UnixStream, bytes: &[u8], fds: &[BorrowedFd<'_>]) 
 pub struct FdReader {
     stream: UnixStream,
     fds: VecDeque<OwnedFd>,
+    received: usize,
 }
 
 impl FdReader {
     pub fn new(stream: UnixStream) -> Self {
-        Self { stream, fds: VecDeque::new() }
+        Self { stream, fds: VecDeque::new(), received: 0 }
+    }
+
+    /// How many descriptors came so far (images in shared memory).
+    pub fn fds_received(&self) -> usize {
+        self.received
     }
 
     /// The next descriptor received.
@@ -141,6 +158,7 @@ impl Read for FdReader {
                     #[cfg(not(target_os = "linux"))]
                     rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::CLOEXEC)?;
                     self.fds.push_back(fd);
+                    self.received += 1;
                 }
             }
         }

@@ -168,6 +168,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                         frame: frame.clone(),
                         complete: *complete,
                         shared: Vec::new(),
+                        trailing: Vec::new(),
                     };
                     c.awaiting = c.tx.send(msg).is_ok().then(Instant::now);
                     c.shown = *seq;

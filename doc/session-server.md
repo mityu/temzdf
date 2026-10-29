@@ -87,8 +87,11 @@ What exists:
   read-only by the client and handed on without a copy (`termpix_core::raster::Pixels`
   to the GPU or the terminal's image store). Smaller images, more than 250 in a
   frame, objects that cannot be made, and clients with `TEMZDF_PIXELS=socket`
-  get the pixels inside the message (`temzdf-protocol`'s `send_server`,
-  `recv_server`, `shared.rs`; numbers in `doc/performance.md`).
+  get the pixels through the socket: from 4 KiB on right after the message,
+  as they are (written from the image, read into the image's own buffer),
+  smaller ones inside it (`temzdf-protocol`'s `send_server`, `recv_server`,
+  `shared.rs`; numbers in `doc/performance.md`). Anything reading frames
+  uses `recv_server`.
 - Nesting: a client says which session's pane it runs in (`Hello`), and a
   session lists those of its clients (`SessionInfo::shown_in`). `attach`
   from a pane refuses that session and every session showing it, directly

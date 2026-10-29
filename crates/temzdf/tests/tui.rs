@@ -1085,12 +1085,13 @@ fn hovering_over_another_client_keeps_the_session_size() {
         shared_memory: false,
     };
     temzdf_protocol::send(&mut s, &hello).unwrap();
+    let mut r = temzdf_protocol::shared::FdReader::new(s.try_clone().unwrap());
     // The width of the next frame (acknowledged), None when none comes.
-    let next_width = |s: &mut std::os::unix::net::UnixStream, wait| {
+    let mut next_width = |s: &mut std::os::unix::net::UnixStream, wait| {
         s.set_read_timeout(Some(std::time::Duration::from_millis(wait))).unwrap();
         loop {
-            match temzdf_protocol::recv::<ServerMsg>(&mut *s) {
-                Ok(Some(ServerMsg::Frame { seq, frame, .. })) => {
+            match temzdf_protocol::recv_server(&mut r) {
+                Ok(Some((ServerMsg::Frame { seq, frame, .. }, _))) => {
                     temzdf_protocol::send(&mut *s, &ClientMsg::FrameAck(seq)).unwrap();
                     return frame.text.iter().map(|g| g.col + g.width()).max();
                 }
@@ -1125,7 +1126,7 @@ fn clients_of_one_session_take_pixels_each_their_own_way() {
     let geometry =
         termpix::geom::Geometry { cols: 100, rows: 30, cell: termpix::geom::CellSize { width: 10, height: 20 } };
     // Each client gets every image when it attaches: the first frame with
-    // pixels, as sent (`shared` not mapped yet), with its descriptors.
+    // pixels, and how many descriptors (images in shared memory) came.
     let first_frame = |shared_memory: bool| {
         let s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
         s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
@@ -1139,36 +1140,29 @@ fn clients_of_one_session_take_pixels_each_their_own_way() {
         temzdf_protocol::send(&mut &s, &hello).unwrap();
         let mut r = FdReader::new(s.try_clone().unwrap());
         loop {
-            match temzdf_protocol::recv::<ServerMsg>(&mut r).unwrap().expect("a frame") {
-                ServerMsg::Frame { updates, shared, .. } if !updates.is_empty() || !shared.is_empty() => {
-                    let fds = std::iter::from_fn(|| r.take_fd()).count();
-                    return (updates, shared, fds);
+            match temzdf_protocol::recv_server(&mut r).unwrap().expect("a frame").0 {
+                ServerMsg::Frame { updates, .. } if !updates.is_empty() => {
+                    let mut images: Vec<_> = updates
+                        .into_iter()
+                        .filter_map(|u| match u {
+                            ImageUpdate::Set(k, i) => Some((k, i)),
+                            ImageUpdate::Remove(_) => None,
+                        })
+                        .collect();
+                    images.sort_by_key(|x| x.0);
+                    return (images, r.fds_received());
                 }
                 ServerMsg::Frame { seq, .. } => temzdf_protocol::send(&mut &s, &ClientMsg::FrameAck(seq)).unwrap(),
                 _ => {}
             }
         }
     };
-    let (inline, none, no_fds) = first_frame(false);
-    let (small, shared, fds) = first_frame(true);
-    assert!(none.is_empty() && no_fds == 0, "the socket client gets everything inside the messages");
-    assert!(!shared.is_empty() && fds == shared.len(), "the other gets large images in shared memory");
-    // The same images either way.
-    let sizes = |u: &[ImageUpdate]| {
-        let mut v: Vec<_> = u
-            .iter()
-            .filter_map(|u| match u {
-                ImageUpdate::Set(k, i) => Some((*k, i.width, i.height)),
-                ImageUpdate::Remove(_) => None,
-            })
-            .collect();
-        v.sort_by_key(|x| x.0);
-        v
-    };
-    let mut both = sizes(&small);
-    both.extend(shared.iter().map(|s| (s.key, s.width, s.height)));
-    both.sort_by_key(|x| x.0);
-    assert_eq!(both, sizes(&inline));
+    let (by_socket, no_fds) = first_frame(false);
+    let (by_memory, fds) = first_frame(true);
+    assert_eq!(no_fds, 0, "the socket client gets every image through the socket");
+    assert!(fds > 0, "the other gets large images in shared memory");
+    // The same images either way, pixels included.
+    assert_eq!(by_socket, by_memory);
 }
 
 #[test]

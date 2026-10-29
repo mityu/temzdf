@@ -23,7 +23,8 @@ server on one `Session`). Next and open:
   client's geometry and cell size, programs' images included) and zoom
   stored relative to the pane width.
 - [ ] Shared memory for local clients' pixels: done (`doc/session-server.md`,
-  "Pixels"; `TEMZDF_PIXELS=socket` for the old way). Left: why the GUI's
+  "Pixels"; `TEMZDF_PIXELS=socket` for the socket, which no longer copies
+  pixels through the encoder either). Left: why the GUI's
   uploads at scale 2 got slower on lavapipe (`doc/performance.md`, "With
   shared memory"); measure on a real GPU and on macOS.
 - [ ] A Vim-like command line on the `Action` text form (tab pages are done).

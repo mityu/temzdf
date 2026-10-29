@@ -5,7 +5,9 @@
 //! One server process per session listens on
 //! `<runtime dir>/temzdf/sessions/<name>.sock` (mode 0700 directory). Each
 //! message is a little-endian `u32` length followed by the message encoded with
-//! `postcard`. A connection starts with [`ClientMsg::Hello`] (a client that will
+//! `postcard`; a frame's large images follow it, their pixels as they are
+//! (`trailing`), or come in shared memory (`shared`, [`send_server`]). A
+//! connection starts with [`ClientMsg::Hello`] (a client that will
 //! show the session) or a single request ([`ClientMsg::Info`],
 //! [`ClientMsg::Kill`], [`ClientMsg::Action`]) answered once.
 
@@ -26,7 +28,7 @@ use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 13;
+pub const VERSION: u32 = 14;
 /// Larger messages are refused (a frame with every image of a full cache is
 /// about 200 MB).
 const MAX_MESSAGE: usize = 512 << 20;
@@ -81,7 +83,10 @@ pub enum ServerMsg {
         /// Images set through shared memory, one descriptor each, in this
         /// order, with the message. Only on the wire: [`recv_server`] turns
         /// them into `updates`.
-        shared: Vec<SharedImage>,
+        shared: Vec<ImageHead>,
+        /// Images set by pixels that follow the message, in this order. Only
+        /// on the wire, as `shared`.
+        trailing: Vec<ImageHead>,
     },
     Effect(Effect),
     /// How to look (GUI clients): when attaching and when it changes.
@@ -93,12 +98,20 @@ pub enum ServerMsg {
     Done(Result<(), String>),
 }
 
-/// An image whose pixels come in shared memory (`width * height * 4` bytes).
+/// An image whose pixels (`width * height * 4` bytes) come apart from the
+/// message: in shared memory, or after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SharedImage {
+pub struct ImageHead {
     pub key: ImageKey,
     pub width: u32,
     pub height: u32,
+}
+
+impl ImageHead {
+    /// Its bytes of pixels.
+    pub fn bytes(&self) -> usize {
+        self.width as usize * self.height as usize * 4
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,7 +152,8 @@ pub fn send<T: Serialize>(w: &mut impl Write, msg: &T) -> io::Result<()> {
     w.flush()
 }
 
-/// Read one message; `Ok(None)` at a clean end of the stream.
+/// Read one message; `Ok(None)` at a clean end of the stream. Messages
+/// from the server go through [`recv_server`] instead.
 pub fn recv<T: for<'de> Deserialize<'de>>(r: &mut impl Read) -> io::Result<Option<T>> {
     Ok(recv_timed(r)?.map(|(msg, _)| msg))
 }
@@ -169,57 +183,84 @@ pub fn recv_timed<T: for<'de> Deserialize<'de>>(r: &mut impl Read) -> io::Result
     Ok(Some((msg, start.elapsed())))
 }
 
-/// Send a message from the server to a client: with `shared_memory` (the
-/// client said so in its Hello), the pixels of a frame's large images go in
-/// shared memory, a descriptor each with the message, instead of inside it
-/// (`shared`); images whose memory cannot be made go inside.
+/// Images smaller than this travel inside the message (UI parts); larger
+/// ones after it, their bytes written straight from the image.
+const MIN_TRAILING: usize = 4 << 10;
+
+/// Send a message from the server to a client. A frame's large images do not
+/// go through the encoder: with `shared_memory` (the client said so in its
+/// Hello) their pixels go in shared memory, a descriptor each with the
+/// message (`shared`); otherwise, or when that memory cannot be made, their
+/// bytes follow the message as they are (`trailing`), written from the
+/// images themselves.
 pub fn send_server(stream: &UnixStream, msg: ServerMsg, shared_memory: bool) -> io::Result<()> {
-    let (msg, fds) = match msg {
-        ServerMsg::Frame { seq, updates, frame, complete, shared } if shared_memory => {
-            let (mut inline, mut fds) = (Vec::new(), Vec::new());
-            let mut shared = shared;
+    let (msg, fds, after) = match msg {
+        ServerMsg::Frame { seq, updates, frame, complete, mut shared, mut trailing } => {
+            let (mut inline, mut fds, mut after) = (Vec::new(), Vec::new(), Vec::new());
             for u in updates {
-                match u {
-                    ImageUpdate::Set(key, image)
-                        if image.pixels.len() >= shared::MIN_SHARED && fds.len() < shared::MAX_FDS =>
-                    {
-                        match shared::create(&image.pixels) {
-                            Ok(fd) => {
-                                fds.push(fd);
-                                shared.push(SharedImage { key, width: image.width, height: image.height });
-                            }
-                            Err(_) => inline.push(ImageUpdate::Set(key, image)),
-                        }
-                    }
-                    u => inline.push(u),
+                let ImageUpdate::Set(key, image) = u else {
+                    inline.push(u);
+                    continue;
+                };
+                let head = ImageHead { key, width: image.width, height: image.height };
+                let len = image.pixels.len();
+                if shared_memory
+                    && len >= shared::MIN_SHARED
+                    && fds.len() < shared::MAX_FDS
+                    && let Ok(fd) = shared::create(&image.pixels)
+                {
+                    fds.push(fd);
+                    shared.push(head);
+                    continue;
+                }
+                if len >= MIN_TRAILING && len == image.width as usize * image.height as usize * 4 {
+                    trailing.push(head);
+                    after.push(image.pixels);
+                } else {
+                    inline.push(ImageUpdate::Set(key, image));
                 }
             }
-            (ServerMsg::Frame { seq, updates: inline, frame, complete, shared }, fds)
+            (ServerMsg::Frame { seq, updates: inline, frame, complete, shared, trailing }, fds, after)
         }
-        msg => (msg, Vec::new()),
+        msg => (msg, Vec::new(), Vec::new()),
     };
     let body = postcard::to_stdvec(&msg).map_err(io::Error::other)?;
     let len = u32::try_from(body.len()).map_err(|_| io::Error::other("message too large"))?;
-    let mut bytes = Vec::with_capacity(4 + body.len());
-    bytes.extend_from_slice(&len.to_le_bytes());
-    bytes.extend_from_slice(&body);
+    let len = len.to_le_bytes();
+    let mut parts = vec![io::IoSlice::new(&len), io::IoSlice::new(&body)];
+    parts.extend(after.iter().map(|p| io::IoSlice::new(p)));
     let borrowed: Vec<_> = fds.iter().map(|fd| fd.as_fd()).collect();
-    shared::send_with_fds(stream, &bytes, &borrowed)
+    shared::send_with_fds(stream, &mut parts, &borrowed)
 }
 
-/// Read a message from the server ([`send_server`]), its shared images
-/// mapped into `updates`; with how long it took once its first bytes came.
+/// Read a message from the server ([`send_server`]): a frame's images in
+/// shared memory are mapped and those after it read, all into `updates`;
+/// with how long it took once its first bytes came. Every reader of frames
+/// must use this, not [`recv`]: the pixels after a frame would be taken for
+/// the next message.
 pub fn recv_server(r: &mut shared::FdReader) -> io::Result<Option<(ServerMsg, Duration)>> {
     let Some((mut msg, took)) = recv_timed::<ServerMsg>(r)? else { return Ok(None) };
     let start = Instant::now();
-    if let ServerMsg::Frame { updates, shared, .. } = &mut msg {
+    if let ServerMsg::Frame { updates, shared, trailing, .. } = &mut msg {
         for s in shared.drain(..) {
             let fd = r
                 .take_fd()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "a shared image without its descriptor"))?;
-            let len = s.width as usize * s.height as usize * 4;
-            let pixels = shared::map(fd, len)?;
+            let pixels = shared::map(fd, s.bytes())?;
             updates.push(ImageUpdate::Set(s.key, Image { width: s.width, height: s.height, pixels }));
+        }
+        let total = trailing.iter().map(|t| t.bytes() as u64).sum::<u64>();
+        if total > MAX_MESSAGE as u64 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{total} bytes of pixels after a frame")));
+        }
+        for t in trailing.drain(..) {
+            // Read into exactly its size, not zeroed first, not grown.
+            let mut pixels = Vec::with_capacity(t.bytes());
+            r.take(t.bytes() as u64).read_to_end(&mut pixels)?;
+            if pixels.len() < t.bytes() {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            updates.push(ImageUpdate::Set(t.key, Image { width: t.width, height: t.height, pixels: pixels.into() }));
         }
     }
     Ok(Some((msg, took + start.elapsed())))
@@ -528,7 +569,14 @@ mod tests {
             pointer: Pointer::Link,
             title: "doc — 1 / 3".into(),
         };
-        round_trip(&ServerMsg::Frame { seq: 9, updates: images.take_updates(), frame, complete: true, shared: vec![] });
+        round_trip(&ServerMsg::Frame {
+            seq: 9,
+            updates: images.take_updates(),
+            frame,
+            complete: true,
+            shared: vec![],
+            trailing: vec![],
+        });
         round_trip(&ServerMsg::Effect(Effect::Copy("x".into())));
         round_trip(&ServerMsg::Exit(ExitReason::Error("bad".into())));
         round_trip(&ServerMsg::Done(Err("no".into())));
@@ -545,6 +593,7 @@ mod tests {
             frame: Frame::default(),
             complete: false,
             shared: vec![],
+            trailing: vec![],
         };
         let mut buf = Vec::new();
         send(&mut buf, &msg).unwrap();
@@ -566,12 +615,22 @@ mod tests {
                 ImageUpdate::Remove(_) => None,
             })
             .collect();
-        (ServerMsg::Frame { seq: 3, updates, frame: Frame::default(), complete: true, shared: vec![] }, want)
+        (
+            ServerMsg::Frame {
+                seq: 3,
+                updates,
+                frame: Frame::default(),
+                complete: true,
+                shared: vec![],
+                trailing: vec![],
+            },
+            want,
+        )
     }
 
     fn got_images(msg: &ServerMsg) -> HashMap<ImageKey, Image> {
-        let ServerMsg::Frame { updates, shared, .. } = msg else { panic!("{msg:?}") };
-        assert!(shared.is_empty(), "recv_server maps them into updates");
+        let ServerMsg::Frame { updates, shared, trailing, .. } = msg else { panic!("{msg:?}") };
+        assert!(shared.is_empty() && trailing.is_empty(), "recv_server puts them into updates");
         updates
             .iter()
             .filter_map(|u| match u {
@@ -583,10 +642,11 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "sockets and shared memory")]
-    fn frames_arrive_whole_through_shared_memory_or_the_socket() {
-        // 128 px is exactly the smallest size that goes shared; two of the
-        // same size tell their descriptors apart only by their pixels.
-        let (msg, want) = frame_of(&[128, 128, 256, 8]);
+    fn frames_arrive_whole_through_shared_memory_or_after_the_message() {
+        // 128 px is exactly the smallest size that goes shared, 32 px the
+        // smallest that follows the message; two of the same size tell their
+        // places apart only by their pixels.
+        let (msg, want) = frame_of(&[128, 128, 256, 32, 8]);
         for shared_memory in [false, true] {
             let (tx, rx) = UnixStream::pair().unwrap();
             let mut rx = shared::FdReader::new(rx);
@@ -601,13 +661,16 @@ mod tests {
             };
             // On the wire first: which images went where.
             let (raw, _) = recv_timed::<ServerMsg>(&mut rx).unwrap().unwrap();
-            let ServerMsg::Frame { updates, shared, .. } = &raw else { panic!() };
-            let (inline, fds) = if shared_memory { (1, 3) } else { (4, 0) };
-            assert_eq!((updates.len(), shared.len()), (inline, fds), "shared_memory: {shared_memory}");
+            let ServerMsg::Frame { updates, shared, trailing, .. } = &raw else { panic!() };
+            let (inside, fds, after) = if shared_memory { (1, 3, 1) } else { (1, 0, 4) };
+            let counts = (updates.len(), shared.len(), trailing.len());
+            assert_eq!(counts, (inside, fds, after), "shared_memory: {shared_memory}");
             for _ in 0..fds {
                 assert!(rx.take_fd().is_some());
             }
             assert!(rx.take_fd().is_none());
+            let skip = trailing.iter().map(|t| t.bytes() as u64).sum();
+            assert_eq!(io::copy(&mut (&mut rx).take(skip), &mut io::sink()).unwrap(), skip);
             // Then as clients see it: every image at its key.
             let (got, _) = recv_server(&mut rx).unwrap().unwrap();
             assert_eq!(got_images(&got), want, "shared_memory: {shared_memory}");
@@ -629,6 +692,47 @@ mod tests {
         let (got, _) = recv_server(&mut rx).unwrap().unwrap();
         sender.join().unwrap();
         assert_eq!(got_images(&got), want);
+    }
+
+    /// A frame announcing pixels after it, as a broken or hostile server
+    /// would send it, with `after` bytes of them.
+    fn frame_announcing(width: u32, height: u32, after: usize) -> Vec<u8> {
+        let head = ImageHead { key: Images::new().add(1, 1, vec![0; 4]), width, height };
+        let msg = ServerMsg::Frame {
+            seq: 1,
+            updates: vec![],
+            frame: Frame::default(),
+            complete: true,
+            shared: vec![],
+            trailing: vec![head],
+        };
+        let mut bytes = Vec::new();
+        send(&mut bytes, &msg).unwrap();
+        bytes.extend(std::iter::repeat_n(7, after));
+        bytes
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "sockets")]
+    fn pixels_after_a_frame_are_checked() {
+        let read = |bytes: Vec<u8>| {
+            let (mut tx, rx) = UnixStream::pair().unwrap();
+            let mut rx = shared::FdReader::new(rx);
+            let sender = std::thread::spawn(move || tx.write_all(&bytes));
+            let got = recv_server(&mut rx).map(|m| m.map(|m| m.0));
+            sender.join().unwrap().unwrap();
+            got
+        };
+        // More than a message may hold: refused before anything is allocated.
+        let err = read(frame_announcing(65535, 65535, 0)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{err}");
+        // The connection ends partway.
+        let err = read(frame_announcing(32, 32, 100)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof, "{err}");
+        // Whole: the pixels are the image's.
+        let got = read(frame_announcing(32, 32, 32 * 32 * 4)).unwrap().unwrap();
+        let ServerMsg::Frame { updates, .. } = got else { panic!() };
+        assert!(matches!(&updates[..], [ImageUpdate::Set(_, i)] if i.pixels.iter().all(|&b| b == 7)));
     }
 
     #[test]
@@ -686,7 +790,14 @@ mod tests {
             let updates = images.take_updates();
             let bytes: usize =
                 updates.iter().map(|u| if let ImageUpdate::Set(_, i) = u { i.pixels.len() } else { 0 }).sum();
-            let msg = ServerMsg::Frame { seq: 1, updates, frame: Frame::default(), complete: true, shared: vec![] };
+            let msg = ServerMsg::Frame {
+                seq: 1,
+                updates,
+                frame: Frame::default(),
+                complete: true,
+                shared: vec![],
+                trailing: vec![],
+            };
             for shared_memory in [false, true] {
                 let (mut send, mut total, mut copy) = (vec![], vec![], vec![]);
                 // The first run warms up the socket and the allocator.
