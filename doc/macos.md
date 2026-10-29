@@ -136,8 +136,9 @@ why:
   and the GUI's cells reach the edges.
 - Links are not opened: `open` is replaced for the command by a script that
   appends what it would open to `OUTDIR/opened.txt` (a browser would open
-  them on the desktop). Clicks that land on a URL are a sign of wrong
-  coordinates.
+  them on the desktop; `xdg-open` the same on Linux). A URL in `opened.txt`
+  that the scenario did not click (only `links` clicks one) is a sign of
+  wrong coordinates.
 - What differs per terminal (kitty's wheel, Ghostty's colours and keys,
   WezTerm's title bar) is in `doc/terminal-compat.md`.
 

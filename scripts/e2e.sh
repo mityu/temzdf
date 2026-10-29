@@ -937,6 +937,17 @@ if [[ $display == macos ]]; then
 fi
 clean_env=(env -u TEMZDF_LOG_DIR -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state"
   "TEMZDF_RECORD_INPUT=$outdir/input.txt")
+# Links are not opened: what temzdf opens them with (`open` on macOS,
+# `xdg-open` elsewhere) only notes them in OUTDIR/opened.txt. A browser would
+# open them on the desktop of whoever runs this (on Linux through D-Bus, past
+# Xvfb and sway).
+mkdir -p "$XDG_RUNTIME_DIR/bin"
+opener=xdg-open
+[[ $display == macos ]] && opener=open
+printf '#!/bin/sh\necho "$*" >> %q\n' "$outdir/opened.txt" >"$XDG_RUNTIME_DIR/bin/$opener"
+chmod +x "$XDG_RUNTIME_DIR/bin/$opener"
+rm -f "$outdir/opened.txt"
+clean_env+=("PATH=$XDG_RUNTIME_DIR/bin:$PATH")
 if [[ $display == macos ]]; then
   # `open` starts apps in / with launchd's environment: a script gives the
   # command this run's environment (without the variables of the terminal
@@ -947,13 +958,6 @@ if [[ $display == macos ]]; then
   # screen first, and temzdf would start there at its scale and log that
   # geometry.
   launch=$XDG_RUNTIME_DIR/launch.sh go=$XDG_RUNTIME_DIR/go
-  # Links are not opened: `open` (what temzdf opens links with on macOS)
-  # only notes them in OUTDIR/opened.txt. A browser would open them on the
-  # desktop of whoever runs this.
-  mkdir -p "$XDG_RUNTIME_DIR/bin"
-  printf '#!/bin/sh\necho "$*" >> %q\n' "$outdir/opened.txt" >"$XDG_RUNTIME_DIR/bin/open"
-  chmod +x "$XDG_RUNTIME_DIR/bin/open"
-  rm -f "$outdir/opened.txt"
   {
     echo '#!/usr/bin/env bash'
     echo "export PATH=$(printf %q "$XDG_RUNTIME_DIR/bin:$PATH")"
@@ -1003,7 +1007,7 @@ if [[ $display == macos ]]; then
         start --always-new-process --cwd "$PWD" -- "$launch")
       ;;
     gui)
-      "${clean_env[@]}" PATH="$XDG_RUNTIME_DIR/bin:$PATH" "$@" >"$outdir/terminal.log" 2>&1 &
+      "${clean_env[@]}" "$@" >"$outdir/terminal.log" 2>&1 &
       term_pid=$! startup=5
       ;;
     *)

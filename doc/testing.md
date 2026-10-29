@@ -122,7 +122,11 @@ wtype and wlrctl make a virtual device per call, which lost clicks and
 wheel steps and made every key a focus change. wlinput keeps one virtual
 keyboard (a US layout at the real evdev codes, so kitty's base-layout key
 is right; other characters get free codes as typed) and one virtual
-pointer for the run. kitty, Ghostty, WezTerm and the GUI pass every judged
+pointer for the run. Links are not opened on any display: `xdg-open` (`open`
+on macOS) is replaced for the command by a script that notes the URI in
+`OUTDIR/opened.txt` (`links` checks it), since through D-Bus a real one
+could reach the desktop of whoever runs the tests, past Xvfb and sway.
+kitty, Ghostty, WezTerm and the GUI pass every judged
 scenario on both (2026-10-29; Ghostty cannot tell its text, so those checks
 SKIP). `-I` (fcitx5 with Mozc) works on both: over XIM on X11, over
 input-method-v2 (sway) and text-input-v3 (the GUI) on Wayland; the run

@@ -2,7 +2,10 @@
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
 # Judged (expect): clicking "3 Filler" in the table of contents jumps to
 # section 3 on page 2 (clicked); Backspace (or Ctrl-o) returns to the table of
-# contents (back); Alt+Right goes forward again (forward).
+# contents (back); Alt+Right goes forward again (forward); from the top, three
+# steps down show the URL in section 1 where the click below expects it (url),
+# and clicking it hands it to the opener (opened; the harness's stand-in notes
+# it in OUTDIR/opened.txt instead of starting a browser).
 pause 1
 click 160 412
 pause 1
@@ -13,3 +16,9 @@ expect back
 keys alt+Right
 pause 1
 expect forward
+keys g g j j j
+pause 1
+expect url
+click 195 380
+pause 1
+check opened grep -qxF https://example.com/ "$outdir/opened.txt"
