@@ -100,7 +100,9 @@
 # sends `q` at the end. It does not check results; inspect the screenshots (or
 # compare pixels) afterwards. The
 # command runs without ZELLIJ/TMUX in its environment so a multiplexer around the
-# harness does not leak into terminal detection, and with its own
+# harness does not leak into terminal detection, without TEMZDF_SESSION_NAME
+# (a temzdf session around the harness would refuse to show the run's
+# session of the same name inside itself), and with its own
 # XDG_RUNTIME_DIR (also for ACTIONS), so its sessions stay apart from the
 # user's and end with the run. If the terminal process died, it prints
 # "TERMINAL CRASHED" and exits 3; failed `expect`s and `check`s exit 4; a
@@ -940,7 +942,7 @@ if [[ $display == macos ]]; then
     exit 1
   fi
 fi
-clean_env=(env -u TEMZDF_LOG_DIR -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state"
+clean_env=(env -u TEMZDF_LOG_DIR -u TEMZDF_SESSION_NAME -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state"
   "TEMZDF_RECORD_INPUT=$outdir/input.txt")
 # Links are not opened: what temzdf opens them with (`open` on macOS,
 # `xdg-open` elsewhere) only notes them in OUTDIR/opened.txt. A browser would
