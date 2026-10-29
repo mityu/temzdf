@@ -102,6 +102,7 @@
                         agent-browser
                         python3
                         imagemagick # Screenshots compared in scripts/e2e.sh (expect).
+                        shellcheck
                       ]
                       ++ (
                         if enableMiri then
