@@ -463,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(all(miri, target_os = "macos"), ignore = "Miri on macOS gives another user id than the files' owner")]
+    #[cfg_attr(miri, ignore = "Miri's getuid is always 1000, not the files' owner unless that is 1000 (GHA, macOS)")]
     fn private_dirs_are_ours_alone() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = std::env::temp_dir().join(format!("temzdf-private-{}", std::process::id()));
@@ -507,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(all(miri, target_os = "macos"), ignore = "Miri on macOS gives another user id than the files' owner")]
+    #[cfg_attr(miri, ignore = "Miri's getuid is always 1000, not the files' owner unless that is 1000 (GHA, macOS)")]
     fn a_runtime_directory_not_ours_gets_one_of_ours_inside() {
         let uid = rustix::process::getuid().as_raw();
         let tmp = std::env::temp_dir().join(format!("temzdf-runtime-{}", std::process::id()));
