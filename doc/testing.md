@@ -113,6 +113,14 @@ attached, and attaching resized the pane mid-scroll; fixed in 02949b7).
 When a wait times out, the screen and the bytes received are in
 `target/tuitest/` (CI uploads them, see `scripts/check.sh --verbose`).
 
+The shell matters too: Ubuntu's `/bin/sh` (CI's) is dash, which has no line
+editing, so input typed before it was ready is echoed before its prompt and
+the command's output follows the prompt on its line (`$ mapped-42`); bash
+with readline shows the input again after the prompt. `TEMZDF_TEST_SHELL`
+runs the tests with another shell, e.g. `TEMZDF_TEST_SHELL=$(nix build
+--print-out-paths nixpkgs#dash)/bin/dash`; tests compare a command's
+output with `shows_output`, which takes either.
+
 What a terminal shows *between* frames (a flicker) does not show on the
 screen a test reads at the end. For those, record what temzdf wrote
 (`TERMPIX_TRACE` in the test's environment) and feed it to

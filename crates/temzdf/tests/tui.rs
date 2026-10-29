@@ -76,7 +76,9 @@ impl Env {
             ("XDG_CONFIG_HOME".into(), d("config")),
             ("XDG_STATE_HOME".into(), d("state")),
             ("TEMZDF_LOG_DIR".into(), d("log")),
-            ("SHELL".into(), "/bin/sh".into()),
+            // TEMZDF_TEST_SHELL: another sh, e.g. dash, Ubuntu's (no line
+            // editing: typed-ahead input is not shown again after the prompt).
+            ("SHELL".into(), std::env::var("TEMZDF_TEST_SHELL").unwrap_or_else(|_| "/bin/sh".into())),
             ("PS1".into(), "$ ".into()),
             // POSIX sh reads this file at startup: no user rc files.
             ("ENV".into(), "/dev/null".into()),
@@ -170,6 +172,14 @@ fn fixture(name: &str) -> PathBuf {
 fn is_prompt(line: &str) -> bool {
     // A floating message may cover the rest of the line.
     line.trim_end().ends_with('$') || line.starts_with("$ ")
+}
+
+/// Whether `row` shows a command's `output`: alone, or right after the
+/// prompt when the command was typed before the shell was ready and the
+/// shell does not show typed-ahead input again (no line editing: dash,
+/// Ubuntu's /bin/sh), so its echo came before the prompt.
+fn shows_output(row: &str, output: &str) -> bool {
+    row == output || row.strip_prefix("$ ") == Some(output)
 }
 
 fn prompt(s: &Screen) -> bool {
@@ -425,7 +435,7 @@ keymap.add("normal", "t", (): void => {
     t.wait_for("the prompt", prompt);
     t.keys(&["C-b", "t"]);
     t.wait_for("the mapping's command in the new pane", |s| {
-        (0..s.cells.len() as u16).any(|r| s.row_from(r, 50) == "mapped-42")
+        (0..s.cells.len() as u16).any(|r| shows_output(&s.row_from(r, 50), "mapped-42"))
     });
 }
 
@@ -645,7 +655,9 @@ try { (o as any).nope = 1; } catch (e) { console.log(`option refused: ${(e as Er
     env.wait_log("md", "the mode change", |l| l.contains("mode normal win"));
     t.key("x");
     t.key("v");
-    t.wait_for("the new pane's command", |s| (0..s.cells.len() as u16).any(|r| s.row_from(r, 50) == "in-new"));
+    t.wait_for("the new pane's command", |s| {
+        (0..s.cells.len() as u16).any(|r| shows_output(&s.row_from(r, 50), "in-new"))
+    });
     let lines = env.script_lines("md");
     assert!(lines.iter().any(|l| l == "mode win terminal"), "the new pane's mode after the split: {lines:?}");
     let ls = env.run(&["ls"]);
