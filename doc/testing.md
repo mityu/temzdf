@@ -98,6 +98,21 @@ each kind to a session. `scripts/e2e.sh -P socket` does the same for e2e runs.
 Check that a new test can fail: break the code it covers for a moment and see
 it fail (the keyboard-mode test fails with the C-h bug fixed in 8598211).
 
+A test that fails now and then, or only in CI (GitHub's runners have 2 to 4
+cores), often depends on which process gets there first. Run the tests on
+one or two CPUs to make the slow order the usual one:
+
+```sh
+cargo test -p temzdf --test tui --no-run       # then, with the binary it names:
+taskset -c 0 target/debug/deps/tui-HASH -q     # one CPU; `-c 0,1` for two
+```
+
+On one CPU `forward_search_goes_to_the_session_showing_the_pdf_or_starts_one`
+failed every time (the PDF took the forward search before the first client
+attached, and attaching resized the pane mid-scroll; fixed in 02949b7).
+When a wait times out, the screen and the bytes received are in
+`target/tuitest/` (CI uploads them, see `scripts/check.sh --verbose`).
+
 What a terminal shows *between* frames (a flicker) does not show on the
 screen a test reads at the end. For those, record what temzdf wrote
 (`TERMPIX_TRACE` in the test's environment) and feed it to
