@@ -24,6 +24,8 @@
 #                 dev shell and GUI session; target/e2e* come back to the
 #                 host's target/vm/; exits with CMD's status
 #   e2e ARGS...   build temzdf and temzdf-gui there, then scripts/e2e.sh ARGS
+#   e2e-all ARGS...  the same with scripts/e2e-all.sh: every judged scenario
+#                 in one go (one copy, dev shell and build for all)
 #   shell         an interactive shell in the guest's work tree
 #   stop, status
 #
@@ -181,6 +183,7 @@ EOF
   run) run "$@" ;;
   # The fixtures come from the host (sync_in): no TeX in the guest.
   e2e) run sh -c 'cargo build -q -p temzdf -p temzdf-gui && scripts/e2e.sh "$@"' e2e "$@" ;;
+  e2e-all) run sh -c 'cargo build -q -p temzdf -p temzdf-gui && scripts/e2e-all.sh "$@"' e2e-all "$@" ;;
   shell)
     start
     sync_in
