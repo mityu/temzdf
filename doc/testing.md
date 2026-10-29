@@ -143,6 +143,8 @@ three wheel steps per notch, so the zoom is three times as deep and its
 tiles are not there yet after the scenario's pause; they are with a longer
 one); Ghostty all (text checks SKIP); the GUI `gui`. `gui-focus` is X11's
 and not run there; `-I` and multiplexers are not tried there.
+`scripts/macos-vm.sh` runs the same in a macOS VM, on its own screen, so
+the host's pointer stays free ("Running in a VM" in `doc/macos.md`).
 
 ## Judged e2e scenarios
 
