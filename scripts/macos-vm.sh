@@ -54,7 +54,7 @@ guest_share="/Volumes/My Shared Files/$share"
 guest_tree='$HOME/temzdf'
 mkdir -p "$out"
 
-usage() { sed -n '2,/^set -euo/{/^set -euo/!p}' "$0"; exit 2; }
+usage() { sed -n '2,${ /^set -euo/q; p; }' "$0"; exit 2; }
 
 # The VM's state in `tart list`: running, stopped, or nothing.
 state() { tart list --source local | awk -v n="$1" '$2 == n { print $NF }'; }
