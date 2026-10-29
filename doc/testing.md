@@ -190,7 +190,14 @@ script) in the given terminals and sums up PASS/FAIL/SKIP per scenario;
 when its phases began to `OUTDIR/timing.txt` (launch, window, written,
 ready, actions, `expect NAME` and `expected NAME` around each headless
 render, quit, done; milliseconds), for seeing where the time goes. The
-GUI's scenarios are `gui`, `gui-focus` and `gui-ime` (with `-I`; the last two
+screens after leaving temzdf (`session`, `terminal`: detached, killed) are
+judged as images against the same terminal's own drawing of the messages
+(`draw_lines` types them with `printf` at the end; `screen_restored`
+compares cell rows: the message, nothing below but the prompt, above it the
+screen from before): the screen came back and nothing of temzdf's is left,
+in Ghostty too, whose text cannot be read. (Images left on the alternate
+screen do not show after it, so they are not caught; leaving the alternate
+screen was, in every terminal.) The GUI's scenarios are `gui`, `gui-focus` and `gui-ime` (with `-I`; the last two
 not on macOS); `gui-focus` and `gui-ime` judge what the shell wrote with
 `check` (`focus.txt`, `ime.txt`, `pasted.txt`); `gui-ime`'s composing screen
 stays unjudged.

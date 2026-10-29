@@ -3,7 +3,9 @@
 #   scripts/e2e.sh tests/e2e/session.actions -- sh -c \
 #     'target/debug/temzdf --clean -s e2e target/fixtures/sample.pdf; exec sh'
 # Judged: expect for split, reattached and new-pane; check for the messages
-# after detaching and killing, and for `temzdf ls` listing the session. Expected:
+# after detaching and killing (their text where the terminal tells it; the
+# screens as images, detached-restored and killed-restored), and for
+# `temzdf ls` listing the session. Expected:
 #   split.png       two panes side by side on the same document, the right
 #                   one focused (accent border), scrolled down three steps
 #   detached.png    the shell, "[detached from session e2e]"
@@ -34,3 +36,8 @@ target/debug/temzdf kill-session e2e
 pause 1
 shot killed
 check killed-text screen_contains "[session e2e was killed]"
+# The screens after detaching and killing against this terminal's own
+# drawing of the messages: the screen came back, nothing of temzdf's left.
+draw_lines reference "[detached from session e2e]" "[session e2e was killed]"
+check detached-restored screen_restored detached reference 0
+check killed-restored screen_restored killed reference 1 detached 0

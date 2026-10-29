@@ -96,6 +96,17 @@
 #                      get-text`) with the frame's
 #                      (NAME.expected.txt; NAME.text.diff on a mismatch).
 #                      Not inside multiplexers.
+#   draw_lines NAME LINE...  type `clear; printf` of the LINEs into the shell
+#                      and save OUTDIR/NAME.png: this terminal's own drawing
+#                      of them (rows 0, 1, ...), a reference for screen_restored
+#                      (it clears the screen: at the end of a scenario)
+#   screen_restored SHOT REF K [BEFORE BK]  whether screenshot SHOT, taken
+#                      after leaving temzdf, shows REF's row K (the message),
+#                      nothing below it but the prompt, and above it what
+#                      BEFORE showed up to its row like REF's row BK, or
+#                      nothing without BEFORE (temzdf was the first command):
+#                      the screen came back and temzdf left nothing behind;
+#                      rows compared as images, so in Ghostty too
 #   check NAME CMD...  run CMD: PASS NAME when it succeeds, else FAIL
 #                      (OUTDIR/expect.txt, as expect), for what a screenshot
 #                      cannot judge (files, exit statuses); SKIP when CMD
@@ -789,6 +800,89 @@ screen_contains() {
   text=$(read_screen) || return
   grep -qF -- "$1" <<<"$text"
 }
+# The terminal's cell grid, as temzdf last logged it: sets cols, rows, cw
+# and ch; fails without one.
+read_geometry() {
+  local geo
+  geo=$(grep -oE 'geometry [0-9]+x[0-9]+ cells of [0-9]+x[0-9]+ px' "$outdir/state/temzdf/temzdf.log" 2>/dev/null | tail -1)
+  [[ -n $geo ]] || return 1
+  read -r cols rows cw ch <<<"$(sed -E 's/geometry ([0-9]+)x([0-9]+) cells of ([0-9]+)x([0-9]+) px/\1 \2 \3 \4/' <<<"$geo")"
+}
+draw_lines() {
+  local name=$1 cmd="clear; printf '%s\n'" line
+  shift
+  for line in "$@"; do cmd+=" '$line'"; done
+  type "$cmd
+"
+  pause 1
+  shot "$name"
+}
+# Cell row ROW of screenshot NAME (OUTDIR/NAME.png) into FILE.
+cell_row() {
+  magick "$outdir/$1.png" -crop "$((cols * cw))x$ch+$origin_x+$((origin_y + $2 * ch))" +repage "$3"
+}
+# Whether two images are the same, as expect compares.
+same_image() {
+  local out
+  out=$(magick compare -metric AE -fuzz 3% "$1" "$2" null: 2>&1 || true)
+  [[ ${out%% *} == 0 ]]
+}
+row_of() {
+  local shot=$1 ref=$2 k=$3 r want=$outdir/.row-want.png got=$outdir/.row-got.png
+  read_geometry || return 1
+  cell_row "$ref" "$k" "$want"
+  for ((r = 0; r < rows; r++)); do
+    cell_row "$shot" "$r" "$got"
+    if same_image "$want" "$got"; then
+      echo "$r"
+      return 0
+    fi
+  done
+  return 1
+}
+screen_restored() {
+  local shot=$1 ref=$2 k=$3 before=${4:-} bk=${5:-} m mb r
+  local a=$outdir/.row-a.png b=$outdir/.row-b.png blank=$outdir/.row-blank.png
+  read_geometry || return 1
+  if ! m=$(row_of "$shot" "$ref" "$k"); then
+    echo "screen_restored: no row of $shot.png is $ref.png's row $k" >&2
+    return 1
+  fi
+  # The reference's last row: a row of nothing in this terminal.
+  cell_row "$ref" $((rows - 1)) "$blank"
+  if [[ -n $before ]]; then
+    if ! mb=$(row_of "$before" "$ref" "$bk"); then
+      echo "screen_restored: no row of $before.png is $ref.png's row $bk" >&2
+      return 1
+    fi
+    for ((r = 0; r <= mb; r++)); do
+      cell_row "$before" "$r" "$a"
+      cell_row "$shot" "$r" "$b"
+      if ! same_image "$a" "$b"; then
+        echo "screen_restored: row $r of $shot.png is not as in $before.png" >&2
+        return 1
+      fi
+    done
+  else
+    # Empty above the message (temzdf was the first command).
+    for ((r = 0; r < m; r++)); do
+      cell_row "$shot" "$r" "$b"
+      if ! same_image "$blank" "$b"; then
+        echo "screen_restored: row $r of $shot.png is not empty" >&2
+        return 1
+      fi
+    done
+  fi
+  # Between BEFORE's message and this one: the command typed there. Below
+  # the message and the prompt after it: nothing.
+  for ((r = m + 2; r < rows; r++)); do
+    cell_row "$shot" "$r" "$b"
+    if ! same_image "$blank" "$b"; then
+      echo "screen_restored: row $r of $shot.png is not empty" >&2
+      return 1
+    fi
+  done
+}
 expect() {
   if [[ $term == gui ]]; then
     expect_gui "$1"
@@ -823,11 +917,10 @@ expect() {
     input=("--events=$outdir/$name.events.txt")
   fi
   shot "$name"
-  geo=$(grep -oE 'geometry [0-9]+x[0-9]+ cells of [0-9]+x[0-9]+ px' "$outdir/state/temzdf/temzdf.log" | tail -1) || {
+  read_geometry || {
     echo "FAIL $name: no geometry in temzdf.log" | tee -a "$outdir/expect.txt"
     return
   }
-  read -r cols rows cw ch <<<"$(sed -E 's/geometry ([0-9]+)x([0-9]+) cells of ([0-9]+)x([0-9]+) px/\1 \2 \3 \4/' <<<"$geo")"
   # --keys=...: key lists may start with "-" (zoom out).
   phase "expect $name"
   "${expect_cmd[@]}" --render-frame "$outdir/$name.expected.png" --size "${cols}x${rows}" \

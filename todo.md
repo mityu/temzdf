@@ -99,9 +99,12 @@ server on one `Session`). Next and open:
   sessions are judged against `temzdf render-session` (the text too in kitty
   and WezTerm; all pass in both, 2026-10-29), reload against fresh renders,
   SyncTeX with `check`, the GUI's focus and Japanese input with `check`
-  on what the shell wrote. Left unjudged: the truncated moment of
+  on what the shell wrote, the screens after detaching and killing
+  against the terminal's own drawing of the messages, the text
+  `select-autoscroll` copies. Left unjudged: the truncated moment of
   `reload`, SyncTeX's highlight and the page it lands on, IME composing,
-  the rendering-speed moment of `select-autoscroll`,
+  how far `select-autoscroll` scrolls (it follows the frames drawn, which
+  a replay does not; judging it needs autoscroll driven by time alone),
   sessions inside multiplexers, and Ghostty's text.
 - MuPDF's allocation lock makes text rendering slower with more threads (see
   `doc/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the

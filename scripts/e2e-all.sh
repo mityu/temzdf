@@ -58,8 +58,8 @@ fi
 # The terminal scenarios, in a stable order, and the GUI's. Not on macOS:
 # gui-focus (AppKit sends no presses for keys held on focus-in) and gui-ime
 # (-I, fcitx5, is Linux's).
-judged=(session terminal terminal-extras tabs floats resize float-wide expect links preview search select viewer
-  viewer-stress synctex synctex-reload reload)
+judged=(session terminal terminal-extras tabs floats resize float-wide expect links preview search select
+  select-autoscroll viewer viewer-stress synctex synctex-reload reload)
 gui_judged=(gui gui-focus gui-ime)
 if [[ $(uname) == Darwin ]]; then
   gui_judged=(gui)
@@ -105,7 +105,7 @@ scenario() {
       cmd=(env SHELL=/bin/sh 'PS1=$ ' target/debug/temzdf-gui --clean)
       if [[ $1 == gui-ime ]]; then opts=(-I); fi
       ;;
-    expect | links | preview | search | select | viewer) pdf ;;
+    expect | links | preview | search | select | select-autoscroll | viewer) pdf ;;
     # Inline transfers, as over SSH.
     viewer-stress) pdf; cmd=(env TERMPIX_MEDIUM=direct "${cmd[@]}") ;;
     *)

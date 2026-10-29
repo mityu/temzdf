@@ -1,9 +1,10 @@
 # Used with: scripts/e2e.sh tests/e2e/select-autoscroll.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
-# Expected: dragging from the title into the bottom edge and holding scrolls the
-# page by itself while the selection grows (held.png: blue selection over many
-# lines, the view moved down); releasing copies it (clipboard.txt starts with
-# "temzdf sample document").
+# Judged (check): releasing copies the selection (clipboard.txt starts with
+# "temzdf sample document"; copied). Not judged: dragging from the title into
+# the bottom edge and holding scrolls the page by itself while the selection
+# grows (held.png: blue selection over many lines, the view moved down); how
+# far it scrolls follows the frames the viewer drew, which a replay does not.
 pause 1
 down 318 188
 for y in 260 360 460 560 575; do move 450 $y; sleep 0.05; done
@@ -12,3 +13,4 @@ shot held
 up
 pause 0.5
 clipboard >"$outdir/clipboard.txt" || true
+check copied grep -q "^temzdf sample document" "$outdir/clipboard.txt"

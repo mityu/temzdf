@@ -5,7 +5,9 @@
 #     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-term; exec sh'
 # Judged: expect (the screen against the session's frame) for shell,
 # split-less, pdf, flood and reattached; check for the messages after
-# detaching and killing (detached-text, killed-text). Expected:
+# detaching and killing (detached-text, killed-text where the terminal tells
+# its text; detached-restored, killed-restored: the screens as images).
+# Expected:
 #   shell.png       a shell filling the window: the listing, "red" in red,
 #                   "green on blue", "数式 wide" (wide characters)
 #   split-less.png  the shell left, less showing Cargo.toml on the right (focused)
@@ -50,3 +52,8 @@ target/debug/temzdf kill-session e2e-term
 pause 1
 shot killed
 check killed-text screen_contains "[session e2e-term was killed]"
+# The screens after detaching and killing against this terminal's own
+# drawing of the messages: the screen came back, nothing of temzdf's left.
+draw_lines reference "[detached from session e2e-term]" "[session e2e-term was killed]"
+check detached-restored screen_restored detached reference 0
+check killed-restored screen_restored killed reference 1 detached 0
