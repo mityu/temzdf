@@ -142,6 +142,76 @@ why:
 - What differs per terminal (kitty's wheel, Ghostty's colours and keys,
   WezTerm's title bar) is in `doc/terminal-compat.md`.
 
+### Running in a VM: scripts/macos-vm.sh
+
+The same runs inside a macOS VM, so they take neither the host's front
+window nor its pointer, and the test environment is rebuilt the same way on
+another Mac. It needs Apple Silicon, Tart (in the dev shell on macOS; its
+licence, FSL, is unfree to nixpkgs, which the flake allows for it alone) and
+about 60 GB of disk. One VM, `temzdf-e2e`, kept between runs:
+
+```sh
+scripts/macos-vm.sh create        # clone the base image, 4 CPUs, 6 GB, 1600x1000 at scale 1
+scripts/macos-vm.sh provision     # Nix, the terminals; no sleep or screen lock
+scripts/macos-vm.sh check         # permissions, display, tools
+scripts/macos-vm.sh save          # keep this state as temzdf-e2e-golden
+scripts/macos-vm.sh e2e -t ghostty tests/e2e/expect.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
+scripts/macos-vm.sh e2e-all -t ghostty -t wezterm -t gui   # every judged scenario, summed up
+scripts/macos-vm.sh reset         # back to the golden copy, permissions included
+```
+
+- The base image is Cirrus Labs' macOS image (user admin/admin, auto-login,
+  Homebrew, the Command Line Tools, the Tart Guest Agent). Commands reach
+  the guest through `tart exec` (the agent runs in the logged-in user's
+  session, so what it starts can drive windows), not SSH.
+- The repository is shared into the guest; `run` and `e2e` copy it to the
+  guest's disk first (VirtioFS is slow to build on, and the guest has its
+  own `target/`), with `target/fixtures/` (no TeX in the guest), and copy
+  `target/e2e*` back to the host's `target/vm/`.
+- In a VM `scripts/e2e.sh` uses the VM's own screen instead of a virtual
+  display (`kern.hv_vmm_present`; `E2E_MACOS_DISPLAY=main|virtual`
+  overrides), which must be at scale 1: Tart's `--display` in `px`.
+- Permissions: the image grants the agent screen recording and
+  accessibility already. macOS still asks, about every 30 days, whether it
+  may go on recording the screen ("tart-guest-agent is requesting to
+  bypass the system private window picker"), and the question covers the
+  screenshots. When it shows (a run's screenshots show it),
+  `permissions` restarts the VM with its screen in Tart's window, where a
+  person clicks Allow; then `save`. The schedule is in the guest's
+  `~/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist`;
+  editing it would make the question go away, which is weakening a
+  privacy check and left alone.
+- The terminals come from Homebrew casks, registered with LaunchServices
+  (`open -a` finds apps there) and not quarantined: Ghostty's tip (the
+  cask's 1.3.1 takes a program given with `-e` through `open` for a file and
+  asks whether to run it), WezTerm's nightly (its release is from 2024).
+  Casks cannot be pinned: each provision writes the versions to
+  `~/temzdf-vm-versions.txt` in the guest (`status` shows them). The image
+  reopens apps at login; `run` closes terminals left open first.
+- kitty does not run in the VM: it draws with OpenGL only, and the VM's
+  paravirtualised GPU offers Metal but no OpenGL 3.3 pixel format ("NSGL:
+  Failed to find a suitable pixel format"). Ghostty, WezTerm (`front_end =
+  "WebGpu"`, which `scripts/e2e.sh` asks for on macOS: its OpenGL front end
+  fails the same way) and the GUI draw with Metal. kitty runs on the host.
+- The GPU is paravirtualised: fine for pixels, not for performance
+  numbers. At most two macOS VMs run at once on a host.
+- Results (2026-10-29, macOS 26.6 guest): WezTerm passes every judged
+  scenario (56), the GUI `gui` (5), Ghostty all but `viewer`'s zoom (51,
+  text checks SKIP): Ghostty reports nine wheel steps per notch, and the
+  VM is slower than the host, so the deep zoom's tiles are not there yet
+  after the scenario's pause. A VM rebuilt with `reset` passes without
+  any question asked.
+- Time: `e2e-all` over Ghostty, WezTerm and the GUI (31 runs) takes about
+  10 minutes, copying and building included. What made it shorter
+  (WezTerm's `expect`, `terminal` and `viewer`: 167 s before, 88 s after):
+  waiting for the first screen instead of a fixed 6 s (launch to ready
+  8.6 s, now 4.3 s), 2 ms instead of 20 ms after each posted event
+  (typing 125 ms a character in WezTerm, about 20 ms now: `terminal` 74 s,
+  now 37 s), one copy, dev shell and build for all the runs, and no fixed
+  half second at the end. What is left is mostly the scenarios' own
+  pauses and the `expect` comparisons (about 2 s each, a debug build
+  rendering the expected screen).
+
 ### scripts/macos-gui.sh
 
 Its header lists the commands. A session:

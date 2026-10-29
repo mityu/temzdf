@@ -29,7 +29,7 @@
           ...
         }:
         let
-          inherit (pkgs.stdenv.hostPlatform) isLinux;
+          inherit (pkgs.stdenv.hostPlatform) isLinux isDarwin;
 
           # The fonts temzdf-gui embeds (crates/temzdf-gui/build.rs), as WezTerm
           # bundles them: JetBrains Mono, the default and first fallback, then
@@ -81,6 +81,7 @@
               (import ./nix/libghostty-vt.nix)
               (import rust-overlay)
             ];
+            config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "tart" ];
           };
 
           devShells =
@@ -91,6 +92,7 @@
                   withTerminals ? false,
                   enableMiri ? false,
                   enableFixedFontSet ? false,
+                  skipTart ? false,
                 }:
                 pkgs.mkShell (
                   {
@@ -98,8 +100,8 @@
                       with pkgs;
                       [
                         agent-browser
-                        # Scratch scripts during development (not needed by the build).
                         python3
+                        imagemagick # Screenshots compared in scripts/e2e.sh (expect).
                       ]
                       ++ (
                         if enableMiri then
@@ -145,8 +147,7 @@
                           zellij
                         ]
                       )
-                      # Screenshots compared in scripts/e2e.sh (expect), on Linux and macOS.
-                      ++ [ pkgs.imagemagick ]
+
                       ++ lib.optionals isLinux (
                         with pkgs;
                         [
@@ -170,7 +171,8 @@
                           dbus
                           (kdePackages.fcitx5-with-addons.override { addons = [ fcitx5-mozc ]; })
                         ]
-                      );
+                      )
+                      ++ lib.optionals (isDarwin && !skipTart) [ pkgs.tart ];
 
                     nativeBuildInputs = with pkgs; [
                       pkg-config
@@ -226,6 +228,9 @@
                 withTerminals = true;
                 enableMiri = true;
               };
+            }
+            // lib.optionalAttrs isDarwin {
+              no-vm = buildDevShell { skipTart = true; };
             };
           packages =
             let

@@ -18,7 +18,8 @@
 #             (headless sway; keys and pointer through crates/wlinput, built
 #             here; screenshots with grim); macos (the default
 #             there): the terminal or the GUI on a virtual display at scale 1
-#             beside the real screen, keys and the pointer through `termctl
+#             beside the real screen (in a VM, scripts/macos-vm.sh: on its own
+#             screen, at scale 1), keys and the pointer through `termctl
 #             serve` (scripts/macos/termctl.swift; the window is in front for
 #             the run, as it has the focus on Linux, and the end gives the
 #             front and the pointer back),
@@ -98,9 +99,11 @@
 #                      through their get-text; 77 elsewhere), e.g. `check
 #                      detached screen_contains "[detached from session e2e]"`.
 #
-# temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log.
-# It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij) and
-# sends `q` at the end. It does not check results; inspect the screenshots (or
+# temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log;
+# when each phase of the run began goes to OUTDIR/timing.txt (milliseconds).
+# It waits 3 s for startup (6 s for Ghostty and WezTerm, 3 s more in zellij;
+# on macOS only until temzdf logged its geometry and the screen stood still
+# for 150 ms, at most that long) and sends `q` at the end. It does not check results; inspect the screenshots (or
 # compare pixels) afterwards. The
 # command runs without ZELLIJ/TMUX in its environment so a multiplexer around the
 # harness does not leak into terminal detection, without TEMZDF_SESSION_NAME
@@ -589,6 +592,34 @@ mask_window_edges() {
   magick "$outdir/$name.actual.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.actual.png"
   magick "$outdir/$name.expected.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.expected.png"
 }
+# Wait until the first screen is up, at most LIMIT seconds (the fixed wait
+# used elsewhere): temzdf's geometry line in its log (it is drawing), then
+# the screen unchanged over 150 ms (the first frame and its tiles are there).
+wait_ready() {
+  local limit=$1 deadline log=$outdir/state/temzdf/temzdf.log a=$outdir/ready.a.png b=$outdir/ready.b.png
+  shift
+  deadline=$(($(usec) + limit * 1000000))
+  if [[ $term != gui ]] && runs_temzdf "$@"; then
+    until grep -qs 'geometry .* cells of' "$log"; do
+      (($(usec) < deadline)) || break
+      sleep 0.05
+    done
+    phase geometry
+  fi
+  be_shot "$a"
+  while (($(usec) < deadline)); do
+    sleep 0.15
+    be_shot "$b"
+    if cmp -s "$a" "$b"; then
+      rm -f "$a" "$b"
+      phase ready
+      return
+    fi
+    mv "$b" "$a"
+  done
+  rm -f "$a" "$b"
+  phase ready "(timed out)"
+}
 # The GUI's form of expect: the window against an offscreen render of the
 # same session at this moment.
 expect_gui() {
@@ -803,6 +834,12 @@ if [[ $term != gui && ${args[1]:-} != standalone ]] && runs_temzdf "$@"; then
 fi
 mkdir -p "$outdir/state"
 rm -f "$outdir/state/temzdf/temzdf.log" "$outdir/expect.txt"
+# When each phase began, in milliseconds since this point
+# (OUTDIR/timing.txt): for seeing where a run spends its time.
+timing0=$(usec)
+: >"$outdir/timing.txt"
+phase() { echo "$((($(usec) - timing0) / 1000)) $*" >>"$outdir/timing.txt"; }
+phase launch
 mux_startup=0
 case $mux in
   "") ;;
@@ -875,7 +912,7 @@ cleanup() {
     kill "$term_pid" 2>/dev/null || true
     wait "$term_pid" 2>/dev/null || true
     # Started through `open`, not a child: wait for it to go.
-    for ((i = 0; i < 50; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.1; done
+    for ((i = 0; i < 100; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.05; done
   fi
   if [[ -n $vdisp_pid ]]; then
     kill "$vdisp_pid" 2>/dev/null || true
@@ -941,13 +978,24 @@ if [[ $display == macos ]]; then
   [[ $term == gui || $term == wezterm ]] && screen_w=$((width + 100)) screen_h=$((height + 100 + menu_bar))
   user_clipboard=$(mktemp)
   pbpaste >"$user_clipboard" 2>/dev/null || true
-  target/macos-gui/vdisp "$screen_w" "$screen_h" 1 >"$outdir/vdisp.out" 2>&1 &
-  vdisp_pid=$!
-  for ((i = 0; i < 50; i++)); do [[ -s $outdir/vdisp.out ]] && break; sleep 0.1; done
-  read -r _ disp_x disp_y disp_w disp_h <"$outdir/vdisp.out" || true
-  if [[ -z ${disp_h:-} ]]; then
-    echo "e2e.sh: no virtual display: $(cat "$outdir/vdisp.out")" >&2
-    exit 1
+  # In a VM (scripts/macos-vm.sh) its own screen is nobody's desktop: no
+  # virtual display there. E2E_MACOS_DISPLAY=main|virtual decides otherwise.
+  macos_display=${E2E_MACOS_DISPLAY:-$([[ $(sysctl -n kern.hv_vmm_present 2>/dev/null) == 1 ]] && echo main || echo virtual)}
+  if [[ $macos_display == main ]]; then
+    read -r disp_x disp_y disp_w disp_h scale <<<"$(target/macos-gui/termctl main)"
+    if ((scale != 1 || disp_w < screen_w || disp_h < screen_h)); then
+      echo "e2e.sh: the main display (${disp_w}x${disp_h} at scale $scale) needs scale 1 and ${screen_w}x${screen_h} at least" >&2
+      exit 1
+    fi
+  else
+    target/macos-gui/vdisp "$screen_w" "$screen_h" 1 >"$outdir/vdisp.out" 2>&1 &
+    vdisp_pid=$!
+    for ((i = 0; i < 50; i++)); do [[ -s $outdir/vdisp.out ]] && break; sleep 0.1; done
+    read -r _ disp_x disp_y disp_w disp_h <"$outdir/vdisp.out" || true
+    if [[ -z ${disp_h:-} ]]; then
+      echo "e2e.sh: no virtual display: $(cat "$outdir/vdisp.out")" >&2
+      exit 1
+    fi
   fi
 fi
 clean_env=(env -u TEMZDF_LOG_DIR -u TEMZDF_SESSION_NAME -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID -u TMUX -u TMUX_PANE "XDG_STATE_HOME=$outdir/state"
@@ -976,7 +1024,10 @@ if [[ $display == macos ]]; then
   {
     echo '#!/usr/bin/env bash'
     echo "export PATH=$(printf %q "$XDG_RUNTIME_DIR/bin:$PATH")"
-    for v in $(compgen -e); do
+    # The names from env (compgen is not in a non-interactive bash, as
+    # `nix develop -c` runs); a line of a value with newlines is no name.
+    for v in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u); do
+      [[ -n ${!v+x} ]] || continue
       case $v in
         PATH | TERM | TERM_PROGRAM* | COLORTERM | TERMINFO | KITTY_* | WEZTERM_* | GHOSTTY_* | WINDOWID | _ | SHLVL | PWD | OLDPWD) ;;
         *) printf 'export %s=%q\n' "$v" "${!v}" ;;
@@ -1016,7 +1067,8 @@ if [[ $display == macos ]]; then
       # bar: without one it takes the top of the window for one, and a drag
       # there (selecting the first row) moves the window.
       app=WezTerm proc=wezterm-gui startup=6
-      targs=(-n --config 'window_decorations="TITLE|RESIZE"' --config enable_tab_bar=false
+      # WebGPU (Metal): a macOS VM has no OpenGL 3.3 (doc/macos.md).
+      targs=(-n --config 'front_end="WebGpu"' --config 'window_decorations="TITLE|RESIZE"' --config enable_tab_bar=false
         --config 'window_padding={left=0,right=0,top=0,bottom=0}'
         --config "initial_cols=$((width / 7))" --config "initial_rows=$((height / 16))"
         start --always-new-process --cwd "$PWD" -- "$launch")
@@ -1049,6 +1101,7 @@ if [[ $display == macos ]]; then
     echo "e2e.sh: $term did not open a window" >&2
     exit 1
   fi
+  phase window
   # Below the menu bar; at scale 1 it draws again at that density, then the
   # command starts.
   "$ctl" move "$term_pid" "$disp_x" $((disp_y + menu_bar))
@@ -1117,7 +1170,14 @@ case $term in
 esac
 term_pid=$!
 fi
-sleep "$((startup + mux_startup))"
+# Until the first screen is up: on macOS as soon as it is (below), at most
+# as long as elsewhere.
+if [[ $display == macos ]]; then
+  wait_ready $((startup + mux_startup)) "$@"
+else
+  sleep "$((startup + mux_startup))"
+  phase ready
+fi
 # A command that ends at once (a missing file, a bad option) leaves no window
 # to wait for.
 if ! kill -0 "$term_pid" 2>/dev/null; then
@@ -1139,7 +1199,11 @@ if [[ $term == gui || $display == macos ]]; then
   fi
 fi
 if [[ $display == macos ]]; then
-  coproc TC { "$ctl" serve "$term_pid" "$([[ $term == wezterm ]] && echo global || echo pid)" 2>>"$outdir/termctl.log"; }
+  # 2 ms after each event (not 20): typing at about 4 ms a character.
+  coproc TC {
+    TERMCTL_SETTLE_MS=${E2E_SETTLE_MS:-2} "$ctl" serve "$term_pid" "$([[ $term == wezterm ]] && echo global || echo pid)" \
+      2>>"$outdir/termctl.log"
+  }
   # In front for the run, as on Linux, where it has the focus: unfocused,
   # Ghostty draws a hollow cursor over the images even where the program
   # hides it.
@@ -1153,14 +1217,22 @@ fi
 # The recorded times start here (the first screen is up).
 : >"$events"
 t0=$(usec)
+phase actions
 # shellcheck source=/dev/null
 source "$actions"
+phase quit
 crashed=0
 kill -0 "$term_pid" 2>/dev/null || crashed=1
 be_key q || true
-sleep 0.5
+if [[ $display == macos ]]; then
+  # As long as the terminal takes to go, at most the half second used elsewhere.
+  for ((i = 0; i < 10; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.05; done
+else
+  sleep 0.5
+fi
 cleanup
 trap - EXIT
+phase done
 echo "screenshots in $outdir"
 if ((crashed)); then
   echo "TERMINAL CRASHED (see $outdir/terminal.log)"

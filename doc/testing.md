@@ -157,6 +157,15 @@ three wheel steps per notch, so the zoom is three times as deep and its
 tiles are not there yet after the scenario's pause; they are with a longer
 one); Ghostty all (text checks SKIP); the GUI `gui`. `gui-focus` is X11's
 and not run there; `-I` and multiplexers are not tried there.
+`scripts/macos-vm.sh` runs the same in a macOS VM, on its own screen, so
+the host's pointer stays free ("Running in a VM" in `doc/macos.md`).
+
+`scripts/e2e-all.sh [-t TERM]... [SCENARIO...]` runs the judged scenarios
+(each with its "Used with:" command, kept in the script) in the given
+terminals and sums up PASS/FAIL/SKIP per scenario; `scripts/macos-vm.sh
+e2e-all` runs it in the VM in one go. Each run writes when its phases
+began to `OUTDIR/timing.txt` (launch, window, geometry, ready, actions,
+quit, done; milliseconds), for seeing where the time goes.
 
 ## Judged e2e scenarios
 
