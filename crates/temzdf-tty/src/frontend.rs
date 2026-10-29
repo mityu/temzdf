@@ -63,9 +63,12 @@ pub struct TtyFrontend {
     pointer: Pointer,
     started: Instant,
     first_shown: bool,
-    /// A complete frame was shown: `Some(true)` once all of it was written
-    /// to the terminal and the log said so.
-    complete_shown: Option<bool>,
+    /// Whether the last frame shown was complete (every visible page
+    /// rendered), and which of the two the log said last: it says when a
+    /// frame left incomplete is shown, and when a complete one has been
+    /// written out (scripts/e2e.sh waits for that, before judging a screen).
+    shown_complete: Option<bool>,
+    logged_complete: Option<bool>,
     /// When the last frame that sent pixels was shown.
     last_pixels: Option<Instant>,
     /// Composited frames resend whole strips of the screen; multiplexers
@@ -136,7 +139,8 @@ impl TtyFrontend {
             pointer: Pointer::Default,
             started: Instant::now(),
             first_shown: false,
-            complete_shown: None,
+            shown_complete: None,
+            logged_complete: None,
             last_pixels: None,
             min_interval,
             retry_soon: false,
@@ -216,8 +220,10 @@ impl TtyFrontend {
         }
         self.set_pointer(frame.pointer)?;
         self.first_shown = true;
-        if complete && self.complete_shown.is_none() {
-            self.complete_shown = Some(false);
+        self.shown_complete = Some(complete);
+        if !complete && self.logged_complete != Some(false) {
+            self.logged_complete = Some(false);
+            eprintln!("temzdf: incomplete frame shown");
         }
         if pixels {
             self.last_pixels = Some(Instant::now());
@@ -259,12 +265,11 @@ impl TtyFrontend {
         if self.tty.pending_output() > 0 {
             // Nothing signals the end of a write; poll for it.
             timeout = timeout.min(OUTPUT_POLL);
-        } else if self.complete_shown == Some(false) {
-            // For scripts/e2e.sh: the first complete screen reached the
-            // terminal (over a slow link or through a multiplexer, much later
-            // than it was made).
-            self.complete_shown = Some(true);
-            eprintln!("temzdf: first complete frame written");
+        } else if self.shown_complete == Some(true) && self.logged_complete != Some(true) {
+            // A complete screen reached the terminal (over a slow link or
+            // through a multiplexer, much later than it was made).
+            self.logged_complete = Some(true);
+            eprintln!("temzdf: complete frame written");
         }
         timeout
     }

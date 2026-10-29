@@ -28,6 +28,10 @@ server on one `Session`). Next and open:
   uploads at scale 2 got slower on lavapipe (`doc/performance.md`, "With
   shared memory"); measure on a real GPU and on macOS.
 - [ ] A Vim-like command line on the `Action` text form (tab pages are done).
+- [ ] A log level (or verbosity) for temzdf's logs: today some lines are
+  there for scripts/e2e.sh (`complete frame written`, `incomplete frame
+  shown`, geometry) and others only with variables (`TEMZDF_TIMING`); the
+  frame lines could go below the default level (user, 2026-10-30).
 - [ ] User report (2026-10-26, deferred): after resizing the terminal window
   with split panes, the bottom-right pane's status bar (file name) stayed where
   it was. Not reproduced in kitty or WezTerm (standalone and session) nor
@@ -97,7 +101,7 @@ server on one `Session`). Next and open:
   SyncTeX with `check`, the GUI's focus and Japanese input with `check`
   on what the shell wrote. Left unjudged: the truncated moment of
   `reload`, SyncTeX's highlight and the page it lands on, IME composing,
-  the rendering-speed moments (`viewer-stress`, `select-autoscroll`),
+  the rendering-speed moment of `select-autoscroll`,
   sessions inside multiplexers, and Ghostty's text.
 - MuPDF's allocation lock makes text rendering slower with more threads (see
   `doc/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the

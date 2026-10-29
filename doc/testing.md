@@ -198,8 +198,8 @@ stays unjudged.
 What makes the runs quick, on every display:
 
 - The first screen is waited for, not a fixed 3 to 6 s: temzdf logs
-  `first complete frame written` once its first complete frame has left
-  the writer (`temzdf-tty`), then the screen must stand still for 150 ms
+  `complete frame written` once a complete frame has left the writer
+  after none or an incomplete one (`incomplete frame shown`; `temzdf-tty`), then the screen must stand still for 150 ms
   and not be of one colour (kitty took up to 2 s to show what temzdf had
   written: a black screen stood still). The old time is the limit. Inside
   a multiplexer the fixed wait stays: images that reach tmux before its

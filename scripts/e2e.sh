@@ -55,6 +55,11 @@
 #   other_window       open a plain window of another program, print its PID
 #   focus_window PID   give PID's window the focus ($term_pid: the terminal's)
 #   pause SECONDS
+#   wait_complete [S]  until temzdf in the terminal has written a complete
+#                      frame (every visible page rendered) since it last
+#                      showed one that was not, at most S seconds (default
+#                      10): for judging a screen whose tiles come slowly
+#                      (inline transfers); nothing for the GUI
 #   ime on|off         (-I) switch the input method
 #   expect NAME KEYS   save OUTDIR/NAME.png and compare it with the screen
 #                      `temzdf standalone pdf --render-frame` draws for the
@@ -101,8 +106,8 @@
 #
 # temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log;
 # when each phase of the run began goes to OUTDIR/timing.txt (milliseconds).
-# It waits for the first screen (temzdf's log says its first complete frame
-# was written, then the screen stands still for 150 ms; at most 3 s, 6 s for
+# It waits for the first screen (temzdf's log says a complete frame was
+# written, then the screen stands still for 150 ms; at most 3 s, 6 s for
 # Ghostty and WezTerm, 5 s for the GUI; inside a multiplexer that long, 3 s
 # more in zellij, 1 s in tmux) and sends `q` at the end, waiting up to half a second for the
 # terminal to go. E2E_RENDERER (a temzdf) and E2E_GUI_RENDERER (a temzdf-gui)
@@ -603,7 +608,7 @@ mask_window_edges() {
   magick "$outdir/$name.expected.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.expected.png"
 }
 # Wait until the first screen is up, at most LIMIT seconds (what a fixed wait
-# took before): temzdf's log saying it wrote a complete first frame (when
+# took before): temzdf's log saying it wrote a complete frame (when
 # the command runs temzdf in the terminal), then the screen unchanged over
 # 150 ms and not of one colour (the terminal has drawn it). Returns at
 # once when the terminal (or the GUI) ended.
@@ -611,7 +616,7 @@ wait_ready() {
   local limit=$1 deadline log=$outdir/state/temzdf/temzdf.log a=$outdir/ready.a.png b=$outdir/ready.b.png
   deadline=$(($(usec) + limit * 1000000))
   if [[ -n $temzdf_in_terminal ]]; then
-    until grep -qs 'first complete frame written' "$log"; do
+    until grep -qs 'complete frame written' "$log"; do
       (($(usec) < deadline)) && kill -0 "$term_pid" 2>/dev/null || break
       sleep 0.05
     done
@@ -639,6 +644,23 @@ wait_ready() {
   done
   rm -f "$a" "$b"
   phase ready "(timed out)"
+}
+wait_complete() {
+  local limit=${1:-10} deadline log=$outdir/state/temzdf/temzdf.log
+  [[ -n $temzdf_in_terminal ]] || return 0
+  deadline=$(($(usec) + limit * 1000000))
+  # The last of the two lines temzdf writes as frames turn incomplete and
+  # complete again.
+  until grep -E 'temzdf: (incomplete frame shown|complete frame written)' "$log" 2>/dev/null | tail -1 |
+    grep -q 'complete frame written'; do
+    if (($(usec) >= deadline)); then
+      echo "e2e.sh: no complete frame written within ${limit}s" >&2
+      phase "complete (timed out)"
+      return 0
+    fi
+    sleep 0.05
+  done
+  phase complete
 }
 # The GUI's form of expect: the window against an offscreen render of the
 # same session at this moment.

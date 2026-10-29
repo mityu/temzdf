@@ -58,8 +58,8 @@ fi
 # The terminal scenarios, in a stable order, and the GUI's. Not on macOS:
 # gui-focus (AppKit sends no presses for keys held on focus-in) and gui-ime
 # (-I, fcitx5, is Linux's).
-judged=(session terminal terminal-extras tabs floats resize float-wide expect links preview search select viewer synctex
-  synctex-reload reload)
+judged=(session terminal terminal-extras tabs floats resize float-wide expect links preview search select viewer
+  viewer-stress synctex synctex-reload reload)
 gui_judged=(gui gui-focus gui-ime)
 if [[ $(uname) == Darwin ]]; then
   gui_judged=(gui)
@@ -106,6 +106,8 @@ scenario() {
       if [[ $1 == gui-ime ]]; then opts=(-I); fi
       ;;
     expect | links | preview | search | select | viewer) pdf ;;
+    # Inline transfers, as over SSH.
+    viewer-stress) pdf; cmd=(env TERMPIX_MEDIUM=direct "${cmd[@]}") ;;
     *)
       echo "e2e-all.sh: no command for scenario $1" >&2
       return 1

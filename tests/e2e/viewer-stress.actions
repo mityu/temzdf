@@ -1,7 +1,9 @@
 # Used with: TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
 # Sends many compressed tiles inline (like over SSH): scroll the whole document,
-# zoom in and out at several points. Pass = the terminal survives (exit code 0)
-# and the last screenshot shows the document.
+# zoom in and out at several points. Pass = the terminal survives (exit code 0,
+# not 3) and, once every tile of the last screen has arrived (wait_complete:
+# inline transfers are slow), it is the one a headless render of the same
+# input draws (expect stress-end).
 wheel 30
 pause 0.5
 wheel -30
@@ -15,4 +17,5 @@ wheel 6 400 300 C
 pause 1
 keys shift+g
 pause 1.5
-shot stress-end
+wait_complete
+expect stress-end
