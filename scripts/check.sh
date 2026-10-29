@@ -4,9 +4,14 @@
 # `cargo miri` is available, with terse output. Re-executes itself inside the
 # Nix dev shell when needed, so it works from any shell.
 #
-# Usage: scripts/check.sh [--fix] [--no-miri] [cargo test args...]
+# Usage: scripts/check.sh [--fix] [--no-miri] [--verbose] [cargo test args...]
 #   --fix      run `cargo fmt` instead of only checking formatting
 #   --no-miri  skip Miri (about a minute and a half)
+#   --verbose  print a failed step's whole output, not its main lines (CI)
+#
+# The whole output of clippy and the tests goes to target/check/ (Miri's to
+# target/miri-logs/; a failed simulated-terminal wait leaves its screen in
+# target/tuitest/).
 #
 # It does not run end-to-end terminal tests or regenerate fixtures.
 set -euo pipefail
@@ -21,11 +26,12 @@ if [[ -z "${IN_NIX_SHELL:-}" ]]; then
   NIX_CONFIG="warn-dirty = false${NIX_CONFIG:+$'\n'$NIX_CONFIG}" exec nix develop --quiet -c "$self" "$@"
 fi
 
-fix=0 miri=1
+fix=0 miri=1 verbose=0
 while [[ $# -gt 0 ]]; do
   case $1 in
     --fix) fix=1 ;;
     --no-miri) miri=0 ;;
+    --verbose) verbose=1 ;;
     *) break ;;
   esac
   shift
@@ -39,17 +45,25 @@ elif ! cargo fmt --all --check >/dev/null; then
   status=1
 fi
 
-if ! out=$(cargo clippy --workspace --all-targets --color never -- -D warnings 2>&1); then
-  echo "FAIL clippy"
-  grep -E "^(error|warning)|-->" <<<"$out" | head -40
+mkdir -p target/check
+# A failed step: its main lines (PATTERN, at most N), or all of it with
+# --verbose; the whole output is in LOG either way.
+failed() {
+  local name=$1 log=$2 pattern=$3 n=$4
+  echo "FAIL $name (all of it: $log)"
+  if ((verbose)); then cat "$log"; else grep -E "$pattern" "$log" | head -"$n"; fi
+}
+
+if ! cargo clippy --workspace --all-targets --color never -- -D warnings >target/check/clippy.log 2>&1; then
+  failed clippy target/check/clippy.log "^(error|warning)|-->" 40
   status=1
 fi
 
-if ! out=$(cargo test --workspace --color never "$@" 2>&1); then
-  echo "FAIL tests"
-  grep -E "^error|-->|FAILED|panicked|left:|right:" <<<"$out" | head -60
+if ! cargo test --workspace --color never "$@" >target/check/test.log 2>&1; then
+  failed tests target/check/test.log "^error|-->|FAILED|panicked|left:|right:" 60
   status=1
 fi
+out=$(cat target/check/test.log)
 passed=$(grep -oE "[0-9]+ passed" <<<"$out" | awk '{s+=$1} END {print s+0}')
 
 if ((status == 0)); then
@@ -57,7 +71,14 @@ if ((status == 0)); then
 fi
 
 if ((miri)); then
-  scripts/miri.sh && st=0 || st=$?
+  scripts/miri.sh | tee target/check/miri.log && st=0 || st=${PIPESTATUS[0]}
+  # Each failed test's own log (named on its FAIL line).
+  if ((verbose)); then
+    for log in $(grep -oE 'target/miri-logs/[^ )]+\.log' target/check/miri.log); do
+      echo "--- $log"
+      cat "$log"
+    done
+  fi
   # 2: no Miri here (e.g. the CI shell); it said so.
   if ((st != 0 && st != 2)); then status=1; fi
 fi

@@ -60,6 +60,7 @@ needs the shell, and the agent in it, restarted.
 scripts/check.sh            # fmt check + clippy -D warnings + tests (+ Miri where available), terse output
 scripts/check.sh --fix      # same, but apply rustfmt
 scripts/check.sh --no-miri  # without Miri (it takes about a minute and a half)
+scripts/check.sh --verbose  # a failed step's whole output (CI); always in target/check/
 cargo build --workspace
 ```
 
