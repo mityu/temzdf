@@ -79,7 +79,7 @@ if ((miri)); then
   scripts/miri.sh | tee target/check/miri.log && st=0 || st=${PIPESTATUS[0]}
   # Each failed test's own log (named on its FAIL line).
   if ((verbose)); then
-    for log in $(grep -oE 'target/miri-logs/[^ )]+\.log' target/check/miri.log); do
+    grep -oE 'target/miri-logs/[^ )]+\.log' target/check/miri.log | while read -r log; do
       echo "--- $log"
       cat "$log"
     done

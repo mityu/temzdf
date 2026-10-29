@@ -32,7 +32,7 @@ set -uo pipefail
 # This cd never fails.
 cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")"
 
-terms=() outdir= pass=() display= jobs=1
+terms=() outdir='' pass=() display='' jobs=1
 while getopts "t:d:P:o:j:Rh" opt; do
   case $opt in
     t) terms+=("$OPTARG") ;;

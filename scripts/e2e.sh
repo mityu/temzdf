@@ -249,7 +249,8 @@ record() {
 }
 # Coordinates as given (the terminal area's) and on the screen.
 at() { echo "$1 $2"; }
-root() { echo "$(($1 + origin_x)) $(($2 + origin_y))"; }
+# The pointer to (X, Y) of the terminal area.
+be_move_at() { be_move "$(($1 + origin_x))" "$(($2 + origin_y))"; }
 # xdotool modifier key names for MODS letters.
 mod_keys() {
   local m=${1:-} c
@@ -453,33 +454,33 @@ shot() { be_shot "$outdir/$1.png"; }
 wheel() {
   local n=$1 x=${2:-$((width / 2))} y=${3:-$((height / 2))} mods=${4:-} btn=5 dir=down k
   if ((n < 0)); then btn=4 dir=up n=$((-n)); fi
-  be_move $(root "$x" "$y")
-  record move "$(at "$x" "$y")" $mods
+  be_move_at "$x" "$y"
+  record move "$(at "$x" "$y")" ${mods:+"$mods"}
   mods_down "$mods"
   # One call: separate ones take about 0.1 s each, too slow for a flick.
   # The steps are recorded at the times it spaces them.
   local first=$((($(usec) - t0) / 1000)) i
   be_clicks "$btn" "$n" 30
-  for ((i = 0; i < n; i++)); do record -at $((first + 30 * i)) wheel $dir "$(at "$x" "$y")" $mods; done
+  for ((i = 0; i < n; i++)); do record -at $((first + 30 * i)) wheel "$dir" "$(at "$x" "$y")" ${mods:+"$mods"}; done
   mods_up "$mods"
 }
 # The button held by `down` (and its MODS), for `move` and `up`.
-held_btn= held_mods= pointer_x=0 pointer_y=0
+held_btn='' held_mods='' pointer_x=0 pointer_y=0
 down() {
   local x=$1 y=$2 btn=${3:-1} mods=${4:-} k
-  be_move $(root "$x" "$y")
-  record move "$(at "$x" "$y")" $mods
+  be_move_at "$x" "$y"
+  record move "$(at "$x" "$y")" ${mods:+"$mods"}
   mods_down "$mods"
   be_button down "$btn"
-  record press "$(at "$x" "$y")" "$(button_name "$btn")" $mods
+  record press "$(at "$x" "$y")" "$(button_name "$btn")" ${mods:+"$mods"}
   held_btn=$btn held_mods=$mods pointer_x=$x pointer_y=$y
 }
 up() {
   local btn=${1:-${held_btn:-1}} k
   be_button up "$btn"
-  record release "$(at "$pointer_x" "$pointer_y")" "$(button_name "$btn")" $held_mods
+  record release "$(at "$pointer_x" "$pointer_y")" "$(button_name "$btn")" ${held_mods:+"$held_mods"}
   mods_up "$held_mods"
-  held_btn= held_mods=
+  held_btn='' held_mods=''
 }
 dragto() {
   local x=$1 y=$2 x2=$3 y2=$4 steps=${5:-10} i px py
@@ -495,20 +496,20 @@ drag() { dragto "$1" "$2" "$1" "$3"; }
 click() {
   local x=$1 y=$2 btn=${3:-1} mods=${4:-} k b
   b=$(button_name "$btn")
-  be_move $(root "$x" "$y")
-  record move "$(at "$x" "$y")" $mods
+  be_move_at "$x" "$y"
+  record move "$(at "$x" "$y")" ${mods:+"$mods"}
   mods_down "$mods"
   be_clicks "$btn" 1 0
-  record press "$(at "$x" "$y")" "$b" $mods
-  record release "$(at "$x" "$y")" "$b" $mods
+  record press "$(at "$x" "$y")" "$b" ${mods:+"$mods"}
+  record release "$(at "$x" "$y")" "$b" ${mods:+"$mods"}
   mods_up "$mods"
 }
 # The pointer: a drag while `down` holds a button, else hovering.
 move() {
-  be_move $(root "$1" "$2")
+  be_move_at "$1" "$2"
   pointer_x=$1 pointer_y=$2
   if [[ -n $held_btn ]]; then
-    record drag "$(at "$1" "$2")" "$(button_name "$held_btn")" $held_mods
+    record drag "$(at "$1" "$2")" "$(button_name "$held_btn")" ${held_mods:+"$held_mods"}
   else
     record move "$(at "$1" "$2")"
   fi
@@ -633,7 +634,7 @@ wait_ready() {
   deadline=$(($(usec) + limit * 1000000))
   if [[ -n $temzdf_in_terminal ]]; then
     until grep -qs 'complete frame written' "$log"; do
-      (($(usec) < deadline)) && kill -0 "$term_pid" 2>/dev/null || break
+      if (($(usec) >= deadline)) || ! kill -0 "$term_pid" 2>/dev/null; then break; fi
       sleep 0.05
     done
     phase written
@@ -793,7 +794,8 @@ read_screen() {
         pane=$(wezterm cli list --format json | jq '.[0].pane_id') || return
         wezterm cli get-text --pane-id "$pane"
       else
-        WEZTERM_UNIX_SOCKET=$(ls "$XDG_RUNTIME_DIR"/wezterm/gui-sock-* | head -1) wezterm cli get-text
+        local socks=("$XDG_RUNTIME_DIR"/wezterm/gui-sock-*)
+        WEZTERM_UNIX_SOCKET=${socks[0]} wezterm cli get-text
       fi
       ;;
     *) return 77 ;;
@@ -1051,11 +1053,11 @@ fi
 export XDG_RUNTIME_DIR
 # kitty answers `kitten @ get-text` (expect in a session) here.
 kitty_socket=$XDG_RUNTIME_DIR/kitty.sock
-term_pid= sway_pid= vdisp_pid= user_clipboard=
+term_pid='' sway_pid='' vdisp_pid='' user_clipboard=''
 cleanup() {
   if [[ -n ${TC[1]:-} ]]; then
     # The front and the pointer back to where they were.
-    tc done || true
+    tc 'done' || true
     eval "exec ${TC[1]}>&-"
   fi
   if [[ -n $ime ]]; then
@@ -1120,8 +1122,9 @@ EOF
     ls "$XDG_RUNTIME_DIR"/wayland-[0-9] >/dev/null 2>&1 && ls "$XDG_RUNTIME_DIR"/sway-ipc.* >/dev/null 2>&1 && break
     sleep 0.1
   done
-  WAYLAND_DISPLAY=$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-[0-9] | head -1)")
-  SWAYSOCK=$(ls "$XDG_RUNTIME_DIR"/sway-ipc.* | head -1)
+  displays=("$XDG_RUNTIME_DIR"/wayland-[0-9]) socks=("$XDG_RUNTIME_DIR"/sway-ipc.*)
+  WAYLAND_DISPLAY=$(basename "${displays[0]}")
+  SWAYSOCK=${socks[0]}
   export WAYLAND_DISPLAY SWAYSOCK
   unset DISPLAY
   cargo build -q -p wlinput
@@ -1198,7 +1201,7 @@ if [[ $display == macos ]]; then
     printf 'cd %q\n' "$PWD"
     # Ghostty runs it through login(1), which leaves "Last login: ..." on the
     # screen: empty, as elsewhere (screen_restored).
-    echo "printf '\\033[H\\033[2J'"
+    printf '%s\n' "printf '\\033[H\\033[2J'"
     printf 'for ((i = 0; i < 600; i++)); do [[ -e %q ]] && break; sleep 0.05; done\n' "$go"
     printf 'exec %s"$@"\n' "$(printf '%q ' "${clean_env[@]}")"
   } >"$launch"
@@ -1395,7 +1398,7 @@ be_key q || true
 for ((i = 0; i < 10; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.05; done
 cleanup
 trap - EXIT
-phase done
+phase 'done'
 echo "screenshots in $outdir"
 if ((crashed)); then
   echo "TERMINAL CRASHED (see $outdir/terminal.log)"
