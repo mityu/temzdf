@@ -170,6 +170,8 @@ Known problems:
   - Ghostty started in the background (`open -g`) without restoring windows
     (`window-save-state = never`) opens its first window only once
     activated; with the saved state it restores the user's windows too.
+    It runs a command (`-e`) through login(1), which first prints "Last
+    login: ..." on the screen.
   - WezTerm without a title bar (`window_decorations = "NONE"` or
     `"RESIZE"`) takes the top strip of the window as one: a drag there moves
     the window instead of reaching the program. Its `cli get-text` needs

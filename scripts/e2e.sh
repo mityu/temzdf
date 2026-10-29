@@ -596,8 +596,15 @@ as_terminal_shows() {
 # the window's edges). They go black on both sides of NAME's comparison
 # (NAME.window-mask.png), the W x H area at the drawing area's origin.
 mask_window_edges() {
-  local name=$1 w=$2 h=$3 wid fx fy fw fh ox oy line=()
   [[ $display == macos ]] || return 0
+  window_edges_mask "$1" "$2" "$3"
+  magick "$outdir/$1.actual.png" "$outdir/$1.window-mask.png" -composite "$outdir/$1.actual.png"
+  magick "$outdir/$1.expected.png" "$outdir/$1.window-mask.png" -composite "$outdir/$1.expected.png"
+}
+# OUTDIR/NAME.window-mask.png: mask_window_edges' mask (black where the
+# window's edges show, clear elsewhere) over W x H pixels from the origin.
+window_edges_mask() {
+  local name=$1 w=$2 h=$3 wid fx fy fw fh ox oy line=()
   read -r wid fx fy fw fh _ <<<"$("$ctl" windows "$term_pid" | head -1)"
   screencapture -x -o -l "$wid" "$outdir/$name.window.png"
   ox=$((disp_x + origin_x - fx)) oy=$((disp_y + origin_y - fy))
@@ -615,8 +622,6 @@ mask_window_edges() {
     magick "$outdir/$name.window-mask.png" -fill black -draw "rectangle $((w / 2 - 12)),0 $((w / 2 + 12)),7" \
       "$outdir/$name.window-mask.png"
   fi
-  magick "$outdir/$name.actual.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.actual.png"
-  magick "$outdir/$name.expected.png" "$outdir/$name.window-mask.png" -composite "$outdir/$name.expected.png"
 }
 # Wait until the first screen is up, at most LIMIT seconds (what a fixed wait
 # took before): temzdf's log saying it wrote a complete frame (when
@@ -817,14 +822,21 @@ draw_lines() {
   pause 1
   shot "$name"
 }
-# Cell row ROW of screenshot NAME (OUTDIR/NAME.png) into FILE.
+# Cell row ROW of screenshot NAME (OUTDIR/NAME.png) into FILE. On macOS
+# the window's edges are masked (row_mask): its rounded corners are in the
+# first and last rows only, and its border is not the terminal's. No colour
+# profile (macOS's screenshots have one; on a grey row magick warns).
+row_mask=
 cell_row() {
-  magick "$outdir/$1.png" -crop "$((cols * cw))x$ch+$origin_x+$((origin_y + $2 * ch))" +repage "$3"
+  local mask=()
+  [[ -n $row_mask ]] && mask=("$row_mask" -composite)
+  magick "$outdir/$1.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage "${mask[@]}" \
+    -crop "$((cols * cw))x$ch+0+$(($2 * ch))" +repage -strip "$3"
 }
 # Whether two images are the same, as expect compares.
 same_image() {
   local out
-  out=$(magick compare -metric AE -fuzz 3% "$1" "$2" null: 2>&1 || true)
+  out=$(magick compare -quiet -metric AE -fuzz 3% "$1" "$2" null: 2>&1 || true)
   [[ ${out%% *} == 0 ]]
 }
 row_of() {
@@ -844,6 +856,11 @@ screen_restored() {
   local shot=$1 ref=$2 k=$3 before=${4:-} bk=${5:-} m mb r
   local a=$outdir/.row-a.png b=$outdir/.row-b.png blank=$outdir/.row-blank.png
   read_geometry || return 1
+  if [[ $display == macos && -z $row_mask ]]; then
+    # Not .rows: screencapture writes no file whose name starts with a dot.
+    window_edges_mask rows $((cols * cw)) $((rows * ch))
+    row_mask=$outdir/rows.window-mask.png
+  fi
   if ! m=$(row_of "$shot" "$ref" "$k"); then
     echo "screen_restored: no row of $shot.png is $ref.png's row $k" >&2
     return 1
@@ -1179,6 +1196,9 @@ if [[ $display == macos ]]; then
       esac
     done
     printf 'cd %q\n' "$PWD"
+    # Ghostty runs it through login(1), which leaves "Last login: ..." on the
+    # screen: empty, as elsewhere (screen_restored).
+    echo "printf '\\033[H\\033[2J'"
     printf 'for ((i = 0; i < 600; i++)); do [[ -e %q ]] && break; sleep 0.05; done\n' "$go"
     printf 'exec %s"$@"\n' "$(printf '%q ' "${clean_env[@]}")"
   } >"$launch"
