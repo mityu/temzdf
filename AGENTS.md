@@ -118,7 +118,9 @@ action files and judgements in kitty, Ghostty, WezTerm and the GUI on a
 virtual display beside the real screen; it takes the front and the pointer
 for the run and needs the screen unlocked (`doc/macos.md`).
 `scripts/macos-vm.sh e2e ARGS...` runs it in a macOS VM (Tart) instead,
-leaving the host alone (set up once: "Running in a VM" there). For poking at a
+leaving the host alone (set up once: "Running in a VM" there); that is the
+way to run them on macOS. `scripts/e2e-all.sh` (in the VM: `scripts/macos-vm.sh
+e2e-all -t ghostty -t wezterm -t gui`) runs every judged scenario and sums up. For poking at a
 terminal step by step, `scripts/macos-gui.sh` runs kitty, Ghostty, WezTerm
 or `temzdf-gui` (`launch app`) in the background on a virtual display and
 drives them (keys, mouse, window screenshots); see its header. Scripted

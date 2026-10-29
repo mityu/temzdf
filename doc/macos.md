@@ -155,6 +155,7 @@ scripts/macos-vm.sh provision     # Nix, the terminals; no sleep or screen lock
 scripts/macos-vm.sh check         # permissions, display, tools
 scripts/macos-vm.sh save          # keep this state as temzdf-e2e-golden
 scripts/macos-vm.sh e2e -t ghostty tests/e2e/expect.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
+scripts/macos-vm.sh e2e-all -t ghostty -t wezterm -t gui   # every judged scenario, summed up
 scripts/macos-vm.sh reset         # back to the golden copy, permissions included
 ```
 
@@ -199,6 +200,16 @@ scripts/macos-vm.sh reset         # back to the golden copy, permissions include
   VM is slower than the host, so the deep zoom's tiles are not there yet
   after the scenario's pause. A VM rebuilt with `reset` passes without
   any question asked.
+- Time: `e2e-all` over Ghostty, WezTerm and the GUI (31 runs) takes about
+  10 minutes, copying and building included. What made it shorter
+  (WezTerm's `expect`, `terminal` and `viewer`: 167 s before, 88 s after):
+  waiting for the first screen instead of a fixed 6 s (launch to ready
+  8.6 s, now 4.3 s), 2 ms instead of 20 ms after each posted event
+  (typing 125 ms a character in WezTerm, about 20 ms now: `terminal` 74 s,
+  now 37 s), one copy, dev shell and build for all the runs, and no fixed
+  half second at the end. What is left is mostly the scenarios' own
+  pauses and the `expect` comparisons (about 2 s each, a debug build
+  rendering the expected screen).
 
 ### scripts/macos-gui.sh
 
