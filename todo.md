@@ -28,6 +28,9 @@ server on one `Session`). Next and open:
   uploads at scale 2 got slower on lavapipe (`doc/performance.md`, "With
   shared memory"); measure on a real GPU and on macOS.
 - [ ] A Vim-like command line on the `Action` text form (tab pages are done).
+- [ ] What pane status lines say, from the configuration (a string or a
+  function, as Vim's `statusline`; `doc/floating-panes.md`); today a PDF
+  pane's says what its old status bar said and a terminal's is blank.
 - [ ] The PDF pane's search prompt (`/`), removed with the move to pane
   status lines (user, 2026-10-31): write it again, on the status line, and
   with it its tests (incremental search while typing, the cursor in the

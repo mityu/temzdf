@@ -206,7 +206,9 @@ change on the server side, testable without a GUI.
     the GUI's. The session's own chrome is already text grids (float
     titles, floating messages, the tab line), so the GUI needs its text
     renderer from the start. Moving the PDF chrome to text grids (planned)
-    fixes the rest for both clients; not a blocker.
+    fixes the rest for both clients; not a blocker. The status bar has
+    moved (2026-10-31: the pane status lines); the outline and link
+    previews are still pixels.
 
 ## Facts checked for this plan (2026-10-26, rechecked 2026-10-27)
 

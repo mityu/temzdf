@@ -303,6 +303,16 @@ largest pane in any of them. All clients show the same tab page.
 - `panes()` gives each pane's `tab` (`null` for a float on every tab page).
 - Hooks: `TabEntered(n)`, `TabClosed(n)`.
 
+## Status lines
+
+Each pane's bottom row is its status line, drawn by the session as text: a
+PDF pane's says its file, the search, the page and the zoom, and its
+messages (errors, "Copied ..."); a terminal's is blank. The shipped
+configuration hides the terminals' (a `PaneOpened` hook calling
+`cmd.statusLine(false, id)`); without the script host every pane has one.
+A pane one row high shows its status line only. Changing what they say
+comes later (`doc/floating-panes.md`).
+
 ## Commands
 
 `cmd.*` and `action.*` share the command registry
@@ -314,14 +324,17 @@ them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `prevTab`, `gotoTab`, `moveTab`, `renameTab`, `breakPane`, `tabs`,
 `currentTab`, `buffers`, `showBuffer`, `edit`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
-`sendText`, `paste` (the client's clipboard, or `"primary"`; GUI clients:
+`statusLine` (shows or hides a pane's status line, its bottom row:
+`statusLine(false)` hides the focused pane's, `statusLine(true, id)` shows
+pane `id`'s, `statusLine()` turns it the other way; the content gets or
+gives back the row; `temzdf action status-line off`), `sendText`, `paste` (the client's clipboard, or `"primary"`; GUI clients:
 terminal clients paste with the terminal's keys), `fontSize` (GUI
 clients' font: `fontSize(16)` sets the first font of `guifont` to 16 points
 and scales the other sizes given with it, `fontSize("+1")` / `fontSize("-1")`
 one point more or less for each, times a mapping's count, `fontSize()` back to the
 configured sizes; terminal clients keep their terminal's font), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
-`search`, ...: every action of the PDF table above, taking the count where it says
+`nextMatch`, ...: every action of the PDF table above, taking the count where it says
 "counts"), and `searchFor(query)`: search the focused PDF pane for `query`
 as if typed after `/` and Enter (the place it starts from goes on the back
 history, the first hit is shown once known; `""` clears the search;

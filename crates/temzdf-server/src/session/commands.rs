@@ -85,6 +85,11 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("reload-config", "(): void", "Restart the script host and load the configuration again"),
     ("message", "(text: string): void", "Show a message"),
     (
+        "status-line",
+        "(show?: boolean, pane?: number): void",
+        "Show or hide a pane's status line (the focused pane's; no `show`: the other way round); its content gets or gives back the row",
+    ),
+    (
         "search-for",
         "(query: string): void",
         "Page view: search the focused PDF pane for `query`, as typing it after / and Enter (the first hit is shown; an empty query clears the search)",
@@ -575,6 +580,19 @@ impl Session {
                     _ => None,
                 };
                 self.move_tab(to.as_deref()).map_err(|e| format!("moveTab: {e}"))?;
+                ok(Outcome::Redraw)
+            }
+            "status-line" => {
+                let show = match args.first() {
+                    Some(ScriptValue::Bool(b)) => Some(*b),
+                    // From `temzdf action`: words.
+                    Some(ScriptValue::Str(s)) if s == "on" || s == "true" => Some(true),
+                    Some(ScriptValue::Str(s)) if s == "off" || s == "false" => Some(false),
+                    None | Some(ScriptValue::Null) => None,
+                    Some(other) => return Err(format!("statusLine: show is a boolean, not {other:?}")),
+                };
+                let pane = id(1).unwrap_or(self.focus);
+                self.set_status_line(pane, show).map_err(|e| format!("statusLine: {e}"))?;
                 ok(Outcome::Redraw)
             }
             "rename-tab" => {

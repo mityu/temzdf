@@ -285,6 +285,10 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     }
     let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, opts.geometry);
     let mut presenter = Presenter::new();
+    // The first screen is up (its pages and links loaded, the
+    // configuration's hooks run) before any input, as in a terminal: a key
+    // held for a running script would be replayed with no time to animate.
+    settle(&mut session, &rx, now)?;
     for key in parse_keys(opts.keys.as_deref().unwrap_or(""))? {
         session.key(&key, now);
         run_out(&mut session, &mut now);
@@ -292,9 +296,6 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         settle(&mut session, &rx, now)?;
     }
     if let Some(events) = &opts.events {
-        // The first screen is up (its pages and links loaded) before any
-        // recorded input, as in a terminal.
-        settle(&mut session, &rx, now)?;
         let start = now;
         let mut ended = false;
         for t in events {

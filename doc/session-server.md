@@ -99,8 +99,9 @@ What exists:
 
 Not yet (in order of the plan, or found on the way):
 
-- Frames carry only image layers: UI chrome (status bar, outline, prompts) is
-  still drawn as pixels by the pane, not as cell grids.
+- A PDF pane's UI chrome (outline, link previews) is still drawn as pixels
+  by the pane, not as cell grids (its status bar is now the pane's status
+  line, text drawn by the session).
 - Every client gets frames rendered for the latest client's geometry, cell
   size included; per-client pixel density, and zoom stored relative to the
   pane width, are not done (fit-width does follow the pane width).

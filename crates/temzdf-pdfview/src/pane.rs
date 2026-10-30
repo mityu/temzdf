@@ -27,7 +27,6 @@ use crate::viewer::{LAYER_KEYS_END, Need, Peek, Viewer};
 pub const ZOOM_STEP: f32 = 1.1;
 /// UI layers sit above page tiles but, like them, below terminal text.
 const Z_UI: i32 = -1_073_741_800;
-const KEY_STATUS: u32 = LAYER_KEYS_END;
 const KEY_SIDEBAR: u32 = LAYER_KEYS_END + 1;
 const KEY_PREVIEW: u32 = LAYER_KEYS_END + 3;
 /// Link previews float above the UI (still below terminal text).
@@ -126,7 +125,6 @@ pub enum Action {
 /// The state a widget image was rendered from; re-rendered when it changes.
 #[derive(Clone, Debug, PartialEq)]
 enum WidgetState {
-    Status(StatusBar),
     List(ListView, u32),
     /// The border around a link preview.
     Frame,
@@ -296,10 +294,6 @@ impl PdfPane {
         self.viewer.set_area(side as i32, w.saturating_sub(side).max(1), h);
     }
 
-    fn bar_height(&self) -> u32 {
-        self.geometry.cell.height
-    }
-
     fn row_height(&self) -> u32 {
         (self.geometry.cell.height as f32 * 1.3).round() as u32
     }
@@ -433,21 +427,6 @@ impl PdfPane {
     pub fn frame(&mut self, images: &mut Images) -> (Frame, Vec<Need>) {
         self.viewer.peek = self.preview.as_ref().map(|p| p.peek);
         let (mut layers, needs) = self.viewer.frame(images);
-        // Zoom as a percentage of 96 dpi ("100%" = actual size on a typical screen).
-        let zoom = (self.viewer.view.scale * 72.0 / 96.0 * 100.0).round();
-        let (w, h) = (self.geometry.width_px(), self.bar_height());
-        let y = self.geometry.height_px().saturating_sub(h) as i32;
-        let bar = Rect::new(0, y, w, h);
-        let mut right = format!("{}   {zoom}%", self.page_text());
-        if self.search.is_active() {
-            right = format!("/{} {}   {right}", self.search.query, self.search_hint());
-        }
-        if self.reloading {
-            right = format!("reloading…   {right}");
-        }
-        let notice = self.hover_uri.clone().or_else(|| self.notice.clone());
-        let status = StatusBar { left: self.name.clone(), right, error: self.message.clone(), notice };
-        layers.push(self.widget(images, KEY_STATUS, WidgetState::Status(status), bar));
         self.overlay_layers(images, &mut layers);
         if self.sidebar_open {
             let r = self.sidebar_rect();
@@ -463,6 +442,24 @@ impl PdfPane {
         (Frame { layers, pointer: self.pointer_shape, title, ..Default::default() }, needs)
     }
 
+    /// What the pane's status line (drawn by the session below it) says:
+    /// the file name, or an error or a notice (a link's address under the
+    /// pointer) in its place; on the right a reload under way, the search,
+    /// the page and the zoom.
+    pub fn status(&self) -> StatusBar {
+        // Zoom as a percentage of 96 dpi ("100%" = actual size on a typical screen).
+        let zoom = (self.viewer.view.scale * 72.0 / 96.0 * 100.0).round();
+        let mut right = format!("{}   {zoom}%", self.page_text());
+        if self.search.is_active() {
+            right = format!("/{} {}   {right}", self.search.query, self.search_hint());
+        }
+        if self.reloading {
+            right = format!("reloading…   {right}");
+        }
+        let notice = self.hover_uri.clone().or_else(|| self.notice.clone());
+        StatusBar { left: self.name.clone(), right, error: self.message.clone(), notice }
+    }
+
     fn widget(&mut self, images: &mut Images, key: u32, state: WidgetState, rect: Rect) -> Layer {
         // A canvas is at least 1x1 (a tiny pane can leave a widget no
         // room): the image must be as large as what was drawn.
@@ -471,7 +468,6 @@ impl PdfPane {
         let fresh = self.widgets.get(&key).is_some_and(|w| w.state == state && w.size == size);
         if !fresh {
             let px = match &state {
-                WidgetState::Status(s) => s.render(&mut self.text, &self.theme, rect.w, rect.h),
                 WidgetState::List(l, rh) => l.render(&mut self.text, &self.theme, rect.w, rect.h, *rh),
                 WidgetState::Frame => {
                     let mut c = Canvas::new(rect.w, rect.h);
@@ -492,7 +488,7 @@ impl PdfPane {
         Layer { key, image, src: Rect::new(0, 0, rect.w, rect.h), dst: rect, z: Z_UI }
     }
 
-    /// "query  k/N" for the status bar or prompt.
+    /// "k/N" for the status line.
     fn search_hint(&self) -> String {
         if !self.search.is_active() {
             return String::new();
@@ -1300,9 +1296,9 @@ impl PdfPane {
             let uri_cleared = self.hover_uri.take().is_some();
             return self.sidebar_mouse(m, now).unwrap_or(false) || closed || uri_cleared;
         }
-        // The status bar is not the page under it: no links, no selection or
-        // drag starts there (the wheel still scrolls; a drag or selection
-        // begun on the page goes on).
+        // Below the page (the session's status line under the pane) is not
+        // the page: no links, no selection or drag starts there (the wheel
+        // still scrolls; a drag or selection begun on the page goes on).
         let over_status =
             y >= self.viewer.view.screen_h && self.drag.is_none() && !self.selecting && !m.kind.is_scroll();
         if over_status {
@@ -1502,7 +1498,7 @@ fn contains(r: &PageRect, x: f32, y: f32) -> bool {
 
 /// Pixel size of the page area: the screen minus the status bar row.
 fn page_area(g: Geometry) -> (u32, u32) {
-    (g.width_px(), g.height_px().saturating_sub(g.cell.height).max(1))
+    (g.width_px(), g.height_px().max(1))
 }
 
 fn wheel_n(v: &mut Viewer, dir: f64, count: Option<usize>, now: Instant) {
@@ -1787,7 +1783,10 @@ mod tests {
         s.viewer.jump_to(0.0, (b.y + 0.3 * b.h) * s.viewer.view.scale);
         s.reload(&mut c, info("sample-insert.pdf"));
         let anchor = s.text_anchor.clone().expect("a line to anchor on");
-        assert!(anchor.line.contains("exercises"), "below the inserted text: {anchor:?}");
+        // A line of the introduction's paragraph (which line depends on the
+        // pane's height).
+        let intro = [&anchor.prev, &anchor.line, &anchor.next].iter().any(|l| l.contains("example.com"));
+        assert!(intro, "below the inserted text: {anchor:?}");
         let position_based = s.viewer.view.scroll_y;
         let doc = pdf::open(&pdf::fixture("sample-insert.pdf")).unwrap();
         for p in 0..s.viewer.page_count() {

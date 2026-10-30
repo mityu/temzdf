@@ -291,6 +291,10 @@ fn splitting_a_terminal_and_opening_a_pdf_beside_it(pixels: PixelPath) {
     // Elsewhere only the one-cell gaps and borders between the panes.
     let stray: Vec<_> = s.images.iter().filter(|p| p.col < 75 && p.cols > 1).collect();
     assert!(stray.is_empty(), "the PDF is in the rightmost pane: {stray:?}");
+    // Its status line is terminal text at the bottom (the shells, by the
+    // shipped configuration, have none); the name is cut to fit.
+    let s = t.wait_for("the PDF's status line", |s| s.row_from(29, 75).contains("sample.pd"));
+    assert!(s.row_from(29, 75).contains("1 / 3"), "{:?}", s.row_from(29, 75));
     let ls = env.run(&["ls"]);
     assert!(ls.contains("p  (3 panes, 3 buffers, 1 attached)") && ls.contains("sample.pdf"), "{ls}");
 }

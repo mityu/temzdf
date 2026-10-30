@@ -34,6 +34,7 @@ mod commands;
 mod floats;
 mod notices;
 mod script;
+mod statusline;
 mod tabs;
 
 pub use commands::command_specs;
@@ -273,11 +274,37 @@ enum Kind {
 
 struct PaneEntry {
     kind: Kind,
-    /// In cells.
+    /// In cells: the content and, at the bottom, the status line.
     rect: Rect,
+    /// The status line shows (its bottom row); on by default.
+    status_line: bool,
+}
+
+/// Where a pane's content goes in `rect`: all of it, or the rows above its
+/// status line (none in a pane one row high: then only the status line shows).
+fn content_rect(rect: Rect, status_line: bool) -> Rect {
+    if status_line { Rect { h: rect.h.saturating_sub(1), ..rect } } else { rect }
+}
+
+/// The size of content `r`: a pane's content gets no size of 0 rows (it
+/// keeps the size it had, `old`, and is not drawn).
+fn content_geometry(r: Rect, cell: termpix_core::geom::CellSize, old: Option<Geometry>) -> Geometry {
+    match old {
+        Some(old) if r.h == 0 => old,
+        _ => Geometry { cols: r.w as u16, rows: r.h.max(1) as u16, cell },
+    }
 }
 
 impl PaneEntry {
+    fn new(kind: Kind, rect: Rect) -> Self {
+        Self { kind, rect, status_line: true }
+    }
+
+    /// Where its content goes (see [`content_rect`]).
+    fn content(&self) -> Rect {
+        content_rect(self.rect, self.status_line)
+    }
+
     fn pdf(&mut self) -> Option<&mut PdfPane> {
         match &mut self.kind {
             Kind::Pdf { pane, .. } => Some(pane),
@@ -673,7 +700,7 @@ impl Session {
         }
         let restore = !self.shown(doc);
         let kind = self.pdf_kind(id, doc)?;
-        self.panes.insert(id, PaneEntry { kind, rect: self.area() });
+        self.panes.insert(id, PaneEntry::new(kind, self.area()));
         self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
         if focus {
             self.set_focus(id);
@@ -687,9 +714,12 @@ impl Session {
 
     /// A page view of `doc` for pane `id`.
     fn pdf_kind(&mut self, id: PaneId, doc: DocId) -> Option<Kind> {
+        // The size its pane gives it (a status line shows by default); the
+        // layout places it right after.
+        let geometry = content_geometry(content_rect(self.area(), true), self.geometry.cell, None);
         let entry = self.docs.get_mut(&doc)?;
         let host = entry.host.as_mut()?;
-        let mut pane = PdfPane::with_document(entry.name.clone(), host.info.clone(), host.doc.clone(), self.geometry);
+        let mut pane = PdfPane::with_document(entry.name.clone(), host.info.clone(), host.doc.clone(), geometry);
         pane.preview_delay = self.options.preview_delay();
         pane.anchor_by_text = self.options.reloadanchor_text;
         pane.viewer.scroll_x.config = self.options.scroll();
@@ -731,7 +761,7 @@ impl Session {
         if e.buffer() == buf {
             return Ok(Outcome::None);
         }
-        let g = Geometry { cols: e.rect.w as u16, rows: e.rect.h as u16, cell: self.geometry.cell };
+        let g = content_geometry(e.content(), self.geometry.cell, None);
         let kind = if let Some(t) = self.terms.get_mut(&buf) {
             t.term.scroll_to_bottom();
             Kind::Term { buf, view: TermView::new(g) }
@@ -897,7 +927,8 @@ impl Session {
         let mut spawn = spawn.clone();
         spawn.argv = spawn.argv.or_else(|| self.shell.clone());
         spawn.env.push(("TEMZDF_SESSION_NAME".into(), self.name.clone()));
-        let geometry = Geometry { cols: rect.w as u16, rows: rect.h as u16, cell: self.geometry.cell };
+        // The size its pane will give it (status lines show by default).
+        let geometry = content_geometry(content_rect(rect, true), self.geometry.cell, None);
         let term = match TermBuffer::spawn(&spawn, geometry, sink) {
             Ok(t) => t,
             Err(e) => {
@@ -919,8 +950,8 @@ impl Session {
 
     /// Pane `id`, placed at `rect`, shows terminal `buf`.
     fn terminal_pane(&mut self, id: PaneId, buf: BufferId, rect: Rect, focus: bool) {
-        let geometry = Geometry { cols: rect.w as u16, rows: rect.h as u16, cell: self.geometry.cell };
-        self.panes.insert(id, PaneEntry { kind: Kind::Term { buf, view: TermView::new(geometry) }, rect });
+        let geometry = content_geometry(content_rect(rect, true), self.geometry.cell, None);
+        self.panes.insert(id, PaneEntry::new(Kind::Term { buf, view: TermView::new(geometry) }, rect));
         self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("terminal".into())]);
         if focus {
             self.set_focus(id);
@@ -978,13 +1009,28 @@ impl Session {
         let cell = self.geometry.cell;
         if let Some(e) = self.panes.get_mut(&id) {
             e.rect = r;
-            let g = Geometry { cols: r.w as u16, rows: r.h as u16, cell };
+            let content = e.content();
             match &mut e.kind {
-                Kind::Pdf { pane, .. } if g != pane.geometry() => pane.resize(g),
-                Kind::Pdf { .. } => {}
-                Kind::Term { view, .. } => view.geometry = g,
+                Kind::Pdf { pane, .. } => {
+                    let g = content_geometry(content, cell, Some(pane.geometry()));
+                    if g != pane.geometry() {
+                        pane.resize(g);
+                    }
+                }
+                Kind::Term { view, .. } => view.geometry = content_geometry(content, cell, Some(view.geometry)),
             }
         }
+    }
+
+    /// Show or hide pane `id`'s status line (`None`: the other way round);
+    /// its content gets the row, or gives it back.
+    fn set_status_line(&mut self, id: PaneId, show: Option<bool>) -> Result<(), String> {
+        let e = self.panes.get_mut(&id).ok_or_else(|| format!("no pane {id}"))?;
+        e.status_line = show.unwrap_or(!e.status_line);
+        let rect = e.rect;
+        self.set_rect(id, rect);
+        self.fit_terms();
+        Ok(())
     }
 
     /// A terminal is as large as the largest pane showing it in any tab (as
@@ -1671,9 +1717,15 @@ impl Session {
         // when their program tracks the mouse.
         let select = self.base_mode() == "normal";
         let Some(e) = self.panes.get_mut(&id) else { return out };
+        let content = e.content();
+        // A pane's status line is not its content: the pointer there goes to
+        // the pane only to end what began in it (a drag, a selection).
+        if self.captured.is_none() && row >= content.y + content.h as i32 {
+            return out;
+        }
         let (dx, dy) = match m.unit {
-            CoordUnit::Pixel => ((e.rect.x * cell.width as i32), (e.rect.y * cell.height as i32)),
-            CoordUnit::Cell => (e.rect.x, e.rect.y),
+            CoordUnit::Pixel => ((content.x * cell.width as i32), (content.y * cell.height as i32)),
+            CoordUnit::Cell => (content.x, content.y),
         };
         let local = MouseEvent { x: m.x - dx, y: m.y - dy, ..*m };
         match &mut e.kind {
@@ -1817,8 +1869,11 @@ impl Session {
                     None => Frame::default(),
                 },
             };
-            let (ox, oy) = (e.rect.x * cell.width as i32, e.rect.y * cell.height as i32);
-            let clip = Rect::new(ox, oy, e.rect.w * cell.width, e.rect.h * cell.height);
+            let content = e.content();
+            let (ox, oy) = (content.x * cell.width as i32, content.y * cell.height as i32);
+            let clip = Rect::new(ox, oy, content.w * cell.width, content.h * cell.height);
+            // A pane one row high shows its status line only.
+            let frame = if content.h == 0 { Frame { title: frame.title, ..Frame::default() } } else { frame };
             for l in frame.layers {
                 let moved = Layer { dst: Rect::new(l.dst.x + ox, l.dst.y + oy, l.dst.w, l.dst.h), ..l };
                 if let Some(c) = moved.clipped(&clip) {
@@ -1826,19 +1881,29 @@ impl Session {
                 }
             }
             for g in frame.text {
-                let g = TextGrid { col: g.col + e.rect.x as u16, row: g.row + e.rect.y as u16, ..g };
+                let g = TextGrid { col: g.col + content.x as u16, row: g.row + content.y as u16, ..g };
                 text.extend(clip::text_pieces(g, &covers));
             }
             if id == self.focus {
                 cursor = frame
                     .cursor
-                    .map(|(c, r)| (c + e.rect.x as u16, r + e.rect.y as u16))
+                    .map(|(c, r)| (c + content.x as u16, r + content.y as u16))
                     .filter(|&(c, r)| !covers.iter().any(|k| k.contains(c as i32, r as i32)));
                 cursor_shape = frame.cursor_shape;
                 title = frame.title;
             }
         }
         self.complete = complete;
+        // Status lines, under floats over them.
+        for id in &order {
+            let Some(e) = self.panes.get(id).filter(|e| e.status_line && e.rect.h > 0) else { continue };
+            let bar = match &e.kind {
+                Kind::Pdf { pane, .. } => pane.status(),
+                Kind::Term { .. } => termpix_ui::StatusBar::default(),
+            };
+            let grid = statusline::grid(&bar, e.rect, *id == self.focus);
+            text.extend(clip::text_pieces(grid, &self.covers(Some(*id))));
+        }
         self.border_layers(&mut layers);
         self.float_frames(&mut layers, &mut text);
         text.extend(self.tabline().map(|(grid, _)| grid));
@@ -1929,9 +1994,11 @@ impl Session {
         self.complete
     }
 
-    /// Nothing is being opened, loaded, rendered or searched.
+    /// Nothing is being opened, loaded, rendered or searched, and no script
+    /// runs (keys wait for it).
     pub fn is_idle(&self) -> bool {
-        self.docs.values().all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle()))
+        !self.script.busy()
+            && self.docs.values().all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle()))
             && self.panes.values().all(|e| match &e.kind {
                 Kind::Pdf { pane, .. } => !pane.search.is_active() || pane.search.is_complete(),
                 Kind::Term { .. } => true,
@@ -2667,7 +2734,8 @@ mod tests {
         // A bigger window: the pane (and its program's pty) grows with it.
         s.resize(Geometry { cols: 100, rows: 34, ..GEOMETRY });
         let frame = s.frame();
-        assert_eq!((frame.text[0].rows.len(), frame.text[0].rows[0].len()), (34, 100));
+        // (Its status line takes a row.)
+        assert_eq!((frame.text[0].rows.len(), frame.text[0].rows[0].len()), (33, 100));
     }
 
     /// Handle events until `done` holds (or ten seconds pass); returns the
@@ -2739,21 +2807,22 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[0] == "ready");
         let first = s.panes[&s.focus].buffer();
         key(&mut s, "<CR>");
-        wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "30 90"));
+        // (Rows less the status line.)
+        wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "29 90"));
         key(&mut s, "<C-b>%");
         let right = s.focus;
         s.show_in(right, first).unwrap();
         let widest = s.panes.values().map(|e| e.rect.w).max().unwrap();
         assert!(widest < 90);
         key(&mut s, "<CR>");
-        let want = format!("30 {widest}");
+        let want = format!("29 {widest}");
         let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains(&want)));
         assert!(rows.iter().any(|l| l.contains(&want)), "{rows:?}");
         // One pane left: the whole width again.
         s.close(right);
         key(&mut s, "<CR>");
-        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().filter(|l| *l == "30 90").count() == 2);
-        assert_eq!(rows.iter().filter(|l| *l == "30 90").count(), 2, "{rows:?}");
+        let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().filter(|l| *l == "29 90").count() == 2);
+        assert_eq!(rows.iter().filter(|l| *l == "29 90").count(), 2, "{rows:?}");
     }
 
     #[test]
@@ -2899,9 +2968,9 @@ mod tests {
         let lines = frame.layers.iter().filter(|l| l.z == Z_BORDER_FOCUS).count();
         assert_eq!(lines, 5, "the focused float's four lines, the top one in two around the title");
         assert!(frame.layers.iter().filter(|l| l.z == Z_BORDER_FOCUS).all(|l| outer.intersect(&l.dst) == Some(l.dst)));
-        // Its terminal is as large as its content.
+        // Its terminal is as large as its content, less the status line.
         let buf = s.panes[&pane].buffer();
-        assert_eq!((s.terms[&buf].term.geometry().cols, s.terms[&buf].term.geometry().rows), (20, 4));
+        assert_eq!((s.terms[&buf].term.geometry().cols, s.terms[&buf].term.geometry().rows), (20, 3));
     }
 
     #[test]
@@ -3513,12 +3582,13 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[0] == "one");
         let one = s.focus;
         let buf = s.panes[&one].buffer();
-        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows, "one tab: no tab line");
+        // (Less the pane's status line.)
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1, "one tab: no tab line");
         new_tab(&mut s, &["sh", "-c", "echo two; sleep 30"]);
         let (_, rows) = wait_text(&mut s, &rx, |r| r[1] == "two");
         assert_eq!(rows[0], " 1 shell  2 shell");
         assert_eq!(s.area(), Rect::new(0, 1, GEOMETRY.cols as u32, GEOMETRY.rows as u32 - 1));
-        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1, "the other tab's terminal too");
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 2, "the other tab's terminal too");
         // A click on a tab goes there; the middle button closes it.
         let cell = GEOMETRY.cell;
         click(&mut s, 2 * cell.width as i32, cell.height as i32 / 2);
@@ -3536,7 +3606,7 @@ mod tests {
         assert_eq!(s.tabs.len(), 1);
         // One tab: the line goes, the panes get the row back.
         assert_eq!(s.area().y, 0);
-        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows);
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1);
         // showtabline: always, never.
         s.set_option("showtabline", &ScriptValue::Str("always".into())).unwrap();
         assert_eq!((s.area().y, screen_text(&s.frame(), GEOMETRY)[0].as_str()), (1, " 1 shell"));
@@ -3546,6 +3616,108 @@ mod tests {
         assert_eq!(s.area().y, 0);
         assert!(s.set_option("showtabline", &ScriptValue::Str("sometimes".into())).is_err());
         assert!(s.set_option("showtabline", &ScriptValue::Num(2.0)).is_err());
+    }
+
+    /// The colour of a theme colour as a cell's.
+    fn theme_rgb(c: termpix_ui::Color) -> temzdf_scene::Color {
+        temzdf_scene::Color::Rgb([c.0[0], c.0[1], c.0[2]])
+    }
+
+    /// The composed cell at (`col`, `row`).
+    fn cell_at(frame: &Frame, col: u16, row: u16) -> Option<temzdf_scene::Cell> {
+        frame.text.iter().rev().find_map(|g| {
+            let r = g.rows.get(row.checked_sub(g.row)? as usize)?;
+            r.get(col.checked_sub(g.col)? as usize).cloned()
+        })
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn pdf_panes_say_their_file_page_zoom_and_messages_in_their_status_line() {
+        let (mut s, rx) = session();
+        let (frame, _) = settle(&mut s, &rx);
+        let last = GEOMETRY.rows - 1;
+        let rows = screen_text(&frame, GEOMETRY);
+        assert!(rows[last as usize].starts_with(" sample.pdf"), "{rows:?}");
+        assert!(rows[last as usize].contains("1 / 3"), "{rows:?}");
+        assert!(rows[last as usize].ends_with('%'), "the zoom: {rows:?}");
+        let theme = termpix_ui::Theme::dark();
+        let name = cell_at(&frame, 1, last).unwrap();
+        assert_eq!((name.fg, name.bg), (theme_rgb(theme.bar_fg), theme_rgb(theme.bar_bg)), "focused");
+        // No page lies on the status line.
+        let row_px = s.pixels(&Rect::new(0, last as i32, GEOMETRY.cols as u32, 1));
+        assert!(frame.layers.iter().all(|l| l.dst.intersect(&row_px).is_none()), "an image on the status line");
+        // Messages take the left side.
+        s.run_cli(&["search-for".into(), "zzzzqqq".into()]).unwrap();
+        let (frame, _) = settle(&mut s, &rx);
+        let rows = screen_text(&frame, GEOMETRY);
+        assert!(rows[last as usize].starts_with(" Pattern not found: zzzzqqq"), "{rows:?}");
+        assert_eq!(cell_at(&frame, 1, last).unwrap().fg, theme_rgb(theme.error));
+        // Another pane: the unfocused one's name is dimmed.
+        key(&mut s, "<C-b>%");
+        let (frame, _) = settle(&mut s, &rx);
+        let left = s.panes.iter().find(|(id, _)| **id != s.focus).map(|(_, e)| e.rect).unwrap();
+        let right = s.panes[&s.focus].rect;
+        let at = |r: Rect| ((r.x + 1) as u16, (r.y + r.h as i32 - 1) as u16);
+        let dim = cell_at(&frame, at(left).0, at(left).1).unwrap();
+        let lit = cell_at(&frame, at(right).0, at(right).1).unwrap();
+        assert_eq!((dim.fg, lit.fg), (theme_rgb(theme.bar_dim), theme_rgb(theme.bar_fg)), "{left:?} {right:?}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn hiding_a_status_line_gives_its_row_to_the_pane() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo ready; while read l; do stty size; done"]);
+        wait_text(&mut s, &rx, |r| r[0] == "ready");
+        let pane = s.focus;
+        let buf = s.panes[&pane].buffer();
+        // A terminal's status line is blank, in the bar's colour.
+        let theme = termpix_ui::Theme::dark();
+        let last = GEOMETRY.rows - 1;
+        let bar = cell_at(&s.frame(), 0, last).unwrap();
+        assert_eq!((bar.text.as_str(), bar.bg), (" ", theme_rgb(theme.bar_bg)));
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1);
+        cmd(&mut s, "status-line", &["off"], None).unwrap();
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows, "the row back");
+        assert!(cell_at(&s.frame(), 0, last).is_none_or(|c| c.bg != theme_rgb(theme.bar_bg)), "no status line");
+        key(&mut s, "<CR>");
+        wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "30 90"));
+        // No argument: the other way round; a pane by its id.
+        let id = ScriptValue::Num(pane as f64);
+        s.run_command("status-line", &[ScriptValue::Null, id], None, Instant::now()).unwrap();
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1);
+        assert_eq!(cell_at(&s.frame(), 0, last).unwrap().bg, theme_rgb(theme.bar_bg));
+        assert!(cmd(&mut s, "status-line", &["maybe"], None).is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_pane_one_row_high_shows_only_its_status_line() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo ready; while read l; do printf SAID; done"]);
+        wait_text(&mut s, &rx, |r| r[0] == "ready");
+        let pane = s.focus;
+        let buf = s.panes[&pane].buffer();
+        let one = Geometry { rows: 1, ..GEOMETRY };
+        s.resize(one);
+        // Its program keeps the size it had (never 0 rows).
+        assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1);
+        key(&mut s, "<CR>");
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline {
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(50)) {
+                s.handle(ev, Instant::now());
+            }
+        }
+        let frame = s.frame();
+        assert_eq!(screen_text(&frame, one), [""], "only the (blank) status line");
+        assert_eq!(cell_at(&frame, 0, 0).unwrap().bg, theme_rgb(termpix_ui::Theme::dark().bar_bg));
+        assert_eq!(frame.cursor, None, "no cursor in hidden content");
+        // Hidden, the content gets its row back.
+        cmd(&mut s, "status-line", &["off"], None).unwrap();
+        assert_eq!(s.terms[&buf].term.geometry().rows, 1);
+        // (No newline after it: one row would scroll it away.)
+        let (_, rows) = wait_text(&mut s, &rx, |r| r[0] == "SAID");
+        assert_eq!(rows[0], "SAID");
     }
 
     /// The panes() entry of `pane`.

@@ -5,7 +5,7 @@
 // namespace: "default" })` removes one, `keymap.clear({ namespace: "default" })`
 // all of them). Built-in modes: `normal` (operating),
 // `terminal` (pass-through, terminal panes) and `pdf` (PDF panes).
-import { action, keymap } from "temzdf";
+import { action, cmd, keymap, on } from "temzdf";
 import type { Action } from "temzdf";
 
 /** The prefix: enters the normal mode from a pane. */
@@ -89,3 +89,9 @@ each("normal", ["q"], action.killSession());
 // The prefix twice sends it to the pane.
 each("normal", [prefix], [action.exitMode(), action.feedkeys(prefix, false)]);
 each("normal", ["<Esc>"], action.exitMode());
+
+// Status lines: terminal panes go without (PDF panes show their file, page
+// and zoom there).
+on("PaneOpened", (id: number, kind: string) => {
+  if (kind === "terminal") cmd.statusLine(false, id);
+});

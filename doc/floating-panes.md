@@ -53,7 +53,13 @@ objects), and when a function is evaluated again. Vim evaluates on every
 redraw; ours run in the script host, a round trip away, so on events and on
 an explicit request rather than per frame.
 
-Moving the PDF pane's own status bar onto bars: later (the user).
+The bottom bar of each pane is done (2026-10-31): the pane's status line,
+one row the session draws as text (`crates/temzdf-server/src/session/statusline.rs`),
+shown or hidden per pane (`statusLine`, `doc/config.md`); the PDF pane's own
+status bar moved onto it. A PDF pane's says what its old bar said, a
+terminal's is blank; the shipped configuration hides the terminals'. Content
+from the configuration (the string or function above), top bars and the
+window's bars: later.
 
 Clicks on bars (the user, 2026-10-26), after Vim:
 
