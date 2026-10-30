@@ -2224,6 +2224,29 @@ mod tests {
         }
     }
 
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn search_for_searches_the_focused_pdf() {
+        let (mut s, rx) = session();
+        // As `temzdf action search-for ...`: words.
+        s.run_cli(&["search-for".into(), "Back to Section".into()]).unwrap();
+        settle(&mut s, &rx);
+        // The jump to the first hit (on page 2) scrolls: let it end.
+        s.tick(Instant::now() + Duration::from_secs(5));
+        let frame = s.frame();
+        assert!(frame.title.contains("2 / 3"), "{}", frame.title);
+        let e = s.run_cli(&["search-for".into()]).unwrap_err();
+        assert!(e.to_string().contains("what to search for"), "{e}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn search_for_needs_a_pdf() {
+        let (mut s, _rx) = terminal_session(&["sh", "-c", "sleep 5"]);
+        let e = s.run_cli(&["search-for".into(), "x".into()]).unwrap_err();
+        assert!(e.to_string().contains("not a PDF"), "{e}");
+    }
+
     fn key(s: &mut Session, spec: &str) -> Outcome {
         let mut out = Outcome::None;
         for k in notation::parse(spec).unwrap() {

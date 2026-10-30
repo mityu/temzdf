@@ -322,7 +322,10 @@ one point more or less for each, times a mapping's count, `fontSize()` back to t
 configured sizes; terminal clients keep their terminal's font), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
 `search`, ...: every action of the PDF table above, taking the count where it says
-"counts").
+"counts"), and `searchFor(query)`: search the focused PDF pane for `query`
+as if typed after `/` and Enter (the place it starts from goes on the back
+history, the first hit is shown once known; `""` clears the search;
+`temzdf action search-for needle`).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
 action split right`). `resizePane("left", 5)` moves a border of the focused
 pane five cells left (as tmux's `resize-pane -L 5`), `resizePane("wider",

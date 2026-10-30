@@ -1081,18 +1081,7 @@ impl PdfPane {
                 return Action::Redraw;
             }
             KeyCode::Enter => {
-                self.input = None;
-                let origin = self.search_origin.take();
-                if let Some((pos, sx, _)) = origin {
-                    self.back.push((pos, sx));
-                    self.forward.clear();
-                }
-                if self.search.is_active() && self.search.current.is_none() {
-                    self.pending_first_hit = Some(origin.map_or_else(|| self.viewer.top_position(), |o| o.0));
-                }
-                if self.search.is_active() && self.search.total() == 0 && self.search.is_complete() {
-                    self.message = Some(format!("Pattern not found: {}", self.search.query));
-                }
+                self.submit_search();
                 return Action::Redraw;
             }
             KeyCode::Backspace if input.text.is_empty() => {
@@ -1140,6 +1129,37 @@ impl PdfPane {
         input.insert(&text.replace(['\n', '\r'], " "));
         self.start_search();
         Action::Redraw
+    }
+
+    /// Search for `query` as if it was typed after `/` and Enter pressed
+    /// (the `search-for` command): the place it starts from goes on the
+    /// back history, and the first hit is shown once it is known. An empty
+    /// query clears the search.
+    pub fn search_for(&mut self, query: &str) -> Action {
+        self.open_search();
+        if let Some(input) = self.input.as_mut() {
+            input.insert(&query.replace(['\n', '\r'], " "));
+        }
+        self.start_search();
+        self.submit_search();
+        Action::Redraw
+    }
+
+    /// The search typed is done (Enter): close the input, remember where it
+    /// started (back history), and go to the first hit when it comes.
+    fn submit_search(&mut self) {
+        self.input = None;
+        let origin = self.search_origin.take();
+        if let Some((pos, sx, _)) = origin {
+            self.back.push((pos, sx));
+            self.forward.clear();
+        }
+        if self.search.is_active() && self.search.current.is_none() {
+            self.pending_first_hit = Some(origin.map_or_else(|| self.viewer.top_position(), |o| o.0));
+        }
+        if self.search.is_active() && self.search.total() == 0 && self.search.is_complete() {
+            self.message = Some(format!("Pattern not found: {}", self.search.query));
+        }
     }
 
     fn open_search(&mut self) {
@@ -1693,10 +1713,7 @@ mod tests {
     fn next_match_before_the_search_finished_waits_for_it() {
         let mut s = session();
         let now = Instant::now();
-        for ch in ['/', 'x'] {
-            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
-        }
-        s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
+        s.search_for("x");
         let generation = match s.take_requests().last() {
             Some(Request::Search { generation, .. }) => *generation,
             other => panic!("{other:?}"),
@@ -1716,10 +1733,7 @@ mod tests {
         let mut s = session();
         let now = Instant::now();
         assert!(s.viewer.page_count() > 2);
-        for ch in ['/', 'x'] {
-            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
-        }
-        s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
+        s.search_for("x");
         let generation = match s.take_requests().last() {
             Some(Request::Search { generation, .. }) => *generation,
             other => panic!("{other:?}"),
@@ -1742,14 +1756,11 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn a_search_that_finished_empty_says_so() {
-        // After Enter alone, `n` and `N`.
+        // Right after searching, after `n`, and after `N`.
         for step in [None, Some('n'), Some('N')] {
             let mut s = session();
             let now = Instant::now();
-            for ch in ['/', 'x'] {
-                s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
-            }
-            s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
+            s.search_for("x");
             let generation = match s.take_requests().last() {
                 Some(Request::Search { generation, .. }) => *generation,
                 other => panic!("{other:?}"),
@@ -1974,12 +1985,7 @@ mod tests {
         let mut c = comp();
         let now = Instant::now();
         s.key(&KeyEvent::new(KeyCode::Tab, Modifiers::NONE), now);
-        s.key(&KeyEvent::new(KeyCode::Char('/'), Modifiers::NONE), now);
-        for ch in "needle".chars() {
-            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
-        }
-        s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
-        // Typing searched for each prefix; the last one counts.
+        s.search_for("needle");
         let first = match s.take_requests().last() {
             Some(Request::Search { generation, .. }) => *generation,
             other => panic!("{other:?}"),
@@ -2077,6 +2083,30 @@ mod tests {
                 "{dir:?} at {at:?}: {before:?} -> {after:?}"
             );
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn search_for_is_a_search_typed_and_entered() {
+        let mut s = session();
+        let now = Instant::now();
+        let start = s.viewer.top_position();
+        // Before any result, as from a script or `temzdf action`.
+        s.search_for("needle");
+        assert!(s.input.is_none(), "no prompt left open");
+        assert_eq!(s.back.last().map(|b| b.0), Some(start), "where it started, for Back");
+        let Some(Request::Search { generation, query, .. }) = s.take_requests().pop() else { panic!("a search") };
+        assert_eq!(query, "needle");
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        for p in 0..s.viewer.page_count() {
+            let rects = pdf::search_page(&doc, p, s.info.bounds[p], &query).unwrap();
+            s.search_hits(generation, p, rects, now);
+        }
+        assert_eq!(s.search.current, Some((0, 0)), "the first hit, once known");
+        assert!(s.search_hint().contains("1/4"), "{}", s.search_hint());
+        // An empty query clears it.
+        s.search_for("");
+        assert!(!s.search.is_active());
     }
 
     #[test]

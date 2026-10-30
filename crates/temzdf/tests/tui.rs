@@ -1298,6 +1298,17 @@ fn forward_search_goes_to_the_session_showing_the_pdf_or_starts_one() {
 }
 
 #[test]
+fn an_action_searches_the_focused_pdf() {
+    let env = Env::new("search-for");
+    let pdf = fixture("sample.pdf").display().to_string();
+    let mut t = Term::spawn(&[BIN, "-s", "sf", &pdf], &env.options());
+    t.wait_for("page 1", |s| s.title.contains("1 / 3"));
+    // Its only hit is on page 2: the view goes there.
+    env.run(&["action", "-s", "sf", "search-for", "Back to Section"]);
+    t.wait_for("the hit on page 2", |s| s.title.contains("2 / 3"));
+}
+
+#[test]
 fn ls_fonts_shows_the_configured_fonts_or_a_sessions() {
     let env = Env::new("ls-fonts");
     env.config(

@@ -84,6 +84,11 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("detach", "(): void", "The operating client detaches"),
     ("reload-config", "(): void", "Restart the script host and load the configuration again"),
     ("message", "(text: string): void", "Show a message"),
+    (
+        "search-for",
+        "(query: string): void",
+        "Page view: search the focused PDF pane for `query`, as typing it after / and Enter (the first hit is shown; an empty query clears the search)",
+    ),
     ("send-text", "(text: string): void", "Type text into the focused terminal pane (Vim's chansend)"),
     (
         "paste",
@@ -247,6 +252,14 @@ impl Session {
         let act = |s: &mut Self, a: Action| {
             s.action_inner(a, now).map(|o| (ScriptValue::Null, o)).map_err(|e| format!("{e:#}"))
         };
+        if name == "search-for" {
+            let query = text(0).ok_or("search-for: what to search for?")?;
+            let Some(pane) = self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf) else {
+                return Err(format!("{name}: the focused pane is not a PDF"));
+            };
+            pane.search_for(&query);
+            return ok(Outcome::Redraw);
+        }
         if let Some(cmd) = Command::from_name(name) {
             let Some(pane) = self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf) else {
                 return Err(format!("{name}: the focused pane is not a PDF"));

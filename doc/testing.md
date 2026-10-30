@@ -121,6 +121,20 @@ runs the tests with another shell, e.g. `TEMZDF_TEST_SHELL=$(nix build
 --print-out-paths nixpkgs#dash)/bin/dash`; tests compare a command's
 output with `shows_output`, which takes either.
 
+Tests that need a search done (next and previous hits, a reload rerunning
+it, a search without hits) search with `PdfPane::search_for`, the
+`search-for` command, rather than typing `/`, the text and Enter. Still
+typed, as the typing is what they test: the incremental search while
+typing (`typing_a_search_does_not_wrap_to_an_earlier_hit_before_the_rest_is_searched`),
+the cursor in the prompt (`the_terminal_cursor_never_covers_typed_text`),
+Enter before results (`enter_before_the_results_arrive_still_selects_the_first_hit`;
+`search_for_is_a_search_typed_and_entered` covers the command), and
+`tests/e2e/search.actions`' `typing`. Still typed because the command cannot
+reach them: `tests/e2e/search.actions`' `next` and `cleared`, and
+`tests/e2e/expect.actions`' `search`, `next` and `sidebar` (the standalone
+viewer takes no `temzdf action`, and `expect` replays keys and mouse
+input only).
+
 What a terminal shows *between* frames (a flicker) does not show on the
 screen a test reads at the end. For those, record what temzdf wrote
 (`TERMPIX_TRACE` in the test's environment) and feed it to
