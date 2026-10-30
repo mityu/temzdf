@@ -1689,6 +1689,8 @@ impl Session {
         if let Some(border) = self.border_mouse(m, under, px, py) {
             return out.merge(border);
         }
+        // (A release ends the capture, and still belongs to it.)
+        let captured = self.captured.is_some();
         match m.kind {
             MouseEventKind::Press(_) => {
                 self.captured = under;
@@ -1720,7 +1722,7 @@ impl Session {
         let content = e.content();
         // A pane's status line is not its content: the pointer there goes to
         // the pane only to end what began in it (a drag, a selection).
-        if self.captured.is_none() && row >= content.y + content.h as i32 {
+        if !captured && row >= content.y + content.h as i32 {
             return out;
         }
         let (dx, dy) = match m.unit {
@@ -3662,6 +3664,24 @@ mod tests {
         let dim = cell_at(&frame, at(left).0, at(left).1).unwrap();
         let lit = cell_at(&frame, at(right).0, at(right).1).unwrap();
         assert_eq!((dim.fg, lit.fg), (theme_rgb(theme.bar_dim), theme_rgb(theme.bar_fg)), "{left:?} {right:?}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_selection_released_over_the_status_line_is_copied() {
+        let (mut s, rx) = session();
+        settle(&mut s, &rx);
+        let at = |kind, x, y| MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
+        let left = MouseButton::Left;
+        // From the title down onto the status line (the bottom row, 580..600).
+        s.mouse(&at(MouseEventKind::Press(left), 318, 188), Instant::now());
+        s.mouse(&at(MouseEventKind::Drag(left), 450, 590), Instant::now());
+        s.mouse(&at(MouseEventKind::Release(left), 450, 590), Instant::now());
+        let copied = s.take_effects().into_iter().find_map(|e| match e {
+            temzdf_scene::Effect::Copy(t) => Some(t),
+            _ => None,
+        });
+        assert!(copied.as_deref().is_some_and(|t| t.starts_with("temzdf sample document")), "{copied:?}");
     }
 
     #[test]
