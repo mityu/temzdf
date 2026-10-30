@@ -34,7 +34,6 @@ pub enum Command {
     ZoomIn,
     ZoomOut,
     FitWidth,
-    Search,
     NextMatch,
     PrevMatch,
     Copy,
@@ -61,7 +60,6 @@ impl Command {
         (Command::ZoomIn, "zoom-in"),
         (Command::ZoomOut, "zoom-out"),
         (Command::FitWidth, "fit-width"),
-        (Command::Search, "search"),
         (Command::NextMatch, "next-match"),
         (Command::PrevMatch, "prev-match"),
         (Command::Copy, "copy"),
@@ -102,7 +100,6 @@ const DEFAULTS: &[(Command, &[&str])] = &[
     (Command::ZoomIn, &["+", "="]),
     (Command::ZoomOut, &["-"]),
     (Command::FitWidth, &["0", "w"]),
-    (Command::Search, &["/"]),
     (Command::NextMatch, &["n"]),
     (Command::PrevMatch, &["N"]),
     (Command::Copy, &["y"]),
@@ -290,13 +287,13 @@ mod tests {
     fn overrides_replace_a_commands_keys_and_steal_keys() {
         let overrides = HashMap::from([
             (Command::Quit, vec!["Q".to_string()]),
-            (Command::Search, vec!["f".to_string(), "/".to_string()]),
+            (Command::NextMatch, vec!["f".to_string(), "/".to_string()]),
             (Command::Copy, vec![]),
         ]);
         let m = Keymap::new(&overrides).unwrap();
         assert_eq!(m.get(&press(KeyCode::Char('q'), Modifiers::NONE)), None);
         assert_eq!(m.get(&press(KeyCode::Char('Q'), Modifiers::SHIFT)), Some(Command::Quit));
-        assert_eq!(m.get(&press(KeyCode::Char('f'), Modifiers::NONE)), Some(Command::Search));
+        assert_eq!(m.get(&press(KeyCode::Char('f'), Modifiers::NONE)), Some(Command::NextMatch));
         assert_eq!(m.get(&press(KeyCode::Char('y'), Modifiers::NONE)), None);
         // Untouched commands keep their defaults.
         assert_eq!(m.get(&press(KeyCode::Char('f'), Modifiers::CTRL)), Some(Command::PageDown));

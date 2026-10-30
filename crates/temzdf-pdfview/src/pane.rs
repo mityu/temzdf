@@ -13,7 +13,7 @@ use termpix_core::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
     ScrollPhase, ScrollUnit,
 };
-use termpix_ui::{Canvas, Color, EditResult, LineInput, ListView, StatusBar, Text, Theme};
+use termpix_ui::{Canvas, Color, ListView, StatusBar, Text, Theme};
 
 use crate::document::{self, Document, SharedDocument};
 use crate::keys::{Command, Key, Keymap};
@@ -29,7 +29,6 @@ pub const ZOOM_STEP: f32 = 1.1;
 const Z_UI: i32 = -1_073_741_800;
 const KEY_STATUS: u32 = LAYER_KEYS_END;
 const KEY_SIDEBAR: u32 = LAYER_KEYS_END + 1;
-const KEY_INPUT: u32 = LAYER_KEYS_END + 2;
 const KEY_PREVIEW: u32 = LAYER_KEYS_END + 3;
 /// Link previews float above the UI (still below terminal text).
 const Z_PREVIEW: i32 = Z_UI + 10;
@@ -129,7 +128,6 @@ pub enum Action {
 enum WidgetState {
     Status(StatusBar),
     List(ListView, u32),
-    Input(LineInput),
     /// The border around a link preview.
     Frame,
 }
@@ -158,11 +156,10 @@ pub struct PdfPane {
     /// Search generations start here, so panes sharing a document's search
     /// thread tell their results apart.
     search_base: u64,
-    /// The search prompt, while typing a query.
-    input: Option<LineInput>,
-    /// Where the view was when the prompt opened (restored on Esc).
+    /// Where the view was when the search began (it goes on the back
+    /// history).
     search_origin: Option<(Target, f32, f32)>,
-    /// Enter was pressed before any hit was selected (results arrive from a
+    /// A search began before any hit was selected (results arrive from a
     /// worker): select the first one after this position once it is found.
     pending_first_hit: Option<Target>,
     requests: Vec<Request>,
@@ -188,8 +185,6 @@ pub struct PdfPane {
     pub reloading: bool,
     /// Forward-search result highlighted until the deadline.
     flash: Option<(Vec<PdfBox>, Instant)>,
-    /// Terminal cell for the text cursor (input caret), if shown.
-    caret_cell: Option<(u16, u16)>,
     pointer_shape: Pointer,
     /// `[links] preview`: preview internal links after the pointer rests on
     /// them this long (`None`: never).
@@ -227,7 +222,6 @@ impl PdfPane {
             sidebar_open: false,
             search: SearchState::new(pages),
             search_base: 0,
-            input: None,
             search_origin: None,
             pending_first_hit: None,
             requests: Vec::new(),
@@ -243,7 +237,6 @@ impl PdfPane {
             restore_hit: None,
             reloading: false,
             flash: None,
-            caret_cell: None,
             pointer_shape: Pointer::Default,
             preview_delay: Some(DEFAULT_PREVIEW_DELAY),
             hover: None,
@@ -445,30 +438,16 @@ impl PdfPane {
         let (w, h) = (self.geometry.width_px(), self.bar_height());
         let y = self.geometry.height_px().saturating_sub(h) as i32;
         let bar = Rect::new(0, y, w, h);
-        self.caret_cell = None;
-        if let Some(mut input) = self.input.clone() {
-            input.hint = self.search_hint();
-            layers.push(self.widget(images, KEY_INPUT, WidgetState::Input(input.clone()), bar));
-            // Put the terminal cursor at the caret so IME preedit shows there:
-            // in the first cell starting at or after it, since the cursor
-            // covers a whole cell and would hide the last character typed.
-            let caret_x = input.caret_x(&mut self.text, &self.theme, h);
-            let cell = self.geometry.cell;
-            let col = (caret_x / cell.width as f32).ceil() as u32;
-            let col = col.min(self.geometry.cols.saturating_sub(1) as u32);
-            self.caret_cell = Some((col as u16, (y as u32 / cell.height) as u16));
-        } else {
-            let mut right = format!("{}   {zoom}%", self.page_text());
-            if self.search.is_active() {
-                right = format!("/{} {}   {right}", self.search.query, self.search_hint());
-            }
-            if self.reloading {
-                right = format!("reloading…   {right}");
-            }
-            let notice = self.hover_uri.clone().or_else(|| self.notice.clone());
-            let status = StatusBar { left: self.name.clone(), right, error: self.message.clone(), notice };
-            layers.push(self.widget(images, KEY_STATUS, WidgetState::Status(status), bar));
+        let mut right = format!("{}   {zoom}%", self.page_text());
+        if self.search.is_active() {
+            right = format!("/{} {}   {right}", self.search.query, self.search_hint());
         }
+        if self.reloading {
+            right = format!("reloading…   {right}");
+        }
+        let notice = self.hover_uri.clone().or_else(|| self.notice.clone());
+        let status = StatusBar { left: self.name.clone(), right, error: self.message.clone(), notice };
+        layers.push(self.widget(images, KEY_STATUS, WidgetState::Status(status), bar));
         self.overlay_layers(images, &mut layers);
         if self.sidebar_open {
             let r = self.sidebar_rect();
@@ -481,7 +460,7 @@ impl PdfPane {
             layers.push(Layer { z: Z_PREVIEW, ..self.widget(images, KEY_PREVIEW, WidgetState::Frame, outer) });
         }
         let title = format!("{} — {}", self.name, self.page_text());
-        (Frame { layers, cursor: self.caret_cell, pointer: self.pointer_shape, title, ..Default::default() }, needs)
+        (Frame { layers, pointer: self.pointer_shape, title, ..Default::default() }, needs)
     }
 
     fn widget(&mut self, images: &mut Images, key: u32, state: WidgetState, rect: Rect) -> Layer {
@@ -494,7 +473,6 @@ impl PdfPane {
             let px = match &state {
                 WidgetState::Status(s) => s.render(&mut self.text, &self.theme, rect.w, rect.h),
                 WidgetState::List(l, rh) => l.render(&mut self.text, &self.theme, rect.w, rect.h, *rh),
-                WidgetState::Input(i) => i.render(&mut self.text, &self.theme, rect.w, rect.h).0,
                 WidgetState::Frame => {
                     let mut c = Canvas::new(rect.w, rect.h);
                     c.fill_rect(0.0, 0.0, rect.w as f32, rect.h as f32, self.theme.accent);
@@ -820,11 +798,6 @@ impl PdfPane {
         }
     }
 
-    /// Terminal cell where the text cursor should be shown, if any.
-    pub fn cursor(&self) -> Option<(u16, u16)> {
-        self.caret_cell
-    }
-
     /// Requests for the caller (searches to run).
     pub fn take_requests(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.requests)
@@ -844,24 +817,18 @@ impl PdfPane {
                 self.search.current = Some((p, i));
             }
         }
-        // Incremental search (while typing): move to the first match after where
-        // the search began. Also after Enter if no match was selected yet.
-        if self.search.current.is_none() {
-            let from = match (&self.input, self.pending_first_hit) {
-                (Some(_), _) => Some(self.search_origin.map_or_else(|| self.viewer.top_position(), |o| o.0)),
-                (None, pending) => pending,
-            };
-            if let Some(from) = from
-                && let Some(hit) = self.search.find_from(from, true)
-                && self.search.hits[hit.0].get(hit.1).is_some()
-                && (self.search.is_complete() || (hit.0 == page && !self.wrapped(from, hit, true)))
-            {
-                self.search.current = Some(hit);
-                if self.pending_first_hit.take().is_some() {
-                    self.clear_searching();
-                }
-                self.reveal_hit(hit, now);
+        // The first match after where the search began, if none is selected yet.
+        if self.search.current.is_none()
+            && let Some(from) = self.pending_first_hit
+            && let Some(hit) = self.search.find_from(from, true)
+            && self.search.hits[hit.0].get(hit.1).is_some()
+            && (self.search.is_complete() || (hit.0 == page && !self.wrapped(from, hit, true)))
+        {
+            self.search.current = Some(hit);
+            if self.pending_first_hit.take().is_some() {
+                self.clear_searching();
             }
+            self.reveal_hit(hit, now);
         }
         // Done: what was waited for (Enter, `n`, `N`) found nothing, or the
         // "Searching" message is out of date.
@@ -910,11 +877,6 @@ impl PdfPane {
                 );
             }
         }
-    }
-
-    fn start_search(&mut self) {
-        let query = self.input.as_ref().map(|i| i.text.clone()).unwrap_or_default();
-        self.run_search(query);
     }
 
     fn run_search(&mut self, query: String) {
@@ -1066,89 +1028,22 @@ impl PdfPane {
         }
     }
 
-    fn input_key(&mut self, k: &KeyEvent, now: Instant) -> Action {
-        let Some(input) = self.input.as_mut() else { return Action::None };
-        let ctrl = k.modifiers.without_locks().contains(Modifiers::CTRL);
-        let r = match k.code {
-            KeyCode::Escape | KeyCode::Char('c') if k.code == KeyCode::Escape || ctrl => {
-                // Cancel: forget the query and go back to where we were.
-                self.input = None;
-                self.search.clear();
-                if let Some((pos, sx, _)) = self.search_origin.take() {
-                    self.viewer.goto(pos, false, now);
-                    self.viewer.jump_to(sx, self.viewer.view.scroll_y);
-                }
-                return Action::Redraw;
-            }
-            KeyCode::Enter => {
-                self.submit_search();
-                return Action::Redraw;
-            }
-            KeyCode::Backspace if input.text.is_empty() => {
-                self.input = None;
-                self.search.clear();
-                return Action::Redraw;
-            }
-            KeyCode::Backspace => input.backspace(),
-            KeyCode::Delete => input.delete(),
-            KeyCode::Left => input.left(),
-            KeyCode::Right => input.right(),
-            KeyCode::Home | KeyCode::Char('a') if k.code == KeyCode::Home || ctrl => {
-                input.home();
-                EditResult::Moved
-            }
-            KeyCode::End | KeyCode::Char('e') if k.code == KeyCode::End || ctrl => {
-                input.end();
-                EditResult::Moved
-            }
-            KeyCode::Char('w') if ctrl => input.delete_word(),
-            KeyCode::Char('u') if ctrl => {
-                input.clear();
-                EditResult::Changed
-            }
-            KeyCode::Char(c) if !ctrl => {
-                let text = k.text.clone().unwrap_or_else(|| c.to_string());
-                input.insert(&text);
-                EditResult::Changed
-            }
-            _ => EditResult::Ignored,
-        };
-        match r {
-            EditResult::Changed => {
-                self.start_search();
-                Action::Redraw
-            }
-            EditResult::Moved => Action::Redraw,
-            EditResult::Ignored => Action::None,
-        }
-    }
-
-    /// Bracketed paste: goes into the search prompt when it is open.
-    pub fn paste(&mut self, text: &str) -> Action {
-        let Some(input) = self.input.as_mut() else { return Action::None };
-        input.insert(&text.replace(['\n', '\r'], " "));
-        self.start_search();
-        Action::Redraw
-    }
-
-    /// Search for `query` as if it was typed after `/` and Enter pressed
-    /// (the `search-for` command): the place it starts from goes on the
-    /// back history, and the first hit is shown once it is known. An empty
-    /// query clears the search.
+    /// Search for `query` (the `search-for` command): the place it starts
+    /// from goes on the back history, and the first hit is shown once it is
+    /// known. An empty query clears the search.
     pub fn search_for(&mut self, query: &str) -> Action {
-        self.open_search();
-        if let Some(input) = self.input.as_mut() {
-            input.insert(&query.replace(['\n', '\r'], " "));
-        }
-        self.start_search();
+        let v = &self.viewer;
+        self.search_origin = Some((v.top_position(), v.view.scroll_x, v.view.scroll_y));
+        self.search.clear();
+        self.pending_first_hit = None;
+        self.run_search(query.replace(['\n', '\r'], " "));
         self.submit_search();
         Action::Redraw
     }
 
-    /// The search typed is done (Enter): close the input, remember where it
-    /// started (back history), and go to the first hit when it comes.
+    /// A search began: remember where (back history), and go to the first
+    /// hit when it comes.
     fn submit_search(&mut self) {
-        self.input = None;
         let origin = self.search_origin.take();
         if let Some((pos, sx, _)) = origin {
             self.back.push((pos, sx));
@@ -1160,14 +1055,6 @@ impl PdfPane {
         if self.search.is_active() && self.search.total() == 0 && self.search.is_complete() {
             self.message = Some(format!("Pattern not found: {}", self.search.query));
         }
-    }
-
-    fn open_search(&mut self) {
-        let v = &self.viewer;
-        self.search_origin = Some((v.top_position(), v.view.scroll_x, v.view.scroll_y));
-        self.input = Some(LineInput { prompt: "/".into(), ..Default::default() });
-        self.search.clear();
-        self.pending_first_hit = None;
     }
 
     fn step_search(&mut self, forward: bool, now: Instant) {
@@ -1290,9 +1177,6 @@ impl PdfPane {
         // The reader moved on; a pending reload anchor would pull them back.
         self.text_anchor = None;
         self.notice = None;
-        if self.input.is_some() {
-            return Some(self.input_key(k, now));
-        }
         if self.sidebar_open
             && let Some(action) = self.sidebar_key(k, now)
         {
@@ -1323,9 +1207,6 @@ impl PdfPane {
         // The reader moved on; a pending reload anchor would pull them back.
         self.text_anchor = None;
         self.notice = None;
-        if self.input.is_some() {
-            return self.input_key(k, now);
-        }
         if self.sidebar_open
             && let Some(action) = self.sidebar_key(k, now)
         {
@@ -1383,7 +1264,6 @@ impl PdfPane {
             Command::ZoomIn => v.zoom(ZOOM_STEP.powi(n as i32), centre),
             Command::ZoomOut => v.zoom(1.0 / ZOOM_STEP.powi(n as i32), centre),
             Command::FitWidth => v.fit_width(),
-            Command::Search => self.open_search(),
             Command::NextMatch => (0..n).for_each(|_| self.step_search(true, now)),
             Command::PrevMatch => (0..n).for_each(|_| self.step_search(false, now)),
         }
@@ -1685,27 +1565,6 @@ mod tests {
         assert!(s.flash.is_some(), "drawn while it lasts");
         assert!(s.tick(now + FLASH_DURATION));
         assert!(s.flash.is_none());
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
-    fn typing_a_search_does_not_wrap_to_an_earlier_hit_before_the_rest_is_searched() {
-        let mut s = session();
-        let now = Instant::now();
-        s.viewer.goto(Target { page: 1, y: Some(400.0) }, false, now);
-        s.key(&KeyEvent::new(KeyCode::Char('/'), Modifiers::NONE), now);
-        s.key(&KeyEvent::new(KeyCode::Char('x'), Modifiers::NONE), now);
-        let generation = match s.take_requests().as_slice() {
-            [Request::Search { generation, start_page: 1, .. }] => *generation,
-            other => panic!("{other:?}"),
-        };
-        let rect = |y| PageRect { x0: 10.0, y0: y, x1: 50.0, y1: y + 10.0 };
-        // The page the search started on comes first: its only hit is above
-        // where the search began.
-        s.search_hits(generation, 1, vec![rect(10.0)], now);
-        assert_eq!(s.search.current, None, "a later page may have one");
-        s.search_hits(generation, 2, vec![rect(100.0)], now);
-        assert_eq!(s.search.current, Some((2, 0)));
     }
 
     #[test]
@@ -2087,13 +1946,12 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
-    fn search_for_is_a_search_typed_and_entered() {
+    fn search_for_searches_and_selects_the_first_hit() {
         let mut s = session();
         let now = Instant::now();
         let start = s.viewer.top_position();
         // Before any result, as from a script or `temzdf action`.
         s.search_for("needle");
-        assert!(s.input.is_none(), "no prompt left open");
         assert_eq!(s.back.last().map(|b| b.0), Some(start), "where it started, for Back");
         let Some(Request::Search { generation, query, .. }) = s.take_requests().pop() else { panic!("a search") };
         assert_eq!(query, "needle");
@@ -2107,27 +1965,6 @@ mod tests {
         // An empty query clears it.
         s.search_for("");
         assert!(!s.search.is_active());
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
-    fn enter_before_the_results_arrive_still_selects_the_first_hit() {
-        let mut s = session();
-        let now = Instant::now();
-        s.key(&KeyEvent::new(KeyCode::Char('/'), Modifiers::NONE), now);
-        for ch in "needle".chars() {
-            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
-        }
-        // Typed quickly (or through a slow link): Enter comes before any hit.
-        s.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE), now);
-        let Some(Request::Search { generation, query, .. }) = s.take_requests().pop() else { panic!("a search") };
-        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
-        for p in 0..s.viewer.page_count() {
-            let rects = pdf::search_page(&doc, p, s.info.bounds[p], &query).unwrap();
-            s.search_hits(generation, p, rects, now);
-        }
-        assert_eq!(s.search.current, Some((0, 0)));
-        assert!(s.search_hint().contains("1/4"), "{}", s.search_hint());
     }
 
     #[test]
@@ -2308,28 +2145,6 @@ mod tests {
         s.preview_delay = None;
         mouse(&mut s, MouseEventKind::Move, at);
         assert!(s.next_deadline().is_none());
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
-    fn the_terminal_cursor_never_covers_typed_text() {
-        let mut s = session();
-        let mut c = comp();
-        let now = Instant::now();
-        s.key(&KeyEvent::new(KeyCode::Char('/'), Modifiers::NONE), now);
-        for ch in "needle".chars() {
-            s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
-            s.frame(&mut c);
-            let input = s.input.clone().unwrap();
-            let h = s.bar_height();
-            let caret_x = input.caret_x(&mut s.text, &s.theme, h);
-            let (col, _) = s.cursor().unwrap();
-            assert!(
-                col as f32 * 10.0 >= caret_x,
-                "after {:?}: cell {col} starts left of the caret at {caret_x}",
-                input.text
-            );
-        }
     }
 
     /// Do a pane's rendering work inline until its frame needs nothing more.

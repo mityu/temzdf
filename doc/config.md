@@ -164,15 +164,15 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `pdf` | `g` `<Home>` / `G` `<End>` | first page / end (or page N with a count) |
 | `pdf` | `<C-o>` `<BS>` `<M-Left>` / `<M-Right>` | link history back / forward (counts) |
 | `pdf` | `+` `=` / `-` / `0` `w` | zoom in / out (counts) / fit width |
-| `pdf` | `/` / `n` / `N` | search / next / previous match (counts) |
+| `pdf` | `n` / `N` | next / previous match of the search (`searchFor`; counts) |
 | `pdf` | `y` | copy the selection |
 | `pdf` | `<Tab>` | outline |
 
 Inside tmux, `<C-b>` is tmux's own prefix: map another key for temzdf (or
 press it twice there).
 
-While a PDF pane's search prompt is open or its outline has the focus, keys
-go to them directly (fixed keys). Mouse handling is built in. Dragging a
+While a PDF pane's outline has the focus, keys go to it directly (fixed
+keys). (The search prompt, `/`, is gone for now; `searchFor` searches.) Mouse handling is built in. Dragging a
 border between panes resizes them, in any mode (the pointer shows a resize
 shape over borders); programs in terminal panes get their new size when the
 button is released. Panes stay at least 10 columns by 4 rows. In terminal

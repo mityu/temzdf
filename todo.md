@@ -28,10 +28,12 @@ server on one `Session`). Next and open:
   uploads at scale 2 got slower on lavapipe (`doc/performance.md`, "With
   shared memory"); measure on a real GPU and on macOS.
 - [ ] A Vim-like command line on the `Action` text form (tab pages are done).
-- [ ] e2e searches by typing in the standalone viewer (`search.actions`'
-  `next` and `cleared`, `expect.actions`' `search`, `next`, `sidebar`):
-  move them to `search-for` once the standalone viewer, and `expect`'s
-  replay, can take commands (`doc/testing.md`).
+- [ ] The PDF pane's search prompt (`/`), removed with the move to pane
+  status lines (user, 2026-10-31): write it again, on the status line, and
+  with it its tests (incremental search while typing, the cursor in the
+  prompt for IME, Enter before results), the `/` mapping, and the e2e
+  searches (`tests/e2e/search.actions`: typing, next, cleared;
+  `expect.actions`' `search` and `next` before `sidebar`).
 - [ ] A log level (or verbosity) for temzdf's logs: today some lines are
   there for scripts/e2e.sh (`complete frame written`, `incomplete frame
   shown`, geometry) and others only with variables (`TEMZDF_TIMING`); the

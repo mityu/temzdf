@@ -1484,10 +1484,7 @@ impl Session {
         if let Some(t) = self.focused_term() {
             return Outcome::None.or(t.paste(text));
         }
-        match self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf) {
-            Some(pane) => Outcome::None.or(pane.paste(text) == pane::Action::Redraw),
-            None => Outcome::None,
-        }
+        Outcome::None
     }
 
     /// Run an action. Errors (a file that cannot be opened, no room for a

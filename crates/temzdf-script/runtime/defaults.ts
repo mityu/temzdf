@@ -34,7 +34,6 @@ each("pdf", ["<M-Right>"], action.forward());
 each("pdf", ["+", "="], action.zoomIn());
 each("pdf", ["-"], action.zoomOut());
 each("pdf", ["0", "w"], action.fitWidth());
-each("pdf", ["/"], action.search());
 each("pdf", ["n"], action.nextMatch());
 each("pdf", ["N"], action.prevMatch());
 each("pdf", ["y"], action.copy());
