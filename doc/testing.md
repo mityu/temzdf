@@ -6,7 +6,7 @@ Layers of verification, cheapest first. All of them run without a human.
 |---|---|---|
 | Unit tests | `scripts/check.sh` | Input parsing, kitty command encoding, compositor diffing (replayed through `termpix::mock`), layout maths, tile rendering vs full-page rendering |
 | Miri | `scripts/miri.sh` (part of `scripts/check.sh` when `cargo miri` is there) | Undefined behaviour, data races and leaked threads or memory in the unit tests' Rust code (ours and the Rust dependencies). See "Miri" below. |
-| Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal. Read the PNG to check it. `scripts/frames.sh` renders a fixed set and compares two sets pixel by pixel (for refactorings). |
+| Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal (images only: `--text FILE` writes the status line's text, `--mask PNG` where it is). Read the PNG to check it. `scripts/frames.sh` renders a fixed set and compares two sets pixel by pixel (for refactorings). |
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
 | Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `scripts/check.sh`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
 | Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland\|macos] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
@@ -239,8 +239,13 @@ and Wayland too). Wayland: 683 s before. With `gui-focus`, `gui-ime` and
 `expect` (see the `scripts/e2e.sh` header) takes a screenshot, reads the
 geometry temzdf logged at startup (`OUTDIR/state/temzdf/temzdf.log`), renders
 the same input headlessly and compares with ImageMagick (`-fuzz 3%`, no pixel
-may differ). Results go to `OUTDIR/expect.txt`; `NAME.actual.png`,
-`NAME.expected.png` and `NAME.diff.png` show a mismatch. Two forms:
+may differ). The cells the terminal draws itself (the pane's status line,
+text since 2026-10-31) are left out of that comparison on both sides
+(`--mask`, `NAME.mask.png`); their text is compared with the headless
+frame's (`--text`, `NAME.expected.txt`) where the terminal can tell it
+(kitty, WezTerm), as for sessions. Results go to `OUTDIR/expect.txt`;
+`NAME.actual.png`, `NAME.expected.png`, `NAME.diff.png` and
+`NAME.text.diff` show a mismatch. Two forms:
 
 - `expect NAME KEYS`: `--render-frame --keys=KEYS`, the whole key sequence
   since startup, each key run to its end. Send scrolling keys one at a time

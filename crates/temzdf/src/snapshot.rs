@@ -109,7 +109,7 @@ pub fn render_session(name: &str, out: &Path, opts: &SnapshotOptions) -> Result<
 /// The cells of the frame's text grids, a line per row: spaces outside them
 /// and for blank cells, a wide character once (its spacer adds nothing),
 /// trailing spaces dropped. What a terminal reports as its screen's text.
-fn screen_text(frame: &Frame, g: Geometry) -> String {
+pub(crate) fn screen_text(frame: &Frame, g: Geometry) -> String {
     let mut rows: Vec<Vec<Option<&Cell>>> = vec![vec![None; g.cols as usize]; g.rows as usize];
     for grid in &frame.text {
         for (r, cells) in grid.rows.iter().enumerate() {
@@ -151,7 +151,7 @@ fn drawn_by_terminal(cell: &Cell) -> bool {
 }
 
 /// Opaque black over the cells the terminal draws, and the cursor's.
-fn cell_mask(frame: &Frame, g: Geometry) -> RgbaImage {
+pub(crate) fn cell_mask(frame: &Frame, g: Geometry) -> RgbaImage {
     let (w, h) = (g.width_px(), g.height_px());
     let mut mask = RgbaImage { width: w, height: h, data: vec![0; (w * h * 4) as usize] };
     let mut fill = |col: u32, row: u32| {

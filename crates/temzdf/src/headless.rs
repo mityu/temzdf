@@ -9,7 +9,7 @@
 //! simulated clock: wheel acceleration, easing, link previews and other
 //! timers see the same times as in the run that was recorded.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -36,6 +36,11 @@ pub struct FrameOptions {
     pub events: Option<Vec<Timed>>,
     /// Blend translucent layers in linear light (as kitty does).
     pub linear_blending: bool,
+    /// Write the text of the screen here (as `render-session --text`).
+    pub text: Option<PathBuf>,
+    /// Write a mask of the cells the terminal draws itself here (as
+    /// `render-session --mask`).
+    pub mask: Option<PathBuf>,
 }
 
 /// Parse keys in Vim's `feedkeys` notation (`jjj++02G/needle<CR>`).
@@ -328,6 +333,15 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     }
     term.feed(&bytes);
     term.render().save_png(out)?;
+    if let Some(path) = &opts.text {
+        std::fs::write(path, crate::snapshot::screen_text(&frame, opts.geometry))
+            .with_context(|| format!("writing {}", path.display()))?;
+    }
+    if let Some(path) = &opts.mask {
+        crate::snapshot::cell_mask(&frame, opts.geometry)
+            .save_png(path)
+            .with_context(|| format!("writing {}", path.display()))?;
+    }
     Ok(())
 }
 

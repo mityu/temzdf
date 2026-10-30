@@ -88,6 +88,14 @@ struct PdfArgs {
     /// (scripts/e2e.sh compares against real terminals).
     #[arg(long, hide = true)]
     linear_blending: bool,
+    /// For --render-frame: write the text of the screen (the status line)
+    /// here.
+    #[arg(long, value_name = "FILE", requires = "render_frame")]
+    text: Option<PathBuf>,
+    /// For --render-frame: write a mask of the cells the terminal draws
+    /// itself here.
+    #[arg(long, value_name = "PNG", requires = "render_frame")]
+    mask: Option<PathBuf>,
 }
 
 /// Viewers that run in this terminal, without a session.
@@ -453,6 +461,8 @@ fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
                 None => None,
             },
             linear_blending: args.linear_blending,
+            text: args.text.clone(),
+            mask: args.mask.clone(),
         };
         return headless::render_frame(&file, out, &opts);
     }

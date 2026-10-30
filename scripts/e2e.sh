@@ -78,9 +78,13 @@
 #                      [--page N] [--scale S] FILE (possibly after
 #                      `env VAR=...`) and terminals
 #                      drawing from the window's top-left (kitty, WezTerm,
-#                      Ghostty without decorations). Results go to
-#                      OUTDIR/expect.txt, mismatches to NAME.diff.png; the
-#                      recorded input to OUTDIR/events.txt.
+#                      Ghostty without decorations). The images are compared
+#                      by pixels outside the cells the terminal draws itself
+#                      (the status line; NAME.mask.png), and in kitty and
+#                      WezTerm the text too (NAME.expected.txt), as for
+#                      sessions below. Results go to
+#                      OUTDIR/expect.txt, mismatches to NAME.diff.png and
+#                      NAME.text.diff; the recorded input to OUTDIR/events.txt.
 #                      With -t gui, `expect NAME` compares the window with
 #                      `temzdf-gui --render-frame` attached to the same
 #                      session at that moment (the window's drawing, not the
@@ -911,7 +915,7 @@ expect() {
     expect_session "$1"
     return
   fi
-  local name=$1 keys=${2:-} input geo cols rows cw ch out
+  local name=$1 keys=${2:-} input geo cols rows cw ch out failed=
   if (($# >= 2)); then
     input=("--keys=$keys")
   else
@@ -943,23 +947,40 @@ expect() {
   # --keys=...: key lists may start with "-" (zoom out).
   phase "expect $name"
   "${expect_cmd[@]}" --render-frame "$outdir/$name.expected.png" --size "${cols}x${rows}" \
-    --cell "${cw}x${ch}" "${input[@]}" "$expect_file" 2>"$outdir/$name.expected.log" || {
+    --cell "${cw}x${ch}" --text "$outdir/$name.expected.txt" --mask "$outdir/$name.mask.png" \
+    "${input[@]}" "$expect_file" 2>"$outdir/$name.expected.log" || {
     echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
     return
   }
   phase "expected $name"
-  # The terminal may have spare pixels right and below the cell grid.
-  magick "$outdir/$name.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage "$outdir/$name.actual.png"
+  # The terminal may have spare pixels right and below the cell grid. The
+  # cells it draws itself (the status line) go black on both sides, as for
+  # sessions; their text is compared where the terminal can tell it.
+  magick "$outdir/$name.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage \
+    "$outdir/$name.mask.png" -composite "$outdir/$name.actual.png"
   as_terminal_shows "$outdir/$name.expected.png"
+  magick "$outdir/$name.expected.png" "$outdir/$name.mask.png" -composite "$outdir/$name.expected.png"
   mask_window_edges "$name" $((cols * cw)) $((rows * ch))
   out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.actual.png" "$outdir/$name.expected.png" \
     "$outdir/$name.diff.png" 2>&1 || true)
   out=${out%% *}
   if [[ $out == 0 ]]; then
     rm -f "$outdir/$name.diff.png"
+  else
+    failed="$out pixels differ (see $name.diff.png)"
+  fi
+  if read_screen >"$outdir/$name.actual.txt"; then
+    if diff <(screen_lines "$outdir/$name.expected.txt") <(screen_lines "$outdir/$name.actual.txt") \
+      >"$outdir/$name.text.diff"; then
+      rm -f "$outdir/$name.text.diff"
+    else
+      failed+="${failed:+; }the text differs (see $name.text.diff)"
+    fi
+  fi
+  if [[ -z $failed ]]; then
     echo "PASS $name" | tee -a "$outdir/expect.txt"
   else
-    echo "FAIL $name: $out pixels differ (see $name.diff.png)" | tee -a "$outdir/expect.txt"
+    echo "FAIL $name: $failed" | tee -a "$outdir/expect.txt"
   fi
 }
 
