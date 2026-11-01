@@ -2,7 +2,9 @@
 #   mkdir -p target/e2e-sync && cp target/fixtures/sample.{pdf,synctex.gz} target/e2e-sync/
 #   scripts/e2e.sh tests/e2e/synctex.actions -- target/debug/temzdf standalone pdf --clean \
 #     --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf
-# Judged (check): `temzdf --forward` from another process succeeds (forward);
+# Judged (check): `temzdf --forward` from another process succeeds (forward)
+# and shows page 2 (forward-page: the status line; kitty and WezTerm; the
+# highlight is not judged);
 # Ctrl+click on the title on page 1 runs the editor on sample.tex at a line
 # of the title, from \title to the line after \maketitle (inverse).
 # Expected:
@@ -12,6 +14,7 @@ pause 1
 check forward target/debug/temzdf --forward "$line:sample.tex" target/e2e-sync/sample.pdf
 pause 0.8
 shot forward
+check forward-page screen_contains "2 / 3"
 keys g
 pause 1
 rm -f target/e2e-sync/inverse.txt

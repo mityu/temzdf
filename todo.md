@@ -108,8 +108,10 @@ server on one `Session`). Next and open:
   SyncTeX with `check`, the GUI's focus and Japanese input with `check`
   on what the shell wrote, the screens after detaching and killing
   against the terminal's own drawing of the messages, the text
-  `select-autoscroll` copies. Left unjudged: the truncated moment of
-  `reload`, SyncTeX's highlight and the page it lands on, IME composing,
+  `select-autoscroll` copies, the truncated moment of `reload` (the screen
+  unchanged outside the status line, which says "reloading…") and the
+  page a forward search lands on (the status line's text; 2026-11-02).
+  Left unjudged: SyncTeX's highlight, IME composing,
   how far `select-autoscroll` scrolls (it follows the frames drawn, which
   a replay does not; judging it needs autoscroll driven by time alone),
   sessions inside multiplexers, and Ghostty's text.

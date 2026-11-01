@@ -115,6 +115,10 @@
 #                      (OUTDIR/expect.txt, as expect), for what a screenshot
 #                      cannot judge (files, exit statuses); SKIP when CMD
 #                      exits with 77 (it cannot tell in this terminal).
+#   same_screen SHOT REF  whether screenshot SHOT shows what `expect REF`
+#                      saw, outside the cells the terminal draws itself
+#                      (REF's mask: the status line), e.g. `check same
+#                      same_screen truncated before`: the images stayed
 #   screen_contains TEXT  whether the screen shows TEXT (kitty and WezTerm,
 #                      through their get-text; 77 elsewhere), e.g. `check
 #                      detached screen_contains "[detached from session e2e]"`.
@@ -838,6 +842,22 @@ cell_row() {
   [[ -n $row_mask ]] && mask=("$row_mask" -composite)
   magick "$outdir/$1.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage "${mask[@]}" \
     -crop "$((cols * cw))x$ch+0+$(($2 * ch))" +repage -strip "$3"
+}
+# Whether screenshot SHOT shows what `expect REF` saw (REF.actual.png),
+# outside REF's mask (and the window's edges on macOS); the comparison goes
+# to SHOT.diff.png.
+same_screen() {
+  local shot=$1 ref=$2 out
+  read_geometry || return 1
+  [[ -f $outdir/$ref.actual.png && -f $outdir/$ref.mask.png ]] || return 1
+  magick "$outdir/$shot.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage \
+    "$outdir/$ref.mask.png" -composite "$outdir/$shot.actual.png"
+  if [[ -f $outdir/$ref.window-mask.png ]]; then
+    magick "$outdir/$shot.actual.png" "$outdir/$ref.window-mask.png" -composite "$outdir/$shot.actual.png"
+  fi
+  out=$(magick compare -quiet -metric AE -fuzz 3% "$outdir/$shot.actual.png" "$outdir/$ref.actual.png" \
+    "$outdir/$shot.diff.png" 2>&1 || true)
+  [[ ${out%% *} == 0 ]] && rm -f "$outdir/$shot.diff.png"
 }
 # Whether two images are the same, as expect compares.
 same_image() {

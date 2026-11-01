@@ -3,7 +3,9 @@
 #   scripts/e2e.sh tests/e2e/reload.actions -- target/debug/temzdf standalone pdf --clean target/e2e-reload/doc.pdf
 # Simulates how LaTeX tools write the PDF. Judged: expect for before, short
 # and recreated, against the file on disk at that moment after "2G" (the
-# reload kept the place). Expected:
+# reload kept the place); while the file is cut short, the screen is
+# before's (truncated, the status line aside) and the status line says
+# "reloading…" (reloading; kitty and WezTerm). Expected:
 #   before.png     page 2 ("3 Filler"), status 2 / 3
 #   truncated.png  same view; "reloading…" in the status bar, old document still shown
 #   short.png      after rename-over with the 2-page version: still page 2 (now
@@ -16,6 +18,8 @@ expect before "2G"
 head -c 60000 target/fixtures/sample.pdf >"$doc"
 pause 1.2
 shot truncated
+check truncated same_screen truncated before
+check reloading screen_contains "reloading…"
 cp target/fixtures/sample-short.pdf target/e2e-reload/.doc.pdf.tmp
 mv target/e2e-reload/.doc.pdf.tmp "$doc"
 pause 1.5
