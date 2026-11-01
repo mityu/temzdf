@@ -339,6 +339,9 @@ configured sizes; terminal clients keep their terminal's font), `feedkeys`, `swi
 as if typed after `/` and Enter (the place it starts from goes on the back
 history, the first hit is shown once known; `""` clears the search;
 `temzdf action search-for needle`).
+Commands named `ns.name` are in a namespace: `cmd.ns.name()` and
+`action.ns.name()` (`temzdf action ns.name`), the name camelCased as the
+others (`input.delete-word` is `cmd.input.deleteWord`).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
 action split right`). `resizePane("left", 5)` moves a border of the focused
 pane five cells left (as tmux's `resize-pane -L 5`), `resizePane("wider",

@@ -35,9 +35,24 @@ fn camel(name: &str) -> String {
 
 /// The declarations for `commands`.
 pub fn declarations(commands: &[CommandSpec]) -> String {
+    // Commands named "ns.name" go in an object `ns` (in the order the first
+    // of each namespace comes).
     let mut cmd = String::new();
+    let mut spaces: Vec<(&str, String)> = Vec::new();
     for c in commands {
-        cmd.push_str(&format!("    /** {} */\n    {}{};\n", c.doc, camel(&c.name), c.ts));
+        match c.name.split_once('.') {
+            Some((ns, name)) => {
+                let line = format!("      /** {} */\n      {}{};\n", c.doc, camel(name), c.ts);
+                match spaces.iter_mut().find(|(n, _)| *n == ns) {
+                    Some((_, body)) => body.push_str(&line),
+                    None => spaces.push((ns, line)),
+                }
+            }
+            None => cmd.push_str(&format!("    /** {} */\n    {}{};\n", c.doc, camel(&c.name), c.ts)),
+        }
+    }
+    for (ns, body) in spaces {
+        cmd.push_str(&format!("    {}: {{\n{body}    }};\n", camel(ns)));
     }
     let events: String = EVENTS.iter().map(|(n, a)| format!("    {n}: {a};\n")).collect();
     format!(
@@ -66,7 +81,11 @@ declare module "temzdf" {{
     readonly name: string;
     readonly args: readonly unknown[];
   }}
-  export const action: {{ [K in keyof Commands]: (...args: Parameters<Commands[K]>) => Action }};
+  /** `cmd`'s commands (and namespaces of them) as actions. */
+  export type Actions<T> = {{
+    [K in keyof T]: T[K] extends (...args: infer A) => unknown ? (...args: A) => Action : Actions<T[K]>;
+  }};
+  export const action: Actions<Commands>;
 
   /** What conditions (`when`, `keepalive`) get: the context of the first key of the sequence. */
   export interface KeyContext {{
@@ -221,5 +240,13 @@ mod tests {
         }]);
         assert!(d.contains("    sendText(text: string): void;"), "{d}");
         assert!(d.contains("ModeChanged: [old: string, new: string];"));
+    }
+
+    #[test]
+    fn namespaced_commands_become_objects() {
+        let spec = |name: &str| CommandSpec { name: name.into(), doc: "d".into(), ts: "(): void".into() };
+        let d = declarations(&[spec("input.backspace"), spec("message"), spec("input.delete-word")]);
+        assert!(d.contains("    input: {\n      /** d */\n      backspace(): void;\n      /** d */\n      deleteWord(): void;\n    };\n"), "{d}");
+        assert!(d.contains("    message(): void;"), "{d}");
     }
 }

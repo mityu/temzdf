@@ -79,12 +79,16 @@ impl Drop for Session {
 }
 
 /// The commands the tests use, and those the shipped defaults use (every
-/// `action.fooBar(` in runtime/defaults.ts, as `foo-bar`).
+/// `action.fooBar(` in runtime/defaults.ts as `foo-bar`, `action.ns.fooBar(`
+/// as `ns.foo-bar`).
 fn command_names() -> Vec<String> {
-    let mut names: Vec<String> = ["split", "new-pane", "message"].iter().map(|s| s.to_string()).collect();
+    let mut names: Vec<String> = ["split", "new-pane", "message", "input.backspace", "input.delete-word"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let defaults = include_str!("../runtime/defaults.ts");
     for part in defaults.split("action.").skip(1) {
-        let camel: String = part.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+        let camel: String = part.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
         let kebab: String = camel
             .chars()
             .map(|c| if c.is_ascii_uppercase() { format!("-{}", c.to_ascii_lowercase()) } else { c.to_string() })
@@ -172,6 +176,31 @@ keymap.clear();
     s.send(ToHost::Call { id: 6, func: 1, args: vec![ScriptValue::Num(3.0)] });
     assert!(matches!(s.serve(&mut log), FromHost::Done { id: 6, result: Ok(()) }));
     assert_eq!(log, ["call6 message(opened 3)"]);
+}
+
+#[test]
+fn namespaced_commands_are_objects_of_their_own() {
+    let config = r#"
+import { action, cmd, keymap } from "temzdf";
+keymap.add("input", "<C-w>", () => cmd.input.deleteWord());
+keymap.add("input", "<BS>", action.input.backspace());
+cmd.message(typeof cmd.input + " " + Object.isFrozen(cmd.input) + " " + typeof action.input.deleteWord);
+"#;
+    let mut s = Session::start(&[("config.ts", config)]);
+    s.load("config.ts");
+    let mut log = Vec::new();
+    ready_ok(s.serve(&mut log));
+    assert!(log.contains(&"load message(object true function)".to_owned()), "{log:?}");
+    let f: u32 = log
+        .iter()
+        .find_map(|l| l.strip_prefix("load map input <C-w> f"))
+        .expect("the function mapping")
+        .parse()
+        .unwrap();
+    log.clear();
+    s.send(ToHost::Call { id: 1, func: f, args: vec![] });
+    assert!(matches!(s.serve(&mut log), FromHost::Done { id: 1, result: Ok(()) }));
+    assert_eq!(log, ["call1 input.delete-word()"], "the command's whole name");
 }
 
 #[test]

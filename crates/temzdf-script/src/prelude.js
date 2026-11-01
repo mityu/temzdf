@@ -27,13 +27,25 @@
   }
 
   const camel = (name) => name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  // `obj.input.deleteWord = value` for the command "input.delete-word": a
+  // namespace (before a dot) is an object of its own.
+  function put(obj, name, value) {
+    const parts = name.split(".").map(camel);
+    const last = parts.pop();
+    for (const p of parts) obj = obj[p] ??= {};
+    obj[last] = value;
+  }
+  function deepFreeze(obj) {
+    for (const v of Object.values(obj)) if (typeof v === "object") deepFreeze(v);
+    return Object.freeze(obj);
+  }
 
   // The session's commands, as functions issuing them under `tokenOf()`.
   function commands(tokenOf, cmd = {}) {
     for (const name of JSON.parse(host.commands())) {
-      cmd[camel(name)] = (...args) => request(tokenOf(), "command", { name, args });
+      put(cmd, name, (...args) => request(tokenOf(), "command", { name, args }));
     }
-    return Object.freeze(cmd);
+    return deepFreeze(cmd);
   }
   // Filled once the session has said which commands it has (before the
   // configuration runs).
@@ -46,9 +58,9 @@
     if (Object.isFrozen(globalCmd)) return;
     commands(current, globalCmd);
     for (const name of JSON.parse(host.commands())) {
-      globalAction[camel(name)] = (...args) => Object.freeze({ [ACTION]: true, name, args });
+      put(globalAction, name, (...args) => Object.freeze({ [ACTION]: true, name, args }));
     }
-    Object.freeze(globalAction);
+    deepFreeze(globalAction);
   };
   const isAction = (a) => a !== null && typeof a === "object" && a[ACTION] === true;
 
