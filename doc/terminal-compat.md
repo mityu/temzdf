@@ -36,6 +36,12 @@ Known problems:
 - zellij 0.45: native kitty graphics per pane, but rejects `U=1` (#5530), no
   `t=s` (#5626), ignores `x/y` without `c/r` (#5567). Use `t=d` and always pass
   `c,r`.
+- Terminals without kitty graphics (foot, xterm, Terminal.app, ...), tmux
+  without passthrough or with an outer terminal that has no placeholders:
+  temzdf runs as text only (since 2026-11-02; `doc/config.md`, "Terminals
+  without graphics"): the frontend writes no graphics commands at all, not
+  even the cleanup on exit; the probe's queries are the only ones (answered
+  or ignored).
 
 ## Input and output modes
 

@@ -7,7 +7,7 @@
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use temzdf_scene::{Effect, Frame, Hints, ImageUpdate, Images, Pointer};
 use termpix::compositor::{Backend, Compositor};
 use termpix::geom::Geometry;
@@ -86,6 +86,12 @@ pub struct TtyFrontend {
     in_band: bool,
     /// When to send an empty synchronized update after images were sent.
     redraw_nudge: Option<Instant>,
+    /// The terminal shows no images (`no_graphics` says why): frames are
+    /// drawn as text with their fallback text and the client's own messages
+    /// (redrawn from `plain_frame` when those change).
+    no_graphics: Option<String>,
+    notices: Option<crate::notices::Notices>,
+    plain_frame: Option<Frame>,
 }
 
 impl TtyFrontend {
@@ -95,20 +101,12 @@ impl TtyFrontend {
     pub fn open(choose: impl FnOnce(&Capabilities) -> (Backend, Medium, u32)) -> Result<Self> {
         let mut tty = Tty::open(Modes::default())?;
         let caps = termpix::probe::probe(&mut tty, Duration::from_secs(1))?;
-        if !caps.kitty_graphics {
-            drop(tty);
-            match &caps.tmux {
-                Some(t) if !t.passthrough => {
-                    bail!("inside tmux, graphics need passthrough: run `tmux set -g allow-passthrough on`")
-                }
-                Some(t) => bail!(
-                    "inside tmux, graphics need an outer terminal with Unicode placeholder support \
-                     (kitty, Ghostty); tmux reports {:?}",
-                    t.outer
-                ),
-                None if caps.in_tmux => bail!("inside tmux, but the `tmux` command could not be queried"),
-                None => bail!("this terminal does not support the kitty graphics protocol"),
-            }
+        // Without graphics the frames are drawn as text (and a message says
+        // why).
+        let no_graphics = (!caps.kitty_graphics).then(|| no_graphics_reason(&caps));
+        if let Some(why) = &no_graphics {
+            eprintln!("temzdf: no images: {why}");
+            tty.without_graphics();
         }
         if caps.pixel_mouse {
             tty.enable_pixel_mouse()?;
@@ -152,6 +150,9 @@ impl TtyFrontend {
             uploading: false,
             in_band: false,
             redraw_nudge: None,
+            notices: no_graphics.as_deref().map(crate::notices::Notices::new),
+            no_graphics,
+            plain_frame: None,
         })
     }
 
@@ -176,13 +177,25 @@ impl TtyFrontend {
         }
     }
 
+    /// Why the terminal shows no images, if it does not.
+    pub fn no_graphics(&self) -> Option<&str> {
+        self.no_graphics.as_deref()
+    }
+
     /// Mirror a pane's image store (see [`Presenter::sync`]).
     pub fn sync(&mut self, images: &mut Images) {
+        if self.no_graphics.is_some() {
+            images.take_updates();
+            return;
+        }
         self.presenter.sync(&mut self.comp, images);
     }
 
     /// Apply image changes received from elsewhere (see [`Presenter::apply`]).
     pub fn apply(&mut self, updates: Vec<ImageUpdate>) {
+        if self.no_graphics.is_some() {
+            return;
+        }
         self.presenter.apply(&mut self.comp, updates);
     }
 
@@ -202,6 +215,13 @@ impl TtyFrontend {
     /// pixels. `complete` says
     /// whether everything visible is fully rendered.
     pub fn present(&mut self, frame: &Frame, complete: bool) -> Result<Presented> {
+        if let Some(n) = &mut self.notices {
+            n.frame(&frame.regions, Instant::now());
+            self.plain_frame = Some(frame.clone());
+            self.present_plain()?;
+            self.first_shown = true;
+            return Ok(Presented::Shown);
+        }
         if !self.first_shown && !complete && self.started.elapsed() < FIRST_FRAME_WAIT {
             self.retry_soon = true;
             return Ok(Presented::Waiting);
@@ -241,6 +261,22 @@ impl TtyFrontend {
         Ok(Presented::Shown)
     }
 
+    /// Draw the last frame as text (no images), with the client's messages.
+    fn present_plain(&mut self) -> Result<()> {
+        let (Some(frame), Some(n)) = (&self.plain_frame, &self.notices) else { return Ok(()) };
+        let g = self.comp.geometry();
+        // Where the panes start (below a tab line), as the session's own
+        // messages.
+        let top = frame.regions.iter().map(|r| r.rect.y.max(0) as u16).min().unwrap_or(0);
+        let over = n.grids(g.cols, g.rows, top);
+        let bytes = self.screen.render_plain(frame, &frame.fallback_text, &over, &mut self.comp);
+        if !bytes.is_empty() {
+            self.tty.write_all(bytes)?;
+        }
+        let pointer = frame.pointer;
+        self.set_pointer(pointer)
+    }
+
     /// Update the mouse pointer shape (OSC 22) if it changed.
     pub fn set_pointer(&mut self, pointer: Pointer) -> Result<()> {
         if pointer != self.pointer {
@@ -259,6 +295,12 @@ impl TtyFrontend {
     /// synchronized update a little later is that change
     /// (`doc/terminal-compat.md`).
     pub fn idle(&mut self) -> Result<()> {
+        if let Some(n) = &mut self.notices {
+            if n.tick(Instant::now()) {
+                self.present_plain()?;
+            }
+            return Ok(());
+        }
         if self.redraw_nudge.is_some_and(|t| Instant::now() >= t) {
             self.redraw_nudge = None;
             self.tty.write_all(b"\x1b[?2026h\x1b[?2026l")?;
@@ -277,6 +319,9 @@ impl TtyFrontend {
 
     /// The longest the caller may wait for events before calling again.
     pub fn timeout(&mut self, mut timeout: Duration) -> Duration {
+        if let Some(t) = self.notices.as_ref().and_then(|n| n.deadline()) {
+            timeout = timeout.min(t.saturating_duration_since(Instant::now()));
+        }
         if let Some(t) = self.redraw_nudge {
             timeout = timeout.min(t.saturating_duration_since(Instant::now()));
         }
@@ -326,7 +371,14 @@ impl TtyFrontend {
                 _ => Input::Handled(false),
             },
             TermEvent::Input(Event::Graphics(reply)) => Input::Handled(self.comp.handle_reply(&reply)),
-            TermEvent::Input(Event::Key(key)) => Input::Key(key),
+            TermEvent::Input(Event::Key(key)) => {
+                // The first key takes the message saying why there are no
+                // images.
+                if self.notices.as_mut().is_some_and(|n| n.key()) {
+                    self.present_plain()?;
+                }
+                Input::Key(key)
+            }
             TermEvent::Input(Event::Mouse(m)) => Input::Mouse(m),
             TermEvent::Input(Event::Paste(text)) => Input::Paste(text),
             TermEvent::Input(Event::Focus(gained)) => Input::Focus(gained),
@@ -351,6 +403,24 @@ impl TtyFrontend {
             }
         }
         Ok(())
+    }
+}
+
+/// Why a terminal shows no images (`caps.kitty_graphics` is false).
+fn no_graphics_reason(caps: &Capabilities) -> String {
+    if caps.graphics_off {
+        return "graphics are turned off (TERMPIX_GRAPHICS=off)".into();
+    }
+    match &caps.tmux {
+        Some(t) if !t.passthrough => {
+            "inside tmux, graphics need passthrough (`tmux set -g allow-passthrough on`)".into()
+        }
+        Some(t) => format!(
+            "inside tmux, graphics need an outer terminal with Unicode placeholder support (kitty, Ghostty); tmux reports {:?}",
+            t.outer
+        ),
+        None if caps.in_tmux => "inside tmux, but the `tmux` command could not be queried".into(),
+        None => "this terminal does not support the kitty graphics protocol".into(),
     }
 }
 

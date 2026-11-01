@@ -31,6 +31,10 @@ server on one `Session`). Next and open:
 - [ ] What pane status lines say, from the configuration (a string or a
   function, as Vim's `statusline`; `doc/floating-panes.md`); today a PDF
   pane's says what its old status bar said and a terminal's is blank.
+- [ ] Terminals without graphics (text only, done 2026-11-02): the server
+  could skip rendering PDF tiles while no attached client draws images (the
+  Hello would say); a PDF pane could show its text instead (the page's text
+  lines) in such terminals.
 - [ ] Input panes (done: one line, the search on them, 2026-11-02): input
   history (`<Up>`/`<Down>`), several lines, a `:` command line on them,
   clicks moving the caret; choosing how the search's input pane shows

@@ -8,11 +8,12 @@ use std::collections::HashMap;
 use std::io;
 
 mod frontend;
+mod notices;
 mod text;
 pub use frontend::{Input, Presented, TtyFrontend};
 pub use text::TextScreen;
 
-use temzdf_scene::{CursorShape, Frame, ImageKey, ImageUpdate, Images, Layer, Pointer};
+use temzdf_scene::{CursorShape, Frame, ImageKey, ImageUpdate, Images, Layer, Pointer, TextGrid};
 use termpix::compositor::{self, Compositor, ImageId};
 
 #[derive(Debug, Default)]
@@ -142,6 +143,34 @@ impl Screen {
         Some(&self.out)
     }
 
+    /// The bytes for one frame on a terminal without images: its text over
+    /// `under` (its fallback text) and under `over` (the client's own
+    /// messages), and the cursor; no graphics commands at all.
+    pub fn render_plain(
+        &mut self,
+        frame: &Frame,
+        under: &[TextGrid],
+        over: &[TextGrid],
+        comp: &mut Compositor,
+    ) -> &[u8] {
+        self.out.clear();
+        self.title(frame);
+        let g = comp.geometry();
+        let mut text = Vec::new();
+        if (g.cols, g.rows) != self.size {
+            self.size = (g.cols, g.rows);
+            self.text.resize(g.cols, g.rows);
+            text.extend_from_slice(b"\x1b[2J");
+        }
+        let grids: Vec<TextGrid> = under.iter().chain(&frame.text).chain(over).cloned().collect();
+        text.extend(self.text.clear_gone(&grids));
+        text.extend(self.text.render(&grids));
+        let moved = !text.is_empty();
+        text.extend(cursor(&mut self.shape, &mut self.cursor, frame, moved));
+        comp.present_text(&text, &mut self.out);
+        &self.out
+    }
+
     fn title(&mut self, frame: &Frame) {
         if frame.title != self.title {
             // Control characters would end the OSC early.
@@ -245,6 +274,45 @@ mod tests {
         frame.cursor = None;
         let hidden = String::from_utf8_lossy(screen.render(&frame, &presenter, &mut comp).unwrap()).into_owned();
         assert!(hidden.starts_with("\x1b[?2026h\x1b[?25l\x1b[?2026l"), "{hidden:?}");
+    }
+
+    #[test]
+    fn plain_frames_are_text_over_the_fallback_and_under_messages() {
+        let g = Geometry { cols: 10, rows: 3, cell: CellSize { width: 8, height: 16 } };
+        let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, g);
+        let row = |col: u16, row: u16, s: &str| TextGrid {
+            col,
+            row,
+            rows: vec![s.chars().map(|c| Cell { text: c.to_string(), width: 1, ..Cell::default() }).collect()],
+        };
+        let image = Images::new().add(1, 1, vec![255; 4]);
+        let layer = Layer {
+            key: 1,
+            image,
+            src: termpix::geom::Rect::new(0, 0, 1, 1),
+            dst: termpix::geom::Rect::new(0, 0, 8, 8),
+            z: 0,
+        };
+        let frame = Frame {
+            layers: vec![layer],
+            text: vec![row(0, 0, "text")],
+            fallback_text: vec![row(0, 0, "under-----"), row(0, 1, "fallback")],
+            ..Default::default()
+        };
+        let mut screen = Screen::new();
+        let out =
+            String::from_utf8_lossy(screen.render_plain(&frame, &frame.fallback_text, &[row(6, 2, "msg")], &mut comp))
+                .into_owned();
+        assert!(!out.contains("\x1b_G"), "no graphics: {out:?}");
+        assert!(out.starts_with("\x1b[?2026h\x1b[2J"), "a clean start: {out:?}");
+        // The frame's text wins over the fallback, the messages over both.
+        assert!(out.contains("text") && out.contains("fallback") && out.contains("msg"), "{out:?}");
+        assert!(out.contains("textr-----"), "the fallback under the text: {out:?}");
+        assert!(screen.render_plain(&frame, &frame.fallback_text, &[row(6, 2, "msg")], &mut comp).is_empty());
+        // The message gone: its cells are cleared.
+        let out =
+            String::from_utf8_lossy(screen.render_plain(&frame, &frame.fallback_text, &[], &mut comp)).into_owned();
+        assert!(out.contains("\x1b[3;7H"), "{out:?}");
     }
 
     #[test]

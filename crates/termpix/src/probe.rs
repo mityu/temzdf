@@ -6,6 +6,8 @@
 //! Environment overrides (for when detection is wrong):
 //! - `TERMPIX_BACKEND=layered|composited`
 //! - `TERMPIX_MEDIUM=direct|shm|file`
+//! - `TERMPIX_GRAPHICS=off`: as a terminal without the kitty graphics
+//!   protocol
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -84,6 +86,7 @@ pub struct Env {
     pub zellij: bool,
     pub backend_override: Option<String>,
     pub medium_override: Option<String>,
+    pub graphics_off: bool,
 }
 
 impl Env {
@@ -97,6 +100,7 @@ impl Env {
             zellij: var("ZELLIJ").is_some(),
             backend_override: var("TERMPIX_BACKEND"),
             medium_override: var("TERMPIX_MEDIUM"),
+            graphics_off: var("TERMPIX_GRAPHICS").is_some_and(|v| v == "off"),
         }
     }
 }
@@ -119,6 +123,8 @@ pub struct Capabilities {
     pub in_zellij: bool,
     /// What tmux reports about itself and the outer terminal, when inside tmux.
     pub tmux: Option<Tmux>,
+    /// `TERMPIX_GRAPHICS=off` turned the graphics off.
+    pub graphics_off: bool,
     backend_override: Option<Backend>,
     medium_override: Option<Medium>,
 }
@@ -259,6 +265,10 @@ pub fn probe(tty: &mut Tty, timeout: Duration) -> io::Result<Capabilities> {
         caps.tmux = Tmux::query();
         caps.kitty_graphics = caps.tmux.as_ref().is_some_and(|t| t.passthrough && t.outer_supports_placeholders());
     }
+    if env.graphics_off {
+        caps.kitty_graphics = false;
+        caps.graphics_off = true;
+    }
     Ok(caps)
 }
 
@@ -277,6 +287,7 @@ pub fn interpret(env: &Env, replies: &[Event], kernel: Option<Geometry>, grid: (
         in_tmux: env.tmux,
         in_zellij: env.zellij,
         tmux: None,
+        graphics_off: false,
         backend_override: match env.backend_override.as_deref() {
             Some("layered") => Some(Backend::Layered),
             Some("composited") => Some(Backend::composited()),

@@ -1351,6 +1351,69 @@ fn slash_searches_through_an_input_line_below_the_pdf() {
     assert!(!s.row_from(29, 0).contains("/Back"), "no search left: {:?}", s.row_from(29, 0));
 }
 
+/// Options for a terminal without the kitty graphics protocol.
+fn no_graphics(env: &Env) -> tuitest::Options {
+    let mut opts = env.options();
+    opts.env.push(("TERMPIX_GRAPHICS".into(), "off".into()));
+    opts
+}
+
+#[test]
+fn a_terminal_without_graphics_shows_pdf_panes_as_a_line_and_says_why() {
+    let env = Env::new("no-graphics");
+    let pdf = fixture("sample.pdf").display().to_string();
+    let mut t = Term::spawn(&[BIN, "-s", "ng", &pdf], &no_graphics(&env));
+    let s = t.wait_for("the PDF pane's line", |s| {
+        s.text().contains("PDF viewer disabled (no kitty graphics protocol support)")
+    });
+    assert!(s.images.is_empty(), "no images: {:?}", s.images);
+    assert!(s.text().contains("graphics are turned off (TERMPIX_GRAPHICS=off)"), "why, at the start");
+    assert!(s.row_from(29, 0).contains("sample.pdf"), "the status line is text: {:?}", s.row_from(29, 0));
+    // A key takes the message away (and does what it does).
+    t.key("j");
+    t.wait_for("the message gone", |s| !s.text().contains("TERMPIX_GRAPHICS=off"));
+    // Another client, with graphics, sees the pages.
+    let mut other = Term::spawn(&[BIN, "attach", "ng"], &env.options());
+    let s = other.wait_for("the pages", |s| !s.images.is_empty());
+    assert!(!s.text().contains("PDF viewer disabled"), "only for terminals without images");
+    other.key("C-b");
+    other.key("d");
+    other.wait_exit();
+    t.wait_for("still text only", |s| s.images.is_empty() && s.text().contains("PDF viewer disabled"));
+}
+
+#[test]
+fn a_program_s_images_without_graphics_are_said_once() {
+    let env = Env::new("no-graphics-img");
+    let mut t = Term::spawn(&["env", "SHELL=/bin/sh", BIN, "-s", "ni"], &no_graphics(&env));
+    t.wait_for("the prompt", prompt);
+    t.key("Enter");
+    t.wait_for("the message gone", |s| !s.text().contains("TERMPIX_GRAPHICS=off"));
+    // A 2x2 RGBA image over 4x2 cells, by the kitty graphics protocol, twice.
+    let image = "printf '\\033_Ga=T,f=32,s=2,v=2,c=4,r=2,q=2;/wAA/wD/AP8AAP///////w==\\033\\\\'; echo\n";
+    t.type_text(&format!("clear; {image}"));
+    // (The message wraps: its first words.)
+    let said = "Images in pane 1 are not shown";
+    let s = t.wait_for("the message", |s| s.text().contains(said));
+    assert!(s.images.is_empty(), "{:?}", s.images);
+    // Still there: not said again (the message fades in a few seconds).
+    t.type_text(image);
+    t.wait_for("the message faded", |s| !s.text().contains(said));
+    t.settle(std::time::Duration::from_millis(1500));
+    assert!(!t.screen().text().contains(said), "said once while the image stays");
+}
+
+#[test]
+fn the_standalone_viewer_runs_without_graphics() {
+    let env = Env::new("no-graphics-standalone");
+    let pdf = fixture("sample.pdf").display().to_string();
+    let mut t = Term::spawn(&[BIN, "standalone", "pdf", &pdf], &no_graphics(&env));
+    let s = t.wait_for("the line", |s| s.text().contains("PDF viewer disabled"));
+    assert!(s.images.is_empty());
+    t.key("q");
+    assert_eq!(t.wait_exit(), 0);
+}
+
 #[test]
 fn ls_fonts_shows_the_configured_fonts_or_a_sessions() {
     let env = Env::new("ls-fonts");

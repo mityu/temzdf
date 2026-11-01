@@ -396,6 +396,19 @@ leave it, `resizePane` and dragging its border change it; it may be smaller
 than other panes can be). `focusPane(id)` focuses a pane, going to its tab
 page.
 
+## Terminals without graphics
+
+In a terminal without the kitty graphics protocol (or inside tmux without
+passthrough, or with an outer terminal tmux cannot pass images to, or with
+`TERMPIX_GRAPHICS=off`) the client runs as text only: terminal panes, the
+status lines, borders and messages work; a PDF pane shows "PDF viewer
+disabled (no kitty graphics protocol support)" in its middle, and a
+message at the start (until the next key) says why. When a pane gets
+images later (a program in a terminal pane shows one, a PDF pane opens),
+a message names it, once until its images go and come back, at most one
+message every five seconds. Only that client is affected: a client in a
+terminal with graphics attached to the same session sees everything.
+
 ## Environment
 
 Settings a client needs before it talks to a session are environment
@@ -405,6 +418,7 @@ variables:
 |---|---|
 | `TERMPIX_BACKEND` | `layered` or `composited`: how frames reach the terminal (default: detected) |
 | `TERMPIX_MEDIUM` | `direct`, `shm` or `file`: how pixels are transferred (default: detected; `direct` mimics SSH) |
+| `TERMPIX_GRAPHICS` | `off`: run as in a terminal without the kitty graphics protocol (text only; see below) |
 | `TEMZDF_ZLIB_LEVEL` | zlib level (0-9) of inline transfers, default 2 (do not use 1 with Ghostty 1.3.1, see doc/terminal-compat.md) |
 | `TEMZDF_LOG_DIR` | where logs go (default `$XDG_STATE_HOME/temzdf`): `temzdf.log` for viewers and clients, `NAME.log` for session NAME. Logs are the user's alone (0600; they name the files opened and the sessions' sockets); the directory is made 0700, and the default one is made so if it is not |
 | `TEMZDF_PIXELS` | `shared` (default) or `socket`: how a client takes frames' pixels from the session, in shared memory or inside the messages (`doc/session-server.md`) |

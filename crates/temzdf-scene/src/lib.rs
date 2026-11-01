@@ -15,6 +15,7 @@ pub use termpix_core::geom::Rect;
 pub use termpix_core::input;
 pub use termpix_core::raster::Pixels;
 
+pub mod notice;
 pub mod theme;
 
 /// An image in an [`Images`] store.

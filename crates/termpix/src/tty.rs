@@ -108,7 +108,8 @@ impl Modes {
         }
         // Free every image we may have left, end any pending synchronized update.
         // Back to the default cursor shape, in case it was changed.
-        s.extend_from_slice(b"\x1b_Ga=d,d=A,q=2\x1b\\\x1b[?2026l\x1b[?25h\x1b[0 q");
+        s.extend_from_slice(GRAPHICS_CLEANUP);
+        s.extend_from_slice(b"\x1b[?2026l\x1b[?25h\x1b[0 q");
         if self.alternate_screen {
             s.extend_from_slice(b"\x1b[?1049l");
         }
@@ -130,6 +131,8 @@ struct RestoreState {
 }
 
 static RESTORE: Mutex<Option<RestoreState>> = Mutex::new(None);
+/// Delete every image we placed (on exit).
+const GRAPHICS_CLEANUP: &[u8] = b"\x1b_Ga=d,d=A,q=2\x1b\\";
 static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// Put the terminal back. With `drain_input`, also swallow replies to queries
@@ -252,6 +255,17 @@ impl Tty {
         let mut tty = Self { file, out };
         tty.write_all(&modes.enable_sequence())?;
         Ok(tty)
+    }
+
+    /// The terminal has no graphics (or they are turned off): no graphics
+    /// cleanup on exit either.
+    pub fn without_graphics(&mut self) {
+        if let Some(state) = RESTORE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            let cleanup: &[u8] = GRAPHICS_CLEANUP;
+            if let Some(i) = state.reset.windows(cleanup.len()).position(|w| w == cleanup) {
+                state.reset.drain(i..i + cleanup.len());
+            }
+        }
     }
 
     /// Inside tmux: send the graphics cleanup done on exit through passthrough
