@@ -41,7 +41,10 @@ Known problems:
   temzdf runs as text only (since 2026-11-02; `doc/config.md`, "Terminals
   without graphics"): the frontend writes no graphics commands at all, not
   even the cleanup on exit; the probe's queries are the only ones (answered
-  or ignored).
+  or ignored). Checked in Terminal.app 2.15 (macOS 26, 2026-11-02): it is
+  detected as without graphics, shows the pane's line, the message and the
+  status line, a key takes the message away, and `q` leaves the screen as
+  it was.
 
 ## Input and output modes
 
