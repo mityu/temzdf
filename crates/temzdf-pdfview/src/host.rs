@@ -2,7 +2,7 @@
 //! SyncTeX, file watching), auto-reload scheduling and SyncTeX routing, shared
 //! by every pane showing the file. The caller owns the event loop: it feeds
 //! [`DocEvent`]s in, collects the panes' work with [`DocumentHost::dispatch`]
-//! and performs the returned [`Effect`]s. See doc/reload.md and doc/synctex.md.
+//! and performs the returned [`Effect`]s. See doc/design/reload.md and doc/design/synctex.md.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;

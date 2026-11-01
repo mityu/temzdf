@@ -12,7 +12,7 @@ Layers of verification, cheapest first. All of them run without a human.
 | Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland\|macos] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
 | Judged e2e | `expect NAME [KEYS]` in an action file (e.g. `tests/e2e/expect.actions`, `viewer.actions`) | The screen matches what `--render-frame` draws after the same input, keys or a replay of the keys and mouse input temzdf handled (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending, wheel, drag, clicks, hover. Not PDF rendering itself (both sides use MuPDF). |
 | GUI client | `crates/temzdf-gui` unit tests and `--test gpu` (offscreen on lavapipe), `scripts/e2e.sh -t gui [-I]` with `tests/e2e/gui*.actions` | The draw list and key translation; layers and text drawn on a GPU; the window under xfwm4 against `temzdf-gui --render-frame` on the same session; Japanese input through fcitx5 and Mozc; the clipboard. |
-| Real terminal (macOS, by hand) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | Poking at a terminal step by step (`doc/macos.md`); `launch app` runs `temzdf-gui`, and `tests/macos/*.sh` are scripted scenarios. `scripts/e2e.sh` runs the action files on macOS too. |
+| Real terminal (macOS, by hand) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | Poking at a terminal step by step (`doc/terminals/macos.md`); `launch app` runs `temzdf-gui`, and `tests/macos/*.sh` are scripted scenarios. `scripts/e2e.sh` runs the action files on macOS too. |
 | User | Ghostty / WezTerm on a real desktop | The feel of scrolling and zooming. |
 
 Action files live in `tests/e2e/`; each starts with a comment saying how to run it
@@ -53,7 +53,7 @@ test meaningful it is ignored instead.
 
 What Miri found so far: the output writer thread of `termpix` lived on when
 every `Output` was dropped without `close` (fixed), and zlib-rs violates
-the aliasing rules (`doc/known-issues.md`; those tests are ignored).
+the aliasing rules (`doc/dev/known-issues.md`; those tests are ignored).
 
 ## Simulated terminal tests
 
@@ -180,15 +180,15 @@ serve` (`scripts/macos/termctl.swift`; kitty's keys through its remote
 control, WezTerm's posted globally), screenshots with `screencapture`, the
 clipboard with pbcopy (the user's text clipboard is put back after), links
 not opened (`open` is replaced; what would open is in `opened.txt`).
-Details and why in `doc/macos.md`; what differs per terminal in
-`doc/terminal-compat.md`. Results on macOS 26 (2026-10-29): WezTerm passes
+Details and why in `doc/terminals/macos.md`; what differs per terminal in
+`doc/terminals/terminal-compat.md`. Results on macOS 26 (2026-10-29): WezTerm passes
 every judged scenario (56); kitty all but `viewer`'s zoom (it reports
 three wheel steps per notch, so the zoom is three times as deep and its
 tiles are not there yet after the scenario's pause; they are with a longer
 one); Ghostty all (text checks SKIP); the GUI `gui`. `gui-focus` (X11's and
 Wayland's synthetic presses on focus-in) is not run there; `-I` and multiplexers are not tried there.
 `scripts/macos-vm.sh` runs the same in a macOS VM, on its own screen, so
-the host's pointer stays free ("Running in a VM" in `doc/macos.md`).
+the host's pointer stays free ("Running in a VM" in `doc/terminals/macos.md`).
 
 `scripts/e2e-all.sh [-t TERM]... [-d DISP] [-P PATH] [-j N] [-R] [SCENARIO...]`
 runs the judged scenarios (each with its "Used with:" command, kept in the
@@ -303,7 +303,7 @@ for `crates/temzdf/tests/tui.rs` and unit tests. Not inside multiplexers;
 Ghostty gets the pixels only. `tests/e2e/session.actions`,
 `terminal.actions`, `terminal-extras.actions`, `tabs.actions`,
 `floats.actions`, `resize.actions` and `float-wide.actions` (WezTerm's
-wide characters under images, `doc/terminal-compat.md`) use it.
+wide characters under images, `doc/terminals/terminal-compat.md`) use it.
 
 `screen_contains TEXT` (kitty, WezTerm) tells whether the screen shows TEXT, for
 moments outside a session (`check detached screen_contains "[detached from

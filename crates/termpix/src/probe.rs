@@ -1,7 +1,7 @@
 //! Startup capability probing: which terminal this is, whether it speaks kitty
 //! graphics, which transmission media work, which modes it supports, and the
 //! cell size. Decisions are summarised in [`Capabilities::backend`] and
-//! [`Capabilities::medium`]; see `doc/terminal-compat.md` for the reasoning.
+//! [`Capabilities::medium`]; see `doc/terminals/terminal-compat.md` for the reasoning.
 //!
 //! Environment overrides (for when detection is wrong):
 //! - `TERMPIX_BACKEND=layered|composited`

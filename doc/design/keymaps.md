@@ -6,7 +6,7 @@ except decision 8 (deferred, see there). How to use it is in
 `crates/temzdf-server/src/keymap/` (modes, the matcher), `session.rs`
 (`drive`, `layers`) and `session/script.rs` (conditions through the script
 host). This document supersedes decision 8
-(`inherit`) of `doc/scripting.md`; the rest of that document's decisions on
+(`inherit`) of `doc/design/scripting.md`; the rest of that document's decisions on
 keys (notation, sequences, counts, `<C-c>`, feedkeys, escape hatches) still
 hold and are summarised here.
 
@@ -127,7 +127,7 @@ configurations are written with the same system.
 
 - The script host down: mappings are off and the fixed keymap works
   (`<C-b>d` detach, `<C-b>q` end the session, `<C-b>r` restart the host).
-- Escape hatches of `doc/scripting.md` (decision 10).
+- Escape hatches of `doc/design/scripting.md` (decision 10).
 
 ## Decisions on the former open questions (2026-10-28)
 

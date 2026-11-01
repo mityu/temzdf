@@ -1,5 +1,5 @@
 // termctl: drive a GUI terminal window for automated checks on macOS. Built and
-// called by scripts/macos-gui.sh; see doc/macos.md.
+// called by scripts/macos-gui.sh; see doc/terminals/macos.md.
 //
 //   termctl windows PID                  "WID X Y W H TITLE" per window (global points)
 //   termctl content PID                  "X Y W H" of its first window without the title bar

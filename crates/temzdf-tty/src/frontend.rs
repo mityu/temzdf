@@ -293,7 +293,7 @@ impl TtyFrontend {
     /// undrawn until the screen changes again when it is the window's first
     /// (a program's image in a session of text panes); an empty
     /// synchronized update a little later is that change
-    /// (`doc/terminal-compat.md`).
+    /// (`doc/terminals/terminal-compat.md`).
     pub fn idle(&mut self) -> Result<()> {
         if let Some(n) = &mut self.notices {
             if n.tick(Instant::now()) {

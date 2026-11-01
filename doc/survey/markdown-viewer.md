@@ -8,7 +8,7 @@ editor <-> preview position sync like SyncTeX. CPU only, Linux and macOS,
 usable over SSH.
 
 Status: research only, no decision yet. The scope later grew to a general
-webview-based previewer (arbitrary HTML/CSS/JS); see `doc/webview-viewer.md`,
+webview-based previewer (arbitrary HTML/CSS/JS); see `doc/survey/webview-viewer.md`,
 which supersedes the engine choice below for that case. Versions and dates were collected by
 research agents from crates.io and GitHub on that date; latency figures are
 estimates or secondary sources unless marked as measured (none are).

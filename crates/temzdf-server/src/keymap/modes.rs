@@ -1,5 +1,5 @@
 //! Modes, the matcher that turns typed keys into mappings, and the mode
-//! history (doc/keymaps.md).
+//! history (doc/design/keymaps.md).
 //!
 //! A mode has properties: its mappings, what unmapped keys do (drop them or
 //! pass them to the pane), whether it takes counts, and for a transient

@@ -3,7 +3,7 @@
 # disturbing the desktop: terminals open in the background on a virtual display
 # next to the real screen, keys go only to their process, and screenshots are
 # taken per window. The macOS counterpart of scripts/e2e.sh (which needs Xvfb);
-# see doc/macos.md.
+# see doc/terminals/macos.md.
 #
 # Usage: scripts/macos-gui.sh COMMAND ...
 #   build                      only build the tools (scripts/e2e.sh -d macos uses them)

@@ -5,8 +5,8 @@ emulator, a PDF viewer and a webview in one window (panes and tabs),
 GPU-rendered, which toolkits and rendering libraries fit? It must run on
 macOS, X11 and Wayland; on Wayland at least wlroots-based compositors (sway,
 labwc, river) and Xfce's xfwl4. The pty would come from `portable-pty`, the VT
-emulation from `libghostty-vt` (see `doc/multiplexer.md`), web
-content from an engine (see `doc/webview-viewer.md`). Also: how much of
+emulation from `libghostty-vt` (see `doc/survey/multiplexer.md`), web
+content from an engine (see `doc/survey/webview-viewer.md`). Also: how much of
 temzdf's PDF code a GUI viewer could reuse.
 
 Status: research only, no decision. Collected by a research agent from

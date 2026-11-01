@@ -1,6 +1,6 @@
 //! The session's side of scripting: the script host process
 //! (`temzdf script-host`, see `temzdf-script`), and the work it does for the
-//! session. See doc/script-host.md.
+//! session. See doc/design/script-host.md.
 //!
 //! Everything is synchronous from the user's point of view: while the host
 //! runs a mapped or hook function (or an `atomic` section, or loads the

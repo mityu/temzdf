@@ -10,7 +10,7 @@
 //! caps/joins and blend groups are not (counted as "skipped").
 //! 3. Compare times and pixels with MuPDF's own rasteriser.
 //!
-//! Usage: gpu-raster FILE.pdf [PAGE] [WIDTH_PX] [OUT_DIR] (see doc/gpu.md).
+//! Usage: gpu-raster FILE.pdf [PAGE] [WIDTH_PX] [OUT_DIR] (see doc/survey/gpu.md).
 //! `MUPDF_AA=0..8` sets MuPDF's anti-aliasing level.
 
 use std::cell::RefCell;

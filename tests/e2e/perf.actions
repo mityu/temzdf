@@ -1,6 +1,6 @@
 # What frames cost between the session server and a client (the GUI or a
 # terminal): run with TEMZDF_TIMING=1 in the environment, then read the
-# `timing:` lines with scripts/timing.sh OUTDIR (doc/performance.md,
+# `timing:` lines with scripts/timing.sh OUTDIR (doc/dev/performance.md,
 # "Session socket").
 # Used with:
 #   cargo build --release -p temzdf -p temzdf-gui

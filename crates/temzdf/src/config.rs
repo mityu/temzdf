@@ -15,7 +15,7 @@ fn config_dir() -> Option<PathBuf> {
 }
 
 /// The configuration script, `config.ts` or `config.js` in the configuration
-/// directory (see doc/script-host.md). Both at once is an error.
+/// directory (see doc/design/script-host.md). Both at once is an error.
 pub fn script_path() -> Result<Option<PathBuf>> {
     let Some(dir) = config_dir() else { return Ok(None) };
     let found: Vec<PathBuf> = ["config.ts", "config.js"].iter().map(|n| dir.join(n)).filter(|p| p.is_file()).collect();

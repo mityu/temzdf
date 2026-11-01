@@ -6,7 +6,7 @@
 //! store by applying [`Images::take_updates`] and draws the layers. Image pixels
 //! are shared ([`Pixels`]), so mirroring them costs no copies.
 //!
-//! See `doc/session-server.md` for where this is going (several panes, clients
+//! See `doc/design/session-server.md` for where this is going (several panes, clients
 //! attached through a socket).
 
 use std::collections::HashMap;

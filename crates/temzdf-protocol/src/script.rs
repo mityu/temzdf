@@ -1,7 +1,7 @@
 //! Messages between a session and its script host (`temzdf script-host`), a
 //! child process running the user's JavaScript configuration. They travel
 //! over the child's stdin and stdout with the framing of [`crate::send`] and
-//! [`crate::recv`]. See doc/script-host.md.
+//! [`crate::recv`]. See doc/design/script-host.md.
 //!
 //! Calls are synchronous both ways: the server asks the host to run a mapped
 //! or hook function ([`ToHost::Call`]) and waits for [`FromHost::Done`]; the

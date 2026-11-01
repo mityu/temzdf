@@ -1,5 +1,5 @@
 //! Session commands: start a session server, attach this terminal to a
-//! session, list and end sessions, run actions (see doc/session-server.md).
+//! session, list and end sessions, run actions (see doc/design/session-server.md).
 
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};

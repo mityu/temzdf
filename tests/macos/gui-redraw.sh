@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The GUI client keeps drawing after its window was covered (macOS only, see
-# "GUI" in doc/macos.md): wgpu hands out no surface texture while the window
+# "GUI" in doc/terminals/macos.md): wgpu hands out no surface texture while the window
 # is covered, and the frames that came meanwhile must be drawn once it shows
 # again. Uncovering alone, without a resize, used to leave it stale for good.
 #

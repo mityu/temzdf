@@ -3,7 +3,7 @@
 //! Terminals deliver wheel input as discrete steps. Each step is treated as an
 //! impulse that moves a target offset; the displayed offset eases towards the
 //! target with exponential decay, so motion looks continuous. Rapid steps in the
-//! same direction accelerate (flicks). See `doc/input.md`.
+//! same direction accelerate (flicks). See `doc/terminals/input.md`.
 
 use std::time::{Duration, Instant};
 

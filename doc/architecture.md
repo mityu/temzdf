@@ -38,7 +38,7 @@
   and what panes on one file share (`Document`, `DocumentHost`: workers,
   reload, SyncTeX routing).
 - `temzdf-script`: the script host process (QuickJS), see
-  `doc/script-host.md`; sessions talk to it over pipes.
+  `doc/design/script-host.md`; sessions talk to it over pipes.
 - `temzdf-term`: the terminal pane (`TermPane`: a program on a pty, its
   output interpreted by `libghostty-vt`, the screen as scene text cells).
 - `temzdf-tty`: the terminal frontend (`TtyFrontend`: terminal setup, frame
@@ -51,7 +51,7 @@
   pdf`), its `--render-frame` and the
   session server all run a `Session`.
 
-This layout prepares the session server (`doc/session-server.md`): backends and
+This layout prepares the session server (`doc/design/session-server.md`): backends and
 panes know nothing about terminals, only frontends draw.
 
 ### termpix
@@ -98,13 +98,13 @@ input widget moves the terminal cursor to its caret; we only receive committed t
   pages are fully rendered, frames wait while inline transfers are unacknowledged,
   and Composited frames are capped at ~30 fps (5 fps over inline links or inside a
   multiplexer, where every strip is forwarded uncompressed by zellij 0.45).
-- Auto-reload: see `reload.md`. SyncTeX: vendored `synctex_parser.c` via `cc`,
+- Auto-reload: see `doc/design/reload.md`. SyncTeX: vendored `synctex_parser.c` via `cc`,
   forward search over a Unix socket, inverse search via a configurable command.
 - Keys: modes and mappings live in the session (`crates/temzdf-server/src/keymap/`:
   Neovim notation, modes with inheritance, the Vim-like sequence matcher,
   the mode history); the shipped JavaScript defaults map the page-view
   `Command`s (`temzdf-pdfview/src/keys.rs`), which `PdfPane::command` runs.
-  See `config.md` and `script-host.md`.
+  See `doc/config.md` and `doc/design/script-host.md`.
 - Images: panes register images in a `temzdf_scene::Images` store and return
   layers referencing them; `temzdf_tty::Presenter` mirrors the store into the
   compositor (pixels are shared, not copied) and maps the layers.

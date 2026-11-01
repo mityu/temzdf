@@ -1,118 +1,12 @@
 # Session server design
 
-Status (2026-10-26): steps 1 to 3 of the incremental plan below are
-implemented (PDF and terminal panes; terminal panes show text only); see
-"Implementation status". The research it
-builds on: `doc/multiplexer.md`,
-`doc/gui-stack.md`, `doc/webview-viewer.md`, `doc/config-language.md`.
-
-## Implementation status
-
-What exists:
-
-- Crates as in "Crate layout" below, with these differences: the PDF backend
-  is `temzdf-pdfcore`; `termpix-core` holds the terminal-independent parts of
-  termpix (geometry, raster helpers, kinetic scroll, input events) so the scene
-  and panes need no terminal code; `temzdf-protocol` holds the messages,
-  framing and socket locations.
-- `Session` (`crates/temzdf-server/src/session.rs`): documents (one
-  `DocumentHost` per file, `crates/temzdf-pdfview/src/host.rs`, shared by every
-  pane on it: one tile cache, links, text, workers, reload), PDF panes in a
-  terminal panes (`crates/temzdf-term`: a pty from `portable-pty`, Ghostty's
-  terminal emulation from `libghostty-vt`, the screen as scene text cells),
-  all in a binary layout of splits with one-cell borders drawn as text (a split halves its
-  area; when the screen changes size the last pane takes the difference;
-  panes given a size keep it), input panes (one line of an input buffer,
-  as Vim's command line: `crates/temzdf-server/src/session/input.rs`; the
-  shipped search types into one), focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
-  buffers as in Vim (what panes show; closing a pane hides its buffer,
-  see `doc/config.md`), floating panes over the layout (a stack of framed
-  panes; `doc/config.md`, design in `doc/floating-panes.md`), tab pages
-  as Vim's (a layout and focus each, buffers shared, a tab line;
-  `crates/temzdf-server/src/session/tabs.rs`, `doc/config.md`),
-  `Action`s with a text form, and one composed frame (pane
-  layers moved into their rectangles, clipped, placement keys made unique and
-  stable; what a float covers is cut out of the panes below it,
-  `crates/temzdf-server/src/clip.rs`, since images cannot be stacked over
-  text).
-- Three ways to run share it: `temzdf standalone pdf FILE` (the session and
-  the terminal frontend in one process, nothing registered), its `--render-frame`
-  (headless, waits for the workers after each key) and the session server
-  (`crates/temzdf-server/src/daemon.rs`) with TTY clients
-  (`crates/temzdf/src/client.rs`).
-- Commands follow zellij: `temzdf [FILE]` starts a session named after the
-  NATO alphabet (alfa, bravo, ...; then alfa-2), `temzdf -s NAME [FILE]` names it (a shell without FILE),
-  `attach [-c] [NAME [FILE]]` (`a`), `list-sessions` (`ls`; the session it runs in is marked `(current)`), `kill-session`
-  (`k`), `kill-all-sessions` (`ka`), `action [-s NAME] COMMAND ARGS...`: any
-  command of the registry (`temzdf print-types` lists them), e.g. `new-pane
-  [--cwd DIR] [FILE | -- COMMAND...]`, `split right|down`, `move-focus DIR`,
-  `close-pane`, `detach` (`new-pane` alone opens a shell; the CLI adds `--cwd`
-  with its own directory and resolves file paths there; without `-s`, in a
-  pane, the session of that pane). Splitting a PDF pane shows the same
-  document again; splitting a terminal starts another shell in the directory
-  the shell reported (OSC 7). `<C-b><C-b>` sends `<C-b>` to the pane.
-  Borders drag with the mouse, and `resize-pane` (`+` `-` `<` `>` in the
-  `normal` mode, as Vim's `<C-w>`) sizes panes from the keyboard;
-  `move-pane` (`H` `J` `K` `L`) and `rotate-panes` (`r` `R`) rearrange them;
-  a split keeps its first half's size, so the last pane takes a change of
-  the screen size. One server process per session; its
-  output goes to `NAME.log` in the log directory (`$TEMZDF_LOG_DIR`, or
-  `$XDG_STATE_HOME/temzdf`); `temzdf ls -v` shows it. Any command of the
-  registry runs from the CLI too (`temzdf action NAME ARGS...`).
-  Sessions whose server speaks another protocol version are listed as such.
-- Terminal panes: palette colours stay palette indices (the outer terminal's
-  theme applies), wide characters, SGR attributes, cursor shape, keys through
-  libghostty's encoder (legacy or kitty keyboard protocol, as the program
-  asks), mouse reports when the program tracks the mouse (otherwise the wheel
-  scrolls back through 10000 lines of history, or on the alternate screen,
-  as in less and man, sends arrow keys: alternate scroll, DECSET 1007), bracketed paste, focus
-  reports, OSC 52 copies, resizing (to the largest pane showing the
-  terminal), mouse selection copied on release, OSC 8 links opened on click,
-  `[rows above/history]` while scrolled back, and kitty graphics from
-  programs (placements become the pane's layers; PNG and every medium kitty
-  takes). A shown terminal's panes close when its program exits.
-  Programs get `TERM=xterm-256color`, `COLORTERM=truecolor`,
-  `TERM_PROGRAM=temzdf` and `TEMZDF_SESSION_NAME`. The server makes at most
-  one frame per 16 ms, so floods of output cost little (`seq 1 500000` takes
-  0.14 s in a pane, `tests/e2e/terminal.actions`).
-- Clients: the latest to attach or use it (keys, clicks, scrolling, paste;
-  not the pointer merely passing over it, which terminals report even when
-  unfocused, and which is ignored from other clients; not resizing its
-  window either, which window managers do in the background) sets the
-  session's size and frontend hints. Programs are told they have the focus
-  while any attached client's window has it; frames are paced per client by acknowledgements, image changes are
-  queued per client (latest wins), late attachers get a snapshot; effects
-  (copy, opening links, inverse search) run in the latest client.
-- Pixels: clients that say so in their `Hello` (`TEMZDF_PIXELS`, default
-  `shared`) take the pixels of images of 64 KiB and more in shared memory:
-  one anonymous object per image (a sealed memfd on Linux, an unlinked POSIX
-  object on macOS), its descriptor passed with the frame (`SCM_RIGHTS`), mapped
-  read-only by the client and handed on without a copy (`termpix_core::raster::Pixels`
-  to the GPU or the terminal's image store). Smaller images, more than 250 in a
-  frame, objects that cannot be made, and clients with `TEMZDF_PIXELS=socket`
-  get the pixels through the socket: from 4 KiB on right after the message,
-  as they are (written from the image, read into the image's own buffer),
-  smaller ones inside it (`temzdf-protocol`'s `send_server`, `recv_server`,
-  `shared.rs`; numbers in `doc/performance.md`). Anything reading frames
-  uses `recv_server`.
-- Nesting: a client says which session's pane it runs in (`Hello`), and a
-  session lists those of its clients (`SessionInfo::shown_in`). `attach`
-  from a pane refuses that session and every session showing it, directly
-  or through others: the session would show itself inside itself.
-
-Not yet (in order of the plan, or found on the way):
-
-- A PDF pane's UI chrome (outline, link previews) is still drawn as pixels
-  by the pane, not as cell grids (its status bar is now the pane's status
-  line, text drawn by the session).
-- Every client gets frames rendered for the latest client's geometry, cell
-  size included; per-client pixel density, and zoom stored relative to the
-  pane width, are not done (fit-width does follow the pane width).
-- Terminal panes: kitty graphics through Unicode placeholders (tmux inside a
-  pane) and animation frames.
-- Step 4, the GUI client, works on X11 (`doc/gui-client.md`); Wayland and
-  macOS are not checked. Step 5, web panes, is next. Step 6 (programmable
-  configuration) is the script host.
+The design of the session server (temzdf as a tmux-like multiplexer of
+terminal, PDF and later web panes) and what was decided on the way, with
+the reasons. How to use what exists is in `doc/config.md`; the crates are
+in `doc/architecture.md` and AGENTS.md; what is left to do is in `todo.md`.
+The research it builds on: `doc/survey/multiplexer.md`,
+`doc/survey/gui-stack.md`, `doc/survey/webview-viewer.md`,
+`doc/survey/config-language.md`.
 
 ## Vision
 
@@ -211,7 +105,7 @@ pixels:
   from programs in terminal panes): image id, source rectangle, destination in
   the client's pixels, z. This is today's `termpix::compositor::Layer`, lifted
   into the protocol. Image data is sent once per client and referenced by id
-  (in shared memory, see "Pixels" above; inline compressed would be for
+  (in shared memory, see "Pixels" under "Decided while implementing"; inline compressed would be for
   remote clients, which do not exist). The TTY
   client maps layers to kitty placements (or composited strips, or a text
   fallback when the terminal has no graphics); the GUI client to textured
@@ -261,7 +155,7 @@ documents are shared, and only view state is per pane:
   `Send + Sync`; today's raster pool already works this way). Requests from all
   panes and clients go into one prioritised queue per document, so visible
   tiles of any pane come first. MuPDF's allocation lock limits useful threads
-  to about four (`doc/performance.md`).
+  to about four (`doc/dev/performance.md`).
 - **If rendering moves to separate processes** (crash isolation, or more
   parallelism than MuPDF's lock allows): MuPDF's parsed objects cannot be
   shared between processes, but the expensive parts can: the file bytes are
@@ -270,11 +164,12 @@ documents are shared, and only view state is per pane:
   document (typically a few MB for LaTeX output). The recommended default is
   one document process per file with internal raster threads, which avoids
   even that duplication; extra processes for the same file only when needed.
-- `Viewer` used to mix document cache and view; it is now split into
+- `Viewer`, which mixed the document cache and the view, was split into
   `DocCache` (display lists, tiles; `crates/temzdf-pdfcore/src/doc_cache.rs`)
   and the view (layout, scroll, zoom, peek window;
-  `crates/temzdf-pdfview/src/viewer.rs`). Page links and text are still kept
-  per pane and move into the document part when panes share documents.
+  `crates/temzdf-pdfview/src/viewer.rs`); links and text moved into the
+  document part, `DocumentHost` (`crates/temzdf-pdfview/src/host.rs`),
+  shared by the panes on a file.
 
 The same applies to other pane kinds: one terminal (pty + VT state) can be
 shown in several panes or windows, like tmux linked windows; one web page per
@@ -293,7 +188,7 @@ pane by default, since web views are stateful per viewport.
 | Web | headless Chromium over CDP in its own process, screencast frames | Fits the server model: the engine is offscreen anyway, so web panes are pixel surfaces like PDF pages. This removes the Wayland webview embedding problem for the GUI (no native child views needed on wlroots, xfwl4 or macOS). CEF only if Chromium's encode/decode cost dominates; Servo later |
 | TTY client | `termpix` (+ `termpix-ui` for pixel widgets where still needed) | Exists; becomes the scene renderer for terminals |
 | GUI client | winit + wgpu + parley/swash (or glyphon), egui optional for chrome | A thin scene renderer (cell grids as glyph quads, layers as textures); GPUI or Qt bring their own application models, which a thin client does not need, and the webview argument for Qt disappears |
-| Config | TOML for now; later a language running in the server (Lua via `mlua` was the survey's pick) | Key bindings and hooks act on server state |
+| Config | TOML at first, then a language (Lua via `mlua` was the survey's pick); became JavaScript/TypeScript in a script-host process (`doc/design/scripting.md`) | Key bindings and hooks act on server state |
 
 The biggest consequence: with the web engine and the PDF renderer both
 offscreen in the server, every pane kind reduces to cell grids plus image
@@ -306,39 +201,23 @@ Two ways to run must share one code path:
 
 - **Session mode**: `temzdf` starts or attaches to the server; panes live in
   the server, clients attach and detach.
-- **Standalone mode**: `temzdf standalone-pdf-viewer FILE` (name to be
-  decided) behaves like today's temzdf: one PDF in the current terminal, using
-  the same PDF backend and pane logic, but not registered in the session list
-  and gone when it exits.
+- **Standalone mode**: `temzdf standalone pdf FILE` behaves like the
+  viewer temzdf started as: one PDF in the current terminal, using the same
+  PDF backend and pane logic, but not registered in the session list and
+  gone when it exits.
 
 Standalone mode is not a second implementation: it links the same pane logic
 and TTY renderer in one process and connects them with an in-process channel
 instead of the socket protocol. Both modes therefore exercise the same code,
 and standalone stays the easy way to test it.
 
-| Crate | Contents | Depends on |
-|---|---|---|
-| `termpix-core` | geometry, raster helpers, kinetic scroll, key/mouse events (no terminal code) | - |
-| `termpix` | terminal I/O, probing, input parsing, kitty transport, compositor, mock terminal | `termpix-core` |
-| `termpix-ui` | pixel widgets (cell widgets may follow) | - |
-| `temzdf-scene` | what a pane shows: image store and its updates, layers, frames (cursor, pointer, title), frontend hints, effects; serde behind a feature | `termpix-core` |
-| `temzdf-protocol` | client/server messages, framing, socket locations | `temzdf-scene` |
-| `temzdf-pdfcore` | the PDF backend as a document service: MuPDF wrapper, display lists, prioritised raster pool and per-document tile cache, text, links, outline, search, SyncTeX, file watching and reload; message-passing API so it can later run in a child process | (no termpix) |
-| `temzdf-pdfview` | a PDF pane: per-view state (layout, scroll, zoom, peek window, selection, history, link preview, search UI, key bindings) that consumes input events and produces a scene; `Document` and `DocumentHost` shared by the panes on a file | `temzdf-pdfcore`, `temzdf-scene` |
-| `temzdf-tty` | TTY frontend: renders a scene with `termpix` (frame pacing, effects); used by the TTY client and by standalone mode | `temzdf-scene`, `termpix` |
-| `temzdf-server` | `Session` (layout tree, panes, focus, prefix keys, actions, composition), the server process (clients, pacing), session discovery, forward-search sockets | `temzdf-protocol`, pane crates |
-| `temzdf-term` | terminal pane: `portable-pty` + `libghostty-vt` | `temzdf-scene`, `termpix-core` |
-| `temzdf-web` (later) | web pane: headless Chromium over CDP | `temzdf-scene` |
-| `temzdf-gui` (later) | GUI client: winit + wgpu renderer of the scene | `temzdf-scene` |
-| `temzdf` (binary) | sessions (`temzdf [FILE]`), session subcommands and client, `--forward` for SyncTeX, the standalone viewer (`temzdf standalone pdf`, `--render-frame`) | all of the above |
-
-Rules, extending today's dependency direction (`temzdf -> termpix-ui ->
-termpix`): `termpix` and `termpix-ui` stay ignorant of PDF and sessions;
-backends (`temzdf-pdfcore`, later `temzdf-term`, `temzdf-web`) know nothing about
-terminals or clients; only frontends (`temzdf-tty`, `temzdf-gui`) know how to
-draw; panes speak only `temzdf-scene`. SyncTeX forward search keeps working in
-both modes: standalone listens on its per-PDF socket as today; in session mode
-the server receives the request and routes it to the panes showing that PDF.
+The crates are listed in AGENTS.md ("Layout"). The rules: `termpix` and
+`termpix-ui` stay ignorant of PDF and sessions; backends (`temzdf-pdfcore`,
+`temzdf-term`, later `temzdf-web`) know nothing about terminals or clients;
+only frontends (`temzdf-tty`, `temzdf-gui`) know how to draw; panes speak
+only `temzdf-scene`. SyncTeX forward search works in both modes: standalone
+listens on its per-PDF socket; in session mode the server receives the
+request and routes it to the panes showing that PDF.
 
 ## Decisions (2026-10-25, with the user)
 
@@ -352,9 +231,9 @@ the server receives the request and routes it to the panes showing that PDF.
   into child processes later (the intended end state).
 - **No resurrection**: a server restart loses the sessions.
 - **Configuration**: stays TOML for now; the programmable language
-  (`doc/config-language.md`) is decided later. Update 2026-10-26: JavaScript /
+  (`doc/survey/config-language.md`) is decided later. Update 2026-10-26: JavaScript /
   TypeScript in a separate process replaces TOML; design in
-  `doc/scripting.md`.
+  `doc/design/scripting.md`.
 - **Terminal panes**: `libghostty-vt` for VT emulation (temzdf itself behaves
   best in Ghostty among the tested terminals: layered kitty placements work
   there, while WezTerm needed whole-frame compositing); the pty itself comes
@@ -386,28 +265,80 @@ the server receives the request and routes it to the panes showing that PDF.
   current tab page's layout and focus, and the others keep theirs in their
   record, swapped on switching.
 
-## Open questions
+## Decided while implementing
 
-- The capability set the server advertises to programs in terminal panes, and
-  how kitty graphics from panes reach clients (re-emission per client; the
-  biggest piece of new work, see `doc/multiplexer.md`).
-- Naming and crate layout once temzdf is more than a PDF viewer.
+Choices made while building steps 1 to 4 (with the user where noted in the
+git log), and why:
 
-## Incremental plan
+- **Which client leads.** The latest client to attach or use the session
+  (keys, clicks, scrolling, paste) sets its size and frontend hints and runs
+  the effects (copy, opening links, inverse search). The pointer merely
+  passing over a window does not count, since terminals report it even when
+  unfocused (it is ignored from other clients), nor does resizing a window,
+  which window managers do in the background. Programs are told they have
+  the focus while any attached client's window has it.
+- **Pacing.** Frames are paced per client by acknowledgements; image
+  changes are queued per client (latest wins); a late attacher gets a
+  snapshot. The server makes at most one frame per 16 ms, so floods of
+  output cost little (`seq 1 500000` takes 0.14 s in a pane,
+  `tests/e2e/terminal.actions`).
+- **Pixels.** Clients that say so in their `Hello` (`TEMZDF_PIXELS`,
+  default `shared`) take images of 64 KiB and more in shared memory: one
+  anonymous object per image (a sealed memfd on Linux, an unlinked POSIX
+  object on macOS), its descriptor passed with the frame (`SCM_RIGHTS`),
+  mapped read-only and handed on without a copy (`termpix_core::raster::Pixels`
+  to the GPU or the terminal's image store). Smaller images, more than 250
+  in a frame, objects that cannot be made, and `TEMZDF_PIXELS=socket` go
+  through the socket: from 4 KiB on right after the message, read into the
+  image's own buffer, smaller ones inside it (`temzdf-protocol`'s
+  `send_server`, `recv_server`, `shared.rs`; numbers in
+  `doc/dev/performance.md`).
+- **Nesting.** A client says which session's pane it runs in (`Hello`), and
+  a session lists those of its clients (`SessionInfo::shown_in`); `attach`
+  from a pane refuses that session and every session showing it, directly
+  or through others, since the session would show itself inside itself.
+- **Layout.** A split halves its area and keeps its first half's size, so
+  when the screen changes size the last pane takes the difference (as in
+  Vim; only that pane re-renders); panes given a size keep it. Borders are
+  one cell wide and drawn as text (2026-11-02, so terminals without
+  graphics show them too). What a float covers is cut out of the panes below
+  it (`crates/temzdf-server/src/clip.rs`), since images cannot be stacked
+  over text.
+- **Commands** follow zellij's names (`attach`, `list-sessions`/`ls`,
+  `kill-session`, `action`); unnamed sessions are named after the NATO
+  alphabet (alfa, bravo, ...). One server process per session, its output
+  in `NAME.log`. Splitting a PDF pane shows the same document again;
+  splitting a terminal starts another shell in the directory the shell
+  reported (OSC 7).
+- **Terminal panes.** Palette colours stay palette indices, so the outer
+  terminal's theme applies. Programs' kitty graphics become the pane's
+  image layers (every medium kitty takes); queries are answered by
+  libghostty-vt, not forwarded to a client's terminal. Programs get
+  `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=temzdf` and
+  `TEMZDF_SESSION_NAME`. On the alternate screen (less, man) the wheel
+  sends arrow keys (alternate scroll, DECSET 1007).
+- **Terminals without graphics** (2026-11-02): a client whose terminal
+  cannot show images still attaches and draws the text; the frame carries
+  where each pane is and whether it has images (`regions`) and text only
+  such clients draw (`fallback_text`), and the client says what it cannot
+  show itself, since other clients of the session can.
 
-1. (done) **Core split**: create `temzdf-scene`, `temzdf-pdfcore`, `temzdf-pdfview` and
-   `temzdf-tty` from today's code (splitting `Viewer` into the document part
-   and the view part on the way); the binary's current behaviour becomes
-   `standalone-pdf-viewer` (and stays the default until session mode exists).
-   Nothing user-visible changes; existing tests and e2e keep passing.
-2. (done) **Server/client for the PDF viewer alone**: a session server, a TTY client
-   that attaches and detaches; several panes on one document. Validates the
-   protocol, sharing and resync with existing features; testable with the
-   mock terminal.
-3. (done) **Terminal panes**: `portable-pty` + `libghostty-vt`, text in
-   cell grids, programs' kitty graphics as the pane's layers. temzdf
-   becomes a multiplexer.
-4. (done on X11) **GUI client**: wgpu renderer of the same scene, local only.
+## The plan (2026-10-25)
+
+The order the work was planned in; where each step stands is in `todo.md`.
+
+1. **Core split**: create `temzdf-scene`, `temzdf-pdfcore`,
+   `temzdf-pdfview` and `temzdf-tty` from the viewer's code (splitting
+   `Viewer` into the document part and the view part on the way); nothing
+   user-visible changes, existing tests and e2e keep passing.
+2. **Server/client for the PDF viewer alone**: a session server, a TTY
+   client that attaches and detaches; several panes on one document.
+   Validates the protocol, sharing and resync with existing features;
+   testable with the mock terminal.
+3. **Terminal panes**: `portable-pty` + `libghostty-vt`, text in cell
+   grids, programs' kitty graphics as the pane's layers. temzdf becomes a
+   multiplexer.
+4. **GUI client**: wgpu renderer of the same scene, local only.
 5. **Web panes**: headless Chromium process, frames as image layers.
-6. (done) **Programmable config**: JavaScript/TypeScript in the script
-   host (`doc/script-host.md`).
+6. **Programmable config**: JavaScript/TypeScript in the script host
+   (`doc/design/script-host.md`).

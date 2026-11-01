@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pre-commit gate: rustfmt check, clippy (warnings are errors) and tests for the
+# Pre-commit gate: rustfmt check, shellcheck, references to documents
+# (scripts/check-docs.sh), clippy (warnings are errors) and tests for the
 # whole workspace, then the unit tests under Miri (scripts/miri.sh) when
 # `cargo miri` is available, with terse output. Re-executes itself inside the
 # Nix dev shell when needed, so it works from any shell.
@@ -59,6 +60,11 @@ if ! shellcheck --color=never --format=gcc ./scripts/{*.sh,**/*.sh} >target/chec
   status=1
 fi
 
+if ! scripts/check-docs.sh >target/check/docs.log 2>&1; then
+  failed docs target/check/docs.log "^" 40
+  status=1
+fi
+
 if ! cargo clippy --workspace --all-targets --color never -- -D warnings >target/check/clippy.log 2>&1; then
   failed clippy target/check/clippy.log "^(error|warning)|-->" 40
   status=1
@@ -72,7 +78,7 @@ out=$(cat target/check/test.log)
 passed=$(grep -oE "[0-9]+ passed" <<<"$out" | awk '{s+=$1} END {print s+0}')
 
 if ((status == 0)); then
-  echo "OK fmt, clippy, tests ($passed passed)"
+  echo "OK fmt, shellcheck, docs, clippy, tests ($passed passed)"
 fi
 
 if ((miri)); then

@@ -7,7 +7,7 @@ means the kitty graphics protocol (placements with pixel offsets, z, `a=q`,
 shm/file/direct transfer, Unicode placeholders), SGR-pixel mouse (1016), the
 kitty keyboard protocol, synchronized output (2026), OSC 52 and OSC 22 work in
 a pane, unlike today's fallbacks inside tmux (placeholders) and zellij
-(composited strips), see `doc/terminal-compat.md`.
+(composited strips), see `doc/terminals/terminal-compat.md`.
 
 Status: research only, no decision. Collected by a research agent from the
 crates.io API, docs.rs, GitHub and the `libghostty-vt` 0.2.2 sources on that
@@ -40,7 +40,7 @@ date. **[V]** verified in source or docs, **[I]** inference.
   lines to reimplement [I].
 - **tmux control mode** as a backend: tmux still parses pane output (answers
   kitty queries itself, forces `z=0`) and cannot pass pixel mouse or the kitty
-  keyboard protocol [V, `doc/terminal-compat.md`]. Not viable.
+  keyboard protocol [V, `doc/terminals/terminal-compat.md`]. Not viable.
 
 Recommendation: write the session layer ourselves in zmx/abduco style: a
 server per user (or per session) on a Unix socket, `portable-pty`, and a small

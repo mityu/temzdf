@@ -14,7 +14,7 @@ Two architectures were compared:
 
 Full-frame streaming (as gpuix does) costs bandwidth on every frame. We instead
 upload page images once and re-place them per frame, uploading only chrome
-layers that changed (see `architecture.md`).
+layers that changed (see `doc/architecture.md`).
 
 ## PDF engine
 

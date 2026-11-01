@@ -60,7 +60,7 @@ NVIDIA GeForce GT 1030 (a low-end GPU) over Vulkan:
   CPU memory, the readback alone beats MuPDF's text rendering, `vello` fails on
   heavy scenes and `vello_hybrid` is slower than `vello_cpu` with threads. A
   faster GPU shrinks render times, not the readback or the terminal transfer,
-  which already dominate (see `doc/performance.md`).
+  which already dominate (see `doc/dev/performance.md`).
 - MuPDF stays the right default for text: its glyph cache makes text pages
   faster than any vello variant.
 - For vector-heavy pages (TikZ/pgfplots figures, plots with many paths),

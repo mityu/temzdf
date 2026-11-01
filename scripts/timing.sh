@@ -2,7 +2,7 @@
 # What frames cost between a session server and its client: joins the
 # `timing:` lines (written with TEMZDF_TIMING set) of the server's log and the
 # client's by frame, and prints the heaviest frames and a summary.
-# doc/performance.md, "Session socket", has the measurement this is for.
+# doc/dev/performance.md, "Session socket", has the measurement this is for.
 #
 # Usage: scripts/timing.sh OUTDIR
 #   OUTDIR: an e2e run of tests/e2e/perf.actions (or any) with TEMZDF_TIMING=1.

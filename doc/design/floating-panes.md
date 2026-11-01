@@ -5,7 +5,7 @@ floats, `74a3f32` mouse, `b55690a` keys and docs, `46ee6fb` text over images
 in WezTerm); user documentation in `doc/config.md` ("Floating panes"). See
 "Found while implementing" at the end for where it differs from the
 proposal. Status bars (below) are not started.
-Decision 13 in `doc/scripting.md` asks for floating panes (and non-focusable
+Decision 13 in `doc/design/scripting.md` asks for floating panes (and non-focusable
 panes) as the parts of the escape-hatch menu; users also want them on their
 own, as in zellij and Neovim. Items marked **(decide)** were put to the user;
 the others are my defaults, open to change.
@@ -232,7 +232,7 @@ borders, animations.
   a shell (no text from below inside it), over a PDF pane, inside tmux.
 - **F3. Mouse**: hit testing top down, focus and raise on click, moving and
   resizing by the frame, pointer shapes; session and tuitest drags.
-- **F4. Defaults and docs**: mappings, `doc/config.md`, `doc/session-server.md`,
+- **F4. Defaults and docs**: mappings, `doc/config.md`, `doc/design/session-server.md`,
   `print-types`; e2e in kitty (a float over a PDF page and over images from a
   program) and in WezTerm (Composited).
 

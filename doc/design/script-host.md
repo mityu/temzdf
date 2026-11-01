@@ -4,7 +4,7 @@ The configuration can be a JavaScript or TypeScript program,
 `$XDG_CONFIG_HOME/temzdf/config.ts` (or `config.js`; both at once is an
 error). It runs in a separate process, the script host. This document
 describes what is implemented; the design, its reasons and the open
-questions are in `doc/scripting.md` (temzdf
+questions are in `doc/design/scripting.md` (temzdf
 is meant to feel like Vim/Neovim without editing buffers, with a vimrc-like
 configuration).
 
@@ -90,7 +90,7 @@ declarations. In short, `import { ... } from "temzdf"`:
   `keymap.remove(modes, lhs, { namespace })`, `keymap.clear({ mode,
   namespace })`, `keymap.get({ mode, namespace, lhs })`, `defineMode(name,
   { unmapped, count, transient, keepalive, timeout })`,
-  `feedkeys(keys, { remap })`, `currentMode()` (doc/keymaps.md).
+  `feedkeys(keys, { remap })`, `currentMode()` (doc/design/keymaps.md).
 - `o.<option>` reads and sets options.
 - `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,
   `PaneClosePre(id)` (also for each pane of a tab page `closeTab` or a

@@ -9,11 +9,11 @@ below them are deferred.
 - [x] M1: `termpix` (tty, probe, input, graphics, compositor Layered/Composited, scroll, mock, `scroll_demo` example)
 - [x] M2: minimal viewer (open PDF, continuous layout, tile cache, smooth scroll, zoom, page navigation); the window title stands in for the status bar
 - [x] M3: `termpix-ui` and viewer features (status bar, outline sidebar, search, links + history, text selection + OSC 52 copy, config file)
-- [x] M4: auto-reload (see `doc/reload.md`)
-- [x] M5: SyncTeX (vendored parser, IPC socket, forward/inverse search). SyncTeX anchoring on reload was dropped, see `doc/reload.md`
+- [x] M4: auto-reload (see `doc/design/reload.md`)
+- [x] M5: SyncTeX (vendored parser, IPC socket, forward/inverse search). SyncTeX anchoring on reload was dropped, see `doc/design/reload.md`
 - [x] M6: compatibility (Composited backend verified on WezTerm and in zellij; zellij/tmux recognised from XTVERSION; inline frames fenced for slow links)
 
-## Session server (`doc/session-server.md`)
+## Session server (`doc/design/session-server.md`)
 
 Steps 1-3 are done (PDF and terminal panes, standalone viewer and session
 server on one `Session`). Next and open:
@@ -22,14 +22,14 @@ server on one `Session`). Next and open:
 - [ ] Per-client pixel density (every client now gets frames for the latest
   client's geometry and cell size, programs' images included) and zoom
   stored relative to the pane width.
-- [ ] Shared memory for local clients' pixels: done (`doc/session-server.md`,
+- [ ] Shared memory for local clients' pixels: done (`doc/design/session-server.md`,
   "Pixels"; `TEMZDF_PIXELS=socket` for the socket, which no longer copies
   pixels through the encoder either). Left: why the GUI's
-  uploads at scale 2 got slower on lavapipe (`doc/performance.md`, "With
+  uploads at scale 2 got slower on lavapipe (`doc/dev/performance.md`, "With
   shared memory"); measure on a real GPU and on macOS.
 - [ ] A Vim-like command line on the `Action` text form (tab pages are done).
 - [ ] What pane status lines say, from the configuration (a string or a
-  function, as Vim's `statusline`; `doc/floating-panes.md`); today a PDF
+  function, as Vim's `statusline`; `doc/design/floating-panes.md`); today a PDF
   pane's says what its old status bar said and a terminal's is blank.
 - [ ] Terminals without graphics (text only, done 2026-11-02): the server
   could skip rendering PDF tiles while no attached client draws images (the
@@ -50,17 +50,21 @@ server on one `Session`). Next and open:
   Suspect: the cell size derived from the kernel's pixel size after a resize
   (`Winsize::geometry` divides by rows/cols; padding would skew it, worst at the
   bottom). Needs the terminal, mode and the `resized to geometry` log line.
+- [ ] Naming and crate layout once temzdf is more than a PDF viewer (open
+  since the session server design, 2026-10-25).
 - [ ] Terminal panes, what is left: kitty graphics through Unicode
   placeholders (tmux inside a pane) and animation frames.
 - [ ] Scripting and configuration (JavaScript/TypeScript in a script-host
-  process; `doc/scripting.md`, `doc/script-host.md`, `doc/config.md`): the
+  process; `doc/design/scripting.md`, `doc/design/script-host.md`, `doc/config.md`): the
   host, modes and mappings, options, hooks, buffers, floating panes and tab
-  pages are implemented, and every question in `doc/scripting.md` is
-  decided. Decided but not built: `temzdf eval` (27 there) and the
-  escape-hatch menu on non-focusable panes (13). Next: default mappings for
+  pages are implemented, and every question in `doc/design/scripting.md` is
+  decided. Decided but not built: `temzdf eval` (27 there), the
+  escape-hatch menu on non-focusable panes (13) and a read-only attach
+  ("Clients" there). Worked out but not planned: asynchronous mapped and
+  hook functions ("Future" there). Next: default mappings for
   switching buffers; status and title bars on panes and the window
-  (direction in `doc/floating-panes.md`).
-- [ ] Step 4, the GUI client (`temzdf-gui`, `doc/gui-client.md`): works on
+  (direction in `doc/design/floating-panes.md`).
+- [ ] Step 4, the GUI client (`temzdf-gui`, `doc/design/gui-client.md`): works on
   X11 (checked on Xvfb with xfwm4, Japanese input through fcitx5 and Mozc).
   Left: Wayland and macOS checks, HiDPI and fractional scales, Option as
   Alt, cursor blinking, underline colours (SGR 58, not in the scene's
@@ -83,7 +87,7 @@ server on one `Session`). Next and open:
   processes a frame, so `q` waits there; sending less data per frame is the
   only lever we have (user agreed to defer, 2026-10-25).
 - Multiplexers: zellij (Composited strips) and tmux 3.8 (Unicode placeholders
-  through passthrough) work; see `doc/terminal-compat.md`. Left: zellij over SSH
+  through passthrough) work; see `doc/terminals/terminal-compat.md`. Left: zellij over SSH
   is still slow (zellij 0.45.1 forwards images uncompressed; a half-resolution
   mode could help), and tmux master's native kitty support (z=0 only) is untested.
 - e2e beyond X11 (Wayland, macOS, maybe Windows) without rewriting the
@@ -91,9 +95,9 @@ server on one `Session`). Next and open:
   only, the display server behind `be_*` functions in `scripts/e2e.sh`;
   2. `-d wayland` on headless sway with `crates/wlinput` (wtype and
   wlrctl did not do: a virtual device per call), kitty and the GUI
-  (`doc/testing.md`, "X11, Wayland and macOS"), every terminal and the
+  (`doc/dev/testing.md`, "X11, Wayland and macOS"), every terminal and the
   GUI, `-I` (fcitx5) too; 3. `-d macos` (`termctl serve` and a virtual
-  display at scale 1; `doc/macos.md`), every terminal and the GUI. Left:
+  display at scale 1; `doc/terminals/macos.md`), every terminal and the GUI. Left:
   kitty's `viewer` zoom on macOS (three wheel reports per notch make it
   deeper than its pause allows), and:
   4. Windows: no bash, so then one small Rust driver for every platform
@@ -107,15 +111,15 @@ server on one `Session`). Next and open:
   and Appium (whole VMs or accessibility APIs, a poor fit for pixel-drawn
   terminals). The `expect` comparisons themselves are platform-neutral.
 - Vector-heavy pages: MuPDF's anti-aliased rasteriser is slow there and
-  `vello_cpu` about 20x faster (`doc/gpu.md`; GPU rendering does not pay off).
+  `vello_cpu` about 20x faster (`doc/survey/gpu.md`; GPU rendering does not pay off).
   Measure real TikZ/pgfplots documents first; then maybe render such pages
   through a MuPDF-device-to-`vello_cpu` translation.
 - Two-page (spread) layout.
 - Markdown viewer: a web pane (step 5 above) showing the rendered document
-  (`doc/markdown-viewer.md`).
+  (`doc/survey/markdown-viewer.md`).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
-- Judged e2e (`expect` in `scripts/e2e.sh`, `doc/testing.md`) covers keys and
+- Judged e2e (`expect` in `scripts/e2e.sh`, `doc/dev/testing.md`) covers keys and
   mouse input in kitty, WezTerm and Ghostty (keys also in tmux and zellij);
   sessions are judged against `temzdf render-session` (the text too in kitty
   and WezTerm; all pass in both, 2026-10-29), reload against fresh renders,
@@ -130,7 +134,7 @@ server on one `Session`). Next and open:
   a replay does not; judging it needs autoscroll driven by time alone),
   sessions inside multiplexers, and Ghostty's text.
 - MuPDF's allocation lock makes text rendering slower with more threads (see
-  `doc/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the
+  `doc/dev/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the
   allocator itself, and `mupdf-sys` backs every context with the same static
   mutexes, so neither a custom allocator nor separate base contexts help. Only
   matters if rasterising ever becomes the bottleneck; then: patch the

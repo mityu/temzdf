@@ -2,7 +2,7 @@
 # One persistent macOS VM (Tart) for scripts/e2e.sh, so that runs neither
 # take the host's front window nor its pointer, and the test environment can
 # be rebuilt on another Mac the same way. See "Running in a VM" in
-# doc/macos.md.
+# doc/terminals/macos.md.
 #
 # Usage: scripts/macos-vm.sh COMMAND [ARGS...]
 #   create        clone the base image ($TEMZDF_VM_IMAGE, pinned below) into

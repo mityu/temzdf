@@ -1,7 +1,7 @@
 //! The view-independent part of showing a document: per-page display lists and
 //! rendered tiles, with the bookkeeping of work in flight. Views (see
 //! `viewer.rs`) decide what to show and ask for what is missing; several views
-//! of the same document can share one cache (see `doc/session-server.md`).
+//! of the same document can share one cache (see `doc/design/session-server.md`).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

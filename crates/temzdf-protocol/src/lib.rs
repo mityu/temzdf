@@ -274,7 +274,7 @@ pub fn shared_memory_wanted() -> bool {
 
 /// Whether to log how long frames take on their way (`TEMZDF_TIMING` set,
 /// to anything): the server and the clients write `timing:` lines to their
-/// logs (`doc/performance.md`, "Session socket").
+/// logs (`doc/dev/performance.md`, "Session socket").
 pub fn timing() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("TEMZDF_TIMING").is_some_and(|v| !v.is_empty()))
@@ -772,7 +772,7 @@ mod tests {
 
     /// What a frame of N 512 px RGBA tiles costs between the session server
     /// and a client on this machine, through the socket and through shared
-    /// memory (`doc/performance.md`):
+    /// memory (`doc/dev/performance.md`):
     /// `cargo test --release -p temzdf-protocol socket_throughput -- --ignored --nocapture`.
     /// `send` is the server's part, `total` until the client has every
     /// image and has read all their bytes once (as an upload would); `copy`

@@ -1,4 +1,4 @@
-//! `temzdf-gui`: show a temzdf session in a window (doc/gui-client.md).
+//! `temzdf-gui`: show a temzdf session in a window (doc/design/gui-client.md).
 
 use anyhow::{Context, Result};
 use clap::Parser;

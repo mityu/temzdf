@@ -985,7 +985,7 @@ impl PdfPane {
     /// reading position (see `Viewer::replace_pages`), sidebar state, outline
     /// expansion and the search query (re-run on the new text); drop the text
     /// selection and per-page caches. History entries are clamped to the new
-    /// page count. See doc/reload.md.
+    /// page count. See doc/design/reload.md.
     pub fn reload(&mut self, images: &mut Images, info: DocInfo) {
         self.before_reload();
         self.viewer.doc.borrow_mut().replace(images, info.bounds.clone());

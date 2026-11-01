@@ -1,11 +1,12 @@
 # Scripting and configuration design
 
-Status (2026-10-26): design in progress, nothing implemented. The execution
-model is settled; the questions under "to decide later" wait. This records
-what was decided with the user and what is still open. It supersedes the
-language recommendation of `doc/config-language.md` (Lua): the configuration
-is to be written in JavaScript/TypeScript. The session server it builds on is
-described in `doc/session-server.md` (with its implementation status).
+What was decided with the user about scripting and configuration (from
+2026-10-26 on), and why. It supersedes the language recommendation of
+`doc/survey/config-language.md` (Lua): the configuration is written in
+JavaScript/TypeScript. The session server it builds on is
+`doc/design/session-server.md`; the script host as built is
+`doc/design/script-host.md`, how to configure `doc/config.md`, and what is
+decided but not built is listed in `todo.md`.
 
 ## Guiding principle
 
@@ -62,9 +63,8 @@ that part follows tmux and zellij (see "Prior art").
   (erasable syntax only, as TypeScript's `erasableSyntaxOnly`; positions kept
   so errors point at the source). Type definitions (`.d.ts`) are generated
   from the same registry as the commands, so they cannot drift.
-- The TOML configuration (`crates/temzdf/src/config.rs`) is to be
-  removed. There are no outside users yet, but each of its settings needs a new
-  home (see "Open questions, to decide later").
+- The TOML configuration was removed (there were no outside users); where
+  each of its settings went is decision 22.
 - Mouse handling is **built in only** and cannot be remapped; scripts can set
   its parameters (scroll speed, kinetic scrolling, hover delay, ...). Besides
   keeping the mouse fast, this keeps a way to operate temzdf when scripts are
@@ -99,9 +99,9 @@ that part follows tmux and zellij (see "Prior art").
 - The Rust core provides **primitives** (split a pane, focus a pane, close,
   resize, swap, query the layout, ...); composite operations (split and focus,
   layouts) live in the JavaScript library shipped with temzdf, as Emacs keeps
-  `split-window` in C and `split-window-below` in Lisp. Prerequisites, agreed
-  in principle but not yet confirmed (see open questions): batched execution,
-  and CLI/escape hatches that do not need scripts.
+  `split-window` in C and `split-window-below` in Lisp. This needs batched
+  execution (`atomic`, see "Execution model") and escape hatches that work
+  without scripts (decision 10).
 - IDs are **unique within a session and never reused**: panes, documents
   (buffers), clients. Sessions are the namespace across servers.
 - A handle to a pane that has closed fails cleanly (the call rejects) instead
@@ -110,7 +110,7 @@ that part follows tmux and zellij (see "Prior art").
 ### Key mappings and modes
 
 The redesign agreed on 2026-10-28 (conditions on mappings, transient modes,
-no `inherit`) is in `doc/keymaps.md`, which supersedes decision 8 below.
+no `inherit`) is in `doc/design/keymaps.md`, which supersedes decision 8 below.
 
 - A mapping goes from a **key sequence to an action**: a script function, or a
   built-in action given as data (`temzdf.cmd.scroll(1)` returns a description
@@ -160,13 +160,10 @@ no `inherit`) is in `doc/keymaps.md`, which supersedes decision 8 below.
 - How a mode treats **unmapped keys is a property of the mode**, stated when a
   built-in mode is implemented and when a user mode is defined.
 - A user-defined mode names its fallback mode explicitly (`inherit: <mode>`):
-  an unmapped key is looked up again in that mode, and so on. Proposed but not
-  confirmed: make `inherit` one of the unmapped-key behaviours (`drop`,
-  `passthrough`, `inherit: <mode>`) so a chain always ends; see open
-  questions.
-- Showing the current mode is left for later.
+  an unmapped key is looked up again in that mode, and so on (superseded,
+  see decision 8 and `doc/design/keymaps.md`).
 - Escape hatches that work whatever the configuration does are required (at
-  least detach and quit); their form is open.
+  least detach and quit); their form is decision 10.
 
 ### Hooks
 
@@ -268,10 +265,8 @@ Decided (the whole model was settled with the user on 2026-10-26):
 - **Commands are synchronous when they finish quickly; only commands that
   wait for something return Promises** (a PDF finishing to load, a forward
   search result). This revises the earlier "commands return Promises", which
-  assumed asynchronous mapped functions.
-  Making a PDF pane appear at once in a "loading" state (as Vim's `:e` creates
-  the buffer at once) would let `split()` return the pane synchronously; to be
-  decided when implementing.
+  assumed asynchronous mapped functions. `split()` returns the new pane
+  synchronously, or `null` for a document still opening.
 - **`temzdf.atomic(fn)`** for dispatched tasks: `fn` must be synchronous (typed
   `() => T`, and a returned Promise is an error), so the critical section
   ends when `fn` returns and can never be held across an `await`. Only an
@@ -322,7 +317,7 @@ Decided (the whole model was settled with the user on 2026-10-26):
   is 10, E218). Hooks for one event run in the order they were registered.
   "Before" events (before closing a pane, before detach, before exit) exist
   because hooks run at the moment; replacing a default action uses the
-  `*Cmd`-like replacement functions (open question 16).
+  `*Cmd`-like replacement functions (decision 16).
 
 ## Implementation details (decided 2026-10-26)
 
@@ -538,16 +533,15 @@ Guarantee such functions would have: no user input or other client
 interleaves; other tasks of the same host may run during an `await`, and
 `atomic(fn)` protects what must not interleave with them.
 
-## Open questions, to decide later
+## Later decisions
 
-The user chose to settle the execution model first (2026-10-26); these stay
-open until then; they keep the numbers of the first list (1-7 became
-"Execution model"). Recommendations are Claude's, for the user to accept or
-change.
+Questions left open after the first round, settled once the execution model
+was (2026-10-26). They keep the numbers of the first list (1-7 became
+"Execution model"), which other documents cite.
 
 ### Modes and mappings
 
-8. *Superseded by `doc/keymaps.md` (2026-10-28), which replaces `inherit`
+8. *Superseded by `doc/design/keymaps.md` (2026-10-28), which replaces `inherit`
    with transient modes.* *Decided (2026-10-26)*: a mode has **properties**: its mappings, what
    unmapped keys do (`drop` or `passthrough`), and whether it takes counts
    (pass-through modes send digits to the pane). **`inherit: <mode>`** takes
@@ -602,7 +596,7 @@ change.
 13. *Decided (2026-10-26)*: the escape-hatch menu (e.g. on a right click) is
     built from two internal pane kinds to come: **non-focusable panes**
     (programs change what they show, the focus never goes there) and
-    **floating panes** (proposal: `doc/floating-panes.md`).
+    **floating panes** (proposal: `doc/design/floating-panes.md`).
 
 14. *Decided (2026-10-26)*: a program that tracks the mouse inside a
     terminal pane gets it; with Shift held temzdf handles the mouse
@@ -686,12 +680,11 @@ change.
     its terminal detection (the `geometry ...` line, read by
     `scripts/e2e.sh`), the output of effects it runs in the user's
     environment (link opener, inverse-search editor) and its own errors
-    (before connecting, failed connections). Recommended: environment
-    variables and command-line options only (`TERMPIX_BACKEND`,
-    `TERMPIX_MEDIUM`, `TEMZDF_LOG_DIR` exist; perhaps `--log-dir`); the rest
-    (`[scroll]`, `[links]`, `[synctex]`, `[reload]`, `[keys]`) moves to the
-    script configuration. *Decided (2026-10-26)*: environment variables and
-    options only, for now. Choosing the image backend and medium from the
+    (before connecting, failed connections). *Decided (2026-10-26)*:
+    environment variables and command-line options only, for now
+    (`TERMPIX_BACKEND`, `TERMPIX_MEDIUM`, `TEMZDF_LOG_DIR`); the rest
+    (`[scroll]`, `[links]`, `[synctex]`, `[reload]`, `[keys]`) moved to the
+    script configuration. Choosing the image backend and medium from the
     script configuration would be possible (the client sends what it detected
     in its Hello, the server answers with the choice before the client sets
     up drawing: one more round trip at attach), and can be added later if

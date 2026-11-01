@@ -22,7 +22,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley` + `taffy`). Independent of `termpix` (`termpix-core` only in its tests). |
 | `crates/temzdf-scene` | Library. What a pane shows, frontend-independent: image store and frames of layers, frontend hints, effects. |
 | `crates/temzdf-protocol` | Library. Session protocol: client/server messages, framing, socket locations, finding sessions (`discovery`). |
-| `crates/temzdf-gui` | The GUI client (`temzdf-gui`): a winit window drawing the session with wgpu and glyphon (draw list, renderer, fonts with built-in fallbacks embedded from nixpkgs, input, IME, clipboard), `--render-frame` offscreen, `ls-fonts`. Uses `temzdf-protocol`, `temzdf-scene`, `temzdf-client`, `termpix-core`; no `termpix`, no server code. See `doc/gui-client.md`. |
+| `crates/temzdf-gui` | The GUI client (`temzdf-gui`): a winit window drawing the session with wgpu and glyphon (draw list, renderer, fonts with built-in fallbacks embedded from nixpkgs, input, IME, clipboard), `--render-frame` offscreen, `ls-fonts`. Uses `temzdf-protocol`, `temzdf-scene`, `temzdf-client`, `termpix-core`; no `termpix`, no server code. See `doc/design/gui-client.md`. |
 | `crates/temzdf-client` | Library. What every client shares: naming, resolving and starting sessions (`spawn_server`), log locations, carrying out effects (links, inverse search). No terminal or window code. |
 | `crates/temzdf-pdfcore` | Library. PDF backend: MuPDF (`mupdf` crate), display list and tile cache, text, SyncTeX, background workers, reload. No terminal code. |
 | `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings; `Document`/`DocumentHost` shared by the panes on one file (workers, reload, SyncTeX routing). No terminal code. |
@@ -33,7 +33,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
 | `crates/wlinput` | Test-only tool: one virtual keyboard and pointer on a wlroots compositor, driven by commands on stdin. `scripts/e2e.sh -d wayland` drives headless sway with it. |
 | `crates/temzdf` | The binary: `temzdf [FILE]` starts a session (named alfa, bravo, ... unless `-s NAME`), session commands and client (zellij names: `attach`, `ls`, `kill-session`, `action`), the standalone viewer (`temzdf standalone pdf`), `ls-fonts`, config, headless `--render-frame`. |
-| `doc/` | Design notes and research. Start with `doc/architecture.md`. |
+| `doc/` | Design notes and research, indexed in `doc/README.md`. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
 | `todo.md` | Long-running tasks and deferred work. |
 | `experiments/` | Standalone experiment crates outside the workspace (see the matching doc). |
@@ -46,7 +46,7 @@ SyncTeX or viewer code, and never make `temzdf-pdfcore`, `temzdf-pdfview`,
 `temzdf-term` or `temzdf-server` depend on `termpix` (tests excepted): backends, panes and the
 session produce scenes, only frontends draw. The direction the project is
 heading (a tmux-like session server with terminal, PDF and web panes) is in
-`doc/session-server.md`.
+`doc/design/session-server.md`.
 
 ## Environment
 
@@ -71,16 +71,17 @@ scripts/check.sh` (or `-c scripts/miri.sh`) is the one allowed use of
 `nix develop -c`; its toolchain is nightly. The scripts enter the dev shell by
 themselves when started outside it. A unit test Miri cannot run (foreign
 code, ptys, processes, sockets) gets `#[cfg_attr(miri, ignore = "why")]`;
-see "Miri" in `doc/testing.md`.
+see "Miri" in `doc/dev/testing.md`.
 
 Design notes and research live in `doc/` with the code (they used to be on a
-separate `research/notes` branch, merged in on 2026-10-27).
+separate `research/notes` branch, merged in on 2026-10-27; that research is
+in `doc/survey/`).
 
 Behaviour visible on screen (terminal panes, sessions, CLI, keys) is best
 tested in `crates/temzdf/tests/tui.rs`: the real binary behind a simulated
 terminal (`crates/tuitest`), checked by text, cells and image placements, also
 inside tmux, without an X server. See "Simulated terminal tests" in
-`doc/testing.md`.
+`doc/dev/testing.md`.
 
 End-to-end checks in a real kitty (virtual X server, no display needed):
 
@@ -103,7 +104,7 @@ without it: `scripts/mutate.sh FILE OLD NEW -- cargo test ...` puts the bug
 back for one run and restores the file (it refuses a pattern that does not
 match once, and tells a mutation that did not compile or a filter that ran
 no test from a caught one). The
-full testing approach is in `doc/testing.md`.
+full testing approach is in `doc/dev/testing.md`.
 
 `scripts/e2e.sh -t gui ... -- target/debug/temzdf-gui --clean FILE` drives the GUI
 client the same way (xfwm4 on Xvfb, lavapipe; `-I` adds fcitx5 with Mozc for
@@ -123,7 +124,7 @@ not on macOS.
 On macOS `scripts/e2e.sh` (`-d macos`, the default there) runs the same
 action files and judgements in kitty, Ghostty, WezTerm and the GUI on a
 virtual display beside the real screen; it takes the front and the pointer
-for the run and needs the screen unlocked (`doc/macos.md`).
+for the run and needs the screen unlocked (`doc/terminals/macos.md`).
 `scripts/macos-vm.sh e2e ARGS...` runs it in a macOS VM (Tart) instead,
 leaving the host alone (set up once: "Running in a VM" there); that is the
 way to run them on macOS. `scripts/e2e-all.sh` (in the VM: `scripts/macos-vm.sh
@@ -184,29 +185,28 @@ CI (`.github/workflows/ci.yml`) runs `scripts/check.sh` in that shell and
   mock terminal, the simulated terminal (`crates/tuitest`), and automated tests. Only the "feel" of scrolling in a real
   terminal needs the user.
 - When you learn something new about terminal behaviour, record it in
-  `doc/terminal-compat.md`.
+  `doc/terminals/terminal-compat.md`.
 - When a task starts repeating, follow `.claude/skills/automate-repeated-work`
   and turn it into a script or skill, then link it from here.
 
 ## Documents
 
-- `doc/architecture.md`: overall design, threads, data flow, invariants.
-- `doc/research.md`: library survey and why each dependency was chosen.
-- `doc/kitty-protocol.md`: the parts of the kitty graphics protocol we rely on.
-- `doc/terminal-compat.md`: per-terminal support matrix and known bugs.
-- `doc/input.md`: mouse/keyboard reporting modes and smooth scrolling.
-- `doc/reload.md`: auto-reload design (learned from Skim and Okular).
-- `doc/testing.md`: how to verify changes without a human.
-- `doc/synctex.md`: forward/inverse search, editor setup, vendored parser.
-- `doc/config.md`: the configuration (JavaScript/TypeScript): modes, key notation, default mappings, options, commands, environment variables (keep in sync with `crates/temzdf-script/runtime/defaults.ts` and the registry in `crates/temzdf-server/src/session/commands.rs`).
-- `doc/performance.md`: measurements (raster pool, display lists, transfer, the session socket) and the benchmarks to rerun (`scripts/timing.sh` reads `TEMZDF_TIMING` logs).
-- `doc/macos.md`: macOS specifics, verification results, and how to drive GUI terminals there.
-- `doc/session-server.md`: the session server design, what is implemented and what comes next.
-- `doc/script-host.md`: the JavaScript/TypeScript configuration: the script host, execution model, API.
-- `doc/gpu.md`: GPU rasterisation experiment (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.
-- `doc/known-issues.md`: problems known and left in place, why, and what a fix would take.
-- `doc/scripting.md`: the scripting and configuration design: decisions with the user, open questions.
-- `doc/keymaps.md`: the key mapping system: modes, conditions on mappings (`when`), namespaces, transient modes (submodes); decisions and what is deferred.
-- `doc/floating-panes.md`: the floating panes design, and bars on panes and the window.
-- `doc/gui-client.md`: groundwork and plan for a native GUI client (not implemented).
-- Research behind the session server: `doc/multiplexer.md` (what a multiplexer can reuse), `doc/gui-stack.md` (GUI toolkits), `doc/markdown-viewer.md` and `doc/webview-viewer.md` (previewers on `termpix`), `doc/config-language.md` (configuration languages; superseded by `doc/scripting.md`).
+`doc/README.md` lists every document, by kind:
+
+- `doc/architecture.md` (start here) and `doc/config.md` (the
+  configuration, for users; keep it in sync with
+  `crates/temzdf-script/runtime/defaults.ts` and the registry in
+  `crates/temzdf-server/src/session/commands.rs`) at the top;
+- `doc/design/`: how the existing parts are built and what was decided
+  with the user, with the reasons (session server, scripting, key maps,
+  floating panes, GUI client, reload, SyncTeX). Plans and status go in
+  `todo.md`, not here;
+- `doc/terminals/`: terminal and platform behaviour (the compatibility
+  matrix, the kitty protocol, input modes, macOS);
+- `doc/dev/`: testing, performance, known issues;
+- `doc/survey/`: research done before deciding (libraries, prior art,
+  experiments), as of when it was written.
+
+A new document goes into one of these and into `doc/README.md`;
+`scripts/check-docs.sh` (part of `scripts/check.sh`) fails otherwise, and
+when a path to a document written anywhere no longer exists.

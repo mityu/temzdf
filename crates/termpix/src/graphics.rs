@@ -1,6 +1,6 @@
 //! Kitty graphics protocol encoding and image transport.
 //!
-//! See `doc/kitty-protocol.md`. This module only produces bytes; writing them to
+//! See `doc/terminals/kitty-protocol.md`. This module only produces bytes; writing them to
 //! the terminal (and wrapping frames in synchronized output) is the caller's job.
 
 use std::fs::File;
@@ -141,7 +141,7 @@ pub struct Encoder {
 ///
 /// Level 2, not 1: zlib-rs level 1 ("deflate_quick") emits fixed-Huffman blocks,
 /// and Ghostty 1.3.1 crashes (SIGSEGV) inflating fixed-Huffman streams larger
-/// than 64 KiB. See doc/terminal-compat.md. Level 2 is about as fast and
+/// than 64 KiB. See doc/terminals/terminal-compat.md. Level 2 is about as fast and
 /// compresses better.
 pub const DEFAULT_ZLIB_LEVEL: u32 = 2;
 
@@ -525,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/known-issues.md)")]
+    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
     fn compressed_transmit_round_trips() {
         let mut enc = Encoder::new(Medium::Direct { compress: true });
         let mut out = Vec::new();
@@ -549,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/known-issues.md)")]
+    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
     fn zlib_level_is_configurable() {
         let data = vec![255u8; 129 * 128 * 4];
         let px = Pixels { width: 129, height: 128, format: PixelFormat::Rgba, data: &data };

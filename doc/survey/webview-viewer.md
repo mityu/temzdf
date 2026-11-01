@@ -1,6 +1,6 @@
 # Webview previewer research
 
-Question (2026-10-25): the Markdown viewer (`doc/markdown-viewer.md`) grows
+Question (2026-10-25): the Markdown viewer (`doc/survey/markdown-viewer.md`) grows
 into a general **webview-based previewer**: show arbitrary HTML/CSS/JS through
 `termpix`, e.g. Markdown rendered by JS toolchains (markdown-it, KaTeX,
 mermaid), HTML exported by other tools (Typst, pandoc, Jupyter/Quarto,

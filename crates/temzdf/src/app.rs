@@ -62,7 +62,7 @@ pub fn settings(serve_forward: bool, script: Option<ScriptSettings>, editor: Opt
 
 /// The zlib level for inline image transfers: `$TEMZDF_ZLIB_LEVEL`, else
 /// termpix's default (do not use 1 with Ghostty 1.3.1, see
-/// doc/terminal-compat.md).
+/// doc/terminals/terminal-compat.md).
 pub fn zlib_level() -> u32 {
     std::env::var("TEMZDF_ZLIB_LEVEL")
         .ok()

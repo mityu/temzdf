@@ -1,4 +1,4 @@
-//! Modes and key mappings (see doc/script-host.md): key notation, modes with
+//! Modes and key mappings (see doc/design/script-host.md): key notation, modes with
 //! their properties, the matcher for key sequences, counts and the mode
 //! history.
 

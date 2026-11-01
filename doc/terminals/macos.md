@@ -140,7 +140,7 @@ why:
   that the scenario did not click (only `links` clicks one) is a sign of
   wrong coordinates.
 - What differs per terminal (kitty's wheel, Ghostty's colours and keys,
-  WezTerm's title bar) is in `doc/terminal-compat.md`.
+  WezTerm's title bar) is in `doc/terminals/terminal-compat.md`.
 
 ### Running in a VM: scripts/macos-vm.sh
 

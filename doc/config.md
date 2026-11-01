@@ -4,7 +4,7 @@ temzdf is configured with a JavaScript or TypeScript program, as Vim is with
 a vimrc: `$XDG_CONFIG_HOME/temzdf/config.ts` or `config.js` (falling back to
 `~/.config/temzdf/`; both at once is an error), or the file given with
 `--config FILE`. It runs in the script host, a separate process
-(`doc/script-host.md` has the execution model). The shipped defaults
+(`doc/design/script-host.md` has the execution model). The shipped defaults
 (`crates/temzdf-script/runtime/defaults.ts`) run first; the configuration can
 map over or remove anything in them. `--clean` runs only the defaults.
 
@@ -57,7 +57,7 @@ Like Vim, temzdf is always in a mode. Built in:
 Focusing a pane puts temzdf in that pane's mode. `switchMode` enters a
 mode on the mode history (at most `modehistory` entries), `exitMode` returns
 to the previous one, and below the history there is always `normal`. The
-design is in doc/keymaps.md.
+design is in doc/design/keymaps.md.
 
 Mappings go from a key sequence to an action, an array of actions (run in
 order by temzdf itself, without the script host, so they are fast and cannot
@@ -218,7 +218,7 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `linkpreviewdelay` | `300` | milliseconds before the preview |
 | `reloaddebounce` | `200` | milliseconds after the PDF last changed before reloading |
 | `reloadanchor` | `"position"` | `"position"` keeps the page and place on it (as Skim, Okular); `"text"` finds the line read a third down the screen in the new PDF (falling back to the position) |
-| `synctexeditor` | `null` | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/synctex.md. `--editor` overrides it |
+| `synctexeditor` | `null` | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/design/synctex.md. `--editor` overrides it |
 | `remainonexit` | `false` | a shown terminal whose program ended keeps its panes (tmux's `remain-on-exit`) |
 | `showtabline` | `"auto"` | when the tab line shows (Vim's): `"never"`, `"auto"` (with two tab pages or more), `"always"` |
 | `foreground`, `background` | `null` | default colours (`"#rrggbb"`) of GUI clients and terminal panes (programs asking with OSC 10/11 are told); `null`: the client's own. A terminal client's terminal keeps its own |
@@ -325,7 +325,7 @@ messages (errors, "Copied ..."); a terminal's is blank. The shipped
 configuration hides the terminals' (a `PaneOpened` hook calling
 `cmd.statusLine(false, id)`); without the script host every pane has one.
 A pane one row high shows its status line only. Changing what they say
-comes later (`doc/floating-panes.md`).
+comes later (`doc/design/floating-panes.md`).
 
 ## Input buffers
 
@@ -419,10 +419,10 @@ variables:
 | `TERMPIX_BACKEND` | `layered` or `composited`: how frames reach the terminal (default: detected) |
 | `TERMPIX_MEDIUM` | `direct`, `shm` or `file`: how pixels are transferred (default: detected; `direct` mimics SSH) |
 | `TERMPIX_GRAPHICS` | `off`: run as in a terminal without the kitty graphics protocol (text only; see below) |
-| `TEMZDF_ZLIB_LEVEL` | zlib level (0-9) of inline transfers, default 2 (do not use 1 with Ghostty 1.3.1, see doc/terminal-compat.md) |
+| `TEMZDF_ZLIB_LEVEL` | zlib level (0-9) of inline transfers, default 2 (do not use 1 with Ghostty 1.3.1, see doc/terminals/terminal-compat.md) |
 | `TEMZDF_LOG_DIR` | where logs go (default `$XDG_STATE_HOME/temzdf`): `temzdf.log` for viewers and clients, `NAME.log` for session NAME. Logs are the user's alone (0600; they name the files opened and the sessions' sockets); the directory is made 0700, and the default one is made so if it is not |
-| `TEMZDF_PIXELS` | `shared` (default) or `socket`: how a client takes frames' pixels from the session, in shared memory or inside the messages (`doc/session-server.md`) |
-| `TEMZDF_TIMING` | set: the session server and clients log how long frames take (`timing:` lines; `scripts/timing.sh`, `doc/performance.md`) |
+| `TEMZDF_PIXELS` | `shared` (default) or `socket`: how a client takes frames' pixels from the session, in shared memory or inside the messages (`doc/design/session-server.md`) |
+| `TEMZDF_TIMING` | set: the session server and clients log how long frames take (`timing:` lines; `scripts/timing.sh`, `doc/dev/performance.md`) |
 | `TEMZDF_GUI` | the `temzdf-gui` that `temzdf ls-fonts` runs (default: next to `temzdf`, else on `PATH`) |
 
 `temzdf ls-fonts` shows the fonts GUI clients use, as `wezterm ls-fonts`

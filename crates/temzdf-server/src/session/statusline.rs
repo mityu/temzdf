@@ -1,7 +1,7 @@
 //! Pane status lines: the bottom row of a pane (unless hidden), drawn by the
 //! session as text from what the pane says about itself (a PDF pane: its
 //! file, page, zoom, search and messages; a terminal: nothing yet). How to
-//! change what they say is for later (`doc/floating-panes.md`).
+//! change what they say is for later (`doc/design/floating-panes.md`).
 
 use temzdf_scene::{Attrs, Cell, Color, TextGrid};
 use termpix_ui::{StatusBar, Theme};

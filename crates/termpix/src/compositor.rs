@@ -848,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/known-issues.md)")]
+    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
     fn composited_matches_layered() {
         let layers_for = |img| {
             [
@@ -908,7 +908,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/known-issues.md)")]
+    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
     fn inline_frames_are_fenced() {
         let mut c = Compositor::new(Backend::Layered, Medium::Direct { compress: true }, geometry());
         let img = c.add_image(30, 30, test_image());
@@ -938,7 +938,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/known-issues.md)")]
+    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
     fn images_can_be_uploaded_ahead_of_use() {
         let mut c = Compositor::new(Backend::Layered, Medium::Direct { compress: true }, geometry());
         let a = c.add_image(30, 30, test_image());
@@ -1024,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/known-issues.md)")]
+    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
     fn composited_skips_identical_frames() {
         let mut c = Compositor::new(Backend::composited(), Medium::Direct { compress: true }, geometry());
         let img = c.add_image(30, 30, test_image());

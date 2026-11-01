@@ -53,7 +53,7 @@
           # What temzdf-gui's winit and wgpu load with dlopen on Linux (the
           # real GPU's Vulkan driver comes from the system: /run/opengl-driver
           # on NixOS).
-          # The GUI client (doc/gui-client.md): what winit and wgpu load at
+          # The GUI client (doc/design/gui-client.md): what winit and wgpu load at
           # run time, a software Vulkan driver (Mesa's lavapipe) for offscreen
           # rendering in tests, and the tools its end-to-end tests drive:
           # an Xfce window manager on Xvfb, headless sway with grim and wtype

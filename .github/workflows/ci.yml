@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   # rustfmt, clippy (warnings are errors) and tests, fixtures built with TeX
-  # from the `ci` dev shell. End-to-end terminal tests stay local (doc/testing.md).
+  # from the `ci` dev shell. End-to-end terminal tests stay local (doc/dev/testing.md).
   check:
     runs-on: ubuntu-latest
     steps:

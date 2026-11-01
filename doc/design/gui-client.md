@@ -2,12 +2,12 @@
 
 Status (2026-10-28): implemented for X11 (the user's Xfce) and checked on
 Xvfb with xfwm4; on macOS used by the user and its redraw after the window
-was covered checked (`tests/macos/gui-redraw.sh`, `doc/macos.md`); Wayland
+was covered checked (`tests/macos/gui-redraw.sh`, `doc/terminals/macos.md`); Wayland
 and HiDPI are not checked yet. See
 "Implemented" below. Every **(decide)** item was decided as recommended
 (the user, 2026-10-27; see "Decisions"). Step 4 of the session server's plan
-(`doc/session-server.md`): a native window that attaches to a session as the
-TTY client does. Toolkit research is in `doc/gui-stack.md`; this document
+(`doc/design/session-server.md`): a native window that attaches to a session as the
+TTY client does. Toolkit research is in `doc/survey/gui-stack.md`; this document
 narrows it to the client the current code needs, lists what is in the way,
 and plans what can be built now.
 
@@ -180,7 +180,7 @@ change on the server side, testable without a GUI.
    session option (`o.guifont = "JetBrains Mono:h13"`, plus
    `o.guifontwide` for CJK) read by GUI clients, so one configuration
    serves every GUI client; the alternative is a GUI-only file
-   (`client.ts`, see decision 22 in `doc/scripting.md`).
+   (`client.ts`, see decision 22 in `doc/design/scripting.md`).
 6. **Pasting.** In a terminal the outer terminal pastes (Ctrl-Shift-V,
    Cmd-V) and the client sees bracketed paste. A GUI must pick the key and
    read the clipboard itself. The server cannot read a client's clipboard.
@@ -193,9 +193,9 @@ change on the server side, testable without a GUI.
    pane changes. Needed: `ClientMsg::Focus(bool)` for both clients (programs
    like Vim refresh on focus-in).
 8. **Images in shared memory.** Large images come in shared memory, mapped
-   and uploaded to textures without a copy (`doc/session-server.md`,
+   and uploaded to textures without a copy (`doc/design/session-server.md`,
    "Pixels"; `TEMZDF_PIXELS=socket` sends them inside the messages). Measured
-   before and after in `doc/performance.md`, "Session socket".
+   before and after in `doc/dev/performance.md`, "Session socket".
 9. **One geometry for all clients.** Frames are rendered for the latest
    client's geometry, cell size included (decided: tmux's `latest`). A GUI
    at 2x and a terminal over SSH alternate; each switch re-renders tiles at
@@ -252,7 +252,7 @@ inferred.
   macOS in physical pixels [I]. It remains a fallback option.
 - **Headless wgpu**:
   - wgpu's own CI runs on Mesa's lavapipe, which shows up as a CPU adapter
-    [V, wgpu's `ci.yml` and `docs/testing.md`].
+    [V, wgpu's CI workflow and https://github.com/gfx-rs/wgpu/blob/trunk/docs/testing.md].
   - On NixOS: `mesa` and `vulkan-loader`, with `VK_DRIVER_FILES` pointing
     at lavapipe's ICD file [I].
   - Output is stable for a pinned Mesa (the flake pins it) and differs from
@@ -376,7 +376,7 @@ Besides the (decide) items above:
   `#[cfg_attr(miri, ignore = "...")]`.
 - **NixOS**: wgpu needs the Vulkan loader and drivers at runtime
   (`LD_LIBRARY_PATH` with `vulkan-loader` and `/run/opengl-driver/lib`,
-  as `doc/gpu.md` notes); a `nix run` wrapper must set that up.
+  as `doc/survey/gpu.md` notes); a `nix run` wrapper must set that up.
 - **Licences**: MuPDF's AGPL covers the server; the GUI client links no
   MuPDF, so it could be licensed separately if ever wanted.
 

@@ -46,7 +46,7 @@ ones farthest from the view.
 - Opaque images are sent as RGB (`f=24`): 29% fewer bytes without compression,
   about 1% with zlib (it already squeezes the constant alpha).
 - Output is written by a background thread, so a slow terminal (SSH, zellij)
-  never delays input handling; see `doc/terminal-compat.md`.
+  never delays input handling; see `doc/terminals/terminal-compat.md`.
 
 ## Session socket
 
@@ -101,7 +101,7 @@ bogus length cannot allocate much).
 
 ### With shared memory
 
-Large images now come in shared memory (`doc/session-server.md`, "Pixels");
+Large images now come in shared memory (`doc/design/session-server.md`, "Pixels");
 `TEMZDF_PIXELS=socket` (`scripts/e2e.sh -P socket`) still sends them inside
 the messages, so one build compares both. The benchmark (same command; `send`
 is the server's part, `total` until the client has read every byte once):

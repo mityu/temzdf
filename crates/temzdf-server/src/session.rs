@@ -1,7 +1,7 @@
 //! A session: panes (PDF views and terminals), their layout and focus, the
 //! prefix key, and the composed frame every attached client shows. No sockets
 //! or terminals here: the standalone viewer, `--render-frame` and the session
-//! server all drive a `Session` (see doc/session-server.md).
+//! server all drive a `Session` (see doc/design/session-server.md).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -2489,7 +2489,7 @@ mod tests {
         let act = |n: &str, a: &[&str]| {
             Mapping::new(Target::Actions(vec![Act::new(n, a.iter().map(|x| ScriptValue::Str((*x).into())).collect())]))
         };
-        // doc/keymaps.md's example: + repeats in a submode of normal.
+        // doc/design/keymaps.md's example: + repeats in a submode of normal.
         let d = s.modes.define("resize");
         d.transient = true;
         d.timeout = Some(Duration::from_millis(1500));

@@ -25,7 +25,7 @@
 #             front and the pointer back),
 #             screenshots with screencapture; needs the accessibility and
 #             screen recording permissions, and the screen unlocked
-#             (doc/macos.md)
+#             (doc/terminals/macos.md)
 #   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
 #             frames, a single pane; its config and layout go to OUTDIR/zellij;
 #             tmux: a private server with passthrough and mouse on, no status)
@@ -593,7 +593,7 @@ ime() {
 # Ghostty on macOS shows the pixels of images as Display P3 values (no
 # conversion from sRGB): saturated colours come out more saturated. The
 # expected screen FILE goes through the same, so the comparison stays exact
-# (doc/terminal-compat.md).
+# (doc/terminals/terminal-compat.md).
 as_terminal_shows() {
   [[ $display == macos && $term == ghostty ]] || return 0
   magick "$1" -strip -profile "/System/Library/ColorSync/Profiles/Display P3.icc" \
@@ -1085,7 +1085,7 @@ esac
 # Removing it on exit ends any session left behind (servers end once their
 # socket is gone), also when an action failed.
 # macOS: /tmp itself, as $TMPDIR is long there (sockets are limited to 104
-# bytes, doc/macos.md).
+# bytes, doc/terminals/macos.md).
 if [[ $display == macos ]]; then
   XDG_RUNTIME_DIR=$(mktemp -d /tmp/temzdf-e2e.XXXXXX)
 else
@@ -1263,7 +1263,7 @@ if [[ $display == macos ]]; then
       # ESC b and ESC f instead of Alt+Left and Alt+Right). Blending
       # in linear light as on Linux (linear-corrected, the default there): its
       # default on macOS (native) blends in
-      # Display P3, which --render-frame cannot draw (doc/terminal-compat.md).
+      # Display P3, which --render-frame cannot draw (doc/terminals/terminal-compat.md).
       app=Ghostty proc=ghostty startup=6
       targs=(--config-default-files=false --window-save-state=never --quit-after-last-window-closed=true
         --alpha-blending=linear-corrected --keybind=alt+left=unbind --keybind=alt+right=unbind
@@ -1276,7 +1276,7 @@ if [[ $display == macos ]]; then
       # bar: without one it takes the top of the window for one, and a drag
       # there (selecting the first row) moves the window.
       app=WezTerm proc=wezterm-gui startup=6
-      # WebGPU (Metal): a macOS VM has no OpenGL 3.3 (doc/macos.md).
+      # WebGPU (Metal): a macOS VM has no OpenGL 3.3 (doc/terminals/macos.md).
       targs=(-n --config 'front_end="WebGpu"' --config 'window_decorations="TITLE|RESIZE"' --config enable_tab_bar=false
         --config 'window_padding={left=0,right=0,top=0,bottom=0}'
         --config "initial_cols=$((width / 7))" --config "initial_rows=$((height / 16))"

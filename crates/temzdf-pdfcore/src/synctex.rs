@@ -1,6 +1,6 @@
 //! SyncTeX: map source lines to PDF positions (forward search) and back
 //! (inverse search), through the vendored parser library
-//! (`vendor/synctex/`). See doc/synctex.md.
+//! (`vendor/synctex/`). See doc/design/synctex.md.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_long, c_void};
 use std::path::{Path, PathBuf};

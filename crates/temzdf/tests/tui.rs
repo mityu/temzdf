@@ -2,7 +2,7 @@
 //! terminal emulation, kitty graphics included): sessions, terminal panes,
 //! PDF panes, and the session commands. Each test has its own runtime,
 //! config, state and log directories, so it never sees the user's sessions.
-//! See doc/testing.md.
+//! See doc/dev/testing.md.
 
 use std::path::PathBuf;
 use std::process::Command;

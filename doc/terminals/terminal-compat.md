@@ -129,7 +129,7 @@ Known problems:
   `ZELLIJ`/`TMUX`, which makes detection think it runs inside a multiplexer.
   `scripts/e2e.sh` clears them; real users may see this when launching a GUI
   terminal from a multiplexer shell.
-- macOS 26 on Apple Silicon (2026-10-25, see `doc/macos.md`):
+- macOS 26 on Apple Silicon (2026-10-25, see `doc/terminals/macos.md`):
   - kitty 0.49.2: shm, temp files and direct all work (Layered over shm by
     default); OSC 52 reaches the macOS clipboard. A window covered by other
     windows is not redrawn at all.

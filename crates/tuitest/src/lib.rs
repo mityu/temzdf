@@ -2,7 +2,7 @@
 //! terminal emulation (`libghostty-vt`, kitty graphics included), drive it with
 //! keys, and read its screen as text, cells, cursor and image placements.
 //! [`Term::inside_tmux`] puts a private tmux between the two, so programs can
-//! also be tested inside tmux. See doc/testing.md.
+//! also be tested inside tmux. See doc/dev/testing.md.
 //!
 //! The harness answers the queries a program makes at startup (device
 //! attributes, XTVERSION, cell size, kitty graphics), so programs that probe

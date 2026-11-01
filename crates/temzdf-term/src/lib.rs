@@ -1,6 +1,6 @@
 //! Terminals: a program on a pty, its output interpreted by Ghostty's
 //! terminal emulation (`libghostty-vt`) and shown as text in a
-//! `temzdf-scene` frame. See doc/session-server.md (step 3).
+//! `temzdf-scene` frame. See doc/design/session-server.md (step 3).
 //!
 //! A [`TermBuffer`] is the program and its screen; a [`TermView`] is one
 //! pane showing it (several panes can show one terminal, as Vim's windows

@@ -10,7 +10,7 @@ library; optionally static (gradual) typing; optionally an LSP, with a way to
 ship type definitions for our API (or an LSP embedded in temzdf).
 
 Status: superseded (2026-10-26): the configuration is to be JavaScript /
-TypeScript run in a separate process, see `doc/scripting.md`. The survey below
+TypeScript run in a separate process, see `doc/design/scripting.md`. The survey below
 is kept for reference. Originally: research only, no decision. Versions and dates were collected by a
 research agent from crates.io, GitHub releases and lua.org on that date; sizes
 are estimates.
