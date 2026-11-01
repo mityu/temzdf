@@ -90,7 +90,10 @@ planned work stays in `todo.md`.
   MuPDF 1.27.2 and master as of 2026-11-03), an ActualText that is all of
   the start of the glyphs it covers ("Ab" over "Abc") leaves no ActualText
   after the matching prefix, which an `assert(z != 0)` says cannot happen
-  ("Shut coverity up"). A debug build of MuPDF aborted there when searching
+  ("Shut coverity up"). Typst 0.14 writes such PDFs for tall brackets: a
+  "(" built from a top piece, extenders and a bottom piece carries the
+  ActualText "(", and its ToUnicode CMap maps the top piece alone to "(".
+  A debug build of MuPDF aborted there when searching
   or selecting such a PDF, taking the session down; so MuPDF is built
   optimized, without assertions, in debug builds too (`Cargo.toml`,
   `[profile.dev.package.mupdf-sys]`), as it ships. Past the assertion the
