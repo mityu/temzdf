@@ -69,6 +69,16 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- Terminal panes' scrollback limit in lines, as a setting (like Neovim's
+  `'scrollback'`). Now it is a byte limit, `SCROLLBACK_BYTES` in
+  `crates/temzdf-term/src/lib.rs` (10 MB: about 13,600 rows at 80 columns,
+  5,500 at 200), because the libghostty-vt we build against has only the
+  byte limit at creation. Newer Ghostty (C API since late July 2026) has
+  `GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES` and `_MAX_BYTES` through
+  `ghostty_terminal_set`; when the Rust crate `libghostty-vt` exposes them,
+  bump it and the commit in `nix/libghostty-vt.nix`, remove the byte limit,
+  set the line limit, and add the setting (user's decision, 2026-11-02).
+  Neovim's switch to libghostty-vt (neovim/neovim#39773) does the same.
 - zellij delays keyboard input (even its own prefix commands) while it
   processes a frame, so `q` waits there; sending less data per frame is the
   only lever we have (user agreed to defer, 2026-10-25).

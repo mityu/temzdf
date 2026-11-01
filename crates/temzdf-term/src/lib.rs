@@ -84,8 +84,26 @@ fn path_of_url(url: &str) -> PathBuf {
     PathBuf::from(std::ffi::OsString::from_vec(out))
 }
 
-/// Lines of scrollback kept per terminal.
-const SCROLLBACK: usize = 10_000;
+/// Scrollback kept per terminal, in bytes of libghostty's pages (about
+/// 13,600 rows at 80 columns, 5,500 at 200: a row's size grows with the
+/// columns). libghostty-vt's `max_scrollback` is documented as lines but
+/// is a byte limit (Ghostty's `Screen.zig`), rounded up to at least the
+/// pages the screen needs plus one; the 10,000 this used to be kept only a
+/// few hundred rows. 10 MB is Ghostty's own default (`scrollback-limit`).
+///
+/// A limit in lines: newer libghostty-vt (Ghostty's C API since late July
+/// 2026) sets the limits after creation, `GHOSTTY_TERMINAL_OPT_SCROLLBACK_
+/// MAX_LINES` and `_MAX_BYTES` through `ghostty_terminal_set` (still
+/// page-granular, so a few dozen rows more than asked). The Rust crate
+/// (0.2.2) and the Ghostty commit pinned in `nix/libghostty-vt.nix` predate
+/// them. Once both have them: drop the byte limit, set the line limit, and
+/// make it a setting (as Neovim's `'scrollback'`); `todo.md` tracks it.
+const SCROLLBACK_BYTES: usize = 10_000_000;
+/// A pane's terminal: its size and scrollback.
+fn options(geometry: Geometry) -> TerminalOptions {
+    TerminalOptions { cols: geometry.cols.max(1), rows: geometry.rows.max(1), max_scrollback: SCROLLBACK_BYTES }
+}
+
 /// Rows the wheel scrolls through history per step.
 const WHEEL_ROWS: isize = 3;
 /// Clicks closer together than this count as double and triple clicks.
@@ -168,12 +186,7 @@ impl TermBuffer {
         let pty = pty::Pty::start(pair.master, child, sink)?;
         let input = pty.input();
 
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols: geometry.cols.max(1),
-            rows: geometry.rows.max(1),
-            max_scrollback: SCROLLBACK,
-        })
-        .map_err(ghostty_err)?;
+        let mut terminal = Terminal::new(options(geometry)).map_err(ghostty_err)?;
         terminal
             .resize(geometry.cols.max(1), geometry.rows.max(1), geometry.cell.width, geometry.cell.height)
             .map_err(ghostty_err)?;
@@ -1186,6 +1199,22 @@ mod tests {
         assert!(view.frame(&mut term, &mut Images::new()).text[0].rows[0][39].attrs.inverse);
         term.key(&KeyEvent::new(KeyCode::Char('x'), Modifiers::NONE));
         assert!(!top(&mut term).contains('['), "typing returns to the bottom");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call libghostty-vt")]
+    fn scrollback_keeps_thousands_of_rows() {
+        // A wide pane keeps the fewest rows (a row's size grows with the
+        // columns); the old 10,000 (bytes, not lines) kept a few hundred.
+        for cols in [80, 200] {
+            let mut t = Terminal::new(options(Geometry { cols, rows: 24, ..GEOMETRY })).unwrap();
+            for i in 0..20_000 {
+                t.vt_write(format!("line {i}\r\n").as_bytes());
+            }
+            let bar = t.scrollbar().unwrap();
+            let history = bar.total - bar.len;
+            assert!(history >= 5_000, "{cols} columns: {history} rows of history");
+        }
     }
 
     #[test]

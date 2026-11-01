@@ -30,6 +30,13 @@ planned work stays in `todo.md`.
   pane are dropped (`crates/temzdf-term/src/keys.rs`). Few keyboards have
   them; a fix encodes them by hand (kitty protocol: `CSI 57389..57398 u`).
 
+- **Scrollback is limited by bytes, not lines.** A terminal pane keeps
+  10 MB of history (`SCROLLBACK_BYTES` in `crates/temzdf-term/src/lib.rs`),
+  so the rows kept depend on the pane's width: about 13,600 at 80 columns,
+  5,500 at 200. libghostty-vt's `max_scrollback` says lines but is bytes
+  (it was 10,000 here once, which kept a few hundred rows). A limit in
+  lines waits for the line-limit API in the Rust crate (`todo.md`).
+
 ## Session protocol and CLI
 
 - **The protocol version is checked only after decoding (SRV-10).** `Hello`
