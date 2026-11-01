@@ -7,6 +7,9 @@
 # far it scrolls follows the frames the viewer drew, which a replay does not.
 pause 1
 down 318 188
+# kitty on macOS reports a press followed at once by motion at the motion's
+# position (the selection then started below the title).
+sleep 0.1
 for y in 260 360 460 560 575; do move 450 $y; sleep 0.05; done
 pause 1
 shot held

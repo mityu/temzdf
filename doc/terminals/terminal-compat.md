@@ -172,7 +172,9 @@ Known problems:
     per notch of a line-scrolling wheel event (whatever
     `wheel_scroll_multiplier`, and whatever the event's deltas); Ghostty
     nine, WezTerm one. kitty ignores key events posted to its process (keys
-    go through its remote control).
+    go through its remote control). A press followed at once (within a few
+    milliseconds) by motion is reported by kitty at the motion's position,
+    not its own; 0.1 s apart it is right.
   - Ghostty shows the pixels of kitty graphics images as Display P3 values,
     without converting them from sRGB: (97,175,239) shows as (63,177,245),
     grey and white stay. Its `window-colorspace` (terminal colours) does
