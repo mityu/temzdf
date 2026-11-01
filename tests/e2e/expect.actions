@@ -23,6 +23,9 @@ pause 1.5
 expect page2 "jjj++02G"
 keys slash
 type needle
+# The hit shows while the input line is open (the page placed for the pane
+# without it, else, after <CR>: rendering speed would decide).
+pause 1
 keys Return
 pause 1
 expect search "jjj++02G/needle<CR>"
