@@ -66,6 +66,16 @@ Known problems:
   (6 wheel steps = 360 px). SGR-pixel (1016) drag deltas are exact (100 px drag
   = 100 px scroll). kitty logs "Pending mode change to already current mode (0)"
   when we send `CSI ? 2026 l` on exit outside a synchronized update; harmless.
+- kitty 0.49.2 (Xvfb, 2026-11-02): **the first image of a window, placed
+  inside a synchronized update (mode 2026), is not drawn until the screen
+  changes again**; nothing else changing (a session of text panes where a
+  program shows an image, borders being text), it stays invisible. Found
+  replaying a recorded frame stream block by block 50 ms apart: without
+  2026, with another image placed first, or with any later update (even an
+  empty `CSI ? 2026 h CSI ? 2026 l`) it shows; the empty update in the same
+  write as the frame does not help. The TTY frontend therefore sends an
+  empty synchronized update 50 ms after a frame with graphics commands
+  (`crates/temzdf-tty/src/frontend.rs`, `idle`). Not yet reported upstream.
 - Ghostty 1.3.1 (Linux under Xvfb, and macOS over SSH as reported by the user):
   **crashes with SIGSEGV when inflating zlib streams produced by zlib-rs at
   level 1** (its "deflate_quick" strategy) in `o=z` transmissions. The same

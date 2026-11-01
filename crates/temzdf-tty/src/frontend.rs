@@ -25,6 +25,9 @@ const UPLOAD_AHEAD_BATCH: usize = 4 << 20;
 const OUTPUT_POLL: Duration = Duration::from_millis(5);
 /// Longest wait for the visible pages before showing the first frame.
 const FIRST_FRAME_WAIT: Duration = Duration::from_millis(1500);
+/// How long after a frame that placed images the terminal gets an empty
+/// synchronized update (see [`TtyFrontend::idle`]).
+const REDRAW_NUDGE: Duration = Duration::from_millis(50);
 
 /// What a terminal event means for the caller.
 pub enum Input {
@@ -81,6 +84,8 @@ pub struct TtyFrontend {
     /// The terminal reports resizes in-band (mode 2048): its pixel sizes win
     /// over the kernel's (see [`resized`]).
     in_band: bool,
+    /// When to send an empty synchronized update after images were sent.
+    redraw_nudge: Option<Instant>,
 }
 
 impl TtyFrontend {
@@ -146,6 +151,7 @@ impl TtyFrontend {
             retry_soon: false,
             uploading: false,
             in_band: false,
+            redraw_nudge: None,
         })
     }
 
@@ -215,6 +221,10 @@ impl TtyFrontend {
             return Ok(Presented::Held);
         }
         let bytes = self.screen.render(frame, &self.presenter, &mut self.comp)?;
+        // Images placed or sent (see `idle`).
+        if self.caps.sync_output && !self.caps.in_tmux && bytes.windows(3).any(|w| w == b"\x1b_G") {
+            self.redraw_nudge = Some(Instant::now() + REDRAW_NUDGE);
+        }
         if !bytes.is_empty() {
             self.tty.write_all(bytes)?;
         }
@@ -242,7 +252,17 @@ impl TtyFrontend {
 
     /// While nothing needs drawing and the link is free: send pre-rendered
     /// images now, so showing them later costs only a placement (matters over SSH).
+    ///
+    /// Also: kitty (0.49) leaves an image placed inside a synchronized update
+    /// undrawn until the screen changes again when it is the window's first
+    /// (a program's image in a session of text panes); an empty
+    /// synchronized update a little later is that change
+    /// (`doc/terminal-compat.md`).
     pub fn idle(&mut self) -> Result<()> {
+        if self.redraw_nudge.is_some_and(|t| Instant::now() >= t) {
+            self.redraw_nudge = None;
+            self.tty.write_all(b"\x1b[?2026h\x1b[?2026l")?;
+        }
         self.uploading = false;
         if self.tty.pending_output() == 0 && !self.comp.is_congested(Instant::now()) && self.comp.has_pending_uploads()
         {
@@ -257,6 +277,9 @@ impl TtyFrontend {
 
     /// The longest the caller may wait for events before calling again.
     pub fn timeout(&mut self, mut timeout: Duration) -> Duration {
+        if let Some(t) = self.redraw_nudge {
+            timeout = timeout.min(t.saturating_duration_since(Instant::now()));
+        }
         if std::mem::take(&mut self.retry_soon) || self.uploading {
             // Re-check soon: the acknowledgement may never come, the frame-rate
             // interval passes, or the first frame stops waiting.
