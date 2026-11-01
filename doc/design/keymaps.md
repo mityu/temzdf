@@ -1,7 +1,7 @@
 # The key mapping system
 
-Status: agreed with the user on 2026-10-28 and implemented the same day,
-except decision 8 (deferred, see there). How to use it is in
+The key mapping system as agreed with the user on 2026-10-28, and why;
+decision 8 was deferred (see there and `todo.md`). How to use it is in
 `doc/config.md` ("Modes and keys"); the code is in
 `crates/temzdf-server/src/keymap/` (modes, the matcher), `session.rs`
 (`drive`, `layers`) and `session/script.rs` (conditions through the script

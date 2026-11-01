@@ -1,14 +1,15 @@
 # Floating panes: design
 
-Status (2026-10-26): implemented (`2d4bfc0` clipping, `a10166d`
-floats, `74a3f32` mouse, `b55690a` keys and docs, `46ee6fb` text over images
-in WezTerm); user documentation in `doc/config.md` ("Floating panes"). See
-"Found while implementing" at the end for where it differs from the
-proposal. Status bars (below) are not started.
-Decision 13 in `doc/design/scripting.md` asks for floating panes (and non-focusable
-panes) as the parts of the escape-hatch menu; users also want them on their
-own, as in zellij and Neovim. Items marked **(decide)** were put to the user;
-the others are my defaults, open to change.
+The floating panes and the bars on panes, as decided with the user
+(2026-10-26 on), and why. Decision 13 in `doc/design/scripting.md` asks for
+floating panes (and non-focusable panes) as the parts of the escape-hatch
+menu; users also want them on their own, as in zellij and Neovim. How to
+use them is in `doc/config.md` ("Floating panes"). They were built in four
+steps (`2d4bfc0` clipping, `a10166d` floats, `74a3f32` mouse, `b55690a`
+keys and docs; `46ee6fb` text over images in WezTerm); "Found while
+implementing" at the end says where they differ from the design. Items
+marked **(decide)** were put to the user; the others were Claude's
+defaults, accepted with the design.
 
 ## Decisions (2026-10-26)
 
@@ -47,19 +48,17 @@ Neovim's global statusline, tmux's status line). They take rows from the
 pane's or the session's area and are never focusable.
 
 Content (the user, 2026-10-26, tentative): as Vim's `statusline`, a string
-or a function returning one. Open: the markup inside the string for colours
-and clickable elements (Vim's `%#Group#` and `%@func@...%X`, or segments as
-objects), and when a function is evaluated again. Vim evaluates on every
-redraw; ours run in the script host, a round trip away, so on events and on
-an explicit request rather than per frame.
+or a function returning one. Still to settle (`todo.md`): the markup inside
+the string for colours and clickable elements (Vim's `%#Group#` and
+`%@func@...%X`, or segments as objects), and when a function is evaluated
+again. Vim evaluates on every redraw; ours run in the script host, a round
+trip away, so on events and on an explicit request rather than per frame.
 
-The bottom bar of each pane is done (2026-10-31): the pane's status line,
-one row the session draws as text (`crates/temzdf-server/src/session/statusline.rs`),
+The bottom bar of each pane (2026-10-31) is the pane's status line, one row
+the session draws as text (`crates/temzdf-server/src/session/statusline.rs`),
 shown or hidden per pane (`statusLine`, `doc/config.md`); the PDF pane's own
-status bar moved onto it. A PDF pane's says what its old bar said, a
-terminal's is blank; the shipped configuration hides the terminals'. Content
-from the configuration (the string or function above), top bars and the
-window's bars: later.
+status bar moved onto it, saying what it said, and a terminal's is blank
+(the shipped configuration hides the terminals').
 
 Clicks on bars (the user, 2026-10-26), after Vim:
 
@@ -68,7 +67,8 @@ Clicks on bars (the user, 2026-10-26), after Vim:
   Neovim's `%@` handlers get `minwid, clicks, button, mods`).
 - A click elsewhere on a pane's bar focuses that pane.
 - A drag that starts on a border stays a border drag (resizing), as now.
-- Open: whether a click on a clickable element also focuses the pane.
+- Still to settle (`todo.md`): whether a click on a clickable element
+  also focuses the pane.
   Neovim (`src/nvim/mouse.c`, `do_mouse` and `jump_to_mouse`): on the
   statusline the `%@` function runs on the press and the window is entered
   on the release when nothing was dragged, so yes; on the winbar a click
@@ -95,7 +95,7 @@ Clicks on bars (the user, 2026-10-26), after Vim:
 temzdf already separates buffers from panes, so the zellij/Neovim model
 fits: a float is a pane that shows a buffer, outside the layout tree.
 
-## Proposal
+## Design
 
 ### Model
 
@@ -219,24 +219,7 @@ Pinned floats, floats relative to a pane or the cursor (Neovim
 `relative`), per-float z order beyond "focus raises", rounded or styled
 borders, animations.
 
-## Plan
-
-- **F1. Clipping** (no visible change): compose lower panes clipped by a list
-  of rectangles; unit tests on layer cutting (pieces, keys, `src` scaling at
-  zoom, partial cells) and text dropping; `scripts/frames.sh compare` shows
-  no change with no floats.
-- **F2. Floats**: the stack, open/close/focus/raise, the frame and title,
-  placement from the spec and on screen resize, terminal sizing, the
-  last-pane rule, `open-float`, `float-config`, `toggle-floats`,
-  `toggle-floating`, `panes()`; session tests; tuitest: a floating shell over
-  a shell (no text from below inside it), over a PDF pane, inside tmux.
-- **F3. Mouse**: hit testing top down, focus and raise on click, moving and
-  resizing by the frame, pointer shapes; session and tuitest drags.
-- **F4. Defaults and docs**: mappings, `doc/config.md`, `doc/design/session-server.md`,
-  `print-types`; e2e in kitty (a float over a PDF page and over images from a
-  program) and in WezTerm (Composited).
-
-## Problems and risks
+## Pitfalls considered
 
 - Clipping PDF tiles at fractional positions: tiles are placed in pixels,
   floats in cells; cuts happen on cell boundaries in pixels, which divide
@@ -247,8 +230,8 @@ borders, animations.
 - Programs that track the mouse under a float must not get events meant for
   the float (hit testing top down covers it).
 - The last-pane rule and `toggleFloats` interact: hiding floats when the
-  focus is in one, closing the last tiled pane while floats are hidden.
-  Session tests must cover these.
+  focus is in one, closing the last tiled pane while floats are hidden;
+  session tests cover these.
 
 ## Found while implementing (2026-10-26, without the user)
 

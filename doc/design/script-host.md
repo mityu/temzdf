@@ -3,15 +3,10 @@
 The configuration can be a JavaScript or TypeScript program,
 `$XDG_CONFIG_HOME/temzdf/config.ts` (or `config.js`; both at once is an
 error). It runs in a separate process, the script host. This document
-describes what is implemented; the design, its reasons and the open
-questions are in `doc/design/scripting.md` (temzdf
-is meant to feel like Vim/Neovim without editing buffers, with a vimrc-like
-configuration).
-
-Status (2026-10-26): implemented: the execution model, modes and key
-mappings, the shipped defaults, options, generated type definitions,
-floating messages and the escape keys; the TOML configuration is gone. How
-to write a configuration is in `doc/config.md`, buffers included.
+describes how the host is built: its pieces, the execution model, the API.
+The design and its reasons are in `doc/design/scripting.md` (temzdf is
+meant to feel like Vim/Neovim without editing buffers, with a vimrc-like
+configuration); how to write a configuration is in `doc/config.md`.
 
 ## Pieces
 

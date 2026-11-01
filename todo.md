@@ -30,7 +30,10 @@ server on one `Session`). Next and open:
 - [ ] A Vim-like command line on the `Action` text form (tab pages are done).
 - [ ] What pane status lines say, from the configuration (a string or a
   function, as Vim's `statusline`; `doc/design/floating-panes.md`); today a PDF
-  pane's says what its old status bar said and a terminal's is blank.
+  pane's says what its old status bar said and a terminal's is blank. To
+  settle with the user first: the markup for colours and clickable
+  elements, when a function is evaluated again, whether clicking an element
+  focuses the pane (proposed: no); then top bars and the window's bars.
 - [ ] Terminals without graphics (text only, done 2026-11-02): the server
   could skip rendering PDF tiles while no attached client draws images (the
   Hello would say); a PDF pane could show its text instead (the page's text
@@ -50,6 +53,8 @@ server on one `Session`). Next and open:
   Suspect: the cell size derived from the kernel's pixel size after a resize
   (`Winsize::geometry` divides by rows/cols; padding would skew it, worst at the
   bottom). Needs the terminal, mode and the `resized to geometry` log line.
+- [ ] PDF panes' fixed keys (the outline) as mappings: deferred by the user
+  (decision 8 of `doc/design/keymaps.md`, which weighs the ways).
 - [ ] Naming and crate layout once temzdf is more than a PDF viewer (open
   since the session server design, 2026-10-25).
 - [ ] Terminal panes, what is left: kitty graphics through Unicode
@@ -66,9 +71,12 @@ server on one `Session`). Next and open:
   (direction in `doc/design/floating-panes.md`).
 - [ ] Step 4, the GUI client (`temzdf-gui`, `doc/design/gui-client.md`): works on
   X11 (checked on Xvfb with xfwm4, Japanese input through fcitx5 and Mozc).
-  Left: Wayland and macOS checks, HiDPI and fractional scales, Option as
-  Alt, cursor blinking, underline colours (SGR 58, not in the scene's
-  cells yet). Step 5: web panes (headless Chromium).
+  Left: a real Wayland desktop (headless sway passes) and macOS checks,
+  HiDPI and fractional scales (`--scale` and `ScaleFactorChanged` exist,
+  untested), Option as Alt, cursor blinking, underline colours (SGR 58, not
+  in the scene's cells yet), the configurable action that ends the session
+  when the window closes (closing detaches), texture reuse for tiles and
+  partial redraws when only text changed (measure first). Step 5: web panes (headless Chromium).
   (Step 6, programmable configuration, is the script host.)
 
 ## Deferred

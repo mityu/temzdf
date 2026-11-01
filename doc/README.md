@@ -31,7 +31,7 @@ the way, with the reasons.
 - [design/floating-panes.md](design/floating-panes.md): floating panes,
   and bars on panes and the window.
 - [design/gui-client.md](design/gui-client.md): the native GUI client
-  (`temzdf-gui`): groundwork and plan.
+  (`temzdf-gui`): the design, the decisions and how it was built.
 - [design/reload.md](design/reload.md): auto-reload (learned from Skim and
   Okular).
 - [design/synctex.md](design/synctex.md): SyncTeX forward and inverse

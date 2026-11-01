@@ -1,17 +1,15 @@
-# GUI client: groundwork and plan
+# GUI client: design
 
-Status (2026-10-28): implemented for X11 (the user's Xfce) and checked on
-Xvfb with xfwm4; on macOS used by the user and its redraw after the window
-was covered checked (`tests/macos/gui-redraw.sh`, `doc/terminals/macos.md`); Wayland
-and HiDPI are not checked yet. See
-"Implemented" below. Every **(decide)** item was decided as recommended
-(the user, 2026-10-27; see "Decisions"). Step 4 of the session server's plan
-(`doc/design/session-server.md`): a native window that attaches to a session as the
-TTY client does. Toolkit research is in `doc/survey/gui-stack.md`; this document
-narrows it to the client the current code needs, lists what is in the way,
-and plans what can be built now.
+The GUI client (`temzdf-gui`), step 4 of the session server's plan
+(`doc/design/session-server.md`): a native window that attaches to a
+session as the TTY client does. Toolkit research is in
+`doc/survey/gui-stack.md`; this document narrows it to the client the code
+needed, the gaps in the protocol it had to close, what was decided with the
+user (every **(decide)** item as recommended, 2026-10-27; see "Decisions")
+and how it was built. What is left (platforms and features) is in
+`todo.md`; checks on macOS are in `doc/terminals/macos.md`.
 
-## Implemented (2026-10-28)
+## As built (2026-10-28)
 
 `temzdf-gui [-s NAME] [--clean] [FILE]` (`crates/temzdf-gui`) attaches to session
 NAME (started with FILE if it does not exist), a new session for FILE, the
@@ -74,7 +72,7 @@ configuration script, as `temzdf --clean`. Closing the window detaches. `--rende
   from the same nixpkgs). It cannot be a static binary: it must dlopen the
   system's Vulkan driver.
 
-Differences from the plan below:
+Where it departs from the design below:
 
 - No input area in `Frame`: PDF prompts already put `Frame.cursor` at their
   caret, so the GUI places the input method at the cursor cell.
@@ -97,15 +95,11 @@ a paste reach a shell).
 On Wayland (headless sway, `scripts/e2e.sh -d wayland`) the same scenarios
 pass, Japanese input included: fcitx5 attaches through input-method-v2,
 the GUI gets preedit and commits through text-input-v3 (winit), and
-fcitx5's candidate window opens below the cursor (2026-10-29). Not done
-yet: a real Wayland desktop, most macOS
-checks, HiDPI and fractional scales (`--scale` and `ScaleFactorChanged`
-exist, untested), Option as Alt on macOS, cursor blinking, the configurable
-action that ends the session when the window closes (closing detaches), underline colours
-(SGR 58: the scene's cells do not carry one, so underlines take the text
-colour, in the terminal frontend too), shared memory for images. Curly,
-dotted and dashed underlines are drawn as fills in `drawlist.rs`, their
-pattern following the window's x so neighbouring cells join up.
+fcitx5's candidate window opens below the cursor (2026-10-29).
+Underlines take the text colour (the scene's cells carry no SGR 58 colour,
+in the terminal frontend too); curly, dotted and dashed ones are drawn as
+fills in `drawlist.rs`, their pattern following the window's x so
+neighbouring cells join up.
 
 ## What the GUI client is
 
@@ -113,9 +107,10 @@ A second frontend of the session protocol (`crates/temzdf-protocol`), next
 to the TTY client. The server stays as it is: it composes one scene per
 frame (`temzdf_scene::Frame`: image layers, text grids, cursor, pointer,
 title) and sends image changes, frames and effects; the client draws and
-sends input back. Local only (Unix socket now, shared memory later).
+sends input back. Local only (a Unix socket, large images in shared
+memory).
 
-What the TTY client does today and what the GUI does instead:
+What the TTY client does and what the GUI does instead:
 
 | Concern | TTY client (`temzdf-tty`, `crates/temzdf/src/client.rs`) | GUI client |
 |---|---|---|
@@ -124,7 +119,7 @@ What the TTY client does today and what the GUI does instead:
 | Image store | mirrored into termpix's compositor | mirrored into GPU textures |
 | Layers | kitty placements or composited strips | textured quads: z order, clipped to their rectangle, scaled |
 | Text grids | escape sequences and characters (only what changed) | glyphs from a font atlas, cell backgrounds, decorations |
-| Cursor, title, pointer | escape sequences | drawn cursor (shape; blinking not yet), window title, cursor icon |
+| Cursor, title, pointer | escape sequences | drawn cursor (shape), window title, cursor icon |
 | Effects | OSC 52 copy, `xdg-open`/`open`, `sh -c` | the native clipboard, the same commands |
 | Input | parsed escape sequences into `KeyEvent`/`MouseEvent` | window events translated into the same types |
 | Pacing | `FrameAck` after the terminal took the bytes | `FrameAck` after presenting |
@@ -132,18 +127,19 @@ What the TTY client does today and what the GUI does instead:
 The GUI reuses: the protocol, session discovery and server spawning,
 `temzdf-scene` and `termpix-core`'s event types. It needs no `termpix`.
 Discovery and spawning (`name_for`, `first_pane`, `spawn_server`,
-`resolve` in `crates/temzdf/src/client.rs`) live in the binary crate today,
-so they move to a library first (the attach loop itself is TTY-specific).
+`resolve`) moved from the binary crate into `crates/temzdf-client` for it
+(the attach loop itself is TTY-specific).
 
-Since this plan was written the session gained tab pages: the current tab
-is the session's, the same for every client, and the session composes the
-tab line (a text grid on the top row, clicks handled by the session). The
-GUI draws it like any text and needs no tabs of its own.
+Tab pages came while this was planned: the current tab is the session's,
+the same for every client, and the session composes the tab line (a text
+grid on the top row, clicks handled by the session). The GUI draws it like
+any text and needs no tabs of its own.
 
-## Gaps in the current protocol and server
+## Gaps in the protocol and server (2026-10-26)
 
-Found by reading the code against what a window delivers; each needs a
-change on the server side, testable without a GUI.
+Found by reading the code against what a window delivers; each needed a
+change on the server side, testable without a GUI. How each was closed is
+in "As built" above.
 
 1. **Precise scrolling.** `MouseEventKind::Scroll(direction)` carries no
    amount: a wheel step is one event and PDF panes animate it
@@ -205,10 +201,9 @@ change on the server side, testable without a GUI.
     reports, so they are sharp at any scale but use termpix-ui's font, not
     the GUI's. The session's own chrome is already text grids (float
     titles, floating messages, the tab line), so the GUI needs its text
-    renderer from the start. Moving the PDF chrome to text grids (planned)
-    fixes the rest for both clients; not a blocker. The status bar has
-    moved (2026-10-31: the pane status lines); the outline and link
-    previews are still pixels.
+    renderer from the start. Moving the PDF chrome to text grids fixes the
+    rest for both clients (the status bar moved, 2026-10-31: the pane
+    status lines; the rest is in `todo.md`); not a blocker.
 
 ## Facts checked for this plan (2026-10-26, rechecked 2026-10-27)
 
@@ -297,7 +292,7 @@ Also decided (the user, 2026-10-27):
 
 The items below were the questions and their recommendations.
 
-## Things to decide (decided as recommended, see above)
+## The questions and the reasons for the decisions
 
 - **winit version.** **(decide)** 0.30.13 (stable) or 0.31 beta (pinned
   exactly). 0.31 has the IME fixes and the scroll source this client wants,
@@ -369,7 +364,7 @@ Besides the (decide) items above:
   filtering.
 - **The dev shell** has the GUI's test tools since 2026-10-27 (the Vulkan
   loader and lavapipe, xfwm4, headless sway, `grim`, `wtype`, `fcitx5` with
-  Mozc); the `ci` shell has none of them yet, so GPU and window tests skip
+  Mozc); the `ci` shell has none of them, so GPU and window tests skip
   there.
 - **Miri**: the draw list and input translation are plain Rust and run
   under `scripts/miri.sh`; tests that open a window or a GPU device get
@@ -403,57 +398,3 @@ without a human:
   GUI driven like `scripts/e2e.sh` drives terminals; on macOS through
   `scripts/macos-gui.sh` (virtual display). IME needs fcitx5 or ibus in the
   test session; at least one scripted Japanese commit per platform.
-
-## Plan
-
-Steps that can start now, each committed separately with tests. G0 needs no
-window at all.
-
-**G0: protocol and server (no GUI yet)**
-
-1. Precise scrolling: a scroll event with deltas, unit and phase; PDF panes
-   follow pixel deltas, terminals accumulate rows. Tests: pane unit tests
-   (same final position for one 120 px delta as for its wheel steps, no
-   easing with OS momentum).
-2. `ClientMsg::Text`, `ClientMsg::Focus`, the input area in `Frame`, the
-   `paste` effect and its answer. Tests: session unit tests; the TTY client
-   forwards focus reports (tuitest can send them).
-3. Theme options (palette, foreground, background) in frames, and libghostty
-   given the palette so colour queries are answered. Tests: a program in a
-   pane queries OSC 11 and gets the configured background.
-
-**G1: a window that shows a session**
-
-0. Move session discovery and spawning (`name_for`, `first_pane`,
-   `spawn_server`, `resolve`) from `crates/temzdf/src/client.rs` into a
-   library both clients use. (The dev shell's test tools are in place.)
-4. Crate `temzdf-gui` (library + binary): connect or spawn a session, Hello
-   with the window's geometry, mirror images into textures, draw layers
-   (z, clip, scale) and acknowledge frames. Tests: draw-list unit tests,
-   offscreen render of a PDF frame compared with the MockTerminal render.
-5. Text grids: font loading (one family plus fallback), a glyph atlas
-   (glyphon/cosmic-text, or swash with our own atlas), backgrounds,
-   attributes (bold, italic, faint, inverse, underline styles,
-   strikethrough), wide cells, the cursor (shapes, blink), the title, the
-   pointer shape. Tests: offscreen renders of terminal frames.
-
-**G2: input**
-
-6. Keys (the kitty-equivalent translation), mouse with pixel coordinates
-   (minus padding), scrolling with deltas, focus, effects (clipboard,
-   links, inverse search), paste. Tests: translation unit tests; e2e under
-   Xvfb (type into a shell, scroll a PDF, copy a selection).
-7. IME: preedit drawn at the input area, the candidate window placed there,
-   commit as `Text`. Tests: e2e with fcitx5 under Xvfb (X11 XIM) and sway
-   (text-input-v3), plus a manual check by the user on macOS.
-
-**G3: polish and platforms**
-
-8. HiDPI and fractional scales, padding, decorations, live resize; macOS
-   specifics (Option as Alt, Cmd mappings, app bundle if IME or focus need
-   it). Tests: e2e at scale 2 (`WAYLAND_DISPLAY` headless output scale).
-9. Performance: shared memory for images, texture reuse for tiles, partial
-   redraw when only text changed; measure first.
-
-Rough size: G0 a few days of work; G1 and G2 the bulk (the renderer and IME);
-G3 open-ended.
