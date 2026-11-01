@@ -355,10 +355,15 @@ one point more or less for each, times a mapping's count, `fontSize()` back to t
 configured sizes; terminal clients keep their terminal's font), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
 `nextMatch`, ...: every action of the PDF table above, taking the count where it says
-"counts"), and `searchFor(query)`: search the focused PDF pane for `query`
-as if typed after `/` and Enter (the place it starts from goes on the back
-history, the first hit is shown once known; `""` clears the search;
-`temzdf action search-for needle`).
+"counts"), and the searches of a PDF pane (the focused one, else `pane`):
+`searchFor(query, pane?)` searches for `query` (the place it starts from
+goes on the back history, the first hit is shown once known; `""` clears
+the search; `temzdf action search-for needle`); `searchPreview(query,
+pane?)` shows the first hit as a query is typed (Vim's incsearch: from where
+the preview began; nothing found or empty, back there), and `searchFor` of
+it then keeps that hit and puts where the preview began on the back
+history; `searchCancel(pane?)` drops the search, a preview's view back
+where it began.
 Commands named `ns.name` are in a namespace: `cmd.ns.name()` and
 `action.ns.name()` (`temzdf action ns.name`), the name camelCased as the
 others (`input.delete-word` is `cmd.input.deleteWord`).

@@ -2380,6 +2380,35 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn searches_go_to_the_pdf_pane_given() {
+        let (mut s, rx) = session();
+        settle(&mut s, &rx);
+        let pdf = s.focus;
+        // Typed into an input pane below it: the PDF pane is not focused.
+        let (buf, _) = s.run_command("new-input", &[], None, Instant::now()).unwrap();
+        let o = ScriptValue::map([
+            ("side", ScriptValue::Str("bottom".into())),
+            ("buffer", buf),
+            ("height", ScriptValue::Num(1.0)),
+        ]);
+        let (input, _) = s.run_command("split", &[o], None, Instant::now()).unwrap();
+        assert_eq!(s.focus, input.as_num().unwrap() as PaneId);
+        let search = |s: &mut Session, name: &str, args: &[&str]| cmd(s, name, args, None);
+        search(&mut s, "search-preview", &["needle", &pdf.to_string()]).unwrap();
+        settle(&mut s, &rx);
+        assert!(s.panes.get_mut(&pdf).and_then(PaneEntry::pdf).unwrap().search.is_active());
+        search(&mut s, "search-cancel", &[&pdf.to_string()]).unwrap();
+        assert!(!s.panes.get_mut(&pdf).and_then(PaneEntry::pdf).unwrap().search.is_active());
+        // The focused input pane is no PDF.
+        let e = search(&mut s, "search-for", &["needle"]).unwrap_err();
+        assert!(e.contains("not a PDF"), "{e}");
+        let focus = s.focus.to_string();
+        let e = search(&mut s, "search-cancel", &[&focus]).unwrap_err();
+        assert!(e.contains("is not a PDF"), "{e}");
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn search_for_needs_a_pdf() {
         let (mut s, _rx) = terminal_session(&["sh", "-c", "sleep 5"]);

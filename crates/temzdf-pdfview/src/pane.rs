@@ -155,8 +155,11 @@ pub struct PdfPane {
     /// thread tell their results apart.
     search_base: u64,
     /// Where the view was when the search began (it goes on the back
-    /// history).
+    /// history, or back to it when a preview is cancelled).
     search_origin: Option<(Target, f32, f32)>,
+    /// A search is being previewed (typed: `search_preview`): each query
+    /// shows its first hit after `search_origin`.
+    previewing: bool,
     /// A search began before any hit was selected (results arrive from a
     /// worker): select the first one after this position once it is found.
     pending_first_hit: Option<Target>,
@@ -221,6 +224,7 @@ impl PdfPane {
             search: SearchState::new(pages),
             search_base: 0,
             search_origin: None,
+            previewing: false,
             pending_first_hit: None,
             requests: Vec::new(),
             overlay_images: HashMap::new(),
@@ -813,9 +817,14 @@ impl PdfPane {
                 self.search.current = Some((p, i));
             }
         }
-        // The first match after where the search began, if none is selected yet.
+        // The first match after where the search began, if none is selected
+        // yet (while previewing, after where the preview began).
+        let from = match self.search_origin.filter(|_| self.previewing) {
+            Some(o) => Some(o.0),
+            None => self.pending_first_hit,
+        };
         if self.search.current.is_none()
-            && let Some(from) = self.pending_first_hit
+            && let Some(from) = from
             && let Some(hit) = self.search.find_from(from, true)
             && self.search.hits[hit.0].get(hit.1).is_some()
             && (self.search.is_complete() || (hit.0 == page && !self.wrapped(from, hit, true)))
@@ -825,6 +834,10 @@ impl PdfPane {
                 self.clear_searching();
             }
             self.reveal_hit(hit, now);
+        }
+        // A preview found nothing: back where it began (as Vim's incsearch).
+        if self.previewing && self.search.is_complete() && self.search.total() == 0 {
+            self.back_to_search_origin();
         }
         // Done: what was waited for (Enter, `n`, `N`) found nothing, or the
         // "Searching" message is out of date.
@@ -1026,15 +1039,67 @@ impl PdfPane {
 
     /// Search for `query` (the `search-for` command): the place it starts
     /// from goes on the back history, and the first hit is shown once it is
-    /// known. An empty query clears the search.
+    /// known. An empty query clears the search. After a preview of it
+    /// (`search_preview`) the search goes on from there: where the preview
+    /// began is the place, the hit shown stays.
     pub fn search_for(&mut self, query: &str) -> Action {
-        let v = &self.viewer;
-        self.search_origin = Some((v.top_position(), v.view.scroll_x, v.view.scroll_y));
-        self.search.clear();
-        self.pending_first_hit = None;
-        self.run_search(query.replace(['\n', '\r'], " "));
+        let query = query.replace(['\n', '\r'], " ");
+        let previewed = std::mem::take(&mut self.previewing);
+        if !(previewed && self.search_origin.is_some() && self.search.query == query) {
+            if !previewed || self.search_origin.is_none() {
+                let v = &self.viewer;
+                self.search_origin = Some((v.top_position(), v.view.scroll_x, v.view.scroll_y));
+            }
+            self.search.clear();
+            self.pending_first_hit = None;
+            self.run_search(query);
+        }
         self.submit_search();
         Action::Redraw
+    }
+
+    /// Preview a search for `query` as it is typed (Vim's incsearch; the
+    /// `search-preview` command): the first hit after where the preview
+    /// began is shown once known; nothing found (or an empty query), the
+    /// view goes back there. `search_for` ends it, `search_cancel` drops it.
+    pub fn search_preview(&mut self, query: &str) -> Action {
+        let query = query.replace(['\n', '\r'], " ");
+        if !self.previewing || self.search_origin.is_none() {
+            let v = &self.viewer;
+            self.search_origin = Some((v.top_position(), v.view.scroll_x, v.view.scroll_y));
+            self.previewing = true;
+        }
+        if query == self.search.query && self.search.is_active() {
+            return Action::None;
+        }
+        self.pending_first_hit = None;
+        self.message = None;
+        self.run_search(query);
+        if !self.search.is_active() {
+            self.back_to_search_origin();
+        }
+        Action::Redraw
+    }
+
+    /// Drop the search; a preview's view goes back where it began (the
+    /// `search-cancel` command).
+    pub fn search_cancel(&mut self) -> Action {
+        if std::mem::take(&mut self.previewing) {
+            self.back_to_search_origin();
+        }
+        self.search_origin = None;
+        self.pending_first_hit = None;
+        self.search.clear();
+        self.clear_searching();
+        Action::Redraw
+    }
+
+    /// Back to where the search began, exactly (the view has not changed
+    /// size or document since: it is typed meanwhile).
+    fn back_to_search_origin(&mut self) {
+        if let Some((_, sx, sy)) = self.search_origin {
+            self.viewer.jump_to(sx, sy);
+        }
     }
 
     /// A search began: remember where (back history), and go to the first
@@ -1941,6 +2006,123 @@ mod tests {
                 "{dir:?} at {at:?}: {before:?} -> {after:?}"
             );
         }
+    }
+
+    /// The generation of the one search `s` asked for since the last call.
+    fn search_generation(s: &mut PdfPane) -> u64 {
+        match s.take_requests().as_slice() {
+            [.., Request::Search { generation, .. }] => *generation,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn rect(y: f32) -> PageRect {
+        PageRect { x0: 10.0, y0: y, x1: 50.0, y1: y + 10.0 }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_preview_does_not_wrap_to_an_earlier_hit_before_the_rest_is_searched() {
+        let mut s = session();
+        let now = Instant::now();
+        s.viewer.goto(Target { page: 1, y: Some(400.0) }, false, now);
+        s.search_preview("x");
+        let generation = match s.take_requests().as_slice() {
+            [Request::Search { generation, start_page: 1, .. }] => *generation,
+            other => panic!("{other:?}"),
+        };
+        // The page the search started on comes first: its only hit is above
+        // where the search began.
+        s.search_hits(generation, 1, vec![rect(10.0)], now);
+        assert_eq!(s.search.current, None, "a later page may have one");
+        s.search_hits(generation, 2, vec![rect(100.0)], now);
+        assert_eq!(s.search.current, Some((2, 0)));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_preview_goes_back_when_cancelled_emptied_or_not_found() {
+        let mut s = session();
+        let later = Instant::now() + Duration::from_secs(10);
+        let now = Instant::now();
+        s.viewer.goto(Target { page: 1, y: Some(400.0) }, false, now);
+        let origin = s.viewer.top_position();
+        let page = |s: &PdfPane| s.viewer.top_position().page;
+        let preview = |s: &mut PdfPane, query: &str, hits: Vec<PageRect>| {
+            s.search_preview(query);
+            let generation = search_generation(s);
+            for p in 0..s.viewer.page_count() {
+                s.search_hits(generation, p, if p == 2 { hits.clone() } else { vec![] }, now);
+            }
+            s.tick(later);
+        };
+        // Each query shows its first hit after where the preview began (low
+        // on page 3: off screen from there).
+        for cancel in ["cancel", "empty", "nothing found"] {
+            preview(&mut s, "ab", vec![rect(700.0)]);
+            assert_eq!(page(&s), 2, "at the hit");
+            match cancel {
+                "cancel" => {
+                    s.search_cancel();
+                    assert!(!s.search.is_active());
+                }
+                "empty" => {
+                    s.search_preview("");
+                    s.tick(later);
+                    assert_eq!(s.viewer.top_position(), origin, "back when emptied");
+                    s.search_cancel();
+                }
+                _ => {
+                    preview(&mut s, "abz", vec![]);
+                    assert!(s.message.is_none(), "no message while typing: {:?}", s.message);
+                    assert_eq!(s.viewer.top_position(), origin, "back when nothing is found");
+                    s.search_cancel();
+                }
+            }
+            s.tick(later);
+            assert_eq!(s.viewer.top_position(), origin, "back after {cancel}");
+        }
+        assert!(s.back.is_empty(), "nothing on the back history");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_preview_confirmed_keeps_its_hit_and_where_it_began() {
+        let mut s = session();
+        let now = Instant::now();
+        let later = now + Duration::from_secs(10);
+        s.viewer.goto(Target { page: 1, y: Some(400.0) }, false, now);
+        let origin = s.viewer.top_position();
+        s.search_preview("ab");
+        let generation = search_generation(&mut s);
+        for p in 0..s.viewer.page_count() {
+            s.search_hits(generation, p, if p == 2 { vec![rect(100.0), rect(300.0)] } else { vec![] }, now);
+        }
+        s.tick(later);
+        s.search_for("ab");
+        assert!(s.take_requests().is_empty(), "the same search goes on");
+        assert_eq!(s.search.current, Some((2, 0)));
+        assert_eq!(s.back.last().map(|b| b.0), Some(origin), "where the preview began, for Back");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn confirming_a_preview_before_the_results_arrive_still_selects_the_first_hit() {
+        let mut s = session();
+        let now = Instant::now();
+        for n in 1..="needle".len() {
+            s.search_preview(&"needle"[..n]);
+        }
+        // Typed quickly (or through a slow link): Enter comes before any hit.
+        s.search_for("needle");
+        let Some(Request::Search { generation, query, .. }) = s.take_requests().pop() else { panic!("a search") };
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        for p in 0..s.viewer.page_count() {
+            let rects = pdf::search_page(&doc, p, s.info.bounds[p], &query).unwrap();
+            s.search_hits(generation, p, rects, now);
+        }
+        assert_eq!(s.search.current, Some((0, 0)));
+        assert!(s.search_hint().contains("1/4"), "{}", s.search_hint());
     }
 
     #[test]

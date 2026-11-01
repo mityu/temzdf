@@ -97,8 +97,18 @@ const SESSION: &[(&str, &str, &str)] = &[
     ),
     (
         "search-for",
-        "(query: string): void",
-        "Page view: search the focused PDF pane for `query`, as typing it after / and Enter (the first hit is shown; an empty query clears the search)",
+        "(query: string, pane?: number): void",
+        "Page view: search the PDF pane (the focused one) for `query`, the first hit shown once known; after a searchPreview of it, from where that began (the hit shown stays); an empty query clears the search",
+    ),
+    (
+        "search-preview",
+        "(query: string, pane?: number): void",
+        "Page view: show the first hit of `query` after where the preview began, as typed (Vim's incsearch); nothing found or empty: back there. searchFor ends it, searchCancel drops it",
+    ),
+    (
+        "search-cancel",
+        "(pane?: number): void",
+        "Page view: drop the search of the PDF pane (the focused one); a preview's view goes back where it began",
     ),
     ("send-text", "(text: string): void", "Type text into the focused terminal pane (Vim's chansend)"),
     (
@@ -280,13 +290,26 @@ impl Session {
         let act = |s: &mut Self, a: Action| {
             s.action_inner(a, now).map(|o| (ScriptValue::Null, o)).map_err(|e| format!("{e:#}"))
         };
-        if name == "search-for" {
-            let query = text(0).ok_or("search-for: what to search for?")?;
-            let Some(pane) = self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf) else {
-                return Err(format!("{name}: the focused pane is not a PDF"));
+        if let "search-for" | "search-preview" | "search-cancel" = name {
+            let query = if name == "search-cancel" {
+                String::new()
+            } else {
+                text(0).ok_or(format!("{name}: what to search for?"))?
             };
-            pane.search_for(&query);
-            return ok(Outcome::Redraw);
+            let which = id(if name == "search-cancel" { 0 } else { 1 });
+            let target = which.unwrap_or(self.focus);
+            let Some(pane) = self.panes.get_mut(&target).and_then(PaneEntry::pdf) else {
+                return Err(match which {
+                    Some(p) => format!("{name}: pane {p} is not a PDF"),
+                    None => format!("{name}: the focused pane is not a PDF"),
+                });
+            };
+            let action = match name {
+                "search-for" => pane.search_for(&query),
+                "search-preview" => pane.search_preview(&query),
+                _ => pane.search_cancel(),
+            };
+            return ok(if action == temzdf_pdfview::pane::Action::None { Outcome::None } else { Outcome::Redraw });
         }
         if let Some(cmd) = Command::from_name(name) {
             let Some(pane) = self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf) else {
