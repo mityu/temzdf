@@ -7,10 +7,14 @@
 # takes the message away (dismissed).
 pause 1.5
 shot start
-# Mostly dark where a page would be white (the line crosses it).
+# Mostly dark where a page would be white (the line crosses it): the middle
+# of the terminal's cells (on macOS the screenshot is the whole display,
+# with an alpha channel the mean would count).
 dark_middle() {
   local mean
-  mean=$(magick "$outdir/start.png" -crop 50%x50%+25%+25% +repage -colorspace gray -format '%[fx:mean]' info:)
+  read_geometry || return 1
+  mean=$(magick "$outdir/start.png" -alpha off -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage \
+    -gravity center -crop 50%x50%+0+0 +repage -colorspace gray -format '%[fx:mean]' info:)
   awk -v m="$mean" 'BEGIN { exit !(m < 0.2) }'
 }
 check blank dark_middle
