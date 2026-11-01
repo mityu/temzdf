@@ -378,6 +378,48 @@ mod tests {
         assert!(search_page(&doc, 0, bounds[0], "  ").unwrap().is_empty());
     }
 
+    /// A one-page PDF showing `content` (a content stream; font /F1 is
+    /// Helvetica), with a correct cross-reference table.
+    fn pdf_with_content(content: &str) -> Vec<u8> {
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R \
+             /Resources << /Font << /F1 5 0 R >> >> >>"
+                .to_string(),
+            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, o) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).bytes());
+        }
+        let xref = out.len();
+        out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).bytes());
+        for o in offsets {
+            out.extend(format!("{o:010} 00000 n \n").bytes());
+        }
+        out.extend(
+            format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).bytes(),
+        );
+        out
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "MuPDF is foreign code")]
+    fn search_through_actualtext_that_ends_before_its_glyphs() {
+        // An ActualText that is all of the start of its glyphs ("Ab" over
+        // "Abc"): a debug build of MuPDF failed an assertion extracting the
+        // text (stext-device.c, `z != 0`) and aborted the session.
+        let doc =
+            open_bytes(&pdf_with_content("/Span << /ActualText (Ab) >> BDC BT /F1 24 Tf 20 100 Td (Abc) Tj ET EMC"))
+                .unwrap();
+        let bounds = page_bounds(&doc).unwrap();
+        assert_eq!(search_page(&doc, 0, bounds[0], "Ab").unwrap().len(), 1);
+    }
+
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn links_internal_and_external() {
