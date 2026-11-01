@@ -2,7 +2,11 @@
 //! side by side or stacked are separated by one cell for the border. A split
 //! halves its area when made and keeps its first half's size after that: when
 //! the screen changes size, the last (right or bottom) pane takes the
-//! difference, as in Vim.
+//! difference, as in Vim. A pane can have a fixed width or height (Vim's
+//! `winfixwidth`, `winfixheight`): it keeps it when the screen changes size
+//! and when panes are equalized, and needs no more than it.
+
+use std::collections::HashMap;
 
 use termpix_core::geom::Rect;
 
@@ -41,14 +45,24 @@ enum Node {
     },
 }
 
+/// Panes with a fixed size: across which splits (`Vertical`: the height),
+/// and how many cells.
+type Fixed = HashMap<PaneId, (Split, u32)>;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     root: Node,
+    fixed: Fixed,
 }
 
 impl Layout {
     pub fn new(pane: PaneId) -> Self {
-        Self { root: Node::Leaf(pane) }
+        Self { root: Node::Leaf(pane), fixed: Fixed::new() }
+    }
+
+    /// `pane`'s fixed size, if it has one.
+    pub fn fixed(&self, pane: PaneId) -> Option<(Split, u32)> {
+        self.fixed.get(&pane).copied()
     }
 
     /// The panes in order (left to right, top to bottom within each split).
@@ -70,18 +84,18 @@ impl Layout {
     /// Each pane's rectangle in `area` (cells), with a one-cell border
     /// between neighbours.
     pub fn rects(&self, area: Rect) -> Vec<(PaneId, Rect)> {
-        fn walk(n: &Node, r: Rect, out: &mut Vec<(PaneId, Rect)>) {
+        fn walk(n: &Node, r: Rect, fx: &Fixed, out: &mut Vec<(PaneId, Rect)>) {
             match n {
                 Node::Leaf(p) => out.push((*p, r)),
                 Node::Split { split, a, b, size } => {
-                    let (ra, rb) = parts(*split, r, *size, min_extent(b, *split));
-                    walk(a, ra, out);
-                    walk(b, rb, out);
+                    let (ra, rb) = split_parts(*split, r, *size, a, b, fx);
+                    walk(a, ra, fx, out);
+                    walk(b, rb, fx, out);
                 }
             }
         }
         let mut out = Vec::new();
-        walk(&self.root, area, &mut out);
+        walk(&self.root, area, &self.fixed, &mut out);
         out
     }
 
@@ -95,6 +109,20 @@ impl Layout {
     /// the full width or height at that edge, as Vim's `:topleft` and
     /// `:botright`), `new` going before (left/above) or after it.
     pub fn split_at(&mut self, target: Option<PaneId>, new: PaneId, split: Split, before: bool, area: Rect) -> bool {
+        self.split_sized(target, new, split, before, None, area)
+    }
+
+    /// As [`Layout::split_at`], `new` `size` cells wide (`Horizontal`) or
+    /// high and fixed at that when given.
+    pub fn split_sized(
+        &mut self,
+        target: Option<PaneId>,
+        new: PaneId,
+        split: Split,
+        before: bool,
+        size: Option<u32>,
+        area: Rect,
+    ) -> bool {
         let r = match target {
             Some(pane) => match self.rects(area).into_iter().find(|(p, _)| *p == pane) {
                 Some((_, r)) => r,
@@ -104,12 +132,33 @@ impl Layout {
         };
         let (a, b) = halves(split, r);
         let fits = |r: Rect| r.w >= MIN_COLS && r.h >= MIN_ROWS;
-        if !fits(a) || !fits(b) {
-            return false;
-        }
-        let size = match split {
-            Split::Horizontal => a.w,
-            Split::Vertical => a.h,
+        let size = match size {
+            // The old pane keeps its minimum (or its own fixed size), and
+            // the new one its minimum across.
+            Some(n) => {
+                let (extent, across, min_across) = match split {
+                    Split::Horizontal => (r.w, r.h, MIN_ROWS),
+                    Split::Vertical => (r.h, r.w, MIN_COLS),
+                };
+                if across < min_across {
+                    return false;
+                }
+                let old = match target.and_then(|t| self.fixed.get(&t)) {
+                    Some((s, f)) if *s == split => *f,
+                    _ => min_extent(&Node::Leaf(PaneId::MAX), split, &self.fixed),
+                };
+                if n == 0 || n + 1 + old > extent {
+                    return false;
+                }
+                self.fixed.insert(new, (split, n));
+                // The first half's size (the new pane's when it goes first).
+                if before { n } else { extent - 1 - n }
+            }
+            None if !fits(a) || !fits(b) => return false,
+            None => match split {
+                Split::Horizontal => a.w,
+                Split::Vertical => a.h,
+            },
         };
         let join = |old: Node| {
             let (a, b) = if before { (Node::Leaf(new), old) } else { (old, Node::Leaf(new)) };
@@ -136,6 +185,14 @@ impl Layout {
 
     /// Remove a pane; its sibling takes the space. False for the last pane.
     pub fn remove(&mut self, pane: PaneId) -> bool {
+        let removed = self.remove_node(pane);
+        if removed {
+            self.fixed.remove(&pane);
+        }
+        removed
+    }
+
+    fn remove_node(&mut self, pane: PaneId) -> bool {
         fn walk(n: &mut Node, pane: PaneId) -> bool {
             let Node::Split { a, b, .. } = n else { return false };
             let keep = match (a.as_ref(), b.as_ref()) {
@@ -156,6 +213,14 @@ impl Layout {
 
     /// Put pane `new` where `old` is. False when `old` is not in the layout.
     pub fn replace(&mut self, old: PaneId, new: PaneId) -> bool {
+        let replaced = self.replace_leaf(old, new);
+        if replaced && let Some(f) = self.fixed.remove(&old) {
+            self.fixed.insert(new, f);
+        }
+        replaced
+    }
+
+    fn replace_leaf(&mut self, old: PaneId, new: PaneId) -> bool {
         fn walk(n: &mut Node, old: PaneId, new: PaneId) -> bool {
             match n {
                 Node::Leaf(p) if *p == old => {
@@ -174,7 +239,7 @@ impl Layout {
     /// is no room (nothing changes then).
     pub fn move_to_edge(&mut self, pane: PaneId, side: Direction, area: Rect) -> bool {
         let before = self.clone();
-        if !self.remove(pane) {
+        if !self.remove_node(pane) {
             return false;
         }
         let (split, first) = match side {
@@ -194,22 +259,24 @@ impl Layout {
     /// smallest size), as shown on `area`; after moves that put subtrees in
     /// places sized for others. False when the layout cannot fit at all.
     fn settle(&mut self, area: Rect) -> bool {
-        fn walk(n: &mut Node, r: Rect) -> bool {
-            let Node::Split { split, a, b, size } = n else { return r.w >= MIN_COLS && r.h >= MIN_ROWS };
+        fn walk(n: &mut Node, r: Rect, fx: &Fixed) -> bool {
+            let Node::Split { split, a, b, size } = n else {
+                return r.w >= min_extent(n, Split::Horizontal, fx) && r.h >= min_extent(n, Split::Vertical, fx);
+            };
             let room = match split {
                 Split::Horizontal => r.w,
                 Split::Vertical => r.h,
             }
             .saturating_sub(1);
-            let (lo, min_b) = (min_extent(a, *split), min_extent(b, *split));
+            let (lo, min_b) = (min_extent(a, *split, fx), min_extent(b, *split, fx));
             if lo + min_b > room {
                 return false;
             }
             *size = (*size).clamp(lo, room - min_b);
-            let (ra, rb) = parts(*split, r, *size, min_b);
-            walk(a, ra) && walk(b, rb)
+            let (ra, rb) = split_parts(*split, r, *size, a, b, fx);
+            walk(a, ra, fx) && walk(b, rb, fx)
         }
-        walk(&mut self.root, area)
+        walk(&mut self.root, area, &self.fixed)
     }
 
     /// Rotate the panes in the row or column `pane` is in (the splits of
@@ -311,7 +378,7 @@ impl Layout {
         let mut path = Vec::new();
         let (mut n, mut r) = (&self.root, area);
         while let Node::Split { split, a, b, size } = n {
-            let (ra, rb) = parts(*split, r, *size, min_extent(b, *split));
+            let (ra, rb) = split_parts(*split, r, *size, a, b, &self.fixed);
             if inside(ra) {
                 (n, r) = (a, ra);
                 path.push(false);
@@ -409,7 +476,7 @@ impl Layout {
         let (mut n, mut r) = (&self.root, area);
         for &side in path {
             let Node::Split { split, a, b, size } = n else { return None };
-            let (ra, rb) = parts(*split, r, *size, min_extent(b, *split));
+            let (ra, rb) = split_parts(*split, r, *size, a, b, &self.fixed);
             (n, r) = if side { (b, rb) } else { (a, ra) };
         }
         match n {
@@ -421,8 +488,8 @@ impl Layout {
     /// The first half's size of the split at `path`, as shown.
     fn size_of(&self, path: &[bool], area: Rect) -> Option<i32> {
         let (r, split) = self.split_rect(path, area)?;
-        let Node::Split { size, b, .. } = self.node(path)? else { return None };
-        let (a, _) = parts(split, r, *size, min_extent(b, split));
+        let Node::Split { size, a, b, .. } = self.node(path)? else { return None };
+        let (a, _) = split_parts(split, r, *size, a, b, &self.fixed);
         Some(match split {
             Split::Horizontal => a.w as i32,
             Split::Vertical => a.h as i32,
@@ -454,11 +521,28 @@ impl Layout {
             Split::Vertical => r.h,
         }
         .saturating_sub(1) as i32;
-        let (lo, hi) = (min_extent(a, split) as i32, room - min_extent(b, split) as i32);
+        // A fixed pane on either side changes its own size (one cell at least).
+        let fixed_leaf = |n: &Node| match n {
+            Node::Leaf(p) => self.fixed.get(p).filter(|(s, _)| *s == split).map(|_| *p),
+            Node::Split { .. } => None,
+        };
+        let (fa, fb) = (fixed_leaf(a), fixed_leaf(b));
+        let (min_a, min_b) = (
+            if fa.is_some() { 1 } else { min_extent(a, split, &self.fixed) as i32 },
+            if fb.is_some() { 1 } else { min_extent(b, split, &self.fixed) as i32 },
+        );
+        let (lo, hi) = (min_a, room - min_b);
         if lo > hi {
             return false;
         }
         let to = to.clamp(lo, hi);
+        if let Some(p) = fb {
+            self.fixed.insert(p, (split, (room - to) as u32));
+        } else if let Some(p) = fa {
+            self.fixed.insert(p, (split, to as u32));
+        } else if fixed_extent(a, split, &self.fixed).is_some() || fixed_extent(b, split, &self.fixed).is_some() {
+            return false;
+        }
         *size = to as u32;
         to != before
     }
@@ -469,31 +553,35 @@ impl Layout {
     /// column) of it, so neighbours in a row come out equal however the
     /// splits nest. False if nothing changed.
     pub fn equalize(&mut self, only: Option<Split>, area: Rect) -> bool {
-        fn walk(n: &mut Node, r: Rect, only: Option<Split>) -> bool {
+        fn walk(n: &mut Node, r: Rect, only: Option<Split>, fx: &Fixed) -> bool {
             let Node::Split { split, a, b, size } = n else { return false };
             let split = *split;
             let mut changed = false;
-            if only.is_none_or(|o| o == split) {
+            let (ua, ub) = (in_a_row(a, split, fx), in_a_row(b, split, fx));
+            if only.is_none_or(|o| o == split) && ua + ub > 0 {
                 let extent = match split {
                     Split::Horizontal => r.w,
                     Split::Vertical => r.h,
                 };
-                let (ua, ub) = (in_a_row(a, split), in_a_row(b, split));
-                // Units of the same size with one-cell borders between them:
-                // the first half ends where its units do.
-                let want = ((extent as u64 + 1) * ua as u64 * 2 / (ua + ub) as u64).div_ceil(2) as u32;
-                let (lo, hi) = (min_extent(a, split), extent.saturating_sub(1).saturating_sub(min_extent(b, split)));
+                // Units of the same size with one-cell borders between them,
+                // in what fixed panes (and their borders) leave: the first
+                // half ends where its units and fixed panes do.
+                let (xa, xb) = (fixed_cells(a, split, fx), fixed_cells(b, split, fx));
+                let free = (extent + 1).saturating_sub(xa + xb);
+                let want = (free as u64 * ua as u64 * 2 / (ua + ub) as u64).div_ceil(2) as u32 + xa;
+                let (lo, hi) =
+                    (min_extent(a, split, fx), extent.saturating_sub(1).saturating_sub(min_extent(b, split, fx)));
                 let want = want.saturating_sub(1).clamp(lo, hi.max(lo));
                 changed = *size != want;
                 *size = want;
             }
-            let (ra, rb) = parts(split, r, *size, min_extent(b, split));
-            let ca = walk(a, ra, only);
-            let cb = walk(b, rb, only);
+            let (ra, rb) = split_parts(split, r, *size, a, b, fx);
+            let ca = walk(a, ra, only, fx);
+            let cb = walk(b, rb, only, fx);
             changed | ca | cb
         }
         let before = self.rects(area);
-        walk(&mut self.root, area, only);
+        walk(&mut self.root, area, only, &self.fixed);
         self.rects(area) != before
     }
 
@@ -524,11 +612,34 @@ impl Layout {
 
 /// How many panes of `n` stand in a row across `split` (side by side for
 /// `Horizontal`), at most: what `equalize` shares the room by.
-fn in_a_row(n: &Node, split: Split) -> u32 {
+/// (Fixed panes do not count.)
+fn in_a_row(n: &Node, split: Split, fx: &Fixed) -> u32 {
     match n {
+        Node::Leaf(p) if fx.get(p).is_some_and(|(s, _)| *s == split) => 0,
         Node::Leaf(_) => 1,
-        Node::Split { split: s, a, b, .. } if *s == split => in_a_row(a, split) + in_a_row(b, split),
-        Node::Split { a, b, .. } => in_a_row(a, split).max(in_a_row(b, split)),
+        Node::Split { split: s, a, b, .. } if *s == split => in_a_row(a, split, fx) + in_a_row(b, split, fx),
+        Node::Split { a, b, .. } => in_a_row(a, split, fx).max(in_a_row(b, split, fx)),
+    }
+}
+
+/// The cells fixed panes of `n` take across `split`, each with a border:
+/// what `equalize` leaves out of the share.
+fn fixed_cells(n: &Node, split: Split, fx: &Fixed) -> u32 {
+    match n {
+        Node::Leaf(p) => fx.get(p).filter(|(s, _)| *s == split).map_or(0, |(_, f)| f + 1),
+        Node::Split { split: s, a, b, .. } if *s == split => fixed_cells(a, split, fx) + fixed_cells(b, split, fx),
+        Node::Split { a, b, .. } => fixed_cells(a, split, fx).min(fixed_cells(b, split, fx)),
+    }
+}
+
+/// The size of `n` across `split` when fixed panes decide it all.
+fn fixed_extent(n: &Node, split: Split, fx: &Fixed) -> Option<u32> {
+    match n {
+        Node::Leaf(p) => fx.get(p).filter(|(s, _)| *s == split).map(|(_, f)| *f),
+        Node::Split { split: s, a, b, .. } if *s == split => {
+            Some(fixed_extent(a, split, fx)? + 1 + fixed_extent(b, split, fx)?)
+        }
+        Node::Split { a, b, .. } => Some(fixed_extent(a, split, fx)?.max(fixed_extent(b, split, fx)?)),
     }
 }
 
@@ -536,16 +647,35 @@ fn in_a_row(n: &Node, split: Split) -> u32 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorderId(Vec<bool>);
 
-/// The fewest cells `n` needs across `split` (width for `Horizontal`).
-fn min_extent(n: &Node, split: Split) -> u32 {
+/// The fewest cells `n` needs across `split` (width for `Horizontal`): a
+/// fixed pane its size.
+fn min_extent(n: &Node, split: Split, fx: &Fixed) -> u32 {
     match n {
-        Node::Leaf(_) => match split {
-            Split::Horizontal => MIN_COLS,
-            Split::Vertical => MIN_ROWS,
+        Node::Leaf(p) => match (fx.get(p), split) {
+            (Some((s, f)), _) if *s == split => *f,
+            (_, Split::Horizontal) => MIN_COLS,
+            (_, Split::Vertical) => MIN_ROWS,
         },
-        Node::Split { split: s, a, b, .. } if *s == split => min_extent(a, split) + 1 + min_extent(b, split),
-        Node::Split { a, b, .. } => min_extent(a, split).max(min_extent(b, split)),
+        Node::Split { split: s, a, b, .. } if *s == split => min_extent(a, split, fx) + 1 + min_extent(b, split, fx),
+        Node::Split { a, b, .. } => min_extent(a, split, fx).max(min_extent(b, split, fx)),
     }
+}
+
+/// How the split of `a` and `b` divides `r`: a fixed second half keeps its
+/// size (the first takes the rest), else a fixed first half, else the first
+/// is `size` cells (see [`parts`]).
+fn split_parts(split: Split, r: Rect, size: u32, a: &Node, b: &Node, fx: &Fixed) -> (Rect, Rect) {
+    let room = match split {
+        Split::Horizontal => r.w,
+        Split::Vertical => r.h,
+    }
+    .saturating_sub(1);
+    let size = match (fixed_extent(b, split, fx), fixed_extent(a, split, fx)) {
+        (Some(fb), _) => room.saturating_sub(fb),
+        (None, Some(fa)) => fa,
+        (None, None) => size,
+    };
+    parts(split, r, size, if fixed_extent(b, split, fx).is_some() { 0 } else { min_extent(b, split, fx) })
 }
 
 /// The two halves of `r` with a one-cell border between them.
@@ -554,7 +684,7 @@ fn halves(split: Split, r: Rect) -> (Rect, Rect) {
         Split::Horizontal => r.w,
         Split::Vertical => r.h,
     };
-    parts(split, r, extent.saturating_sub(1) / 2, min_extent(&Node::Leaf(0), split))
+    parts(split, r, extent.saturating_sub(1) / 2, min_extent(&Node::Leaf(PaneId::MAX), split, &Fixed::new()))
 }
 
 /// `r` in two with a one-cell border between them, the first `size` cells
@@ -601,6 +731,42 @@ mod tests {
 
     fn widths(l: &Layout, area: Rect) -> Vec<(PaneId, u32, u32)> {
         l.rects(area).into_iter().map(|(p, r)| (p, r.w, r.h)).collect()
+    }
+
+    #[test]
+    fn a_fixed_pane_keeps_its_size_through_resizes_and_equalizing() {
+        let mut l = Layout::new(1);
+        assert!(l.split(1, 2, Split::Horizontal, AREA));
+        // One row under pane 1, below its minimum, fixed.
+        assert!(l.split_sized(Some(1), 3, Split::Vertical, false, Some(1), AREA));
+        assert_eq!(widths(&l, AREA), [(1, 40, 29), (3, 40, 1), (2, 40, 31)]);
+        // A taller screen: the pane above takes the difference.
+        let tall = Rect::new(0, 0, 81, 41);
+        assert_eq!(widths(&l, tall), [(1, 40, 39), (3, 40, 1), (2, 40, 41)]);
+        assert!(l.move_border(1, Split::Horizontal, 10, AREA));
+        assert!(l.equalize(None, AREA));
+        assert_eq!(widths(&l, AREA), [(1, 40, 29), (3, 40, 1), (2, 40, 31)], "equalized");
+        // Two panes stacked beside a stack with a fixed one share what it
+        // leaves.
+        let mut m = Layout::new(1);
+        assert!(m.split(1, 2, Split::Vertical, AREA));
+        assert!(m.split_sized(Some(2), 3, Split::Vertical, false, Some(1), AREA));
+        assert!(m.move_border(1, Split::Vertical, -5, AREA));
+        assert!(m.equalize(None, AREA));
+        // 31 = 14 + 1 + 14 + 1 + 1
+        assert_eq!(widths(&m, AREA), [(1, 81, 14), (2, 81, 14), (3, 81, 1)]);
+        // Resizing it changes its fixed size; the border drags too.
+        assert!(l.set_pane_size(3, Split::Vertical, 3, AREA));
+        assert_eq!((l.fixed(3), widths(&l, AREA)[0]), (Some((Split::Vertical, 3)), (1, 40, 27)));
+        let (id, _) = l.border_at(AREA, 5, 27).expect("the border above it");
+        assert!(l.drag_border(&id, 5, 25, AREA));
+        assert_eq!(l.fixed(3), Some((Split::Vertical, 5)));
+        // Too big for the pane it splits: refused, nothing fixed.
+        assert!(!l.split_sized(Some(2), 4, Split::Vertical, false, Some(28), AREA));
+        assert_eq!(l.fixed(4), None);
+        // Gone with its pane.
+        assert!(l.remove(3));
+        assert_eq!((l.fixed(3), widths(&l, AREA)[0]), (None, (1, 40, 31)));
     }
 
     #[test]

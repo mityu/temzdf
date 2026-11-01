@@ -318,7 +318,7 @@ comes later (`doc/floating-panes.md`).
 `cmd.*` and `action.*` share the command registry
 (`crates/temzdf-server/src/session/commands.rs`; `temzdf print-types` lists
 them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
-`focusNextPane`, `resizePane`, `equalizePanes`, `maximizePane`, `movePane`, `rotatePanes`, `closePane`,
+`focusNextPane`, `focusPane`, `resizePane`, `equalizePanes`, `maximizePane`, `movePane`, `rotatePanes`, `closePane`,
 `openFloat`, `floatConfig`,
 `toggleFloats`, `toggleFloating`, `newTab`, `closeTab`, `nextTab`,
 `prevTab`, `gotoTab`, `moveTab`, `renameTab`, `breakPane`, `tabs`,
@@ -344,6 +344,15 @@ action split right`). `resizePane("left", 5)` moves a border of the focused
 pane five cells left (as tmux's `resize-pane -L 5`), `resizePane("wider",
 5)` makes it five cells wider (as Vim's `5<C-w>>`), `resizePane({ width:
 40 })` sets its size.
+`split` returns the new pane and also takes an object: `split({ side:
+"bottom", buffer: b, height: 1, pane: p })` splits pane `p` (the focused
+one by default) and shows buffer `b` there (else what the split pane shows);
+`width` (a split to the side) or `height` (up or down), in cells or `"N%"`
+of the screen, makes the new pane that size and keeps it so (as Vim's
+`winfixwidth` / `winfixheight`: resizing the screen and `equalizePanes`
+leave it, `resizePane` and dragging its border change it; it may be smaller
+than other panes can be). `focusPane(id)` focuses a pane, going to its tab
+page.
 
 ## Environment
 

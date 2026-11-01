@@ -236,8 +236,8 @@ enum Spot {
     /// The first pane of the session.
     First,
     /// Next to `target` (the whole layout for `None`), before (left/above)
-    /// or after it.
-    Split { target: Option<PaneId>, split: Split, before: bool },
+    /// or after it; `size` cells wide (or high) and fixed when given.
+    Split { target: Option<PaneId>, split: Split, before: bool, size: Option<u32> },
     /// Instead of what this pane shows (Vim's `:edit`).
     Replace(PaneId),
     /// A floating pane, on top of the others.
@@ -510,7 +510,7 @@ impl Session {
             // Beside a focused float: another float (zellij).
             Spot::Float(self.cascade())
         } else if self.layout.is_some() {
-            Spot::Split { target: Some(self.focus), split: Split::Horizontal, before: false }
+            Spot::Split { target: Some(self.focus), split: Split::Horizontal, before: false, size: None }
         } else {
             Spot::First
         }
@@ -637,19 +637,19 @@ impl Session {
         // A float has no place in the layout to split: the tiled pane
         // focused last stands in (rather than "no room").
         let tiled = |t: PaneId| if self.is_float(t) { self.tiled_focus } else { t };
-        let (target, split, before) = match spot {
+        let (target, split, before, size) = match spot {
             // (A pane of another tab is no target here.)
-            Spot::Split { target: Some(t), split, before } if self.tab_of(t) == Some(self.tab) => {
-                (Some(tiled(t)), split, before)
+            Spot::Split { target: Some(t), split, before, size } if self.tab_of(t) == Some(self.tab) => {
+                (Some(tiled(t)), split, before, size)
             }
-            Spot::Split { target: None, split, before } => (None, split, before),
+            Spot::Split { target: None, split, before, size } => (None, split, before, size),
             // The target went away meanwhile: split the focused pane instead.
-            _ => (Some(tiled(self.focus)), Split::Horizontal, false),
+            _ => (Some(tiled(self.focus)), Split::Horizontal, false, None),
         };
         match self.layout.as_mut() {
             None => self.layout = Some(Layout::new(id)),
             Some(layout) => {
-                if !layout.split_at(target, id, split, before, area) {
+                if !layout.split_sized(target, id, split, before, size, area) {
                     bail!("no room for another pane");
                 }
             }
@@ -1540,26 +1540,40 @@ impl Session {
         Ok(out.merge(self.flush_events()))
     }
 
+    /// Split `target` (the whole layout for `None`): the new pane shows
+    /// `buf`, or what `target` shows (the same document again, a new shell
+    /// where it is); `size` cells wide (or high) and fixed when given. From
+    /// a float: a new float instead. Returns the new pane (`None` for a
+    /// document still opening).
+    pub(super) fn split_pane(
+        &mut self,
+        target: Option<PaneId>,
+        split: Split,
+        before: bool,
+        size: Option<u32>,
+        buf: Option<BufferId>,
+    ) -> Result<Option<PaneId>, String> {
+        let from = target.unwrap_or(self.focus);
+        let spot =
+            if self.is_float(from) { Spot::Float(self.cascade()) } else { Spot::Split { target, split, before, size } };
+        let what = match (buf, self.panes.get(&from).map(|e| &e.kind)) {
+            (Some(b), _) => floats::FloatWhat::Buffer(b),
+            (None, Some(Kind::Pdf { doc, .. })) => floats::FloatWhat::Buffer(*doc),
+            // A new shell where the focused one is.
+            (None, Some(Kind::Term { buf, .. })) => {
+                let cwd = self.terms.get(buf).and_then(|t| t.term.pwd()).filter(|d| d.is_dir());
+                floats::FloatWhat::Spawn(Spawn { argv: None, cwd, env: Vec::new() })
+            }
+            (None, None) => return Err(format!("no pane {from}")),
+        };
+        self.open_what(what, spot)
+    }
+
     fn action_inner(&mut self, action: Action, _now: Instant) -> Result<Outcome> {
         match action {
             Action::Split { split, before, root } => {
-                let spot = if self.is_float(self.focus) {
-                    Spot::Float(self.cascade())
-                } else {
-                    Spot::Split { target: if root { None } else { Some(self.focus) }, split, before }
-                };
-                match self.panes.get(&self.focus).map(|e| &e.kind) {
-                    Some(Kind::Pdf { doc, .. }) => {
-                        let doc = *doc;
-                        self.add_pdf_pane(doc, spot);
-                    }
-                    // A new shell where the focused one is.
-                    Some(Kind::Term { buf, .. }) => {
-                        let cwd = self.terms.get(buf).and_then(|t| t.term.pwd()).filter(|d| d.is_dir());
-                        self.open_terminal(&Spawn { argv: None, cwd, env: Vec::new() }, spot)?;
-                    }
-                    None => {}
-                }
+                let target = if root { None } else { Some(self.focus) };
+                self.split_pane(target, split, before, None, None).map_err(|e| anyhow::anyhow!(e))?;
             }
             Action::NewPane { spec, cwd } => self.new_pane(&spec, cwd.as_deref())?,
             Action::MoveFocus(dir) => {
@@ -3682,6 +3696,45 @@ mod tests {
             _ => None,
         });
         assert!(copied.as_deref().is_some_and(|t| t.starts_with("temzdf sample document")), "{copied:?}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn split_shows_a_buffer_at_a_fixed_size_and_returns_the_pane() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo first; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "first");
+        let first = s.focus;
+        let buf = s.panes[&first].buffer();
+        let opts = |kv: &[(&str, ScriptValue)]| ScriptValue::map(kv.iter().cloned());
+        let n = |v: f64| ScriptValue::Num(v);
+        let side = |v: &str| ScriptValue::Str(v.into());
+        let split = |s: &mut Session, o: ScriptValue| s.run_command("split", &[o], None, Instant::now());
+        // The first terminal again, one row high, below it.
+        let (pane, _) =
+            split(&mut s, opts(&[("side", side("bottom")), ("buffer", n(buf as f64)), ("height", n(1.0))])).unwrap();
+        let pane = pane.as_num().expect("the new pane") as PaneId;
+        assert_eq!((s.focus, s.panes[&pane].buffer()), (pane, buf));
+        assert_eq!(s.panes[&pane].rect, Rect::new(0, 29, 90, 1));
+        assert_eq!(s.panes[&first].rect, Rect::new(0, 0, 90, 28), "less the row and the border");
+        // Fixed: a taller screen and equalizing leave it one row.
+        s.resize(Geometry { rows: 40, ..GEOMETRY });
+        assert_eq!(s.panes[&pane].rect, Rect::new(0, 39, 90, 1));
+        cmd(&mut s, "equalize-panes", &[], None).unwrap();
+        assert_eq!(s.panes[&pane].rect.h, 1);
+        // Back to the first pane by its id; a pane of another one to split.
+        cmd(&mut s, "focus-pane", &[&first.to_string()], None).unwrap();
+        assert_eq!(s.focus, first);
+        let (right, _) =
+            split(&mut s, opts(&[("side", side("right")), ("pane", n(first as f64)), ("width", side("50%"))])).unwrap();
+        let right = right.as_num().unwrap() as PaneId;
+        assert_eq!((s.panes[&right].rect.w, s.panes[&right].rect.h), (45, 38));
+        // Beside the one-row pane there is no room (4 rows at least).
+        let beside = opts(&[("side", side("right")), ("pane", n(pane as f64)), ("width", n(20.0))]);
+        assert!(split(&mut s, beside).is_err());
+        // Wrong combinations are refused.
+        assert!(split(&mut s, opts(&[("side", side("bottom")), ("width", n(3.0))])).is_err());
+        assert!(split(&mut s, opts(&[("buffer", n(9999.0))])).is_err());
+        assert!(cmd(&mut s, "focus-pane", &["9999"], None).is_err());
     }
 
     #[test]

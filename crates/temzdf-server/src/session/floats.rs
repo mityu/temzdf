@@ -33,7 +33,7 @@ pub(super) enum Extent {
 }
 
 impl Extent {
-    fn of(self, whole: u32) -> u32 {
+    pub(super) fn of(self, whole: u32) -> u32 {
         match self {
             Self::Cells(n) => n,
             Self::Percent(p) => whole * p.min(100) / 100,

@@ -20,12 +20,17 @@ use crate::layout::{Direction, PaneId, Split};
 const SESSION: &[(&str, &str, &str)] = &[
     (
         "split",
-        "(side?: \"right\" | \"left\" | \"bottom\" | \"top\", scope?: \"pane\" | \"screen\"): void",
-        "Another pane like the focused one (the same document, or a new shell); `screen` puts it at that edge of the whole screen",
+        "(side?: \"right\" | \"left\" | \"bottom\" | \"top\" | { side?: \"right\" | \"left\" | \"bottom\" | \"top\"; scope?: \"pane\" | \"screen\"; buffer?: number; width?: number | string; height?: number | string; pane?: number }, scope?: \"pane\" | \"screen\"): number | null",
+        "Another pane like the focused one (the same document, or a new shell), or showing `buffer`; `screen` puts it at that edge of the whole screen; `pane` splits that pane; `width`/`height` (cells or \"N%\" of the screen) make it that size, fixed (as Vim's winfixwidth/winfixheight); returns the new pane (null for a document still opening)",
     ),
     ("new-pane", "(...words: string[]): void", "As `temzdf action new-pane`: a file, or \"--\" and a command"),
     ("move-focus", "(dir: \"left\" | \"right\" | \"up\" | \"down\"): void", "Focus the pane in that direction"),
     ("focus-next-pane", "(): void", "Focus the next pane"),
+    (
+        "focus-pane",
+        "(pane: number): void",
+        "Focus pane `pane`, going to its tab page (as Vim's win_gotoid); not a hidden float",
+    ),
     (
         "resize-pane",
         "(how: \"left\" | \"right\" | \"up\" | \"down\" | \"wider\" | \"narrower\" | \"taller\" | \"shorter\" | { width?: number; height?: number }, cells?: number): void",
@@ -277,10 +282,11 @@ impl Session {
         }
         match name {
             "split" => {
-                // split("right"), split({ side, scope }), split("right", "screen")
-                let (side, scope) = match args.first() {
-                    Some(ScriptValue::Map(_)) => {
-                        let o = &args[0];
+                // split("right"), split({ side, scope, ... }), split("right", "screen")
+                let none = ScriptValue::Null;
+                let o = args.first().filter(|o| matches!(o, ScriptValue::Map(_))).unwrap_or(&none);
+                let (side, scope) = match o {
+                    ScriptValue::Map(_) => {
                         (o.get("side").and_then(ScriptValue::as_str), o.get("scope").and_then(ScriptValue::as_str))
                     }
                     _ => (args.first().and_then(ScriptValue::as_str), args.get(1).and_then(ScriptValue::as_str)),
@@ -295,8 +301,41 @@ impl Session {
                     "bottom" | "down" if !self.options.splitbelow => "top",
                     s => s,
                 };
-                let a = Action::split(side, root).map_err(|e| format!("{e:#}"))?;
-                act(self, a)
+                let Action::Split { split, before, .. } = Action::split(side, root).map_err(|e| format!("{e:#}"))?
+                else {
+                    unreachable!("a split")
+                };
+                let num = |k: &str| o.get(k).filter(|v| !matches!(v, ScriptValue::Null));
+                let target = match num("pane") {
+                    Some(p) => {
+                        let p = p.as_num().ok_or("split: pane is a number")? as PaneId;
+                        if !self.panes.contains_key(&p) {
+                            return Err(format!("split: no pane {p}"));
+                        }
+                        Some(p)
+                    }
+                    None => Some(self.focus),
+                };
+                let target = if root { None } else { target };
+                let buffer = match num("buffer") {
+                    Some(b) => Some(b.as_num().ok_or("split: buffer is a number")? as BufferId),
+                    None => None,
+                };
+                let area = self.area();
+                let size = match (split, num("width"), num("height")) {
+                    (_, Some(_), Some(_)) => return Err("split: width or height, not both".into()),
+                    (Split::Horizontal, Some(w), None) => {
+                        Some(floats::Extent::parse(w).ok_or("split: bad width")?.of(area.w))
+                    }
+                    (Split::Vertical, None, Some(h)) => {
+                        Some(floats::Extent::parse(h).ok_or("split: bad height")?.of(area.h))
+                    }
+                    (_, None, None) => None,
+                    (Split::Horizontal, None, Some(_)) => return Err("split: a split to the side takes a width".into()),
+                    (Split::Vertical, Some(_), None) => return Err("split: a split up or down takes a height".into()),
+                };
+                let pane = self.split_pane(target, split, before, size, buffer).map_err(|e| format!("split: {e}"))?;
+                Ok((pane.map_or(ScriptValue::Null, |p| ScriptValue::Num(p as f64)), Outcome::Redraw))
             }
             "open-float" => {
                 let what = read_what(args).map_err(|e| format!("openFloat: {e}"))?;
@@ -393,6 +432,16 @@ impl Session {
                 act(self, Action::MoveFocus(dir))
             }
             "focus-next-pane" => act(self, Action::FocusNextPane),
+            "focus-pane" => {
+                let pane = id(0).ok_or("focusPane: which pane?")?;
+                let tab = self.tab_of(pane).ok_or_else(|| format!("focusPane: no pane {pane}"))?;
+                self.enter_tab(tab);
+                if self.is_float(pane) && !self.shown_floats().iter().any(|f| f.pane == pane) {
+                    return Err(format!("focusPane: pane {pane} is a hidden float"));
+                }
+                self.set_focus(pane);
+                ok(Outcome::Redraw)
+            }
             "resize-pane" => self.resize_pane(args, count),
             "equalize-panes" => {
                 let only = match text(0).as_deref() {
