@@ -1,0 +1,30 @@
+# A terminal without the kitty graphics protocol, as TERMPIX_GRAPHICS=off
+# makes any terminal look: the viewer runs as text only.
+# Used with: scripts/e2e.sh tests/e2e/no-graphics.actions -- env TERMPIX_GRAPHICS=off target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
+# Judged (check): no page is drawn (the middle of the screen is the
+# terminal's dark background, not a white page; blank); the PDF pane's line
+# and the message saying why show (line, why; kitty and WezTerm), and a key
+# takes the message away (dismissed).
+pause 1.5
+shot start
+# Mostly dark where a page would be white (the line crosses it).
+dark_middle() {
+  local mean
+  mean=$(magick "$outdir/start.png" -crop 50%x50%+25%+25% +repage -colorspace gray -format '%[fx:mean]' info:)
+  awk -v m="$mean" 'BEGIN { exit !(m < 0.2) }'
+}
+check blank dark_middle
+check line screen_contains "PDF viewer disabled (no kitty graphics protocol support)"
+check why screen_contains "TERMPIX_GRAPHICS=off"
+keys j
+pause 0.5
+dismissed() {
+  local status=0
+  screen_contains "TERMPIX_GRAPHICS=off" || status=$?
+  case $status in
+    0) return 1 ;;
+    77) return 77 ;;
+    *) return 0 ;;
+  esac
+}
+check dismissed dismissed

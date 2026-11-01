@@ -62,7 +62,7 @@ fi
 # gui-focus (AppKit sends no presses for keys held on focus-in) and gui-ime
 # (-I, fcitx5, is Linux's).
 judged=(session terminal terminal-extras tabs floats resize float-wide expect links preview search select
-  select-autoscroll viewer viewer-stress synctex synctex-reload reload)
+  select-autoscroll viewer viewer-stress synctex synctex-reload reload no-graphics)
 gui_judged=(gui gui-focus gui-ime)
 if [[ $(uname) == Darwin ]]; then
   gui_judged=(gui)
@@ -111,6 +111,8 @@ scenario() {
     expect | links | preview | search | select | select-autoscroll | viewer) pdf ;;
     # Inline transfers, as over SSH.
     viewer-stress) pdf; cmd=(env TERMPIX_MEDIUM=direct "${cmd[@]}") ;;
+    # As a terminal without kitty graphics.
+    no-graphics) pdf; cmd=(env TERMPIX_GRAPHICS=off "${cmd[@]}") ;;
     *)
       echo "e2e-all.sh: no command for scenario $1" >&2
       return 1
