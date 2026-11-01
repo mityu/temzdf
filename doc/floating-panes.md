@@ -111,7 +111,9 @@ fits: a float is a pane that shows a buffer, outside the layout tree.
 - A float has a one-cell frame: a border line (as the tiled borders, accent
   colour when focused) with a title on its top edge (the buffer's name, or a
   `title` given when opening). The frame is part of the float's rectangle;
-  the content is inside it.
+  the content is inside it. Frames and the tiled borders are text (box
+  drawing characters, `crates/temzdf-server/src/session/borders.rs`) since
+  2026-11-02, so terminals without graphics show them too.
 - **(decide)** Not modal (as zellij and Neovim): keys go to the focused pane,
   floating or not. A modal popup (tmux) can be built on this later by a
   script (a mode whose mappings only talk to the float) if wanted.

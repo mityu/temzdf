@@ -3,7 +3,7 @@
 //! together; what lies under a shown float is cut out of the panes below
 //! (see `crate::clip`). Design: `doc/floating-panes.md`.
 
-use temzdf_scene::{Attrs, Cell, Color, Layer, Pointer, Rect, TextGrid};
+use temzdf_scene::{Attrs, Cell, Color, Pointer, Rect, TextGrid};
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
 
 use std::path::PathBuf;
@@ -11,14 +11,10 @@ use std::path::PathBuf;
 use temzdf_term::Spawn;
 
 use super::tabs::FloatTab;
-use super::{
-    BACKGROUND, BORDER, BORDER_PX, BufferId, Outcome, Session, Spot, Z_BORDER, Z_BORDER_FOCUS, Z_SESSION_BACKGROUND,
-};
+use super::{BACKGROUND, BufferId, Outcome, Session, Spot};
 use crate::layout::{Direction, PaneId};
 use temzdf_protocol::script::ScriptValue;
 
-/// Layer key owner for the floats' frames.
-const OWNER_FRAMES: u32 = u32::MAX - 1;
 /// The smallest float content, in cells (as the smallest tiled pane).
 const MIN_COLS: u32 = 10;
 const MIN_ROWS: u32 = 4;
@@ -541,9 +537,8 @@ impl Session {
     }
 
     /// The frames of the shown floats, bottom to top, each cut by the floats
-    /// above it: background, lines (accent for the focused one) and title.
-    pub(super) fn float_frames(&mut self, layers: &mut Vec<Layer>, text: &mut Vec<TextGrid>) {
-        let accent = termpix_ui::Theme::dark().accent.0;
+    /// above it: a box (accent for the focused one) and the title, as text.
+    pub(super) fn float_frames(&mut self, text: &mut Vec<TextGrid>) {
         let frames: Vec<(PaneId, Rect, String)> = self
             .shown_floats()
             .iter()
@@ -551,43 +546,9 @@ impl Session {
             .collect();
         for (pane, frame, title) in frames {
             let focus = pane == self.focus;
-            let title = title_grid(&title, frame, focus);
             let covers = self.covers(Some(pane));
-            // The frame's images also leave the title's cells (see covers).
-            let title_rect = title.as_ref().map(|g| Rect::new(g.col as i32, g.row as i32, g.width() as u32, 1));
-            let covers_px: Vec<Rect> = covers.iter().chain(&title_rect).map(|r| self.pixels(r)).collect();
-            let outer = self.pixels(&frame);
-            let inner = self.pixels(&content(frame));
-            let cell = self.geometry.cell;
-            // The frame's cells: four bands around the content.
-            for (n, band) in outer.subtract(&inner).into_iter().enumerate() {
-                let image = self.solid(band.w, band.h, BACKGROUND);
-                let layer =
-                    Layer { key: 0, image, src: Rect::new(0, 0, band.w, band.h), dst: band, z: Z_SESSION_BACKGROUND };
-                self.keys.place(layers, OWNER_FRAMES, pane * 16 + n as u32, layer, &covers_px);
-            }
-            // Lines through the middle of the frame's cells.
-            let (vx, vy) =
-                ((cell.width.saturating_sub(BORDER_PX) / 2) as i32, (cell.height.saturating_sub(BORDER_PX) / 2) as i32);
-            let (x0, y0) = (outer.x + vx, outer.y + vy);
-            let (x1, y1) =
-                (outer.right() as i32 - cell.width as i32 + vx, outer.bottom() as i32 - cell.height as i32 + vy);
-            // Frames at least a cell each way (a screen smaller than a
-            // float's smallest size squeezes them).
-            let (w, h) = ((x1 - x0).max(0) as u32 + BORDER_PX, (y1 - y0).max(0) as u32 + BORDER_PX);
-            let lines = [
-                Rect::new(x0, y0, w, BORDER_PX),
-                Rect::new(x0, y1, w, BORDER_PX),
-                Rect::new(x0, y0, BORDER_PX, h),
-                Rect::new(x1, y0, BORDER_PX, h),
-            ];
-            for (n, r) in lines.into_iter().enumerate() {
-                let image = self.solid(r.w, r.h, if focus { accent } else { BORDER });
-                let z = if focus { Z_BORDER_FOCUS } else { Z_BORDER };
-                let layer = Layer { key: 0, image, src: Rect::new(0, 0, r.w, r.h), dst: r, z };
-                self.keys.place(layers, OWNER_FRAMES, pane * 16 + 8 + n as u32, layer, &covers_px);
-            }
-            if let Some(grid) = title {
+            let title = title_grid(&title, frame, focus);
+            for grid in super::borders::frame(frame, focus).into_iter().chain(title) {
                 text.extend(crate::clip::text_pieces(grid, &covers));
             }
         }

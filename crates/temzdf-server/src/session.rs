@@ -15,7 +15,7 @@ use temzdf_pdfview::document::Document;
 use temzdf_pdfview::host::{DocumentHost, Forward, HostOptions, Opening};
 use temzdf_pdfview::pane::{self, PdfPane};
 use temzdf_pdfview::viewer::{StandIn, ViewState};
-use temzdf_scene::{CursorShape, Effect, Frame, Hints, ImageKey, Images, Layer, Pointer, Rect, TextGrid};
+use temzdf_scene::{CursorShape, Effect, Frame, Hints, Images, Layer, Pointer, Rect, TextGrid};
 use temzdf_term::{Spawn, TermBuffer, TermEvent, TermView};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{
@@ -30,6 +30,7 @@ use crate::keymap::{History, Keepalive, Layers, Matcher, Modes, Step, Stroke, Ta
 use crate::layout::{BorderId, Layout, PaneId, Split};
 use temzdf_protocol::script::{FromHost, ScriptValue};
 
+mod borders;
 mod commands;
 mod floats;
 mod input;
@@ -218,18 +219,14 @@ impl Options {
         HostOptions { debounce: self.reloaddebounce, editor: self.synctexeditor.clone() }
     }
 }
-/// Session layers: the background below every pane, borders above them.
-const Z_SESSION_BACKGROUND: i32 = -1_073_741_950;
-const Z_BORDER: i32 = -1_073_741_700;
-const Z_BORDER_FOCUS: i32 = -1_073_741_699;
+/// The lowest z of programs' images in terminal panes: never under the cell
+/// backgrounds (the GUI draws layers below -2^30 under them).
+const Z_PROGRAMS_MIN: i32 = -1_073_741_698;
+/// The session's own cells: borders, frames, the tab line.
 const BACKGROUND: [u8; 4] = [0x3a, 0x3a, 0x3a, 0xff];
 const BORDER: [u8; 4] = [0x5a, 0x5a, 0x5a, 0xff];
-/// Border line thickness in pixels (centred in the one-cell gap).
-const BORDER_PX: u32 = 2;
 /// The most mappings one typed key may run (Vim's `maxmapdepth`).
 const MAX_MAP_DEPTH: usize = 1000;
-/// Layer key owner for the session's own layers.
-const OWNER_SESSION: u32 = u32::MAX;
 
 /// Where a pane goes.
 #[derive(Clone, Debug)]
@@ -435,8 +432,6 @@ pub struct Session {
     /// The float frame being dragged, and the part of a frame under the pointer.
     float_drag: Option<floats::FloatDrag>,
     over_frame: Option<floats::Grip>,
-    /// Solid images (background, borders) by size and colour.
-    solids: HashMap<(u32, u32, [u8; 4]), ImageKey>,
     complete: bool,
     /// Why the first pane could not be opened.
     error: Option<String>,
@@ -487,7 +482,6 @@ impl Session {
             float_drag: None,
             over_frame: None,
             over_border: None,
-            solids: HashMap::new(),
             complete: false,
             error: None,
             script: script::Bridge::default(),
@@ -1932,9 +1926,8 @@ impl Session {
                 Kind::Term { buf, view } => match self.terms.get_mut(buf) {
                     Some(t) => {
                         let mut frame = view.frame(&mut t.term, &mut self.images);
-                        // Programs' images stay above the session's own layers.
                         for l in &mut frame.layers {
-                            l.z = l.z.max(Z_BORDER_FOCUS + 1);
+                            l.z = l.z.max(Z_PROGRAMS_MIN);
                         }
                         frame
                     }
@@ -1976,8 +1969,8 @@ impl Session {
             let grid = statusline::grid(&bar, e.rect, *id == self.focus);
             text.extend(clip::text_pieces(grid, &self.covers(Some(*id))));
         }
-        self.border_layers(&mut layers);
-        self.float_frames(&mut layers, &mut text);
+        text.extend(self.border_grids());
+        self.float_frames(&mut text);
         text.extend(self.tabline().map(|(grid, _)| grid));
         self.keys.end_frame();
         for (doc, needs) in needs {
@@ -1991,74 +1984,19 @@ impl Session {
     }
 
     /// Lines in the one-cell gaps between panes; the focused pane's in the accent colour.
-    fn border_layers(&mut self, layers: &mut Vec<Layer>) {
-        let tiled = self.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
-        if tiled.len() < 2 {
-            return;
-        }
-        let covers: Vec<Rect> = self.covers(None).iter().map(|r| self.pixels(r)).collect();
-        let cell = self.geometry.cell;
-        let area = self.area();
-        let accent = termpix_ui::Theme::dark().accent.0;
-        let mut lines = Vec::new();
-        let mut gaps = Vec::new();
-        for (id, e) in tiled.iter().filter_map(|id| Some((*id, self.panes.get(id)?))) {
-            let r = e.rect;
-            let (x0, y0) = (r.x * cell.width as i32, r.y * cell.height as i32);
-            let (w, h) = (r.w * cell.width, r.h * cell.height);
-            let focus = id == self.focus;
-            let (vx, vy) = (cell.width.saturating_sub(BORDER_PX) / 2, cell.height.saturating_sub(BORDER_PX) / 2);
-            // The gap cells right of and below the pane (including the corner
-            // where gaps cross).
-            let (cw, ch) = (cell.width, cell.height);
-            let right = r.right() < area.right();
-            let below = r.bottom() < area.bottom();
-            if right {
-                gaps.push(Rect::new(x0 + w as i32, y0, cw, h + if below { ch } else { 0 }));
-            }
-            if below {
-                gaps.push(Rect::new(x0, y0 + h as i32, w, ch));
-            }
-            if right {
-                lines.push((focus, Rect::new(x0 + w as i32 + vx as i32, y0, BORDER_PX, h)));
-            }
-            if r.x > area.x {
-                lines.push((focus, Rect::new(x0 - cell.width as i32 + vx as i32, y0, BORDER_PX, h)));
-            }
-            if below {
-                lines.push((focus, Rect::new(x0, y0 + h as i32 + vy as i32, w, BORDER_PX)));
-            }
-            if r.y > area.y {
-                lines.push((focus, Rect::new(x0, y0 - cell.height as i32 + vy as i32, w, BORDER_PX)));
-            }
-        }
-        for (i, r) in gaps.into_iter().enumerate() {
-            let image = self.solid(r.w, r.h, BACKGROUND);
-            let layer = Layer { key: 0, image, src: Rect::new(0, 0, r.w, r.h), dst: r, z: Z_SESSION_BACKGROUND };
-            self.keys.place(layers, OWNER_SESSION, 0x1000 + i as u32, layer, &covers);
-        }
-        for (i, (focus, r)) in lines.into_iter().enumerate() {
-            let image = self.solid(r.w, r.h, if focus { accent } else { BORDER });
-            let z = if focus { Z_BORDER_FOCUS } else { Z_BORDER };
-            let layer = Layer { key: 0, image, src: Rect::new(0, 0, r.w, r.h), dst: r, z };
-            self.keys.place(layers, OWNER_SESSION, 1 + i as u32, layer, &covers);
-        }
+    /// The borders between the tiled panes, as text (see `borders`), cut by
+    /// what lies above them.
+    fn border_grids(&self) -> Vec<TextGrid> {
+        let Some(layout) = self.layout.as_ref() else { return Vec::new() };
+        let grids = borders::gaps(self.area(), &layout.rects(self.area()), self.focus);
+        let covers = self.covers(None);
+        grids.into_iter().flat_map(|g| clip::text_pieces(g, &covers)).collect()
     }
 
     /// A rectangle of cells in screen pixels.
     fn pixels(&self, r: &Rect) -> Rect {
         let cell = self.geometry.cell;
         Rect::new(r.x * cell.width as i32, r.y * cell.height as i32, r.w * cell.width, r.h * cell.height)
-    }
-
-    fn solid(&mut self, w: u32, h: u32, color: [u8; 4]) -> ImageKey {
-        if self.solids.len() > 64 {
-            for (_, id) in self.solids.drain() {
-                self.images.remove(id);
-            }
-        }
-        let images = &mut self.images;
-        *self.solids.entry((w, h, color)).or_insert_with(|| images.add(w, h, color.repeat(w as usize * h as usize)))
     }
 
     /// Whether every pane showed its visible pages fully rendered last frame.
@@ -2608,10 +2546,15 @@ mod tests {
             let in_left = l.dst.right() <= 440;
             let in_right = l.dst.x >= 450;
             let screen = l.dst == Rect::new(0, 0, 900, 600);
-            let border = l.dst.w == BORDER_PX || l.dst.h == BORDER_PX;
-            let gap = l.dst.x == 440 && l.dst.w == 10;
-            assert!(in_left || in_right || screen || border || gap, "{:?} crosses the panes", l.dst);
+            assert!(in_left || in_right || screen, "{:?} crosses the panes", l.dst);
         }
+        // The border between them is text: a line down the gap's column,
+        // lit beside the focused (new, right) pane.
+        let rows = screen_text(&frame, GEOMETRY);
+        assert!(rows.iter().take(29).all(|r| r.chars().nth(44) == Some('│')), "{rows:?}");
+        let border = frame.text.iter().find(|g| g.col == 44 && g.row == 0).expect("the border's top cell");
+        let accent = termpix_ui::Theme::dark().accent.0;
+        assert_eq!(border.rows[0][0].fg, temzdf_scene::Color::Rgb([accent[0], accent[1], accent[2]]));
         // The focused pane's title is the window title.
         assert!(frame.title.starts_with("sample.pdf"), "{}", frame.title);
     }
@@ -2776,6 +2719,11 @@ mod tests {
                 outcome = s.handle(ev, Instant::now());
             }
         }
+    }
+
+    /// Columns `a..b` of a screen row (characters, not bytes).
+    fn cols(row: &str, a: usize, b: usize) -> String {
+        row.chars().skip(a).take(b - a).collect()
     }
 
     /// The frame's text as screen rows (trailing blanks trimmed).
@@ -3058,21 +3006,19 @@ mod tests {
         assert_eq!((s.focus, s.current_mode()), (pane, "terminal"));
         // The frame is 22 x 6 cells at (5, 2); the content inside it.
         assert_eq!(s.panes[&pane].rect, Rect::new(6, 3, 20, 4));
-        let (_, rows) = wait_text(&mut s, &rx, |r| r[3].get(6..11) == Some("FLOAT"));
+        let (_, rows) = wait_text(&mut s, &rx, |r| cols(&r[3], 6, 11) == "FLOAT");
         assert_eq!(rows[1], zeros, "above the float");
-        assert_eq!(&rows[2][7..12], " pop ", "the title on the frame");
+        assert_eq!(cols(&rows[2], 7, 12), " pop ", "the title on the frame");
         for (y, row) in rows.iter().enumerate().take(8).skip(2) {
             let inside: String = row.chars().skip(5).take(22).collect();
             assert!(!inside.contains('0'), "row {y}: the pane below shows through: {row:?}");
             assert_eq!(row.chars().nth(4), Some('0'), "row {y}: left of the float");
             assert_eq!(row.chars().nth(27), Some('0'), "row {y}: right of the float");
         }
-        // The frame is drawn: its lines lie within the float's cells.
-        let frame = s.frame();
-        let outer = s.pixels(&Rect::new(5, 2, 22, 6));
-        let lines = frame.layers.iter().filter(|l| l.z == Z_BORDER_FOCUS).count();
-        assert_eq!(lines, 5, "the focused float's four lines, the top one in two around the title");
-        assert!(frame.layers.iter().filter(|l| l.z == Z_BORDER_FOCUS).all(|l| outer.intersect(&l.dst) == Some(l.dst)));
+        // The frame is a box of text around the title.
+        assert_eq!(cols(&rows[2], 5, 27), "╭─ pop ──────────────╮");
+        assert_eq!(cols(&rows[4], 5, 6), "│");
+        assert_eq!(cols(&rows[7], 5, 27), "╰────────────────────╯");
         // Its terminal is as large as its content, less the status line.
         let buf = s.panes[&pane].buffer();
         assert_eq!((s.terms[&buf].term.geometry().cols, s.terms[&buf].term.geometry().rows), (20, 3));
@@ -3293,14 +3239,14 @@ mod tests {
         let notice = s.notice_rects()[0];
         let title = Rect::new(2, 0, 7, 1);
         let rows = screen_text(&frame, GEOMETRY);
-        assert_eq!(&rows[0][2..9], " title ");
+        assert_eq!(cols(&rows[0], 2, 9), " title ");
         for r in [notice, title] {
             let px = s.pixels(&r);
             let under: Vec<_> = frame.layers.iter().filter(|l| l.dst.intersect(&px).is_some()).collect();
             assert!(under.is_empty(), "images under the text at {r:?}: {under:?}");
         }
         // Around them the frame is drawn.
-        assert!(frame.layers.iter().any(|l| l.dst.y == 0 && l.dst.x == 0), "the frame of float {f}");
+        assert_eq!(cols(&rows[0], 0, 2), "╭─", "the frame of float {f}");
     }
 
     #[test]

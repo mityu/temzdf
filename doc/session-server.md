@@ -20,7 +20,7 @@ What exists:
   pane on it: one tile cache, links, text, workers, reload), PDF panes in a
   terminal panes (`crates/temzdf-term`: a pty from `portable-pty`, Ghostty's
   terminal emulation from `libghostty-vt`, the screen as scene text cells),
-  all in a binary layout of splits with one-cell borders (a split halves its
+  all in a binary layout of splits with one-cell borders drawn as text (a split halves its
   area; when the screen changes size the last pane takes the difference;
   panes given a size keep it), input panes (one line of an input buffer,
   as Vim's command line: `crates/temzdf-server/src/session/input.rs`; the

@@ -362,7 +362,9 @@ fn typed_keys_echo_at_once_while_a_pdf_scrolls(pixels: PixelPath) {
     t.wait_text("30 49");
     t.settle(std::time::Duration::from_millis(500));
     t.type_text("clear\n");
-    t.wait_for("a clear screen", |s| s.lines().first().is_some_and(|l| l.trim_end() == "$"));
+    // (The left pane: the border's column follows.)
+    let left = |l: &String| l.chars().take(49).collect::<String>();
+    t.wait_for("a clear screen", |s| s.lines().first().is_some_and(|l| left(l).trim_end() == "$"));
     let mut typed = String::from("$ ");
     let mut times = Vec::new();
     let mut down = true;
@@ -745,8 +747,13 @@ fn borders_drag_and_the_shipped_keys_resize_panes() {
     // `stty size` prints "ROWS COLS".
     let widths = |s: &tuitest::Screen| -> Vec<u16> {
         let lines = s.lines();
+        // (Words between blanks and the border's line.)
         let pairs = lines.iter().flat_map(|l| {
-            let words: Vec<_> = l.split_whitespace().map(|w| w.parse::<u16>().ok()).collect();
+            let words: Vec<_> = l
+                .split(|c: char| c.is_whitespace() || c == '│')
+                .filter(|w| !w.is_empty())
+                .map(|w| w.parse::<u16>().ok())
+                .collect();
             words.windows(2).filter_map(|w| Some((w[0]?, w[1]?))).collect::<Vec<_>>()
         });
         pairs.map(|(_, cols)| cols).collect()
@@ -835,13 +842,13 @@ fn a_floating_shell_inside_tmux() {
     t.wait_for("zeros", |s| s.lines().iter().filter(|l| l.starts_with("0000")).count() >= 25);
     env.run(&["action", "-s", "ft", "open-float"]);
     t.wait_for("a prompt in the float", float_prompt);
-    let (cx, cy, cw, ch) = FLOAT_CONTENT;
     t.type_text("clear\n");
     let s = t.wait_for("the float cleared", |s| shows_through(s).is_none());
-    // Its frame is drawn through placeholders; its content is text only.
+    // Its frame is text; no image (placeholder) is over it or its content.
+    assert_eq!(s.cells[(FLOAT_FRAME.1 + 5) as usize][FLOAT_FRAME.0 as usize].text, "│", "the frame's left edge");
     let cells = s.placeholder_cells();
-    assert!(cells.iter().any(|&(x, y)| (x, y) == (FLOAT_FRAME.0, FLOAT_FRAME.1 + 5)), "the frame's left edge");
-    assert!(!cells.iter().any(|&(x, y)| x >= cx && x < cx + cw && y >= cy && y < cy + ch), "nothing over the content");
+    let (fx, fy, fw, fh) = FLOAT_FRAME;
+    assert!(!cells.iter().any(|&(x, y)| x >= fx && x < fx + fw && y >= fy && y < fy + fh), "no image over the float");
 }
 
 #[test]
