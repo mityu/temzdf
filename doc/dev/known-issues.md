@@ -85,6 +85,28 @@ planned work stays in `todo.md`.
   to come of it, and 0.6.8 is the newest release flate2 accepts. Those
   tests are ignored under Miri; check a newer zlib-rs when one comes, or
   report it upstream.
+- **MuPDF mishandles an ActualText that ends with the start of its
+  glyphs.** In `do_extract_within_actualtext` (`source/fitz/stext-device.c`,
+  MuPDF 1.27.2 and master as of 2026-11-03), an ActualText that is all of
+  the start of the glyphs it covers ("Ab" over "Abc") leaves no ActualText
+  after the matching prefix, which an `assert(z != 0)` says cannot happen
+  ("Shut coverity up"). A debug build of MuPDF aborted there when searching
+  or selecting such a PDF, taking the session down; so MuPDF is built
+  optimized, without assertions, in debug builds too (`Cargo.toml`,
+  `[profile.dev.package.mupdf-sys]`), as it ships. Past the assertion the
+  code goes on with the count `z` at 0: the remaining glyphs lose their text
+  (searching finds "Ab", not "Abc"), and nothing is read past the string as
+  long as no glyph's Unicode value is -1. One that is would match
+  `rune_index`'s -1 and make `z--` wrap around (a `size_t`), and the
+  following loops read past the end of the ActualText string. MuPDF's PDF
+  interpreter gives glyphs without Unicode U+FFFD, so no path to -1 is
+  known, but none is ruled out (a crafted ToUnicode CMap, say). The test is
+  `search_through_actualtext_that_ends_before_its_glyphs` in
+  `crates/temzdf-pdfcore/src/pdf.rs`. A fix belongs in MuPDF (report it
+  upstream: handle `z == 0` there by extracting the rest as plain text);
+  meanwhile `TextPageFlags::IGNORE_ACTUALTEXT` for search and selection
+  would avoid the code entirely, at the price of searching what the glyphs
+  say instead of their ActualText.
 
 ## Tests and CI
 
