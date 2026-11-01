@@ -54,6 +54,8 @@ pub const EVENTS: &[&str] = &[
     "ModeChanged",
     "BufferCreated",
     "BufferDeleted",
+    "BufferHidden",
+    "InputChanged",
 ];
 
 /// Input that arrived while a script ran.
@@ -360,6 +362,15 @@ impl Session {
             self.script.frames.pop();
             // No host: no condition holds.
             self.matcher.set_conditions(funcs.into_iter().map(|f| (f, false)));
+        }
+    }
+
+    /// Record `events` from now on, as if hooked, in `script_events` (until
+    /// something flushes them; for tests without a script host).
+    #[cfg(test)]
+    pub(super) fn listen(&mut self, events: &[&str]) {
+        for e in events {
+            self.script.hooks.entry((*e).to_owned()).or_default();
         }
     }
 

@@ -7,14 +7,16 @@ use temzdf_protocol::script::CommandSpec;
 /// The events hooks can name, with their arguments.
 const EVENTS: &[(&str, &str)] = &[
     ("SessionReady", "[]"),
-    ("PaneOpened", "[pane: number, kind: \"pdf\" | \"terminal\"]"),
+    ("PaneOpened", "[pane: number, kind: \"pdf\" | \"terminal\" | \"input\"]"),
     ("PaneClosePre", "[pane: number]"),
     ("PaneClosed", "[pane: number]"),
     ("PaneFocused", "[pane: number]"),
     ("DocumentReloaded", "[path: string]"),
     ("ModeChanged", "[old: string, new: string]"),
-    ("BufferCreated", "[buffer: number, kind: \"pdf\" | \"terminal\"]"),
+    ("BufferCreated", "[buffer: number, kind: \"pdf\" | \"terminal\" | \"input\"]"),
     ("BufferDeleted", "[buffer: number]"),
+    ("BufferHidden", "[buffer: number, kind: \"pdf\" | \"terminal\" | \"input\"]"),
+    ("InputChanged", "[buffer: number, text: string]"),
 ];
 
 fn camel(name: &str) -> String {
@@ -92,7 +94,7 @@ declare module "temzdf" {{
     /** The focused pane. */
     pane: number;
     /** Its kind; null without a pane. */
-    paneKind: "terminal" | "pdf" | null;
+    paneKind: "terminal" | "pdf" | "input" | null;
     /** Whether it is a floating pane. */
     floating: boolean;
     /** The current mode. */

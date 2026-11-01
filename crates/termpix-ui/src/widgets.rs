@@ -252,14 +252,53 @@ impl LineInput {
 
     /// Delete the word before the caret (Ctrl+W).
     pub fn delete_word(&mut self) -> EditResult {
-        let before = &self.text[..self.caret];
-        let trimmed = before.trim_end();
-        let start = trimmed.rfind(char::is_whitespace).map_or(0, |i| i + 1);
+        let start = word_start(&self.text[..self.caret]);
         if start == self.caret {
             return EditResult::Ignored;
         }
         self.text.replace_range(start..self.caret, "");
         self.caret = start;
+        EditResult::Changed
+    }
+
+    /// To the start of the word before the caret (readline's Alt+B).
+    pub fn word_left(&mut self) -> EditResult {
+        let start = word_start(&self.text[..self.caret]);
+        if start == self.caret {
+            return EditResult::Ignored;
+        }
+        self.caret = start;
+        EditResult::Moved
+    }
+
+    /// To the end of the word after the caret (readline's Alt+F).
+    pub fn word_right(&mut self) -> EditResult {
+        let after = &self.text[self.caret..];
+        let skipped = after.len() - after.trim_start().len();
+        let word = after[skipped..].find(char::is_whitespace).unwrap_or(after.len() - skipped);
+        if skipped + word == 0 {
+            return EditResult::Ignored;
+        }
+        self.caret += skipped + word;
+        EditResult::Moved
+    }
+
+    /// Delete from the start to the caret (Ctrl+U).
+    pub fn delete_to_start(&mut self) -> EditResult {
+        if self.caret == 0 {
+            return EditResult::Ignored;
+        }
+        self.text.replace_range(..self.caret, "");
+        self.caret = 0;
+        EditResult::Changed
+    }
+
+    /// Delete from the caret to the end (Ctrl+K).
+    pub fn delete_to_end(&mut self) -> EditResult {
+        if self.caret == self.text.len() {
+            return EditResult::Ignored;
+        }
+        self.text.truncate(self.caret);
         EditResult::Changed
     }
 
@@ -301,9 +340,37 @@ impl LineInput {
     }
 }
 
+/// Where the word that ends `before` starts (blanks after it skipped).
+fn word_start(before: &str) -> usize {
+    let trimmed = before.trim_end();
+    trimmed.rfind(char::is_whitespace).map_or(0, |i| i + trimmed[i..].chars().next().map_or(1, char::len_utf8))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn line_input_words_and_ends() {
+        let mut i = LineInput { text: "ab  数式 cd".into(), ..Default::default() };
+        i.end();
+        assert_eq!(i.word_left(), EditResult::Moved);
+        assert_eq!(&i.text[i.caret..], "cd");
+        i.word_left();
+        assert_eq!(&i.text[i.caret..], "数式 cd");
+        i.home();
+        assert_eq!(i.word_left(), EditResult::Ignored);
+        i.word_right();
+        assert_eq!(&i.text[..i.caret], "ab");
+        i.word_right();
+        assert_eq!(&i.text[..i.caret], "ab  数式");
+        assert_eq!(i.delete_to_end(), EditResult::Changed);
+        assert_eq!(i.text, "ab  数式");
+        assert_eq!(i.delete_to_end(), EditResult::Ignored);
+        i.left();
+        assert_eq!(i.delete_to_start(), EditResult::Changed);
+        assert_eq!((i.text.as_str(), i.caret), ("式", 0));
+    }
 
     fn save(name: &str, w: u32, h: u32, px: Vec<u8>) {
         if let Ok(dir) = std::env::var("TERMPIX_UI_SNAPSHOT_DIR") {

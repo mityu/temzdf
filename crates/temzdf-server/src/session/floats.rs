@@ -413,6 +413,13 @@ impl Session {
                 self.terminal_pane(id, buf, rect, focus);
                 Some(id)
             }
+            FloatWhat::Buffer(buf) if self.inputs.contains_key(&buf) => {
+                let id = self.alloc_id();
+                let focus = self.takes_focus(&spot);
+                let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
+                self.input_pane(id, buf, rect, focus);
+                Some(id)
+            }
             FloatWhat::Buffer(buf) if self.docs.get(&buf).is_some_and(|d| d.host.is_none()) => {
                 // Still opening: the pane comes with the file.
                 let spot = self.pin_spot(spot);
@@ -586,7 +593,8 @@ impl Session {
         }
     }
 
-    /// A pane's buffer name: the document's file name or the terminal's title.
+    /// A pane's buffer name: the document's file name, the terminal's title
+    /// or the input's prompt.
     pub(super) fn pane_name(&self, pane: PaneId) -> String {
         let Some(e) = self.panes.get(&pane) else { return String::new() };
         match &e.kind {
@@ -594,6 +602,7 @@ impl Session {
             super::Kind::Term { buf, .. } => {
                 self.terms.get(buf).and_then(|t| t.term.title()).unwrap_or_else(|| "shell".into())
             }
+            super::Kind::Input { buf, .. } => self.inputs.get(buf).map(|b| b.prompt.clone()).unwrap_or_default(),
         }
     }
 }

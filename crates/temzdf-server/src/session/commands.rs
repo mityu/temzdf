@@ -10,7 +10,8 @@ use temzdf_scene::FontEntry;
 use temzdf_term::Spawn;
 
 use super::floats::{self, FloatSpec, FloatWhat};
-use super::{BufferId, Kind, Outcome, PaneEntry, Session, Spot};
+use super::input::InputOp;
+use super::{BufferId, Outcome, PaneEntry, Session, Spot};
 use crate::action::{Action, PaneSpec};
 use crate::keymap::notation;
 use crate::layout::{Direction, PaneId, Split};
@@ -163,6 +164,18 @@ const SESSION: &[(&str, &str, &str)] = &[
     ),
     ("current-tab", "(): number", "The current tab page's index (from 1, as Vim's tabpagenr())"),
     ("session-name", "(): string", "The session's name"),
+    (
+        "new-input",
+        "(opts?: { prompt?: string; text?: string }): number",
+        "A new input buffer (one line of text, as Vim's command line) to show in a pane (split, openFloat); returns the buffer",
+    ),
+    ("input-text", "(buffer?: number): string", "An input buffer's text (the focused input pane's)"),
+    (
+        "set-input-text",
+        "(text: string, buffer?: number): void",
+        "Set an input buffer's text (the focused input pane's); its carets go to the end",
+    ),
+    ("input.insert", "(text: string): void", "Insert text at the focused input pane's caret"),
 ];
 
 /// Every command, for the script host.
@@ -177,7 +190,12 @@ pub fn command_specs() -> Vec<CommandSpec> {
         doc: format!("Page view: {name} in the focused PDF pane (a mapping's count applies)"),
         ts: "(): void".into(),
     });
-    session.chain(pdf).collect()
+    let input = InputOp::NAMES.iter().map(|(_, name, doc)| CommandSpec {
+        name: format!("input.{name}"),
+        doc: format!("{doc} (the focused input pane)"),
+        ts: "(): void".into(),
+    });
+    session.chain(input).chain(pdf).collect()
 }
 
 /// What a new pane shows (`openFloat`, `newTab`): `{ buffer }`, `{ file }`,
@@ -279,6 +297,9 @@ impl Session {
                 temzdf_pdfview::pane::Action::Redraw => ok(Outcome::Redraw),
                 temzdf_pdfview::pane::Action::None => ok(Outcome::None),
             };
+        }
+        if let Some(op) = InputOp::from_name(name) {
+            return Ok((ScriptValue::Null, self.input_edit(op).map_err(|e| format!("{name}: {e}"))?));
         }
         match name {
             "split" => {
@@ -553,10 +574,7 @@ impl Session {
                     .into_iter()
                     .map(|id| {
                         let e = &self.panes[&id];
-                        let kind = match e.kind {
-                            Kind::Pdf { .. } => "pdf",
-                            Kind::Term { .. } => "terminal",
-                        };
+                        let kind = e.kind_name();
                         let r = e.rect;
                         ScriptValue::map([
                             ("id", ScriptValue::Num(id as f64)),
@@ -630,6 +648,25 @@ impl Session {
                 };
                 self.move_tab(to.as_deref()).map_err(|e| format!("moveTab: {e}"))?;
                 ok(Outcome::Redraw)
+            }
+            "new-input" => {
+                let o = args.first().filter(|o| matches!(o, ScriptValue::Map(_)));
+                let field = |k: &str| o.and_then(|o| o.get(k)).and_then(ScriptValue::as_str).unwrap_or("").to_owned();
+                let buf = self.new_input(&field("prompt"), &field("text"));
+                Ok((ScriptValue::Num(buf as f64), Outcome::None))
+            }
+            "input-text" => {
+                let buf = self.input_buffer(id(0)).map_err(|e| format!("inputText: {e}"))?;
+                Ok((ScriptValue::Str(self.inputs[&buf].text.clone()), Outcome::None))
+            }
+            "set-input-text" => {
+                let t = text(0).ok_or("setInputText: what text?")?;
+                let buf = self.input_buffer(id(1)).map_err(|e| format!("setInputText: {e}"))?;
+                Ok((ScriptValue::Null, self.set_input_text(buf, &t)))
+            }
+            "input.insert" => {
+                let t = text(0).ok_or("input.insert: what text?")?;
+                Ok((ScriptValue::Null, self.input_insert(&t).map_err(|e| format!("{name}: {e}"))?))
             }
             "status-line" => {
                 let show = match args.first() {

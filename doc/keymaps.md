@@ -39,7 +39,10 @@ configurations are written with the same system.
 
 - **Built-in modes stay**: `normal` (operating: keys act on temzdf, unmapped
   keys are dropped, counts), `terminal` (pass-through: unmapped keys go to
-  the pane, no counts) and `pdf` (PDF panes: unmapped keys dropped, counts).
+  the pane, no counts), `pdf` (PDF panes: unmapped keys dropped, counts)
+  and `input` (input panes, pass-through: unmapped keys that type a
+  character with no modifier but Shift go in, the rest are dropped; editing
+  is `input.*` commands mapped there).
   The pane kinds decide them, so switching panes changes the mode without
   anything to configure. Their mappings come from `defaults.ts`, as now.
 - `defineMode(name, properties)` makes a mode or changes one:

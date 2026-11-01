@@ -32,6 +32,7 @@ use temzdf_protocol::script::{FromHost, ScriptValue};
 
 mod commands;
 mod floats;
+mod input;
 mod notices;
 mod script;
 mod statusline;
@@ -270,6 +271,7 @@ struct TermEntry {
 enum Kind {
     Pdf { pane: Box<PdfPane>, doc: DocId },
     Term { buf: BufferId, view: TermView },
+    Input { buf: BufferId, view: input::InputView },
 }
 
 struct PaneEntry {
@@ -308,28 +310,37 @@ impl PaneEntry {
     fn pdf(&mut self) -> Option<&mut PdfPane> {
         match &mut self.kind {
             Kind::Pdf { pane, .. } => Some(pane),
-            Kind::Term { .. } => None,
+            Kind::Term { .. } | Kind::Input { .. } => None,
         }
     }
 
     fn doc(&self) -> Option<DocId> {
         match &self.kind {
             Kind::Pdf { doc, .. } => Some(*doc),
-            Kind::Term { .. } => None,
+            Kind::Term { .. } | Kind::Input { .. } => None,
         }
     }
 
     fn term(&self) -> Option<BufferId> {
         match &self.kind {
             Kind::Term { buf, .. } => Some(*buf),
-            Kind::Pdf { .. } => None,
+            Kind::Pdf { .. } | Kind::Input { .. } => None,
         }
     }
 
     fn buffer(&self) -> BufferId {
         match &self.kind {
             Kind::Pdf { doc, .. } => *doc,
-            Kind::Term { buf, .. } => *buf,
+            Kind::Term { buf, .. } | Kind::Input { buf, .. } => *buf,
+        }
+    }
+
+    /// The kind's name, as scripts see it.
+    fn kind_name(&self) -> &'static str {
+        match &self.kind {
+            Kind::Pdf { .. } => "pdf",
+            Kind::Term { .. } => "terminal",
+            Kind::Input { .. } => "input",
         }
     }
 }
@@ -379,6 +390,7 @@ pub struct Session {
     events: EventSink,
     docs: HashMap<DocId, DocEntry>,
     terms: HashMap<BufferId, TermEntry>,
+    inputs: HashMap<BufferId, input::InputBuffer>,
     /// What a new shell pane runs; `None`: `$SHELL`.
     shell: Option<Vec<String>>,
     panes: HashMap<PaneId, PaneEntry>,
@@ -445,6 +457,7 @@ impl Session {
             events,
             docs: HashMap::new(),
             terms: HashMap::new(),
+            inputs: HashMap::new(),
             shell: None,
             panes: HashMap::new(),
             layout: None,
@@ -765,6 +778,8 @@ impl Session {
         let kind = if let Some(t) = self.terms.get_mut(&buf) {
             t.term.scroll_to_bottom();
             Kind::Term { buf, view: TermView::new(g) }
+        } else if let Some(b) = self.inputs.get(&buf) {
+            Kind::Input { buf, view: input::InputView::at_end(b) }
         } else if let Some(d) = self.docs.get_mut(&buf) {
             if d.host.is_none() {
                 d.waiting.push((Spot::Replace(pane), self.tabs[self.tab].id));
@@ -799,9 +814,21 @@ impl Session {
     }
 
     /// What a pane showed is no longer shown there. A buffer no pane shows
-    /// stays, hidden: a document keeps its position (and drops its tiles), a
-    /// terminal keeps running; an ended terminal goes.
+    /// stays, hidden (`BufferHidden`): a document keeps its position (and
+    /// drops its tiles), a terminal keeps running; an ended terminal goes.
     fn hide(&mut self, kind: Kind) {
+        let buf = match &kind {
+            Kind::Pdf { doc, .. } => *doc,
+            Kind::Term { buf, .. } | Kind::Input { buf, .. } => *buf,
+        };
+        let name = match &kind {
+            Kind::Pdf { .. } => "pdf",
+            Kind::Term { .. } => "terminal",
+            Kind::Input { .. } => "input",
+        };
+        if !self.shown(buf) {
+            self.event("BufferHidden", vec![ScriptValue::Num(buf as f64), ScriptValue::Str(name.into())]);
+        }
         match kind {
             Kind::Pdf { mut pane, doc } => {
                 let state = pane.viewer.view_state();
@@ -825,6 +852,7 @@ impl Session {
                     }
                 }
             }
+            Kind::Input { .. } => {}
         }
     }
 
@@ -849,7 +877,7 @@ impl Session {
     /// panes showing it (the last pane: the session ends). `PaneClosePre`
     /// hooks do not run (the buffer goes either way); `PaneClosed` does.
     fn delete_buffer(&mut self, buf: BufferId) -> Result<Outcome, String> {
-        if !self.terms.contains_key(&buf) && !self.docs.contains_key(&buf) {
+        if !self.terms.contains_key(&buf) && !self.docs.contains_key(&buf) && !self.inputs.contains_key(&buf) {
             return Err(format!("no buffer {buf}"));
         }
         for p in self.panes_showing(buf) {
@@ -869,7 +897,7 @@ impl Session {
             }
         } else if let Some(mut t) = self.terms.remove(&buf) {
             t.term.release(&mut self.images);
-        } else {
+        } else if self.inputs.remove(&buf).is_none() {
             return;
         }
         self.event("BufferDeleted", vec![ScriptValue::Num(buf as f64)]);
@@ -887,6 +915,7 @@ impl Session {
                     .iter()
                     .map(|(id, t)| (*id, "terminal", t.term.title().unwrap_or_else(|| "shell".into()), t.exited)),
             )
+            .chain(self.inputs.iter().map(|(id, b)| (*id, "input", b.prompt.clone(), false)))
             .collect();
         list.sort_by_key(|b| b.0);
         ScriptValue::List(
@@ -907,7 +936,7 @@ impl Session {
 
     /// The number of buffers (for `temzdf ls`).
     pub fn buffer_count(&self) -> usize {
-        self.docs.values().filter(|d| d.host.is_some()).count() + self.terms.len()
+        self.docs.values().filter(|d| d.host.is_some()).count() + self.terms.len() + self.inputs.len()
     }
 
     /// The focused pane's terminal.
@@ -946,6 +975,17 @@ impl Session {
         self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str("terminal".into())]);
         self.terminal_pane(id, buf, rect, focus);
         Ok(id)
+    }
+
+    /// Pane `id`, placed at `rect`, shows input `buf`, its caret at the end.
+    fn input_pane(&mut self, id: PaneId, buf: BufferId, rect: Rect, focus: bool) {
+        let view = self.inputs.get(&buf).map(input::InputView::at_end).unwrap_or_default();
+        self.panes.insert(id, PaneEntry::new(Kind::Input { buf, view }, rect));
+        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("input".into())]);
+        if focus {
+            self.set_focus(id);
+        }
+        self.relayout();
     }
 
     /// Pane `id`, placed at `rect`, shows terminal `buf`.
@@ -1018,6 +1058,7 @@ impl Session {
                     }
                 }
                 Kind::Term { view, .. } => view.geometry = content_geometry(content, cell, Some(view.geometry)),
+                Kind::Input { .. } => {}
             }
         }
     }
@@ -1268,7 +1309,7 @@ impl Session {
         }
         let focus = self.focus;
         match self.panes.get_mut(&focus).map(|e| &mut e.kind) {
-            Some(Kind::Term { .. }) => Outcome::None,
+            Some(Kind::Term { .. } | Kind::Input { .. }) => Outcome::None,
             // The pane's own page-view keys still work.
             Some(Kind::Pdf { pane, .. }) => match pane.key(k, now) {
                 pane::Action::Quit => self.close(focus),
@@ -1357,9 +1398,8 @@ impl Session {
     /// kind, whether it floats, the mode, the keys pending, and (mapped
     /// functions) the count.
     fn key_context(&self, count: Option<Option<usize>>) -> ScriptValue {
-        let kind = match self.panes.get(&self.focus).map(|e| &e.kind) {
-            Some(Kind::Pdf { .. }) => ScriptValue::Str("pdf".into()),
-            Some(Kind::Term { .. }) => ScriptValue::Str("terminal".into()),
+        let kind = match self.panes.get(&self.focus) {
+            Some(e) => ScriptValue::Str(e.kind_name().into()),
             None => ScriptValue::Null,
         };
         let keys: String = self.matcher.pending().iter().map(|k| k.notation()).collect();
@@ -1423,21 +1463,28 @@ impl Session {
         Some(self.last_key + d.timeout.filter(|_| d.transient)?)
     }
 
-    /// An unmapped key in a pass-through mode goes to the focused pane.
+    /// An unmapped key in a pass-through mode goes to the focused pane: a
+    /// terminal's program, or an input pane, which takes the characters it
+    /// types (with no modifier but Shift) and drops the rest.
     fn send_to_pane(&mut self, k: &KeyEvent) -> Outcome {
-        match self.focused_term() {
-            Some(t) => Outcome::None.or(t.key(k)),
+        if let Some(t) = self.focused_term() {
+            return Outcome::None.or(t.key(k));
+        }
+        let typed = k.text.clone().or_else(|| match k.code {
+            KeyCode::Char(c) => Some(c.to_string()),
+            _ => None,
+        });
+        let held = [Modifiers::ALT, Modifiers::CTRL, Modifiers::SUPER, Modifiers::HYPER, Modifiers::META];
+        let plain = !held.iter().any(|m| k.modifiers.contains(*m));
+        match typed.filter(|t| plain && !t.chars().any(char::is_control)) {
+            Some(t) => self.input_insert(&t).unwrap_or(Outcome::None),
             None => Outcome::None,
         }
     }
 
     /// The mode of a pane kind (its default mode).
     fn pane_mode(&self, id: PaneId) -> &'static str {
-        match self.panes.get(&id).map(|e| &e.kind) {
-            Some(Kind::Pdf { .. }) => "pdf",
-            Some(Kind::Term { .. }) => "terminal",
-            None => "normal",
-        }
+        self.panes.get(&id).map_or("normal", PaneEntry::kind_name)
     }
 
     /// Announce a mode change (if `old` differs from the current mode).
@@ -1497,6 +1544,10 @@ impl Session {
             && let Some(t) = self.focused_term()
         {
             Outcome::None.or(t.send_text(text))
+        } else if self.unmapped() == Unmapped::Passthrough
+            && let Ok(out) = self.input_insert(text)
+        {
+            out
         } else {
             let mut out = Outcome::None;
             for c in text.chars() {
@@ -1530,7 +1581,8 @@ impl Session {
         if let Some(t) = self.focused_term() {
             return Outcome::None.or(t.paste(text));
         }
-        Outcome::None
+        // An input pane takes it; elsewhere it goes nowhere.
+        self.input_insert(text).unwrap_or(Outcome::None)
     }
 
     /// Run an action. Errors (a file that cannot be opened, no room for a
@@ -1558,7 +1610,8 @@ impl Session {
             if self.is_float(from) { Spot::Float(self.cascade()) } else { Spot::Split { target, split, before, size } };
         let what = match (buf, self.panes.get(&from).map(|e| &e.kind)) {
             (Some(b), _) => floats::FloatWhat::Buffer(b),
-            (None, Some(Kind::Pdf { doc, .. })) => floats::FloatWhat::Buffer(*doc),
+            // The same document or input again.
+            (None, Some(Kind::Pdf { doc: b, .. } | Kind::Input { buf: b, .. })) => floats::FloatWhat::Buffer(*b),
             // A new shell where the focused one is.
             (None, Some(Kind::Term { buf, .. })) => {
                 let cwd = self.terms.get(buf).and_then(|t| t.term.pwd()).filter(|d| d.is_dir());
@@ -1750,6 +1803,7 @@ impl Session {
                 Some(t) => out.or(view.mouse(&mut t.term, &local, select)),
                 None => out,
             },
+            Kind::Input { .. } => out,
         }
     }
 
@@ -1802,7 +1856,7 @@ impl Session {
                         }
                     }
                 }
-                Kind::Term { .. } => {}
+                Kind::Term { .. } | Kind::Input { .. } => {}
             }
         }
         for t in self.terms.values_mut() {
@@ -1866,7 +1920,9 @@ impl Session {
             let covers = self.covers(Some(id));
             let covers_px: Vec<Rect> = covers.iter().map(|r| self.pixels(r)).collect();
             let Some(e) = self.panes.get_mut(&id) else { continue };
+            let cols = e.content().w as u16;
             let frame = match &mut e.kind {
+                Kind::Input { buf, view } => input::frame(self.inputs.get(buf), view, cols),
                 Kind::Pdf { pane, doc } => {
                     let (frame, pane_needs) = pane.frame(&mut self.images);
                     needs.entry(*doc).or_default().extend(pane_needs);
@@ -1915,7 +1971,7 @@ impl Session {
             let Some(e) = self.panes.get(id).filter(|e| e.status_line && e.rect.h > 0) else { continue };
             let bar = match &e.kind {
                 Kind::Pdf { pane, .. } => pane.status(),
-                Kind::Term { .. } => termpix_ui::StatusBar::default(),
+                Kind::Term { .. } | Kind::Input { .. } => termpix_ui::StatusBar::default(),
             };
             let grid = statusline::grid(&bar, e.rect, *id == self.focus);
             text.extend(clip::text_pieces(grid, &self.covers(Some(*id))));
@@ -2017,7 +2073,7 @@ impl Session {
             && self.docs.values().all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle()))
             && self.panes.values().all(|e| match &e.kind {
                 Kind::Pdf { pane, .. } => !pane.search.is_active() || pane.search.is_complete(),
-                Kind::Term { .. } => true,
+                Kind::Term { .. } | Kind::Input { .. } => true,
             })
     }
 
@@ -2067,7 +2123,7 @@ impl Session {
     pub fn next_deadline(&self) -> Option<Instant> {
         let panes = self.panes.values().filter_map(|e| match &e.kind {
             Kind::Pdf { pane, .. } => pane.next_deadline(),
-            Kind::Term { .. } => None,
+            Kind::Term { .. } | Kind::Input { .. } => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
         let terms = self.terms.values().filter_map(|t| t.term.autoscroll_deadline());
@@ -2112,12 +2168,16 @@ impl Session {
 
 /// The built-in modes, without mappings (the shipped JavaScript defaults,
 /// `crates/temzdf-script/runtime/defaults.ts`, map them): `normal`
-/// (operating), `terminal` (pass-through) and `pdf`.
+/// (operating), `terminal` (pass-through), `pdf` and `input` (pass-through:
+/// typed characters go in).
 fn builtin_modes() -> Modes<Target> {
     let mut m = Modes::default();
-    for (name, unmapped, count) in
-        [("normal", Unmapped::Drop, true), ("terminal", Unmapped::Passthrough, false), ("pdf", Unmapped::Drop, true)]
-    {
+    for (name, unmapped, count) in [
+        ("normal", Unmapped::Drop, true),
+        ("terminal", Unmapped::Passthrough, false),
+        ("pdf", Unmapped::Drop, true),
+        ("input", Unmapped::Passthrough, false),
+    ] {
         let d = m.define(name);
         d.unmapped = Some(unmapped);
         d.count = Some(count);
@@ -3696,6 +3756,136 @@ mod tests {
             _ => None,
         });
         assert!(copied.as_deref().is_some_and(|t| t.starts_with("temzdf sample document")), "{copied:?}");
+    }
+
+    /// A terminal session with an input buffer (prompt `/`) in a one-row
+    /// pane below the terminal, focused; returns the buffer and the pane.
+    fn input_session() -> (Session, Receiver<SessionEvent>, BufferId, PaneId) {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo first; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "first");
+        let prompt = ScriptValue::map([("prompt", ScriptValue::Str("/".into()))]);
+        let (buf, _) = s.run_command("new-input", &[prompt], None, Instant::now()).unwrap();
+        let o = ScriptValue::map([
+            ("side", ScriptValue::Str("bottom".into())),
+            ("buffer", buf.clone()),
+            ("height", ScriptValue::Num(1.0)),
+        ]);
+        let (pane, _) = s.run_command("split", &[o], None, Instant::now()).unwrap();
+        let pane = pane.as_num().unwrap() as PaneId;
+        cmd(&mut s, "status-line", &["off"], None).unwrap();
+        (s, rx, buf.as_num().unwrap() as BufferId, pane)
+    }
+
+    /// The input pane's row (29) as text, and the cursor.
+    fn input_row(s: &mut Session) -> (String, Option<(u16, u16)>) {
+        let frame = s.frame();
+        (screen_text(&frame, GEOMETRY)[29].clone(), frame.cursor)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn input_panes_take_typed_text_and_edit_it_by_commands() {
+        let (mut s, _rx, buf, pane) = input_session();
+        assert_eq!((s.current_mode(), s.panes[&pane].kind_name()), ("input", "input"));
+        assert_eq!(input_row(&mut s), ("/".into(), Some((1, 29))));
+        // Characters typed go in; keys with Ctrl or Alt, and Enter, do not.
+        key(&mut s, "ab<C-x><M-c><CR><Tab>C");
+        assert_eq!(input_row(&mut s), ("/abC".into(), Some((4, 29))));
+        // Input-method text and pastes too, on one line.
+        s.text("数式", Instant::now());
+        s.paste("x\ny");
+        // (Wide characters take two cells, the second shown as a blank.)
+        assert_eq!(input_row(&mut s), ("/abC数 式 x y".into(), Some((11, 29))));
+        let edit = |s: &mut Session, name: &str| cmd(s, name, &[], None).unwrap();
+        cmd(&mut s, "set-input-text", &["one two three"], None).unwrap();
+        edit(&mut s, "input.backspace");
+        edit(&mut s, "input.delete-word");
+        assert_eq!(input_row(&mut s), ("/one two".into(), Some((9, 29))));
+        edit(&mut s, "input.word-left");
+        edit(&mut s, "input.delete-word");
+        assert_eq!(input_row(&mut s), ("/two".into(), Some((1, 29))));
+        edit(&mut s, "input.word-right");
+        cmd(&mut s, "input.insert", &[" x"], None).unwrap();
+        edit(&mut s, "input.home");
+        edit(&mut s, "input.delete");
+        edit(&mut s, "input.right");
+        edit(&mut s, "input.delete-to-end");
+        assert_eq!(input_row(&mut s), ("/w".into(), Some((2, 29))));
+        edit(&mut s, "input.end");
+        cmd(&mut s, "input.insert", &["z"], None).unwrap();
+        edit(&mut s, "input.left");
+        edit(&mut s, "input.delete-to-start");
+        assert_eq!(input_row(&mut s), ("/z".into(), Some((1, 29))));
+        // Read and set from scripts; the buffer is listed.
+        let (text, _) = s.run_command("input-text", &[], None, Instant::now()).unwrap();
+        assert_eq!(text, ScriptValue::Str("z".into()));
+        cmd(&mut s, "set-input-text", &["needle", &buf.to_string()], None).unwrap();
+        assert_eq!(input_row(&mut s), ("/needle".into(), Some((7, 29))));
+        let (list, _) = s.run_command("buffers", &[], None, Instant::now()).unwrap();
+        let ScriptValue::List(list) = list else { panic!() };
+        assert!(list.iter().any(|b| b.get("kind") == Some(&ScriptValue::Str("input".into()))
+            && b.get("name") == Some(&ScriptValue::Str("/".into()))));
+        // Elsewhere the edits are errors.
+        cmd(&mut s, "focus-next-pane", &[], None).unwrap();
+        assert!(cmd(&mut s, "input.backspace", &[], None).is_err());
+        assert!(cmd(&mut s, "input-text", &[], None).is_err());
+        assert!(cmd(&mut s, "input-text", &[&buf.to_string()], None).is_ok());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_long_input_scrolls_to_keep_the_caret_in_sight() {
+        let (mut s, _rx, _buf, _pane) = input_session();
+        let long: String = ('a'..='z').cycle().take(120).collect();
+        cmd(&mut s, "input.insert", &[&long], None).unwrap();
+        let (row, cursor) = input_row(&mut s);
+        // 121 cells and the caret's: the last 89 characters and the caret.
+        assert_eq!((row.as_str(), cursor), (&long[31..], Some((89, 29))));
+        cmd(&mut s, "input.home", &[], None).unwrap();
+        let (row, cursor) = input_row(&mut s);
+        assert_eq!((row.as_str(), cursor), (format!("/{}", &long[..89]).as_str(), Some((1, 29))), "the prompt again");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn input_changes_and_hidden_buffers_reach_hooks() {
+        let (mut s, _rx, buf, pane) = input_session();
+        s.listen(&["InputChanged", "BufferHidden", "BufferDeleted"]);
+        let b = ScriptValue::Num(buf as f64);
+        let changed =
+            |t: &str| ("InputChanged".to_owned(), vec![ScriptValue::Num(buf as f64), ScriptValue::Str(t.into())]);
+        let k = |c: char| KeyEvent { text: Some(c.to_string()), ..KeyEvent::new(KeyCode::Char(c), Modifiers::NONE) };
+        s.send_to_pane(&k('n'));
+        cmd(&mut s, "input.left", &[], None).unwrap();
+        cmd(&mut s, "input.home", &[], None).unwrap();
+        cmd(&mut s, "input.backspace", &[], None).unwrap();
+        cmd(&mut s, "set-input-text", &["ne"], None).unwrap();
+        cmd(&mut s, "set-input-text", &["ne"], None).unwrap();
+        assert_eq!(std::mem::take(&mut s.script_events), [changed("n"), changed("ne")], "changes only");
+        // Shown in a second pane: closing one does not hide it.
+        let term_pane = *s.panes.iter().find(|(_, e)| e.kind_name() == "terminal").unwrap().0;
+        let o = ScriptValue::map([("buffer", b.clone()), ("pane", ScriptValue::Num(term_pane as f64))]);
+        let (second, _) = s.run_command("split", &[o], None, Instant::now()).unwrap();
+        s.script_events.clear();
+        s.close(second.as_num().unwrap() as PaneId);
+        assert!(s.script_events.iter().all(|(e, _)| e != "BufferHidden"), "{:?}", s.script_events);
+        // Deleting it: hidden first, then deleted.
+        s.script_events.clear();
+        cmd(&mut s, "delete-buffer", &[&buf.to_string()], None).unwrap();
+        let names: Vec<&str> = s.script_events.iter().map(|(e, _)| e.as_str()).collect();
+        assert_eq!(names, ["BufferHidden", "BufferDeleted"]);
+        assert_eq!(s.script_events[0].1, [b, ScriptValue::Str("input".into())]);
+        assert!(!s.panes.contains_key(&pane));
+        // A terminal hidden by closing its pane too.
+        let first = s.focus;
+        let term = s.panes[&first].buffer();
+        key(&mut s, "<C-b>%");
+        s.script_events.clear();
+        s.close(first);
+        assert_eq!(
+            s.script_events.iter().find(|(e, _)| e == "BufferHidden").map(|(_, a)| a.clone()),
+            Some(vec![ScriptValue::Num(term as f64), ScriptValue::Str("terminal".into())])
+        );
     }
 
     #[test]

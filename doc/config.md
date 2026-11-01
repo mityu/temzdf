@@ -313,6 +313,26 @@ configuration hides the terminals' (a `PaneOpened` hook calling
 A pane one row high shows its status line only. Changing what they say
 comes later (`doc/floating-panes.md`).
 
+## Input buffers
+
+An input buffer is one line of text with a prompt, as Vim's command line,
+shown in input panes. `newInput({ prompt: "/", text })` makes one and
+returns it; a pane shows it like any buffer (`split({ buffer, height: 1
+})`, `openFloat({ buffer })`, `showBuffer`). Focused, an input pane puts
+the session in the `input` mode: keys no mapping takes that type a character
+(no modifier but Shift), committed input-method text and pastes go in at
+its caret (the terminal cursor, where input methods show their preedit);
+the line scrolls to keep the caret in sight. Editing is commands in the
+`input` namespace, for mappings: `input.backspace`, `input.delete`,
+`input.left`, `input.right`, `input.home`, `input.end`, `input.wordLeft`,
+`input.wordRight`, `input.deleteWord`, `input.deleteToStart`,
+`input.deleteToEnd`, `input.insert(text)`. `inputText(buffer?)` and
+`setInputText(text, buffer?)` read and set the text (the focused input
+pane's buffer by default); the hook `InputChanged(buffer, text)` hears every
+change of it. An input buffer stays when its last pane closes, as others do;
+`BufferHidden(buffer, kind)` says so (delete it there if it is done with).
+Panes showing one buffer share its text, each with its own caret.
+
 ## Commands
 
 `cmd.*` and `action.*` share the command registry

@@ -98,7 +98,11 @@ declarations. In short, `import { ... } from "temzdf"`:
   goes either way), `PaneClosed(id)`, `PaneFocused(id)`, `TabEntered(n)`,
   `TabClosed(n)`,
   `DocumentReloaded(path)`, `ModeChanged(old, new)`, `BufferCreated(id,
-  kind)`, `BufferDeleted(id)`.
+  kind)`, `BufferDeleted(id)`, `BufferHidden(id, kind)` (the last pane
+  showing it went: closed, showing another buffer, its tab page closed;
+  before `BufferDeleted` when `deleteBuffer` closes its panes),
+  `InputChanged(id, text)` (an input buffer's text changed: typed, pasted,
+  edited, set; not when only its caret moved).
 - `dispatch(async (ctx) => ...)` with `ctx.cmd` and `ctx.atomic(fn)`;
   `atomic(fn)`.
 - Globals: `setTimeout`, `clearTimeout`, `console`.
