@@ -17,8 +17,7 @@ Two kinds of state decide what a key does, and they are kept apart:
 - **Modes**: states the user enters and leaves with keys. One at a time;
   a mode also decides what unmapped keys do and whether digits are counts.
 - **Conditions** (`when`, as nvim-insx's `enabled`): states the world
-  decides, such as the kind of the focused pane or whether a PDF pane's
-  search prompt is open. They are independent of each other and combine
+  decides, such as the kind of the focused pane. They are independent of each other and combine
   freely. A mapping whose condition is false does not exist for that key.
 
 On top of modes, **transient modes** (submodes) sit over the current mode
@@ -160,7 +159,8 @@ configurations are written with the same system.
 7. **Sequences across a submode and the mode below**: with `"always"` the
    two form one table (a submode's `g` and the mode below's `gt` wait as in
    Vim); with `"mapped"` only the submode's mappings count.
-8. **Fixed keys of PDF panes** (the search prompt, the outline): deferred
+8. **Fixed keys of PDF panes** (the outline; the search prompt became an
+   input pane with its own mode, 2026-11-02): deferred
    (the user, 2026-10-28). As conditional mappings, every default mapping
    of the `pdf` mode would need the condition "the prompt is closed" (else
    typing `n` or `j` into the prompt runs them), and with JavaScript

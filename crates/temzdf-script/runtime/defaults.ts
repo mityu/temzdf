@@ -4,14 +4,15 @@
 // and these are in the namespace "default" (`keymap.remove(mode, lhs, {
 // namespace: "default" })` removes one, `keymap.clear({ namespace: "default" })`
 // all of them). Built-in modes: `normal` (operating),
-// `terminal` (pass-through, terminal panes) and `pdf` (PDF panes).
+// `terminal` (pass-through, terminal panes), `pdf` (PDF panes) and `input`
+// (input panes: typed characters go in).
 import { action, cmd, keymap, on } from "temzdf";
-import type { Action } from "temzdf";
+import type { Rhs } from "temzdf";
 
 /** The prefix: enters the normal mode from a pane. */
 const prefix = "<C-b>";
 
-function each(mode: string, keys: string[], rhs: Action | Action[]): void {
+function each(mode: string, keys: string[], rhs: Rhs): void {
   for (const k of keys) keymap.add(mode, k, rhs, { namespace: "default" });
 }
 
@@ -34,6 +35,7 @@ each("pdf", ["<M-Right>"], action.forward());
 each("pdf", ["+", "="], action.zoomIn());
 each("pdf", ["-"], action.zoomOut());
 each("pdf", ["0", "w"], action.fitWidth());
+each("pdf", ["/"], () => openSearch());
 each("pdf", ["n"], action.nextMatch());
 each("pdf", ["N"], action.prevMatch());
 each("pdf", ["y"], action.copy());
@@ -95,3 +97,79 @@ each("normal", ["<Esc>"], action.exitMode());
 on("PaneOpened", (id: number, kind: string) => {
   if (kind === "terminal") cmd.statusLine(false, id);
 });
+
+// Searching a PDF pane (/): an input pane one row high below it, without a
+// status line. As the query is typed the PDF pane shows its first hit
+// (searchPreview, as Vim's incsearch); <CR> searches, <Esc> cancels (back
+// where it began), and either closes the input. Closed any other way, the
+// search is cancelled.
+/** The searches being typed: input buffer -> the PDF pane searched. */
+const searches = new Map<number, number>();
+
+function openSearch(): void {
+  const pdf = cmd.focusedPane();
+  if (pdf === null) return;
+  const buf = cmd.newInput({ prompt: "/" });
+  searches.set(buf, pdf);
+  try {
+    const pane = cmd.split({ side: "bottom", buffer: buf, height: 1 });
+    if (pane !== null) cmd.statusLine(false, pane);
+  } catch (e) {
+    searches.delete(buf);
+    cmd.deleteBuffer(buf);
+    throw e;
+  }
+}
+
+/** End the search typed into `buf`: search (`confirm`) or cancel, back to
+ * its PDF pane, and the input goes. */
+function endSearch(buf: number, confirm: boolean): void {
+  const pdf = searches.get(buf);
+  if (pdf === undefined) return;
+  searches.delete(buf);
+  const query = cmd.inputText(buf);
+  try {
+    if (confirm) cmd.searchFor(query, pdf);
+    else cmd.searchCancel(pdf);
+    cmd.focusPane(pdf);
+  } catch {
+    // The PDF pane is gone.
+  }
+  cmd.deleteBuffer(buf);
+}
+
+/** The input buffer pane `pane` shows. */
+function bufferOf(pane: number): number | undefined {
+  return cmd.panes().find((p) => p.id === pane)?.buffer;
+}
+
+on("InputChanged", (buf: number, text: string) => {
+  const pdf = searches.get(buf);
+  if (pdf !== undefined) cmd.searchPreview(text, pdf);
+});
+on("BufferHidden", (buf: number) => endSearch(buf, false));
+
+// The input mode: editing (readline's keys), the search's <CR> and <Esc>,
+// the prefix.
+each("input", ["<BS>", "<C-h>"], action.input.backspace());
+each("input", ["<Del>", "<C-d>"], action.input.delete());
+// (Not readline's <C-b> and <C-f>: <C-b> is the prefix.)
+each("input", ["<Left>"], action.input.left());
+each("input", ["<Right>"], action.input.right());
+each("input", ["<Home>", "<C-a>"], action.input.home());
+each("input", ["<End>", "<C-e>"], action.input.end());
+each("input", ["<M-b>", "<C-Left>"], action.input.wordLeft());
+each("input", ["<M-f>", "<C-Right>"], action.input.wordRight());
+each("input", ["<C-w>"], action.input.deleteWord());
+each("input", ["<C-u>"], action.input.deleteToStart());
+each("input", ["<C-k>"], action.input.deleteToEnd());
+each("input", ["<CR>"], (ctx) => {
+  const buf = bufferOf(ctx.pane);
+  if (buf !== undefined) endSearch(buf, true);
+});
+each("input", ["<Esc>"], (ctx) => {
+  const buf = bufferOf(ctx.pane);
+  if (buf !== undefined) endSearch(buf, false);
+});
+each("input", ["<C-S-v>", "<D-v>"], action.paste());
+each("input", [prefix], action.switchMode("normal"));

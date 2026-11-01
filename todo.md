@@ -31,12 +31,10 @@ server on one `Session`). Next and open:
 - [ ] What pane status lines say, from the configuration (a string or a
   function, as Vim's `statusline`; `doc/floating-panes.md`); today a PDF
   pane's says what its old status bar said and a terminal's is blank.
-- [ ] The PDF pane's search prompt (`/`), removed with the move to pane
-  status lines (user, 2026-10-31): write it again, on the status line, and
-  with it its tests (incremental search while typing, the cursor in the
-  prompt for IME, Enter before results), the `/` mapping, and the e2e
-  searches (`tests/e2e/search.actions`: typing, next, cleared;
-  `expect.actions`' `search` and `next` before `sidebar`).
+- [ ] Input panes (done: one line, the search on them, 2026-11-02): input
+  history (`<Up>`/`<Down>`), several lines, a `:` command line on them,
+  clicks moving the caret; choosing how the search's input pane shows
+  (the user: a configuration's own action opening it, mapped).
 - [ ] A log level (or verbosity) for temzdf's logs: today some lines are
   there for scripts/e2e.sh (`complete frame written`, `incomplete frame
   shown`, geometry) and others only with variables (`TEMZDF_TIMING`); the

@@ -1313,6 +1313,38 @@ fn an_action_searches_the_focused_pdf() {
 }
 
 #[test]
+fn slash_searches_through_an_input_line_below_the_pdf() {
+    let env = Env::new("search-input");
+    let pdf = fixture("sample.pdf").display().to_string();
+    let mut t = Term::spawn(&[BIN, "-s", "si", &pdf], &env.options());
+    t.wait_for("page 1", |s| s.title.contains("1 / 3"));
+    // The input line is the bottom row (30 rows: the PDF pane, its status
+    // line, the border, the input), with the cursor after the text.
+    t.key("/");
+    t.type_text("Back to");
+    let s = t.wait_for("the query typed", |s| s.row_from(29, 0) == "/Back to");
+    assert_eq!(s.cursor, Some((8, 29)), "{:?}", s.cursor);
+    // Each change shows the first hit: its only one is on page 2 (the PDF
+    // pane's status line says; the window title is the input's).
+    t.wait_for("the hit on page 2", |s| s.row_from(27, 0).contains("1/1   2 / 3"));
+    t.key("Enter");
+    let s = t.wait_for("the search done", |s| s.row_from(29, 0).contains("/Back to 1/1"));
+    assert!(s.lines().iter().all(|l| !l.starts_with("/Back to")), "the input is gone");
+    // The input buffer went with it: the document is the only buffer.
+    let ls = env.run(&["ls"]);
+    assert!(ls.contains("1 buffers") || ls.contains("1 buffer,") || ls.contains("1 buffer)"), "{ls}");
+    // Esc cancels: back to where it began.
+    t.key("g");
+    t.wait_for("page 1 again", |s| s.title.contains("1 / 3"));
+    t.key("/");
+    t.type_text("Back");
+    t.wait_for("the hit on page 2", |s| s.row_from(27, 0).contains("2 / 3"));
+    t.key("Esc");
+    let s = t.wait_for("back on page 1", |s| s.title.contains("1 / 3") && s.row_from(29, 0).contains("1 / 3"));
+    assert!(!s.row_from(29, 0).contains("/Back"), "no search left: {:?}", s.row_from(29, 0));
+}
+
+#[test]
 fn ls_fonts_shows_the_configured_fonts_or_a_sessions() {
     let env = Env::new("ls-fonts");
     env.config(

@@ -100,6 +100,43 @@ fn command_names() -> Vec<String> {
     names
 }
 
+/// How many function ids the shipped defaults take (loaded before every
+/// configuration): found by loading an empty one.
+fn base() -> u32 {
+    static BASE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *BASE.get_or_init(|| {
+        let mut s = Session::start(&[("config.js", "")]);
+        s.load("config.js");
+        let mut most = None;
+        loop {
+            match s.recv() {
+                FromHost::Request { req, op, .. } => {
+                    let f = match op {
+                        HostOp::On { func, .. } | HostOp::Map { rhs: MapRhs::Func(func), .. } => Some(func),
+                        _ => None,
+                    };
+                    most = most.max(f);
+                    s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
+                }
+                FromHost::Ready(r) => {
+                    r.unwrap();
+                    break;
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        most.map_or(0, |m| m + 1)
+    })
+}
+
+/// The id of the configuration's function number `n` (from 0, in the
+/// order registered; the defaults' come first).
+fn user(n: u32) -> u32 {
+    base() + n
+}
+
+/// A request as a log line; the configuration's functions numbered from 0
+/// (as [`user`]), the defaults' left out.
 fn describe(token: Token, op: &HostOp) -> String {
     let t = match token {
         Token::Call(id) => format!("call{id}"),
@@ -117,8 +154,11 @@ fn describe(token: Token, op: &HostOp) -> String {
                 .collect();
             format!("{t} {name}({})", args.join(","))
         }
-        HostOp::On { event, func, nested } => format!("{t} on {event} f{func} nested={nested}"),
-        HostOp::Map { modes, keys, rhs: MapRhs::Func(f), .. } => format!("{t} map {} {keys} f{f}", modes.join(",")),
+        HostOp::On { func, .. } | HostOp::Map { rhs: MapRhs::Func(func), .. } if *func < base() => String::new(),
+        HostOp::On { event, func, nested } => format!("{t} on {event} f{} nested={nested}", func - base()),
+        HostOp::Map { modes, keys, rhs: MapRhs::Func(f), .. } => {
+            format!("{t} map {} {keys} f{}", modes.join(","), f - base())
+        }
         // The shipped defaults map actions; leave them out.
         HostOp::Map { rhs: MapRhs::Actions(_), .. } => String::new(),
         other => format!("{t} {other:?}"),
@@ -152,10 +192,8 @@ keymap.clear();
     assert_eq!(
         log,
         [
-            // The defaults' hook (terminal panes without status lines).
             "load on PaneOpened f0 nested=false",
-            "load on PaneOpened f1 nested=false",
-            "load map normal t f2",
+            "load map normal t f1",
             "load message(hello 2)",
             "load ClearMappings { mode: None, namespace: Some(\"default\") }",
             "load ClearMappings { mode: None, namespace: None }",
@@ -164,7 +202,7 @@ keymap.clear();
 
     // The prefix mapping: its commands carry its call's token.
     log.clear();
-    s.send(ToHost::Call { id: 5, func: 2, args: vec![] });
+    s.send(ToHost::Call { id: 5, func: user(1), args: vec![] });
     match s.serve(&mut log) {
         FromHost::Done { id: 5, result: Ok(()) } => {}
         other => panic!("{other:?}"),
@@ -173,7 +211,7 @@ keymap.clear();
 
     // A hook gets its arguments.
     log.clear();
-    s.send(ToHost::Call { id: 6, func: 1, args: vec![ScriptValue::Num(3.0)] });
+    s.send(ToHost::Call { id: 6, func: user(0), args: vec![ScriptValue::Num(3.0)] });
     assert!(matches!(s.serve(&mut log), FromHost::Done { id: 6, result: Ok(()) }));
     assert_eq!(log, ["call6 message(opened 3)"]);
 }
@@ -198,7 +236,7 @@ cmd.message(typeof cmd.input + " " + Object.isFrozen(cmd.input) + " " + typeof a
         .parse()
         .unwrap();
     log.clear();
-    s.send(ToHost::Call { id: 1, func: f, args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(f), args: vec![] });
     assert!(matches!(s.serve(&mut log), FromHost::Done { id: 1, result: Ok(()) }));
     assert_eq!(log, ["call1 input.delete-word()"], "the command's whole name");
 }
@@ -213,10 +251,10 @@ keymap.add("normal", "s", () => { cmd.split("right"); cmd.message("after split")
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
     ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 1, func: 2, args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(1), args: vec![] });
     // The split: before answering it, the session runs the hook.
     let FromHost::Request { req: split, token: Token::Call(1), .. } = s.recv() else { panic!() };
-    s.send(ToHost::Call { id: 2, func: 1, args: vec![] });
+    s.send(ToHost::Call { id: 2, func: user(0), args: vec![] });
     let FromHost::Request { req, token: Token::Call(2), op } = s.recv() else { panic!() };
     assert_eq!(describe(Token::Call(2), &op), "call2 message(hook)");
     s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
@@ -237,15 +275,15 @@ keymap.add("normal", "c", () => cmd.message(String(1)));
     let mut s = Session::start(&[("config.ts", config)]);
     s.load("config.ts");
     ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 1, func: 1, args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(0), args: vec![] });
     let FromHost::Done { result: Err(e), .. } = s.serve(&mut Vec::new()) else { panic!() };
     assert!(e.message.contains("synchronous"), "{e}");
-    s.send(ToHost::Call { id: 2, func: 2, args: vec![] });
+    s.send(ToHost::Call { id: 2, func: user(1), args: vec![] });
     let FromHost::Done { result: Err(e), .. } = s.serve(&mut Vec::new()) else { panic!() };
     assert_eq!(e.message, "Error: boom");
     assert!(e.stack.as_deref().unwrap_or_default().contains("config.ts:3"), "{e}");
     // A failed command (the session refused it) is an exception too.
-    s.send(ToHost::Call { id: 3, func: 3, args: vec![] });
+    s.send(ToHost::Call { id: 3, func: user(2), args: vec![] });
     let FromHost::Request { req, .. } = s.recv() else { panic!() };
     s.send(ToHost::Reply { req, result: Err("no such pane".into()) });
     let FromHost::Done { result: Err(e), .. } = s.recv() else { panic!() };
@@ -261,13 +299,13 @@ keymap.add("normal", "w", () => { try { cmd.message("waits"); } catch (e) {} for
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
     ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 1, func: 1, args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(0), args: vec![] });
     std::thread::sleep(Duration::from_millis(100));
     s.send(ToHost::Interrupt);
     assert!(matches!(s.recv(), FromHost::Done { id: 1, result: Err(_) }));
     // Blocked in a command the session does not answer: the interrupt ends
     // the wait, and the catch cannot keep it running.
-    s.send(ToHost::Call { id: 2, func: 2, args: vec![] });
+    s.send(ToHost::Call { id: 2, func: user(1), args: vec![] });
     let FromHost::Request { .. } = s.recv() else { panic!() };
     s.send(ToHost::Interrupt);
     assert!(matches!(s.recv(), FromHost::Done { id: 2, result: Err(_) }));
@@ -332,7 +370,6 @@ dispatch(async (ctx) => {
     assert_eq!(
         log,
         [
-            "load on PaneOpened f0 nested=false",
             "task1 message(late)",
             "task1 message(no context)",
             "begin Task(1)",
@@ -354,7 +391,7 @@ fn paths_resolve_relative_to_the_importing_module() {
     s.load("config.js");
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
-    assert_eq!(log, ["load on PaneOpened f0 nested=false", "load message(from n)"]);
+    assert_eq!(log, ["load message(from n)"]);
 }
 
 #[test]
@@ -377,7 +414,7 @@ cmd.message("ok");
     s.load("config.js");
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
-    assert_eq!(log, ["load on PaneOpened f0 nested=false", "load message(ok)"]);
+    assert_eq!(log, ["load message(ok)"]);
 }
 
 #[test]
@@ -393,7 +430,7 @@ keymap.add("normal", "x", () => cmd.message("ran"));
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
     std::thread::sleep(Duration::from_millis(100));
-    s.send(ToHost::Call { id: 1, func: 1, args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(0), args: vec![] });
     s.send(ToHost::Interrupt);
     log.clear();
     match s.serve(&mut log) {
@@ -405,7 +442,7 @@ keymap.add("normal", "x", () => cmd.message("ran"));
     let mut s = Session::start_with_limit(&[("config.js", config)], Duration::from_millis(200));
     s.load("config.js");
     ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 2, func: 1, args: vec![] });
+    s.send(ToHost::Call { id: 2, func: user(0), args: vec![] });
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 2, result: Ok(()) }));
 }
 
@@ -425,7 +462,7 @@ cmd.message(a + b + c);
     s.load("config.ts");
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
-    assert_eq!(log, ["load on PaneOpened f0 nested=false", "load message(abc)"]);
+    assert_eq!(log, ["load message(abc)"]);
 }
 
 #[test]
@@ -457,12 +494,12 @@ keymap.add("normal", "w", () => {
     };
     ready_ok(ready);
     // Each condition is registered once, before the mapped function.
-    assert_eq!(maps[0], ("t".into(), MapRhs::Func(2), Some(1), Some("mine".into())));
+    assert_eq!(maps[0], ("t".into(), MapRhs::Func(user(1)), Some(user(0)), Some("mine".into())));
     let (when_u, when_v) = (maps[1].2.unwrap(), maps[2].2.unwrap());
 
     // Values in order: true, an exception, a Promise (refused).
     let ctx = ScriptValue::map([("paneKind", ScriptValue::Str("terminal".into()))]);
-    s.send(ToHost::Eval { id: 9, funcs: vec![1, when_u, when_v], args: vec![ctx] });
+    s.send(ToHost::Eval { id: 9, funcs: vec![user(0), when_u, when_v], args: vec![ctx] });
     match s.recv() {
         FromHost::Values { id: 9, results } => {
             assert_eq!(results[0], Ok(true));
@@ -491,8 +528,8 @@ keymap.add("normal", "w", () => {
                 let m = ScriptValue::map([
                     ("mode", ScriptValue::Str("normal".into())),
                     ("lhs", ScriptValue::Str("t".into())),
-                    ("rhs", func(2)),
-                    ("when", func(1)),
+                    ("rhs", func(user(1))),
+                    ("when", func(user(0))),
                     ("nowait", ScriptValue::Bool(false)),
                     ("desc", ScriptValue::Null),
                     ("namespace", ScriptValue::Str("mine".into())),
@@ -511,7 +548,7 @@ keymap.add("normal", "w", () => {
             other => panic!("{other:?}"),
         }
     }
-    assert_eq!(copied, Some((vec!["copy".to_owned()], MapRhs::Func(2), Some(1))));
+    assert_eq!(copied, Some((vec!["copy".to_owned()], MapRhs::Func(user(1)), Some(user(0)))));
 }
 
 /// What the host says about task 1 until it is done.
@@ -584,7 +621,7 @@ dispatch(async (ctx) => {
     s.send(ToHost::Interrupt);
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::TaskDone { task: 1, .. }));
     // A call waiting in a command: the user's next <C-c> must end it.
-    s.send(ToHost::Call { id: 7, func: 1, args: vec![] });
+    s.send(ToHost::Call { id: 7, func: user(0), args: vec![] });
     let FromHost::Request { token: Token::Call(7), .. } = s.recv() else { panic!() };
     s.send(ToHost::Interrupt);
     assert!(matches!(s.recv(), FromHost::Done { id: 7, result: Err(_) }));
@@ -607,7 +644,7 @@ dispatch(async (ctx) => { await new Promise((r) => setTimeout(r, 30)); ctx.cmd.m
     };
     // The task has waited past the limit when the user's mapping runs.
     std::thread::sleep(Duration::from_millis(400));
-    s.send(ToHost::Call { id: 9, func: 1, args: vec![] });
+    s.send(ToHost::Call { id: 9, func: user(0), args: vec![] });
     assert!(matches!(s.recv(), FromHost::Done { id: 9, result: Ok(()) }));
     s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::TaskDone { task: 1, result: Ok(()) }));

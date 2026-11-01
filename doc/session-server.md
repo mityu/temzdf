@@ -21,7 +21,10 @@ What exists:
   terminal panes (`crates/temzdf-term`: a pty from `portable-pty`, Ghostty's
   terminal emulation from `libghostty-vt`, the screen as scene text cells),
   all in a binary layout of splits with one-cell borders (a split halves its
-  area; when the screen changes size the last pane takes the difference), focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
+  area; when the screen changes size the last pane takes the difference;
+  panes given a size keep it), input panes (one line of an input buffer,
+  as Vim's command line: `crates/temzdf-server/src/session/input.rs`; the
+  shipped search types into one), focus, modes and key mappings (`doc/script-host.md`; the prefix `<C-b>`),
   buffers as in Vim (what panes show; closing a pane hides its buffer,
   see `doc/config.md`), floating panes over the layout (a stack of framed
   panes; `doc/config.md`, design in `doc/floating-panes.md`), tab pages

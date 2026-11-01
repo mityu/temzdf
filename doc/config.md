@@ -164,15 +164,29 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `pdf` | `g` `<Home>` / `G` `<End>` | first page / end (or page N with a count) |
 | `pdf` | `<C-o>` `<BS>` `<M-Left>` / `<M-Right>` | link history back / forward (counts) |
 | `pdf` | `+` `=` / `-` / `0` `w` | zoom in / out (counts) / fit width |
+| `pdf` | `/` | search: an input line below the pane (typing shows the first hit; `<CR>` searches, `<Esc>` cancels) |
 | `pdf` | `n` / `N` | next / previous match of the search (`searchFor`; counts) |
 | `pdf` | `y` | copy the selection |
 | `pdf` | `<Tab>` | outline |
+| `input` | `<BS>` `<C-h>` / `<Del>` `<C-d>` | delete the character before / after the caret |
+| `input` | `<Left>` / `<Right>` / `<Home>` `<C-a>` / `<End>` `<C-e>` | caret: a character left / right, the start / end |
+| `input` | `<M-b>` `<C-Left>` / `<M-f>` `<C-Right>` | caret: a word left / right |
+| `input` | `<C-w>` / `<C-u>` / `<C-k>` | delete the word before the caret / to the start / to the end |
+| `input` | `<CR>` / `<Esc>` | a search: search / cancel (the input closes) |
+| `input` | `<C-b>` | the normal mode |
 
 Inside tmux, `<C-b>` is tmux's own prefix: map another key for temzdf (or
 press it twice there).
 
 While a PDF pane's outline has the focus, keys go to it directly (fixed
-keys). (The search prompt, `/`, is gone for now; `searchFor` searches.) Mouse handling is built in. Dragging a
+keys). The search (`/`) is the shipped configuration's: a function mapped
+in `defaults.ts` opens an input buffer (`newInput`) in a one-row pane split
+below the PDF pane (`split({ height: 1 })`, its status line off), an
+`InputChanged` hook previews the query (`searchPreview`), `<CR>` and
+`<Esc>` in the `input` mode search or cancel and delete the input buffer;
+closed any other way (`BufferHidden`), the search is cancelled. A
+configuration can replace it with its own (`keymap.add("pdf", "/", ...)`).
+Mouse handling is built in. Dragging a
 border between panes resizes them, in any mode (the pointer shows a resize
 shape over borders); programs in terminal panes get their new size when the
 button is released. Panes stay at least 10 columns by 4 rows. In terminal

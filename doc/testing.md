@@ -121,12 +121,12 @@ runs the tests with another shell, e.g. `TEMZDF_TEST_SHELL=$(nix build
 --print-out-paths nixpkgs#dash)/bin/dash`; tests compare a command's
 output with `shows_output`, which takes either.
 
-Tests search with `PdfPane::search_for`, the `search-for` command: the
-search prompt (`/`) is gone until it is written again (`todo.md`), and with
-it its tests (the incremental search while typing, the cursor in the
-prompt, Enter before results) and the e2e searches (`tests/e2e/search.actions`,
-`expect.actions`' `search` and `next`), which the standalone viewer can
-only reach by keys.
+Searches are typed into an input pane by the shipped configuration (`/`):
+the PDF pane's side is tested with `PdfPane::search_preview`,
+`search_for` and `search_cancel` (incremental search, Enter before
+results, going back), the input pane's in the session's tests (editing,
+the cursor, hooks), the whole in `tui.rs` and the e2e searches
+(`tests/e2e/search.actions`, `expect.actions`' `search` and `next`).
 
 What a terminal shows *between* frames (a flicker) does not show on the
 screen a test reads at the end. For those, record what temzdf wrote
