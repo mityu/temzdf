@@ -19,20 +19,29 @@ pub fn width(c: char) -> usize {
     if wide { 2 } else { 1 }
 }
 
-/// `text` broken into lines of at most `max` cells.
+/// `text` broken into lines of at most `max` cells, at a space where the
+/// line has one (the space goes), else anywhere.
 pub fn wrap(text: &str, max: usize) -> Vec<String> {
+    let w = |s: &str| s.chars().map(width).sum::<usize>();
     let mut out = Vec::new();
     for para in text.lines() {
         let mut line = String::new();
-        let mut w = 0;
         for c in para.chars() {
-            let cw = width(c);
-            if w + cw > max && !line.is_empty() {
-                out.push(std::mem::take(&mut line));
-                w = 0;
+            if w(&line) + width(c) > max && !line.is_empty() {
+                match line.rfind(' ').filter(|&i| i > 0) {
+                    // The word typed so far goes on.
+                    Some(i) if c != ' ' => {
+                        let rest = line.split_off(i + 1);
+                        line.pop();
+                        out.push(std::mem::replace(&mut line, rest));
+                    }
+                    _ => out.push(std::mem::take(&mut line)),
+                }
+                if c == ' ' && line.is_empty() {
+                    continue;
+                }
             }
             line.push(c);
-            w += cw;
         }
         out.push(line);
     }
@@ -98,6 +107,10 @@ mod tests {
         assert_eq!(wrap("abcdef", 4), ["abcd", "ef"]);
         assert_eq!(wrap("数式数式", 5), ["数式", "数式"]);
         assert_eq!(wrap("a\nb", 10), ["a", "b"]);
+        // At spaces where the line has them.
+        assert_eq!(wrap("one two three", 8), ["one two", "three"]);
+        assert_eq!(wrap("one two three", 7), ["one two", "three"]);
+        assert_eq!(wrap("aaaaaa bb", 4), ["aaaa", "aa", "bb"]);
     }
 
     #[test]
