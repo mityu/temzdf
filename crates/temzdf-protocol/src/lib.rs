@@ -28,7 +28,7 @@ use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 14;
+pub const VERSION: u32 = 15;
 /// Larger messages are refused (a frame with every image of a full cache is
 /// about 200 MB).
 const MAX_MESSAGE: usize = 512 << 20;
@@ -568,6 +568,13 @@ mod tests {
             cursor_shape: CursorShape::Bar { blink: true },
             pointer: Pointer::Link,
             title: "doc — 1 / 3".into(),
+            regions: vec![temzdf_scene::Region {
+                pane: 4,
+                rect: Rect::new(0, 0, 40, 20),
+                kind: temzdf_scene::RegionKind::Pdf,
+                images: true,
+            }],
+            fallback_text: vec![TextGrid { col: 0, row: 9, rows: vec![vec![Cell::default()]] }],
         };
         round_trip(&ServerMsg::Frame {
             seq: 9,

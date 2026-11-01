@@ -44,7 +44,7 @@ pub fn render_frame(name: &str, out: &Path, size: (u32, u32), scale: f64) -> Res
             None => deadline.saturating_duration_since(Instant::now()),
         };
         let msg = match rx.recv_timeout(wait) {
-            Ok(FromServer::Msg(m)) => m,
+            Ok(FromServer::Msg(m)) => *m,
             Ok(FromServer::Gone) => bail!("the session closed the connection"),
             Err(RecvTimeoutError::Timeout) if complete_at.is_some() => break,
             Err(_) => bail!("no complete frame from session {name:?} within {} s", TIMEOUT.as_secs()),

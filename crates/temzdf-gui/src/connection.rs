@@ -12,7 +12,7 @@ use temzdf_protocol::{self as proto, ClientMsg, ServerMsg};
 
 /// What the reader thread passes on.
 pub enum FromServer {
-    Msg(ServerMsg),
+    Msg(Box<ServerMsg>),
     /// The server closed the connection.
     Gone,
 }
@@ -35,7 +35,7 @@ impl Connection {
                 let msg = match proto::recv_server(&mut reader) {
                     Ok(Some((m, took))) => {
                         log_received(&m, took);
-                        FromServer::Msg(m)
+                        FromServer::Msg(Box::new(m))
                     }
                     _ => FromServer::Gone,
                 };

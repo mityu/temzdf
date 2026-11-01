@@ -211,7 +211,7 @@ impl App {
                 return;
             };
             let Some(g) = &mut self.gpu else { continue };
-            match g.view.apply(msg) {
+            match g.view.apply(*msg) {
                 Applied::Frame(seq, _) => {
                     // Drawn when the window is ready; acknowledged after.
                     g.window.request_redraw();

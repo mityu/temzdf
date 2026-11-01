@@ -15,7 +15,7 @@ use temzdf_pdfview::document::Document;
 use temzdf_pdfview::host::{DocumentHost, Forward, HostOptions, Opening};
 use temzdf_pdfview::pane::{self, PdfPane};
 use temzdf_pdfview::viewer::{StandIn, ViewState};
-use temzdf_scene::{CursorShape, Effect, Frame, Hints, Images, Layer, Pointer, Rect, TextGrid};
+use temzdf_scene::{CursorShape, Effect, Frame, Hints, Images, Layer, Pointer, Rect, Region, RegionKind, TextGrid};
 use temzdf_term::{Spawn, TermBuffer, TermEvent, TermView};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{
@@ -222,6 +222,8 @@ impl Options {
 /// The lowest z of programs' images in terminal panes: never under the cell
 /// backgrounds (the GUI draws layers below -2^30 under them).
 const Z_PROGRAMS_MIN: i32 = -1_073_741_698;
+/// What a PDF pane says to frontends without images.
+const NO_GRAPHICS_PDF: &str = "PDF viewer disabled (no kitty graphics protocol support)";
 /// The session's own cells: borders, frames, the tab line.
 const BACKGROUND: [u8; 4] = [0x3a, 0x3a, 0x3a, 0xff];
 const BORDER: [u8; 4] = [0x5a, 0x5a, 0x5a, 0xff];
@@ -1906,6 +1908,8 @@ impl Session {
         let mut cursor_shape = CursorShape::Default;
         let mut title = self.name.clone();
         let mut complete = true;
+        let mut regions = Vec::new();
+        let mut fallback_text = Vec::new();
         // The focused pane's work first.
         let mut ids = order.clone();
         ids.sort_by_key(|id| *id != self.focus);
@@ -1939,6 +1943,21 @@ impl Session {
             let clip = Rect::new(ox, oy, content.w * cell.width, content.h * cell.height);
             // A pane one row high shows its status line only.
             let frame = if content.h == 0 { Frame { title: frame.title, ..Frame::default() } } else { frame };
+            // For frontends without images: where it is, and a PDF pane's
+            // line saying it cannot show.
+            if content.h > 0 {
+                let kind = match &e.kind {
+                    Kind::Pdf { .. } => RegionKind::Pdf,
+                    Kind::Term { .. } => RegionKind::Terminal,
+                    Kind::Input { .. } => RegionKind::Input,
+                };
+                let images = kind == RegionKind::Pdf || !frame.layers.is_empty();
+                regions.push(Region { pane: id, rect: content, kind, images });
+                if kind == RegionKind::Pdf {
+                    let line = statusline::centred(NO_GRAPHICS_PDF, content);
+                    fallback_text.extend(clip::text_pieces(line, &covers));
+                }
+            }
             for l in frame.layers {
                 let moved = Layer { dst: Rect::new(l.dst.x + ox, l.dst.y + oy, l.dst.w, l.dst.h), ..l };
                 if let Some(c) = moved.clipped(&clip) {
@@ -1980,10 +1999,9 @@ impl Session {
         }
         // Floating messages over everything.
         text.extend(self.notice_grids());
-        Frame { layers, text, cursor, cursor_shape, pointer: self.pointer(), title }
+        Frame { layers, text, cursor, cursor_shape, pointer: self.pointer(), title, regions, fallback_text }
     }
 
-    /// Lines in the one-cell gaps between panes; the focused pane's in the accent colour.
     /// The borders between the tiled panes, as text (see `borders`), cut by
     /// what lies above them.
     fn border_grids(&self) -> Vec<TextGrid> {
@@ -3900,6 +3918,54 @@ mod tests {
         assert!(split(&mut s, opts(&[("side", side("bottom")), ("width", n(3.0))])).is_err());
         assert!(split(&mut s, opts(&[("buffer", n(9999.0))])).is_err());
         assert!(cmd(&mut s, "focus-pane", &["9999"], None).is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn frames_say_where_panes_and_their_images_are_for_frontends_without_images() {
+        let (mut s, rx) = session();
+        let (frame, _) = settle(&mut s, &rx);
+        let pdf = s.focus;
+        // The PDF pane: images, and its line for frontends without them in
+        // the middle of its content (29 rows: the status line below).
+        assert_eq!(
+            frame.regions,
+            [Region { pane: pdf, rect: Rect::new(0, 0, 90, 29), kind: RegionKind::Pdf, images: true }]
+        );
+        let rows = screen_text(&Frame { text: frame.fallback_text.clone(), ..Frame::default() }, GEOMETRY);
+        assert_eq!(rows[14].trim(), NO_GRAPHICS_PDF);
+        assert!(screen_text(&frame, GEOMETRY).iter().all(|r| !r.contains("disabled")), "not in the text");
+        // A float over it cuts the line.
+        let n = |v: f64| ScriptValue::Num(v);
+        let opts = [("width", n(20.0)), ("height", n(5.0)), ("col", n(30.0)), ("row", n(11.0))];
+        let f = float(&mut s, &["sleep", "30"], &opts);
+        let frame = s.frame();
+        let rows = screen_text(&Frame { text: frame.fallback_text.clone(), ..Frame::default() }, GEOMETRY);
+        assert!(!rows[14].contains("graphics protocol"), "{:?}", rows[14]);
+        let kinds: Vec<_> = frame.regions.iter().map(|r| (r.pane, r.kind, r.images)).collect();
+        assert!(kinds.contains(&(f, RegionKind::Terminal, false)), "{kinds:?}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_terminal_region_has_images_once_a_program_shows_one() {
+        let (mut s, rx) = terminal_session(&[
+            "sh",
+            "-c",
+            "read l; printf '\\033_Ga=T,f=32,s=2,v=2,c=4,r=2,q=2;/wAA/wD/AP8AAP///////w==\\033\\\\'; echo; sleep 30",
+        ]);
+        let pane = s.focus;
+        let images = |s: &mut Session| s.frame().regions.iter().find(|r| r.pane == pane).map(|r| r.images);
+        assert_eq!(images(&mut s), Some(false));
+        key(&mut s, "<CR>");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while images(&mut s) != Some(true) {
+            assert!(Instant::now() < deadline, "the image never came");
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(50)) {
+                s.handle(ev, Instant::now());
+            }
+        }
+        assert!(s.frame().fallback_text.is_empty(), "terminal panes have no line");
     }
 
     #[test]

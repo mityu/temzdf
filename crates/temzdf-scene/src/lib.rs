@@ -197,6 +197,33 @@ pub struct Frame {
     pub pointer: Pointer,
     /// Window title.
     pub title: String,
+    /// The panes shown, for frontends that draw no images (terminals without
+    /// the kitty graphics protocol): where each is and whether it has images.
+    pub regions: Vec<Region>,
+    /// Text such frontends draw below `text`, where images would be (a PDF
+    /// pane's "viewer disabled" line); the others ignore it.
+    pub fallback_text: Vec<TextGrid>,
+}
+
+/// A pane of a frame (see [`Frame::regions`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Region {
+    pub pane: u32,
+    /// Its content, in cells.
+    pub rect: Rect,
+    pub kind: RegionKind,
+    /// It shows images (a PDF pane always; a terminal pane once a program
+    /// sent one that is on screen).
+    pub images: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum RegionKind {
+    Pdf,
+    Terminal,
+    Input,
 }
 
 /// A rectangle of text cells at (`col`, `row`) of the screen; every row has

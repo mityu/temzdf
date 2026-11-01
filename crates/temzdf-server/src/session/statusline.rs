@@ -36,6 +36,20 @@ pub(super) fn cells(bar: &StatusBar, cols: usize, focused: bool) -> Vec<Cell> {
     row
 }
 
+/// `text` on the middle row of `rect`, centred (cut to fit), dimmed, on
+/// the terminal's background.
+pub(super) fn centred(text: &str, rect: temzdf_scene::Rect) -> TextGrid {
+    let theme = Theme::dark();
+    let fg = Color::Rgb([theme.bar_dim.0[0], theme.bar_dim.0[1], theme.bar_dim.0[2]]);
+    let cols = rect.w as usize;
+    let w = text_width(text).min(cols);
+    let mut row = vec![Cell { text: " ".into(), width: 1, fg, bg: Color::Default, attrs: Attrs::default() }; w];
+    put(&mut row, 0, text, w, fg, Color::Default);
+    let col = rect.x + ((cols - w) / 2) as i32;
+    let line = rect.y + (rect.h as i32 - 1) / 2;
+    TextGrid { col: col.max(0) as u16, row: line.max(0) as u16, rows: vec![row] }
+}
+
 fn text_width(s: &str) -> usize {
     s.chars().filter(|c| !c.is_control()).map(width).sum()
 }
@@ -88,6 +102,14 @@ mod tests {
         let row = cells(&StatusBar::default(), 5, false);
         assert_eq!(text(&row), "     ");
         assert!(row.iter().all(|c| c.bg != Color::Default));
+    }
+
+    #[test]
+    fn centred_lines_are_cut_to_fit() {
+        let g = centred("abcdef", temzdf_scene::Rect::new(10, 2, 10, 5));
+        assert_eq!((g.col, g.row, text(&g.rows[0])), (12, 4, "abcdef".into()));
+        let g = centred("abcdef", temzdf_scene::Rect::new(0, 0, 4, 1));
+        assert_eq!((g.col, g.row, text(&g.rows[0])), (0, 0, "abcd".into()));
     }
 
     #[test]
