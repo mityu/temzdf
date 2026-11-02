@@ -89,6 +89,36 @@ break the API). In-process Rust with JS (SpiderMonkey) and raw RGBA through
 web compatibility has gaps, the build is huge and no macOS software path is
 confirmed. Re-evaluate at the next LTS.
 
+### Other installed browsers (added 2026-11-02)
+
+Which browsers a user may already have can serve the same way:
+
+- **Chromium-based browsers** (Chrome, Edge, Brave, Vivaldi, Opera) speak
+  CDP: the recommended path covers them all.
+- **Firefox**: its CDP implementation is gone (Firefox 141 is the first
+  release without it; ESR can still turn it on), replaced by W3C WebDriver
+  BiDi [C: fxdx.dev/cdp-retirement-in-firefox,
+  selenium.dev/blog/2025/remove-cdp-firefox]. BiDi has what we need except
+  the frame stream: `browsingContext.captureScreenshot` (with `clip`),
+  `input.performActions` (pointer, wheel, keys), `script.evaluate`. The
+  screencast being specified for BiDi records video for test runs, not
+  frames to a client [C: w3.org/groups/wg/browser-tools-testing/activity/2026,
+  wiki.mozilla.org/WebDriver/RemoteProtocol/WebDriver_BiDi/Milestone_20],
+  and there is no `beginFrame`. So Firefox works only by polling screenshots
+  and diffing them, heavier while scrolling or animating: a possible second
+  engine behind the engine trait, not a first one. `firefox --headless
+  --screenshot` takes one picture and cannot be driven.
+- **Safari** (`safaridriver`, WebDriver): macOS only, no headless mode, needs
+  the window on screen. Unsuitable.
+- **Playwright's patched Firefox and WebKit** have their own protocol with a
+  screencast, but they are Playwright's builds to download, not the user's
+  browser.
+- **WPE WebKit** (WebKitWebDriver) and **Servo**/**Ladybird** (partial
+  WebDriver): see below and above.
+
+In practice only Chromium-based browsers are both likely installed and able to
+stream frames; Firefox over BiDi is the runner-up.
+
 ### Rejected
 
 - **System webviews as Tauri/wry use them** (WebKitGTK, WKWebView,
