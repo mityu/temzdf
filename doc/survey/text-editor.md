@@ -148,10 +148,47 @@ Clients get finished cells, as they do for terminal panes now.
 | Zed `rope`, `editor` | in the Zed repository | GPL-3.0-or-later | |
 | `iset`, `rust-lapper` | 0.3.3, 1.3.0 | MIT | interval sets with absolute keys: every edit shifts O(n) |
 
-[C: crates.io]. No permissively licensed crate offers marks that shift with
-edits and have stickiness [E]. Options: a small tree of relative offsets of
-our own (marktree or VS Code style), or `zed-sum-tree` with a
-`{len, max_end}` summary.
+[C: crates.io]
+
+Ranges that follow edits (checked 2026-11-03; corrects a first pass that
+found none). Libraries:
+
+- `xi-rope`'s `Spans<T>` (Apache-2.0): "spans (in an interval tree), useful
+  for rich text annotations", moved by an edit with `apply_shape(&Delta)`.
+  It is tied to xi-rope's own `Delta` and has no stickiness options; Lapce
+  uses it through `lapce-xi-rope`.
+  [C: xi-editor `rust/rope/src/spans.rs`]
+- `any-rope` 1.2.5 (MIT, 2023): a rope of arbitrary measured items, "for
+  example ... a rope of tags" beside a rope of text. Ranges kept as runs, not
+  overlapping marks. [C: github.com/AhoyISki/AnyRope]
+- Helix (MPL-2.0, `helix-core` not published on crates.io, so a git
+  dependency): no tree. Each `ChangeSet` moves sorted positions with
+  `update_positions`/`map_pos`, and each position carries an `Assoc`
+  (`Before`, `After`, `BeforeWord`, `AfterWord`, `BeforeSticky`,
+  `AfterSticky`). Selections, diagnostics and inlay hints are mapped this way.
+  [C: `helix-core/src/transaction.rs`]
+- Zed (GPL-3.0-or-later):
+  - The `text` crate has anchors (CRDT positions with a bias) that are
+    resolved through a snapshot.
+  - `editor`'s `DisplayMap` (inlays, folds, blocks) and `multi_buffer` build
+    on them.
+  - These crates are not on crates.io and depend on the rest of Zed.
+  [C: zed `crates/text/Cargo.toml`, `crates/multi_buffer/Cargo.toml`]
+- `neosh-core` 0.7.0 (MIT, 2026-10): buffers with extmarks, new and
+  little used.
+
+Code to port rather than depend on:
+
+- Neovim's `src/nvim/marktree.c` (C, Apache-2.0);
+- VS Code's `intervalTree.ts` (TypeScript, MIT);
+- Atom's `superstring` marker index (C++, MIT);
+- CodeMirror 6's `RangeSet` (JavaScript, MIT);
+- Emacs' `itree.c` (C, GPL-3.0).
+
+None of the libraries is a drop-in for marks with VS Code or Neovim
+semantics. Options: a small tree of relative offsets of our own (marktree or
+VS Code style, ported), `zed-sum-tree` with a `{len, max_end}` summary, or
+Helix's approach (sorted positions mapped per edit) for a first version.
 
 ### Shape for temzdf [E]
 
@@ -500,7 +537,7 @@ fallback, slower than Tree-sitter.
       defend with `nomodifiable` and many buffer-local maps;
     - redraw means "modifiable, replace all lines, nomodifiable" and
       restoring cursor and folds by hand.
-  [C: neovim `doc/options.txt` 'buftype', `doc/channel.txt`, github.com/stevearc/oil.nvim,
+  [C: neovim `runtime/doc/options.txt` 'buftype', `runtime/doc/channel.txt`, github.com/stevearc/oil.nvim,
   github.com/MunifTanjim/nui.nvim]
 - **Widget-first**:
   - Helix's compositor stacks `Component`s (pickers, prompts, popups; the
@@ -517,7 +554,7 @@ fallback, slower than Tree-sitter.
 - **Kakoune** sends clients a few primitives (info boxes, menus, the status
   line). **Acme** makes all UI text: any word in a tag line runs as a
   command, and programs drive windows through 9P files.
-  [C: kakoune `doc/json_ui.asciidoc`, plan9.io/sys/doc/acme/acme.html]
+  [C: github.com/mawww/kakoune/blob/master/doc/json_ui.asciidoc, plan9.io/sys/doc/acme/acme.html]
 
 ### Trade-off [E]
 
