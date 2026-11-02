@@ -91,6 +91,12 @@ confirmed. Re-evaluate at the next LTS.
 
 ### Rejected
 
+- **System webviews as Tauri/wry use them** (WebKitGTK, WKWebView,
+  WebView2): `wry` shows the webview in a native window and has no pixel
+  readback; driving the platform APIs directly means a backend per platform,
+  WebKitGTK needing GTK and a display server (details in
+  `doc/survey/markdown-viewer.md`, "System webviews"). Reusing the user's
+  installed browser is the recommended Chromium path above instead.
 - **WPE WebKit**: headless WPEPlatform backend and Skia CPU rendering exist,
   but Linux only and no maintained Rust bindings.
 - **macOS WKWebView** snapshots: AppKit main thread, misbehaves detached from
