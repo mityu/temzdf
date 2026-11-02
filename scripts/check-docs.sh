@@ -24,7 +24,7 @@ set -uo pipefail
 # This cd never fails.
 cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")"
 
-# The files looked at (pathspecs for git grep).
+# The files looked at (pathspecs for git grep), tracked or not yet added.
 files=(. ':!.claude/skills' ':!scripts/check-docs.sh' ':!Cargo.lock')
 md=('*.md' ':!.claude/skills')
 
@@ -39,7 +39,7 @@ while IFS=: read -r file line path; do
   path=${path%.}
   [[ $path == *'*'* ]] && continue
   [[ -e $path ]] || problem "$file:$line: $path does not exist"
-done < <(git grep -noE '(^|[^A-Za-z0-9_./-])doc/[A-Za-z0-9_./-]*[A-Za-z0-9_/]' -- "${files[@]}" |
+done < <(git grep --untracked -noE '(^|[^A-Za-z0-9_./-])doc/[A-Za-z0-9_./-]*[A-Za-z0-9_/]' -- "${files[@]}" |
   sed -E 's/^([^:]*:[0-9]+:)[^d]*/\1/')
 
 # 2. Relative Markdown links in Markdown files.
@@ -49,7 +49,7 @@ while IFS=: read -r file line link; do
   target=${target%%#*}
   [[ -z $target || $target == *://* || $target == mailto:* ]] && continue
   [[ -e $(dirname "$file")/$target ]] || problem "$file:$line: link to $target, not found from $(dirname "$file")/"
-done < <(git grep -noE '\]\([^)[:space:]]+\)' -- "${md[@]}")
+done < <(git grep --untracked -noE '\]\([^)[:space:]]+\)' -- "${md[@]}")
 
 # 3. Markdown files named in backticks in Markdown files.
 # shellcheck disable=SC2016
@@ -58,11 +58,11 @@ while IFS=: read -r file line name; do
   name=${name//\`/}
   [[ $name == *'*'* || $name == *'{'* ]] && continue
   [[ -e $name ]] || problem "$file:$line: \`$name\` does not exist (paths are relative to the repository root)"
-done < <(git grep -noE '`[A-Za-z0-9_./-]+\.md`' -- "${md[@]}")
+done < <(git grep --untracked -noE '`[A-Za-z0-9_./-]+\.md`' -- "${md[@]}")
 
 # 4. Every document is in the index.
 [[ -f doc/README.md ]] || problem "doc/README.md: missing (the index of doc/)"
-for doc in $(git ls-files 'doc/*.md' 'doc/**/*.md'); do
+for doc in $(git ls-files --cached --others --exclude-standard 'doc/*.md' 'doc/**/*.md'); do
   [[ $doc == doc/README.md ]] && continue
   grep -qsF "](${doc#doc/})" doc/README.md || problem "doc/README.md: does not link to $doc"
 done
