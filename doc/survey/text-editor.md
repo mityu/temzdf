@@ -246,6 +246,52 @@ A frontend-independent crate that produces `temzdf-scene` text cells, like
   a write count. 600-1000 lines with tests [E]. Pitfalls: grouping one
   insert into one step, restoring cursor and marks, a memory cap.
 
+#### VS Code's version ids and snapshots (added 2026-11-03)
+
+What VS Code has, from `src/vs/editor/common`:
+
+- **Two version ids** (`model.ts`):
+  - `getVersionId()` grows with every change, undo included.
+  - `getAlternativeVersionId()` "will return the same values in the case of
+    undo-redo": going back to a state gives that state's number again. It
+    names the state rather than the change, and is what the dirty flag
+    compares with the saved one.
+- **`createSnapshot()`** reads out the text of one moment.
+  - `PieceTreeSnapshot` copies the list of pieces. The buffers holding the
+    text are only appended to, so the snapshot can be read asynchronously
+    (to save the file) while edits go on.
+  - It is a one-off reader, not a store of past versions.
+- **Undo is linear**:
+  - `src/vs/platform/undoRedo/common/undoRedoService.ts` keeps `_past` and
+    `_future` stacks.
+  - Each element (`SingleModelEditStackData` in `model/editStack.ts`) holds
+    `TextChange` diffs, the version ids before and after, and cursor
+    states.
+  [C: github.com/microsoft/vscode]
+
+What carries over to an undo tree [E]:
+
+- **A state number per node**, as the alternative version id (Vim's
+  `uh_seq`).
+  - One number says which state the buffer is in.
+  - Comparing it with the saved node's number gives the modified flag
+    directly, instead of Vim's count of writes (`uh_save_nr`).
+  - Decorations and display transforms can record the number they were
+    computed for, and drop stale results.
+- **Snapshots only with a persistent rope.** VS Code's do not help. But
+  clones of `crop` or `ropey` share nodes (copy on write), so each tree node
+  could hold the whole text cheaply.
+  - Jumping far (`:undo N`, `:earlier 10m`) then swaps the text instead of
+    replaying every edit on the path.
+  - Each snapshot pins the branches of the rope an edit copied.
+  - Marks and decorations still have to be moved by the diffs.
+  - An undo file stores diffs, not snapshots.
+  - A practical mix: diffs as the truth, with snapshots on recent nodes or
+    every N nodes as shortcuts.
+- Zed's CRDT keeps an undo map (how many times each operation was undone),
+  so any operation can be undone selectively. Its commands look linear
+  [E, not checked]. This is a different idea from walking Vim's tree.
+
 ### Persistent undo
 
 - **Vim** (`src/undo.c`) [C]:
