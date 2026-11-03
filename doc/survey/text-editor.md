@@ -396,6 +396,72 @@ What carries over to an undo tree [E]:
 - The substitute expander is 300-500 lines on its own; `\=` could call the
   script host [E].
 
+#### Parsing Vim patterns (added 2026-11-03)
+
+How much of Vim's code is parsing (vim master `src/regexp*.c`, 16918 lines,
+counted per function) [C]:
+
+| Part | Functions | Lines |
+|---|---|---|
+| Lexing (depends on the magic level), skipping `[]` | `peekchr`, `skipchr`, `getchr`, `skip_anyof`, `get_coll_element`, ... | about 330 |
+| Parsing for the backtracking engine | `reg`, `regbranch`, `regconcat`, `regpiece`, `regatom` | about 1290 |
+| Parsing for the NFA engine | `nfa_reg` ... `nfa_regatom` | about 1300 |
+| Matching | `regmatch`, `regrepeat`, `nfa_regmatch`, `post2nfa` | about 3950 |
+| Substitution | `vim_regsub_both`, `regtilde` | about 610 |
+| Class and equivalence tables | `init_class_tab`, `nfa_emit_equi_class` | about 750 |
+
+- Vim builds no syntax tree. Each engine has its own parser that emits
+  that engine's code directly, so the parsing is done twice.
+- One parser producing a syntax tree would be 1000-1500 lines of
+  hand-written Rust [E].
+
+**A parser generator saves little** [E]:
+
+- The structure is four levels:
+  - branches separated by `\|`;
+  - concats separated by `\&`;
+  - pieces: an atom and a multi (`*`, `\+`, `\=`, `\{n,m}`, `\@=`, ...);
+  - atoms, a long table.
+- That is easy to write by recursive descent.
+- The hard parts are outside what LALR or PEG generators handle well:
+  - which characters are operators depends on the magic level;
+  - inside `[...]`, a leading `]` is literal and a `[` with no closing `]`
+    is literal (Vim looks ahead with `skip_anyof`);
+  - `\%[...]`, `\_[...]`, `\%d123`, `\%u20AC`;
+  - `~` expands to the previous replacement while parsing;
+  - errors should carry Vim's numbers.
+
+**The magic level is lexer state, not grammar.**
+
+- A level switch applies to the rest of the pattern, across group
+  boundaries. Checked with Vim (`vim -Nu NONE -es`, `matchlist('abc', ...)`)
+  [C]:
+  - `\(a\vb)` matches `ab` with group 1 `ab`: a group opened by magic `\(`
+    is closed by very magic `)`.
+  - `\v(a\mb\)` is the same the other way round.
+  - In `\(a\vb)c` the `c` after the group is still very magic (`abc`, group
+    1 `ab`).
+- One grammar per level would need every rule duplicated for each pair of
+  levels on entry and exit, up to 16 copies. It is possible in theory (the
+  levels are finite), but impractical.
+- Instead, define tokens per level in the lexer.
+  - `logos` can switch token types with `Lexer::morph` when `\v`, `\m`,
+    `\M` or `\V` appears.
+  - `[...]` gets a lexer state of its own, since the levels hardly matter
+    inside it.
+  - Every level emits the same normalised tokens ("group open", "lazy
+    repeat", ...), so the parser has one small grammar that knows nothing of
+    levels.
+  - The parser can be hand-written or generated.
+  - The same tree feeds either the translation to `regex-cursor` or
+    `fancy-regex`, or a ported engine.
+- **Testing**:
+  - Generate patterns and texts (`proptest`), and compare with real Vim
+    (`vim -es` and `matchstrpos()`).
+  - Use Vim's `test_regexp_*.vim` as cases.
+  - This finds differences without studying every corner of the
+    specification.
+
 ### Summary
 
 | Feature | Approach | Effort [E] | Risks |
@@ -479,8 +545,142 @@ What carries over to an undo tree [E]:
      directory, and the session loads the files with wasmtime.
    - One artifact serves Linux and macOS, sandboxed. The price is wasmtime's
      weight (build time, binary size, a large dependency).
-3. **Avoid** building `.so` files on users' machines (Helix, Emacs): that is
-   where the ABI and compiler failures come from.
+3. **Avoid** unmanaged builds of `.so` files on users' machines (Helix,
+   Emacs): that is where the ABI and compiler failures come from. Native
+   parsers that users add are workable with the management below.
+
+#### User-added native parsers (added 2026-11-03)
+
+What manages `.so`/`.dylib` parsers added by users well, and what does not.
+The criteria: where files go, which file types a parser serves, ABI checks,
+queries matching the parser revision, prebuilt files, pinning and removal,
+safety.
+
+- **`tree-sitter-loader`** 0.27.1 (MIT), the CLI's loader, usable from other
+  programs [C: tree-sitter `crates/loader`]:
+  - **Finding grammars:** it scans `parser-directories`
+    (`~/.config/tree-sitter/config.json`) for `tree-sitter-*` directories.
+  - **Building:** it compiles a grammar on demand into
+    `$TREE_SITTER_LIBDIR` or `<cache>/tree-sitter/lib`.
+    - It rebuilds when the library is older (mtime) than `parser.c`,
+      `scanner.c` or `external-files`. Queries and headers are not checked.
+    - A build writes a temporary file and renames it, under a lock file.
+  - **Symbols:** `tree_sitter_<name>`, with `-` replaced by `_`.
+  - **Metadata:** each grammar's `tree-sitter.json` (cli/init.html) gives
+    `scope`, `file-types`, `first-line-regex`, `content-regex`,
+    `injection-regex`, the query paths, and a semver `version`.
+  - **ABI:** the loader itself does not check it. `Parser::set_language`
+    returns `LanguageError::Version` outside ABI 13 to 15. ABI 15 parsers
+    carry `Language::name()` and `metadata()` (their version).
+- **Neovim** [C: neovim `runtime/doc/treesitter.txt`, `src/nvim/lua/treesitter.c`]:
+  - **Finding parsers:** `parser/<lang>.*` on `'runtimepath'`, first match
+    first (user before plugins before bundled).
+  - **Explicit loading:** `vim.treesitter.language.add(lang, {path,
+    symbol_name})`, and `language.register(lang, filetypes)`.
+  - **ABI errors** are clear: "ABI version mismatch for %s: supported
+    between %d and %d, found %d". `language.inspect()` shows the ABI and the
+    version.
+  - **luarocks** [C: github.com/nvim-neorocks/luarocks-build-treesitter-parser,
+    github.com/nvim-neorocks/rocks-treesitter.nvim]:
+    `luarocks-build-treesitter-parser` builds `tree-sitter-<lang>` rocks.
+    `rocks-treesitter.nvim` installs prebuilt parsers with their queries, so
+    no compiler is needed. The only ecosystem found that versions a parser
+    and its queries as one package with a real uninstall [E].
+- **Kakoune's `kak-tree-sitter`** (`ktsctl` 3.1) [C: man.sr.ht/~hadronized/kak-tree-sitter,
+  docs.rs/crate/ktsctl]:
+  - The configuration pins each grammar's git URL and revision, and the
+    compile and link commands can be changed.
+  - Files go to `grammars/<lang>/<pin>.so`, with the queries in a directory
+    per pin. Revisions coexist, and a parser always has its own queries.
+  - It has `sync` (skips pins already there) and `remove`.
+- **Topiary** [C: topiary `topiary-config/languages.ncl`, `src/language.rs`]:
+  - The configuration gives git, revision, subdirectory, a Nix hash and an
+    optional symbol.
+  - Grammars are built through `tree-sitter-loader` into
+    `<cache>/<lang>/<rev>`, with queries cached per revision.
+- **ast-grep** 0.51 [C: ast-grep.github.io/advanced/custom-language.html,
+  ast-grep `crates/dynamic/src/lib.rs`]:
+  - `customLanguages` in its configuration gives `libraryPath` and
+    `extensions`.
+  - It loads with `libloading` and checks the ABI range ("Incompatible
+    tree-sitter parser version").
+  - Since 0.50 custom languages need `--custom-languages allow|trust`. The
+    trust store remembers the configuration's path, not a hash of its
+    contents.
+- **Helix**:
+  - Runtime directories are searched in order (the user's
+    `~/.config/helix/runtime` before the installed one).
+  - `source = { path = ... }` builds a local grammar in place.
+  - A workspace's `.helix/languages.toml` needs `:workspace-trust`.
+  [C: helix `helix-loader/src/lib.rs`, `grammar.rs`]
+- **Prebuilt downloads**:
+  - Lapce downloads `grammars-<os>-<arch>.tar.zst` and `queries.tar.zst`
+    from `lapce/tree-sitter-grammars` releases, picked by its own version,
+    with no checksum.
+  - `tree-sitter-language-pack` (MIT) downloads bundles on demand into a
+    versioned cache, checked against a manifest with a size and sha256 per
+    platform. The manifest is unsigned: integrity, not authenticity.
+  [C: lapce `lapce-app/src/app/grammars.rs`, tree-sitter-language-pack
+  `crates/ts-pack-core/src/download.rs`]
+- **Emacs, as a warning** [C: github.com/emacs-mirror/emacs/blob/master/doc/lispref/parsing.texi, `lisp/treesit.el`,
+  github.com/renzmann/treesit-auto, github.com/emacs-tree-sitter/tree-sitter-langs]:
+  - **Loading:** `libtree-sitter-<lang>` from `treesit-extra-load-path` and
+    `~/.emacs.d/tree-sitter`, with a clear `version-mismatch` error.
+  - **Queries** are written in each major mode's Lisp, so a newer parser can
+    break a mode silently.
+  - **ABI drift:** `treesit-auto` has an `:abi14-revision` field to pin
+    grammars that Emacs 30.1 (ABI 13 and 14) can still load.
+  - **No checksums:** `tree-sitter-langs` downloads per-platform bundles
+    from GitHub releases without checking them.
+- **nixpkgs** builds a grammar into `$out/parser` (or `parser.wasm`) plus
+  `tree-sitter.json` and `queries/` when the grammar has them
+  [C: nixpkgs `pkgs/by-name/tr/tree-sitter/grammars/build-grammar.nix`].
+- **difftastic** links its grammars statically, so users cannot add any.
+
+**For temzdf** [E]:
+
+1. **Layout**, one directory per revision:
+
+   ```
+   $XDG_DATA_HOME/temzdf/grammars/<name>/<revision or "local">/
+     parser.so | parser.dylib | parser   # the last as nixpkgs builds it
+     tree-sitter.json                    # upstream metadata, if any
+     queries/{highlights,injections,locals}.scm
+     grammar.toml                        # ours: symbol, file types, source, sha256
+   ```
+
+   - Search order: `$TEMZDF_GRAMMAR_PATH`, then the user directory, then
+     directories from the configuration (Nix store paths). The first match
+     per name wins.
+   - Removing a revision deletes its directory.
+2. **Metadata**: read `tree-sitter.json` and let `grammar.toml` override it.
+   The symbol defaults to `tree_sitter_<name>`, and the name can be changed.
+3. **Loading**:
+   - Load with `libloading` and never unload.
+   - Check the ABI range, with Neovim's wording (path, range, found).
+   - Compare `Language::name()` and `metadata()` with `grammar.toml`.
+   - Compile the queries against the parser when installing and when
+     loading, so a stale `highlights.scm` gives a clear error instead of
+     broken highlighting.
+4. **Commands**: `temzdf grammar add <git URL|path> [--rev]` builds through
+   `tree-sitter-loader` and copies the queries from the same checkout (as
+   `ktsctl` and Topiary do). Also `grammar ls`, `rm` and `update`.
+5. **Nix**: accept nixpkgs grammar outputs as they are. Store paths are
+   read-only and pinned, so they need no hash or trust prompt.
+6. **Safety**: a native parser is code execution.
+   - Load only from the user's directories and the Nix store, never from
+     a project.
+   - Record a sha256 when installing, and refuse a changed file until it is
+     trusted again. That is stronger than ast-grep's trust by path.
+   - Download no unverified binaries.
+   - Load parsers in the server only.
+7. **WebAssembly**: native first, with the loader shaped so that `.wasm`
+   files can be added through `WasmStore` later, as Neovim does.
+   - Native parsers are fast, work with every grammar, are built by nixpkgs,
+     and need no wasmtime. But they are per platform (with quarantine and
+     notarisation on macOS), unsandboxed, and can crash the process.
+   - WebAssembly is portable and sandboxed, but needs wasi-sdk to build and
+     runs somewhat slower.
 
 ### Vim-style regex syntax highlighting: cost
 
