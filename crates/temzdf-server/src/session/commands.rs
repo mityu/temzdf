@@ -8,6 +8,7 @@ use temzdf_protocol::script::{CommandSpec, ScriptValue};
 use temzdf_scene::FontEntry;
 
 use temzdf_term::Spawn;
+use temzdf_term::visual::{Op as VisualOp, Outcome as VisualOutcome};
 
 use super::floats::{self, FloatSpec, FloatWhat};
 use super::input::InputOp;
@@ -186,6 +187,21 @@ const SESSION: &[(&str, &str, &str)] = &[
         "Set an input buffer's text (the focused input pane's); its carets go to the end",
     ),
     ("input.insert", "(text: string): void", "Insert text at the focused input pane's caret"),
+    (
+        "visual.search-for",
+        "(query: string, pane?: number, backward?: boolean): void",
+        "Visual mode: to the next match of `query` (plain text, case-insensitive) in the terminal's screen and scrollback (the focused pane's), after the cursor or where a preview began, backwards with `backward`; n and N go on",
+    ),
+    (
+        "visual.search-preview",
+        "(query: string, pane?: number, backward?: boolean): void",
+        "Visual mode: show the first match of `query` after where the preview began, as typed; nothing found: back there. visual.searchFor ends it, visual.searchCancel drops it",
+    ),
+    (
+        "visual.search-cancel",
+        "(pane?: number): void",
+        "Visual mode: drop the search being typed in the terminal (the focused pane's): back where its preview began",
+    ),
 ];
 
 /// Every command, for the script host.
@@ -205,7 +221,12 @@ pub fn command_specs() -> Vec<CommandSpec> {
         doc: format!("{doc} (the focused input pane)"),
         ts: "(): void".into(),
     });
-    session.chain(input).chain(pdf).collect()
+    let visual = VisualOp::NAMES.iter().map(|(_, name, doc)| CommandSpec {
+        name: format!("visual.{name}"),
+        doc: format!("Visual mode: {doc} (the focused terminal; a mapping's count applies)"),
+        ts: "(): void".into(),
+    });
+    session.chain(input).chain(visual).chain(pdf).collect()
 }
 
 /// What a new pane shows (`openFloat`, `newTab`): `{ buffer }`, `{ file }`,
@@ -323,6 +344,51 @@ impl Session {
         }
         if let Some(op) = InputOp::from_name(name) {
             return Ok((ScriptValue::Null, self.input_edit(op).map_err(|e| format!("{name}: {e}"))?));
+        }
+        if let "visual.search-for" | "visual.search-preview" | "visual.search-cancel" = name {
+            let cancel = name == "visual.search-cancel";
+            let query = if cancel { String::new() } else { text(0).ok_or(format!("{name}: what to search for?"))? };
+            let which = id(if cancel { 0 } else { 1 });
+            let backward = !cancel && matches!(args.get(2), Some(ScriptValue::Bool(true)));
+            let target = which.unwrap_or(self.focus);
+            let Some(t) = self
+                .panes
+                .get(&target)
+                .and_then(PaneEntry::term)
+                .and_then(|b| self.terms.get_mut(&b))
+                .filter(|t| t.term.visual_kept())
+            else {
+                return Err(format!("{name}: no terminal in the visual mode there"));
+            };
+            match name {
+                "visual.search-for" => {
+                    if !t.term.visual_search(&query, backward, false) && !query.is_empty() {
+                        self.message(&format!("Pattern not found: {query}"));
+                    }
+                }
+                "visual.search-preview" => {
+                    t.term.visual_search(&query, backward, true);
+                }
+                _ => {
+                    t.term.visual_search_cancel();
+                }
+            }
+            return ok(Outcome::Redraw);
+        }
+        if let Some(op) = VisualOp::from_name(name) {
+            let Some(t) = self.focused_term().filter(|t| t.visual_on()) else {
+                return Err(format!("{name}: the focused pane is not in the visual mode"));
+            };
+            return match t.visual(op, count) {
+                VisualOutcome::Leave => {
+                    let old = self.history.current().to_owned();
+                    self.history.pop();
+                    self.mode_changed(&old);
+                    ok(Outcome::Redraw)
+                }
+                VisualOutcome::Stay(true) => ok(Outcome::Redraw),
+                VisualOutcome::Stay(false) => ok(Outcome::None),
+            };
         }
         match name {
             "split" => {
@@ -576,6 +642,14 @@ impl Session {
                 let mode = text(0).ok_or("switchMode: which mode?")?;
                 if !self.modes.exists(&mode) {
                     return Err(format!("switchMode: no mode {mode:?}"));
+                }
+                if mode == "visual" {
+                    if self.history.current() == "visual" {
+                        return ok(Outcome::None);
+                    }
+                    if self.panes.get(&self.focus).and_then(PaneEntry::term).is_none() {
+                        return Err("switchMode: the visual mode is for terminal panes".into());
+                    }
                 }
                 let old = self.history.current().to_owned();
                 self.history.push(&mode);

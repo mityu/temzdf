@@ -418,6 +418,9 @@ pub struct Session {
     notices: Vec<notices::Notice>,
     /// The fixed escape keymap (script host down) saw its prefix.
     escape_prefix: bool,
+    /// The terminal buffer with a visual mode, on or suspended (one at a
+    /// time; see [`Session::mode_changed`]).
+    visual: Option<BufferId>,
     /// Mappings run since the matcher last used up its keys (Vim's
     /// `maxmapdepth`).
     map_depth: usize,
@@ -474,6 +477,7 @@ impl Session {
             configured_fonts: None,
             notices: Vec::new(),
             escape_prefix: false,
+            visual: None,
             map_depth: 0,
             keys: Keys::default(),
             effects: Vec::new(),
@@ -1484,8 +1488,43 @@ impl Session {
     }
 
     /// Announce a mode change (if `old` differs from the current mode).
+    ///
+    /// The `visual` mode drives the focused terminal's visual mode: entering
+    /// it begins one (or goes on with a suspended one); leaving it ends it,
+    /// unless the focus went to another pane (the search's input line, a
+    /// click) or `visual` is still deeper in the history: then it is
+    /// suspended, to go on when the mode comes back.
     fn mode_changed(&mut self, old: &str) {
         let new = self.history.current().to_owned();
+        if new == "visual" && old != "visual" {
+            let buf = self.panes.get(&self.focus).and_then(PaneEntry::term);
+            if let Some(other) = self.visual.filter(|b| Some(*b) != buf)
+                && let Some(t) = self.terms.get_mut(&other)
+            {
+                t.term.visual_end();
+            }
+            self.visual = None;
+            if let Some(b) = buf
+                && let Some(t) = self.terms.get_mut(&b)
+                && t.term.visual_begin()
+            {
+                self.visual = Some(b);
+            }
+        } else if old == "visual"
+            && new != "visual"
+            && let Some(b) = self.visual
+        {
+            let here = self.panes.get(&self.focus).and_then(PaneEntry::term) == Some(b);
+            let deeper = self.history.modes().any(|m| m == "visual");
+            match self.terms.get_mut(&b) {
+                Some(t) if here && !deeper => {
+                    t.term.visual_end();
+                    self.visual = None;
+                }
+                Some(t) => t.term.visual_suspend(),
+                None => self.visual = None,
+            }
+        }
         if new != old {
             self.event("ModeChanged", vec![ScriptValue::Str(old.to_owned()), ScriptValue::Str(new)]);
         }
@@ -1779,8 +1818,10 @@ impl Session {
         }
         let Some(id) = target else { return out };
         // In the operating mode, the left button selects in terminals even
-        // when their program tracks the mouse.
+        // when their program tracks the mouse; in the visual mode the mouse
+        // is the visual mode's.
         let select = self.base_mode() == "normal";
+        let visual = self.history.current() == "visual";
         let Some(e) = self.panes.get_mut(&id) else { return out };
         let content = e.content();
         // A pane's status line is not its content: the pointer there goes to
@@ -1796,6 +1837,7 @@ impl Session {
         match &mut e.kind {
             Kind::Pdf { pane, .. } => out.or(pane.mouse(&local, now)),
             Kind::Term { buf, view } => match self.terms.get_mut(buf) {
+                Some(t) if visual && t.term.visual_on() => out.or(view.visual_mouse(&mut t.term, &local)),
                 Some(t) => out.or(view.mouse(&mut t.term, &local, select)),
                 None => out,
             },
@@ -2124,8 +2166,9 @@ impl Session {
 
 /// The built-in modes, without mappings (the shipped JavaScript defaults,
 /// `crates/temzdf-script/runtime/defaults.ts`, map them): `normal`
-/// (operating), `terminal` (pass-through), `pdf` and `input` (pass-through:
-/// typed characters go in).
+/// (operating), `terminal` (pass-through), `pdf`, `input` (pass-through:
+/// typed characters go in) and `visual` (a terminal's visual mode, entered
+/// from the others; see [`Session::mode_changed`]).
 fn builtin_modes() -> Modes<Target> {
     let mut m = Modes::default();
     for (name, unmapped, count) in [
@@ -2133,6 +2176,7 @@ fn builtin_modes() -> Modes<Target> {
         ("terminal", Unmapped::Passthrough, false),
         ("pdf", Unmapped::Drop, true),
         ("input", Unmapped::Passthrough, false),
+        ("visual", Unmapped::Drop, true),
     ] {
         let d = m.define(name);
         d.unmapped = Some(unmapped);
@@ -2196,6 +2240,35 @@ mod tests {
         for lhs in ["<C-S-v>", "<D-v>"] {
             m.map("terminal", keys(lhs), crate::keymap::Mapping::new(acts(&[("paste", &[])])));
         }
+        for lhs in ["[", "v"] {
+            let target = acts(&[("exit-mode", &[]), ("switch-mode", &[s("visual")])]);
+            m.map("normal", keys(lhs), crate::keymap::Mapping::new(target));
+        }
+        for (lhs, name) in [
+            ("h", "visual.left"),
+            ("l", "visual.right"),
+            ("k", "visual.up"),
+            ("j", "visual.down"),
+            ("0", "visual.line-start"),
+            ("$", "visual.line-end"),
+            ("w", "visual.word-forward"),
+            ("e", "visual.word-end"),
+            ("gg", "visual.top"),
+            ("G", "visual.bottom"),
+            ("v", "visual.charwise"),
+            ("V", "visual.linewise"),
+            ("<C-v>", "visual.blockwise"),
+            ("o", "visual.swap-ends"),
+            ("y", "visual.yank"),
+            ("Y", "visual.yank-lines"),
+            ("<Esc>", "visual.escape"),
+            ("n", "visual.next-match"),
+            ("N", "visual.prev-match"),
+            ("q", "exit-mode"),
+        ] {
+            m.map("visual", keys(lhs), crate::keymap::Mapping::new(acts(&[(name, &[])])));
+        }
+        m.map("visual", keys("<C-b>"), crate::keymap::Mapping::new(acts(&[("switch-mode", &[s("normal")])])));
         for (key, cmd) in Keymap::default().bindings() {
             let stroke = Stroke::of(&key.event());
             if stroke != keys("<C-c>")[0] {
@@ -3749,6 +3822,99 @@ mod tests {
             _ => None,
         });
         assert!(copied.as_deref().is_some_and(|t| t.starts_with("temzdf sample document")), "{copied:?}");
+    }
+
+    /// What the session copied (OSC 52 in a terminal client).
+    fn copied(s: &mut Session) -> Vec<String> {
+        s.take_effects()
+            .into_iter()
+            .filter_map(|e| match e {
+                temzdf_scene::Effect::Copy(t) => Some(t),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn the_visual_mode_moves_selects_and_copies_by_keys() {
+        // cat echoes what reaches it: keys in the visual mode must not.
+        let (mut s, rx) = terminal_session(&["sh", "-c", "printf 'hello world\\nsecond line\\n'; exec cat"]);
+        wait_text(&mut s, &rx, |r| r[1] == "second line");
+        key(&mut s, "<C-b>[");
+        assert_eq!(s.current_mode(), "visual");
+        let rows = screen_text(&s.frame(), GEOMETRY);
+        assert!(rows[0].ends_with("[VISUAL]"), "{rows:?}");
+        key(&mut s, "x");
+        key(&mut s, "ggwve");
+        assert!(rows_after(&mut s, &rx, 300)[2].is_empty(), "x went nowhere");
+        key(&mut s, "y");
+        assert_eq!(copied(&mut s), ["world"]);
+        assert_eq!(s.current_mode(), "terminal", "y leaves");
+        assert!(!s.focused_term().unwrap().visual_kept());
+        // Counts, rows, <Esc> twice.
+        key(&mut s, "<C-b>v");
+        key(&mut s, "ggVjy");
+        assert_eq!(copied(&mut s), ["hello world\nsecond line"]);
+        key(&mut s, "<C-b>[");
+        key(&mut s, "v<Esc>");
+        assert_eq!(s.current_mode(), "visual", "the first <Esc> drops the selection");
+        key(&mut s, "<Esc>");
+        assert_eq!(s.current_mode(), "terminal");
+        assert!(cmd(&mut s, "visual.left", &[], None).is_err(), "no visual mode now");
+    }
+
+    /// The screen after handling events for `ms` milliseconds.
+    fn rows_after(s: &mut Session, rx: &Receiver<SessionEvent>, ms: u64) -> Vec<String> {
+        let until = Instant::now() + Duration::from_millis(ms);
+        while let Some(left) = until.checked_duration_since(Instant::now()) {
+            if let Ok(ev) = rx.recv_timeout(left) {
+                s.handle(ev, Instant::now());
+            }
+        }
+        screen_text(&s.frame(), GEOMETRY)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn the_visual_mode_is_for_terminals_and_waits_while_another_pane_has_the_focus() {
+        let (mut s, rx) = session();
+        settle(&mut s, &rx);
+        assert!(cmd(&mut s, "switch-mode", &["visual"], None).is_err(), "not on a PDF pane");
+        assert_eq!(s.current_mode(), "pdf");
+
+        let (mut s, rx) = terminal_session(&["sh", "-c", "echo first; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == "first");
+        let term = s.focus;
+        key(&mut s, "<C-b>[");
+        key(&mut s, "ggv");
+        // The search's input line takes the focus: the visual mode waits.
+        let prompt = ScriptValue::map([("prompt", ScriptValue::Str("/".into()))]);
+        let (buf, _) = s.run_command("new-input", &[prompt], None, Instant::now()).unwrap();
+        let spec = ScriptValue::map([
+            ("side", ScriptValue::Str("bottom".into())),
+            ("buffer", buf.clone()),
+            ("height", ScriptValue::Num(1.0)),
+        ]);
+        s.run_command("split", &[spec], None, Instant::now()).unwrap();
+        assert_eq!(s.current_mode(), "input");
+        let t = s.terms.values().next().unwrap();
+        assert!(t.term.visual_kept() && !t.term.visual_on(), "suspended");
+        // Searching from there, then back.
+        cmd(&mut s, "visual.search-preview", &["fir", &term.to_string()], None).unwrap();
+        cmd(&mut s, "focus-pane", &[&term.to_string()], None).unwrap();
+        assert_eq!(s.current_mode(), "terminal");
+        cmd(&mut s, "switch-mode", &["visual"], None).unwrap();
+        assert_eq!(s.focused_term().unwrap().visual_label(), Some("VISUAL CHAR"), "it goes on");
+        assert_eq!(cmd(&mut s, "switch-mode", &["visual"], None), Ok(Outcome::None), "once only");
+        // The prefix's normal mode over it, and back.
+        key(&mut s, "<C-b>");
+        assert!(!s.focused_term().unwrap().visual_on());
+        key(&mut s, "<Esc>");
+        assert_eq!(s.current_mode(), "visual");
+        assert_eq!(s.focused_term().unwrap().visual_label(), Some("VISUAL CHAR"));
+        key(&mut s, "q");
+        assert!(!s.focused_term().unwrap().visual_kept(), "leaving in its own pane ends it");
     }
 
     /// A terminal session with an input buffer (prompt `/`) in a one-row

@@ -4,8 +4,9 @@
 // and these are in the namespace "default" (`keymap.remove(mode, lhs, {
 // namespace: "default" })` removes one, `keymap.clear({ namespace: "default" })`
 // all of them). Built-in modes: `normal` (operating),
-// `terminal` (pass-through, terminal panes), `pdf` (PDF panes) and `input`
-// (input panes: typed characters go in).
+// `terminal` (pass-through, terminal panes), `pdf` (PDF panes), `input`
+// (input panes: typed characters go in) and `visual` (a terminal's visual
+// mode: a cursor over the screen and scrollback, selecting and copying).
 import { action, cmd, keymap, on } from "temzdf";
 import type { Rhs } from "temzdf";
 
@@ -98,19 +99,24 @@ on("PaneOpened", (id: number, kind: string) => {
   if (kind === "terminal") cmd.statusLine(false, id);
 });
 
-// Searching a PDF pane (/): an input pane one row high below it, without a
-// status line. As the query is typed the PDF pane shows its first hit
-// (searchPreview, as Vim's incsearch); <CR> searches, <Esc> cancels (back
-// where it began), and either closes the input. Closed any other way, the
+// Searching a PDF pane (/) or a terminal in the visual mode (/ and ?): an
+// input pane one row high below it, without a status line. As the query is
+// typed the pane shows its first match (searchPreview, as Vim's incsearch);
+// <CR> searches, <Esc> cancels (back where it began), and either closes the
+// input, back to the pane (and its visual mode). Closed any other way, the
 // search is cancelled.
-/** The searches being typed: input buffer -> the PDF pane searched. */
-const searches = new Map<number, number>();
+/** A search being typed: the pane searched, a terminal's visual mode, its
+ * direction. */
+type Searching = { pane: number; visual: boolean; backward: boolean };
+/** The searches being typed, by input buffer. */
+const searches = new Map<number, Searching>();
 
-function openSearch(): void {
-  const pdf = cmd.focusedPane();
-  if (pdf === null) return;
-  const buf = cmd.newInput({ prompt: "/" });
-  searches.set(buf, pdf);
+function openSearch(backward = false): void {
+  const pane = cmd.focusedPane();
+  if (pane === null) return;
+  const visual = cmd.currentMode() === "visual";
+  const buf = cmd.newInput({ prompt: backward ? "?" : "/" });
+  searches.set(buf, { pane, visual, backward });
   try {
     const pane = cmd.split({ side: "bottom", buffer: buf, height: 1 });
     if (pane !== null) cmd.statusLine(false, pane);
@@ -122,18 +128,25 @@ function openSearch(): void {
 }
 
 /** End the search typed into `buf`: search (`confirm`) or cancel, back to
- * its PDF pane, and the input goes. */
+ * its pane (in the visual mode again for a terminal), and the input goes. */
 function endSearch(buf: number, confirm: boolean): void {
-  const pdf = searches.get(buf);
-  if (pdf === undefined) return;
+  const s = searches.get(buf);
+  if (s === undefined) return;
   searches.delete(buf);
   const query = cmd.inputText(buf);
   try {
-    if (confirm) cmd.searchFor(query, pdf);
-    else cmd.searchCancel(pdf);
-    cmd.focusPane(pdf);
+    if (s.visual) {
+      cmd.focusPane(s.pane);
+      cmd.switchMode("visual");
+      if (confirm) cmd.visual.searchFor(query, s.pane, s.backward);
+      else cmd.visual.searchCancel(s.pane);
+    } else {
+      if (confirm) cmd.searchFor(query, s.pane);
+      else cmd.searchCancel(s.pane);
+      cmd.focusPane(s.pane);
+    }
   } catch {
-    // The PDF pane is gone.
+    // The pane is gone.
   }
   cmd.deleteBuffer(buf);
 }
@@ -144,8 +157,10 @@ function bufferOf(pane: number): number | undefined {
 }
 
 on("InputChanged", (buf: number, text: string) => {
-  const pdf = searches.get(buf);
-  if (pdf !== undefined) cmd.searchPreview(text, pdf);
+  const s = searches.get(buf);
+  if (s === undefined) return;
+  if (s.visual) cmd.visual.searchPreview(text, s.pane, s.backward);
+  else cmd.searchPreview(text, s.pane);
 });
 on("BufferHidden", (buf: number) => endSearch(buf, false));
 
@@ -173,3 +188,50 @@ each("input", ["<Esc>"], (ctx) => {
 });
 each("input", ["<C-S-v>", "<D-v>"], action.paste());
 each("input", [prefix], action.switchMode("normal"));
+
+// The visual mode (a terminal's output, selected and copied by keys): <C-b>[
+// (tmux's copy-mode key) or v in the normal mode enter it, at the program's
+// cursor with nothing selected; v, V, <C-v> select characters, rows or a
+// block, y copies and leaves, <Esc> drops the selection, then leaves. The
+// moves are Vim's (counts too); <C-b> stays the prefix (<PageUp> for a
+// screen up).
+each("normal", ["[", "v"], [action.exitMode(), action.switchMode("visual")]);
+each("visual", ["h", "<Left>"], action.visual.left());
+each("visual", ["l", "<Right>"], action.visual.right());
+each("visual", ["k", "<Up>"], action.visual.up());
+each("visual", ["j", "<Down>"], action.visual.down());
+each("visual", ["0", "<Home>"], action.visual.lineStart());
+each("visual", ["^"], action.visual.firstNonBlank());
+each("visual", ["$", "<End>"], action.visual.lineEnd());
+each("visual", ["w"], action.visual.wordForward());
+each("visual", ["b"], action.visual.wordBackward());
+each("visual", ["e"], action.visual.wordEnd());
+each("visual", ["W"], action.visual.bigWordForward());
+each("visual", ["B"], action.visual.bigWordBackward());
+each("visual", ["E"], action.visual.bigWordEnd());
+each("visual", ["gg"], action.visual.top());
+each("visual", ["G"], action.visual.bottom());
+each("visual", ["H"], action.visual.screenTop());
+each("visual", ["M"], action.visual.screenMiddle());
+each("visual", ["L"], action.visual.screenBottom());
+each("visual", ["<C-u>"], action.visual.halfPageUp());
+each("visual", ["<C-d>"], action.visual.halfPageDown());
+each("visual", ["<PageUp>"], action.visual.pageUp());
+each("visual", ["<C-f>", "<PageDown>"], action.visual.pageDown());
+each("visual", ["<C-y>"], action.visual.scrollUp());
+each("visual", ["<C-e>"], action.visual.scrollDown());
+each("visual", ["[["], action.visual.prevPrompt());
+each("visual", ["]]"], action.visual.nextPrompt());
+each("visual", ["v"], action.visual.charwise());
+each("visual", ["V"], action.visual.linewise());
+each("visual", ["<C-v>"], action.visual.blockwise());
+each("visual", ["o"], action.visual.swapEnds());
+each("visual", ["y"], action.visual.yank());
+each("visual", ["Y"], action.visual.yankLines());
+each("visual", ["<Esc>"], action.visual.escape());
+each("visual", ["q"], action.exitMode());
+each("visual", ["/"], () => openSearch());
+each("visual", ["?"], () => openSearch(true));
+each("visual", ["n"], action.visual.nextMatch());
+each("visual", ["N"], action.visual.prevMatch());
+each("visual", [prefix], action.switchMode("normal"));
