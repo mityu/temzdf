@@ -1,0 +1,42 @@
+# The terminal visual mode: keys select and copy a shell's output.
+# Used with:
+#   mkdir -p target/e2e-visual
+#   scripts/e2e.sh -o target/e2e-visual tests/e2e/visual.actions -- sh -c \
+#     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-v; exec sh'
+# Judged (check): copied-word (C-b [, k0wve, y: the clipboard is "beta"),
+# copied-rows (gg V 2j y: "1", "2", "3" on three lines), searched (/alpha,
+# v e y: "alpha"), label (the top right says [VISUAL LINE]; kitty and
+# WezTerm only). Not judged: rows.png (rows 1 to 3 inverted at the top of
+# the scrollback, the label, the block cursor).
+pause 1
+type "clear; seq 1 100; echo alpha beta
+"
+pause 1
+keys ctrl+b bracketleft
+pause 0.3
+type "k0wve"
+pause 0.3
+keys y
+pause 0.5
+clipboard >"$outdir/word.txt" || true
+check copied-word grep -qx beta "$outdir/word.txt"
+keys ctrl+b bracketleft
+pause 0.3
+type "ggV2j"
+pause 0.5
+shot rows
+check label screen_contains "[VISUAL LINE]"
+keys y
+pause 0.5
+clipboard >"$outdir/rows.txt" || true
+check copied-rows test "$(cat "$outdir/rows.txt")" = "$(printf '1\n2\n3')"
+keys ctrl+b bracketleft
+pause 0.3
+type "gg/alpha"
+keys Return
+pause 0.5
+type "vey"
+pause 0.5
+clipboard >"$outdir/search.txt" || true
+check searched grep -qx alpha "$outdir/search.txt"
+target/debug/temzdf kill-session e2e-v

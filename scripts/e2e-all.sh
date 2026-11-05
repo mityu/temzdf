@@ -62,7 +62,7 @@ fi
 # gui-focus (AppKit sends no presses for keys held on focus-in) and gui-ime
 # (-I, fcitx5, is Linux's).
 judged=(session terminal terminal-extras tabs floats resize float-wide expect links preview search select
-  select-autoscroll viewer viewer-stress synctex synctex-reload reload no-graphics)
+  select-autoscroll viewer viewer-stress synctex synctex-reload reload no-graphics visual)
 gui_judged=(gui gui-focus gui-ime)
 if [[ $(uname) == Darwin ]]; then
   gui_judged=(gui)
@@ -83,6 +83,7 @@ scenario() {
       ;;
     terminal) mkdir -p target/e2e-terminal; session e2e-term ;;
     terminal-extras) mkdir -p target/e2e-term-extras; session e2e-x ;;
+    visual) mkdir -p target/e2e-visual; session e2e-v ;;
     tabs) mkdir -p target/e2e-tabs; session e2e-t ;;
     floats) mkdir -p target/e2e-floats; session e2e-f ;;
     resize) mkdir -p target/e2e-resize; session e2e-r ;;
