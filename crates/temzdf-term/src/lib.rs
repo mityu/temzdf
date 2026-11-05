@@ -15,6 +15,7 @@ mod graphics;
 pub mod keys;
 
 mod pty;
+pub mod visual;
 
 use std::cell::RefCell;
 use std::io;
@@ -155,6 +156,8 @@ pub struct TermBuffer {
     scroll_rows: f32,
     graphics: graphics::Graphics,
     born: Instant,
+    /// The visual mode's cursor and selection (see [`visual`]).
+    visual: Option<visual::Visual>,
 }
 
 impl TermBuffer {
@@ -246,6 +249,7 @@ impl TermBuffer {
             scroll_rows: 0.0,
             graphics: graphics::Graphics::new().map_err(ghostty_err)?,
             born: Instant::now(),
+            visual: None,
         })
     }
 
@@ -335,7 +339,7 @@ impl TermBuffer {
 
     /// A key typed while a pane showing it has the focus.
     pub fn key(&mut self, k: &KeyEvent) -> bool {
-        let redraw = self.clear_selection() | self.scroll_to_bottom();
+        let redraw = self.visual_end() | self.clear_selection() | self.scroll_to_bottom();
         let out = keys::encode(&mut self.key_encoder, &self.terminal, k);
         self.write(&out);
         redraw
@@ -352,7 +356,7 @@ impl TermBuffer {
 
     /// Bracketed paste when the program asked for it.
     pub fn paste(&mut self, text: &str) -> bool {
-        let redraw = self.clear_selection() | self.scroll_to_bottom();
+        let redraw = self.visual_end() | self.clear_selection() | self.scroll_to_bottom();
         let bracketed = self.terminal.mode(Mode::BRACKETED_PASTE).unwrap_or(false);
         let mut data = text.as_bytes().to_vec();
         let mut buf = vec![0u8; data.len() + 16];
@@ -552,6 +556,8 @@ impl TermBuffer {
     }
 
     fn select_press(&mut self, x: f32, y: f32) -> bool {
+        // A selection of the mouse's own replaces a kept visual mode's.
+        self.visual_end();
         self.selecting.link = self.link_at(x, y);
         let at = self.cell_at(x, y);
         let time = self.born.elapsed();
@@ -747,6 +753,11 @@ impl TermBuffer {
                 };
             }
         }
+        // In the visual mode the cursor is its own.
+        if self.visual_on() {
+            cursor = self.visual_cursor();
+            cursor_shape = CursorShape::Block { blink: false };
+        }
         Frame {
             text: vec![TextGrid { col: 0, row: 0, rows: self.grid.clone() }],
             cursor,
@@ -802,11 +813,19 @@ impl TermView {
             let r = r.checked_sub(top as u16)?;
             (c < self.geometry.cols && r < self.geometry.rows).then_some((c, r))
         });
-        // Scrolled back: how far, at the top right (as tmux's copy mode).
-        if let Some((above, history)) = term.scroll_position()
+        if let Some(query) = term.visual_query()
+            && let Some(grid) = frame.text.first_mut()
+        {
+            visual::highlight(&mut grid.rows, query);
+        }
+        // Scrolled back: how far, at the top right (as tmux's copy mode);
+        // the visual mode says so there too.
+        let position = term.scroll_position().map(|(above, history)| format!("[{above}/{history}]"));
+        let mode = term.visual_label().map(|m| format!("[{m}]"));
+        if (position.is_some() || mode.is_some())
             && let Some(row) = frame.text.first_mut().and_then(|g| g.rows.first_mut())
         {
-            let label = format!("[{above}/{history}]");
+            let label = format!("{}{}", mode.unwrap_or_default(), position.unwrap_or_default());
             let start = row.len().saturating_sub(label.chars().count());
             for (c, ch) in row[start..].iter_mut().zip(label.chars()) {
                 *c = Cell {
@@ -824,12 +843,24 @@ impl TermView {
 
     /// A mouse event in view coordinates (see [`TermBuffer::mouse`]).
     pub fn mouse(&self, term: &mut TermBuffer, m: &MouseEvent, select: bool) -> bool {
+        let m = self.in_terminal(term, m);
+        term.mouse(&m, select)
+    }
+
+    /// A mouse event in the visual mode, in view coordinates (see
+    /// [`TermBuffer::visual_mouse`]).
+    pub fn visual_mouse(&self, term: &mut TermBuffer, m: &MouseEvent) -> bool {
+        let m = self.in_terminal(term, m);
+        term.visual_mouse(&m)
+    }
+
+    fn in_terminal(&self, term: &TermBuffer, m: &MouseEvent) -> MouseEvent {
         let top = self.top(term) as i32;
         let dy = match m.unit {
             CoordUnit::Pixel => top * term.geometry.cell.height as i32,
             CoordUnit::Cell => top,
         };
-        term.mouse(&MouseEvent { y: m.y + dy, ..*m }, select)
+        MouseEvent { y: m.y + dy, ..*m }
     }
 }
 
