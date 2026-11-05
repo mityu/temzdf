@@ -91,6 +91,15 @@ server on one `Session`). Next and open:
   bump it and the commit in `nix/libghostty-vt.nix`, remove the byte limit,
   set the line limit, and add the setting (user's decision, 2026-11-02).
   Neovim's switch to libghostty-vt (neovim/neovim#39773) does the same.
+- The terminal visual mode (`crates/temzdf-term/src/visual.rs`), left for
+  later (2026-11-06):
+  - text objects (`iw`, `aw`, `iW`, `aW`), the user chose to wait;
+  - searches matching across soft wraps (rows are searched one by one);
+  - autoscrolling while a visual-mode drag is past the top or bottom (the
+    mouse's own selection has it);
+  - a view smaller than its terminal (it shows the bottom part) can leave
+    the cursor in rows it does not show;
+  - a visual mode for PDF panes (keyboard selection of text).
 - zellij delays keyboard input (even its own prefix commands) while it
   processes a frame, so `q` waits there; sending less data per frame is the
   only lever we have (user agreed to defer, 2026-10-25).

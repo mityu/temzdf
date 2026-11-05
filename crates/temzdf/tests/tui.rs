@@ -734,6 +734,55 @@ fn dragging_in_a_shell_copies_to_the_outer_terminal() {
     t.wait_for("no selection", |s| !s.cell(3, row).inverse);
 }
 
+/// The copies (OSC 52) once there are `n` of them.
+fn copies(t: &mut Term, n: usize) -> Vec<String> {
+    let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
+    while t.copied().len() < n && std::time::Instant::now() < deadline {
+        t.pump(std::time::Duration::from_millis(50));
+    }
+    t.copied()
+}
+
+#[test]
+fn the_visual_mode_copies_a_shells_output_by_keys() {
+    let env = Env::new("visual");
+    let mut t = Term::spawn(&[BIN, "-s", "v"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.type_text("clear; seq 1 100; echo alpha beta\n");
+    t.wait_for("the output", |s| s.lines().iter().any(|l| l == "alpha beta"));
+    // <C-b>[ enters it at the prompt below the output; up a row, a word.
+    t.keys(&["C-b", "["]);
+    t.wait_for("the visual mode", |s| s.lines()[0].ends_with("[VISUAL]"));
+    t.type_text("k0wvey");
+    assert_eq!(copies(&mut t, 1), ["beta"]);
+    t.wait_for("back in the shell", |s| !s.lines()[0].contains("[VISUAL"));
+    // Rows from the top of the scrollback (the view goes there and back).
+    t.keys(&["C-b", "["]);
+    t.type_text("ggV2j");
+    let s = t.wait_for("the top", |s| s.lines()[0].starts_with('1') && s.lines()[0].contains("[VISUAL LINE]"));
+    assert!(s.cell(0, 2).inverse, "rows 1 to 3 selected");
+    t.type_text("y");
+    assert_eq!(copies(&mut t, 2)[1], "1\n2\n3");
+    t.wait_for("the live screen again", |s| s.lines().iter().any(|l| l == "alpha beta"));
+    // Search with / (an input line below), then select the match.
+    t.keys(&["C-b", "["]);
+    t.type_text("gg/alpha");
+    t.key("Enter");
+    t.wait_for("at the match", |s| s.lines().iter().any(|l| l == "alpha beta") && s.lines()[0].contains("[VISUAL]"));
+    t.type_text("vey");
+    assert_eq!(copies(&mut t, 3)[2], "alpha");
+    // The mouse selects without copying; y copies.
+    t.keys(&["C-b", "["]);
+    let s = t.wait_for("the visual mode", |s| s.lines()[0].ends_with("[VISUAL]"));
+    let row = s.find("alpha beta").unwrap() as u16;
+    t.drag((6, row), (9, row));
+    t.wait_for("the selection", |s| s.cell(7, row).inverse);
+    t.pump(std::time::Duration::from_millis(300));
+    assert_eq!(t.copied().len(), 3, "a drag copies nothing in the visual mode");
+    t.type_text("y");
+    assert_eq!(copies(&mut t, 4)[3], "beta");
+}
+
 #[test]
 fn borders_drag_and_the_shipped_keys_resize_panes() {
     let env = Env::new("resize");

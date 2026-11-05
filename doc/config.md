@@ -53,6 +53,8 @@ Like Vim, temzdf is always in a mode. Built in:
 | `normal` | dropped | yes | operating mode: panes and the session |
 | `terminal` | to the pane | no | terminal panes (pass-through, like Neovim's Terminal mode) |
 | `pdf` | dropped | yes | PDF panes |
+| `input` | typed characters go in | no | input panes (the search's line) |
+| `visual` | dropped | yes | a terminal's output selected and copied by keys (see "The visual mode") |
 
 Focusing a pane puts temzdf in that pane's mode. `switchMode` enters a
 mode on the mode history (at most `modehistory` entries), `exitMode` returns
@@ -155,6 +157,7 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `normal` | `q` | end the session |
 | `normal` | `<C-b>` | send `<C-b>` to the pane |
 | `normal` | `<Esc>` | back to the pane's mode |
+| `normal` | `[` `v` | the `visual` mode (a terminal pane; so `<C-b>[` from it, as tmux's copy mode) |
 | `pdf` | `q` | close the pane (see Buffers) |
 | `pdf` | `<Esc>` | clear the selection, else the search, else quit |
 | `pdf` | `j` `k` / `<Down>` `<Up>` | scroll (counts) |
@@ -174,6 +177,20 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `input` | `<C-w>` / `<C-u>` / `<C-k>` | delete the word before the caret / to the start / to the end |
 | `input` | `<CR>` / `<Esc>` | a search: search / cancel (the input closes) |
 | `input` | `<C-b>` | the normal mode |
+| `visual` | `h` `j` `k` `l`, arrows | a character / row (counts) |
+| `visual` | `0` `<Home>` / `^` / `$` `<End>` | the first column / the first character / the last character of the row |
+| `visual` | `w` `b` `e` / `W` `B` `E` | words / blank-separated words (counts) |
+| `visual` | `gg` / `G` | the first row of the scrollback / the last row with text (row N with a count) |
+| `visual` | `H` `M` `L` | the top / middle / bottom row shown |
+| `visual` | `<C-u>` `<C-d>` / `<PageUp>` / `<C-f>` `<PageDown>` | half a screen up / down, a screen up / down (the view with it) |
+| `visual` | `<C-y>` / `<C-e>` | the view a row up / down |
+| `visual` | `[[` / `]]` | the shell prompt above / below (shells that mark prompts, OSC 133) |
+| `visual` | `v` / `V` / `<C-v>` | select characters / rows / a block from the cursor; the same key again stops selecting |
+| `visual` | `o` | the cursor to the other end of the selection |
+| `visual` | `y` / `Y` | copy the selection / the selected rows (else the cursor's, counts) and leave |
+| `visual` | `/` / `?` / `n` `N` | search the scrollback forwards / backwards (an input line, as the PDF search) / next, previous match |
+| `visual` | `<Esc>` / `q` | drop the selection, else leave / leave |
+| `visual` | `<C-b>` | the normal mode (`<Esc>` there comes back) |
 
 Inside tmux, `<C-b>` is tmux's own prefix: map another key for temzdf (or
 press it twice there).
@@ -195,6 +212,29 @@ line) and releasing copies to the clipboard (OSC 52 through the client's
 terminal); where the program uses the mouse, hold Shift, or select from the
 `normal` mode. A click on a link a program printed (OSC 8) opens it with
 `linkopener`.
+
+### The visual mode
+
+Keys select and copy a terminal's output, its scrollback included (Vim's
+Visual mode on a terminal buffer, tmux's copy mode). `<C-b>[` (or `v` in
+the `normal` mode) enters it in the focused terminal pane: a cursor of its
+own at the program's cursor, nothing selected, and `[VISUAL]` at the top
+right (with the kind of selection, and how far the view is back). `v`, `V`
+and `<C-v>` start a selection of characters, rows or a block; `y` copies it
+(OSC 52, as the mouse's: soft-wrapped rows joined, trailing blanks dropped,
+no line break after the last row) and leaves. Keys do not reach the
+program meanwhile; its output goes on, and the cursor and the selection stay
+on their characters. Leaving returns the view to the live screen.
+
+Searching (`/`, `?`) is plain text, case-insensitive, matches shown black on
+yellow; a match across a soft wrap is not found. While the search's input
+line has the focus the visual mode waits, and `<CR>` or `<Esc>` there comes
+back to it; so does `<Esc>` from the `normal` mode entered with `<C-b>`.
+Focusing another pane ends nothing either: the selection stays until keys
+reach that terminal again. In the visual mode the mouse is its own: a click
+moves the cursor, a drag selects characters (double click a word, triple
+click a row) without copying, the wheel scrolls with the cursor kept in
+view. `switchMode("visual")` refuses panes that are not terminals.
 
 When the script host is down (it exited, or the configuration never finished
 loading), mappings are off and a fixed keymap works: `<C-b>d` detaches,
@@ -358,6 +398,11 @@ them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `prevTab`, `gotoTab`, `moveTab`, `renameTab`, `breakPane`, `tabs`,
 `currentTab`, `buffers`, `showBuffer`, `edit`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
+the visual mode's (`visual.left`, `visual.wordForward`, `visual.top`,
+`visual.charwise`, `visual.yank`, `visual.escape`, ...: one for each key of
+the table above, counts where it says so; `visual.searchFor(query, pane?,
+backward?)`, `visual.searchPreview`, `visual.searchCancel(pane?)` take the
+terminal's pane, as the PDF search does),
 `statusLine` (shows or hides a pane's status line, its bottom row:
 `statusLine(false)` hides the focused pane's, `statusLine(true, id)` shows
 pane `id`'s, `statusLine()` turns it the other way; the content gets or

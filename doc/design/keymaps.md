@@ -44,6 +44,18 @@ configurations are written with the same system.
   is `input.*` commands mapped there).
   The pane kinds decide them, so switching panes changes the mode without
   anything to configure. Their mappings come from `defaults.ts`, as now.
+- **`visual`** (added 2026-11-06, with the user) is built in too, though no
+  pane kind starts in it: entered from a terminal pane (`<C-b>[`, the
+  `normal` mode's `v`), unmapped keys dropped, counts. It drives the
+  terminal's own state (a cursor, a selection, a search), so the server
+  begins that state when the mode is entered and ends it when the mode is
+  left in the same pane. Leaving for another pane (the search's input line)
+  or for a mode pushed above it (the prefix's `normal`) suspends the state
+  instead, to go on when `visual` comes back: the focus rule below rebuilds
+  the history, and the search must not lose the cursor and selection on the
+  way. Keys reaching that terminal end a suspended state. Vim's cursor-first
+  start was the user's choice (Terminal-Normal and Visual in one mode, as
+  tmux's copy mode).
 - `defineMode(name, properties)` makes a mode or changes one:
 
   ```ts
