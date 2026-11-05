@@ -293,8 +293,9 @@ fn splitting_a_terminal_and_opening_a_pdf_beside_it(pixels: PixelPath) {
     assert!(stray.is_empty(), "the PDF is in the rightmost pane: {stray:?}");
     // Its status line is terminal text at the bottom (the shells, by the
     // shipped configuration, have none); the name is cut to fit.
-    let s = t.wait_for("the PDF's status line", |s| s.row_from(29, 75).contains("sample.pd"));
-    assert!(s.row_from(29, 75).contains("1 / 3"), "{:?}", s.row_from(29, 75));
+    // (Above the window's status line, the bottom row.)
+    let s = t.wait_for("the PDF's status line", |s| s.row_from(28, 75).contains("sample.pd"));
+    assert!(s.row_from(28, 75).contains("1 / 3"), "{:?}", s.row_from(28, 75));
     let ls = env.run(&["ls"]);
     assert!(ls.contains("p  (3 panes, 3 buffers, 1 attached)") && ls.contains("sample.pdf"), "{ls}");
 }
@@ -304,11 +305,12 @@ fn the_shell_follows_the_window_size() {
     let env = Env::new("resize");
     let mut t = Term::spawn(&[BIN, "-s", "r"], &env.options());
     t.wait_for("the prompt", prompt);
+    // A row less than the window: the window's status line.
     t.type_text("stty size\n");
-    t.wait_text("30 100");
+    t.wait_text("29 100");
     t.resize(120, 40);
     t.type_text("clear; stty size\n");
-    t.wait_text("40 120");
+    t.wait_text("39 120");
 }
 
 #[test]
@@ -359,7 +361,7 @@ fn typed_keys_echo_at_once_while_a_pdf_scrolls(pixels: PixelPath) {
     }
     t.click(10, 10);
     t.type_text("clear; stty size\n");
-    t.wait_text("30 49");
+    t.wait_text("29 49");
     t.settle(std::time::Duration::from_millis(500));
     t.type_text("clear\n");
     // (The left pane: the border's column follows.)
@@ -734,6 +736,12 @@ fn dragging_in_a_shell_copies_to_the_outer_terminal() {
     t.wait_for("no selection", |s| !s.cell(3, row).inverse);
 }
 
+/// The mode the window's status line (the bottom row) names.
+fn mode_shown(s: &Screen) -> String {
+    let line = s.lines().last().cloned().unwrap_or_default();
+    line.trim_start().split("  ").next().unwrap_or_default().trim().to_owned()
+}
+
 /// The copies (OSC 52) once there are `n` of them.
 fn copies(t: &mut Term, n: usize) -> Vec<String> {
     let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
@@ -752,14 +760,14 @@ fn the_visual_mode_copies_a_shells_output_by_keys() {
     t.wait_for("the output", |s| s.lines().iter().any(|l| l == "alpha beta"));
     // <C-b>[ enters it at the prompt below the output; up a row, a word.
     t.keys(&["C-b", "["]);
-    t.wait_for("the visual mode", |s| s.lines()[0].ends_with("[VISUAL]"));
+    t.wait_for("the visual mode", |s| mode_shown(s) == "VISUAL");
     t.type_text("k0wvey");
     assert_eq!(copies(&mut t, 1), ["beta"]);
-    t.wait_for("back in the shell", |s| !s.lines()[0].contains("[VISUAL"));
+    t.wait_for("back in the shell", |s| mode_shown(s) == "TERMINAL");
     // Rows from the top of the scrollback (the view goes there and back).
     t.keys(&["C-b", "["]);
     t.type_text("ggV2j");
-    let s = t.wait_for("the top", |s| s.lines()[0].starts_with('1') && s.lines()[0].contains("[VISUAL LINE]"));
+    let s = t.wait_for("the top", |s| s.lines()[0].starts_with('1') && mode_shown(s) == "VISUAL LINE");
     assert!(s.cell(0, 2).inverse, "rows 1 to 3 selected");
     t.type_text("y");
     assert_eq!(copies(&mut t, 2)[1], "1\n2\n3");
@@ -768,12 +776,12 @@ fn the_visual_mode_copies_a_shells_output_by_keys() {
     t.keys(&["C-b", "["]);
     t.type_text("gg/alpha");
     t.key("Enter");
-    t.wait_for("at the match", |s| s.lines().iter().any(|l| l == "alpha beta") && s.lines()[0].contains("[VISUAL]"));
+    t.wait_for("at the match", |s| s.lines().iter().any(|l| l == "alpha beta") && mode_shown(s) == "VISUAL");
     t.type_text("vey");
     assert_eq!(copies(&mut t, 3)[2], "alpha");
     // The mouse selects without copying; y copies.
     t.keys(&["C-b", "["]);
-    let s = t.wait_for("the visual mode", |s| s.lines()[0].ends_with("[VISUAL]"));
+    let s = t.wait_for("the visual mode", |s| mode_shown(s) == "VISUAL");
     let row = s.find("alpha beta").unwrap() as u16;
     t.drag((6, row), (9, row));
     t.wait_for("the selection", |s| s.cell(7, row).inverse);
@@ -832,8 +840,8 @@ fn images_from_a_program_show_inside_its_pane() {
 
 /// Cells of the default float on a 100x30 screen: its frame (centred, 80% by
 /// 80%) and its content inside the frame.
-const FLOAT_FRAME: (u16, u16, u16, u16) = (10, 3, 80, 24);
-const FLOAT_CONTENT: (u16, u16, u16, u16) = (11, 4, 78, 22);
+const FLOAT_FRAME: (u16, u16, u16, u16) = (10, 3, 80, 23);
+const FLOAT_CONTENT: (u16, u16, u16, u16) = (11, 4, 78, 21);
 
 /// Whether anything of a lower pane shows inside the default float: a `0`
 /// from the shell below.
@@ -913,7 +921,7 @@ fn a_float_moves_by_its_title_edge_and_a_click_raises_it() {
     let (cx, cy) = (FLOAT_CONTENT.0 + 5, FLOAT_CONTENT.1 + 2);
     t.wait_for("the float moved", |s| s.row_from(cy, cx).starts_with('$'));
     t.type_text("stty size\n");
-    t.wait_for("its shell's size", |s| s.row_from(cy + 1, cx).starts_with("22 78"));
+    t.wait_for("its shell's size", |s| s.row_from(cy + 1, cx).starts_with("21 78"));
     // A click on the tiled shell focuses it; typing goes there.
     t.click(2, 1);
     t.type_text("echo tiled-$((1+1))\n");
@@ -1089,7 +1097,7 @@ fn tabs_switch_by_keys_and_clicks_and_floats_on_all_tabs_follow(pixels: PixelPat
     t.wait_for("the shell's tab", |s| s.text().contains("first-2") && s.images.is_empty());
     // The shell is one row lower and a row shorter.
     t.type_text("stty size\n");
-    t.wait_for("its size", |s| s.lines().iter().any(|l| l.starts_with("29 100")));
+    t.wait_for("its size", |s| s.lines().iter().any(|l| l.starts_with("28 100")));
     // A click on the second tab's label.
     let col = t.screen().lines()[0].find(" 2 ").unwrap() as u16 + 1;
     t.click(col, 0);
@@ -1374,17 +1382,18 @@ fn slash_searches_through_an_input_line_below_the_pdf() {
     let pdf = fixture("sample.pdf").display().to_string();
     let mut t = Term::spawn(&[BIN, "-s", "si", &pdf], &env.options());
     t.wait_for("page 1", |s| s.title.contains("1 / 3"));
-    // The input line is the bottom row (30 rows: the PDF pane, its status
-    // line, the border, the input), with the cursor after the text.
+    // The input line is above the window's status line (30 rows: the PDF
+    // pane, its status line, the border, the input, the window's status
+    // line), with the cursor after the text.
     t.key("/");
     t.type_text("Back to");
-    let s = t.wait_for("the query typed", |s| s.row_from(29, 0) == "/Back to");
-    assert_eq!(s.cursor, Some((8, 29)), "{:?}", s.cursor);
+    let s = t.wait_for("the query typed", |s| s.row_from(28, 0) == "/Back to");
+    assert_eq!(s.cursor, Some((8, 28)), "{:?}", s.cursor);
     // Each change shows the first hit: its only one is on page 2 (the PDF
     // pane's status line says; the window title is the input's).
-    t.wait_for("the hit on page 2", |s| s.row_from(27, 0).contains("1/1   2 / 3"));
+    t.wait_for("the hit on page 2", |s| s.row_from(26, 0).contains("1/1   2 / 3"));
     t.key("Enter");
-    let s = t.wait_for("the search done", |s| s.row_from(29, 0).contains("/Back to 1/1"));
+    let s = t.wait_for("the search done", |s| s.row_from(28, 0).contains("/Back to 1/1"));
     assert!(s.lines().iter().all(|l| !l.starts_with("/Back to")), "the input is gone");
     // The input buffer went with it: the document is the only buffer.
     let ls = env.run(&["ls"]);
@@ -1394,10 +1403,10 @@ fn slash_searches_through_an_input_line_below_the_pdf() {
     t.wait_for("page 1 again", |s| s.title.contains("1 / 3"));
     t.key("/");
     t.type_text("Back");
-    t.wait_for("the hit on page 2", |s| s.row_from(27, 0).contains("2 / 3"));
+    t.wait_for("the hit on page 2", |s| s.row_from(26, 0).contains("2 / 3"));
     t.key("Esc");
-    let s = t.wait_for("back on page 1", |s| s.title.contains("1 / 3") && s.row_from(29, 0).contains("1 / 3"));
-    assert!(!s.row_from(29, 0).contains("/Back"), "no search left: {:?}", s.row_from(29, 0));
+    let s = t.wait_for("back on page 1", |s| s.title.contains("1 / 3") && s.row_from(28, 0).contains("1 / 3"));
+    assert!(!s.row_from(28, 0).contains("/Back"), "no search left: {:?}", s.row_from(28, 0));
 }
 
 /// Options for a terminal without the kitty graphics protocol.
@@ -1417,7 +1426,7 @@ fn a_terminal_without_graphics_shows_pdf_panes_as_a_line_and_says_why() {
     });
     assert!(s.images.is_empty(), "no images: {:?}", s.images);
     assert!(s.text().contains("graphics are turned off (TERMPIX_GRAPHICS=off)"), "why, at the start");
-    assert!(s.row_from(29, 0).contains("sample.pdf"), "the status line is text: {:?}", s.row_from(29, 0));
+    assert!(s.row_from(28, 0).contains("sample.pdf"), "the status line is text: {:?}", s.row_from(28, 0));
     // A key takes the message away (and does what it does).
     t.key("j");
     t.wait_for("the message gone", |s| !s.text().contains("TERMPIX_GRAPHICS=off"));

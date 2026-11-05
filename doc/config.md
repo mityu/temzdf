@@ -46,7 +46,11 @@ log, as do promise rejections nothing handled.
 
 ## Modes and keys
 
-Like Vim, temzdf is always in a mode. Built in:
+Like Vim, temzdf is always in a mode; the window's status line (the bottom
+row, `showstatusline`) names it at its left, with the session's name (and,
+with several tab pages, the current one's number) at its right, as
+Neovim's global status line and tmux's status line do. What it says is
+built in for now. Built in:
 
 | Mode | Unmapped keys | Counts | |
 |---|---|---|---|
@@ -218,8 +222,9 @@ terminal); where the program uses the mouse, hold Shift, or select from the
 Keys select and copy a terminal's output, its scrollback included (Vim's
 Visual mode on a terminal buffer, tmux's copy mode). `<C-b>[` (or `v` in
 the `normal` mode) enters it in the focused terminal pane: a cursor of its
-own at the program's cursor, nothing selected, and `[VISUAL]` at the top
-right (with the kind of selection, and how far the view is back). `v`, `V`
+own at the program's cursor, nothing selected; the window's status line says
+`VISUAL` (`VISUAL CHAR`, `VISUAL LINE`, `VISUAL BLOCK` with a selection), and
+the pane's top right how far the view is back. `v`, `V`
 and `<C-v>` start a selection of characters, rows or a block; `y` copies it
 (OSC 52, as the mouse's: soft-wrapped rows joined, trailing blanks dropped,
 no line break after the last row) and leaves. Keys do not reach the
@@ -261,6 +266,7 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `synctexeditor` | `null` | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/design/synctex.md. `--editor` overrides it |
 | `remainonexit` | `false` | a shown terminal whose program ended keeps its panes (tmux's `remain-on-exit`) |
 | `showtabline` | `"auto"` | when the tab line shows (Vim's): `"never"`, `"auto"` (with two tab pages or more), `"always"` |
+| `showstatusline` | `"always"` | whether the window's status line shows (its bottom row: the mode, the session, the tab page): `"always"`, `"never"` |
 | `foreground`, `background` | `null` | default colours (`"#rrggbb"`) of GUI clients and terminal panes (programs asking with OSC 10/11 are told); `null`: the client's own. A terminal client's terminal keeps its own |
 | `palette` | `[]` | the first colours of the 256-colour palette (`["#000000", "#cd0000", ...]`), for GUI clients and terminal panes (OSC 4); the rest stay the default |
 | `guifont` | `[{ font: "JetBrains Mono", size: 14 }]` | the GUI client's fonts, `{ font, size? }` (size in points, 4 to 200; left out: the first font's, else 14). The first installed one sets the cell size; a character goes to the first font of the list that has it, at that font's size, then (as WezTerm) to the built-in JetBrains Mono, Noto Color Emoji and Symbols Nerd Font Mono, then the system's fonts for its script. A font that is not installed is skipped: `temzdf ls-fonts` shows what the list resolves to |

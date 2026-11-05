@@ -818,14 +818,12 @@ impl TermView {
         {
             visual::highlight(&mut grid.rows, query);
         }
-        // Scrolled back: how far, at the top right (as tmux's copy mode);
-        // the visual mode says so there too.
-        let position = term.scroll_position().map(|(above, history)| format!("[{above}/{history}]"));
-        let mode = term.visual_label().map(|m| format!("[{m}]"));
-        if (position.is_some() || mode.is_some())
+        // Scrolled back: how far, at the top right (as tmux's copy mode).
+        // (The visual mode is named on the window's status line.)
+        if let Some((above, history)) = term.scroll_position()
             && let Some(row) = frame.text.first_mut().and_then(|g| g.rows.first_mut())
         {
-            let label = format!("{}{}", mode.unwrap_or_default(), position.unwrap_or_default());
+            let label = format!("[{above}/{history}]");
             let start = row.len().saturating_sub(label.chars().count());
             for (c, ch) in row[start..].iter_mut().zip(label.chars()) {
                 *c = Cell {

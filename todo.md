@@ -34,6 +34,9 @@ server on one `Session`). Next and open:
   settle with the user first: the markup for colours and clickable
   elements, when a function is evaluated again, whether clicking an element
   focuses the pane (proposed: no); then top bars and the window's bars.
+  The window's status line exists with built-in content (the mode, the
+  session, the tab page; 2026-11-06): the same settlement makes it
+  configurable, its content then the default.
 - [ ] Terminals without graphics (text only, done 2026-11-02): the server
   could skip rendering PDF tiles while no attached client draws images (the
   Hello would say); a PDF pane could show its text instead (the page's text

@@ -36,6 +36,26 @@ pub(super) fn cells(bar: &StatusBar, cols: usize, focused: bool) -> Vec<Cell> {
     row
 }
 
+/// The window's status line, `cols` wide: the mode at the left on the
+/// accent colour, `right` at the right, on the bars' background.
+pub(super) fn window(mode: &str, right: &str, cols: usize) -> Vec<Cell> {
+    let theme = Theme::dark();
+    let rgb = |c: termpix_ui::Color| Color::Rgb([c.0[0], c.0[1], c.0[2]]);
+    let bg = rgb(theme.bar_bg);
+    let mut row = vec![Cell { text: " ".into(), width: 1, fg: Color::Default, bg, attrs: Attrs::default() }; cols];
+    let label = format!(" {mode} ");
+    let label_w = text_width(&label).min(cols);
+    let accent = rgb(theme.accent);
+    put(&mut row, 0, &label, label_w, rgb(theme.bar_bg), accent);
+    for c in &mut row[..label_w] {
+        c.bg = accent;
+        c.attrs.bold = true;
+    }
+    let right_w = text_width(right).min(cols.saturating_sub(label_w + 2));
+    put(&mut row, cols.saturating_sub(1 + right_w), right, right_w, rgb(theme.bar_dim), bg);
+    row
+}
+
 /// `text` on the middle row of `rect`, centred (cut to fit), dimmed, on
 /// the terminal's background.
 pub(super) fn centred(text: &str, rect: temzdf_scene::Rect) -> TextGrid {

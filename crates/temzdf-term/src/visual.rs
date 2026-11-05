@@ -1192,12 +1192,11 @@ mod tests {
     fn the_view_follows_the_cursor_through_the_scrollback() {
         let lines: String = (1..=30).map(|i| format!("line {i}\n")).collect();
         let mut t = term(&lines);
-        let rows = shown(&mut t);
-        assert!(rows[0].starts_with("line 26 ") && rows[0].ends_with(" [VISUAL]"), "{rows:?}");
+        assert_eq!(shown(&mut t)[0], "line 26", "at the bottom, no label");
         go(&mut t, Op::Top);
         assert_eq!(at(&t), (0, 0));
         let rows = shown(&mut t);
-        assert!(rows[0].starts_with("line 1 ") && rows[0].ends_with("[VISUAL][25/25]"), "{rows:?}");
+        assert!(rows[0].starts_with("line 1 ") && rows[0].ends_with(" [25/25]"), "{rows:?}");
         // New output: the cursor stays on its character.
         t.feed(b"more\r\nand more\r\n");
         let p = t.visual_pos().unwrap();

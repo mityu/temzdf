@@ -60,6 +60,14 @@ shown or hidden per pane (`statusLine`, `doc/config.md`); the PDF pane's own
 status bar moved onto it, saying what it said, and a terminal's is blank
 (the shipped configuration hides the terminals').
 
+The window's bottom bar (2026-11-06, with the user) is its status line,
+one row the session draws (`statusline::window`): the mode at the left
+(every mode by name, the visual mode with its kind of selection, moved
+there from the terminal pane's corner), the session and the tab page at
+the right; `showstatusline` turns it off. Its content is built in until the
+markup and the re-evaluation above are settled; it then becomes the
+default of a configurable one.
+
 Clicks on bars (the user, 2026-10-26), after Vim:
 
 - A bar can hold clickable elements; a click on one calls its callback

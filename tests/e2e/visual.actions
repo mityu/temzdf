@@ -5,9 +5,9 @@
 #     'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean -s e2e-v; exec sh'
 # Judged (check): copied-word (C-b [, k0wve, y: the clipboard is "beta"),
 # copied-rows (gg V 2j y: "1", "2", "3" on three lines), searched (/alpha,
-# v e y: "alpha"), label (the top right says [VISUAL LINE]; kitty and
+# v e y: "alpha"), label (the window's status line says VISUAL LINE; kitty and
 # WezTerm only). Not judged: rows.png (rows 1 to 3 inverted at the top of
-# the scrollback, the label, the block cursor).
+# the scrollback, the mode on the bottom row, the block cursor).
 pause 1
 type "clear; seq 1 100; echo alpha beta
 "
@@ -25,7 +25,7 @@ pause 0.3
 type "ggV2j"
 pause 0.5
 shot rows
-check label screen_contains "[VISUAL LINE]"
+check label screen_contains " VISUAL LINE "
 keys y
 pause 0.5
 clipboard >"$outdir/rows.txt" || true

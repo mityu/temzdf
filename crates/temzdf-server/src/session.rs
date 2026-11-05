@@ -148,6 +148,9 @@ pub struct Options {
     pub remainonexit: bool,
     /// When the tab line shows (Vim's `showtabline`).
     pub showtabline: ShowTabline,
+    /// The window's status line shows (its bottom row; Vim's `laststatus`
+    /// 3, Neovim's global status line).
+    pub showstatusline: bool,
     /// Colours for clients and terminal panes (`None`: the client's own),
     /// and the first palette entries.
     pub foreground: Option<[u8; 3]>,
@@ -193,6 +196,9 @@ impl Default for Options {
             synctexeditor: None,
             remainonexit: false,
             showtabline: ShowTabline::Auto,
+            // Off in this crate's tests, which count panes' rows; the window
+            // status line's own tests turn it on.
+            showstatusline: !cfg!(test),
             foreground: None,
             background: None,
             palette: Vec::new(),
@@ -630,10 +636,44 @@ impl Session {
         id
     }
 
-    /// Where panes go: the screen, below the tab line when it shows.
+    /// Where panes go: the screen, below the tab line and above the
+    /// window's status line when they show.
     fn area(&self) -> Rect {
         let top = u32::from(self.tabline_shown());
-        Rect::new(0, top as i32, self.geometry.cols as u32, (self.geometry.rows as u32).saturating_sub(top))
+        let bottom = u32::from(self.window_statusline_shown());
+        Rect::new(0, top as i32, self.geometry.cols as u32, (self.geometry.rows as u32).saturating_sub(top + bottom))
+    }
+
+    /// Whether the window's status line shows (`showstatusline`, and room
+    /// for it: three rows at least).
+    fn window_statusline_shown(&self) -> bool {
+        self.options.showstatusline && self.geometry.rows > 2
+    }
+
+    /// The window's status line: the mode, and the session (and the tab
+    /// page, with several).
+    fn window_statusline(&self) -> Option<TextGrid> {
+        if !self.window_statusline_shown() {
+            return None;
+        }
+        let mode = match self.history.current() {
+            "visual" => self
+                .panes
+                .get(&self.focus)
+                .and_then(PaneEntry::term)
+                .and_then(|b| self.terms.get(&b))
+                .and_then(|t| t.term.visual_label())
+                .unwrap_or("VISUAL")
+                .to_owned(),
+            m => m.to_uppercase(),
+        };
+        let right = if self.tabs.len() > 1 {
+            format!("{}/{}  {}", self.tab + 1, self.tabs.len(), self.name)
+        } else {
+            self.name.clone()
+        };
+        let row = self.geometry.rows - 1;
+        Some(TextGrid { col: 0, row, rows: vec![statusline::window(&mode, &right, self.geometry.cols as usize)] })
     }
 
     /// Put pane `id` into the layout at `spot`. Returns its rectangle.
@@ -2033,6 +2073,7 @@ impl Session {
         text.extend(self.border_grids());
         self.float_frames(&mut text);
         text.extend(self.tabline().map(|(grid, _)| grid));
+        text.extend(self.window_statusline());
         self.keys.end_frame();
         for (doc, needs) in needs {
             if let Some(host) = self.docs.get_mut(&doc).and_then(|d| d.host.as_mut()) {
@@ -3843,8 +3884,6 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[1] == "second line");
         key(&mut s, "<C-b>[");
         assert_eq!(s.current_mode(), "visual");
-        let rows = screen_text(&s.frame(), GEOMETRY);
-        assert!(rows[0].ends_with("[VISUAL]"), "{rows:?}");
         key(&mut s, "x");
         key(&mut s, "ggwve");
         assert!(rows_after(&mut s, &rx, 300)[2].is_empty(), "x went nowhere");
@@ -3862,6 +3901,39 @@ mod tests {
         key(&mut s, "<Esc>");
         assert_eq!(s.current_mode(), "terminal");
         assert!(cmd(&mut s, "visual.left", &[], None).is_err(), "no visual mode now");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn the_window_status_line_names_the_mode_and_the_session() {
+        let (mut s, rx) = terminal_session(&["sh", "-c", "stty size; sleep 30"]);
+        wait_text(&mut s, &rx, |r| r[0] == format!("{} {}", GEOMETRY.rows, GEOMETRY.cols));
+        s.set_option("showstatusline", &ScriptValue::Str("always".into())).unwrap();
+        assert_eq!(s.get_option("showstatusline"), Ok(ScriptValue::Str("always".into())));
+        let last = GEOMETRY.rows as usize - 1;
+        let bottom = |s: &mut Session| screen_text(&s.frame(), GEOMETRY)[last].clone();
+        let row = bottom(&mut s);
+        assert!(row.starts_with(" TERMINAL ") && row.ends_with("term"), "{row:?}");
+        // The pane is a row shorter.
+        assert_eq!(s.panes[&s.focus].rect.h, GEOMETRY.rows as u32 - 1);
+        key(&mut s, "<C-b>");
+        assert!(bottom(&mut s).starts_with(" NORMAL "));
+        key(&mut s, "[");
+        assert!(bottom(&mut s).starts_with(" VISUAL "));
+        key(&mut s, "V");
+        assert!(bottom(&mut s).starts_with(" VISUAL LINE "), "the kind of selection");
+        let frame = s.frame();
+        let cell = &frame.text.last().unwrap().rows[0][1];
+        assert!(cell.attrs.bold && cell.bg != frame.text.last().unwrap().rows[0][40].bg, "the mode stands out");
+        key(&mut s, "<Esc><Esc>");
+        // With tab pages: which one, of how many.
+        new_tab(&mut s, &["sh", "-c", "sleep 30"]);
+        assert!(bottom(&mut s).ends_with("2/2  term"), "{:?}", bottom(&mut s));
+        // never: the row goes back to the panes.
+        s.set_option("showstatusline", &ScriptValue::Str("never".into())).unwrap();
+        assert_eq!(s.panes[&s.focus].rect.h, GEOMETRY.rows as u32 - 1, "below the tab line only");
+        assert!(!bottom(&mut s).contains("TERMINAL"));
+        assert!(s.set_option("showstatusline", &ScriptValue::Str("auto".into())).is_err());
     }
 
     /// The screen after handling events for `ms` milliseconds.

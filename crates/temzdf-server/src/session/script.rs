@@ -997,10 +997,17 @@ impl Session {
                     _ => return Err("o.showtabline: expected \"never\", \"auto\" or \"always\"".into()),
                 }
             }
+            "showstatusline" => {
+                o.showstatusline = match value.as_str() {
+                    Some("never") => false,
+                    Some("always") => true,
+                    _ => return Err("o.showstatusline: expected \"never\" or \"always\"".into()),
+                }
+            }
             other => return Err(format!("no option {other:?}")),
         }
         self.apply_options();
-        if name == "showtabline" {
+        if name == "showtabline" || name == "showstatusline" {
             self.relayout();
         }
         Ok(())
@@ -1033,6 +1040,7 @@ impl Session {
                 }
                 .into(),
             ),
+            "showstatusline" => ScriptValue::Str(if o.showstatusline { "always" } else { "never" }.into()),
             "foreground" => o.foreground.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "background" => o.background.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "palette" => ScriptValue::List(o.palette.iter().map(|c| ScriptValue::Str(hex(*c))).collect()),
