@@ -37,8 +37,8 @@ test and all cores at once, in about a minute and a half. `scripts/check.sh`
 runs it after the normal tests, or skips it with a note when the toolchain
 has no Miri; `--no-miri` skips it on purpose. The default dev shell leaves
 Miri out (it is slow to run on every commit): it is in
-`nix develop .#enable-miri` (and the `ci` and `alldeps` shells), run from
-time to time. Isolation is
+`nix develop .#enable-miri` (and the `ci-miri` and `alldeps` shells), run
+from time to time; CI runs it in a job of its own. Isolation is
 off, so tests can read files and the real clock.
 
 Miri interprets Rust only. Tests that reach foreign code (MuPDF, the

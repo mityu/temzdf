@@ -93,29 +93,36 @@
                   enableMiri ? false,
                   enableFixedFontSet ? false,
                   skipTart ? false,
+                  # Only what CI runs (scripts/check.sh, scripts/miri.sh): no
+                  # editor tools, toolchain docs or end-to-end tools, so that
+                  # less is downloaded.
+                  forCi ? false,
                 }:
                 pkgs.mkShell (
                   {
                     packages =
                       with pkgs;
-                      [
+                      [ shellcheck ]
+                      ++ lib.optionals (!forCi) [
                         agent-browser
                         python3
                         imagemagick # Screenshots compared in scripts/e2e.sh (expect).
-                        shellcheck
                       ]
                       ++ (
                         if enableMiri then
                           [
                             (rust-bin.selectLatestNightlyWith (
                               toolchain:
-                              toolchain.default.override {
+                              # minimal: rustc, cargo and the standard library,
+                              # without default's documentation (700 MB unpacked).
+                              (if forCi then toolchain.minimal else toolchain.default).override {
                                 extensions = [
                                   "rust-src"
                                   "miri"
-                                  "rust-analyzer"
                                   "clippy"
-                                ];
+                                  "rustfmt"
+                                ]
+                                ++ lib.optionals (!forCi) [ "rust-analyzer" ];
                               }
                             ))
                           ]
@@ -124,10 +131,10 @@
                           [
                             cargo
                             rustc
-                            rust-analyzer
                             clippy
                             rustfmt
                           ]
+                          ++ lib.optionals (!forCi) [ rust-analyzer ]
                       )
                       ++ lib.optionals withTeX [
                         (pkgs.texliveBasic.withPackages (
@@ -149,7 +156,7 @@
                         ]
                       )
 
-                      ++ lib.optionals isLinux (
+                      ++ lib.optionals (isLinux && !forCi) (
                         with pkgs;
                         [
                           # End-to-end testing: run kitty on a virtual X server and drive it.
@@ -219,10 +226,18 @@
                 withTeX = true;
                 enableMiri = true;
               };
+              # CI (.github/workflows/ci.yml): scripts/check.sh with the
+              # toolchain of the default shell, and Miri in a job of its own.
               ci = buildDevShell {
+                withTeX = true;
+                enableFixedFontSet = true;
+                forCi = true;
+              };
+              ci-miri = buildDevShell {
                 withTeX = true;
                 enableMiri = true;
                 enableFixedFontSet = true;
+                forCi = true;
               };
               alldeps = buildDevShell {
                 withTeX = true;

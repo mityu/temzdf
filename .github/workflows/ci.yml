@@ -16,22 +16,49 @@ permissions:
 jobs:
   # rustfmt, clippy (warnings are errors) and tests, fixtures built with TeX
   # from the `ci` dev shell. End-to-end terminal tests stay local (doc/dev/testing.md).
+  # Miri runs in a job of its own, beside this one.
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
-      - run: nix develop .#ci --command scripts/check.sh --verbose
-      # What a failure leaves: the whole outputs, Miri's logs, and the
-      # screens of failed simulated-terminal waits.
+      # The shell's cargo and rustc on PATH: rust-cache runs outside the shell.
+      - run: nix develop .#ci --command bash -c 'dirname "$(command -v cargo)"; dirname "$(command -v rustc)"' >>"$GITHUB_PATH"
+      # Built dependencies and the crates downloaded, not our own crates.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: nix develop .#ci --command scripts/check.sh --verbose --no-miri
+      # What a failure leaves: the whole outputs, and the screens of failed
+      # simulated-terminal waits.
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: check-logs
           path: |
             target/check/
-            target/miri-logs/
             target/tuitest/
+          if-no-files-found: ignore
+
+  # The unit tests under Miri (scripts/miri.sh), with the nightly toolchain of
+  # the `ci-miri` dev shell.
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
+      - run: nix develop .#ci-miri --command bash -c 'dirname "$(command -v cargo)"' >>"$GITHUB_PATH"
+      # Also Miri's standard library, built by `cargo miri setup`.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-directories: ~/.cache/miri
+      - run: nix develop .#ci-miri --command scripts/miri.sh
+      # Each failed test's log (named on its FAIL line).
+      - if: failure()
+        run: tail -n +1 target/miri-logs/*.log
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: miri-logs
+          path: target/miri-logs/
           if-no-files-found: ignore
 
   # The package output (`nix build`).
