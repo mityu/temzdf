@@ -43,6 +43,9 @@
   server (precompiled at build time).
 - `temzdf-term`: the terminal pane (`TermPane`: a program on a pty, its
   output interpreted by `libghostty-vt`, the screen as scene text cells).
+- `temzdf-texteditor`: a framework for text editors (text, positions,
+  edits, marks, the undo tree, motions; `doc/design/text-editor.md`),
+  under construction: no pane uses it yet.
 - `temzdf-tty`: the terminal frontend (`TtyFrontend`: terminal setup, frame
   pacing, effects; `Presenter`, `Screen`).
 - `temzdf-protocol`: the session protocol (messages, framing, sockets).

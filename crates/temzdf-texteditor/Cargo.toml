@@ -1,0 +1,19 @@
+[package]
+name = "temzdf-texteditor"
+description = "A framework for text editors: text, positions, edits, marks, undo, motions, layout and drawing into temzdf-scene cells."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+# LF is the only line break inside (CRLF files are converted when read):
+# without unicode_lines and cr_lines, ropey counts nothing else as one.
+ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
+regex = "1.13.1"
+unicode-script = "0.5.8"
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
+
+[lints]
+workspace = true

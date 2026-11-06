@@ -8,6 +8,7 @@ members = [
     "crates/temzdf-pdfcore",
     "crates/temzdf-pdfview",
     "crates/temzdf-term",
+    "crates/temzdf-texteditor",
     "crates/temzdf-script",
     "crates/temzdf-script-guest",
     "crates/temzdf-script-runner",
