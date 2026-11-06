@@ -166,9 +166,6 @@ enum Cmd {
         #[arg(long)]
         list_system: bool,
     },
-    /// Run the configuration script for a session (started by the session).
-    #[command(hide = true)]
-    ScriptHost,
     /// Draw session NAME's frame as a terminal client of this geometry would
     /// show it, into a PNG (scripts/e2e.sh compares terminals against it).
     #[command(hide = true)]
@@ -316,9 +313,6 @@ fn main() -> Result<()> {
                 mask,
             };
             return snapshot::render_session(&name, &out, &opts);
-        }
-        Some(Cmd::ScriptHost) => {
-            return temzdf_script::run(std::io::stdin(), std::io::stdout()).map_err(anyhow::Error::msg);
         }
         Some(Cmd::Attach { name, create, file }) => {
             if file.is_some() && !create {

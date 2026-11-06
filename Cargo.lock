@@ -4380,6 +4380,7 @@ dependencies = [
  "temzdf-pdfview",
  "temzdf-protocol",
  "temzdf-scene",
+ "temzdf-script-runner",
  "temzdf-term",
  "temzdf-tty",
  "termpix",

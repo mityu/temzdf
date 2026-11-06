@@ -1,6 +1,6 @@
-//! The session's side of scripting: the script host process
-//! (`temzdf script-host`, see `temzdf-script`), and the work it does for the
-//! session. See doc/design/script-host.md.
+//! The session's side of scripting: the script host (`temzdf-script`, run
+//! as a WebAssembly guest in this process by `temzdf-script-runner`), and the
+//! work it does for the session. See doc/design/script-host.md.
 //!
 //! Everything is synchronous from the user's point of view: while the host
 //! runs a mapped or hook function (or an `atomic` section, or loads the
@@ -14,22 +14,19 @@
 //! the command that caused them, as Vim's autocmds do.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::BufReader;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use temzdf_protocol::script::{CallId, FromHost, FuncId, HostOp, ScriptError, ScriptValue, TaskId, ToHost, Token};
+use temzdf_script_runner::{Event, Options, ScriptHost};
 use termpix_core::input::{KeyCode, KeyEvent, Modifiers, MouseEvent, MouseEventKind};
 
 use super::{Outcome, PaneId, Session, SessionEvent, ShowTabline};
 use crate::action::PaneSpec;
 
-/// How to start the script host, and the configuration it loads.
+/// The configuration the script host loads.
 #[derive(Clone, Debug)]
 pub struct ScriptSettings {
-    /// The host program and its arguments (`temzdf script-host`).
-    pub command: Vec<String>,
     /// The user's configuration (`None` with `--clean`: the shipped defaults only).
     pub config: Option<PathBuf>,
 }
@@ -92,23 +89,10 @@ struct Hook {
     nested: bool,
 }
 
-struct Host {
-    child: Child,
-    stdin: ChildStdin,
-}
-
-impl Drop for Host {
-    fn drop(&mut self) {
-        let _ = temzdf_protocol::send(&mut self.stdin, &ToHost::Shutdown);
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 /// The session's scripting state.
 #[derive(Default)]
 pub struct Bridge {
-    host: Option<Host>,
+    host: Option<ScriptHost>,
     /// Which host is current (one is started per load).
     pub(super) generation: u32,
     /// Loading the configuration, until this time.
@@ -147,9 +131,14 @@ impl Bridge {
     }
 
     fn send(&mut self, msg: &ToHost) -> bool {
-        match &mut self.host {
-            Some(h) => temzdf_protocol::send(&mut h.stdin, msg).is_ok(),
-            None => false,
+        self.host.as_ref().is_some_and(|h| h.send(msg.clone()))
+    }
+
+    /// Stop the host whatever it does (`debug-stop-script-host`, for
+    /// tests): it then exits as if it had failed.
+    pub(super) fn stop_host(&mut self) {
+        if let Some(h) = &mut self.host {
+            h.stop();
         }
     }
 
@@ -193,37 +182,28 @@ impl Session {
 
     /// Start the host and ask it to load the configuration.
     fn spawn_host(&mut self, s: &ScriptSettings) -> bool {
-        let Some((program, args)) = s.command.split_first() else { return false };
-        let child = Command::new(program)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn();
-        let mut child = match child {
-            Ok(c) => c,
+        // The old host goes first (it may hold a lot of memory).
+        self.script.host = None;
+        let events = self.events.clone();
+        let generation = self.script.generation + 1;
+        let started = ScriptHost::start(Options::default(), move |e| match e {
+            Event::Msg(msg) => {
+                events(SessionEvent::Script(generation, msg));
+            }
+            Event::Exited(why) => {
+                eprintln!("temzdf: the script host ended: {why}");
+                events(SessionEvent::ScriptExited(generation));
+            }
+        });
+        let host = match started {
+            Ok(h) => h,
             Err(e) => {
                 self.script.startup_error = Some(format!("cannot start the script host: {e}"));
                 return false;
             }
         };
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else { return false };
-        let events = self.events.clone();
-        self.script.generation += 1;
-        let generation = self.script.generation;
-        let spawned = std::thread::Builder::new().name("temzdf-script-in".into()).spawn(move || {
-            let mut r = BufReader::new(stdout);
-            while let Ok(Some(msg)) = temzdf_protocol::recv::<FromHost>(&mut r) {
-                if !events(SessionEvent::Script(generation, msg)) {
-                    return;
-                }
-            }
-            events(SessionEvent::ScriptExited(generation));
-        });
-        if spawned.is_err() {
-            return false;
-        }
-        self.script.host = Some(Host { child, stdin });
+        self.script.generation = generation;
+        self.script.host = Some(host);
         self.clear_host_notice();
         self.script.loading = Some(Instant::now() + LOAD_TIMEOUT);
         self.script.busy_since = Some(Instant::now());

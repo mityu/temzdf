@@ -550,11 +550,8 @@ fn reload_config_registers_again_and_the_session_survives_the_host() {
     t.keys(&["C-b", "e"]);
     t.wait_text("mapped");
     t.key("Esc");
-    // Kill the host: the session goes on without scripts.
-    let ls = env.run(&["ls", "-v"]);
-    let pid = ls.lines().find_map(|l| l.trim().strip_prefix("pid: ")).unwrap().trim().to_owned();
-    let killed = Command::new("pkill").args(["-P", &pid, "-f", "script-host"]).status().unwrap();
-    assert!(killed.success());
+    // Stop the host as if it had failed: the session goes on without scripts.
+    env.run(&["action", "-s", "r", "debug-stop-script-host"]);
     env.wait_log("r", "the host's exit", |l| l.contains("the script host exited"));
     // The notice floats at the top right with the keys that still work.
     t.wait_text("<C-b>r restarts");

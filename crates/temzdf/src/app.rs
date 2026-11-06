@@ -49,8 +49,7 @@ pub fn script_settings(clean: bool, explicit: Option<&Path>) -> Result<Option<Sc
         (false, Some(p)) => Some(std::path::absolute(p)?),
         (false, None) => crate::config::script_path()?,
     };
-    let exe = std::env::current_exe()?.display().to_string();
-    Ok(Some(ScriptSettings { command: vec![exe, "script-host".into()], config }))
+    Ok(Some(ScriptSettings { config }))
 }
 
 /// Session settings; `editor` (`--editor`) wins over the configuration's.

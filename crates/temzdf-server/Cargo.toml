@@ -11,6 +11,7 @@ anyhow.workspace = true
 temzdf-pdfcore.workspace = true
 temzdf-pdfview.workspace = true
 temzdf-protocol = { workspace = true, features = ["session"] }
+temzdf-script-runner.workspace = true
 serde = "1.0.229"
 temzdf-scene.workspace = true
 temzdf-term.workspace = true

@@ -611,6 +611,11 @@ impl Session {
             "kill-session" => ok(Outcome::Quit),
             "detach" => ok(Outcome::Detach),
             "reload-config" => act(self, Action::ReloadConfig),
+            // Not in the registry (no type, no documentation): for tests.
+            "debug-stop-script-host" => {
+                self.script.stop_host();
+                ok(Outcome::None)
+            }
             "message" => {
                 self.notify(super::notices::Kind::Info, &text(0).unwrap_or_default());
                 ok(Outcome::Redraw)

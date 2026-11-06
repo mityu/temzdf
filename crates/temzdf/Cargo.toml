@@ -15,7 +15,7 @@ termpix.workspace = true
 temzdf-pdfview.workspace = true
 temzdf-protocol = { workspace = true, features = ["session"] }
 temzdf-scene.workspace = true
-temzdf-script = { workspace = true, features = ["host"] }
+temzdf-script.workspace = true
 temzdf-server.workspace = true
 temzdf-tty.workspace = true
 
