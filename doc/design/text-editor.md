@@ -408,6 +408,12 @@ Decided with the user on 2026-11-07, before building:
   `{ start, end }`.
 - A primitive acts on the focused pane (and its buffer) unless given a
   pane or buffer.
+- The hollow cursor of panes without the focus (section 14) is, for now,
+  the highlight group `CursorUnfocused` drawn in the cell (underlined by
+  default): frames carry one cursor, and terminals draw one.
+- Wrapping is greedy, so a row depends only on where it starts: a view
+  keeps the offset its top row starts at and lays out only the rows it
+  shows. Tabs in continuation rows count from the row's start.
 - Order of work: the crate's core (positions, edits, marks, undo,
   motions), then layout and drawing, then the pane in the server with
   files, `fallback`, `basemode` and the mode-less defaults (where the user
