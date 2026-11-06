@@ -9,12 +9,14 @@
 //!   the JSON work;
 //! - C: QuickJS compiled to WebAssembly (guest/) in wasmtime in this
 //!   process, `__host.request` a host import doing the same work, epoch
-//!   interruption on.
+//!   interruption on;
+//! - D: as C, but on wasmtime's Pulley interpreter instead of Cranelift's
+//!   machine code (the guest compiled to Pulley bytecode, then interpreted).
 //!
 //! One "key" is a call of the mapped function issuing `k` commands, timed
 //! from the call to its end.
 //!
-//!   script-host-bench run --guest GUEST.wasm --label LABEL [--keys N]
+//!   script-host-bench run --guest GUEST.wasm --label LABEL [--keys N] [--forms abcd]
 //!   script-host-bench host          (form A's child: the script host)
 //!
 //! Output: CSV lines `label,form,what,k,n,p50_us,p90_us,p99_us,max_us,mean_us`.
@@ -39,7 +41,7 @@ fn main() {
             let guest = opt("--guest").expect("--guest GUEST.wasm");
             let label = opt("--label").unwrap_or_else(|| "none".into());
             let keys: usize = opt("--keys").map_or(2000, |s| s.parse().unwrap());
-            let forms = opt("--forms").unwrap_or_else(|| "abc".into());
+            let forms = opt("--forms").unwrap_or_else(|| "abcd".into());
             if forms.contains('a') {
                 form_a(&label, keys);
             }
@@ -47,11 +49,14 @@ fn main() {
                 form_b(&label, keys);
             }
             if forms.contains('c') {
-                form_c(&label, keys, &guest);
+                form_c(&label, keys, &guest, false);
+            }
+            if forms.contains('d') {
+                form_c(&label, keys, &guest, true);
             }
         }
         _ => {
-            eprintln!("usage: script-host-bench run --guest GUEST.wasm --label LABEL [--keys N] [--forms abc]");
+            eprintln!("usage: script-host-bench run --guest GUEST.wasm --label LABEL [--keys N] [--forms abcd]");
             std::process::exit(2);
         }
     }
@@ -271,17 +276,21 @@ fn form_b(label: &str, keys: usize) {
 
 // --- C: QuickJS in wasmtime ----------------------------------------------
 
-fn form_c(label: &str, keys: usize, guest: &str) {
+fn form_c(label: &str, keys: usize, guest: &str, pulley: bool) {
     use wasmtime::{Caller, Config, Engine, Linker, Module, Store, UpdateDeadline};
     use wasmtime_wasi::WasiCtxBuilder;
     use wasmtime_wasi::p1::WasiP1Ctx;
 
+    let form = if pulley { "D" } else { "C" };
     let mut config = Config::new();
     config.epoch_interruption(true);
+    if pulley {
+        config.target("pulley64").unwrap();
+    }
     let engine = Engine::new(&config).unwrap();
     let t = Instant::now();
     let module = Module::from_file(&engine, guest).unwrap();
-    report(label, "C", "compile", 0, &mut [micros(t.elapsed())]);
+    report(label, form, "compile", 0, &mut [micros(t.elapsed())]);
 
     let start = Instant::now();
     let mut linker: Linker<WasiP1Ctx> = Linker::new(&engine);
@@ -332,10 +341,10 @@ fn form_c(label: &str, keys: usize, guest: &str) {
     }
     let init = instance.get_typed_func::<(), i32>(&mut store, "init").unwrap();
     assert_eq!(init.call(&mut store, ()).unwrap(), 0);
-    report(label, "C", "startup", 0, &mut [micros(start.elapsed())]);
+    report(label, form, "startup", 0, &mut [micros(start.elapsed())]);
 
     let call = instance.get_typed_func::<u32, i32>(&mut store, "call").unwrap();
-    keys_loop(label, "C", keys, |k| {
+    keys_loop(label, form, keys, |k| {
         let before = SERVED.load(Ordering::Relaxed);
         assert_eq!(call.call(&mut store, k).unwrap(), 0);
         assert_eq!(SERVED.load(Ordering::Relaxed) - before, k as u64);
@@ -349,6 +358,6 @@ fn form_c(label: &str, keys: usize, guest: &str) {
             micros(t.elapsed())
         })
         .collect();
-    report(label, "C", "compute1e6", 0, &mut samples);
+    report(label, form, "compute1e6", 0, &mut samples);
     stop.store(true, Ordering::Relaxed);
 }

@@ -95,6 +95,51 @@ Other figures (full run):
   C 0.5-1.3 ms after compiling the module, which takes **1.2-2.0 s** (7.9 s
   at 25% quota) with Cranelift.
 
+## Compiled or interpreted WebAssembly (added 2026-11-07)
+
+Form C compiles the guest (QuickJS, the interpreter of the scripts) to
+machine code with Cranelift once, when the module is loaded; the scripts
+themselves are interpreted by QuickJS either way. **D** runs the same guest
+on wasmtime's Pulley interpreter instead (`Config::target("pulley64")`): the
+guest is compiled to Pulley bytecode, which wasmtime interprets. A second
+full run (`--forms abcd`, same conditions), median per key in µs (p99):
+
+| Condition | Form | k = 1 | k = 10 | k = 50 | 10⁶-loop JS |
+|---|---|---|---|---|---|
+| no limit | C | 6 (6) | 47 (50) | 226 (231) | 55 ms |
+| | D | 185 (222) | 1539 (1734) | 7631 (7984) | 656 ms |
+| one P-core | C | 6 (6) | 46 (50) | 227 (233) | 55 ms |
+| | D | 185 (216) | 1539 (1733) | 7640 (7977) | 657 ms |
+| one E-core | C | 5 (6) | 46 (49) | 226 (231) | 55 ms |
+| | D | 185 (226) | 1543 (1738) | 7629 (8002) | 656 ms |
+| one P-core, 50% | C | 6 (7) | 46 (224) | 226 (1108) | 116 ms |
+| | D | 190 (1017) | 1597 (55814) | 7902 (72158) | 1698 ms |
+| one P-core, 25% | C | 6 (40) | 49 (361) | 258 (75638) | 307 ms |
+| | D | 202 (75364) | 3562 (82879) | 94020 (102504) | — |
+
+(A and B in this run, k = 50 median: A 595-2468 µs, B 102-143 µs. The
+E-core rows match the P-core ones in this run, unlike the first; the clock
+again.)
+
+- Interpreting costs about **30 times** per key and **12 times** for plain
+  JavaScript: an interpreter (Pulley) running an interpreter (QuickJS).
+  At k = 50 a key takes 7.6 ms unconstrained, half a 60 Hz frame, and
+  94 ms at a 25% quota.
+- Pulley does not save the startup either: the guest still goes through
+  Cranelift (to Pulley bytecode, 0.8 s here), and instantiating took
+  4.6 ms against C's 0.5 ms.
+- Precompiling C at build time keeps C's per-key numbers (the same machine
+  code is produced) and removes the compile at startup: loading a
+  precompiled module took 0.3 ms, and a binary with wasmtime's runtime but
+  no Cranelift grew by about 2.8 MB plus the 3.1 MB precompiled guest
+  (measured with stripped release builds; Cranelift in the binary would add
+  about 13.5 MB instead).
+- The sandbox does not depend on interpreting: Cranelift's code keeps
+  WebAssembly's rules (bounds via guard pages or checks, indirect calls
+  through typed tables, stack limits), and faults come back as traps.
+  Precompiled modules must come from the build itself (loading one is
+  `unsafe`: it is machine code).
+
 ## Reading
 
 - A key issuing 50 commands costs at most about 1.5 ms at the median in
