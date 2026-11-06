@@ -270,7 +270,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     let settings = crate::app::settings(false, script, None);
     // A Layered terminal over inline transfers, like the mock terminal.
     let mut session = Session::new(name, opts.geometry, Hints::default(), settings, sink);
-    session.start(temzdf_server::action::PaneSpec::Pdf(pdf_path.to_owned()), None)?;
+    session.start(temzdf_server::action::PaneSpec::File(pdf_path.to_owned()), None)?;
     // Simulated clock, so animations started by keys settle deterministically.
     let mut now = Instant::now();
     while session.is_starting() {

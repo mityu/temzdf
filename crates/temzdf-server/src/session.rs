@@ -38,6 +38,7 @@ mod notices;
 mod script;
 mod statusline;
 mod tabs;
+mod text;
 
 pub use commands::command_specs;
 
@@ -160,6 +161,17 @@ pub struct Options {
     /// characters.
     pub guifont: Vec<temzdf_scene::FontEntry>,
     pub guifontwide: Vec<temzdf_scene::FontEntry>,
+    /// Text panes: wrapping, tabs, line numbers, the cursor line,
+    /// `scrolloff`.
+    pub text: TextOptions,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TextOptions {
+    pub layout: temzdf_texteditor::LayoutOptions,
+    pub number: temzdf_texteditor::NumberMode,
+    pub cursorline: bool,
+    pub scrolloff: usize,
 }
 
 impl Options {
@@ -204,6 +216,7 @@ impl Default for Options {
             palette: Vec::new(),
             guifont: vec![temzdf_scene::FontEntry { family: "JetBrains Mono".into(), size: Some(14.0) }],
             guifontwide: Vec::new(),
+            text: TextOptions::default(),
         }
     }
 }
@@ -277,6 +290,7 @@ enum Kind {
     Pdf { pane: Box<PdfPane>, doc: DocId },
     Term { buf: BufferId, view: TermView },
     Input { buf: BufferId, view: input::InputView },
+    Text { buf: BufferId, view: Box<text::TextView> },
 }
 
 struct PaneEntry {
@@ -315,28 +329,28 @@ impl PaneEntry {
     fn pdf(&mut self) -> Option<&mut PdfPane> {
         match &mut self.kind {
             Kind::Pdf { pane, .. } => Some(pane),
-            Kind::Term { .. } | Kind::Input { .. } => None,
+            Kind::Term { .. } | Kind::Input { .. } | Kind::Text { .. } => None,
         }
     }
 
     fn doc(&self) -> Option<DocId> {
         match &self.kind {
             Kind::Pdf { doc, .. } => Some(*doc),
-            Kind::Term { .. } | Kind::Input { .. } => None,
+            Kind::Term { .. } | Kind::Input { .. } | Kind::Text { .. } => None,
         }
     }
 
     fn term(&self) -> Option<BufferId> {
         match &self.kind {
             Kind::Term { buf, .. } => Some(*buf),
-            Kind::Pdf { .. } | Kind::Input { .. } => None,
+            Kind::Pdf { .. } | Kind::Input { .. } | Kind::Text { .. } => None,
         }
     }
 
     fn buffer(&self) -> BufferId {
         match &self.kind {
             Kind::Pdf { doc, .. } => *doc,
-            Kind::Term { buf, .. } | Kind::Input { buf, .. } => *buf,
+            Kind::Term { buf, .. } | Kind::Input { buf, .. } | Kind::Text { buf, .. } => *buf,
         }
     }
 
@@ -346,6 +360,7 @@ impl PaneEntry {
             Kind::Pdf { .. } => "pdf",
             Kind::Term { .. } => "terminal",
             Kind::Input { .. } => "input",
+            Kind::Text { .. } => "edit",
         }
     }
 }
@@ -396,6 +411,12 @@ pub struct Session {
     docs: HashMap<DocId, DocEntry>,
     terms: HashMap<BufferId, TermEntry>,
     inputs: HashMap<BufferId, input::InputBuffer>,
+    texts: HashMap<BufferId, text::TextEntry>,
+    /// Highlight groups for text panes (scripts define them).
+    highlights: temzdf_texteditor::Highlights,
+    /// Counts invocations (keys, text, pastes, CLI requests): a text
+    /// buffer's undo step ends when a new one edits it.
+    invocation: u64,
     /// What a new shell pane runs; `None`: `$SHELL`.
     shell: Option<Vec<String>>,
     panes: HashMap<PaneId, PaneEntry>,
@@ -464,6 +485,9 @@ impl Session {
             docs: HashMap::new(),
             terms: HashMap::new(),
             inputs: HashMap::new(),
+            texts: HashMap::new(),
+            highlights: temzdf_texteditor::Highlights::default(),
+            invocation: 0,
             shell: None,
             panes: HashMap::new(),
             layout: None,
@@ -539,7 +563,7 @@ impl Session {
     pub fn new_pane(&mut self, spec: &PaneSpec, cwd: Option<&Path>) -> Result<()> {
         let cwd = cwd.map(Path::to_owned);
         match spec {
-            PaneSpec::Pdf(path) => {
+            PaneSpec::File(path) => {
                 let path = cwd.map_or_else(|| path.clone(), |d| d.join(path));
                 self.open(&path)
             }
@@ -559,6 +583,9 @@ impl Session {
     }
 
     fn open_at(&mut self, path: &Path, spot: Spot) -> Result<()> {
+        if !is_pdf(path) {
+            return self.open_text(path, spot, true).map(drop);
+        }
         let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
         if let Some((&id, entry)) = self.docs.iter_mut().find(|(_, d)| d.path == canonical) {
             if entry.host.is_some() {
@@ -820,6 +847,10 @@ impl Session {
             Kind::Term { buf, view: TermView::new(g) }
         } else if let Some(b) = self.inputs.get(&buf) {
             Kind::Input { buf, view: input::InputView::at_end(b) }
+        } else if self.texts.contains_key(&buf) {
+            let mut tv = self.text_view_for(buf);
+            (tv.view.width, tv.view.height) = (g.cols, g.rows);
+            Kind::Text { buf, view: Box::new(tv) }
         } else if let Some(d) = self.docs.get_mut(&buf) {
             if d.host.is_none() {
                 d.waiting.push((Spot::Replace(pane), self.tabs[self.tab].id));
@@ -859,12 +890,13 @@ impl Session {
     fn hide(&mut self, kind: Kind) {
         let buf = match &kind {
             Kind::Pdf { doc, .. } => *doc,
-            Kind::Term { buf, .. } | Kind::Input { buf, .. } => *buf,
+            Kind::Term { buf, .. } | Kind::Input { buf, .. } | Kind::Text { buf, .. } => *buf,
         };
         let name = match &kind {
             Kind::Pdf { .. } => "pdf",
             Kind::Term { .. } => "terminal",
             Kind::Input { .. } => "input",
+            Kind::Text { .. } => "edit",
         };
         if !self.shown(buf) {
             self.event("BufferHidden", vec![ScriptValue::Num(buf as f64), ScriptValue::Str(name.into())]);
@@ -892,7 +924,7 @@ impl Session {
                     }
                 }
             }
-            Kind::Input { .. } => {}
+            Kind::Input { .. } | Kind::Text { .. } => {}
         }
     }
 
@@ -917,7 +949,11 @@ impl Session {
     /// panes showing it (the last pane: the session ends). `PaneClosePre`
     /// hooks do not run (the buffer goes either way); `PaneClosed` does.
     fn delete_buffer(&mut self, buf: BufferId) -> Result<Outcome, String> {
-        if !self.terms.contains_key(&buf) && !self.docs.contains_key(&buf) && !self.inputs.contains_key(&buf) {
+        if !self.terms.contains_key(&buf)
+            && !self.docs.contains_key(&buf)
+            && !self.inputs.contains_key(&buf)
+            && !self.texts.contains_key(&buf)
+        {
             return Err(format!("no buffer {buf}"));
         }
         for p in self.panes_showing(buf) {
@@ -937,7 +973,7 @@ impl Session {
             }
         } else if let Some(mut t) = self.terms.remove(&buf) {
             t.term.release(&mut self.images);
-        } else if self.inputs.remove(&buf).is_none() {
+        } else if self.inputs.remove(&buf).is_none() && self.texts.remove(&buf).is_none() {
             return;
         }
         self.event("BufferDeleted", vec![ScriptValue::Num(buf as f64)]);
@@ -956,6 +992,7 @@ impl Session {
                     .map(|(id, t)| (*id, "terminal", t.term.title().unwrap_or_else(|| "shell".into()), t.exited)),
             )
             .chain(self.inputs.iter().map(|(id, b)| (*id, "input", b.prompt.clone(), false)))
+            .chain(self.texts.iter().map(|(id, t)| (*id, "edit", t.name.clone(), false)))
             .collect();
         list.sort_by_key(|b| b.0);
         ScriptValue::List(
@@ -976,7 +1013,10 @@ impl Session {
 
     /// The number of buffers (for `temzdf ls`).
     pub fn buffer_count(&self) -> usize {
-        self.docs.values().filter(|d| d.host.is_some()).count() + self.terms.len() + self.inputs.len()
+        self.docs.values().filter(|d| d.host.is_some()).count()
+            + self.terms.len()
+            + self.inputs.len()
+            + self.texts.len()
     }
 
     /// The focused pane's terminal.
@@ -1099,8 +1139,10 @@ impl Session {
                 }
                 Kind::Term { view, .. } => view.geometry = content_geometry(content, cell, Some(view.geometry)),
                 Kind::Input { .. } => {}
+                Kind::Text { .. } => {}
             }
         }
+        self.fit_text_view(id);
     }
 
     /// Show or hide pane `id`'s status line (`None`: the other way round);
@@ -1272,6 +1314,7 @@ impl Session {
         if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
             return Outcome::None;
         }
+        self.invocation += 1;
         // A key dismisses error messages (and is handled as usual).
         let dismissed = Outcome::None.or(self.dismiss_errors());
         self.map_depth = 0;
@@ -1349,7 +1392,7 @@ impl Session {
         }
         let focus = self.focus;
         match self.panes.get_mut(&focus).map(|e| &mut e.kind) {
-            Some(Kind::Term { .. } | Kind::Input { .. }) => Outcome::None,
+            Some(Kind::Term { .. } | Kind::Input { .. } | Kind::Text { .. }) => Outcome::None,
             // The pane's own page-view keys still work.
             Some(Kind::Pdf { pane, .. }) => match pane.key(k, now) {
                 pane::Action::Quit => self.close(focus),
@@ -1517,6 +1560,7 @@ impl Session {
         let held = [Modifiers::ALT, Modifiers::CTRL, Modifiers::SUPER, Modifiers::HYPER, Modifiers::META];
         let plain = !held.iter().any(|m| k.modifiers.contains(*m));
         match typed.filter(|t| plain && !t.chars().any(char::is_control)) {
+            Some(t) if self.text_type(&t).is_ok() => Outcome::Redraw,
             Some(t) => self.input_insert(&t).unwrap_or(Outcome::None),
             None => Outcome::None,
         }
@@ -1588,6 +1632,20 @@ impl Session {
         for t in self.terms.values_mut() {
             t.term.set_colors(o.foreground_or_default(), o.background_or_default(), &o.full_palette());
         }
+        let ids: Vec<PaneId> = self.panes.keys().copied().collect();
+        for id in ids {
+            let o = &self.options.text;
+            let (Some(Kind::Text { buf, view }), layout) =
+                (self.panes.get_mut(&id).map(|e| &mut e.kind), o.layout.clone())
+            else {
+                continue;
+            };
+            (view.view.layout, view.view.number, view.view.cursorline, view.view.scrolloff) =
+                (layout, o.number, o.cursorline, o.scrolloff);
+            if let Some(t) = self.texts.get(buf) {
+                view.view.relayout(t.buf.text());
+            }
+        }
     }
 
     /// How GUI clients should look (see [`temzdf_scene::Appearance`]).
@@ -1612,6 +1670,7 @@ impl Session {
     /// mappings stay reachable with an input method on (as Vim takes IME
     /// input in Normal mode).
     pub fn text(&mut self, text: &str, now: Instant) -> Outcome {
+        self.invocation += 1;
         if self.hold_text(text) {
             return Outcome::None;
         }
@@ -1620,7 +1679,7 @@ impl Session {
         {
             Outcome::None.or(t.send_text(text))
         } else if self.unmapped() == Unmapped::Passthrough
-            && let Ok(out) = self.input_insert(text)
+            && let Ok(out) = self.text_type(text).or_else(|_| self.input_insert(text))
         {
             out
         } else {
@@ -1645,6 +1704,7 @@ impl Session {
     }
 
     pub fn paste(&mut self, text: &str) -> Outcome {
+        self.invocation += 1;
         if self.hold_paste(text) {
             return Outcome::None;
         }
@@ -1656,8 +1716,8 @@ impl Session {
         if let Some(t) = self.focused_term() {
             return Outcome::None.or(t.paste(text));
         }
-        // An input pane takes it; elsewhere it goes nowhere.
-        self.input_insert(text).unwrap_or(Outcome::None)
+        // A text or input pane takes it; elsewhere it goes nowhere.
+        self.text_type(text).or_else(|_| self.input_insert(text)).unwrap_or(Outcome::None)
     }
 
     /// Run an action. Errors (a file that cannot be opened, no room for a
@@ -1686,7 +1746,9 @@ impl Session {
         let what = match (buf, self.panes.get(&from).map(|e| &e.kind)) {
             (Some(b), _) => floats::FloatWhat::Buffer(b),
             // The same document or input again.
-            (None, Some(Kind::Pdf { doc: b, .. } | Kind::Input { buf: b, .. })) => floats::FloatWhat::Buffer(*b),
+            (None, Some(Kind::Pdf { doc: b, .. } | Kind::Input { buf: b, .. } | Kind::Text { buf: b, .. })) => {
+                floats::FloatWhat::Buffer(*b)
+            }
             // A new shell where the focused one is.
             (None, Some(Kind::Term { buf, .. })) => {
                 let cwd = self.terms.get(buf).and_then(|t| t.term.pwd()).filter(|d| d.is_dir());
@@ -1881,7 +1943,7 @@ impl Session {
                 Some(t) => out.or(view.mouse(&mut t.term, &local, select)),
                 None => out,
             },
-            Kind::Input { .. } => out,
+            Kind::Input { .. } | Kind::Text { .. } => out,
         }
     }
 
@@ -1934,7 +1996,7 @@ impl Session {
                         }
                     }
                 }
-                Kind::Term { .. } | Kind::Input { .. } => {}
+                Kind::Term { .. } | Kind::Input { .. } | Kind::Text { .. } => {}
             }
         }
         for t in self.terms.values_mut() {
@@ -2003,6 +2065,9 @@ impl Session {
             let cols = e.content().w as u16;
             let frame = match &mut e.kind {
                 Kind::Input { buf, view } => input::frame(self.inputs.get(buf), view, cols),
+                Kind::Text { buf, view } => {
+                    Self::text_frame(self.texts.get(buf), view, id, id == self.focus, &self.highlights)
+                }
                 Kind::Pdf { pane, doc } => {
                     let (frame, pane_needs) = pane.frame(&mut self.images);
                     needs.entry(*doc).or_default().extend(pane_needs);
@@ -2031,7 +2096,7 @@ impl Session {
                 let kind = match &e.kind {
                     Kind::Pdf { .. } => RegionKind::Pdf,
                     Kind::Term { .. } => RegionKind::Terminal,
-                    Kind::Input { .. } => RegionKind::Input,
+                    Kind::Input { .. } | Kind::Text { .. } => RegionKind::Input,
                 };
                 let images = kind == RegionKind::Pdf || !frame.layers.is_empty();
                 regions.push(Region { pane: id, rect: content, kind, images });
@@ -2065,6 +2130,7 @@ impl Session {
             let Some(e) = self.panes.get(id).filter(|e| e.status_line && e.rect.h > 0) else { continue };
             let bar = match &e.kind {
                 Kind::Pdf { pane, .. } => pane.status(),
+                Kind::Text { buf, view } => Self::text_status(self.texts.get(buf), view, self.history.current()),
                 Kind::Term { .. } | Kind::Input { .. } => termpix_ui::StatusBar::default(),
             };
             let grid = statusline::grid(&bar, e.rect, *id == self.focus);
@@ -2112,7 +2178,7 @@ impl Session {
             && self.docs.values().all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle()))
             && self.panes.values().all(|e| match &e.kind {
                 Kind::Pdf { pane, .. } => !pane.search.is_active() || pane.search.is_complete(),
-                Kind::Term { .. } | Kind::Input { .. } => true,
+                Kind::Term { .. } | Kind::Input { .. } | Kind::Text { .. } => true,
             })
     }
 
@@ -2162,7 +2228,7 @@ impl Session {
     pub fn next_deadline(&self) -> Option<Instant> {
         let panes = self.panes.values().filter_map(|e| match &e.kind {
             Kind::Pdf { pane, .. } => pane.next_deadline(),
-            Kind::Term { .. } | Kind::Input { .. } => None,
+            Kind::Term { .. } | Kind::Input { .. } | Kind::Text { .. } => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
         let terms = self.terms.values().filter_map(|t| t.term.autoscroll_deadline());
@@ -2207,9 +2273,14 @@ impl Session {
 
 /// The built-in modes, without mappings (the shipped JavaScript defaults,
 /// `crates/temzdf-script/runtime/defaults.ts`, map them): `normal`
-/// (operating), `terminal` (pass-through), `pdf`, `input` (pass-through:
-/// typed characters go in) and `visual` (a terminal's visual mode, entered
+/// (operating), `terminal` (pass-through), `pdf`, `input` and `edit`
+/// (pass-through: typed characters go in) and `visual` (a terminal's visual mode, entered
 /// from the others; see [`Session::mode_changed`]).
+/// A file opens as a PDF by its extension, otherwise as text.
+fn is_pdf(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+}
+
 fn builtin_modes() -> Modes<Target> {
     let mut m = Modes::default();
     for (name, unmapped, count) in [
@@ -2217,6 +2288,7 @@ fn builtin_modes() -> Modes<Target> {
         ("terminal", Unmapped::Passthrough, false),
         ("pdf", Unmapped::Drop, true),
         ("input", Unmapped::Passthrough, false),
+        ("edit", Unmapped::Passthrough, false),
         ("visual", Unmapped::Drop, true),
     ] {
         let d = m.define(name);
@@ -2711,7 +2783,7 @@ mod tests {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
         let first = s.panes[&s.focus].buffer();
-        s.action(Action::NewPane { spec: PaneSpec::Pdf(pdf::fixture("sample-short.pdf")), cwd: None }, Instant::now())
+        s.action(Action::NewPane { spec: PaneSpec::File(pdf::fixture("sample-short.pdf")), cwd: None }, Instant::now())
             .unwrap();
         while s.pane_count() < 2 {
             let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();
@@ -4437,5 +4509,137 @@ mod tests {
         let k = KeyEvent::new(KeyCode::Char('v'), Modifiers::CTRL | Modifiers::SHIFT);
         s.key(&k, Instant::now());
         assert_eq!(s.take_effects(), [temzdf_scene::Effect::Paste { primary: false }]);
+    }
+
+    /// A session editing `name` (written with `content` first) in a
+    /// temporary directory.
+    fn text_session(name: &str, content: &str) -> (Session, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("temzdf-text-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, content).unwrap();
+        let sink: EventSink = Arc::new(|_| true);
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
+        default_mappings(&mut s.modes);
+        s.start(PaneSpec::File(path.clone()), None).unwrap();
+        (s, path)
+    }
+
+    fn text_of(s: &mut Session) -> String {
+        s.run_command("text.get-text", &[], None, Instant::now()).unwrap().0.as_str().unwrap().to_owned()
+    }
+
+    fn cursor_of(s: &mut Session) -> (usize, usize) {
+        let (c, _) = s.run_command("text.cursor", &[], None, Instant::now()).unwrap();
+        let n = |k| c.get(k).unwrap().as_num().unwrap() as usize;
+        (n("line"), n("character"))
+    }
+
+    fn pos(line: usize, character: usize) -> ScriptValue {
+        ScriptValue::map([("line", ScriptValue::Num(line as f64)), ("character", ScriptValue::Num(character as f64))])
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn a_text_file_opens_takes_typing_and_is_written_back() {
+        let (mut s, path) = text_session("notes.txt", "one\r\ntwo\r\n");
+        assert_eq!(s.panes[&s.focus].kind_name(), "edit");
+        assert_eq!(s.history.current(), "edit", "the pane's mode");
+        assert_eq!(text_of(&mut s), "one\ntwo\n");
+        key(&mut s, "hi");
+        assert_eq!(text_of(&mut s), "hione\ntwo\n");
+        assert_eq!(cursor_of(&mut s), (0, 2));
+        // Moves by the mapping's count; typing goes on from there.
+        s.run_command("text.move", &[ScriptValue::Str("line".into())], Some(1), Instant::now()).unwrap();
+        assert_eq!(cursor_of(&mut s), (1, 2));
+        key(&mut s, "!");
+        assert_eq!(text_of(&mut s), "hione\ntw!o\n");
+        // Each typing run is one step; undo puts the cursor back.
+        cmd(&mut s, "text.undo", &[], None).unwrap();
+        assert_eq!((text_of(&mut s).as_str(), cursor_of(&mut s)), ("hione\ntwo\n", (1, 2)));
+        cmd(&mut s, "text.undo", &[], None).unwrap();
+        assert_eq!(text_of(&mut s), "one\ntwo\n");
+        cmd(&mut s, "text.redo", &[], None).unwrap();
+        cmd(&mut s, "write", &[], None).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hione\r\ntwo\r\n", "CRLF as it was read");
+        let (info, _) = s.run_command("text.info", &[], None, Instant::now()).unwrap();
+        assert_eq!(info.get("modified"), Some(&ScriptValue::Bool(false)));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn panes_on_one_text_buffer_follow_each_others_edits() {
+        let (mut s, path) = text_session("shared.txt", "abc\n");
+        let first = s.focus;
+        s.run_command("text.set-cursor", &[pos(0, 3)], None, Instant::now()).unwrap();
+        let (second, _) = s.run_command("split", &[], None, Instant::now()).unwrap();
+        let second = second.as_num().unwrap() as PaneId;
+        assert_eq!(s.focus, second);
+        assert_eq!(cursor_of(&mut s), (0, 3), "the split starts where the other pane was");
+        let at0 = ScriptValue::map([("pane", ScriptValue::Num(first as f64))]);
+        s.run_command("text.insert", &[ScriptValue::Str(">> ".into()), pos(0, 0), at0], None, Instant::now()).unwrap();
+        assert_eq!(cursor_of(&mut s), (0, 6), "moved along by the other pane's edit");
+        // The selection is replaced by typing.
+        s.run_command("text.set-selection", &[pos(0, 3), pos(0, 6)], None, Instant::now()).unwrap();
+        key(&mut s, "X");
+        assert_eq!(text_of(&mut s), ">> X\n");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn a_text_pane_draws_its_text_cursor_and_status_line() {
+        let (mut s, path) = text_session("draw.txt", "hello\nあい\n");
+        s.run_command("text.set-cursor", &[pos(1, 1)], None, Instant::now()).unwrap();
+        let frame = s.frame();
+        let row = |y: usize| -> String {
+            let g = frame.text.iter().find(|g| g.row as usize <= y && y < g.row as usize + g.rows.len()).unwrap();
+            g.rows[y - g.row as usize]
+                .iter()
+                .map(|c| if c.text.is_empty() && c.width != 0 { " " } else { &c.text })
+                .collect()
+        };
+        assert!(row(0).starts_with("hello "), "{:?}", row(0));
+        assert!(row(1).starts_with("あい "), "{:?}", row(1));
+        assert!(row(2).trim().is_empty(), "the empty line after the last line break");
+        assert!(row(3).starts_with('~'), "past the text");
+        assert_eq!(frame.cursor, Some((2, 1)), "after あ");
+        assert_eq!(frame.title, "draw.txt");
+        key(&mut s, "x");
+        let bar = Session::text_status(
+            s.texts.values().next(),
+            match &s.panes[&s.focus].kind {
+                Kind::Text { view, .. } => view,
+                _ => unreachable!(),
+            },
+            "edit",
+        );
+        assert_eq!(bar.left, "draw.txt [+]");
+        assert!(bar.right.contains("2:3"), "{}", bar.right);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn text_files_are_refused_when_binary_and_new_when_missing() {
+        let (mut s, path) = text_session("a.txt", "x");
+        let dir = path.parent().unwrap().to_owned();
+        std::fs::write(dir.join("bin.dat"), b"\0\0").unwrap();
+        let e = s.run_command(
+            "open-file",
+            &[ScriptValue::Str(dir.join("bin.dat").display().to_string())],
+            None,
+            Instant::now(),
+        );
+        assert!(e.unwrap_err().contains("binary"));
+        // A file that does not exist yet opens empty (new-pane FILE).
+        s.new_pane(&PaneSpec::File(dir.join("new.txt")), None).unwrap();
+        key(&mut s, "made");
+        cmd(&mut s, "write", &[], None).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("new.txt")).unwrap(), "made");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -977,6 +977,23 @@ impl Session {
                     _ => return Err("o.showtabline: expected \"never\", \"auto\" or \"always\"".into()),
                 }
             }
+            "wrap" => o.text.layout.wrap = flag()?,
+            "linebreak" => o.text.layout.linebreak = flag()?,
+            "breakindent" => o.text.layout.breakindent = flag()?,
+            "showbreak" => o.text.layout.showbreak = text()?.unwrap_or_default(),
+            "tabstop" => o.text.layout.tabstop = (num()? as usize).clamp(1, 64),
+            "cursorline" => o.text.cursorline = flag()?,
+            "scrolloff" => o.text.scrolloff = num()? as usize,
+            "number" => {
+                use temzdf_texteditor::NumberMode;
+                o.text.number = match value.as_str() {
+                    Some("off") => NumberMode::Off,
+                    Some("absolute") => NumberMode::Absolute,
+                    Some("relative") => NumberMode::Relative,
+                    Some("both") => NumberMode::Both,
+                    _ => return Err("o.number: expected \"off\", \"absolute\", \"relative\" or \"both\"".into()),
+                }
+            }
             "showstatusline" => {
                 o.showstatusline = match value.as_str() {
                     Some("never") => false,
@@ -1021,6 +1038,22 @@ impl Session {
                 .into(),
             ),
             "showstatusline" => ScriptValue::Str(if o.showstatusline { "always" } else { "never" }.into()),
+            "wrap" => ScriptValue::Bool(o.text.layout.wrap),
+            "linebreak" => ScriptValue::Bool(o.text.layout.linebreak),
+            "breakindent" => ScriptValue::Bool(o.text.layout.breakindent),
+            "showbreak" => ScriptValue::Str(o.text.layout.showbreak.clone()),
+            "tabstop" => ScriptValue::Num(o.text.layout.tabstop as f64),
+            "cursorline" => ScriptValue::Bool(o.text.cursorline),
+            "scrolloff" => ScriptValue::Num(o.text.scrolloff as f64),
+            "number" => ScriptValue::Str(
+                match o.text.number {
+                    temzdf_texteditor::NumberMode::Off => "off",
+                    temzdf_texteditor::NumberMode::Absolute => "absolute",
+                    temzdf_texteditor::NumberMode::Relative => "relative",
+                    temzdf_texteditor::NumberMode::Both => "both",
+                }
+                .into(),
+            ),
             "foreground" => o.foreground.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "background" => o.background.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "palette" => ScriptValue::List(o.palette.iter().map(|c| ScriptValue::Str(hex(*c))).collect()),

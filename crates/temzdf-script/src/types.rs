@@ -164,6 +164,21 @@ declare module "temzdf" {{
     size?: number;
   }}
 
+  /** A position in a text buffer: a zero-based line and a column in UTF-16 code units (JavaScript string indices, LSP's). */
+  export interface Position {{
+    line: number;
+    character: number;
+  }}
+  /** A half-open range of positions. */
+  export interface Range {{
+    start: Position;
+    end: Position;
+  }}
+  /** What `text.move` and `text.positionOf` move by. */
+  export type TextUnit =
+    | "grapheme" | "wordStart" | "wordEnd" | "lineStart" | "firstNonBlank" | "lineEnd"
+    | "documentStart" | "documentEnd" | "line" | "displayLine" | "page";
+
   export interface Options {{
     /** Milliseconds a key that starts a longer mapping waits. */
     timeoutlen: number;
@@ -203,6 +218,22 @@ declare module "temzdf" {{
     guifont: FontEntry[];
     /** Fonts tried first for wide (CJK) characters; []: none. */
     guifontwide: FontEntry[];
+    /** Text panes wrap long lines (else they scroll sideways). */
+    wrap: boolean;
+    /** Wrap after a blank rather than anywhere. */
+    linebreak: boolean;
+    /** Continuation rows start at the line's indent. */
+    breakindent: boolean;
+    /** Shown at the start of continuation rows. */
+    showbreak: string;
+    /** Display columns between tab stops. */
+    tabstop: number;
+    /** Line numbers in text panes. */
+    number: "off" | "absolute" | "relative" | "both";
+    /** Highlight the cursor's line (the CursorLine group). */
+    cursorline: boolean;
+    /** Rows kept between the cursor and the top or bottom of text panes. */
+    scrolloff: number;
   }}
   export const o: Options;
 

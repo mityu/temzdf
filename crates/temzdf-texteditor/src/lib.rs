@@ -11,6 +11,7 @@
 mod buffer;
 mod cursor;
 mod edit;
+pub mod file;
 mod layout;
 mod marks;
 mod motion;

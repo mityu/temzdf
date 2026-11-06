@@ -15,7 +15,8 @@ pub enum PaneSpec {
     Shell,
     /// A program and its arguments.
     Command(Vec<String>),
-    Pdf(PathBuf),
+    /// A file: a PDF by its extension, otherwise text.
+    File(PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,7 +73,7 @@ impl Action {
                     ["--", command @ ..] if !command.is_empty() => {
                         PaneSpec::Command(command.iter().map(|s| s.to_string()).collect())
                     }
-                    [file] if !file.starts_with('-') => PaneSpec::Pdf(PathBuf::from(file)),
+                    [file] if !file.starts_with('-') => PaneSpec::File(PathBuf::from(file)),
                     _ => bail!("usage: new-pane [--cwd DIR] [FILE | -- COMMAND...]"),
                 };
                 Action::NewPane { spec, cwd }
@@ -114,7 +115,7 @@ mod tests {
     #[test]
     fn parses_the_text_form() {
         assert!(parse("new-pane a b.pdf").is_err(), "one file");
-        assert_eq!(parse("new-pane doc.pdf").unwrap(), new_pane(PaneSpec::Pdf("doc.pdf".into()), None));
+        assert_eq!(parse("new-pane doc.pdf").unwrap(), new_pane(PaneSpec::File("doc.pdf".into()), None));
         assert_eq!(parse("new-pane").unwrap(), new_pane(PaneSpec::Shell, None));
         assert_eq!(
             parse("new-pane --cwd /w -- vim -u NONE").unwrap(),

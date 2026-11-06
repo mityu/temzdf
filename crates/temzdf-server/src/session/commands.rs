@@ -226,7 +226,12 @@ pub fn command_specs() -> Vec<CommandSpec> {
         doc: format!("Visual mode: {doc} (the focused terminal; a mapping's count applies)"),
         ts: "(): void".into(),
     });
-    session.chain(input).chain(visual).chain(pdf).collect()
+    let text = super::text::COMMANDS.iter().map(|(name, ts, doc)| CommandSpec {
+        name: (*name).into(),
+        doc: (*doc).into(),
+        ts: (*ts).into(),
+    });
+    session.chain(text).chain(input).chain(visual).chain(pdf).collect()
 }
 
 /// What a new pane shows (`openFloat`, `newTab`): `{ buffer }`, `{ file }`,
@@ -251,7 +256,7 @@ fn read_what(args: &[ScriptValue]) -> Result<FloatWhat, String> {
             let mut words = vec!["new-pane".to_owned()];
             words.extend(args.iter().filter_map(|a| a.as_str().map(str::to_owned)));
             match Action::parse(&words).map_err(|e| format!("{e:#}"))? {
-                Action::NewPane { spec: PaneSpec::Pdf(p), cwd } => {
+                Action::NewPane { spec: PaneSpec::File(p), cwd } => {
                     FloatWhat::File(cwd.map_or_else(|| p.clone(), |d| d.join(&p)))
                 }
                 Action::NewPane { spec: PaneSpec::Command(argv), cwd } => {
@@ -311,6 +316,9 @@ impl Session {
         let act = |s: &mut Self, a: Action| {
             s.action_inner(a, now).map(|o| (ScriptValue::Null, o)).map_err(|e| format!("{e:#}"))
         };
+        if let Some(result) = self.text_command(name, args, count) {
+            return result;
+        }
         if let "search-for" | "search-preview" | "search-cancel" = name {
             let query = if name == "search-cancel" {
                 String::new()
@@ -935,6 +943,7 @@ impl Session {
     /// `temzdf action NAME ARGS...`: a command by name, its arguments as
     /// strings.
     pub fn run_cli(&mut self, words: &[String]) -> anyhow::Result<Outcome> {
+        self.invocation += 1;
         let Some((name, rest)) = words.split_first() else { anyhow::bail!("which action?") };
         let args: Vec<ScriptValue> = rest.iter().map(|w| ScriptValue::Str(w.clone())).collect();
         self.map_depth = 0;

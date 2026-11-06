@@ -91,7 +91,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
     let settings = settings(true, script_settings(opts.clean, opts.config.as_deref())?, opts.editor.as_deref());
     let mut session = Session::new(name, front.geometry(), front.hints(), settings, sink(&tx, AppEvent::Session));
-    session.start(PaneSpec::Pdf(path.to_owned()), None)?;
+    session.start(PaneSpec::File(path.to_owned()), None)?;
 
     // Wait for the document before drawing anything.
     while session.is_starting() {

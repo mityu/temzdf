@@ -183,6 +183,16 @@ mod tests {
     }
 
     #[test]
+    fn moving_the_cursor_ends_a_typing_step() {
+        let mut b = Buffer::new(Text::from(""), LineEnding::Lf);
+        typed(&mut b, 0, "ab");
+        b.undo_tree_mut().cursor_moved();
+        typed(&mut b, 0, "x");
+        b.undo().unwrap();
+        assert_eq!(b.text().to_string(), "ab");
+    }
+
+    #[test]
     fn a_group_spans_invocations_and_split_cuts_it() {
         let mut b = Buffer::new(Text::from("x"), LineEnding::Lf);
         b.undo_tree_mut().begin();

@@ -409,6 +409,13 @@ impl Session {
                 self.terminal_pane(id, buf, rect, focus);
                 Some(id)
             }
+            FloatWhat::Buffer(buf) if self.texts.contains_key(&buf) => {
+                let id = self.alloc_id();
+                let focus = self.takes_focus(&spot);
+                let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
+                self.text_pane(id, buf, rect, focus);
+                Some(id)
+            }
             FloatWhat::Buffer(buf) if self.inputs.contains_key(&buf) => {
                 let id = self.alloc_id();
                 let focus = self.takes_focus(&spot);
@@ -564,6 +571,7 @@ impl Session {
                 self.terms.get(buf).and_then(|t| t.term.title()).unwrap_or_else(|| "shell".into())
             }
             super::Kind::Input { buf, .. } => self.inputs.get(buf).map(|b| b.prompt.clone()).unwrap_or_default(),
+            super::Kind::Text { buf, .. } => self.texts.get(buf).map(|t| t.name.clone()).unwrap_or_default(),
         }
     }
 }

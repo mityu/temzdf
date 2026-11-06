@@ -4398,6 +4398,7 @@ dependencies = [
  "temzdf-scene",
  "temzdf-script-runner",
  "temzdf-term",
+ "temzdf-texteditor",
  "temzdf-tty",
  "termpix",
  "termpix-core",

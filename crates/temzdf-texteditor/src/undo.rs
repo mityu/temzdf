@@ -95,6 +95,15 @@ impl UndoTree {
         }
     }
 
+    /// The cursor moved by itself (not by an edit): typing after it is a
+    /// step of its own (inside a group it still joins the group).
+    pub fn cursor_moved(&mut self) {
+        if self.depth == 0 && self.nodes[self.current].kind == StepKind::Typing {
+            self.open = false;
+        }
+        self.typing_tail = false;
+    }
+
     /// End the step here, even inside a group.
     pub fn split(&mut self) {
         self.open = false;
