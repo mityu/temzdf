@@ -103,22 +103,27 @@ server on one `Session`). Next and open:
   - a view smaller than its terminal (it shows the bottom part) can leave
     the cursor in rows it does not show;
   - a visual mode for PDF panes (keyboard selection of text).
-- Key mapping pieces that operators and motions written in scripts
-  (Vim's `operatorfunc` and `omap`) need, found on 2026-11-07. A
-  transient `operator` mode with counts, motions mapped in both modes and
-  the pending operator kept in the script already work; missing:
-  - reading the next key (`f{char}`, `t{char}`, `r{char}`, `m{mark}`,
-    `"{reg}`): a function as a transient mode's `unmapped`, given the key,
-    rather than waiting inside a mapped function (they are synchronous);
-    the terminal visual mode's `f{char}` could use it too;
-  - a third `keepalive` behaviour, leave the mode and drop the key: in
-    Vim, `d` followed by a key that is no motion cancels the operator and
-    swallows the key, while `"mapped"` handles it again below (`dx` runs
-    `x`) and `"always"` stays;
-  - editor commands that compute a motion's target without moving (with
-    the editor, `doc/survey/text-editor.md`). Built-in operators and
-    motions belong in the server; scripts add their own
-    (`doc/design/dot-repeat.md` for repeating them).
+- The text editor framework, specified with the user on 2026-11-07
+  (`doc/design/text-editor.md`; nothing built). Next: measure the script
+  host's round trips in three forms (a separate process over a pipe,
+  `rquickjs` in the server, QuickJS inside `wasmtime` in the server; in
+  `experiments/`, results in `doc/survey/`), then the design. It includes
+  the key mapping pieces scripts need for operators and motions: a mode's
+  `unmapped` renamed `fallback` and accepting a function given the
+  unmatched key (leave-and-swallow, reading one key), and the `KeyTyped`
+  event. Deferred there:
+  - `getchar()`/`input()`-like reading (`readKey`, `await` in
+    asynchronous mappings; the user wants `input()`-driven operations
+    such as sandwich.vim's function surround later);
+  - reading the clipboard; function values in buffer, pane and tab
+    variables;
+  - decorations beyond highlights (virtual text and images, conceal and
+    math previews, signs, virtual lines), folding, `listchars`;
+  - swap files, backups, persistent undo (until then `kill-session
+    --force` and signals lose unsaved changes);
+  - customising the editor's status line;
+  - replacing the one-line input pane with a one-line editor buffer;
+  - not discussed yet: SyncTeX with editor panes, syntax highlighting.
 - zellij delays keyboard input (even its own prefix commands) while it
   processes a frame, so `q` waits there; sending less data per frame is the
   only lever we have (user agreed to defer, 2026-10-25).

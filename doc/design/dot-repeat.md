@@ -7,6 +7,15 @@ direction agreed and the choice made for nesting. Items marked
 **(decided)** were put to the user; the others are proposals accepted as
 the direction.
 
+**Superseded in part (2026-11-07)**: the text editor became a framework
+whose Vim-like behaviour is a script (`doc/design/text-editor.md`). The
+server no longer manages repeat units or `repeat.set`; it provides events
+(`InvokePre`/`InvokePost`, `TextChanged`) and the Vim script builds `.`
+from them, with declarations attached to regions of execution
+(`doc/design/text-editor.md`, "Guidance for scripts"). What follows is kept
+for its analysis of recording and nesting and is rewritten when the Vim
+script is.
+
 ## What a repeat is recorded as
 
 Vim records the keys of the last change (after mappings are expanded).
