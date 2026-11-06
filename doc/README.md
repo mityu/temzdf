@@ -94,5 +94,9 @@ branch. The decisions taken from it are in the design documents.
   text and decorations (VS Code, Neovim, Zed), Vim's undo tree, undo files,
   swap files and regular expressions, syntax highlighting and Tree-sitter
   grammars, the editor buffer as a base for script-made panes.
+- [survey/script-host-transport.md](survey/script-host-transport.md):
+  round trips between scripts and the server, measured for the script host
+  over pipes, rquickjs in process and QuickJS in wasmtime, also on one core
+  and under a CPU quota (`experiments/script-host-bench/`).
 - [survey/gpu.md](survey/gpu.md): the GPU rasterisation experiment
   (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.

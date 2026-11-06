@@ -5,8 +5,8 @@ a specification; nothing is built yet.** The research behind it (VS Code,
 Neovim, Zed, Vim's undo, swap files and regular expressions, Tree-sitter) is
 in `doc/survey/text-editor.md`. Decisions marked **(user)** were the user's
 own call or correction; the others were proposals the user accepted. The
-next step is measuring the script host's round trips ("Script host
-round trips" below), then the design.
+script host's round trips are measured ("Script host round trips"
+below); the next step is the design.
 
 ## 1. What it is
 
@@ -375,7 +375,11 @@ results in `doc/survey/`:
 - QuickJS inside `wasmtime` in the server process (in-process isolation:
   traps instead of crashes, epoch interruption, memory limits).
 
-The primitives do not depend on the transport.
+The primitives do not depend on the transport. Measured on 2026-11-07
+(`doc/survey/script-host-transport.md`): per command about 11-30 µs over
+the pipe, 2-6 µs in process, 4.5-15 µs in wasmtime; a key issuing 50
+commands stays under about 1.5 ms at the median in every form and
+condition, so the transport does not rule the design out.
 
 ## 18. Deferred and open
 

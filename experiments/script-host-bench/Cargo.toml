@@ -1,0 +1,21 @@
+[package]
+name = "script-host-bench"
+version = "0.1.0"
+edition = "2024"
+
+# A: the real script host over pipes (this binary re-executed as `host`);
+# B: rquickjs in this process; C: QuickJS in wasmtime (guest/).
+[dependencies]
+temzdf-protocol = { path = "../../crates/temzdf-protocol" }
+temzdf-script = { path = "../../crates/temzdf-script" }
+rquickjs = "0.14.0"
+serde_json = "1.0.149"
+wasmtime = { version = "50.0.0", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "50.0.0", default-features = false, features = ["p1"] }
+
+[profile.release]
+debug = false
+
+# Not part of the temzdf workspace.
+[workspace]
+exclude = ["guest"]

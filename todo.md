@@ -104,10 +104,10 @@ server on one `Session`). Next and open:
     the cursor in rows it does not show;
   - a visual mode for PDF panes (keyboard selection of text).
 - The text editor framework, specified with the user on 2026-11-07
-  (`doc/design/text-editor.md`; nothing built). Next: measure the script
-  host's round trips in three forms (a separate process over a pipe,
-  `rquickjs` in the server, QuickJS inside `wasmtime` in the server; in
-  `experiments/`, results in `doc/survey/`), then the design. It includes
+  (`doc/design/text-editor.md`; nothing built). The script host's round
+  trips are measured (`doc/survey/script-host-transport.md`: fine in all
+  three forms; choosing the form, pipe or wasmtime, is open). Next: the
+  design. It includes
   the key mapping pieces scripts need for operators and motions: a mode's
   `unmapped` renamed `fallback` and accepting a function given the
   unmatched key (leave-and-swallow, reading one key), and the `KeyTyped`

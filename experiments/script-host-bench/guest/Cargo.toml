@@ -1,0 +1,17 @@
+[package]
+name = "script-host-bench-guest"
+version = "0.1.0"
+edition = "2024"
+
+# Form C's guest: QuickJS (rquickjs) built for wasm32-wasip1, run by the
+# bench in wasmtime. Built with ../shell.nix (CC_wasm32_wasip1).
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rquickjs = "0.14.0"
+
+[profile.release]
+debug = false
+
+[workspace]
