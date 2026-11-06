@@ -12,4 +12,8 @@ pub mod strip;
 pub mod types;
 
 #[cfg(feature = "host")]
-pub use host::{UNATTENDED_LIMIT, run, run_link, run_with_limit};
+pub use host::{run, run_link, run_with_limit};
+
+/// How long a timer or a promise job (code nobody waits for, so nobody can
+/// interrupt) may run before it is interrupted.
+pub const UNATTENDED_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);

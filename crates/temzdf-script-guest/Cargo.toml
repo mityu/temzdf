@@ -1,0 +1,20 @@
+[package]
+name = "temzdf-script-guest"
+description = "temzdf's script host as a WebAssembly guest (wasm32-wasip1), run by temzdf-script-runner."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+# Built for wasm32-wasip1 by crates/temzdf-script-runner/build.rs. Built for
+# anything else (the workspace's own builds), it is empty.
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+temzdf-script = { workspace = true, features = ["host"] }
+temzdf-protocol.workspace = true
+
+[lints]
+workspace = true

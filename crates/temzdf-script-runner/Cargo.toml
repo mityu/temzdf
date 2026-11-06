@@ -1,0 +1,24 @@
+[package]
+name = "temzdf-script-runner"
+description = "Runs temzdf's script host (temzdf-script-guest, precompiled at build time) in wasmtime inside the session server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+# The guest is built and precompiled by build.rs (Cranelift, a build
+# dependency); at run time only wasmtime's runtime, no compiler. Both sides
+# must use the same wasmtime version and features (the precompiled module
+# carries them, and loading checks).
+[dependencies]
+temzdf-protocol.workspace = true
+temzdf-script.workspace = true
+wasmtime = { version = "50.0.1", default-features = false, features = ["runtime", "std"] }
+wasmtime-wasi = { version = "50.0.1", default-features = false, features = ["p1"] }
+
+[build-dependencies]
+wasmtime = { version = "50.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+
+[lints]
+workspace = true

@@ -35,9 +35,7 @@ const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
      atomic = t.atomic;\n\
      export default t;\n";
 
-/// How long a timer or a promise job (code nobody waits for, so nobody can
-/// interrupt) may run before it is interrupted.
-pub const UNATTENDED_LIMIT: Duration = Duration::from_secs(10);
+use crate::UNATTENDED_LIMIT;
 
 /// Run the host over a byte stream ([`StreamLink`]) until the session goes
 /// away or says [`ToHost::Shutdown`].

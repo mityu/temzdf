@@ -9,6 +9,8 @@ members = [
     "crates/temzdf-pdfview",
     "crates/temzdf-term",
     "crates/temzdf-script",
+    "crates/temzdf-script-guest",
+    "crates/temzdf-script-runner",
     "crates/temzdf-tty",
     "crates/temzdf-protocol",
     "crates/temzdf-client",
@@ -34,6 +36,7 @@ temzdf-pdfcore = { path = "crates/temzdf-pdfcore" }
 temzdf-pdfview = { path = "crates/temzdf-pdfview" }
 temzdf-term = { path = "crates/temzdf-term" }
 temzdf-script = { path = "crates/temzdf-script", default-features = false }
+temzdf-script-runner = { path = "crates/temzdf-script-runner" }
 temzdf-tty = { path = "crates/temzdf-tty" }
 temzdf-server = { path = "crates/temzdf-server" }
 temzdf-protocol = { path = "crates/temzdf-protocol", default-features = false }
@@ -47,6 +50,24 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# The script host's guest (crates/temzdf-script-runner/build.rs builds it
+# for wasm32-wasip1 with this profile, debug or release alike): small where
+# size matters (swc stripping TypeScript, run once per load), fast where
+# scripts spend their time (QuickJS, its bindings and the host's loop).
+[profile.script-guest]
+inherits = "release"
+opt-level = "s"
+strip = true
+
+[profile.script-guest.package.rquickjs-sys]
+opt-level = 3
+
+[profile.script-guest.package.rquickjs-core]
+opt-level = 3
+
+[profile.script-guest.package.temzdf-script]
+opt-level = 3
 
 # MuPDF as it ships even in debug builds: optimized, so mupdf-sys builds it
 # without debug assertions (a debug MuPDF aborted on PDFs whose ActualText is
