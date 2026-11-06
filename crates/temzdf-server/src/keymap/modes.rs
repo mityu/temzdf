@@ -1,8 +1,9 @@
 //! Modes, the matcher that turns typed keys into mappings, and the mode
 //! history (doc/design/keymaps.md).
 //!
-//! A mode has properties: its mappings, what unmapped keys do (drop them or
-//! pass them to the pane), whether it takes counts, and for a transient
+//! A mode has properties: its mappings, what unmapped keys do (its
+//! fallback: drop them, pass them to the pane, or call a script function),
+//! whether it takes counts, and for a transient
 //! mode (a submode) how long it stays. A key may have several mappings in a
 //! mode: the first whose condition holds runs, in order of priority, then
 //! the last registered first. A mapping whose condition is false is not
@@ -28,11 +29,13 @@ use super::notation::Stroke;
 /// (`when`) or a submode stays (`keepalive`).
 pub type Cond = u32;
 
-/// What a mode does with keys it has no mapping for.
+/// What a mode does with keys it has no mapping for (its `fallback`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Unmapped {
+pub enum Fallback {
     Drop,
     Passthrough,
+    /// A script function given the key.
+    Func(Cond),
 }
 
 /// How long a transient mode stays.
@@ -74,7 +77,7 @@ impl<T> Mapping<T> {
 /// when there is none).
 #[derive(Clone, Debug)]
 pub struct ModeDef<T> {
-    pub unmapped: Option<Unmapped>,
+    pub fallback: Option<Fallback>,
     pub count: Option<bool>,
     /// A submode: sits over the mode it was entered from.
     pub transient: bool,
@@ -88,7 +91,7 @@ pub struct ModeDef<T> {
 impl<T> Default for ModeDef<T> {
     fn default() -> Self {
         Self {
-            unmapped: None,
+            fallback: None,
             count: None,
             transient: false,
             keepalive: Keepalive::default(),

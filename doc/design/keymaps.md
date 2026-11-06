@@ -60,7 +60,7 @@ configurations are written with the same system.
 
   ```ts
   defineMode(name, {
-    unmapped?: "drop" | "passthrough", // keys no mapping takes
+    fallback?: "drop" | "passthrough" | ((ctx, key) => void), // keys no mapping takes
     count?: boolean,                   // digits are counts
     transient?: boolean,               // a submode (below)
     keepalive?: "mapped" | "always" | ((ctx: KeyContext) => boolean),
@@ -91,7 +91,7 @@ configurations are written with the same system.
   now.
 - **`when`**: the mapping exists only while it returns true. When it is
   false the key is looked up as if the mapping were not there: another
-  mapping, else the mode's `unmapped`.
+  mapping, else the mode's `fallback`.
 - Conditions are JavaScript functions (decision 1 below), synchronous and
   without side effects: they may run
   several times for one key (sequences, key readings). Commands that change
@@ -119,12 +119,15 @@ configurations are written with the same system.
   - `"mapped"`: while keys are mapped in it. Another key leaves it and is
     handled again in the mode below (kana/vim-submode, Emacs' default).
   - `"always"`: it stays; keys it does not map are looked up in the mode
-    below and, failing that, handled by that mode's `unmapped`.
+    below and, failing that, handled by that mode's `fallback`.
   - a function: asked before each key; when false the submode is left and
     the key handled again below.
 - `timeout`: leave after that many milliseconds without keys (each key
   restarts it).
-- `unmapped` and `count` not given: the mode below's.
+- `fallback` and `count` not given: the mode below's. (`fallback` was
+  `unmapped`, taking only `"drop"` and `"passthrough"`, until the text
+  editor framework, `doc/design/text-editor.md` section 11, added the
+  function.)
 - Example: a resize submode entered from `normal`, where `+` and `-`
   repeat:
 

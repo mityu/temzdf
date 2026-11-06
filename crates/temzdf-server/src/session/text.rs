@@ -25,6 +25,8 @@ pub(super) struct TextEntry {
     pub name: String,
     /// The invocation its undo tree last heard of (a new one ends a step).
     invocation: u64,
+    /// The base mode of panes showing it, chosen when it was made.
+    pub basemode: Option<String>,
 }
 
 /// A text pane: its view of the buffer, and its cursor's shape.
@@ -141,7 +143,7 @@ impl Session {
         let id = self.alloc_id();
         let buf = Buffer::new(text, file.as_ref().map_or(LineEnding::Lf, |f| f.line_ending));
         let name = name_of(file.as_ref().map(|f| f.path.as_path()));
-        self.texts.insert(id, TextEntry { buf, file, name, invocation: 0 });
+        self.texts.insert(id, TextEntry { buf, file, name, invocation: 0, basemode: None });
         self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("edit".into())]);
         id
     }
@@ -156,6 +158,14 @@ impl Session {
         }
         self.relayout();
         self.fit_text_view(id);
+    }
+
+    /// The focused pane's base mode changed: the history starts from it.
+    fn refocus_mode(&mut self) {
+        let old = self.history.current().to_owned();
+        let mode = self.pane_mode(self.focus);
+        self.history.reset(&mode);
+        self.mode_changed(&old);
     }
 
     /// Pane `id`'s view follows its size.
@@ -338,7 +348,17 @@ impl Session {
         match name {
             "open-file" => {
                 let path = args.first().and_then(ScriptValue::as_str).ok_or("which file?")?;
+                let known: Vec<BufferId> = self.texts.keys().copied().collect();
                 let id = self.open_text(Path::new(path), self.next_spot(), false).map_err(|e| format!("{e:#}"))?;
+                // A buffer it made takes the base mode asked for.
+                if let Some(mode) = opt_str("basemode")
+                    && let Some(Kind::Text { buf, .. }) = self.panes.get(&id).map(|e| &e.kind)
+                    && !known.contains(buf)
+                {
+                    let buf = *buf;
+                    self.texts.get_mut(&buf).expect("made").basemode = Some(mode);
+                    self.refocus_mode();
+                }
                 Ok((ScriptValue::Num(id as f64), Outcome::Redraw))
             }
             "new-buffer" => {
@@ -350,6 +370,7 @@ impl Session {
                     ..FileInfo::default()
                 });
                 let buf = self.add_text_buffer(Text::from(text.as_str()), info);
+                self.texts.get_mut(&buf).expect("made").basemode = opt_str("basemode");
                 Ok((ScriptValue::Num(buf as f64), Outcome::None))
             }
             _ => {
@@ -621,11 +642,15 @@ fn camel(name: &str) -> String {
 /// The `text.*` commands for the registry: (name, TypeScript signature,
 /// documentation).
 pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
-    ("open-file", "(path: string): number", "Open a file as text in a new pane; returns the pane"),
+    (
+        "open-file",
+        "(path: string, opts?: { basemode?: string }): number",
+        "Open a file as text in a new pane (its buffer if it is open); returns the pane. `basemode`: the base mode of panes on a buffer made now",
+    ),
     (
         "new-buffer",
-        "(opts?: { text?: string, path?: string }): number",
-        "A new text buffer (no pane); with only `path`, a new file. Returns the buffer",
+        "(opts?: { text?: string, path?: string, basemode?: string }): number",
+        "A new text buffer (no pane); with only `path`, a new file. `basemode`: the base mode of panes on it (never changed after). Returns the buffer",
     ),
     (
         "write",

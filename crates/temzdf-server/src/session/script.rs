@@ -759,18 +759,13 @@ impl Session {
                 self.script.hooks.entry(event).or_default().push(Hook { func, nested });
                 (Ok(ScriptValue::Null), Outcome::None)
             }
-            HostOp::DefineMode { name, unmapped, count, transient, keepalive, timeout } => {
-                let unmapped = match unmapped.as_deref() {
-                    None => None,
-                    Some("drop") => Some(crate::keymap::Unmapped::Drop),
-                    Some("passthrough") => Some(crate::keymap::Unmapped::Passthrough),
-                    Some(other) => {
-                        return (
-                            Err(format!("defineMode: unmapped {other:?} is not drop or passthrough")),
-                            Outcome::None,
-                        );
-                    }
-                };
+            HostOp::DefineMode { name, fallback, count, transient, keepalive, timeout } => {
+                use temzdf_protocol::script::Fallback as F;
+                let fallback = fallback.map(|f| match f {
+                    F::Drop => crate::keymap::Fallback::Drop,
+                    F::Passthrough => crate::keymap::Fallback::Passthrough,
+                    F::Func(f) => crate::keymap::Fallback::Func(f),
+                });
                 if timeout.is_some_and(|t| !t.is_finite() || t < 0.0) {
                     return (Err("defineMode: timeout is a number of milliseconds".into()), Outcome::None);
                 }
@@ -789,8 +784,8 @@ impl Session {
                 if let Some(t) = timeout {
                     d.timeout = (t > 0.0).then(|| Duration::from_secs_f64(t / 1000.0));
                 }
-                if unmapped.is_some() {
-                    d.unmapped = unmapped;
+                if fallback.is_some() {
+                    d.fallback = fallback;
                 }
                 if count.is_some() {
                     d.count = count;
@@ -977,6 +972,20 @@ impl Session {
                     _ => return Err("o.showtabline: expected \"never\", \"auto\" or \"always\"".into()),
                 }
             }
+            "basemode" => {
+                if self.script.loading.is_none() {
+                    return Err("o.basemode is set while the configuration loads only".into());
+                }
+                let ScriptValue::Map(pairs) = value else {
+                    return Err("o.basemode: expected { kind: mode, ... }".into());
+                };
+                let mut map = std::collections::BTreeMap::new();
+                for (kind, mode) in pairs {
+                    let mode = mode.as_str().ok_or(format!("o.basemode.{kind}: expected a mode's name"))?;
+                    map.insert(kind.clone(), mode.to_owned());
+                }
+                self.options.basemode = map;
+            }
             "wrap" => o.text.layout.wrap = flag()?,
             "linebreak" => o.text.layout.linebreak = flag()?,
             "breakindent" => o.text.layout.breakindent = flag()?,
@@ -1038,6 +1047,9 @@ impl Session {
                 .into(),
             ),
             "showstatusline" => ScriptValue::Str(if o.showstatusline { "always" } else { "never" }.into()),
+            "basemode" => {
+                ScriptValue::Map(o.basemode.iter().map(|(k, v)| (k.clone(), ScriptValue::Str(v.clone()))).collect())
+            }
             "wrap" => ScriptValue::Bool(o.text.layout.wrap),
             "linebreak" => ScriptValue::Bool(o.text.layout.linebreak),
             "breakindent" => ScriptValue::Bool(o.text.layout.breakindent),

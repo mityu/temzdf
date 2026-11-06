@@ -16,7 +16,7 @@ import {
 o.timeoutlen = 500;
 o.splitright = false;
 
-defineMode("window", { unmapped: "drop", count: true, transient: true, keepalive: "always", timeout: 2000 });
+defineMode("window", { fallback: "drop", count: true, transient: true, keepalive: "always", timeout: 2000 });
 defineMode("resize", { transient: true, keepalive: (ctx) => ctx.paneKind !== null });
 keymap.add("normal", "w", action.switchMode("window"));
 keymap.add("window", "v", [action.split("right"), action.exitMode()], { desc: "split right", namespace: "mine" });

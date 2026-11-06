@@ -131,9 +131,14 @@ declare module "temzdf" {{
     /** The mappings of the mode, the namespace and the keys (each one left out: all of them): a snapshot. */
     get(filter?: {{ mode?: string; namespace?: string; lhs?: string }}): MappingInfo[];
   }};
+  /** A key a mode's fallback function gets: its notation, and the text it types (if any). */
+  export interface KeyInfo {{
+    keys: string;
+    text: string | null;
+  }}
   export interface ModeProperties {{
-    /** What keys no mapping takes do (default: the mode below's, else drop). */
-    unmapped?: "drop" | "passthrough";
+    /** What keys no mapping takes do (default: the mode below's, else drop): drop them, pass them to the pane (typed into a terminal, an input or a text pane), or call a function with the key (reading one key; leaving the mode: `() => cmd.exitMode()`). */
+    fallback?: "drop" | "passthrough" | ((ctx: KeyContext, key: KeyInfo) => void);
     /** Whether digits are counts (default: the mode below's, else no). */
     count?: boolean;
     /** A submode: entered with switchMode, it sits over the mode it was entered from. */
@@ -218,6 +223,8 @@ declare module "temzdf" {{
     guifont: FontEntry[];
     /** Fonts tried first for wide (CJK) characters; []: none. */
     guifontwide: FontEntry[];
+    /** The base mode (the bottom of the mode history) in panes of each kind, e.g. {{ edit: "vim/normal" }}; set while the configuration loads only. */
+    basemode: {{ [kind: string]: string }};
     /** Text panes wrap long lines (else they scroll sideways). */
     wrap: boolean;
     /** Wrap after a blank rather than anywhere. */

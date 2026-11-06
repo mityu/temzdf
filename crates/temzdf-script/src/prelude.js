@@ -160,19 +160,26 @@
         }));
       },
     }),
-    // defineMode(name, { unmapped: "drop" | "passthrough", count, transient,
-    // keepalive: "mapped" | "always" | (ctx) => boolean, timeout })
+    // defineMode(name, { fallback: "drop" | "passthrough" | (ctx, key) => void,
+    // count, transient, keepalive: "mapped" | "always" | (ctx) => boolean, timeout })
     defineMode(name, props = {}) {
       if ("inherit" in props) {
         throw new TypeError("defineMode: inherit is gone; a transient mode with keepalive takes the keys of the mode below");
       }
+      if ("unmapped" in props) {
+        throw new TypeError("defineMode: unmapped is now fallback");
+      }
+      const fallback =
+        typeof props.fallback === "function"
+          ? funcId(props.fallback, `defineMode(${name}) fallback`, false)
+          : (props.fallback ?? null);
       const keepalive =
         typeof props.keepalive === "function"
           ? funcId(props.keepalive, `defineMode(${name}) keepalive`, true)
           : (props.keepalive ?? null);
       request(current(), "defineMode", {
         name,
-        unmapped: props.unmapped ?? null,
+        fallback,
         count: props.count ?? null,
         transient: props.transient ?? null,
         keepalive,

@@ -26,7 +26,7 @@ use termpix_core::scroll::ScrollConfig;
 use crate::action::{Action, PaneSpec};
 use crate::clip;
 use crate::forward::{self, ForwardRequest};
-use crate::keymap::{History, Keepalive, Layers, Matcher, Modes, Step, Stroke, Target, Unmapped, notation};
+use crate::keymap::{Fallback, History, Keepalive, Layers, Matcher, Modes, Step, Stroke, Target, notation};
 use crate::layout::{BorderId, Layout, PaneId, Split};
 use temzdf_protocol::script::{FromHost, ScriptValue};
 
@@ -164,6 +164,10 @@ pub struct Options {
     /// Text panes: wrapping, tabs, line numbers, the cursor line,
     /// `scrolloff`.
     pub text: TextOptions,
+    /// The mode at the bottom of the history in a pane of each kind (by
+    /// the kind's name; its own mode when left out). Set only while the
+    /// configuration loads.
+    pub basemode: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -217,6 +221,7 @@ impl Default for Options {
             guifont: vec![temzdf_scene::FontEntry { family: "JetBrains Mono".into(), size: Some(14.0) }],
             guifontwide: Vec::new(),
             text: TextOptions::default(),
+            basemode: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -878,7 +883,7 @@ impl Session {
             }
             let old = self.history.current().to_owned();
             let mode = self.pane_mode(pane);
-            self.history.reset(mode);
+            self.history.reset(&mode);
             self.mode_changed(&old);
         }
         Ok(Outcome::Redraw)
@@ -1099,7 +1104,7 @@ impl Session {
         // The history starts again from the pane's own mode.
         let old = self.history.current().to_owned();
         let mode = self.pane_mode(id);
-        self.history.reset(mode);
+        self.history.reset(&mode);
         self.mode_changed(&old);
     }
 
@@ -1442,9 +1447,22 @@ impl Session {
                     out = out.merge(self.run_target(target, count, now));
                 }
                 Step::Unmapped(stroke, ev) => {
-                    if self.unmapped() == Unmapped::Passthrough {
-                        let ev = ev.unwrap_or_else(|| stroke.event());
-                        out = out.merge(self.send_to_pane(&ev));
+                    let ev = ev.unwrap_or_else(|| stroke.event());
+                    match self.fallback() {
+                        Fallback::Drop => {}
+                        Fallback::Passthrough => out = out.merge(self.send_to_pane(&ev)),
+                        Fallback::Func(func) => {
+                            let text = ev.text.clone().or_else(|| match ev.code {
+                                KeyCode::Char(c) => Some(c.to_string()),
+                                _ => None,
+                            });
+                            let key = ScriptValue::map([
+                                ("keys", ScriptValue::Str(stroke.notation())),
+                                ("text", text.map_or(ScriptValue::Null, ScriptValue::Str)),
+                            ]);
+                            let ctx = self.key_context(None);
+                            self.call(func, vec![ctx, key], false);
+                        }
                     }
                 }
             }
@@ -1531,8 +1549,8 @@ impl Session {
     }
 
     /// What unmapped keys do now.
-    fn unmapped(&self) -> Unmapped {
-        self.mode_property(|d| d.unmapped).unwrap_or(Unmapped::Drop)
+    fn fallback(&self) -> Fallback {
+        self.mode_property(|d| d.fallback).unwrap_or(Fallback::Drop)
     }
 
     /// The current mode, or the first below it that is not transient.
@@ -1566,9 +1584,21 @@ impl Session {
         }
     }
 
-    /// The mode of a pane kind (its default mode).
-    fn pane_mode(&self, id: PaneId) -> &'static str {
-        self.panes.get(&id).map_or("normal", PaneEntry::kind_name)
+    /// A pane's base mode, the bottom of the history while it has the
+    /// focus: its buffer's (text buffers made with one), else its kind's
+    /// (`o.basemode`), else the kind's own mode; one not defined falls back
+    /// to the kind's.
+    fn pane_mode(&self, id: PaneId) -> String {
+        let Some(e) = self.panes.get(&id) else { return "normal".into() };
+        let kind = e.kind_name();
+        let chosen = match &e.kind {
+            Kind::Text { buf, .. } => self.texts.get(buf).and_then(|t| t.basemode.clone()),
+            _ => None,
+        };
+        chosen
+            .or_else(|| self.options.basemode.get(kind).cloned())
+            .filter(|m| self.modes.get(m).is_some())
+            .unwrap_or_else(|| kind.into())
     }
 
     /// Announce a mode change (if `old` differs from the current mode).
@@ -1674,11 +1704,11 @@ impl Session {
         if self.hold_text(text) {
             return Outcome::None;
         }
-        let out = if self.unmapped() == Unmapped::Passthrough
+        let out = if self.fallback() == Fallback::Passthrough
             && let Some(t) = self.focused_term()
         {
             Outcome::None.or(t.send_text(text))
-        } else if self.unmapped() == Unmapped::Passthrough
+        } else if self.fallback() == Fallback::Passthrough
             && let Ok(out) = self.text_type(text).or_else(|_| self.input_insert(text))
         {
             out
@@ -2283,16 +2313,16 @@ fn is_pdf(path: &Path) -> bool {
 
 fn builtin_modes() -> Modes<Target> {
     let mut m = Modes::default();
-    for (name, unmapped, count) in [
-        ("normal", Unmapped::Drop, true),
-        ("terminal", Unmapped::Passthrough, false),
-        ("pdf", Unmapped::Drop, true),
-        ("input", Unmapped::Passthrough, false),
-        ("edit", Unmapped::Passthrough, false),
-        ("visual", Unmapped::Drop, true),
+    for (name, fallback, count) in [
+        ("normal", Fallback::Drop, true),
+        ("terminal", Fallback::Passthrough, false),
+        ("pdf", Fallback::Drop, true),
+        ("input", Fallback::Passthrough, false),
+        ("edit", Fallback::Passthrough, false),
+        ("visual", Fallback::Drop, true),
     ] {
         let d = m.define(name);
-        d.unmapped = Some(unmapped);
+        d.fallback = Some(fallback);
         d.count = Some(count);
     }
     m
@@ -4641,5 +4671,29 @@ mod tests {
         cmd(&mut s, "write", &[], None).unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("new.txt")).unwrap(), "made");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn base_modes_come_from_the_buffer_then_the_kind() {
+        let (mut s, path) = text_session("base.txt", "x");
+        s.modes.define("kindmode");
+        s.modes.define("bufmode");
+        s.options.basemode.insert("edit".into(), "kindmode".into());
+        let first = s.focus;
+        // A buffer made with its own base mode, in a split.
+        let o = ScriptValue::map([("basemode", ScriptValue::Str("bufmode".into()))]);
+        let (buf, _) = s.run_command("new-buffer", &[o], None, Instant::now()).unwrap();
+        let o = ScriptValue::map([("buffer", buf)]);
+        s.run_command("split", &[o], None, Instant::now()).unwrap();
+        assert_eq!(s.history.current(), "bufmode");
+        s.set_focus(first);
+        assert_eq!(s.history.current(), "kindmode");
+        // A mode nobody defined: the kind's own.
+        s.options.basemode.insert("edit".into(), "nowhere".into());
+        let (second, _) = s.run_command("split", &[], None, Instant::now()).unwrap();
+        assert_eq!(s.focus, second.as_num().unwrap() as PaneId);
+        assert_eq!(s.history.current(), "edit");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

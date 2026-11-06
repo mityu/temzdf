@@ -19,7 +19,7 @@ use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::promise::PromiseState;
 use rquickjs::{Context, Ctx, Exception, Function, Module, Persistent, Runtime, Value};
 use temzdf_protocol::script::{
-    CommandSpec, FromHost, FuncId, HostOp, Keepalive, MapRhs, ScriptError, ScriptValue, TaskId, ToHost, Token,
+    CommandSpec, Fallback, FromHost, FuncId, HostOp, Keepalive, MapRhs, ScriptError, ScriptValue, TaskId, ToHost, Token,
 };
 
 use crate::link::{Link, Received, StreamLink};
@@ -356,7 +356,17 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
         },
         "defineMode" => HostOp::DefineMode {
             name: text("name"),
-            unmapped: payload.get("unmapped").and_then(|v| v.as_str()).map(str::to_owned),
+            fallback: match payload.get("fallback") {
+                Some(serde_json::Value::String(s)) if s == "drop" => Some(Fallback::Drop),
+                Some(serde_json::Value::String(s)) if s == "passthrough" => Some(Fallback::Passthrough),
+                Some(serde_json::Value::Number(n)) => Some(Fallback::Func(n.as_u64().unwrap_or(0) as FuncId)),
+                None | Some(serde_json::Value::Null) => None,
+                Some(other) => {
+                    return throw(&format!(
+                        "defineMode: fallback {other} is not \"drop\", \"passthrough\" or a function"
+                    ));
+                }
+            },
             count: payload.get("count").and_then(|v| v.as_bool()),
             transient: payload.get("transient").and_then(|v| v.as_bool()),
             keepalive: match payload.get("keepalive") {

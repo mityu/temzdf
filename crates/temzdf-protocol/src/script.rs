@@ -187,7 +187,8 @@ pub enum HostOp {
     /// Create a mode, or change a mode's properties (`None` keeps them).
     DefineMode {
         name: String,
-        unmapped: Option<String>,
+        /// What keys no mapping takes do.
+        fallback: Option<Fallback>,
         count: Option<bool>,
         transient: Option<bool>,
         keepalive: Option<Keepalive>,
@@ -234,6 +235,16 @@ pub enum HostOp {
 }
 
 /// How long a transient mode stays (`defineMode`'s `keepalive`).
+/// What a mode does with keys no mapping takes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Fallback {
+    Drop,
+    /// To the focused pane (typed into a terminal, an input or a text pane).
+    Passthrough,
+    /// A function given the key (reading one key, leaving a mode).
+    Func(FuncId),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Keepalive {
     Mapped,
@@ -306,7 +317,7 @@ mod tests {
             token: Token::Load,
             op: HostOp::DefineMode {
                 name: "resize".into(),
-                unmapped: None,
+                fallback: Some(Fallback::Func(3)),
                 count: None,
                 transient: Some(true),
                 keepalive: Some(Keepalive::Func(5)),

@@ -77,7 +77,7 @@ mode keys that time out go to the pane.
 
 - **`when`**: a condition, `(ctx) => boolean`: the mapping exists only
   while it holds; otherwise the key is looked up as if it were not there
-  (another mapping, else the mode's unmapped keys). `ctx` is the context of
+  (another mapping, else the mode's `fallback`). `ctx` is the context of
   the sequence's first key: `pane`, `paneKind` (`"terminal"`, `"pdf"`),
   `floating`, `mode`, `keys` (typed before). Conditions run in the script
   host, synchronously, and may only read (`cmd.panes()`, `o.x`, ...); one
@@ -102,9 +102,15 @@ mode keys that time out go to the pane.
   `keymap.add` takes them (functions included): to copy some into another
   mode, or to show them. It is a snapshot.
 
-`defineMode(name, { unmapped, count, transient, keepalive, timeout })`
+`defineMode(name, { fallback, count, transient, keepalive, timeout })`
 makes a mode (or changes one). Properties left out are the mode below's
-(then `drop` and no counts). A **transient** mode (a submode, as
+(then `drop` and no counts). **`fallback`** says what keys no mapping
+takes do: `"drop"`, `"passthrough"` (to the focused pane: typed into a
+terminal, an input or a text pane), or a function `(ctx, key) => void`
+given the key (`key.keys` in notation, `key.text` what it types or
+null): reading one key (`f{char}`) is a transient mode with a fallback
+function, and leaving a mode on a key it does not know is
+`fallback: () => cmd.exitMode()`. A **transient** mode (a submode, as
 kana/vim-submode or Emacs' transient keymaps) sits over the mode it was
 entered from:
 
@@ -271,6 +277,15 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `palette` | `[]` | the first colours of the 256-colour palette (`["#000000", "#cd0000", ...]`), for GUI clients and terminal panes (OSC 4); the rest stay the default |
 | `guifont` | `[{ font: "JetBrains Mono", size: 14 }]` | the GUI client's fonts, `{ font, size? }` (size in points, 4 to 200; left out: the first font's, else 14). The first installed one sets the cell size; a character goes to the first font of the list that has it, at that font's size, then (as WezTerm) to the built-in JetBrains Mono, Noto Color Emoji and Symbols Nerd Font Mono, then the system's fonts for its script. A font that is not installed is skipped: `temzdf ls-fonts` shows what the list resolves to |
 | `guifontwide` | `[]` | fonts tried first for wide (CJK) characters, as `guifont` |
+| `basemode` | `{}` | the base mode (the bottom of the mode history) of panes of each kind by its name, e.g. `{ edit: "vim/normal" }`; a kind left out (or a mode not defined) has its own mode. Set while the configuration loads only. A text buffer made with `newBuffer({ basemode })` or `openFile(path, { basemode })` uses its own |
+| `wrap` | `true` | text panes wrap long lines (else they scroll sideways) |
+| `linebreak` | `false` | wrap after a blank rather than anywhere |
+| `breakindent` | `false` | continuation rows start at the line's indent |
+| `showbreak` | `""` | shown at the start of continuation rows |
+| `tabstop` | `8` | display columns between tab stops |
+| `number` | `"off"` | line numbers in text panes: `"off"`, `"absolute"`, `"relative"`, `"both"` (relative, the cursor's line absolute) |
+| `cursorline` | `false` | highlight the cursor's line |
+| `scrolloff` | `0` | rows kept between the cursor and the top or bottom of text panes |
 
 ## Buffers
 
