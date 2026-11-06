@@ -1,6 +1,6 @@
-//! Messages between a session and its script host (`temzdf script-host`), a
-//! child process running the user's JavaScript configuration. They travel
-//! over the child's stdin and stdout with the framing of [`crate::send`] and
+//! Messages between a session and its script host, which runs the user's
+//! JavaScript configuration (as a WebAssembly guest in the server). They
+//! cross the guest's imports with the framing of [`crate::send`] and
 //! [`crate::recv`]. See doc/design/script-host.md.
 //!
 //! Calls are synchronous both ways: the server asks the host to run a mapped

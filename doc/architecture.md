@@ -37,8 +37,10 @@
 - `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys)
   and what panes on one file share (`Document`, `DocumentHost`: workers,
   reload, SyncTeX routing).
-- `temzdf-script`: the script host process (QuickJS), see
-  `doc/design/script-host.md`; sessions talk to it over pipes.
+- `temzdf-script`: the script host (QuickJS), see
+  `doc/design/script-host.md`; `temzdf-script-guest` builds it for
+  WebAssembly, and `temzdf-script-runner` runs that in wasmtime inside the
+  server (precompiled at build time).
 - `temzdf-term`: the terminal pane (`TermPane`: a program on a pty, its
   output interpreted by `libghostty-vt`, the screen as scene text cells).
 - `temzdf-tty`: the terminal frontend (`TtyFrontend`: terminal setup, frame

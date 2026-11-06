@@ -18,7 +18,7 @@ for that format. The format has two layers:
 
 The server owns layout, text measurement and everything per-keystroke
 (cursor, scrolling, editing); the script owns the state and describes what
-to show. The script host is a separate process (`doc/design/script-host.md`),
+to show. The script host is isolated from the session (`doc/design/script-host.md`),
 so everything crosses the protocol as data.
 
 ## Layer 1: styled text

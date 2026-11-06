@@ -25,7 +25,8 @@ the way, with the reasons.
   configuration design: where scripts run, the execution model, commands,
   modes, hooks, buffers, layout.
 - [design/script-host.md](design/script-host.md): the script host
-  (`temzdf script-host`): the process, its protocol and API.
+  (QuickJS in WebAssembly, run in the server): the sandbox, its protocol
+  and API.
 - [design/keymaps.md](design/keymaps.md): the key mapping system: modes,
   conditions on mappings (`when`), namespaces, transient modes (submodes).
 - [design/floating-panes.md](design/floating-panes.md): floating panes,

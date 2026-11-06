@@ -62,8 +62,8 @@ server on one `Session`). Next and open:
   since the session server design, 2026-10-25).
 - [ ] Terminal panes, what is left: kitty graphics through Unicode
   placeholders (tmux inside a pane) and animation frames.
-- [ ] Scripting and configuration (JavaScript/TypeScript in a script-host
-  process; `doc/design/scripting.md`, `doc/design/script-host.md`, `doc/config.md`): the
+- [ ] Scripting and configuration (JavaScript/TypeScript in the script host,
+  QuickJS in WebAssembly; `doc/design/scripting.md`, `doc/design/script-host.md`, `doc/config.md`): the
   host, modes and mappings, options, hooks, buffers, floating panes and tab
   pages are implemented, and every question in `doc/design/scripting.md` is
   decided. Decided but not built: `temzdf eval` (27 there), the
@@ -104,9 +104,8 @@ server on one `Session`). Next and open:
     the cursor in rows it does not show;
   - a visual mode for PDF panes (keyboard selection of text).
 - The text editor framework, specified with the user on 2026-11-07
-  (`doc/design/text-editor.md`; nothing built). The script host's round
-  trips are measured (`doc/survey/script-host-transport.md`: fine in all
-  three forms; choosing the form, pipe or wasmtime, is open). Next: the
+  (`doc/design/text-editor.md`; nothing built). The script host now runs
+  in wasmtime inside the server (`doc/design/script-host.md`). Next: the
   design. It includes
   the key mapping pieces scripts need for operators and motions: a mode's
   `unmapped` renamed `fallback` and accepting a function given the

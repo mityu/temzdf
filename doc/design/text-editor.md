@@ -365,7 +365,7 @@ keymap.add("vim/normal", "f", (ctx) => { pendingCount = ctx.count; cmd.switchMod
 ## 17. Script host round trips
 
 In this design one key can issue many primitives, each a round trip to the
-script host process, and synchronous events add more. Before designing,
+script host, and synchronous events add more. Before designing,
 the user asked to measure three forms with one benchmark (a mapped
 function calling a trivial command many times), in `experiments/` with the
 results in `doc/survey/`:
@@ -379,7 +379,10 @@ The primitives do not depend on the transport. Measured on 2026-11-07
 (`doc/survey/script-host-transport.md`): per command about 11-30 µs over
 the pipe, 2-6 µs in process, 4.5-15 µs in wasmtime; a key issuing 50
 commands stays under about 1.5 ms at the median in every form and
-condition, so the transport does not rule the design out.
+condition, so the transport does not rule the design out. The user chose
+wasmtime, precompiled at build time (`doc/design/scripting.md`); through
+the server's runner and its thread a command costs about 10 µs
+(`doc/survey/script-host-transport.md`, "In the server").
 
 ## 18. Deferred and open
 

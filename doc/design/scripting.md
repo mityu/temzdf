@@ -41,22 +41,30 @@ that part follows tmux and zellij (see "Prior art").
 
 - Scripts run **only on the server side** (the session server, or the
   standalone viewer's process). Clients run none.
-- Scripts run in a **separate process** and talk to temzdf over RPC, much like
-  denops.vim (or Neovim's remote plugins and msgpack-RPC API). A runaway or
-  crashing script cannot freeze or kill the session, and the process can be
-  restarted.
-- The script process is **temzdf itself with rquickjs built in**, started by
-  the server as a hidden subcommand (the script host). No outside runtime:
-  Node.js needs `node_modules`, Deno's future is uncertain, bun's too, and a
-  built-in engine keeps the Nix build and distribution as they are.
+- Scripts run **isolated from the session** and talk to it with messages,
+  much like denops.vim (or Neovim's remote plugins and msgpack-RPC API). A
+  runaway or crashing script cannot freeze or kill the session, and the
+  host can be restarted.
+- **The isolation is WebAssembly** (the user's decision, 2026-11-07, after
+  measuring three forms: `doc/survey/script-host-transport.md`): QuickJS
+  (rquickjs) compiled to WebAssembly, precompiled at build time and run by
+  wasmtime inside the server on a thread of its own. Faults are traps, its
+  memory is capped, and it can be stopped at any point
+  (`doc/design/script-host.md`, "The sandbox"). It used to be a child
+  process (`temzdf script-host`, the same binary) over pipes; a key issuing
+  many commands made the round trips matter (`doc/design/text-editor.md`).
+  Interpreting the WebAssembly instead (Pulley) was about 30 times slower.
+- The engine is **built in**. No outside runtime: Node.js needs
+  `node_modules`, Deno's future is uncertain, bun's too, and a built-in
+  engine keeps the Nix build and distribution as they are.
 - **RPC**: both ends are Rust (JavaScript only meets rquickjs inside the
-  host), so the host speaks `temzdf-protocol`'s framing (length prefix and
-  postcard, serde types) over pipes to the server that started it. A bridge
-  (e.g. msgpack) is only needed if outside runtimes ever connect.
-- Key lookup stays in the server (Rust): the script process registers mapping
+  host), so the host speaks `temzdf-protocol`'s messages (postcard, serde
+  types) through the guest's imports. A bridge (e.g. msgpack) is only needed
+  if outside runtimes ever connect.
+- Key lookup stays in the server (Rust): the script host registers mapping
   tables and hook subscriptions; only a key that is mapped to a script
   function, or an event someone subscribed to, causes an RPC. Typing into a
-  terminal pane never waits for the script process.
+  terminal pane never waits for the script host.
 - How scripts execute (synchronous functions, `dispatch`, `atomic`) is in
   "Execution model" below.
 - The language is JavaScript, with TypeScript accepted through type stripping

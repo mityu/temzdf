@@ -3,7 +3,7 @@
 temzdf is configured with a JavaScript or TypeScript program, as Vim is with
 a vimrc: `$XDG_CONFIG_HOME/temzdf/config.ts` or `config.js` (falling back to
 `~/.config/temzdf/`; both at once is an error), or the file given with
-`--config FILE`. It runs in the script host, a separate process
+`--config FILE`. It runs in the script host, isolated from the session (WebAssembly)
 (`doc/design/script-host.md` has the execution model). The shipped defaults
 (`crates/temzdf-script/runtime/defaults.ts`) run first; the configuration can
 map over or remove anything in them. `--clean` runs only the defaults.

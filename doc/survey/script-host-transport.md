@@ -140,6 +140,37 @@ again.)
   Precompiled modules must come from the build itself (loading one is
   `unsafe`: it is machine code).
 
+## In the server (added 2026-11-07)
+
+The user chose C, precompiled at build time. As built
+(`crates/temzdf-script-runner`), the guest is the whole host (its loop,
+postcard framing, tokens; swc for TypeScript) and runs on a thread of its
+own; the session talks to it through channels. Measured with the ignored
+test in `crates/temzdf-script-runner/tests/guest.rs` (release, no limit,
+same machine), a mapped function issuing `k` commands, answered at once:
+
+| k | p50 | p90 | p99 |
+|---|---|---|---|
+| 1 | 15 µs | 19 µs | 47 µs |
+| 10 | 109 µs | 115 µs | 162 µs |
+| 50 | 489 µs | 540 µs | 1034 µs |
+
+About **10 µs per command**: closer to A (pipe, 11-12 µs in the same
+unconstrained runs) than to the bench's C (4.5-5 µs). The bench's C called
+the guest on the caller's thread with JSON only; here each command crosses
+two threads (guest to session and back, a wake-up each way) and goes
+through the real host's framing. If that ever matters, the guest could
+spin briefly before blocking for a reply. Startup (start to `Ready`,
+loading the shipped defaults and a small configuration): 17 ms for the
+first host in a process (engine and module loaded), 6-10 ms after; the
+child process took 6-21 ms.
+
+Sizes (stripped release builds): the guest is 4.6 MB of WebAssembly
+(profile `script-guest`, size-optimised but for QuickJS and the host),
+13.7 MB precompiled, most of it swc; swc native was about 7.7 MB. The user
+kept swc inside the guest (everything sandboxed) over moving it to the
+server (about 2.5 MB smaller).
+
 ## Reading
 
 - A key issuing 50 commands costs at most about 1.5 ms at the median in

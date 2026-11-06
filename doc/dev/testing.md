@@ -31,6 +31,10 @@ nothing).
 
 ## Miri
 
+Under Miri, `crates/temzdf-script-runner/build.rs` builds no guest and
+embeds nothing (Miri runs no WebAssembly); the guest's tests are in
+`crates/temzdf-script-runner/tests/`, which Miri does not run.
+
 `scripts/miri.sh [PACKAGE...]` runs the workspace's unit tests (`--lib`,
 `--bins`; not `crates/*/tests` or `tuitest`) under Miri, one process per
 test and all cores at once, in about a minute and a half. `scripts/check.sh`

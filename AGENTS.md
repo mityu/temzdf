@@ -29,7 +29,9 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-term` | Library. The terminal pane: a program on a pty (`portable-pty`), its output interpreted by `libghostty-vt` (from Nix: `nix/libghostty-vt.nix`), the screen as scene text cells. No `termpix`. |
 | `crates/temzdf-tty` | Library. Terminal frontend (`TtyFrontend`): shows scene frames through `termpix`, frame pacing, effects. |
 | `crates/temzdf-server` | Library. `Session` (panes, layout, focus, modes and key mappings, the command registry, composed frame), the session server process, forward-search sockets. No terminal code. |
-| `crates/temzdf-script` | Library. The script host (`temzdf script-host`): runs `config.ts`/`config.js` in QuickJS (`rquickjs`, TypeScript stripped with swc) and talks to the session over `temzdf-protocol`. The server never links it (child process). |
+| `crates/temzdf-script` | Library. The script host: runs `config.ts`/`config.js` in QuickJS (`rquickjs`, TypeScript stripped with swc) and talks to the session through a `Link` with `temzdf-protocol`'s messages (feature `host`; without it only the type declarations). |
+| `crates/temzdf-script-guest` | The script host built for `wasm32-wasip1` (imports as its `Link`); empty on other targets. |
+| `crates/temzdf-script-runner` | Library. Runs the guest in wasmtime inside the server (`ScriptHost`: a thread, memory cap, stop). Its `build.rs` builds the guest with a nested cargo (`target/script-guest`, profile `script-guest`) and precompiles it with Cranelift; see `doc/design/script-host.md`. |
 | `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
 | `crates/wlinput` | Test-only tool: one virtual keyboard and pointer on a wlroots compositor, driven by commands on stdin. `scripts/e2e.sh -d wayland` drives headless sway with it. |
 | `crates/temzdf` | The binary: `temzdf [FILE]` starts a session (named alfa, bravo, ... unless `-s NAME`), session commands and client (zellij names: `attach`, `ls`, `kill-session`, `action`), the standalone viewer (`temzdf standalone pdf`), `ls-fonts`, config, headless `--render-frame`. |
@@ -50,7 +52,10 @@ heading (a tmux-like session server with terminal, PDF and web panes) is in
 
 ## Environment
 
-Everything runs inside the Nix dev shell (`flake.nix`). Agents are started
+Everything runs inside the Nix dev shell (`flake.nix`). Its Rust toolchain
+(rust-overlay) has the `wasm32-wasip1` target, and `CC_wasm32_wasip1` names
+nixpkgs' WASI clang (for the script host's guest; never put that clang on
+`PATH`, it would replace the native `cc`). Agents are started
 inside it, so run tools directly, not through `nix develop -c` (it costs a
 shell evaluation each time); if a tool the dev shell should provide is
 missing, say so instead of working around it. A tool added to `flake.nix`

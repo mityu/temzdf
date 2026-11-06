@@ -59,7 +59,7 @@ pub enum SessionEvent {
     /// A message from the script host (of this generation: hosts are
     /// replaced on reload, and an old one's last words must not count).
     Script(u32, FromHost),
-    /// The script host process of this generation ended.
+    /// The script host of this generation ended.
     ScriptExited(u32),
 }
 
