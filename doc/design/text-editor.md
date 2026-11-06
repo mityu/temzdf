@@ -6,7 +6,7 @@ Neovim, Zed, Vim's undo, swap files and regular expressions, Tree-sitter) is
 in `doc/survey/text-editor.md`. Decisions marked **(user)** were the user's
 own call or correction; the others were proposals the user accepted. The
 script host's round trips are measured ("Script host round trips"
-below); the next step is the design.
+below); how it is built is in "Implementation" at the end.
 
 ## 1. What it is
 
@@ -384,7 +384,37 @@ wasmtime, precompiled at build time (`doc/design/scripting.md`); through
 the server's runner and its thread a command costs about 10 µs
 (`doc/survey/script-host-transport.md`, "In the server").
 
-## 18. Deferred and open
+## 18. Implementation
+
+Decided with the user on 2026-11-07, before building:
+
+- **The crate is `crates/temzdf-texteditor`** **(user named it)**: a
+  library with no terminal code, depending on `temzdf-scene` only
+  (`temzdf-scene <- temzdf-texteditor <- temzdf-server`). It holds the
+  text (`ropey`, LF inside), positions, edits, decorations and marks, the
+  undo tree, motions, layout (wrapping, display rows, widths) and drawing
+  into `temzdf-scene` text cells, search, and reading and writing files.
+  Widths follow the GUI's rule (per grapheme with `unicode-width`, 1 or 2).
+- The server side is `crates/temzdf-server/src/session/text.rs`: a buffer
+  store beside the PDF, terminal and input ones, and a pane kind whose
+  name (and default base mode) is `edit`.
+- **Scripts reach the primitives under `text.*`** **(user)**:
+  `cmd.text.edit([...])`, `cmd.text.move("word", 1)`,
+  `action.text.move(...)`, as `input.*` today. The existing `edit(path)`
+  (open a PDF in the focused pane, Vim's `:edit`) stays. The names in the
+  sections above (`edit`, `move`, `positionOf`, ...) are these.
+- **A position is `{ line, character }`** **(user)**, LSP's names: zero
+  based, `character` in UTF-16 code units (section 3); a range is
+  `{ start, end }`.
+- A primitive acts on the focused pane (and its buffer) unless given a
+  pane or buffer.
+- Order of work: the crate's core (positions, edits, marks, undo,
+  motions), then layout and drawing, then the pane in the server with
+  files, `fallback`, `basemode` and the mode-less defaults (where the user
+  tries it), then the events and hooks of sections 9 and 10, then search
+  and the smaller primitives.
+
+## 19. Deferred and open
 
 - `readKey`/`input()` and asynchronous mappings; reading the clipboard;
   function values in variables.
