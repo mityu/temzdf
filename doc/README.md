@@ -33,6 +33,9 @@ the way, with the reasons.
 - [design/tui-panes.md](design/tui-panes.md): script-made TUI panes, a
   draft (nothing built): styled text, a minimal layout, keyed updates,
   which libraries were looked at.
+- [design/dot-repeat.md](design/dot-repeat.md): Vim's `.` for the future
+  text editor, a draft (nothing built): recorded as actions, units,
+  `repeat.set`, nesting.
 - [design/gui-client.md](design/gui-client.md): the native GUI client
   (`temzdf-gui`): the design, the decisions and how it was built.
 - [design/reload.md](design/reload.md): auto-reload (learned from Skim and
