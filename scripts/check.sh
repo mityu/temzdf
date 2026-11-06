@@ -5,10 +5,15 @@
 # `cargo miri` is available, with terse output. Re-executes itself inside the
 # Nix dev shell when needed, so it works from any shell.
 #
-# Usage: scripts/check.sh [--fix] [--no-miri] [--verbose] [cargo test args...]
+# Usage: scripts/check.sh [--fix] [--no-miri] [--all] [--verbose] [cargo test args...]
 #   --fix      run `cargo fmt` instead of only checking formatting
 #   --no-miri  skip Miri (about a minute and a half)
+#   --all      run the tests even when only documents changed (see below)
 #   --verbose  print a failed step's whole output, not its main lines (CI)
+#
+# When every uncommitted change (staged, unstaged or untracked) is Markdown
+# under doc/, the tests and Miri are skipped: such changes cannot affect
+# them. A clean tree (CI), --all or cargo test arguments run them.
 #
 # The whole output of clippy and the tests goes to target/check/ (Miri's to
 # target/miri-logs/; a failed simulated-terminal wait leaves its screen in
@@ -27,16 +32,27 @@ if [[ -z "${IN_NIX_SHELL:-}" ]]; then
   NIX_CONFIG="warn-dirty = false${NIX_CONFIG:+$'\n'$NIX_CONFIG}" exec nix develop --quiet -c "$self" "$@"
 fi
 
-fix=0 miri=1 verbose=0
+fix=0 miri=1 all=0 verbose=0
 while [[ $# -gt 0 ]]; do
   case $1 in
     --fix) fix=1 ;;
     --no-miri) miri=0 ;;
+    --all) all=1 ;;
     --verbose) verbose=1 ;;
     *) break ;;
   esac
   shift
 done
+
+# Paths changed since the last commit; tests are skipped when all of them
+# are Markdown under doc/ (and there is at least one).
+tests=1
+if ((!all)) && [[ $# -eq 0 ]]; then
+  changed=$(git diff --name-only --no-renames HEAD && git ls-files --others --exclude-standard)
+  if [[ -n $changed ]] && ! grep -qvE '^doc/.+\.md$' <<<"$changed"; then
+    tests=0 miri=0
+  fi
+fi
 
 status=0
 if ((fix)); then
@@ -70,15 +86,19 @@ if ! cargo clippy --workspace --all-targets --color never -- -D warnings >target
   status=1
 fi
 
-if ! cargo test --workspace --color never "$@" >target/check/test.log 2>&1; then
-  failed tests target/check/test.log "^error|-->|FAILED|panicked|left:|right:" 60
-  status=1
+if ((tests)); then
+  if ! cargo test --workspace --color never "$@" >target/check/test.log 2>&1; then
+    failed tests target/check/test.log "^error|-->|FAILED|panicked|left:|right:" 60
+    status=1
+  fi
+  passed=$(grep -oE "[0-9]+ passed" target/check/test.log | awk '{s+=$1} END {print s+0}')
+  summary="tests ($passed passed)"
+else
+  summary="tests skipped (only Markdown under doc/ changed; --all runs them)"
 fi
-out=$(cat target/check/test.log)
-passed=$(grep -oE "[0-9]+ passed" <<<"$out" | awk '{s+=$1} END {print s+0}')
 
 if ((status == 0)); then
-  echo "OK fmt, shellcheck, docs, clippy, tests ($passed passed)"
+  echo "OK fmt, shellcheck, docs, clippy, $summary"
 fi
 
 if ((miri)); then
