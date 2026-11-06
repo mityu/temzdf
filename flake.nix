@@ -58,6 +58,27 @@
           # rendering in tests, and the tools its end-to-end tests drive:
           # an Xfce window manager on Xvfb, headless sway with grim and wtype
           # (Wayland), fcitx5 with Mozc (Japanese input, IME tests).
+          # The script host runs as a WebAssembly guest (crates/temzdf-script-guest,
+          # built and precompiled by crates/temzdf-script-runner/build.rs): the
+          # toolchains carry the wasm32-wasip1 standard library, and QuickJS's C
+          # code (rquickjs-sys) is compiled with nixpkgs' WASI clang. That clang
+          # is only named in these variables, never put on PATH: there it would
+          # replace the native cc.
+          wasmTargets = [ "wasm32-wasip1" ];
+          wasiCc = pkgs.pkgsCross.wasi32.stdenv.cc;
+          wasmEnv = {
+            CC_wasm32_wasip1 = "${wasiCc}/bin/${wasiCc.targetPrefix}cc";
+            AR_wasm32_wasip1 = "${wasiCc.bintools}/bin/${wasiCc.targetPrefix}ar";
+            # rquickjs-sys would otherwise download the WASI SDK.
+            RQUICKJS_SYS_NO_WASI_SDK = "1";
+          };
+          stableToolchain = pkgs.rust-bin.stable.latest.minimal.override {
+            targets = wasmTargets;
+            extensions = [
+              "clippy"
+              "rustfmt"
+            ];
+          };
           guiLibs = with pkgs; [
             vulkan-loader
             libxkbcommon
@@ -123,18 +144,12 @@
                                   "rustfmt"
                                 ]
                                 ++ lib.optionals (!forCi) [ "rust-analyzer" ];
+                                targets = wasmTargets;
                               }
                             ))
                           ]
                         else
-                          with pkgs;
-                          [
-                            cargo
-                            rustc
-                            clippy
-                            rustfmt
-                          ]
-                          ++ lib.optionals (!forCi) [ rust-analyzer ]
+                          [ stableToolchain ] ++ lib.optionals (!forCi) [ pkgs.rust-analyzer ]
                       )
                       ++ lib.optionals withTeX [
                         (pkgs.texliveBasic.withPackages (
@@ -202,6 +217,7 @@
                     # Fonts temzdf-gui embeds (see bundledFontsFor).
                     TEMZDF_BUNDLED_FONTS = bundleFontPath;
                   }
+                  // wasmEnv
                   // lib.optionalAttrs enableFixedFontSet {
                     # `nix develop .#ci`: what scripts/check.sh needs on a bare machine
                     # (.github/workflows/ci.yml): the toolchain, TeX for the fixtures, and
@@ -255,7 +271,11 @@
                   withGui ? false,
                   enableCheck ? false,
                 }:
-                pkgs.rustPlatform.buildRustPackage {
+                (pkgs.makeRustPlatform {
+                  cargo = stableToolchain;
+                  rustc = stableToolchain;
+                }).buildRustPackage
+                {
                   pname = "temzdf";
                   version = (lib.importTOML ./Cargo.toml).workspace.package.version;
                   src = lib.fileset.toSource {
@@ -301,9 +321,11 @@
                   };
                   # Environment variables of the build (plain attributes are
                   # not exported).
-                  env = lib.optionalAttrs withGui {
-                    TEMZDF_BUNDLED_FONTS = bundleFontPath;
-                  };
+                  env =
+                    wasmEnv
+                    // lib.optionalAttrs withGui {
+                      TEMZDF_BUNDLED_FONTS = bundleFontPath;
+                    };
                 };
             in
             {
