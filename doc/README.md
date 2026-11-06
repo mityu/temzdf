@@ -30,6 +30,9 @@ the way, with the reasons.
   conditions on mappings (`when`), namespaces, transient modes (submodes).
 - [design/floating-panes.md](design/floating-panes.md): floating panes,
   and bars on panes and the window.
+- [design/tui-panes.md](design/tui-panes.md): script-made TUI panes, a
+  draft (nothing built): styled text, a minimal layout, keyed updates,
+  which libraries were looked at.
 - [design/gui-client.md](design/gui-client.md): the native GUI client
   (`temzdf-gui`): the design, the decisions and how it was built.
 - [design/reload.md](design/reload.md): auto-reload (learned from Skim and
