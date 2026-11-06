@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-temzdf-protocol.workspace = true
+temzdf-protocol = { workspace = true, features = ["session"] }
 temzdf-scene.workspace = true
 
 [lints]

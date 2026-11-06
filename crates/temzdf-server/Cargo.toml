@@ -10,7 +10,7 @@ repository.workspace = true
 anyhow.workspace = true
 temzdf-pdfcore.workspace = true
 temzdf-pdfview.workspace = true
-temzdf-protocol.workspace = true
+temzdf-protocol = { workspace = true, features = ["session"] }
 serde = "1.0.229"
 temzdf-scene.workspace = true
 temzdf-term.workspace = true

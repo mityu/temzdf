@@ -1,10 +1,10 @@
 //! The host's event loop and the native half of the API (`__host`, used by
 //! `prelude.js`).
 //!
-//! One thread runs JavaScript; a second one only reads messages from the
-//! session, so an interrupt can be noticed while JavaScript runs (rquickjs'
-//! interrupt handler checks the flag it sets, and the interpreter then throws
-//! an uncatchable error).
+//! JavaScript runs on one thread; the [`Link`] counts the session's
+//! interrupts as they are sent, so one can be noticed while JavaScript runs
+//! (rquickjs' interrupt handler checks the count, and the interpreter then
+//! throws an uncatchable error).
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -12,8 +12,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
@@ -22,6 +21,8 @@ use rquickjs::{Context, Ctx, Exception, Function, Module, Persistent, Runtime, V
 use temzdf_protocol::script::{
     CommandSpec, FromHost, FuncId, HostOp, Keepalive, MapRhs, ScriptError, ScriptValue, TaskId, ToHost, Token,
 };
+
+use crate::link::{Link, Received, StreamLink};
 
 const PRELUDE: &str = include_str!("prelude.js");
 /// The shipped default configuration, loaded before the user's.
@@ -38,7 +39,8 @@ const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
 /// interrupt) may run before it is interrupted.
 pub const UNATTENDED_LIMIT: Duration = Duration::from_secs(10);
 
-/// Run the host until the session goes away or says [`ToHost::Shutdown`].
+/// Run the host over a byte stream ([`StreamLink`]) until the session goes
+/// away or says [`ToHost::Shutdown`].
 pub fn run(input: impl Read + Send + 'static, output: impl Write + 'static) -> Result<(), String> {
     run_with_limit(input, output, UNATTENDED_LIMIT)
 }
@@ -50,38 +52,19 @@ pub fn run_with_limit(
     output: impl Write + 'static,
     limit: Duration,
 ) -> Result<(), String> {
-    let interrupt = Arc::new(AtomicBool::new(false));
-    let interrupts_sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let (tx, rx) = mpsc::channel();
-    {
-        let interrupt = interrupt.clone();
-        let interrupts_sent = interrupts_sent.clone();
-        let mut input = std::io::BufReader::new(input);
-        std::thread::Builder::new()
-            .name("script-host-in".into())
-            .spawn(move || {
-                loop {
-                    let msg = match temzdf_protocol::recv::<ToHost>(&mut input) {
-                        Ok(Some(m)) => m,
-                        _ => ToHost::Shutdown,
-                    };
-                    if msg == ToHost::Interrupt {
-                        interrupts_sent.fetch_add(1, Ordering::SeqCst);
-                        interrupt.store(true, Ordering::SeqCst);
-                    }
-                    let last = msg == ToHost::Shutdown;
-                    if tx.send(msg).is_err() || last {
-                        return;
-                    }
-                }
-            })
-            .map_err(|e| e.to_string())?;
-    }
+    let link = StreamLink::new(input, output).map_err(|e| e.to_string())?;
+    run_link(Box::new(link), limit)
+}
+
+/// Run the host over `link` until the session goes away or says
+/// [`ToHost::Shutdown`], with `limit` as the [`UNATTENDED_LIMIT`].
+pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
+    let interrupt = Interrupts { sent: link.interrupts().into(), cleared: Arc::default() };
     let rt = Runtime::new().map_err(|e| e.to_string())?;
     let unattended = Unattended::new(limit);
     {
         let (interrupt, unattended) = (interrupt.clone(), unattended.clone());
-        rt.set_interrupt_handler(Some(Box::new(move || interrupt.load(Ordering::SeqCst) || unattended.overdue())));
+        rt.set_interrupt_handler(Some(Box::new(move || interrupt.raised() || unattended.overdue())));
     }
     // A promise rejected with nobody to handle it (a timer's async code, a
     // top-level `Promise.reject`) would fail silently: say so in the log.
@@ -108,14 +91,12 @@ pub fn run_with_limit(
     rt.set_loader(Resolve, Load);
     let context = Context::full(&rt).map_err(|e| e.to_string())?;
     let st = Rc::new(State {
-        out: RefCell::new(Box::new(output)),
-        rx,
+        link: RefCell::new(link),
         interrupt,
         next_req: Cell::new(1),
         next_task: Cell::new(1),
         next_timer: Cell::new(1),
         unattended,
-        interrupts_sent,
         interrupts_read: Cell::new(0),
         interrupts_used: Cell::new(0),
         funcs: RefCell::new(Vec::new()),
@@ -134,7 +115,7 @@ pub fn run_with_limit(
         while context.with(|ctx| st.unattended(|| ctx.execute_pending_job())) {}
         let next = st.timers.borrow().keys().next().map(|(at, _)| *at);
         let timeout = next.map_or(Duration::from_secs(3600), |at| at.saturating_duration_since(Instant::now()));
-        match st.rx.recv_timeout(timeout) {
+        match st.recv(Some(timeout)) {
             Ok(ToHost::Load { config, commands }) => {
                 *st.commands.borrow_mut() = commands;
                 let result = context.with(|ctx| load_config(&ctx, &st, config.as_deref()));
@@ -145,11 +126,11 @@ pub fn run_with_limit(
             // Nothing runs: an interrupt or a late answer has nothing to stop.
             Ok(ToHost::Interrupt) => {
                 st.take_interrupt_message();
-                st.interrupt.store(false, Ordering::SeqCst);
+                st.interrupt.clear();
             }
             Ok(ToHost::Reply { .. }) => {}
-            Ok(ToHost::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
-            Err(RecvTimeoutError::Timeout) => {}
+            Ok(ToHost::Shutdown) | Err(true) => break,
+            Err(false) => {}
         }
         context.with(|ctx| fire_timers(&ctx, &st));
     }
@@ -159,21 +140,43 @@ pub fn run_with_limit(
     Ok(())
 }
 
+/// The interrupt flag: raised while the session has sent interrupts since
+/// it was last cleared (counted by the [`Link`] as they are sent).
+#[derive(Clone)]
+struct Interrupts {
+    sent: Arc<dyn Fn() -> u64>,
+    cleared: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl Interrupts {
+    fn raised(&self) -> bool {
+        (self.sent)() > self.cleared.load(Ordering::SeqCst)
+    }
+
+    fn clear(&self) {
+        self.cleared.store((self.sent)(), Ordering::SeqCst);
+    }
+
+    /// Clear it: whether it was raised, and the interrupts sent until now.
+    fn take(&self) -> (bool, u64) {
+        let sent = (self.sent)();
+        (self.cleared.swap(sent, Ordering::SeqCst) < sent, sent)
+    }
+}
+
 struct State {
-    out: RefCell<Box<dyn Write>>,
-    rx: Receiver<ToHost>,
-    interrupt: Arc<AtomicBool>,
+    link: RefCell<Box<dyn Link>>,
+    interrupt: Interrupts,
     next_req: Cell<u64>,
     next_task: Cell<TaskId>,
     next_timer: Cell<u64>,
     unattended: Unattended,
-    /// Interrupts by number: those the reader thread passed on (setting the
-    /// flag), those whose message was read here, and the last one used up
+    /// Interrupts by number: those sent (`interrupt`, raising the flag),
+    /// those whose message was read here, and the last one used up
     /// (by the flag stopping code nobody waited for, or by its message
     /// ending a wait). A message read later for an interrupt used up already
     /// must not interrupt the call that runs next; one whose message ended a
     /// wait must not count again when its flag is found.
-    interrupts_sent: Arc<std::sync::atomic::AtomicU64>,
     interrupts_read: Cell<u64>,
     interrupts_used: Cell<u64>,
     funcs: RefCell<Vec<Persistent<Function<'static>>>>,
@@ -194,8 +197,19 @@ struct State {
 
 impl State {
     fn send(&self, msg: &FromHost) {
-        if temzdf_protocol::send(&mut *self.out.borrow_mut(), msg).is_err() {
+        if self.link.borrow_mut().send(msg).is_err() {
             self.gone.set(true);
+        }
+    }
+
+    /// The next message; `Err(true)` when the session went away,
+    /// `Err(false)` when nothing came in time. (A function, not a borrow
+    /// kept over the caller's `match`: handling a message sends.)
+    fn recv(&self, timeout: Option<Duration>) -> Result<ToHost, bool> {
+        match self.link.borrow_mut().recv(timeout) {
+            Received::Msg(m) => Ok(m),
+            Received::Timeout => Err(false),
+            Received::Closed => Err(true),
         }
     }
 }
@@ -415,7 +429,7 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
             if st.gone.get() {
                 return throw("the session is gone");
             }
-            match st.rx.recv() {
+            match st.recv(None) {
                 Ok(ToHost::Reply { req: r, result }) if r == req => {
                     return match result {
                         Ok(v) => Ok(serde_json::to_string(&from_script(&v)).unwrap_or_else(|_| "null".into())),
@@ -458,7 +472,7 @@ fn run_call_now(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, func: FuncId, args: Vec<
     };
     st.tokens.borrow_mut().pop();
     if st.tokens.borrow().is_empty() {
-        st.interrupt.store(false, Ordering::SeqCst);
+        st.interrupt.clear();
     }
     st.send(&FromHost::Done { id, result });
 }
@@ -482,7 +496,7 @@ fn run_eval_now(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, funcs: &[FuncId], args: 
     }
     st.tokens.borrow_mut().pop();
     if st.tokens.borrow().is_empty() {
-        st.interrupt.store(false, Ordering::SeqCst);
+        st.interrupt.clear();
     }
     st.send(&FromHost::Values { id, results });
 }
@@ -552,8 +566,9 @@ impl State {
         u.deadline.store(deadline.max(1), Ordering::SeqCst);
         let r = f();
         u.deadline.store(0, Ordering::SeqCst);
-        if self.tokens.borrow().is_empty() && self.interrupt.swap(false, Ordering::SeqCst) {
-            let sent = self.interrupts_sent.load(Ordering::SeqCst);
+        if self.tokens.borrow().is_empty()
+            && let (true, sent) = self.interrupt.take()
+        {
             self.interrupts_used.set(self.interrupts_used.get().max(sent));
         }
         self.close_cut_off();
@@ -607,7 +622,7 @@ fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: Option<&Path>) -> Result<(),
         evaluate(ctx, &path.display().to_string(), source)
     })();
     st.tokens.borrow_mut().pop();
-    st.interrupt.store(false, Ordering::SeqCst);
+    st.interrupt.clear();
     let held = st.held_rejections.lock().unwrap_or_else(|p| p.into_inner()).take().unwrap_or_default();
     for text in rejections_to_log(held, &result) {
         log_rejection(&text);
