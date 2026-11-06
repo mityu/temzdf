@@ -73,7 +73,7 @@ off-screen parts are handled by cropping.
 ### termpix-ui
 
 Widgets drawn with `vello_cpu` into RGBA layers, text by `parley`/`fontique`,
-layout by `taffy`. Text, virtualised list (outline, search results), one-line
+layout by hand (no layout engine). Text, virtualised list (outline, search results), one-line
 input, status bar, popup, scrollbar. Each widget is its own layer so only changed
 widgets are re-uploaded. IME: the terminal draws the preedit at the cursor, so the
 input widget moves the terminal cursor to its caret; we only receive committed text.
