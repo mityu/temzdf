@@ -131,6 +131,11 @@ const SESSION: &[(&str, &str, &str)] = &[
         "(keys: string, remap?: boolean): void",
         "Keys as if typed, after the running mapping; remap false skips mappings",
     ),
+    (
+        "invoke",
+        "(target: InvokeTarget, opts?: { count?: number }): void",
+        "Run an invocation's target again (as InvokePre and InvokePost give it), as part of what runs now",
+    ),
     ("switch-mode", "(mode: string): void", "Enter a mode (pushed on the mode history)"),
     ("exit-mode", "(): void", "Back to the previous mode"),
     ("current-mode", "(): string", "The current mode's name"),
@@ -659,8 +664,45 @@ impl Session {
             "feedkeys" => {
                 let keys = notation::parse(&text(0).unwrap_or_default()).map_err(|e| format!("feedkeys: {e:#}"))?;
                 let remap = !matches!(args.get(1), Some(ScriptValue::Bool(false)));
+                if self.script.hooks_on("KeyTyped") {
+                    for k in &keys {
+                        self.key_typed(k.notation(), None, "feedkeys");
+                    }
+                }
                 self.matcher.feed_front(&keys, remap);
                 ok(Outcome::None)
+            }
+            // An invocation's target again (as InvokePre/InvokePost give it),
+            // as part of what runs now.
+            "invoke" => {
+                let count = args.get(1).and_then(|o| o.get("count")).and_then(ScriptValue::as_num).map(|c| c as usize);
+                let what = match args.first() {
+                    Some(ScriptValue::Num(f)) => {
+                        super::Invoked::Target { target: crate::keymap::Target::Func(*f as u32), count }
+                    }
+                    Some(ScriptValue::List(acts)) => {
+                        let acts = acts
+                            .iter()
+                            .map(|a| {
+                                let name = a
+                                    .get("name")
+                                    .and_then(ScriptValue::as_str)
+                                    .ok_or("invoke: an action needs a name")?;
+                                let args = match a.get("args") {
+                                    Some(ScriptValue::List(l)) => l.clone(),
+                                    _ => Vec::new(),
+                                };
+                                Ok(crate::keymap::Act::new(name, args))
+                            })
+                            .collect::<Result<Vec<_>, String>>()?;
+                        super::Invoked::Target { target: crate::keymap::Target::Actions(acts), count }
+                    }
+                    Some(v) if let Some(t) = v.get("textInput").and_then(ScriptValue::as_str) => {
+                        super::Invoked::Text(t.to_owned())
+                    }
+                    _ => return Err("invoke: a target as InvokePre gives it".into()),
+                };
+                ok(self.run_invoked(what))
             }
             "switch-mode" => {
                 let mode = text(0).ok_or("switchMode: which mode?")?;
@@ -961,8 +1003,15 @@ impl Session {
         let Some((name, rest)) = words.split_first() else { anyhow::bail!("which action?") };
         let args: Vec<ScriptValue> = rest.iter().map(|w| ScriptValue::Str(w.clone())).collect();
         self.map_depth = 0;
-        let (_, out) = self.run_command(name, &args, None, Instant::now()).map_err(anyhow::Error::msg)?;
-        Ok(out.merge(self.flush_events()))
+        let out = self.invoke(super::Invoked::Cli { name: name.clone(), args }, "cli", String::new());
+        let out = out.merge(self.flush_events());
+        // Done already and it failed: say so now (else the answer waits).
+        if !self.holds_input()
+            && let Some(Some(_)) = &self.cli_cancel
+        {
+            anyhow::bail!(self.take_cli_answer().unwrap_err());
+        }
+        Ok(out)
     }
 }
 

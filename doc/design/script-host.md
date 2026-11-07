@@ -134,7 +134,36 @@ declarations. In short, `import { ... } from "temzdf"`:
   `InputChanged(id, text)` (an input buffer's text changed: typed, pasted,
   edited, set; not when only its caret moved), `BufferDeletePre(id)`
   (before `deleteBuffer`), `SessionEndPre()` (before `kill-session` and
-  before closing the last pane).
+  before closing the last pane), `InvokePre(info)` and `InvokePost(info)`
+  (around each invocation), `TextChanged(buffer, change)`,
+  `KeyTyped(key)`.
+- **Invocations** (doc/design/text-editor.md section 9): a key sequence
+  that runs a mapping, text typed into a text or input pane (keys no
+  mapping took, input methods, pastes), a mode's fallback function, a
+  `temzdf action` request. `InvokePre` hooks hear it first (and may
+  cancel it, as "before" hooks); `InvokePost` comes at the safe point
+  after it and its hooks, with the cursor and selection. Their `info`:
+  `seq`, `target` (actions as `{ name, args }`, a function's id, or `{
+  textInput }`), `keys`, `count`, `mode`, `pane`, `source` (`"key"`,
+  `"cli"`). `invoke(target, { count })` runs a target again, as part of
+  what runs now (no events of its own). Commands from hooks, timers and
+  tasks are no invocation.
+- **`TextChanged(buffer, { changes, version, cause, invocation })`**: once
+  per editing primitive, undo or redo; `changes` in positions before them
+  (`{ range, rangeLength, text }`, LSP's form), `cause` `"typing"`,
+  `"script"`, `"undo"`, `"redo"`; heard before the editing command
+  returns (the host serves the hooks while it waits).
+- **`KeyTyped({ keys, text, source })`**: a key arrived (`"typed"`, or
+  `"feedkeys"` when fed), before it is matched: the key waits for these
+  hooks. Observe only.
+- **Hooks only read** (doc/design/text-editor.md section 10): a hook's
+  commands may read (queries, options, mappings), show a `message`,
+  subscribe (`on`) and `schedule(fn)`; anything else fails ("change
+  things in schedule(fn)"). `schedule(fn)` runs `fn` at the **safe
+  point**: after the current invocation and its hooks, before the next
+  key, in the order scheduled (named so, not `defer`, by the user: Go's
+  `defer` runs last-in first-out). `InvokePost` and `SessionReady` hooks
+  and scheduled functions may act themselves.
 - **"Before" hooks may cancel** (`PaneClosePre`, `BufferDeletePre`,
   `SessionEndPre`; doc/design/text-editor.md section 13): one returning
   `{ cancel: true, reason }` stops the operation, and the reason goes to

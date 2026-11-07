@@ -424,6 +424,10 @@ pub struct Session {
     cli_cancel: Option<Option<String>>,
     /// The session ends because it was killed (`kill-session`).
     killed: bool,
+    /// Invocations (doc/design/text-editor.md section 9): the last one's
+    /// number, and the one under way (its edits name it in `TextChanged`).
+    inv_seq: u64,
+    pub(super) current_invocation: Option<u64>,
     /// Counts invocations (keys, text, pastes, CLI requests): a text
     /// buffer's undo step ends when a new one edits it.
     invocation: u64,
@@ -500,6 +504,8 @@ impl Session {
             invocation: 0,
             cli_cancel: None,
             killed: false,
+            inv_seq: 0,
+            current_invocation: None,
             shell: None,
             panes: HashMap::new(),
             layout: None,
@@ -1353,9 +1359,25 @@ impl Session {
         if self.hold_key(k) {
             return dismissed;
         }
+        // KeyTyped hooks hear it before it is matched: while they run, it
+        // waits (first in line).
+        if self.script.hooks_on("KeyTyped") {
+            let typed = self.typed_text(k);
+            self.key_typed(Stroke::of(k).notation(), typed, "typed");
+            let heard = self.flush_events();
+            if self.script.busy() {
+                self.script.hold_announced(k.clone());
+                return dismissed.merge(heard);
+            }
+        }
+        dismissed.merge(self.key_announced(k, now))
+    }
+
+    /// A key whose KeyTyped hooks ran: matched and handled.
+    pub(super) fn key_announced(&mut self, k: &KeyEvent, now: Instant) -> Outcome {
         self.last_key = now;
         let out = self.key_inner(k, now);
-        dismissed.merge(out).merge(self.flush_events())
+        out.merge(self.flush_events())
     }
 
     fn key_inner(&mut self, k: &KeyEvent, now: Instant) -> Outcome {
@@ -1461,7 +1483,7 @@ impl Session {
                     self.mode_changed(&old);
                     out = out.merge(Outcome::Redraw);
                 }
-                Step::Run { target, count, .. } => {
+                Step::Run { target, count, keys } => {
                     // Mappings that feed keys mapping to themselves (`a` to
                     // `a`, or to `aa`) would run forever, as in Vim.
                     self.map_depth += 1;
@@ -1471,13 +1493,21 @@ impl Session {
                         out = out.merge(Outcome::Redraw);
                         break;
                     }
-                    out = out.merge(self.run_target(target, count, now));
+                    let keys = keys.iter().map(|k| k.notation()).collect();
+                    out = out.merge(self.invoke(Invoked::Target { target, count }, "key", keys));
                 }
                 Step::Unmapped(stroke, ev) => {
                     let ev = ev.unwrap_or_else(|| stroke.event());
                     match self.fallback() {
                         Fallback::Drop => {}
-                        Fallback::Passthrough => out = out.merge(self.send_to_pane(&ev)),
+                        // Typing into a text or input pane is an
+                        // invocation; a key for a terminal's program is not.
+                        Fallback::Passthrough => match self.typed_text(&ev) {
+                            Some(t) if self.focused_takes_text() => {
+                                out = out.merge(self.invoke(Invoked::Text(t), "key", stroke.notation()));
+                            }
+                            _ => out = out.merge(self.send_to_pane(&ev)),
+                        },
                         Fallback::Func(func) => {
                             let text = ev.text.clone().or_else(|| match ev.code {
                                 KeyCode::Char(c) => Some(c.to_string()),
@@ -1487,14 +1517,113 @@ impl Session {
                                 ("keys", ScriptValue::Str(stroke.notation())),
                                 ("text", text.map_or(ScriptValue::Null, ScriptValue::Str)),
                             ]);
-                            let ctx = self.key_context(None);
-                            self.call(func, vec![ctx, key], false);
+                            out = out.merge(self.invoke(Invoked::Fallback { func, key }, "key", stroke.notation()));
                         }
                     }
                 }
             }
         }
         out
+    }
+
+    /// Start an invocation (a mapping, typed text, a fallback function, a
+    /// CLI request): `InvokePre` hooks first (they may cancel it), then it
+    /// runs; `InvokePost` comes at the safe point after it and its hooks.
+    pub(super) fn invoke(&mut self, what: Invoked, source: &str, keys: String) -> Outcome {
+        self.inv_seq += 1;
+        let count = match &what {
+            Invoked::Target { count: Some(c), .. } => ScriptValue::Num(*c as f64),
+            _ => ScriptValue::Null,
+        };
+        let info = ScriptValue::map([
+            ("seq", ScriptValue::Num(self.inv_seq as f64)),
+            ("target", what.value()),
+            ("keys", ScriptValue::Str(keys)),
+            ("count", count),
+            ("mode", ScriptValue::Str(self.history.current().to_owned())),
+            ("pane", ScriptValue::Num(self.focus as f64)),
+            ("source", ScriptValue::Str(source.to_owned())),
+        ]);
+        self.current_invocation = Some(self.inv_seq);
+        if self.script.hooks_on("InvokePost") {
+            self.script.pending_post = Some(info.clone());
+        }
+        self.request_op(vec![("InvokePre".to_owned(), vec![info])], script::Deferred::Run(Box::new(what)))
+    }
+
+    /// Run what an invocation invokes (also `invoke`, again).
+    pub(super) fn run_invoked(&mut self, what: Invoked) -> Outcome {
+        match what {
+            Invoked::Target { target, count } => self.run_target(target, count, Instant::now()),
+            Invoked::Text(t) => self.text_type(&t).or_else(|_| self.input_insert(&t)).unwrap_or(Outcome::None),
+            Invoked::Fallback { func, key } => {
+                let ctx = self.key_context(None);
+                self.call(func, vec![ctx, key], false);
+                Outcome::None
+            }
+            Invoked::Cli { name, args } => match self.run_command(&name, &args, None, Instant::now()) {
+                Ok((_, o)) => o,
+                Err(e) => {
+                    match &mut self.cli_cancel {
+                        Some(slot) => {
+                            slot.get_or_insert(e);
+                        }
+                        None => self.message(&e),
+                    }
+                    Outcome::Redraw
+                }
+            },
+        }
+    }
+
+    /// `KeyTyped({ keys, text, source })`: a key arrived (typed, or fed by
+    /// `feedkeys`), before it is matched.
+    pub(super) fn key_typed(&mut self, keys: String, text: Option<String>, source: &str) {
+        let info = ScriptValue::map([
+            ("keys", ScriptValue::Str(keys)),
+            ("text", text.map_or(ScriptValue::Null, ScriptValue::Str)),
+            ("source", ScriptValue::Str(source.into())),
+        ]);
+        self.event("KeyTyped", vec![info]);
+    }
+
+    /// The text a key types (no modifier but Shift), if any.
+    fn typed_text(&self, k: &KeyEvent) -> Option<String> {
+        let typed = k.text.clone().or_else(|| match k.code {
+            KeyCode::Char(c) => Some(c.to_string()),
+            _ => None,
+        });
+        let held = [Modifiers::ALT, Modifiers::CTRL, Modifiers::SUPER, Modifiers::HYPER, Modifiers::META];
+        let plain = !held.iter().any(|m| k.modifiers.contains(*m));
+        typed.filter(|t| plain && !t.chars().any(char::is_control))
+    }
+
+    /// The focused pane takes typed text (a text or input pane).
+    fn focused_takes_text(&self) -> bool {
+        matches!(self.panes.get(&self.focus).map(|e| &e.kind), Some(Kind::Text { .. } | Kind::Input { .. }))
+    }
+
+    /// An `InvokePost` argument with the cursor and selection after it (the
+    /// focused text pane's; null elsewhere).
+    pub(super) fn with_cursor(&self, info: ScriptValue) -> ScriptValue {
+        let ScriptValue::Map(mut fields) = info else { return info };
+        let (cursor, selection) = match self.panes.get(&self.focus).map(|e| &e.kind) {
+            Some(Kind::Text { buf, view }) if let Some(t) = self.texts.get(buf) => {
+                let text = t.buf.text();
+                let c = view.view.cursor;
+                let sel = c.selection().map_or(ScriptValue::Null, |(a, b, _)| {
+                    ScriptValue::map([
+                        ("start", text::position_value(text.position(a))),
+                        ("end", text::position_value(text.position(b))),
+                    ])
+                });
+                (text::position_value(text.position(c.pos)), sel)
+            }
+            _ => (ScriptValue::Null, ScriptValue::Null),
+        };
+        fields.push(("cursor".into(), cursor));
+        fields.push(("selection".into(), selection));
+        ScriptValue::Map(fields)
     }
 
     /// What a mapping runs: commands right here, or a script function.
@@ -1738,10 +1867,8 @@ impl Session {
             && let Some(t) = self.focused_term()
         {
             Outcome::None.or(t.send_text(text))
-        } else if self.fallback() == Fallback::Passthrough
-            && let Ok(out) = self.text_type(text).or_else(|_| self.input_insert(text))
-        {
-            out
+        } else if self.fallback() == Fallback::Passthrough && self.focused_takes_text() {
+            self.invoke(Invoked::Text(text.to_owned()), "key", String::new())
         } else {
             let mut out = Outcome::None;
             for c in text.chars() {
@@ -1776,8 +1903,12 @@ impl Session {
         if let Some(t) = self.focused_term() {
             return Outcome::None.or(t.paste(text));
         }
-        // A text or input pane takes it; elsewhere it goes nowhere.
-        self.text_type(text).or_else(|_| self.input_insert(text)).unwrap_or(Outcome::None)
+        // A text or input pane takes it (an invocation); elsewhere it goes
+        // nowhere.
+        if self.focused_takes_text() {
+            return self.invoke(Invoked::Text(text.to_owned()), "key", String::new());
+        }
+        Outcome::None
     }
 
     /// Run an action. Errors (a file that cannot be opened, no room for a
@@ -2340,6 +2471,40 @@ impl Session {
 /// (operating), `terminal` (pass-through), `pdf`, `input` and `edit`
 /// (pass-through: typed characters go in) and `visual` (a terminal's visual mode, entered
 /// from the others; see [`Session::mode_changed`]).
+/// What an invocation runs.
+pub(super) enum Invoked {
+    /// A mapping's right-hand side (or `invoke`'s target).
+    Target { target: Target, count: Option<usize> },
+    /// Text typed into a text or input pane (keys no mapping took, input
+    /// methods, pastes).
+    Text(String),
+    /// A mode's fallback function, given the key.
+    Fallback { func: crate::keymap::Cond, key: ScriptValue },
+    /// A `temzdf action` request.
+    Cli { name: String, args: Vec<ScriptValue> },
+}
+
+impl Invoked {
+    /// What `InvokePre`/`InvokePost` call the target: actions as
+    /// `{ name, args }` (what `invoke` takes back), a function's id, or
+    /// `{ textInput }`.
+    fn value(&self) -> ScriptValue {
+        let act = |name: &str, args: &[ScriptValue]| {
+            ScriptValue::map([("name", ScriptValue::Str(name.into())), ("args", ScriptValue::List(args.to_vec()))])
+        };
+        match self {
+            Invoked::Target { target: Target::Actions(acts), .. } => {
+                ScriptValue::List(acts.iter().map(|a| act(&a.name, &a.args)).collect())
+            }
+            Invoked::Target { target: Target::Func(f), .. } | Invoked::Fallback { func: f, .. } => {
+                ScriptValue::Num(*f as f64)
+            }
+            Invoked::Text(t) => ScriptValue::map([("textInput", ScriptValue::Str(t.clone()))]),
+            Invoked::Cli { name, args } => ScriptValue::List(vec![act(name, args)]),
+        }
+    }
+}
+
 /// A file opens as a PDF by its extension, otherwise as text.
 fn is_pdf(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"))

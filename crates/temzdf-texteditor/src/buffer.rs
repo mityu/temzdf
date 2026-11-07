@@ -4,7 +4,7 @@ use crate::cursor::Cursor;
 use crate::edit::{self, Change, TextEdit};
 use crate::marks::Marks;
 use crate::motion::WordChars;
-use crate::text::{LineEnding, Text};
+use crate::text::{LineEnding, Range, Text};
 use crate::undo::{Batch, StepKind, UndoTree};
 
 /// Why an edit was refused.
@@ -32,11 +32,35 @@ pub struct Origin {
 
 /// What an edit, undo or redo changed: batches in order (each in offsets of
 /// the text before it), for cursors elsewhere to follow; for undo and redo,
-/// where the cursor of the pane that made the step goes.
+/// where the cursor of the pane that made the step goes; and the changes
+/// as scripts hear of them (`TextChanged`).
 #[derive(Clone, Debug, Default)]
 pub struct Edited {
     pub batches: Vec<Vec<Change>>,
     pub cursor: Option<(Option<u32>, Cursor)>,
+    pub reported: Vec<Reported>,
+}
+
+/// One change as scripts see it: the range it replaced, in positions of
+/// the text before its batch, that range's length in UTF-16 units, and the
+/// text put there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reported {
+    pub range: Range,
+    pub range_length: usize,
+    pub text: String,
+}
+
+/// `changes` (a batch applied to `before`) as scripts see them.
+fn report(before: &Text, changes: &[Change]) -> Vec<Reported> {
+    changes
+        .iter()
+        .map(|c| Reported {
+            range: before.range(c.start, c.start + c.removed_chars()),
+            range_length: c.removed.encode_utf16().count(),
+            text: c.inserted.clone(),
+        })
+        .collect()
 }
 
 impl Edited {
@@ -94,16 +118,18 @@ impl Buffer {
     /// Apply a batch, recorded for undo. The cursor given in `origin`
     /// follows it (an insertion at it leaves it after).
     pub fn edit(&mut self, edits: Vec<TextEdit>, origin: Origin) -> Result<Edited, EditError> {
+        let before = self.text.clone();
         let changes = edit::apply(&mut self.text, edits).map_err(EditError::Overlap)?;
         if changes.is_empty() {
             return Ok(Edited::default());
         }
+        let reported = report(&before, &changes);
         self.version += 1;
         let marks = self.marks.follow(&changes);
         let mut after = origin.cursor;
         after.follow(&changes);
         self.undo.record(Batch { changes: changes.clone(), marks }, origin.kind, origin.cursor, after, origin.pane);
-        Ok(Edited { batches: vec![changes], cursor: None })
+        Ok(Edited { batches: vec![changes], cursor: None, reported })
     }
 
     /// Undo the current step: its cursor goes back to where it was before.
@@ -111,7 +137,9 @@ impl Buffer {
         let node = self.undo.back()?;
         let mut done = Edited::default();
         for batch in node.batches.iter().rev() {
+            let before = self.text.clone();
             let changes = edit::apply(&mut self.text, edit::inverse(&batch.changes)).expect("an undo applies");
+            done.reported.extend(report(&before, &changes));
             self.marks.follow(&changes);
             self.marks.restore(&batch.marks);
             done.batches.push(changes);
@@ -132,7 +160,9 @@ impl Buffer {
                 .iter()
                 .map(|c| TextEdit::new(c.start, c.start + c.removed_chars(), c.inserted.clone()))
                 .collect();
+            let before = self.text.clone();
             let changes = edit::apply(&mut self.text, edits).expect("a redo applies");
+            done.reported.extend(report(&before, &changes));
             let marks = self.marks.follow(&changes);
             self.undo.set_marks(i, marks);
             done.batches.push(changes);
@@ -190,6 +220,19 @@ mod tests {
         typed(&mut b, 0, "x");
         b.undo().unwrap();
         assert_eq!(b.text().to_string(), "ab");
+    }
+
+    #[test]
+    fn changes_are_reported_in_positions_before_them() {
+        let mut b = Buffer::new(Text::from("a😀b\nc"), LineEnding::Lf);
+        let o = Origin::default();
+        let e = b.edit(vec![TextEdit::new(1, 2, "xy"), TextEdit::new(4, 5, "")], o).unwrap();
+        let r = &e.reported;
+        assert_eq!((r[0].range.start.character, r[0].range.end.character, r[0].range_length), (1, 3, 2));
+        assert_eq!(r[0].text, "xy");
+        assert_eq!((r[1].range.start.line, r[1].range.start.character, r[1].range_length), (1, 0, 1));
+        let u = b.undo().unwrap();
+        assert_eq!(u.reported.len(), 2, "undo reports its changes too");
     }
 
     #[test]

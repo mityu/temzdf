@@ -7,7 +7,7 @@
 // `terminal` (pass-through, terminal panes), `pdf` (PDF panes), `input`
 // and `edit` (input and text panes: typed characters go in) and `visual` (a terminal's visual
 // mode: a cursor over the screen and scrollback, selecting and copying).
-import { action, cmd, keymap, on } from "temzdf";
+import { action, cmd, keymap, on, schedule } from "temzdf";
 import type { Rhs } from "temzdf";
 
 /** The prefix: enters the normal mode from a pane. */
@@ -95,8 +95,9 @@ each("normal", ["<Esc>"], action.exitMode());
 
 // Status lines: terminal panes go without (PDF panes show their file, page
 // and zoom there).
+// (Hooks only read: what they change waits for the safe point, schedule.)
 on("PaneOpened", (id: number, kind: string) => {
-  if (kind === "terminal") cmd.statusLine(false, id);
+  if (kind === "terminal") schedule(() => cmd.statusLine(false, id));
 });
 
 // Searching a PDF pane (/) or a terminal in the visual mode (/ and ?): an
@@ -159,10 +160,12 @@ function bufferOf(pane: number): number | undefined {
 on("InputChanged", (buf: number, text: string) => {
   const s = searches.get(buf);
   if (s === undefined) return;
-  if (s.visual) cmd.visual.searchPreview(text, s.pane, s.backward);
-  else cmd.searchPreview(text, s.pane);
+  schedule(() => {
+    if (s.visual) cmd.visual.searchPreview(text, s.pane, s.backward);
+    else cmd.searchPreview(text, s.pane);
+  });
 });
-on("BufferHidden", (buf: number) => endSearch(buf, false));
+on("BufferHidden", (buf: number) => schedule(() => endSearch(buf, false)));
 
 // The input mode: editing (readline's keys), the search's <CR> and <Esc>,
 // the prefix.

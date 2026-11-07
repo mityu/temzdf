@@ -452,10 +452,18 @@ fn hooks_run_like_vim_autocmds() {
     let env = Env::new("script-hooks");
     env.config(
         "config.js",
-        r#"import { cmd, on } from "temzdf";
+        r#"import { cmd, on, schedule } from "temzdf";
 on("SessionReady", () => console.log("ready"));
 on("PaneOpened", (id, kind) => console.log(`opened ${id} ${kind}`));
-on("PaneClosePre", (id) => { console.log(`pre ${id}`); cmd.split("down"); });
+on("PaneClosePre", (id) => {
+  console.log(`pre ${id}`);
+  try {
+    cmd.split("down");
+  } catch (e) {
+    console.log(`refused`);
+  }
+  schedule(() => cmd.split("down"));
+});
 on("PaneClosed", (id) => console.log(`closed ${id}`));
 "#,
     );
@@ -465,12 +473,17 @@ on("PaneClosed", (id) => console.log(`closed ${id}`));
     t.keys(&["C-b", "%"]);
     // Pane and buffer ids share one counter: the shell's buffer is 2.
     env.wait_log("h", "the second pane", |l| l.contains("opened 3"));
-    // Closing it: the "before" hook runs first; the pane its split creates
-    // fires no PaneOpened (events inside hooks only reach nested hooks).
+    // Closing it: the "before" hook runs first; it may only read (its own
+    // split is refused), and what it schedules runs after the close, at
+    // the safe point, as any command (its PaneOpened is heard).
     t.keys(&["C-b", "x"]);
-    env.wait_log("h", "the close", |l| l.contains("closed 3"));
+    env.wait_log("h", "the scheduled split", |l| l.contains("opened 5"));
     let lines = env.script_lines("h");
-    assert_eq!(lines, ["opened 1 terminal", "ready", "opened 3 terminal", "pre 3", "closed 3"], "{lines:?}");
+    assert_eq!(
+        lines,
+        ["opened 1 terminal", "ready", "opened 3 terminal", "pre 3", "refused", "closed 3", "opened 5 terminal"],
+        "{lines:?}"
+    );
     let ls = env.run(&["ls"]);
     assert!(ls.contains("h  (2 panes"), "the hook's split happened: {ls}");
 }
@@ -1760,4 +1773,65 @@ keymap.add("normal", "c", () => {
     // Nothing unsaved: kill-session ends it as before.
     env.run(&["kill-session", "h"]);
     t.wait_text("[session h was killed]");
+}
+
+#[test]
+fn invocations_text_changes_typed_keys_and_scheduled_functions_are_heard_in_order() {
+    let env = Env::new("text-events");
+    env.config(
+        "config.ts",
+        r#"import { cmd, keymap, on, schedule } from "temzdf";
+import type { InvokeTarget } from "temzdf";
+const log = (s: string) => console.log(s);
+const what = (t: InvokeTarget) =>
+  typeof t === "number" ? "func" : Array.isArray(t) ? t.map((a) => `${a.name}(${a.args.join(",")})`).join() : `text ${t.textInput}`;
+on("InvokePre", (i) => log(`pre ${i.seq} ${what(i.target)} ${i.keys} ${i.source}`));
+on("InvokePost", (i) => log(`post ${i.seq} ${i.cursor?.character}`));
+on("TextChanged", (_b, c) =>
+  log(`changed ${c.cause} ${c.invocation} ${c.changes.map((x) => `${x.range.start.character}-${x.range.end.character}/${x.rangeLength}+${x.text}`)}`));
+on("KeyTyped", (k) => log(`key ${k.keys} ${k.source}`));
+keymap.add("edit", "<C-t>", () => {
+  schedule(() => log("first"));
+  schedule(() => log("second"));
+  cmd.text.insert("T");
+  log("mapped");
+});
+"#,
+    );
+    let file = env.path("e.txt");
+    std::fs::write(&file, "ab").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "ev", file.to_str().unwrap()], &env.options());
+    t.wait_text("ab");
+    t.type_text("x");
+    t.wait_text("xab");
+    t.keys(&["C-t"]);
+    t.wait_text("xTab");
+    env.run(&["action", "-s", "ev", "text.type", "Z"]);
+    t.wait_text("xTZab");
+    env.wait_log("ev", "the action's InvokePost", |l| l.contains("post 3 3"));
+    assert_eq!(
+        env.script_lines("ev"),
+        [
+            // Typed text: heard before it is matched, then one invocation
+            // with its change.
+            "key x typed",
+            "pre 1 text x x key",
+            "changed typing 1 0-0/0+x",
+            "post 1 1",
+            // A mapped function: its change is heard before cmd.text.insert
+            // returns; the scheduled functions run after it, in order, then
+            // InvokePost.
+            "key <C-t> typed",
+            "pre 2 func <C-t> key",
+            "changed script 2 1-1/0+T",
+            "mapped",
+            "first",
+            "second",
+            "post 2 2",
+            // A temzdf action.
+            "pre 3 text.type(Z)  cli",
+            "changed typing 3 2-2/0+Z",
+            "post 3 3",
+        ]
+    );
 }

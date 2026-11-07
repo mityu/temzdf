@@ -32,7 +32,7 @@ const DEFAULTS_NAME: &str = "temzdf:defaults";
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
      export const cmd = t.cmd, action = t.action, on = t.on, keymap = t.keymap, defineMode = t.defineMode,\n\
      o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, dispatch = t.dispatch,\n\
-     atomic = t.atomic;\n\
+     atomic = t.atomic, schedule = t.schedule;\n\
      export default t;\n";
 
 use crate::UNATTENDED_LIMIT;
@@ -349,6 +349,7 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
                 .and_then(|a| a.as_array())
                 .map_or(Vec::new(), |a| a.iter().map(to_script).collect()),
         },
+        "schedule" => HostOp::Schedule { func: func() },
         "on" => HostOp::On {
             event: text("event"),
             func: func(),

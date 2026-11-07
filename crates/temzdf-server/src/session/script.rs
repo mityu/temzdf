@@ -42,6 +42,10 @@ const MAX_HOOK_DEPTH: usize = 10;
 pub const EVENTS: &[&str] = &[
     "SessionReady",
     "SessionEndPre",
+    "InvokePre",
+    "InvokePost",
+    "KeyTyped",
+    "TextChanged",
     "PaneOpened",
     "PaneClosePre",
     "PaneClosed",
@@ -60,10 +64,21 @@ pub const EVENTS: &[&str] = &[
 /// Input that arrived while a script ran.
 enum Held {
     Key(KeyEvent),
+    /// A key whose KeyTyped hooks ran (or run): it is matched next.
+    Announced(KeyEvent),
     Mouse(MouseEvent),
     Paste(String),
     Text(String),
 }
+
+/// A function the frame stack calls: a hook (with its event's arguments),
+/// or (`acting`) one that may change things: a scheduled function, an
+/// `InvokePost` or `SessionReady` hook.
+type Queued = (FuncId, Vec<ScriptValue>, bool);
+
+/// Events whose hooks may change things themselves (the others are told to
+/// `schedule`): they run at the safe point.
+const ACTING_EVENTS: &[&str] = &["SessionReady", "InvokePost"];
 
 /// Work waiting for the host, innermost (top of the stack) last.
 enum Frame {
@@ -73,7 +88,7 @@ enum Frame {
     Eval { id: CallId, funcs: Vec<FuncId> },
     /// Hooks still to run (one at a time), at this nesting depth. `pre`:
     /// "before" hooks of the operation below, which may cancel it.
-    Hooks { queue: VecDeque<(FuncId, Vec<ScriptValue>)>, depth: usize, pre: bool },
+    Hooks { queue: VecDeque<Queued>, depth: usize, pre: bool },
     /// An operation to perform once the frames above it are done (after its
     /// "before" hooks), unless one of them cancelled it (why).
     Op { op: Deferred, cancel: Option<String> },
@@ -82,11 +97,13 @@ enum Frame {
     Reply { req: u64, result: Option<Result<ScriptValue, String>> },
 }
 
-enum Deferred {
+pub(super) enum Deferred {
     ClosePane(PaneId),
     CloseTab(super::tabs::TabId),
     DeleteBuffer(super::BufferId),
     EndSession,
+    /// An invocation, after its `InvokePre` hooks.
+    Run(Box<super::Invoked>),
 }
 
 struct Hook {
@@ -116,6 +133,10 @@ pub struct Bridge {
     notice_shown: bool,
     /// A startup problem to show once there is a pane.
     startup_error: Option<String>,
+    /// Functions `schedule` asked for, for the safe point, in order.
+    scheduled: Vec<FuncId>,
+    /// The invocation whose `InvokePost` comes at the next safe point.
+    pub(super) pending_post: Option<ScriptValue>,
 }
 
 /// `<C-c>`, whatever the lock keys (kitty's keyboard protocol reports Caps
@@ -156,6 +177,22 @@ impl Bridge {
                 .any(|f| matches!(f, Frame::Call { id: c, .. } | Frame::Eval { id: c, .. } if *c == id)),
             Token::Task(t) => self.tasks.contains(&t),
         }
+    }
+
+    /// A key KeyTyped hooks heard waits for them, ahead of keys typed
+    /// meanwhile.
+    pub(super) fn hold_announced(&mut self, k: KeyEvent) {
+        self.held.push_front(Held::Announced(k));
+    }
+
+    /// A hook runs now (its edits belong to no invocation).
+    pub(super) fn in_hook(&self) -> bool {
+        self.frames.iter().any(|f| matches!(f, Frame::Call { hook: true, .. }))
+    }
+
+    /// Someone hooked `event`.
+    pub(super) fn hooks_on(&self, event: &str) -> bool {
+        self.hooks.contains_key(event)
     }
 
     /// The nesting depth of hooks running now.
@@ -368,7 +405,7 @@ impl Session {
 
     /// The hooks for `events`, given the nesting `depth` of the code that
     /// caused them: inside a hook only `nested` hooks run, up to the limit.
-    fn hooks_for(&self, events: &[(String, Vec<ScriptValue>)], depth: usize) -> VecDeque<(FuncId, Vec<ScriptValue>)> {
+    fn hooks_for(&self, events: &[(String, Vec<ScriptValue>)], depth: usize) -> VecDeque<Queued> {
         let mut out = VecDeque::new();
         if depth >= MAX_HOOK_DEPTH {
             if !events.is_empty() {
@@ -379,7 +416,7 @@ impl Session {
         for (name, args) in events {
             for h in self.script.hooks.get(name).into_iter().flatten() {
                 if depth == 0 || h.nested {
-                    out.push_back((h.func, args.clone()));
+                    out.push_back((h.func, args.clone(), ACTING_EVENTS.contains(&name.as_str())));
                 }
             }
         }
@@ -391,7 +428,7 @@ impl Session {
     pub(super) fn flush_events(&mut self) -> Outcome {
         let events = std::mem::take(&mut self.script_events);
         if events.is_empty() {
-            return Outcome::None;
+            return self.safe_point();
         }
         if self.script.busy() {
             self.script.deferred_events.extend(events);
@@ -409,7 +446,7 @@ impl Session {
     /// returns `{ cancel: true, reason }`: then the reason goes to whoever
     /// asked (the script's command fails with it, `temzdf action` answers
     /// it, a key shows it).
-    fn request_op(&mut self, pre: Vec<(String, Vec<ScriptValue>)>, op: Deferred) -> Outcome {
+    pub(super) fn request_op(&mut self, pre: Vec<(String, Vec<ScriptValue>)>, op: Deferred) -> Outcome {
         let depth = self.script.hook_depth();
         let queue = self.hooks_for(&pre, depth);
         if queue.is_empty() || self.script.host.is_none() {
@@ -479,6 +516,7 @@ impl Session {
                 self.killed = true;
                 Outcome::Quit
             }
+            Deferred::Run(what) => self.run_invoked(*what),
         }
     }
 
@@ -494,9 +532,11 @@ impl Session {
                     return out;
                 }
                 Some(Frame::Hooks { mut queue, depth, pre }) => {
-                    if let Some((func, args)) = queue.pop_front() {
+                    if let Some((func, args, acting)) = queue.pop_front() {
                         self.script.frames.push(Frame::Hooks { queue, depth, pre });
-                        self.call(func, args, true);
+                        // A function that may act is not a hook: its
+                        // commands cause every hook, and are not limited.
+                        self.call(func, args, !acting);
                         if matches!(self.script.frames.last(), Some(Frame::Call { .. })) {
                             return out;
                         }
@@ -542,6 +582,19 @@ impl Session {
         out
     }
 
+    /// Nothing runs: what waits for the safe point (scheduled functions,
+    /// `InvokePost`) runs now; the invocation, if any, is over.
+    fn safe_point(&mut self) -> Outcome {
+        if self.script.busy() {
+            return Outcome::None;
+        }
+        if self.script.scheduled.is_empty() && self.script.pending_post.is_none() {
+            self.current_invocation = None;
+            return Outcome::None;
+        }
+        self.after_scripts()
+    }
+
     /// Nothing runs any more: deferred hooks, then held input.
     fn after_scripts(&mut self) -> Outcome {
         self.script.busy_since = None;
@@ -554,6 +607,23 @@ impl Session {
                 return out.merge(self.pump());
             }
         }
+        // The safe point: scheduled functions, then the invocation's
+        // InvokePost (both may act), before the next key.
+        if !self.script.scheduled.is_empty() {
+            let queue = self.script.scheduled.drain(..).map(|f| (f, Vec::new(), true)).collect();
+            self.script.frames.push(Frame::Hooks { queue, depth: 0, pre: false });
+            return out.merge(self.pump());
+        }
+        if let Some(info) = self.script.pending_post.take() {
+            let info = self.with_cursor(info);
+            let queue = self.hooks_for(&[("InvokePost".to_owned(), vec![info])], 0);
+            self.current_invocation = None;
+            if !queue.is_empty() {
+                self.script.frames.push(Frame::Hooks { queue, depth: 0, pre: false });
+                return out.merge(self.pump());
+            }
+        }
+        self.current_invocation = None;
         let now = Instant::now();
         // Keys the matcher still holds came before the held ones.
         out = out.merge(self.drive(now));
@@ -562,6 +632,7 @@ impl Session {
         {
             let o = match h {
                 Held::Key(k) => self.key(&k, now),
+                Held::Announced(k) => self.key_announced(&k, now),
                 Held::Mouse(m) => self.mouse(&m, now),
                 Held::Paste(t) => self.paste(&t),
                 Held::Text(t) => self.text(&t, now),
@@ -790,6 +861,15 @@ impl Session {
             self.script.send(&ToHost::Reply { req, result: Err(e.into()) });
             return Outcome::None;
         }
+        // Hooks only read: changes go through schedule (InvokePost and
+        // SessionReady hooks and scheduled functions are no hooks here).
+        let in_hook = matches!(token, Token::Call(id)
+            if self.script.frames.iter().any(|f| matches!(f, Frame::Call { id: c, hook: true } if *c == id)));
+        if in_hook && !hook_may(&op) {
+            let e = "a hook may only read; change things in schedule(fn) (InvokePost and SessionReady hooks may act)";
+            self.script.send(&ToHost::Reply { req, result: Err(e.into()) });
+            return Outcome::None;
+        }
         let depth = match token {
             // Commands of a hook cause only nested hooks.
             Token::Call(_) => self.script.hook_depth(),
@@ -819,6 +899,10 @@ impl Session {
     /// Perform one operation of a script.
     fn run_op(&mut self, op: HostOp) -> (Result<ScriptValue, String>, Outcome) {
         match op {
+            HostOp::Schedule { func } => {
+                self.script.scheduled.push(func);
+                (Ok(ScriptValue::Null), Outcome::None)
+            }
             HostOp::On { event, func, nested } => {
                 if !EVENTS.contains(&event.as_str()) {
                     return (Err(format!("unknown event {event:?}; known: {}", EVENTS.join(", "))), Outcome::None);
@@ -1214,6 +1298,31 @@ struct MapSpec {
 }
 
 /// Whether `op` only reads (what conditions may do).
+/// What a hook may do: read, subscribe, schedule, and show messages.
+fn hook_may(op: &HostOp) -> bool {
+    read_only(op)
+        || matches!(op, HostOp::On { .. } | HostOp::Schedule { .. })
+        || matches!(op, HostOp::Command { name, .. } if QUERIES.contains(&name.as_str()))
+}
+
+/// Commands that change nothing (or only show something), for hooks.
+const QUERIES: &[&str] = &[
+    "buffers",
+    "tabs",
+    "input-text",
+    "message",
+    "text.line-count",
+    "text.line",
+    "text.get-text",
+    "text.cursor",
+    "text.selection",
+    "text.offset-at",
+    "text.position-at",
+    "text.info",
+    "text.position-of",
+    "text.visible-range",
+];
+
 fn read_only(op: &HostOp) -> bool {
     match op {
         HostOp::GetOption { .. } | HostOp::GetMappings { .. } => true,

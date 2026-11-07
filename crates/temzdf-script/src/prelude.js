@@ -207,6 +207,11 @@
     on(event, fn, options = {}) {
       request(current(), "on", { event, func: register(fn, `on(${event})`), nested: !!options.nested });
     },
+    // Run `fn` at the safe point (after the invocation and its hooks), in
+    // the order scheduled: what a hook does to change anything.
+    schedule(fn) {
+      request(current(), "schedule", { func: funcId(fn, "schedule", false) });
+    },
     // Start an asynchronous task without waiting for it. It issues commands
     // through its `ctx`.
     dispatch(fn) {

@@ -21,6 +21,10 @@ const EVENTS: &[(&str, &str)] = &[
     ("BufferDeleted", "[buffer: number]"),
     ("BufferHidden", "[buffer: number, kind: PaneKind]"),
     ("InputChanged", "[buffer: number, text: string]"),
+    ("InvokePre", "[info: Invocation]"),
+    ("InvokePost", "[info: Invocation & { cursor: Position | null; selection: Range | null }]"),
+    ("KeyTyped", "[key: { keys: string; text: string | null; source: \"typed\" | \"feedkeys\" }]"),
+    ("TextChanged", "[buffer: number, change: TextChange]"),
 ];
 
 fn camel(name: &str) -> String {
@@ -256,6 +260,27 @@ declare module "temzdf" {{
     cancel?: boolean;
     reason?: string;
   }}
+  /** What an invocation ran: a mapping's actions ({{ name, args }}), a function's id, or typed text. */
+  export type InvokeTarget = {{ name: string; args: unknown[] }}[] | number | {{ textInput: string }};
+  /** One invocation (a key sequence that ran a mapping, typed text, a fallback function, a CLI action): InvokePre and InvokePost get it. */
+  export interface Invocation {{
+    seq: number;
+    target: InvokeTarget;
+    keys: string;
+    count: number | null;
+    mode: string;
+    pane: number;
+    source: "key" | "cli";
+  }}
+  /** What TextChanged gets: the changes in positions before them (rangeLength in UTF-16 units), the buffer's version after, why, and the invocation it happened in (null from hooks, timers, tasks). */
+  export interface TextChange {{
+    changes: {{ range: Range; rangeLength: number; text: string }}[];
+    version: number;
+    cause: "typing" | "script" | "undo" | "redo" | "reload";
+    invocation: number | null;
+  }}
+  /** Run `fn` at the safe point: after the current invocation and its hooks, before the next key, in the order scheduled. Hooks change things this way (only InvokePost and SessionReady hooks may act themselves). */
+  export function schedule(fn: () => void): void;
   /** The kinds of panes and buffers. */
   export type PaneKind = "pdf" | "terminal" | "input" | "edit";
   export function on<E extends keyof Events>(

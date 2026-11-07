@@ -190,7 +190,8 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
 
 - **The synchronous part of a hook does not run state-changing actions**
   **(user)**: only queries and the script's own state (recording a repeat).
-  Changes (mode, focus, layout, edits, `feedkeys`) go to `defer(fn)`, which
+  Changes (mode, focus, layout, edits, `feedkeys`) go to `defer(fn)`
+  (named `schedule(fn)` when built, see Implementation), which
   runs at the **safe point**: after the current invocation and its hooks,
   before the next key is matched, with input held (like Vim's `SafeState`),
   so the order is fixed. `InvokePost` is itself at the safe point and may act
@@ -412,6 +413,12 @@ Decided with the user on 2026-11-07, before building:
 - The hollow cursor of panes without the focus (section 14) is, for now,
   the highlight group `CursorUnfocused` drawn in the cell (underlined by
   default): frames carry one cursor, and terminals draw one.
+- `defer(fn)` of section 10 is **`schedule(fn)`** **(user renamed it)**:
+  Go's `defer` runs in reverse order; these run in the order scheduled.
+  At the safe point the scheduled functions run before `InvokePost`.
+- `KeyTyped` hooks run before the key is matched: the key waits for them.
+  `invoke` runs a target as part of what runs now, without invocation
+  events of its own; the mouse is not an invocation yet.
 - Wrapping is greedy, so a row depends only on where it starts: a view
   keeps the offset its top row starts at and lays out only the rows it
   shows. Tabs in continuation rows count from the row's start.

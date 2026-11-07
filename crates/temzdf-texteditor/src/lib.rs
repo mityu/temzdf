@@ -20,7 +20,7 @@ mod text;
 mod undo;
 mod view;
 
-pub use buffer::{Buffer, EditError, Edited, Origin};
+pub use buffer::{Buffer, EditError, Edited, Origin, Reported};
 pub use cursor::{Cursor, SelectionKind};
 pub use edit::{Change, Gravity, TextEdit, map_offset};
 pub use layout::{Glyph, GlyphKind, Layout, LayoutOptions, Row, grapheme_width};

@@ -185,6 +185,12 @@ pub enum HostOp {
         func: FuncId,
         nested: bool,
     },
+    /// Call `func` at the safe point: after the current invocation and its
+    /// hooks, before the next key (how hooks change things); in the order
+    /// they were scheduled.
+    Schedule {
+        func: FuncId,
+    },
     /// Create a mode, or change a mode's properties (`None` keeps them).
     DefineMode {
         name: String,

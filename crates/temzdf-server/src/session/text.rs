@@ -212,7 +212,47 @@ impl Session {
         }
         let edited = t.buf.edit(edits, Origin { kind, pane: Some(pane), cursor }).map_err(|e| e.to_string())?;
         self.text_follow(buf, &edited, pane);
+        let cause = if kind == StepKind::Typing { "typing" } else { "script" };
+        self.text_changed(buf, &edited, cause);
         Ok(())
+    }
+
+    /// `TextChanged(buffer, { changes, version, cause, invocation })`: the
+    /// changes in positions before them, with the invocation they happened
+    /// in (none from hooks, timers or tasks).
+    pub(super) fn text_changed(&mut self, buf: BufferId, edited: &Edited, cause: &str) {
+        if edited.reported.is_empty() || !self.script.hooks_on("TextChanged") {
+            return;
+        }
+        let Some(t) = self.texts.get(&buf) else { return };
+        let changes = edited
+            .reported
+            .iter()
+            .map(|r| {
+                ScriptValue::map([
+                    (
+                        "range",
+                        ScriptValue::map([
+                            ("start", position_value(r.range.start)),
+                            ("end", position_value(r.range.end)),
+                        ]),
+                    ),
+                    ("rangeLength", ScriptValue::Num(r.range_length as f64)),
+                    ("text", ScriptValue::Str(r.text.clone())),
+                ])
+            })
+            .collect();
+        let invocation = match self.current_invocation {
+            Some(n) if !self.script.in_hook() => ScriptValue::Num(n as f64),
+            _ => ScriptValue::Null,
+        };
+        let info = ScriptValue::map([
+            ("changes", ScriptValue::List(changes)),
+            ("version", ScriptValue::Num(t.buf.version() as f64)),
+            ("cause", ScriptValue::Str(cause.into())),
+            ("invocation", invocation),
+        ]);
+        self.event("TextChanged", vec![ScriptValue::Num(buf as f64), info]);
     }
 
     /// The panes on `buf` follow what changed; the cursor undo or redo
@@ -610,6 +650,7 @@ impl Session {
                         }
                     }
                     self.text_follow(buf, &edited, pane);
+                    self.text_changed(buf, &edited, name);
                 }
                 Ok((ScriptValue::List(changed), Outcome::Redraw))
             }
