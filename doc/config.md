@@ -181,7 +181,7 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `pdf` | `+` `=` / `-` / `0` `w` | zoom in / out (counts) / fit width |
 | `pdf` | `/` | search: an input line below the pane (typing shows the first hit; `<CR>` searches, `<Esc>` cancels) |
 | `pdf` | `n` / `N` | next / previous match of the search (`searchFor`; counts) |
-| `pdf` | `y` | copy the selection |
+| `pdf` | `y` | copy the selection (into the copy history and the clipboard) |
 | `pdf` | `<Tab>` | outline |
 | `input` | `<BS>` `<C-h>` / `<Del>` `<C-d>` | delete the character before / after the caret |
 | `input` | `<Left>` / `<Right>` / `<Home>` `<C-a>` / `<End>` `<C-e>` | caret: a character left / right, the start / end |
@@ -327,7 +327,7 @@ keymap.add("normal", "n", () => {
 
 The session keeps what is copied (`doc/design/registers.md`): a terminal's
 selection (the mouse's, the visual mode's `y`, OSC 52 from its program), a
-PDF's selection, the Vim mode's yanks and deletes, scripts' `copyText` and
+PDF's selection (released with the mouse, or `y`; as characters), the Vim mode's yanks and deletes, scripts' `copyText` and
 `temzdf copy`. `history({ limit? })` lists the entries, newest first (at
 most `o.copyhistory`): `{ id, text, kind, how, register, source, time }`,
 `kind` `"char"`, `"line"` (ending with a line break) or `"block"`, `how`

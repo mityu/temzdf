@@ -15,7 +15,8 @@ terminal pane pipes into it (`temzdf copy`). Decided with the user on
 - An entry: `{ id, text, kind, how, register, source, time }`.
   - `kind`: `"char"`, `"line"` or `"block"`, as Vim's register types. It is
     kept whichever pane copied: a terminal's visual `V` copies lines, its
-    `<C-v>` a block, a PDF's selection characters. A text pane puts lines
+    `<C-v>` a block, a PDF's selection (a mouse drag released, or `y`)
+    characters. A text pane puts lines
     as lines; a terminal is sent the text (a bracketed paste).
   - `how`: `"copy"` (a yank) or `"delete"` (taken out of the text).
   - `register`: the name it was copied to, or null.

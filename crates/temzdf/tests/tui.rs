@@ -1920,3 +1920,19 @@ fn the_vim_mode_edits_and_writes_a_file() {
     t.type_text(":q\n");
     t.wait_text("[session vi was killed]");
 }
+
+#[test]
+fn a_pdfs_selection_goes_into_the_copy_history() {
+    // What a PDF pane copies is in the session's copy history, as a
+    // terminal's copy (doc/design/registers.md).
+    let env = Env::new("pdf-copy");
+    let pdf = fixture("sample.pdf").display().to_string();
+    let mut t = Term::spawn(&[BIN, "-s", "pc", &pdf], &env.options());
+    t.wait_for("page 1", |s| s.title.contains("1 / 3"));
+    // From the start of the title (sample.tex: "temzdf sample document").
+    t.drag((35, 10), (60, 11));
+    assert_eq!(copies(&mut t, 1).len(), 1, "to the clipboard");
+    let copied = t.copied()[0].clone();
+    assert!(copied.starts_with("temzdf sample"), "{copied:?}");
+    assert_eq!(env.run(&["paste", "-s", "pc"]), copied);
+}

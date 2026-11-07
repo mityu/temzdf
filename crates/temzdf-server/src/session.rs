@@ -4185,6 +4185,25 @@ mod tests {
             _ => None,
         });
         assert!(copied.as_deref().is_some_and(|t| t.starts_with("temzdf sample document")), "{copied:?}");
+        // It is the copy history's newest entry, from the PDF, as characters.
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
+            s.run_command(name, args, None, Instant::now()).unwrap().0
+        };
+        let newest = match run(&mut s, "history", &[]) {
+            ScriptValue::List(l) => l[0].clone(),
+            v => panic!("{v:?}"),
+        };
+        assert_eq!(newest.get("text").and_then(ScriptValue::as_str), copied.as_deref());
+        assert_eq!(newest.get("kind"), Some(&ScriptValue::Str("char".into())));
+        assert_eq!(newest.get("how"), Some(&ScriptValue::Str("copy".into())));
+        let source = newest.get("source").and_then(|x| x.get("kind"));
+        assert_eq!(source, Some(&ScriptValue::Str("pdf".into())));
+        // A text pane puts it.
+        let buf = run(&mut s, "new-buffer", &[]);
+        let o = ScriptValue::map([("side", ScriptValue::Str("right".into())), ("buffer", buf)]);
+        run(&mut s, "split", &[o]);
+        run(&mut s, "put", &[]);
+        assert_eq!(Some(text_of(&mut s)), copied);
     }
 
     /// What the session copied (OSC 52 in a terminal client).
