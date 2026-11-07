@@ -110,6 +110,7 @@ pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
         commands: RefCell::new(Vec::new()),
         promises: RefCell::default(),
         settled: RefCell::default(),
+        replies: RefCell::default(),
         gone: Cell::new(false),
         held_rejections: held,
     });
@@ -117,7 +118,15 @@ pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
     while !st.gone.get() {
         // Each job on its own time: one that overran does not cut off the
         // next ones.
-        while context.with(|ctx| st.unattended(|| ctx.execute_pending_job())) {}
+        // Answers that came while code ran (a nested wait took them) settle
+        // before waiting: no message may come to wake the loop for them.
+        loop {
+            while context.with(|ctx| st.unattended(|| ctx.execute_pending_job())) {}
+            if st.settled.borrow().is_empty() {
+                break;
+            }
+            context.with(|ctx| settle_promises(&ctx, &st));
+        }
         let next = st.timers.borrow().keys().next().map(|(at, _)| *at);
         let timeout = next.map_or(Duration::from_secs(3600), |at| at.saturating_duration_since(Instant::now()));
         match st.recv(Some(timeout)) {
@@ -200,6 +209,10 @@ struct State {
     /// each (`(ok, json)`), and answers that came while code ran.
     promises: RefCell<std::collections::HashMap<u64, Persistent<Function<'static>>>>,
     settled: RefCell<std::collections::VecDeque<(u64, Result<ScriptValue, String>)>>,
+    /// Answers to requests waited for further out: a call run while one
+    /// request waits (a hook) can be waiting for its own when the outer
+    /// one's answer comes.
+    replies: RefCell<std::collections::HashMap<u64, Result<ScriptValue, String>>>,
     /// The session went away.
     gone: Cell<bool>,
     /// Unhandled rejections held back while a configuration loads.
@@ -456,16 +469,23 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
         let req = st.next_req.get();
         st.next_req.set(req + 1);
         st.send(&FromHost::Request { req, token, op });
+        let answer = |result: Result<ScriptValue, String>| match result {
+            Ok(v) => Ok(serde_json::to_string(&from_script(&v)).unwrap_or_else(|_| "null".into())),
+            Err(e) => throw(&e),
+        };
         loop {
             if st.gone.get() {
                 return throw("the session is gone");
             }
+            // Answered while a nested call waited for its own.
+            if let Some(result) = st.replies.borrow_mut().remove(&req) {
+                return answer(result);
+            }
             match st.recv(None) {
-                Ok(ToHost::Reply { req: r, result }) if r == req => {
-                    return match result {
-                        Ok(v) => Ok(serde_json::to_string(&from_script(&v)).unwrap_or_else(|_| "null".into())),
-                        Err(e) => throw(&e),
-                    };
+                Ok(ToHost::Reply { req: r, result }) if r == req => return answer(result),
+                // An outer request's answer: kept for it.
+                Ok(ToHost::Reply { req: r, result }) if r < req => {
+                    st.replies.borrow_mut().insert(r, result);
                 }
                 Ok(ToHost::Call { id, func, args }) => run_call(ctx, st, id, func, args),
                 Ok(ToHost::Eval { id, funcs, args }) => run_eval(ctx, st, id, &funcs, args),

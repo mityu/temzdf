@@ -743,3 +743,41 @@ dispatch(async (ctx) => { await new Promise((r) => setTimeout(r, 30)); ctx.cmd.m
     s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::TaskDone { task: 1, result: Ok(()) }));
 }
+
+#[test]
+fn answers_taken_by_a_nested_wait_reach_their_request_and_promise() {
+    // A task's request waits; a call the session runs meanwhile (a
+    // scheduled function) waits for its own, and the task's answer and the
+    // Promise's settling come during that inner wait. Neither may be lost,
+    // and the Promise settles without another message to wake the host.
+    let config = r#"import { cmd, dispatch, keymap } from "temzdf";
+keymap.add("normal", "a", () => dispatch(async (ctx) => {
+  const v = await ctx.cmd.readClipboard();
+  ctx.cmd.message(`got ${v}`);
+}));
+keymap.add("normal", "b", () => cmd.message("inner"));
+"#;
+    let mut s = Session::start(&[("config.js", config)]);
+    s.load("config.js");
+    ready_ok(s.serve(&mut Vec::new()));
+    s.send(ToHost::Call { id: 1, func: user(0), args: vec![] });
+    let task_req = loop {
+        match s.recv() {
+            FromHost::TaskStart(_) | FromHost::Done { id: 1, .. } => {}
+            FromHost::Request { req, token: Token::Task(_), .. } => break req,
+            other => panic!("{other:?}"),
+        }
+    };
+    // Before answering, another call runs; while it waits, the answers come.
+    s.send(ToHost::Call { id: 2, func: user(1), args: vec![] });
+    let FromHost::Request { req: inner, token: Token::Call(2), .. } = s.recv() else { panic!() };
+    let promise = ScriptValue::map([("$promise", ScriptValue::Num(9.0))]);
+    s.send(ToHost::Reply { req: task_req, result: Ok(promise) });
+    s.send(ToHost::Resolve { promise: 9, result: Ok(ScriptValue::Str("clip".into())) });
+    s.send(ToHost::Reply { req: inner, result: Ok(ScriptValue::Null) });
+    assert!(matches!(s.recv(), FromHost::Done { id: 2, result: Ok(_) }));
+    let FromHost::Request { req, token, op } = s.recv() else { panic!() };
+    assert_eq!(describe(token, &op), "task1 message(got clip)");
+    s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
+    assert!(matches!(s.recv(), FromHost::TaskDone { result: Ok(()), .. }));
+}

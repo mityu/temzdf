@@ -96,6 +96,12 @@ configured the same way). Under Miri the build script embeds nothing.
   the prelude turns the reply into a Promise, settled (as timers fire) when
   nothing runs. Its continuation has no context, so it is awaited in a
   dispatched task (`doc/design/registers.md`).
+- **Nested waits**: every request waits for its answer, attending calls
+  the session runs meanwhile (hooks, scheduled functions), whose own
+  requests wait inside it. An answer for a request further out that comes
+  during such an inner wait is kept for it; a `Resolve` is queued, and the
+  host settles queued answers before it waits for a message again (none
+  may come to wake it).
 - **Context tokens**: every command carries the call or task it belongs to;
   the session refuses commands of calls that have finished and of tasks that
   ended. Global functions (`cmd.split()`) only work inside a mapped or hook
