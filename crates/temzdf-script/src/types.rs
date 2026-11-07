@@ -26,6 +26,7 @@ const EVENTS: &[(&str, &str)] = &[
     ("KeyTyped", "[key: { keys: string; text: string | null; source: \"typed\" | \"feedkeys\" }]"),
     ("TextChanged", "[buffer: number, change: TextChange]"),
     ("FileChangedOnDisk", "[buffer: number]"),
+    ("Copied", "[entry: Copied]"),
 ];
 
 fn camel(name: &str) -> String {
@@ -196,6 +197,21 @@ declare module "temzdf" {{
     namespace: string;
     style: string | null;
   }}
+  /** What copied text is, as Vim's register types: characters, whole lines (ending with a line break), or a block (one line of it per line). */
+  export type CopyKind = "char" | "line" | "block";
+  /** An entry of the copy history or a named register (doc/design/registers.md). */
+  export interface Copied {{
+    id: number;
+    text: string;
+    kind: CopyKind;
+    how: "copy" | "delete";
+    /** The named register it was copied to. */
+    register: string | null;
+    /** Where it came from: the buffer's kind and name, or "cli" (temzdf copy). */
+    source: {{ kind: PaneKind | "cli" | "script"; name: string; buffer: number | null }};
+    /** Milliseconds since the Unix epoch. */
+    time: number;
+  }}
   /** What `text.move` and `text.positionOf` move by. */
   export type TextUnit =
     | "grapheme" | "wordStart" | "wordEnd" | "bigWordStart" | "bigWordEnd" | "lineStart" | "firstNonBlank" | "lineEnd"
@@ -210,6 +226,10 @@ declare module "temzdf" {{
     splitbelow: boolean;
     /** How many modes the mode history keeps. */
     modehistory: number;
+    /** How many entries the copy history keeps. */
+    copyhistory: number;
+    /** What goes to the client's clipboard as well: copies and deletes ("all", Vim's clipboard=unnamedplus), "copies", or "none"; a copy to a named register never does. */
+    clipboard: "all" | "copies" | "none";
     /** Pixels per wheel step in PDF panes. */
     scrollstep: number;
     /** Milliseconds of the scrolling animation's easing. */

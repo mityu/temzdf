@@ -259,6 +259,9 @@ on("FileChangedOnDisk", (buf: number) => {
 // moves are Vim's (counts too); <C-b> stays the prefix (<PageUp> for a
 // screen up).
 each("normal", ["[", "v"], [action.exitMode(), action.switchMode("visual")]);
+// <C-b>] (tmux's paste-buffer key) or p puts the newest copy (any pane's;
+// doc/design/registers.md) into the focused pane.
+each("normal", ["]", "p"], [action.exitMode(), action.put()]);
 each("visual", ["h", "<Left>"], action.visual.left());
 each("visual", ["l", "<Right>"], action.visual.right());
 each("visual", ["k", "<Up>"], action.visual.up());

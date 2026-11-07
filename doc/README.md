@@ -42,6 +42,10 @@ the way, with the reasons.
 - [design/vim-mode.md](design/vim-mode.md): the Vim mode for text panes,
   a script on the text editor framework (`import "temzdf/vim"`): how it is
   built, its differences from Vim, its tests.
+- [design/registers.md](design/registers.md): registers and the copy
+  history kept by the session (every pane's copies, Vim's registers as
+  queries of it, the system clipboard read asynchronously, `temzdf
+  copy`/`paste`).
 - [design/dot-repeat.md](design/dot-repeat.md): Vim's `.` for the future
   text editor, a draft (nothing built): recorded as actions, units,
   `repeat.set`, nesting.

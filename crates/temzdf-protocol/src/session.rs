@@ -9,14 +9,14 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use temzdf_scene::{Appearance, Effect, Frame, Hints, Image, ImageKey, ImageUpdate};
+use temzdf_scene::{Appearance, CopyKind, Effect, Frame, Hints, Image, ImageKey, ImageUpdate};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
 use crate::{MAX_MESSAGE, recv_timed, shared};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 15;
+pub const VERSION: u32 = 16;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// Attach and show the session at this size, with this frontend.
@@ -43,6 +43,12 @@ pub enum ClientMsg {
     FrameAck(u64),
     /// Something the frontend could not do (e.g. open a link).
     Report(String),
+    /// The answer to `Effect::ReadClipboard` with this ticket: the text, or
+    /// why it could not be read.
+    Clipboard {
+        ticket: u64,
+        result: Result<String, String>,
+    },
     Detach,
     /// Requests answered once (no Hello): describe the session, end it, run
     /// an action (its text form, see `temzdf-server`'s `Action`), or tell
@@ -53,6 +59,19 @@ pub enum ClientMsg {
     Kill,
     Action(Vec<String>),
     GetAppearance,
+    /// `temzdf copy`: record `text` in the copy history (to `register`),
+    /// answered with `Done`.
+    Copy {
+        text: String,
+        register: Option<String>,
+        kind: Option<CopyKind>,
+    },
+    /// `temzdf paste`: the text of `register`, else of the history's entry
+    /// `index` (0 the newest), answered with `Copied`.
+    GetCopy {
+        register: Option<String>,
+        index: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -80,6 +99,8 @@ pub enum ServerMsg {
     Info(SessionInfo),
     /// The answer to an action: `Err` with a message when it failed.
     Done(Result<(), String>),
+    /// The answer to `GetCopy`.
+    Copied(Result<String, String>),
 }
 
 /// An image whose pixels (`width * height * 4` bytes) come apart from the

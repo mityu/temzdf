@@ -116,15 +116,21 @@ server on one `Session`). Next and open:
   read, cancelling "before" hooks and unsaved changes,
   `FileChangedOnDisk` and `reload`), search and `highlightPattern`,
   decorations and highlight groups for scripts, named encodings,
-  `wordchars`, `findPair`, variables and `setClipboard`. The Vim mode
+  `wordchars`, `findPair`, variables. Registers and the copy history
+  (`doc/design/registers.md`): every pane's copies, the Vim mode's
+  registers on them, `readClipboard`, `temzdf copy`/`paste`; picking from
+  the history and cycling after a put wait for a completion and fuzzy
+  finder framework for scripts (the user's plan). Reading the clipboard
+  (OSC 52 queries) is untried in real terminals and inside tmux: check
+  kitty, Ghostty, WezTerm, tmux and record it in
+  doc/terminals/terminal-compat.md. The Vim mode
   is built (`doc/design/vim-mode.md`; marks, the jump list and macros left
   for later, with what that document lists as not there yet). Deferred
   there:
   - `getchar()`/`input()`-like reading (`readKey`, `await` in
     asynchronous mappings; the user wants `input()`-driven operations
     such as sandwich.vim's function surround later);
-  - reading the clipboard; function values in buffer, pane and tab
-    variables;
+  - function values in buffer, pane and tab variables;
   - decorations beyond highlights (virtual text and images, conceal and
     math previews, signs, virtual lines), folding, `listchars`;
   - swap files, backups, persistent undo (until then `kill-session

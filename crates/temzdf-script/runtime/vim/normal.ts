@@ -1,6 +1,6 @@
 // The normal mode's commands, and how motions run: moving the cursor, or
 // the range of a pending operator, or the visual selection's end.
-import { cmd } from "temzdf";
+import { cmd, dispatch } from "temzdf";
 import type { KeyInfo, Position } from "temzdf";
 import { endInsert, startInsert } from "./insert";
 import { motions } from "./motions";
@@ -310,8 +310,23 @@ export function shorthand(key: "x" | "X" | "D" | "C" | "s" | "S" | "Y", count: n
 
 export function putRegister(after: boolean, count: number | null): void {
   const name = takeRegister();
+  if (registers.isClipboard(name)) {
+    // The client's clipboard comes later: put it then, as one change.
+    dispatch(async (ctx) => {
+      const text = await ctx.cmd.readClipboard({ primary: name === "*" });
+      ctx.atomic(() => {
+        if (text === "") throw new Error(`E353: Nothing in register ${name}`);
+        putWith(registers.fromClipboard(text), after, count);
+      });
+    });
+    return;
+  }
   const reg = registers.get(name);
   if (reg === undefined) throw new Error(`E353: Nothing in register ${name ?? '"'}`);
+  putWith(reg, after, count);
+}
+
+function putWith(reg: registers.Register, after: boolean, count: number | null): void {
   if (state.visual !== null) {
     // Replace the selection.
     const s = state.visual.kind === "block" ? null : selection();

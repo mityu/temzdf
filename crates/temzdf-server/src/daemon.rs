@@ -179,8 +179,16 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
             }
         }
         for effect in session.take_effects() {
-            if let Some(c) = latest.and_then(|id| clients.get(&id)) {
-                let _ = c.tx.send(ServerMsg::Effect(effect));
+            match latest.and_then(|id| clients.get(&id)) {
+                Some(c) => {
+                    let _ = c.tx.send(ServerMsg::Effect(effect));
+                }
+                // Nobody to read a clipboard from.
+                None => {
+                    if let temzdf_scene::Effect::ReadClipboard { ticket, .. } = effect {
+                        session.clipboard_answer(ticket, Err("no client is attached to read the clipboard of".into()));
+                    }
+                }
             }
         }
         // The configuration changed how GUI clients look.
@@ -290,6 +298,18 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     dirty = true;
                 }
                 ClientMsg::Detach => outcome = detach(&mut clients, id),
+                ClientMsg::Clipboard { ticket, result } => outcome = session.clipboard_answer(ticket, result),
+                ClientMsg::Copy { text, register, kind } => {
+                    outcome = session.cli_copy(text, register, kind);
+                    if let Some(c) = clients.remove(&id) {
+                        let _ = c.tx.send(ServerMsg::Done(Ok(())));
+                    }
+                }
+                ClientMsg::GetCopy { register, index } => {
+                    if let Some(c) = clients.remove(&id) {
+                        let _ = c.tx.send(ServerMsg::Copied(session.cli_get_copy(register.as_deref(), index)));
+                    }
+                }
                 ClientMsg::Info { .. } => {
                     if let Some(c) = clients.remove(&id) {
                         let info = SessionInfo {

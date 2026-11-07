@@ -88,8 +88,14 @@ configured the same way). Under Miri the build script embeds nothing.
   (`PaneClosePre`) run ahead of the operation, which waits for them.
 - **`dispatch(async (ctx) => ...)`** starts a task without waiting for it. Its
   commands go through `ctx.cmd`; `ctx.atomic(fn)` runs a synchronous `fn` with
-  everything else held. Errors of tasks are reported as messages and in the
-  log.
+  everything else held, and the plain `cmd` works inside it (under the
+  task's token), so code shared with mappings runs there unchanged. Errors
+  of tasks are reported as messages and in the log.
+- **Commands answering later** (`readClipboard`): the session replies
+  `{ "$promise": n }` at once and settles it later with `ToHost::Resolve`;
+  the prelude turns the reply into a Promise, settled (as timers fire) when
+  nothing runs. Its continuation has no context, so it is awaited in a
+  dispatched task (`doc/design/registers.md`).
 - **Context tokens**: every command carries the call or task it belongs to;
   the session refuses commands of calls that have finished and of tasks that
   ended. Global functions (`cmd.split()`) only work inside a mapped or hook

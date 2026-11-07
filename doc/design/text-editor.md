@@ -416,8 +416,9 @@ Decided with the user on 2026-11-07, before building:
 - `defer(fn)` of section 10 is **`schedule(fn)`** **(user renamed it)**:
   Go's `defer` runs in reverse order; these run in the order scheduled.
   At the safe point the scheduled functions run before `InvokePost`.
-- `copy(text, { primary })` of section 15 is `setClipboard(text)` (`copy`
-  is the PDF pane's command); the primary selection needs the protocol's
+- `copy(text, { primary })` of section 15 is `copyText(text)` (`copy`
+  is the PDF pane's command), which records it in the copy history too
+  (`doc/design/registers.md`); the primary selection needs the protocol's
   `Effect::Copy` to carry it, and waits.
 - Searching, `^` and `$` match at lines (multi-line mode); `\A` and `\z`
   at the text's ends.

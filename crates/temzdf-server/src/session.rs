@@ -35,6 +35,7 @@ mod commands;
 mod floats;
 mod input;
 mod notices;
+mod registers;
 mod script;
 mod statusline;
 mod tabs;
@@ -172,6 +173,10 @@ pub struct Options {
     /// the kind's name; its own mode when left out). Set only while the
     /// configuration loads.
     pub basemode: std::collections::BTreeMap<String, String>,
+    /// How many entries the copy history keeps.
+    pub copyhistory: usize,
+    /// What goes to the client's clipboard (doc/design/registers.md).
+    pub clipboard: registers::ClipboardSync,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -226,6 +231,8 @@ impl Default for Options {
             guifontwide: Vec::new(),
             text: TextOptions::default(),
             basemode: std::collections::BTreeMap::new(),
+            copyhistory: 30,
+            clipboard: registers::ClipboardSync::All,
         }
     }
 }
@@ -475,6 +482,8 @@ pub struct Session {
     map_depth: usize,
     keys: Keys,
     effects: Vec<Effect>,
+    /// The copy history and named registers.
+    copies: registers::Copies,
     /// The pane under the pointer, and the one holding a pressed button.
     hovered: Option<PaneId>,
     captured: Option<PaneId>,
@@ -539,6 +548,7 @@ impl Session {
             map_depth: 0,
             keys: Keys::default(),
             effects: Vec::new(),
+            copies: registers::Copies::default(),
             hovered: None,
             captured: None,
             focus_click: false,
@@ -2194,23 +2204,7 @@ impl Session {
     /// Effects for the frontend, including requests panes made since the last
     /// call (call every loop iteration: inverse search does not redraw).
     pub fn take_effects(&mut self) -> Vec<Effect> {
-        for e in self.panes.values_mut() {
-            match &mut e.kind {
-                Kind::Pdf { pane, doc } => {
-                    for req in pane.take_requests() {
-                        if let Some(host) = self.docs.get_mut(doc).and_then(|d| d.host.as_mut())
-                            && let Some(effect) = host.request(req)
-                        {
-                            self.effects.push(effect);
-                        }
-                    }
-                }
-                Kind::Term { .. } | Kind::Input { .. } | Kind::Text { .. } => {}
-            }
-        }
-        for t in self.terms.values_mut() {
-            self.effects.extend(t.term.take_effects());
-        }
+        self.collect_copies();
         // Links open with the configured command, in the client.
         for e in &mut self.effects {
             if let Effect::OpenUri { command, .. } = e
@@ -2419,6 +2413,7 @@ impl Session {
     /// [`Session::tick`], plus scripting's timers (the configuration's load
     /// timeout, the "running a script" notice). For event loops.
     pub fn poll(&mut self, now: Instant) -> Outcome {
+        self.expire_clipboard_reads(now);
         let mut out =
             self.script_tick(now).or(self.tick(now)).or(self.expire_notices(now)).or(self.expire_decorations(now));
         if self.matcher.deadline(self.options.timeoutlen).is_some_and(|d| now >= d) {
@@ -2447,6 +2442,7 @@ impl Session {
             .chain(terms)
             .chain(self.script_deadline())
             .chain(self.decorations_deadline())
+            .chain(self.copies_deadline())
             .chain(self.matcher.deadline(self.options.timeoutlen))
             .chain(self.submode_deadline())
             .chain(self.notice_deadline())
@@ -4220,7 +4216,12 @@ mod tests {
         // Counts, rows, <Esc> twice.
         key(&mut s, "<C-b>v");
         key(&mut s, "ggVjy");
-        assert_eq!(copied(&mut s), ["hello world\nsecond line"]);
+        assert_eq!(copied(&mut s), ["hello world\nsecond line\n"], "lines, with their line break");
+        let (history, _) = s.run_command("history", &[], None, Instant::now()).unwrap();
+        let ScriptValue::List(history) = history else { panic!() };
+        let newest = &history[0];
+        assert_eq!(newest.get("kind").and_then(ScriptValue::as_str), Some("line"));
+        assert_eq!(newest.get("source").and_then(|x| x.get("kind")).and_then(ScriptValue::as_str), Some("terminal"));
         key(&mut s, "<C-b>[");
         key(&mut s, "v<Esc>");
         assert_eq!(s.current_mode(), "visual", "the first <Esc> drops the selection");
@@ -5041,8 +5042,95 @@ mod tests {
         assert!(
             s.run_command("get-var", &[str("pane"), str("y"), ScriptValue::Num(pane)], None, Instant::now()).is_err()
         );
-        run(&mut s, "set-clipboard", &[str("copied")]);
-        assert!(s.take_effects().contains(&temzdf_scene::Effect::Copy("copied".into())));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn command_names_are_unique() {
+        // A name twice: the first one found would hide the other (`copy`,
+        // the PDF pane's, once was).
+        let specs = commands::command_specs();
+        let mut seen = std::collections::HashSet::new();
+        for c in &specs {
+            assert!(seen.insert(c.name.as_str()), "{} twice", c.name);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn copies_registers_and_the_clipboard() {
+        let (mut s, path) = text_session("copies.txt", "one\ntwo\n");
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
+            s.run_command(name, args, None, Instant::now()).unwrap().0
+        };
+        let str = |v: &str| ScriptValue::Str(v.into());
+        let opts = |kv: &[(&str, ScriptValue)]| ScriptValue::map(kv.iter().cloned());
+        let texts = |v: ScriptValue| match v {
+            ScriptValue::List(l) => l.iter().map(|e| e.get("text").unwrap().as_str().unwrap().to_owned()).collect(),
+            _ => Vec::<String>::new(),
+        };
+        // Copies and deletes go to the clipboard (o.clipboard "all").
+        let e = run(&mut s, "copy-text", &[str("a")]);
+        assert_eq!(e.get("kind"), Some(&str("char")));
+        assert_eq!(e.get("source").and_then(|x| x.get("kind")), Some(&str("edit")));
+        run(&mut s, "copy-text", &[str("gone"), opts(&[("how", str("delete"))])]);
+        assert_eq!(copied(&mut s), ["a", "gone"]);
+        // Lines end with a line break.
+        run(
+            &mut s,
+            "copy-text",
+            &[str("line"), opts(&[("kind", str("line")), ("clipboard", ScriptValue::Bool(false))])],
+        );
+        assert_eq!(copied(&mut s), Vec::<String>::new());
+        assert_eq!(texts(run(&mut s, "history", &[])), ["line\n", "gone", "a"]);
+        // "copies": not deletes.
+        s.set_option("clipboard", &str("copies")).unwrap();
+        run(&mut s, "copy-text", &[str("cut"), opts(&[("how", str("delete"))])]);
+        assert_eq!(copied(&mut s), Vec::<String>::new());
+        // Named registers: not to the clipboard; appending lines to text.
+        run(&mut s, "copy-text", &[str("r1"), opts(&[("register", str("a"))])]);
+        run(
+            &mut s,
+            "copy-text",
+            &[str("r2"), opts(&[("register", str("a")), ("kind", str("line")), ("append", ScriptValue::Bool(true))])],
+        );
+        assert_eq!(copied(&mut s), Vec::<String>::new());
+        let a = run(&mut s, "register", &[str("a")]);
+        assert_eq!((a.get("text"), a.get("kind")), (Some(&str("r1\nr2\n")), Some(&str("line"))));
+        assert_eq!(run(&mut s, "register", &[str("b")]), ScriptValue::Null);
+        // The history keeps o.copyhistory entries.
+        s.set_option("copyhistory", &ScriptValue::Num(2.0)).unwrap();
+        run(&mut s, "copy-text", &[str("last")]);
+        assert_eq!(copied(&mut s), ["last"]);
+        assert_eq!(texts(run(&mut s, "history", &[])), ["last", "r1\nr2\n"]);
+        assert_eq!(s.cli_get_copy(None, 1), Ok("r1\nr2\n".to_owned()));
+        assert_eq!(s.cli_get_copy(Some("a"), 0), Ok("r1\nr2\n".to_owned()));
+        assert!(s.cli_get_copy(None, 5).is_err());
+        // Putting: characters at the cursor, lines before the cursor's line.
+        run(&mut s, "text.set-cursor", &[pos(1, 1)]);
+        run(&mut s, "put", &[]);
+        assert_eq!(text_of(&mut s), "one\ntlastwo\n");
+        run(&mut s, "put", &[opts(&[("register", str("a"))])]);
+        assert_eq!(text_of(&mut s), "one\nr1\nr2\ntlastwo\n");
+        assert!(s.run_command("put", &[opts(&[("register", str("z"))])], None, Instant::now()).is_err());
+        // Forgetting.
+        let ScriptValue::List(history) = run(&mut s, "history", &[]) else { panic!() };
+        let id = history[0].get("id").cloned().unwrap();
+        run(&mut s, "forget-copy", &[id]);
+        assert_eq!(texts(run(&mut s, "history", &[])), ["r1\nr2\n"]);
+        run(&mut s, "forget-copy", &[]);
+        assert_eq!(texts(run(&mut s, "history", &[])), Vec::<String>::new());
+        assert_eq!(run(&mut s, "register", &[str("a")]), ScriptValue::Null);
+        // Reading the clipboard asks the client; no answer in time fails it.
+        let p = run(&mut s, "read-clipboard", &[opts(&[("primary", ScriptValue::Bool(true))])]);
+        let ticket = p.get("$promise").and_then(ScriptValue::as_num).unwrap() as u64;
+        assert_eq!(s.take_effects(), [temzdf_scene::Effect::ReadClipboard { ticket, primary: true }]);
+        let due = s.next_deadline().unwrap();
+        assert!(due > Instant::now() + Duration::from_secs(5));
+        s.poll(due + Duration::from_millis(1));
+        assert!(s.copies_deadline().is_none(), "given up");
+        // A late answer is dropped.
+        assert_eq!(s.clipboard_answer(ticket, Ok("late".into())), Outcome::None);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

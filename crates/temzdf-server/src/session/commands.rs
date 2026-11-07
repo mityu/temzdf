@@ -235,7 +235,7 @@ pub fn command_specs() -> Vec<CommandSpec> {
         doc: format!("Visual mode: {doc} (the focused terminal; a mapping's count applies)"),
         ts: "(): void".into(),
     });
-    let text = super::text::COMMANDS.iter().map(|(name, ts, doc)| CommandSpec {
+    let text = super::text::COMMANDS.iter().chain(super::registers::COMMANDS).map(|(name, ts, doc)| CommandSpec {
         name: (*name).into(),
         doc: (*doc).into(),
         ts: (*ts).into(),
@@ -326,6 +326,9 @@ impl Session {
             s.action_inner(a, now).map(|o| (ScriptValue::Null, o)).map_err(|e| format!("{e:#}"))
         };
         if let Some(result) = self.text_command(name, args, count) {
+            return result;
+        }
+        if let Some(result) = self.register_command(name, args) {
             return result;
         }
         if let "search-for" | "search-preview" | "search-cancel" = name {

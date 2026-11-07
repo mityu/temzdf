@@ -249,7 +249,7 @@ impl App {
                 temzdf_client::open_uri(&command, &uri, report);
             }
             Effect::RunShell(cmd) => temzdf_client::run_shell(&cmd),
-            Effect::Copy(text) => {
+            Effect::Copy(text) | Effect::Copied { text, .. } => {
                 if let Err(e) = self.input.clipboard_set(&text, false) {
                     report(format!("cannot copy: {e}"));
                 }
@@ -258,6 +258,10 @@ impl App {
                 Ok(text) => self.send(ClientMsg::Paste(text)),
                 Err(e) => report(format!("cannot paste: {e}")),
             },
+            Effect::ReadClipboard { ticket, primary } => {
+                let result = self.input.clipboard_get(primary);
+                self.send(ClientMsg::Clipboard { ticket, result });
+            }
         }
     }
 

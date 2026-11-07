@@ -780,7 +780,7 @@ fn the_visual_mode_copies_a_shells_output_by_keys() {
     let s = t.wait_for("the top", |s| s.lines()[0].starts_with('1') && mode_shown(s) == "VISUAL LINE");
     assert!(s.cell(0, 2).inverse, "rows 1 to 3 selected");
     t.type_text("y");
-    assert_eq!(copies(&mut t, 2)[1], "1\n2\n3");
+    assert_eq!(copies(&mut t, 2)[1], "1\n2\n3\n", "rows as lines");
     t.wait_for("the live screen again", |s| s.lines().iter().any(|l| l == "alpha beta"));
     // Search with / (an input line below), then select the match.
     t.keys(&["C-b", "["]);
@@ -799,6 +799,33 @@ fn the_visual_mode_copies_a_shells_output_by_keys() {
     assert_eq!(t.copied().len(), 3, "a drag copies nothing in the visual mode");
     t.type_text("y");
     assert_eq!(copies(&mut t, 4)[3], "beta");
+}
+
+#[test]
+fn copies_reach_other_panes_and_the_command_line() {
+    // The session keeps what panes copy (doc/design/registers.md): `temzdf
+    // paste` prints it, `temzdf copy` adds to it, <C-b>] puts the newest
+    // into the focused pane.
+    let env = Env::new("copies");
+    let mut t = Term::spawn(&[BIN, "-s", "cp"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.type_text("clear; echo alpha beta\n");
+    t.wait_for("the output", |s| s.lines().iter().any(|l| l == "alpha beta"));
+    t.keys(&["C-b", "["]);
+    t.wait_for("the visual mode", |s| mode_shown(s) == "VISUAL");
+    t.type_text("k0wvey");
+    assert_eq!(copies(&mut t, 1), ["beta"]);
+    assert_eq!(env.run(&["paste", "-s", "cp"]), "beta");
+    let mut copy = env.command().args(["copy", "-s", "cp"]).stdin(std::process::Stdio::piped()).spawn().unwrap();
+    std::io::Write::write_all(copy.stdin.as_mut().unwrap(), b"echo from-cli").unwrap();
+    drop(copy.stdin.take());
+    assert!(copy.wait().unwrap().success());
+    assert_eq!(copies(&mut t, 2)[1], "echo from-cli", "to the clipboard too (o.clipboard)");
+    assert_eq!(env.run(&["paste", "-s", "cp", "-n", "1"]), "beta");
+    t.keys(&["C-b", "]"]);
+    t.wait_for("put at the prompt", |s| s.lines().iter().any(|l| is_prompt(l) && l.ends_with("echo from-cli")));
+    t.key("Enter");
+    t.wait_for("run", |s| s.lines().iter().any(|l| l == "from-cli"));
 }
 
 #[test]

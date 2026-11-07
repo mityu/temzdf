@@ -155,6 +155,31 @@ enum Cmd {
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         action: Vec<String>,
     },
+    /// Record standard input in a session's copy history, as if a pane had
+    /// copied it (doc/design/registers.md); it goes to the clipboard as the
+    /// session's o.clipboard says.
+    Copy {
+        /// The session (the one this runs in, else the only one).
+        #[arg(short, long, value_name = "NAME")]
+        session: Option<String>,
+        /// To this named register.
+        #[arg(short, long, value_name = "NAME")]
+        register: Option<String>,
+        /// As whole lines (else characters).
+        #[arg(long)]
+        line: bool,
+    },
+    /// Print an entry of a session's copy history: the newest, the N-th
+    /// newest, or a named register's.
+    Paste {
+        #[arg(short, long, value_name = "NAME")]
+        session: Option<String>,
+        #[arg(short, long, value_name = "NAME", conflicts_with = "index")]
+        register: Option<String>,
+        /// The N-th newest entry (0: the newest).
+        #[arg(short = 'n', long = "index", value_name = "N", default_value_t = 0)]
+        index: usize,
+    },
     /// Show the fonts GUI clients use (as `wezterm ls-fonts`): those of the
     /// configuration, of session NAME, or of the session this runs in.
     LsFonts {
@@ -272,6 +297,20 @@ fn main() -> Result<()> {
             // In a session's pane, that session (as zellij does).
             let session = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok());
             return client::action(&client::resolve(session.as_deref())?, action, timeout);
+        }
+        Some(Cmd::Copy { session, register, line }) => {
+            warn_unused(&start_flags, "copy");
+            let session = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok());
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+            return client::copy(&client::resolve(session.as_deref())?, text, register, line);
+        }
+        Some(Cmd::Paste { session, register, index }) => {
+            warn_unused(&start_flags, "paste");
+            let session = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok());
+            let text = client::paste(&client::resolve(session.as_deref())?, register, index)?;
+            std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes())?;
+            return Ok(());
         }
         Some(Cmd::LsFonts { session, font, font_wide, text, list_system }) => {
             let looks = if !font.is_empty() || !font_wide.is_empty() {

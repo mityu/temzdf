@@ -185,6 +185,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                     o
                 }
                 Input::Paste(text) => session.paste(&text),
+                Input::Clipboard { ticket, result } => session.clipboard_answer(ticket, result),
                 Input::Focus(gained) => session.client_focus(gained),
                 Input::Handled(true) => Outcome::Redraw,
                 Input::Handled(false) => Outcome::None,

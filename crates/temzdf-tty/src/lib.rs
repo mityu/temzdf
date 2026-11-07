@@ -240,6 +240,24 @@ pub fn copy_sequence(text: &str, in_tmux: bool) -> Vec<u8> {
     if in_tmux { termpix::placeholder::tmux_passthrough(&osc) } else { osc }
 }
 
+/// OSC 52 query: ask the terminal for its clipboard (`primary`: the primary
+/// selection). Not passed through tmux: tmux answers it (from its own
+/// buffer, or by asking the terminal, as `set-clipboard` says).
+pub fn clipboard_query(primary: bool) -> Vec<u8> {
+    format!("\x1b]52;{};?\x1b\\", if primary { 'p' } else { 'c' }).into_bytes()
+}
+
+/// The text of an OSC 52 answer's body (`52;c;BASE64`).
+pub fn clipboard_reply(body: &[u8]) -> Result<String, String> {
+    use base64::Engine;
+    let body = std::str::from_utf8(body).map_err(|_| "the terminal's clipboard answer is not text".to_owned())?;
+    let data = body.splitn(3, ';').nth(2).ok_or("the terminal's clipboard answer has no data")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.trim())
+        .map_err(|e| format!("the terminal's clipboard answer: {e}"))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,6 +434,16 @@ mod tests {
         }
         assert_eq!(term.text_rows()[0], "line 1: 5");
         assert_eq!(term.take_shown_cursors(), [] as [(u32, u32); 0], "text alone");
+    }
+
+    #[test]
+    fn clipboard_queries_and_answers() {
+        assert_eq!(clipboard_query(false), b"\x1b]52;c;?\x1b\\");
+        assert_eq!(clipboard_query(true), b"\x1b]52;p;?\x1b\\");
+        assert_eq!(clipboard_reply(b"52;c;aGVsbG8K"), Ok("hello\n".to_owned()));
+        assert_eq!(clipboard_reply(b"52;c;"), Ok(String::new()));
+        assert!(clipboard_reply(b"52;c;!!").is_err());
+        assert!(clipboard_reply(b"52").is_err());
     }
 
     #[test]

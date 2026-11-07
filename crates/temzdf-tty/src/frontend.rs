@@ -12,7 +12,7 @@ use temzdf_scene::{Effect, Frame, Hints, ImageUpdate, Images, Pointer};
 use termpix::compositor::{Backend, Compositor};
 use termpix::geom::Geometry;
 use termpix::graphics::Medium;
-use termpix::input::{Event, KeyEvent, MouseEvent};
+use termpix::input::{Event, KeyEvent, MouseEvent, Reply};
 use termpix::probe::Capabilities;
 use termpix::tty::{self, Modes, TermEvent, Tty};
 
@@ -38,6 +38,11 @@ pub enum Input {
     Focus(bool),
     /// The terminal changed size.
     Resized(Geometry),
+    /// The terminal answered a clipboard read (`Effect::ReadClipboard`).
+    Clipboard {
+        ticket: u64,
+        result: std::result::Result<String, String>,
+    },
     /// The terminal went away or we were told to stop.
     Terminate,
     /// Handled here; redraw if true.
@@ -92,7 +97,15 @@ pub struct TtyFrontend {
     no_graphics: Option<String>,
     notices: Option<crate::notices::Notices>,
     plain_frame: Option<Frame>,
+    /// Clipboard reads asked of the terminal (OSC 52 queries), oldest first:
+    /// its answers come in that order. Some terminals never answer
+    /// (WezTerm), so old ones are dropped.
+    clipboard_reads: std::collections::VecDeque<(u64, Instant)>,
 }
+
+/// How long a clipboard read waits for the terminal's answer here (the
+/// session gives up after its own, shorter wait).
+const CLIPBOARD_READ_WAIT: Duration = Duration::from_secs(15);
 
 impl TtyFrontend {
     /// Open and probe the terminal. `choose` picks the backend and transfer
@@ -153,6 +166,7 @@ impl TtyFrontend {
             notices: no_graphics.as_deref().map(crate::notices::Notices::new),
             no_graphics,
             plain_frame: None,
+            clipboard_reads: Default::default(),
         })
     }
 
@@ -382,6 +396,13 @@ impl TtyFrontend {
             TermEvent::Input(Event::Mouse(m)) => Input::Mouse(m),
             TermEvent::Input(Event::Paste(text)) => Input::Paste(text),
             TermEvent::Input(Event::Focus(gained)) => Input::Focus(gained),
+            TermEvent::Input(Event::Reply(Reply::Osc(body))) if body.starts_with(b"52;") => {
+                self.drop_old_reads();
+                match self.clipboard_reads.pop_front() {
+                    Some((ticket, _)) => Input::Clipboard { ticket, result: crate::clipboard_reply(&body) },
+                    None => Input::Handled(false),
+                }
+            }
             _ => Input::Handled(false),
         })
     }
@@ -397,12 +418,27 @@ impl TtyFrontend {
                 temzdf_client::open_uri(&command, &uri, on_failure)
             }
             Effect::RunShell(cmd) => temzdf_client::run_shell(&cmd),
+            // Only the session sees these; a copy all the same.
+            Effect::Copied { text, .. } => self.tty.write_all(&copy_sequence(&text, self.caps.in_tmux))?,
+            Effect::ReadClipboard { ticket, primary } => {
+                self.drop_old_reads();
+                self.clipboard_reads.push_back((ticket, Instant::now()));
+                self.tty.write_all(&crate::clipboard_query(primary))?;
+            }
             // The terminal holds the clipboard and pastes with its own key.
             Effect::Paste { .. } => {
                 on_failure("in a terminal, paste with the terminal's own key (Ctrl+Shift+V, Cmd+V)".into())
             }
         }
         Ok(())
+    }
+}
+
+impl TtyFrontend {
+    fn drop_old_reads(&mut self) {
+        while self.clipboard_reads.front().is_some_and(|(_, at)| at.elapsed() > CLIPBOARD_READ_WAIT) {
+            self.clipboard_reads.pop_front();
+        }
     }
 }
 

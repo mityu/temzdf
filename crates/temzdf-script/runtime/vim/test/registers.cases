@@ -1,0 +1,73 @@
+# Registers on the session's copy history (doc/design/registers.md): what
+# other panes copied ("copy:" records it before the keys, as a terminal's
+# visual mode would), and the client's clipboard ("clipboard:").
+
+=== a terminal's lines put with p
+text:
+|one
+two
+copy: line from the terminal
+keys: p
+want:
+one
+|from the terminal
+two
+
+=== a terminal's copy is the newest yank, "0
+text:
+|ab
+copy: char T
+keys: x"0p
+want:
+b|T
+
+=== deletes of lines shift through "1 and "2
+text:
+|one
+two
+three
+keys: dddd"2p
+want:
+three
+|one
+
+=== a delete within a line goes to "-
+text:
+|ab cd
+next
+keys: dwjdd"-P
+want:
+ab| cd
+
+=== "+p puts the client's clipboard
+text:
+|x
+clipboard: from outside
+keys: "+p
+want:
+xfrom outsid|e
+
+=== the clipboard's text ending with a line break goes in as lines
+text:
+|x
+clipboard: line\n
+keys: "+p
+want:
+x
+|line
+
+=== a clipboard put repeats with .
+text:
+|x
+clipboard: ab
+keys: "+p.
+want:
+xaba|b
+
+=== a clipboard that cannot be read is an error
+text:
+|x
+keys: "+p
+want:
+|x
+error: yes

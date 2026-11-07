@@ -41,10 +41,15 @@ user's.
   previous line's end, and is linewise from at or before the first
   non-blank; `dw` on a line's last word stops at the line's end; `cw` is
   `ce`.
-- Registers (`registers.ts`): `"`, `0`, `1`-`9` (deletes of lines or more),
-  `-`, `a`-`z` (`A`-`Z` append), `+` and `*` (written with
-  `setClipboard`; reading the system clipboard is not possible yet, so
-  they give back what was put there), `_`.
+- Registers (`registers.ts`) are the session's copy history and named
+  registers (`doc/design/registers.md`), so what other panes copy is in
+  them: `"` the newest entry, `0` the newest copy, `1`-`9` and `-` the
+  newest deletes, `a`-`z` (`A`-`Z` append) named, `+` and `*` the client's
+  clipboard (written with `copyText(text, { clipboard: true })`, read with
+  `readClipboard()` in a dispatched task: `"+p` puts once the client
+  answered), `_`. Yanks and deletes go to the clipboard too, as Vim's
+  `clipboard=unnamedplus` (`o.clipboard`); `"_` or a named register keeps
+  it.
 - The visual selection is a decoration (style `Selection`), not the
   framework's selection, so the cursor stays on Vim's character
   (inclusive ends).

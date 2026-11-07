@@ -60,6 +60,7 @@ pub const EVENTS: &[&str] = &[
     "BufferHidden",
     "InputChanged",
     "FileChangedOnDisk",
+    "Copied",
 ];
 
 /// Input that arrived while a script ran.
@@ -643,6 +644,17 @@ impl Session {
         out
     }
 
+    /// Whether dispatched tasks are under way (for tests waiting on them).
+    #[cfg(test)]
+    pub(super) fn tasks_running(&self) -> bool {
+        !self.script.tasks.is_empty()
+    }
+
+    /// Settle the Promise a command answered with (`{ "$promise": n }`).
+    pub(super) fn resolve_promise(&mut self, promise: u64, result: Result<ScriptValue, String>) {
+        self.script.send(&ToHost::Resolve { promise, result });
+    }
+
     /// A message from the script host.
     pub(super) fn handle_script(&mut self, msg: FromHost) -> Outcome {
         match msg {
@@ -1066,6 +1078,13 @@ impl Session {
             "splitright" => o.splitright = flag()?,
             "splitbelow" => o.splitbelow = flag()?,
             "modehistory" => o.modehistory = (num()? as usize).max(1),
+            "copyhistory" => o.copyhistory = (num()? as usize).max(1),
+            "clipboard" => {
+                o.clipboard = value
+                    .as_str()
+                    .and_then(super::registers::ClipboardSync::parse)
+                    .ok_or("o.clipboard: expected \"all\", \"copies\" or \"none\"")?
+            }
             "scrollstep" => o.scrollstep = num()?,
             "scrollsmoothness" => o.scrollsmoothness = ms()?,
             "linkopener" => {
@@ -1179,6 +1198,8 @@ impl Session {
             "splitright" => ScriptValue::Bool(o.splitright),
             "splitbelow" => ScriptValue::Bool(o.splitbelow),
             "modehistory" => ScriptValue::Num(o.modehistory as f64),
+            "copyhistory" => ScriptValue::Num(o.copyhistory as f64),
+            "clipboard" => ScriptValue::Str(o.clipboard.name().into()),
             "scrollstep" => ScriptValue::Num(o.scrollstep),
             "scrollsmoothness" => ms(o.scrollsmoothness),
             "linkopener" => o.linkopener.as_ref().map_or(ScriptValue::Null, |l| {
@@ -1309,6 +1330,9 @@ fn hook_may(op: &HostOp) -> bool {
 /// Commands that change nothing (or only show something), for hooks.
 const QUERIES: &[&str] = &[
     "buffers",
+    "history",
+    "register",
+    "registers",
     "tabs",
     "input-text",
     "message",

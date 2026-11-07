@@ -85,10 +85,11 @@ impl Drop for Session {
 /// `action.fooBar(` in runtime/defaults.ts as `foo-bar`, `action.ns.fooBar(`
 /// as `ns.foo-bar`).
 pub(crate) fn command_names() -> Vec<String> {
-    let mut names: Vec<String> = ["split", "new-pane", "message", "input.backspace", "input.delete-word"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let mut names: Vec<String> =
+        ["split", "new-pane", "message", "input.backspace", "input.delete-word", "read-clipboard"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     let defaults = include_str!("../../runtime/defaults.ts");
     for part in defaults.split("action.").skip(1) {
         let camel: String = part.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
@@ -383,6 +384,54 @@ dispatch(async (ctx) => {
             "task1 message(in atomic)",
             "end Task(1)"
         ]
+    );
+}
+
+#[test]
+fn commands_answering_later_give_promises_and_atomic_lends_cmd_the_task() {
+    // A command answering `{ $promise: n }` is a Promise, settled by
+    // ToHost::Resolve; inside ctx.atomic the plain cmd issues as the task.
+    let config = r#"import { cmd, dispatch } from "temzdf";
+dispatch(async (ctx) => {
+  const v = await ctx.cmd.readClipboard();
+  ctx.atomic(() => cmd.message(`got ${v}`));
+  try { await ctx.cmd.readClipboard(); } catch (e) { ctx.cmd.message(`failed ${e.message}`); }
+});
+"#;
+    let mut s = Session::start(&[("config.js", config)]);
+    s.load("config.js");
+    let mut log = Vec::new();
+    let mut promise = 6;
+    loop {
+        match s.recv() {
+            FromHost::Request { req, token, op } => {
+                let reading = matches!(&op, HostOp::Command { name, .. } if name == "read-clipboard");
+                let d = describe(token, &op);
+                if !d.is_empty() {
+                    log.push(d);
+                }
+                if reading {
+                    promise += 1;
+                    let p = ScriptValue::map([("$promise", ScriptValue::Num(promise as f64))]);
+                    s.send(ToHost::Reply { req, result: Ok(p) });
+                    let result = if promise == 7 { Ok(ScriptValue::Str("clip".into())) } else { Err("nope".into()) };
+                    s.send(ToHost::Resolve { promise, result });
+                } else {
+                    s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
+                }
+            }
+            FromHost::Ready(r) => assert!(r.is_ok()),
+            FromHost::TaskStart(_) | FromHost::AtomicBegin(_) | FromHost::AtomicEnd(_) => {}
+            FromHost::TaskDone { result, .. } => {
+                assert!(result.is_ok(), "{result:?}");
+                break;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(
+        log,
+        ["task1 read-clipboard()", "task1 message(got clip)", "task1 read-clipboard()", "task1 message(failed nope)"]
     );
 }
 

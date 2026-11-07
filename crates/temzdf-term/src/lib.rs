@@ -35,7 +35,9 @@ use libghostty_vt::style::{StyleColor, Underline as GUnderline};
 use libghostty_vt::terminal::{Mode, Point, PointCoordinate, ScrollViewport};
 use libghostty_vt::{RenderState, Terminal, TerminalOptions, focus, key, mouse, paste};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use temzdf_scene::{Attrs, Cell, Color, CursorShape, Effect, Frame, Images, Layer, Rect, TextGrid, Underline};
+use temzdf_scene::{
+    Attrs, Cell, Color, CopyKind, CursorShape, Effect, Frame, Images, Layer, Rect, TextGrid, Underline,
+};
 use termpix_core::geom::Geometry;
 use termpix_core::input::{
     CoordUnit, KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection, ScrollUnit,
@@ -212,7 +214,7 @@ impl TermBuffer {
             .on_clipboard_write(move |_, write| {
                 for content in write.contents() {
                     if content.mime.starts_with("text/plain") {
-                        e.borrow_mut().push(Effect::Copy(content.data.to_owned()));
+                        e.borrow_mut().push(Effect::Copied { text: content.data.to_owned(), kind: CopyKind::Char });
                         break;
                     }
                 }
@@ -630,7 +632,7 @@ impl TermBuffer {
         if let Ok(Some(bytes)) = t.format_selection_alloc(None, options) {
             let text = String::from_utf8_lossy(&bytes).into_owned();
             if !text.is_empty() {
-                self.effects.borrow_mut().push(Effect::Copy(text));
+                self.effects.borrow_mut().push(Effect::Copied { text, kind: CopyKind::Char });
             }
         }
         false
@@ -1072,7 +1074,7 @@ mod tests {
         term.take_effects()
             .into_iter()
             .filter_map(|e| match e {
-                Effect::Copy(t) => Some(t),
+                Effect::Copied { text, .. } => Some(text),
                 _ => None,
             })
             .collect()

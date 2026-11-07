@@ -1,9 +1,13 @@
-// Registers: the unnamed one ("), the yank register (0), the delete ring
-// (1-9), the small delete register (-), named ones (a-z; A-Z append), the
-// clipboard (+ and *, written with setClipboard; reading the system's is
-// not possible yet, so they give back what was last put there) and the
-// black hole (_).
-import { cmd } from "temzdf";
+// Registers, on the session's copy history (doc/design/registers.md), so
+// what any pane copies is in them:
+//   "       the newest entry
+//   0       the newest copy without a register
+//   1-9     the n-th newest delete of a line or more, without a register
+//   -       the newest delete within a line, without a register
+//   a-z     named registers (A-Z append)
+//   + *     the system clipboard (read asynchronously: see normal.ts)
+//   _       nothing is stored
+import { cmd, type Copied } from "temzdf";
 
 export type Kind = "char" | "line" | "block";
 
@@ -12,52 +16,51 @@ export interface Register {
   kind: Kind;
 }
 
-const regs = new Map<string, Register>();
+const plain = (e: Copied) => e.register === null;
+const multiLine = (e: Copied) => e.kind === "line" || e.text.includes("\n");
+const reg = (e: Copied | null | undefined): Register | undefined =>
+  e === null || e === undefined ? undefined : { text: e.text, kind: e.kind };
 
+/** Whether `name` is the system clipboard (read with readClipboard). */
+export function isClipboard(name: string | null): boolean {
+  return name === "+" || name === "*";
+}
+
+/** A register's content (not the clipboard's: see `isClipboard`). */
 export function get(name: string | null): Register | undefined {
-  const n = (name ?? '"').toLowerCase();
-  if (n === "*") return regs.get("+");
-  return regs.get(n);
+  const n = name ?? '"';
+  if (n === '"') return reg(cmd.history({ limit: 1 })[0]);
+  if (n === "_") return undefined;
+  if (n === "0") return reg(cmd.history().find((e) => e.how === "copy" && plain(e)));
+  if (/^[1-9]$/.test(n)) {
+    return reg(cmd.history().filter((e) => e.how === "delete" && plain(e) && multiLine(e))[Number(n) - 1]);
+  }
+  if (n === "-") return reg(cmd.history().find((e) => e.how === "delete" && plain(e) && !multiLine(e)));
+  return reg(cmd.register(n.toLowerCase()));
+}
+
+/** What the clipboard's `text` is: the kind it was copied as here, else
+ * lines when it ends with a line break (as Vim). */
+export function fromClipboard(text: string): Register {
+  const known = cmd.history().find((e) => e.text === text);
+  if (known !== undefined) return { text, kind: known.kind };
+  return { text, kind: text.endsWith("\n") ? "line" : "char" };
 }
 
 /** Store what a yank (`yank`) or a delete or change took. */
-export function store(name: string | null, reg: Register, how: "yank" | "delete"): void {
+export function store(name: string | null, r: Register, how: "yank" | "delete"): void {
   if (name === "_") return;
+  const opts = { kind: r.kind, how: how === "yank" ? ("copy" as const) : ("delete" as const) };
   if (name !== null && /^[A-Z]$/.test(name)) {
-    const lower = name.toLowerCase();
-    const old = regs.get(lower);
-    const joined =
-      old === undefined
-        ? reg
-        : {
-            text: old.kind === "line" || reg.kind === "line" ? ensureNl(old.text) + reg.text : old.text + reg.text,
-            kind: old.kind === "line" || reg.kind === "line" ? ("line" as Kind) : old.kind,
-          };
-    regs.set(lower, joined);
-    regs.set('"', joined);
-    return;
-  }
-  if (name === "+" || name === "*") {
-    regs.set("+", reg);
-    cmd.setClipboard(reg.text);
-  } else if (name !== null && name !== '"') {
-    regs.set(name, reg);
-  } else if (how === "yank") {
-    regs.set("0", reg);
-  } else if (reg.kind === "line" || reg.text.includes("\n")) {
-    for (let i = 9; i > 1; i--) {
-      const prev = regs.get(String(i - 1));
-      if (prev !== undefined) regs.set(String(i), prev);
-    }
-    regs.set("1", reg);
+    cmd.copyText(r.text, { ...opts, register: name.toLowerCase(), append: true });
+  } else if (name !== null && /^[a-z]$/.test(name)) {
+    cmd.copyText(r.text, { ...opts, register: name });
+  } else if (isClipboard(name)) {
+    cmd.copyText(r.text, { ...opts, clipboard: true });
   } else {
-    regs.set("-", reg);
+    // ", or a numbered one named: as the unnamed register.
+    cmd.copyText(r.text, opts);
   }
-  regs.set('"', reg);
-}
-
-function ensureNl(s: string): string {
-  return s.endsWith("\n") ? s : `${s}\n`;
 }
 
 /** Whether `c` names a register. */

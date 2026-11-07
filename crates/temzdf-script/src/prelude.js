@@ -14,8 +14,19 @@
     });
 
   // The context token of the synchronous call running now (a mapped or hook
-  // function, or the configuration at startup); null elsewhere.
-  const current = () => JSON.parse(host.current());
+  // function, or the configuration at startup), else the task's inside
+  // its ctx.atomic(fn); null elsewhere.
+  let atomicToken = null;
+  const current = () => JSON.parse(host.current()) ?? atomicToken;
+
+  // A command answering later answers `{ $promise: n }`: a Promise, settled
+  // when the session sends ToHost::Resolve.
+  function promised(result) {
+    if (result === null || typeof result !== "object" || typeof result.$promise !== "number") return result;
+    return new Promise((resolve, reject) =>
+      host.awaitPromise(result.$promise, (ok, json) => (ok ? resolve(JSON.parse(json)) : reject(new Error(json)))),
+    );
+  }
 
   function request(token, op, payload) {
     if (token === null) {
@@ -43,7 +54,7 @@
   // The session's commands, as functions issuing them under `tokenOf()`.
   function commands(tokenOf, cmd = {}) {
     for (const name of JSON.parse(host.commands())) {
-      put(cmd, name, (...args) => request(tokenOf(), "command", { name, args }));
+      put(cmd, name, (...args) => promised(request(tokenOf(), "command", { name, args })));
     }
     return deepFreeze(cmd);
   }
@@ -98,6 +109,9 @@
     if (typeof fn !== "function") throw new TypeError("atomic: expected a function");
     const t = JSON.stringify(token);
     host.atomicBegin(t);
+    // The plain `cmd` works inside too, under the task's token.
+    const outer = atomicToken;
+    atomicToken = token;
     try {
       const r = fn();
       if (r !== null && typeof r === "object" && typeof r.then === "function") {
@@ -105,6 +119,7 @@
       }
       return r;
     } finally {
+      atomicToken = outer;
       host.atomicEnd(t);
     }
   }

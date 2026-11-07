@@ -469,13 +469,6 @@ impl Session {
             "highlight-pattern" => self.highlight_pattern(args),
             "highlight" => self.define_highlight(args),
             "get-var" | "set-var" => self.var_command(name, args),
-            "set-clipboard" => {
-                let text = args.first().and_then(ScriptValue::as_str).ok_or_else(|| "what text?".to_owned());
-                text.map(|t| {
-                    self.effects.push(temzdf_scene::Effect::Copy(t.to_owned()));
-                    (ScriptValue::Null, Outcome::None)
-                })
-            }
             n if n.starts_with("text.") => self.text_primitive(&n["text.".len()..], args, count),
             _ => return None,
         };
@@ -1162,7 +1155,6 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
         "(scope: \"buffer\" | \"pane\" | \"tab\", name: string, value: unknown, id?: number): void",
         "Set one (JSON values; null unsets it). Held by the server: it outlives script host restarts and goes with its owner",
     ),
-    ("set-clipboard", "(text: string): void", "Put text on the clipboard (in the client)"),
     (
         "text.add-decoration",
         "(range: Range, opts?: { style?: string, namespace?: string, priority?: number, showIn?: number, startGravity?: \"before\" | \"after\", endGravity?: \"before\" | \"after\", ttl?: number, pane?: number }): number",

@@ -387,6 +387,36 @@ pub fn base_points(font: &[FontEntry]) -> f32 {
     font.first().and_then(|f| f.size).unwrap_or(DEFAULT_FONT_POINTS)
 }
 
+/// What copied text is, as Vim's register types: characters, whole lines,
+/// or a block (a rectangle, one line of it per line).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum CopyKind {
+    #[default]
+    Char,
+    Line,
+    Block,
+}
+
+impl CopyKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            CopyKind::Char => "char",
+            CopyKind::Line => "line",
+            CopyKind::Block => "block",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "char" => CopyKind::Char,
+            "line" => CopyKind::Line,
+            "block" => CopyKind::Block,
+            _ => return None,
+        })
+    }
+}
+
 /// Something a frontend does on a pane's behalf, in the frontend's own
 /// environment (its clipboard, its `DISPLAY`, its user's editor).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -394,6 +424,13 @@ pub fn base_points(font: &[FontEntry]) -> f32 {
 pub enum Effect {
     /// Put text on the clipboard.
     Copy(String),
+    /// A pane copied text (pane to session, never sent to clients): the
+    /// session records it in its copy history and puts it on the client's
+    /// clipboard as `o.clipboard` says (doc/design/registers.md).
+    Copied { text: String, kind: CopyKind },
+    /// Read the client's clipboard (`primary`: the X11/Wayland primary
+    /// selection), answered with `ClientMsg::Clipboard` carrying `ticket`.
+    ReadClipboard { ticket: u64, primary: bool },
     /// Open an external link: with `command` (the URI appended), else the
     /// system handler (`xdg-open`, `open`).
     OpenUri { uri: String, command: Option<Vec<String>> },

@@ -13,7 +13,7 @@ use std::time::Instant;
 use libghostty_vt::screen::{CellWide, RowSemanticPrompt, TrackedGridRef};
 use libghostty_vt::selection::{FormatOptions, Order, SelectWordOptions, Selection};
 use libghostty_vt::terminal::{Point, PointCoordinate, PointSpace, ScrollViewport};
-use temzdf_scene::{Cell, Color, Effect};
+use temzdf_scene::{Cell, Color, CopyKind, Effect};
 use termpix_core::input::{CoordUnit, MouseButton, MouseEvent, MouseEventKind, ScrollDirection, ScrollUnit};
 
 use super::{MULTI_CLICK, TermBuffer, WHEEL_ROWS};
@@ -408,7 +408,12 @@ impl TermBuffer {
             Op::Yank => {
                 if self.visual.as_ref().is_some_and(|v| v.selection.is_some()) {
                     self.apply_selection();
-                    self.copy_selection(None);
+                    let kind = match self.visual.as_ref().and_then(|v| v.selection.as_ref()).map(|(_, k)| *k) {
+                        Some(Kind::Line) => CopyKind::Line,
+                        Some(Kind::Block) => CopyKind::Block,
+                        _ => CopyKind::Char,
+                    };
+                    self.copy_selection(None, kind);
                     return Outcome::Leave;
                 }
                 return Outcome::Stay(false);
@@ -852,8 +857,8 @@ impl TermBuffer {
         }
     }
 
-    /// Copy the installed selection (or `sel`) to the client's clipboard.
-    fn copy_selection(&mut self, sel: Option<&Selection<'_>>) {
+    /// Copy the installed selection (or `sel`), as `kind`.
+    fn copy_selection(&mut self, sel: Option<&Selection<'_>>, kind: CopyKind) {
         let mut options =
             FormatOptions::new().with_emit_format(libghostty_vt::fmt::Format::Plain).with_unwrap(true).with_trim(true);
         if let Some(s) = sel {
@@ -862,7 +867,7 @@ impl TermBuffer {
         if let Ok(Some(bytes)) = self.terminal.format_selection_alloc(None, options) {
             let text = String::from_utf8_lossy(&bytes).into_owned();
             if !text.is_empty() {
-                self.effects.borrow_mut().push(Effect::Copy(text));
+                self.effects.borrow_mut().push(Effect::Copied { text, kind });
             }
         }
     }
@@ -886,7 +891,7 @@ impl TermBuffer {
         if let Ok(Some(bytes)) = t.format_selection_alloc(None, options) {
             let text = String::from_utf8_lossy(&bytes).into_owned();
             if !text.is_empty() {
-                self.effects.borrow_mut().push(Effect::Copy(text));
+                self.effects.borrow_mut().push(Effect::Copied { text, kind: CopyKind::Line });
             }
         }
     }
@@ -1047,7 +1052,7 @@ mod tests {
         t.take_effects()
             .into_iter()
             .filter_map(|e| match e {
-                Effect::Copy(s) => Some(s),
+                Effect::Copied { text, .. } => Some(text),
                 _ => None,
             })
             .collect()

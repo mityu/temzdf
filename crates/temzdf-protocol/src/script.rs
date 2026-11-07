@@ -134,6 +134,12 @@ pub enum ToHost {
         req: ReqId,
         result: Result<ScriptValue, String>,
     },
+    /// Settle the Promise a command answered with (`{ "$promise": n }`):
+    /// its value, or why it failed.
+    Resolve {
+        promise: u64,
+        result: Result<ScriptValue, String>,
+    },
     /// Stop the running synchronous code (`<C-c>`).
     Interrupt,
     Shutdown,

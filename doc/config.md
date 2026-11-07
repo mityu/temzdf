@@ -169,6 +169,7 @@ mapping); `cmd.sendText(text)` writes straight to the terminal pane.
 | `normal` | `<C-b>` | send `<C-b>` to the pane |
 | `normal` | `<Esc>` | back to the pane's mode |
 | `normal` | `[` `v` | the `visual` mode (a terminal pane; so `<C-b>[` from it, as tmux's copy mode) |
+| `normal` | `]` `p` | put the newest copy (any pane's, see Copies and registers) into the pane (tmux's `<C-b>]`) |
 | `pdf` | `q` | close the pane (see Buffers) |
 | `pdf` | `<Esc>` | clear the selection, else the search, else quit |
 | `pdf` | `j` `k` / `<Down>` `<Up>` | scroll (counts) |
@@ -233,8 +234,9 @@ own at the program's cursor, nothing selected; the window's status line says
 `VISUAL` (`VISUAL CHAR`, `VISUAL LINE`, `VISUAL BLOCK` with a selection), and
 the pane's top right how far the view is back. `v`, `V`
 and `<C-v>` start a selection of characters, rows or a block; `y` copies it
-(OSC 52, as the mouse's: soft-wrapped rows joined, trailing blanks dropped,
-no line break after the last row) and leaves. Keys do not reach the
+(into the copy history as characters, lines or a block, and to the
+clipboard with OSC 52, as the mouse's: soft-wrapped rows joined, trailing
+blanks dropped; rows end with a line break) and leaves. Keys do not reach the
 program meanwhile; its output goes on, and the cursor and the selection stay
 on their characters. Leaving returns the view to the live screen.
 
@@ -263,6 +265,8 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `splitright` | `true` | `split()` without a side goes right (else left) |
 | `splitbelow` | `true` | splits towards the bottom go below (else above) |
 | `modehistory` | `100` | modes the history keeps |
+| `copyhistory` | `30` | entries the copy history keeps (see Copies and registers) |
+| `clipboard` | `"all"` | what goes to the client's clipboard as well: copies and deletes (`"all"`, Vim's `clipboard=unnamedplus`), `"copies"`, or `"none"`; a copy to a named register never does |
 | `scrollstep` | `60` | pixels per wheel step, before flick acceleration |
 | `scrollsmoothness` | `60` | easing time constant in milliseconds (smaller is snappier) |
 | `linkopener` | `null` | command opening external links, the URI appended (`["firefox"]`); `null`: `xdg-open` / `open`. Runs in the client; a failure shows as a message. Only `http`, `https`, `mailto` and `ftp` links open, and `file` links to existing documents: regular files, not executable, not of a kind openers launch (`.desktop`, `.command`, scripts, ...): documents and programs are not trusted |
@@ -318,6 +322,48 @@ keymap.add("normal", "n", () => {
   if (hidden.length > 0) cmd.showBuffer(hidden[0].id);
 });
 ```
+
+## Copies and registers
+
+The session keeps what is copied (`doc/design/registers.md`): a terminal's
+selection (the mouse's, the visual mode's `y`, OSC 52 from its program), a
+PDF's selection, the Vim mode's yanks and deletes, scripts' `copyText` and
+`temzdf copy`. `history({ limit? })` lists the entries, newest first (at
+most `o.copyhistory`): `{ id, text, kind, how, register, source, time }`,
+`kind` `"char"`, `"line"` (ending with a line break) or `"block"`, `how`
+`"copy"` or `"delete"`, `source` the buffer's `{ kind, name, buffer }`.
+
+- `copyText(text, { kind?, how?, register?, append?, clipboard? })` records an
+  entry and returns it; it goes to the client's clipboard as `o.clipboard`
+  says, unless `clipboard` says otherwise or it names a `register`;
+- named registers: `register(name)`, `registers()`, `setRegister(name,
+  entry | { text, kind? } | null)`; any string names one (the Vim mode uses
+  `a`-`z`);
+- `put({ register?, index?, pane? })` puts an entry into a pane: pasted
+  into a terminal (lines without their last line break), typed into a text
+  pane (lines go in before the cursor's line) or an input pane;
+- `forgetCopy(id?)` drops an entry, or everything; the hook `Copied(entry)`
+  hears every new one;
+- `readClipboard({ primary? })` reads the client's clipboard and returns a
+  Promise: a terminal client asks its terminal (OSC 52; kitty and Ghostty
+  may ask you first, WezTerm does not answer), the GUI reads its own; no
+  answer within 10 s fails it. Await it in a dispatched task; inside
+  `ctx.atomic(fn)` the plain `cmd` works too:
+
+```ts
+import { dispatch, keymap } from "temzdf";
+keymap.add("terminal", "<C-S-p>", () =>
+  dispatch(async (ctx) => {
+    // The clipboard into register c, for a later put({ register: "c" }).
+    ctx.cmd.copyText(await ctx.cmd.readClipboard(), { register: "c" });
+  }),
+);
+```
+
+From a shell, `cmd | temzdf copy [-r NAME] [--line]` records standard
+input and `temzdf paste [-r NAME] [-n N]` prints an entry (in the session
+the shell runs in, else `-s NAME`); they work over SSH, where OSC 52 may
+not reach.
 
 ## Floating panes
 
@@ -494,7 +540,7 @@ JavaScript strings index; out of range is clamped), ranges
   Vim's `iskeyword`), `getVar(scope, name, id?)` and
   `setVar(scope, name, value, id?)` (`"buffer"`, `"pane"`, `"tab"`: Vim's
   `b:`, `w:`, `t:`; JSON values, kept by the server, gone with their
-  owner), `setClipboard(text)`;
+  owner);
 - undo: `text.undo()` and `text.redo()` (return the changed ranges; the
   cursor goes back where the step started), `text.undoBegin()` /
   `text.undoEnd()` (one step across mappings, e.g. a Vim Insert session),
@@ -510,7 +556,9 @@ ending, the line and column and the position in the file.
 
 `import "temzdf/vim";` makes text panes start in Vim's normal mode
 (`doc/design/vim-mode.md` has what it does and does not do): motions,
-operators with counts and text objects, registers, the insert and visual
+operators with counts and text objects, registers (on the copy history:
+`"0` is also a terminal's newest copy, `"+p` reads the client's
+clipboard), the insert and visual
 modes (characters, lines, blocks), `u`, `<C-r>`, `.`, searching with
 Vim's patterns (`/ ? n N * #`, hlsearch) and Ex commands (`:w :q :wq :x
 :e :s :d :y :noh :set`, ranges). `import vim from "temzdf/vim";

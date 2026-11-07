@@ -108,6 +108,8 @@ pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
         open_atomic: RefCell::new(Vec::new()),
         running_tasks: RefCell::new(std::collections::BTreeSet::new()),
         commands: RefCell::new(Vec::new()),
+        promises: RefCell::default(),
+        settled: RefCell::default(),
         gone: Cell::new(false),
         held_rejections: held,
     });
@@ -132,9 +134,11 @@ pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
                 st.interrupt.clear();
             }
             Ok(ToHost::Reply { .. }) => {}
+            Ok(ToHost::Resolve { promise, result }) => st.settled.borrow_mut().push_back((promise, result)),
             Ok(ToHost::Shutdown) | Err(true) => break,
             Err(false) => {}
         }
+        context.with(|ctx| settle_promises(&ctx, &st));
         context.with(|ctx| fire_timers(&ctx, &st));
     }
     // JavaScript values kept in Rust must go before the runtime does.
@@ -192,6 +196,10 @@ struct State {
     open_atomic: RefCell<Vec<Token>>,
     running_tasks: RefCell<std::collections::BTreeSet<TaskId>>,
     commands: RefCell<Vec<CommandSpec>>,
+    /// Promises commands answered with, by number: the function settling
+    /// each (`(ok, json)`), and answers that came while code ran.
+    promises: RefCell<std::collections::HashMap<u64, Persistent<Function<'static>>>>,
+    settled: RefCell<std::collections::VecDeque<(u64, Result<ScriptValue, String>)>>,
     /// The session went away.
     gone: Cell<bool>,
     /// Unhandled rejections held back while a configuration loads.
@@ -307,6 +315,13 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
             let at = Instant::now() + Duration::from_secs_f64(ms / 1000.0);
             s.timers.borrow_mut().insert((at, id), Persistent::save(&ctx, f));
             id as f64
+        })?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "awaitPromise",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: f64, settle: Function<'js>| {
+            s.promises.borrow_mut().insert(id as u64, Persistent::save(&ctx, settle));
         })?,
     )?;
     let s = st.clone();
@@ -453,6 +468,8 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
                 }
                 Ok(ToHost::Call { id, func, args }) => run_call(ctx, st, id, func, args),
                 Ok(ToHost::Eval { id, funcs, args }) => run_eval(ctx, st, id, &funcs, args),
+                // Settled once nothing runs (as timers fire).
+                Ok(ToHost::Resolve { promise, result }) => st.settled.borrow_mut().push_back((promise, result)),
                 // One that already stopped a timer is not for this call.
                 Ok(ToHost::Interrupt) if !st.take_interrupt_message() => {}
                 // The flag is set too: if the script catches this error, the
@@ -537,6 +554,25 @@ fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {
         st.unattended(|| {
             if let Err(e) = f.restore(ctx).and_then(|f| f.call::<_, ()>(())) {
                 eprintln!("temzdf script: a timer failed: {}", error_of(ctx, e));
+            }
+        });
+        while st.unattended(|| ctx.execute_pending_job()) {}
+    }
+}
+
+/// Settle the Promises whose answers came (in the order they came); an
+/// answer for no Promise (one nobody awaits any more) is dropped.
+fn settle_promises(ctx: &Ctx<'_>, st: &Rc<State>) {
+    loop {
+        let Some((id, result)) = st.settled.borrow_mut().pop_front() else { return };
+        let Some(f) = st.promises.borrow_mut().remove(&id) else { continue };
+        let (ok, json) = match result {
+            Ok(v) => (true, serde_json::to_string(&from_script(&v)).unwrap_or_else(|_| "null".into())),
+            Err(e) => (false, e),
+        };
+        st.unattended(|| {
+            if let Err(e) = f.restore(ctx).and_then(|f| f.call::<_, ()>((ok, json))) {
+                eprintln!("temzdf script: settling a promise failed: {}", error_of(ctx, e));
             }
         });
         while st.unattended(|| ctx.execute_pending_job()) {}

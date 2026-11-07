@@ -15,6 +15,10 @@
 //! mode: vim/normal        (optional)
 //! ```
 //!
+//! Optional too: `copy: KIND TEXT` (a copy recorded before the keys, as a
+//! terminal pane's: `\n` in TEXT is a line break), `clipboard: TEXT` (what
+//! the client's clipboard holds, same escapes), `error: yes`.
+//!
 //! `|` is the cursor (Vim's cursor is on the character after it). Text and
 //! expectation end with a line break (as files do), which is not written.
 
@@ -40,6 +44,10 @@ struct Case {
     mode: Option<String>,
     /// An error message is expected (`error: yes`).
     want_error: bool,
+    /// Copies recorded before the keys: (kind, text).
+    copies: Vec<(String, String)>,
+    /// What the client's clipboard holds.
+    clipboard: Option<String>,
 }
 
 fn cases_dir() -> PathBuf {
@@ -55,13 +63,41 @@ fn parse(file: &str, src: &str) -> Vec<Case> {
             continue;
         }
         let text = section(rest, "text:", "keys:");
+        let text = text
+            .lines()
+            .filter(|l| !l.starts_with("copy:") && !l.starts_with("clipboard:"))
+            .map(|l| format!("{l}\n"))
+            .collect();
         let keys = rest.lines().find_map(|l| l.strip_prefix("keys:")).unwrap_or("").trim().to_owned();
         let after_keys = &rest[rest.find("keys:").unwrap()..];
         let want = section(after_keys, "want:", "mode:");
-        let want = want.lines().take_while(|l| !l.starts_with("error:")).map(|l| format!("{l}\n")).collect::<String>();
+        let meta = ["error:", "copy:", "clipboard:"];
+        let want = want
+            .lines()
+            .take_while(|l| !meta.iter().any(|m| l.starts_with(m)))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>();
         let mode = rest.lines().find_map(|l| l.strip_prefix("mode:")).map(|m| m.trim().to_owned());
         let want_error = rest.lines().any(|l| l.trim() == "error: yes");
-        out.push(Case { name: name.trim().to_owned(), file: file.to_owned(), text, keys, want, mode, want_error });
+        let unescape = |s: &str| s.replace("\\n", "\n");
+        let copies = rest
+            .lines()
+            .filter_map(|l| l.strip_prefix("copy: "))
+            .filter_map(|l| l.split_once(' '))
+            .map(|(k, t)| (k.to_owned(), unescape(t)))
+            .collect();
+        let clipboard = rest.lines().find_map(|l| l.strip_prefix("clipboard: ")).map(unescape);
+        out.push(Case {
+            name: name.trim().to_owned(),
+            file: file.to_owned(),
+            text,
+            keys,
+            want,
+            mode,
+            want_error,
+            copies,
+            clipboard,
+        });
     }
     out
 }
@@ -118,15 +154,22 @@ fn errors(s: &Session) -> Vec<String> {
     s.notices.iter().filter(|n| n.kind == notices::Kind::Error).map(|n| n.text.clone()).collect()
 }
 
-/// Handle events until no script runs; with `flush`, a key waiting for a
-/// longer mapping times out too (after the last key).
-fn settle(s: &mut Session, rx: &Receiver<SessionEvent>, flush: bool) {
+/// Handle events until no script runs (no task either); with `flush`, a key
+/// waiting for a longer mapping times out too (after the last key). The
+/// client's clipboard holds `clipboard`.
+fn settle(s: &mut Session, rx: &Receiver<SessionEvent>, flush: bool, clipboard: Option<&str>) {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         while let Ok(ev) = rx.try_recv() {
             s.handle(ev, Instant::now());
         }
-        if !s.holds_input() && s.script.running() && rx.try_recv().is_err() {
+        for e in s.take_effects() {
+            if let temzdf_scene::Effect::ReadClipboard { ticket, .. } = e {
+                let answer = clipboard.map(str::to_owned).ok_or_else(|| "no clipboard".to_owned());
+                s.clipboard_answer(ticket, answer);
+            }
+        }
+        if !s.holds_input() && s.script.running() && !s.tasks_running() && rx.try_recv().is_err() {
             // A key waiting for a longer mapping: as if its time ran out.
             if flush && s.matcher.deadline(s.options.timeoutlen).is_some() {
                 s.poll(Instant::now() + s.options.timeoutlen + Duration::from_millis(1));
@@ -154,7 +197,7 @@ fn run(case: &Case, dir: &Path) -> Result<(), String> {
         Settings { serve_forward: false, script: Some(ScriptSettings { config: Some(config) }), overrides: Vec::new() };
     let mut s = Session::new("vim".into(), GEOMETRY, Hints::default(), settings, sink);
     s.start(PaneSpec::File(file), None).map_err(|e| format!("{e:#}"))?;
-    settle(&mut s, &rx, true);
+    settle(&mut s, &rx, true, None);
     if s.history.current() != "vim/normal" {
         return Err(format!("the Vim mode did not load: mode {}; {:?}", s.history.current(), errors(&s)));
     }
@@ -163,11 +206,15 @@ fn run(case: &Case, dir: &Path) -> Result<(), String> {
         ("character", ScriptValue::Num(cursor.1 as f64)),
     ]);
     s.run_command("text.set-cursor", &[pos], None, Instant::now())?;
+    for (kind, text) in &case.copies {
+        let opts = ScriptValue::map([("kind", ScriptValue::Str(kind.clone()))]);
+        s.run_command("copy-text", &[ScriptValue::Str(text.clone()), opts], None, Instant::now())?;
+    }
     let mut seen = errors(&s);
     let keys = notation::parse(&case.keys).map_err(|e| format!("keys: {e:#}"))?;
     for (i, k) in keys.iter().enumerate() {
         s.key(&k.event(), Instant::now());
-        settle(&mut s, &rx, i + 1 == keys.len());
+        settle(&mut s, &rx, i + 1 == keys.len(), case.clipboard.as_deref());
         seen.extend(errors(&s));
     }
     let got_text = s.run_command("text.get-text", &[], None, Instant::now())?.0;
@@ -227,6 +274,10 @@ fn cases_parse_and_cursors_mark() {
     let src = "# a comment\n=== one\ntext:\nab|c\nkeys: x\nwant:\nab|\nmode: vim/normal\n=== two\ntext:\n|x\ny\nkeys: dd\nwant:\n|y\n";
     let cases = parse("t.cases", src);
     assert_eq!(cases.len(), 2);
+    let with = parse("t.cases", "=== c\ntext:\n|x\ncopy: line a\\nb\nkeys: p\nwant:\nx\n|a\nclipboard: c\\n\n");
+    assert_eq!((with[0].text.as_str(), with[0].want.as_str()), ("|x\n", "x\n|a\n"));
+    assert_eq!(with[0].copies, [("line".to_owned(), "a\nb".to_owned())]);
+    assert_eq!(with[0].clipboard.as_deref(), Some("c\n"));
     assert_eq!(
         (cases[0].text.as_str(), cases[0].want.as_str(), cases[0].mode.as_deref()),
         ("ab|c\n", "ab|\n", Some("vim/normal"))

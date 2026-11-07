@@ -178,6 +178,11 @@ pub fn attach(name: &str) -> Result<String> {
                         break ended(&rx);
                     }
                 }
+                Input::Clipboard { ticket, result } => {
+                    if send(ClientMsg::Clipboard { ticket, result }).is_err() {
+                        break ended(&rx);
+                    }
+                }
                 Input::Handled(true) => {
                     if pending.is_none() {
                         pending = last.clone().map(|f| (0, f, true));
@@ -306,6 +311,25 @@ pub fn kill_all_sessions(force: bool) -> Result<()> {
         bail!("some sessions did not end:\n{}", failed.join("\n"));
     }
     Ok(())
+}
+
+/// `temzdf copy`: record `text` in session `name`'s copy history.
+pub fn copy(name: &str, text: String, register: Option<String>, line: bool) -> Result<()> {
+    let kind = Some(if line { temzdf_scene::CopyKind::Line } else { temzdf_scene::CopyKind::Char });
+    match request(name, ClientMsg::Copy { text, register, kind }, REQUEST_TIMEOUT)? {
+        ServerMsg::Done(Ok(())) => Ok(()),
+        ServerMsg::Done(Err(e)) => bail!("{e}"),
+        other => bail!("unexpected answer {other:?}"),
+    }
+}
+
+/// `temzdf paste`: an entry of session `name`'s copy history.
+pub fn paste(name: &str, register: Option<String>, index: usize) -> Result<String> {
+    match request(name, ClientMsg::GetCopy { register, index }, REQUEST_TIMEOUT)? {
+        ServerMsg::Copied(Ok(text)) => Ok(text),
+        ServerMsg::Copied(Err(e)) => bail!("{e}"),
+        other => bail!("unexpected answer {other:?}"),
+    }
 }
 
 /// Run an action in session `name`. The server runs elsewhere: a new pane's
