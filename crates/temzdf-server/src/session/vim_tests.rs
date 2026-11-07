@@ -233,10 +233,13 @@ fn run(case: &Case, dir: &Path) -> Result<(), String> {
         let opts = ScriptValue::map([("kind", ScriptValue::Str(kind.clone()))]);
         s.run_command("copy-text", &[ScriptValue::Str(text.clone()), opts], None, Instant::now())?;
     }
+    let text_pane = s.focus;
     let mut seen = errors(&s);
     seen.extend(type_keys(&mut s, &rx, &case.keys, case.clipboard.as_deref())?);
-    let got_text = s.run_command("text.get-text", &[], None, Instant::now())?.0;
-    let c = s.run_command("text.cursor", &[], None, Instant::now())?.0;
+    // The text pane the case began in (a command line may be open below).
+    let opts = ScriptValue::map([("pane", ScriptValue::Num(text_pane as f64))]);
+    let got_text = s.run_command("text.get-text", &[ScriptValue::Null, opts.clone()], None, Instant::now())?.0;
+    let c = s.run_command("text.cursor", &[opts], None, Instant::now())?.0;
     let n = |k: &str| c.get(k).and_then(ScriptValue::as_num).unwrap_or(0.0) as usize;
     let got = mark(got_text.as_str().unwrap_or(""), (n("line"), n("character")));
     let mut errors = Vec::new();

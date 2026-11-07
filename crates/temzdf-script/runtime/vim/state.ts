@@ -44,5 +44,6 @@ export const options = {
   ignorecase: false,
   smartcase: false,
   hlsearch: true,
+  incsearch: true,
   wrapscan: true,
 };

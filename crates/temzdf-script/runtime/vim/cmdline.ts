@@ -1,18 +1,20 @@
 // The command line (/ ? :): an input pane one row high below the text pane,
 // in the mode vim/cmdline over the input mode (its editing keys work);
 // <CR> runs it in the text pane, <Esc> cancels.
-import { cmd } from "temzdf";
+import { cmd, on, schedule } from "temzdf";
+import type { Position } from "temzdf";
 import { ex } from "./ex";
 import { rememberEx } from "./macros";
 import { recordJump } from "./marks";
 import { leaveTransient, operator } from "./normal";
-import { again, find, wordUnder } from "./search";
-import { state } from "./state";
+import { convert } from "./pattern";
+import { again, find, restoreHighlight, wordUnder } from "./search";
+import { options, state } from "./state";
 import type { Motion } from "./state";
-import { clampNormal, cursor, setCursor } from "./util";
+import { clampNormal, cursor, setCursor, t } from "./util";
 import { exitVisual, moveVisual } from "./visual";
 
-let open: null | { buf: number; pane: number; kind: string; count: number | null } = null;
+let open: null | { buf: number; pane: number; kind: string; count: number | null; origin: Position } = null;
 
 export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
   const pane = cmd.focusedPane();
@@ -23,8 +25,9 @@ export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
     exitVisual();
     initial = "'<,'>";
   }
+  const origin = cursor();
   const buf = cmd.newInput({ prompt: kind, text: initial });
-  open = { buf, pane, kind, count };
+  open = { buf, pane, kind, count, origin };
   try {
     const p = cmd.split({ side: "bottom", buffer: buf, height: 1 });
     if (p !== null) cmd.statusLine(false, p);
@@ -36,7 +39,53 @@ export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
   cmd.switchMode("vim/cmdline");
 }
 
-/** Back to the text pane; what was typed. */
+// incsearch: while a search is typed, the text pane's cursor goes to the
+// first match from where it began (IncSearch), every match highlighted
+// with hlsearch; back there when nothing matches, or on <Esc>.
+const INC = "vim-incsearch";
+
+on("InputChanged", (buf: number, text: string) => {
+  const o = open;
+  if (o === null || o.buf !== buf || o.kind === ":" || !options.incsearch) return;
+  schedule(() => {
+    if (open === o) preview(o, text);
+  });
+});
+
+function preview(o: NonNullable<typeof open>, text: string): void {
+  const pane = { pane: o.pane };
+  t.clearNamespace(INC, pane);
+  const back = () => {
+    t.setCursor(o.origin, pane);
+    restoreHighlight();
+  };
+  if (text === "") {
+    back();
+    return;
+  }
+  let r = null;
+  let rust = "";
+  try {
+    const conv = convert(text, options.ignorecase, options.smartcase);
+    rust = conv.rust;
+    const backward = o.kind === "?";
+    const len = t.line(o.origin.line, pane).length;
+    const from = backward || o.origin.character >= len ? o.origin : t.positionOf(o.origin, "grapheme", 1, pane);
+    r = t.search(rust, { from, backward, wrap: options.wrapscan, group: conv.group, pane: o.pane });
+  } catch {
+    // A pattern still being typed.
+  }
+  if (r === null) {
+    back();
+    return;
+  }
+  t.setCursor(r.range.start, pane);
+  t.addDecoration(r.range, { style: "IncSearch", namespace: INC, pane: o.pane });
+  if (options.hlsearch) cmd.highlightPattern("vim-search", rust, "Search");
+}
+
+/** Back to the text pane; what was typed. The cursor is where the command
+ * line opened (incsearch moved it). */
 function close(): { line: string; kind: string; count: number | null } | null {
   const o = open;
   open = null;
@@ -45,11 +94,17 @@ function close(): { line: string; kind: string; count: number | null } | null {
   leaveTransient();
   cmd.deleteBuffer(o.buf);
   cmd.focusPane(o.pane);
+  if (o.kind !== ":") {
+    t.clearNamespace(INC);
+    t.setCursor(o.origin);
+  }
   return { line, kind: o.kind, count: o.count };
 }
 
 export function cancelCmdline(): void {
+  const searching = open !== null && open.kind !== ":";
   close();
+  if (searching) restoreHighlight();
   state.pending = null;
 }
 

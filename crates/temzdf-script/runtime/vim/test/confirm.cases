@@ -1,0 +1,143 @@
+# :s with c asks about each match; incsearch previews a search being typed.
+
+=== y and n answer each match
+text:
+|a a a
+keys: :s/a/b/gc<CR>yny
+want:
+|b a b
+mode: vim/normal
+
+=== l replaces this one and stops
+text:
+|a a a
+keys: :s/a/b/gc<CR>nl
+want:
+|a b a
+mode: vim/normal
+
+=== a replaces the rest
+text:
+|a1
+a2
+a3
+keys: :%s/a/b/c<CR>na
+want:
+a1
+b2
+|b3
+mode: vim/normal
+
+=== q stops, the replacements so far stay
+text:
+|a a a
+keys: :s/a/b/gc<CR>yq
+want:
+|b a a
+mode: vim/normal
+
+=== without g one match per line
+text:
+|aa
+aa
+keys: :%s/a/b/c<CR>yy
+want:
+ba
+|ba
+mode: vim/normal
+
+=== the replacements are one undo step
+text:
+|a a a
+keys: :s/a/b/gc<CR>yyyu
+want:
+|a a a
+
+=== replacements with line breaks keep the range
+text:
+|a,a
+a
+x
+keys: :1,2s/a/b\r/gc<CR>yyy
+want:
+b
+,b
+
+b
+|
+x
+mode: vim/normal
+
+=== nothing to confirm is an error
+text:
+|abc
+keys: :s/x/y/c<CR>
+want:
+|abc
+mode: vim/normal
+error: yes
+
+=== incsearch moves the cursor while typing
+text:
+|one
+two
+three
+keys: /thr
+want:
+one
+two
+|three
+mode: vim/cmdline
+
+=== incsearch goes back when nothing matches
+text:
+o|ne
+two
+keys: /twx
+want:
+o|ne
+two
+mode: vim/cmdline
+
+=== incsearch goes back on Esc
+text:
+o|ne
+two
+keys: /tw<Esc>
+want:
+o|ne
+two
+mode: vim/normal
+
+=== Enter searches from where it began
+text:
+|ab
+ab
+ab
+keys: /b<CR>
+want:
+a|b
+ab
+ab
+
+=== ? previews backwards
+text:
+ab
+ab
+a|b
+keys: ?a
+want:
+ab
+ab
+|ab
+mode: vim/cmdline
+
+=== :set nois turns it off
+text:
+|one
+two
+keys: :set nois<CR>/tw
+want:
+|one
+two
+mode: vim/cmdline

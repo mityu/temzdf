@@ -13,7 +13,7 @@ user's.
   `defaults.ts`).
 - `import vim from "temzdf/vim"; vim.options.shiftwidth = 2;` changes its
   settings (`shiftwidth`, `expandtab`, `ignorecase`, `smartcase`,
-  `hlsearch`, `wrapscan`); `:set` changes them too.
+  `hlsearch`, `incsearch`, `wrapscan`); `:set` changes them too.
 - Its mappings are in the namespace `vim`: a configuration maps over them
   or removes them as any.
 
@@ -94,9 +94,20 @@ user's.
   fancy-regex). `hlsearch` is `highlightPattern`.
 - Ex commands (`ex.ts`): ranges (`%`, `.`, `$`, numbers, `'<,'>`, `+N`
   `-N`), `:w[!] [file]`, `:q[!]`, `:wq`, `:x`, `:e[!] [file]`,
-  `:s/pat/rep/[gieI]` (`&`, `\0`-`\9`, `\r`, `\n`, `\t`, `\u \l \U \L \E`),
+  `:s/pat/rep/[gieIc]` (`&`, `\0`-`\9`, `\r`, `\n`, `\t`, `\u \l \U \L \E`),
   `:d`, `:y`, `:noh`, `:set`, a line number. Errors are Vim's (`E486` and
   such), shown as error messages.
+- `:s` with `c` asks about each match in the transient-like mode
+  `vim/confirm` (a fallback function reading one key): the match shown
+  with `IncSearch`, the question as a message; `y`, `n`, `a`, `l`, `q`
+  (`<Esc>`), `<C-e>`/`<C-y>`. A mark follows the range's end through the
+  replacements; all of them are one undo step.
+- `incsearch` (on by default): while `/` or `?` is typed, an
+  `InputChanged` hook schedules a search from where the command line
+  opened; the text pane's cursor goes to the match (`IncSearch`), every
+  match is highlighted with `hlsearch`, and the cursor goes back when
+  nothing matches, on `<Esc>`, and before `<CR>` searches. Not for `:s`
+  (Neovim's `inccommand`).
 - Hooks only read (the framework's rule): the cursor's shape following the
   mode, and closing an insert session or selection a focus change left
   open, are scheduled from a `ModeChanged` hook.
@@ -108,8 +119,8 @@ user's.
   next line. Vim deletes it.
 - Not yet: `:g`, `:normal`, `:map`, folds, text formatting (`gq`),
   `gJ`, the insert mode's `<C-o>`, `<C-r>{reg}` and completion, `I`/`A` on
-  a block, `incsearch`, search offsets (`/pat/e`), `:s` with `c`, `&`
-  and `~`, counts on visual operators.
+  a block, search offsets (`/pat/e`), `&` and `~`, counts on visual
+  operators.
 - In a `:s` replacement `\n` is a line break (Vim inserts a NUL), as `\r`.
 - `:q` on the last pane ends the session (refused with unsaved changes by
   the shipped hooks); `:q!` there ends it anyway. On another pane it

@@ -1,6 +1,7 @@
 // Ex commands (after :): ranges (% . $ numbers '< '> and +N -N), :w :q :wq
 // :x :e :s :noh :d :y, a line number alone, and a few of :set.
 import { cmd } from "temzdf";
+import type { KeyInfo, Position, Range as TextRange } from "temzdf";
 import { operate } from "./operators";
 import { convert } from "./pattern";
 import { deleteMarks, listMarks, markLine, recordJump, setMark } from "./marks";
@@ -126,6 +127,139 @@ function replacement(rep: string, groups: string[]): string {
   return out;
 }
 
+type Match = { range: TextRange; groups: (TextRange | null)[] };
+
+/** A match's groups as a replacement reads them: the match first (\zs
+ * \ze's group when there is one), then the pattern's own (shifted past
+ * the one \zs \ze added). */
+function groupsOf(m: Match, group: number): string[] {
+  const groupTexts = m.groups.map((g) => (g === null ? "" : text(g)));
+  const own = group > 0 ? groupTexts.filter((_, k) => k !== group && k !== 0) : groupTexts.slice(1);
+  return [groupTexts[group] ?? "", ...own];
+}
+
+/** Where `s` put at `start` ends. */
+function endOf(start: Position, s: string): Position {
+  const lines = s.split("\n");
+  if (lines.length === 1) return pos(start.line, start.character + s.length);
+  return pos(start.line + lines.length - 1, lines[lines.length - 1].length);
+}
+
+// :s with c: each match is shown (IncSearch) and asked about, one key at a
+// time in the transient mode vim/confirm; one undo step in all.
+const CONFIRM = "vim-confirm";
+let confirming: null | {
+  rust: string;
+  group: number;
+  rep: string;
+  global: boolean;
+  /** A mark at the range's end (it follows the replacements). */
+  end: number;
+  at: Position;
+  match: Match | null;
+  /** The last line replaced on (-1: none). */
+  lastChanged: number;
+} = null;
+
+function confirmSubstitute(range: Range, conv: { rust: string; group: number }, rep: string, global: boolean, pattern: string): void {
+  const endAt = lineEnd(range.last);
+  const first = t.search(conv.rust, { from: pos(range.first, 0), wrap: false, lines: [range.first, range.last], group: conv.group });
+  if (first === null) throw new Error(`E486: Pattern not found: ${pattern}`);
+  t.undoBegin();
+  const end = t.addDecoration({ start: endAt, end: endAt }, { namespace: CONFIRM, endGravity: "after" });
+  confirming = { rust: conv.rust, group: conv.group, rep, global, end, at: pos(range.first, 0), match: null, lastChanged: -1 };
+  cmd.switchMode("vim/confirm");
+  if (!nextMatch()) finishConfirm();
+}
+
+/** Show the next match (false: none left in the range). */
+function nextMatch(): boolean {
+  const c = confirming!;
+  t.clearNamespace(CONFIRM + "-match");
+  const endPos = t.decoration(c.end)?.range.start ?? c.at;
+  if (c.at.line > endPos.line) return false;
+  const m = t.search(c.rust, { from: c.at, wrap: false, lines: [c.at.line, endPos.line], group: c.group });
+  if (m === null || m.range.start.line > endPos.line) return false;
+  c.match = m;
+  t.addDecoration(m.range, { style: "IncSearch", namespace: CONFIRM + "-match" });
+  t.setCursor(m.range.start);
+  cmd.message(`replace with ${c.rep} (y/n/a/q/l/^E/^Y)?`);
+  return true;
+}
+
+/** Past the current match: the next search starts there (or on the next
+ * line without g); `replaced`: what it became. */
+function advance(replaced: string | null): void {
+  const c = confirming!;
+  const m = c.match!;
+  const end = replaced === null ? m.range.end : endOf(m.range.start, replaced);
+  if (!c.global) {
+    c.at = pos(end.line + 1, 0);
+  } else if (m.range.start.line === m.range.end.line && m.range.start.character === m.range.end.character) {
+    // An empty match: one character on.
+    c.at = end.character < t.line(end.line).length ? t.positionOf(end, "grapheme", 1) : pos(end.line + 1, 0);
+  } else {
+    c.at = end;
+  }
+}
+
+function replaceMatch(): void {
+  const c = confirming!;
+  const m = c.match!;
+  const now = replacement(c.rep, groupsOf(m, c.group));
+  t.replace(m.range, now);
+  c.lastChanged = endOf(m.range.start, now).line;
+  advance(now);
+}
+
+function finishConfirm(): void {
+  const c = confirming;
+  confirming = null;
+  if (c === null) return;
+  t.clearNamespace(CONFIRM);
+  t.clearNamespace(CONFIRM + "-match");
+  t.undoEnd();
+  if (cmd.currentMode() === "vim/confirm") cmd.exitMode();
+  if (c.lastChanged >= 0) t.setCursor(firstNonBlank(Math.min(lastLine(), c.lastChanged)));
+}
+
+/** A key answering :s///c. */
+export function confirmKey(key: KeyInfo): void {
+  if (confirming === null) {
+    if (cmd.currentMode() === "vim/confirm") cmd.exitMode();
+    return;
+  }
+  switch (key.keys) {
+    case "y":
+      replaceMatch();
+      break;
+    case "l":
+      replaceMatch();
+      finishConfirm();
+      return;
+    case "n":
+      advance(null);
+      break;
+    case "a":
+      replaceMatch();
+      while (nextMatch()) replaceMatch();
+      finishConfirm();
+      return;
+    case "<C-e>":
+    case "<C-y>":
+      t.scroll(key.keys === "<C-e>" ? 1 : -1);
+      return;
+    case "q":
+    case "<Esc>":
+    case "<C-c>":
+      finishConfirm();
+      return;
+    default:
+      return;
+  }
+  if (!nextMatch()) finishConfirm();
+}
+
 function substitute(range: Range, args: string): void {
   const delim = args[0];
   if (delim === undefined || /[\w\s"|]/.test(delim)) throw new Error("E488: Trailing characters");
@@ -136,8 +270,12 @@ function substitute(range: Range, args: string): void {
   if (pattern === "") throw new Error("E35: No previous regular expression");
   const ic = flags.includes("i") ? true : flags.includes("I") ? false : options.ignorecase;
   const conv = convert(pattern, ic, options.smartcase && !flags.includes("i") && !flags.includes("I"));
-  const found = t.searchAll(conv.rust, { range: { start: pos(range.first, 0), end: lineEnd(range.last) }, group: conv.group });
   const global = flags.includes("g");
+  if (flags.includes("c")) {
+    confirmSubstitute(range, conv, rep, global, pattern);
+    return;
+  }
+  const found = t.searchAll(conv.rust, { range: { start: pos(range.first, 0), end: lineEnd(range.last) }, group: conv.group });
   const seen = new Set<number>();
   const edits = [];
   // The last substitution's line, once the line breaks before it (put in or
@@ -148,12 +286,7 @@ function substitute(range: Range, args: string): void {
     const line = m.range.start.line;
     if (!global && seen.has(line)) continue;
     seen.add(line);
-    // Groups: the match first (\zs \ze's group when there is one), then
-    // the pattern's own (shifted past the one \zs \ze added).
-    const groupTexts = m.groups.map((g) => (g === null ? "" : text(g)));
-    const own = conv.group > 0 ? groupTexts.filter((_, k) => k !== conv.group && k !== 0) : groupTexts.slice(1);
-    const groups = [groupTexts[conv.group] ?? "", ...own];
-    const text_ = replacement(rep, groups);
+    const text_ = replacement(rep, groupsOf(m, conv.group));
     edits.push({ range: m.range, text: text_ });
     const breaks = (text_.match(/\n/g) ?? []).length;
     lastLineChanged = line + shift + breaks;
@@ -251,6 +384,8 @@ const names: Record<string, keyof typeof options> = {
   smartcase: "smartcase",
   hls: "hlsearch",
   hlsearch: "hlsearch",
+  is: "incsearch",
+  incsearch: "incsearch",
   ws: "wrapscan",
   wrapscan: "wrapscan",
   et: "expandtab",

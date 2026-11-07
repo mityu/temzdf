@@ -38,6 +38,20 @@ function highlight(rust: string): void {
   if (options.hlsearch) cmd.highlightPattern("vim-search", rust, "Search");
 }
 
+/** hlsearch as the last search left it (after a preview). */
+export function restoreHighlight(): void {
+  const last = state.lastSearch;
+  if (last === null || !options.hlsearch) {
+    noHighlight();
+    return;
+  }
+  try {
+    highlight(convert(last.pattern, options.ignorecase, options.smartcase).rust);
+  } catch {
+    noHighlight();
+  }
+}
+
 export function noHighlight(): void {
   cmd.highlightPattern("vim-search", null);
 }

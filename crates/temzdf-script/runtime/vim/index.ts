@@ -30,7 +30,7 @@ import {
 import { options, state } from "./state";
 import type { MotionFn, Operator } from "./state";
 import { textObjectKeys } from "./textobjects";
-import { ex } from "./ex";
+import { confirmKey, ex } from "./ex";
 import { isRecording, runMacro, startRecording, stopRecording } from "./macros";
 import { isMarkName, jump, markPos, setMark } from "./marks";
 import { cursor, firstNonBlank, t } from "./util";
@@ -61,6 +61,8 @@ defineMode(P, { transient: true, count: true, fallback: () => cancelPending() })
 // Digits are what they read (f1, r1, "1), not counts.
 defineMode("vim/char", { transient: true, count: false, fallback: (_ctx, key) => readChar(key) });
 defineMode("vim/register", { transient: true, count: false, fallback: (_ctx, key) => selectRegister(key) });
+// :s///c reads its answers one key at a time.
+defineMode("vim/confirm", { transient: false, count: false, fallback: (_ctx, key) => confirmKey(key) });
 // The input mode's editing keys below it work.
 defineMode("vim/cmdline", { transient: true, keepalive: "always" });
 o.basemode = { ...o.basemode, edit: N };
