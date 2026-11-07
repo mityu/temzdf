@@ -1865,6 +1865,24 @@ fn a_text_file_changed_elsewhere_is_read_again_unless_it_has_changes() {
 }
 
 #[test]
+fn a_text_file_saved_elsewhere_by_renaming_is_read_again() {
+    // Editors that write a temporary file and rename it over the old one
+    // (Vim's backupcopy=no, most GUI editors): the file is another one each
+    // time, and the watcher still sees the next save.
+    let env = Env::new("text-rename");
+    let file = env.path("r.txt");
+    std::fs::write(&file, "first\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "rn", file.to_str().unwrap()], &env.options());
+    t.wait_text("first");
+    for text in ["second", "third"] {
+        let tmp = env.path("r.txt.tmp");
+        std::fs::write(&tmp, format!("{text}\n")).unwrap();
+        std::fs::rename(&tmp, &file).unwrap();
+        t.wait_text(text);
+    }
+}
+
+#[test]
 fn the_vim_mode_edits_and_writes_a_file() {
     let env = Env::new("vim");
     env.config("config.ts", "import \"temzdf/vim\";\n");
