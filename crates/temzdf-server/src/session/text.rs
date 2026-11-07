@@ -449,6 +449,7 @@ impl Session {
         let result = match name {
             "open-file" | "new-buffer" | "write" | "reload" => self.text_file_command(name, args),
             "highlight-pattern" => self.highlight_pattern(args),
+            "highlight" => self.define_highlight(args),
             n if n.starts_with("text.") => self.text_primitive(&n["text.".len()..], args, count),
             _ => return None,
         };
@@ -465,6 +466,62 @@ impl Session {
             self.patterns.push((ns, Pattern::new(p)?, style));
         }
         Ok((ScriptValue::Null, Outcome::Redraw))
+    }
+
+    /// `highlight(name, { fg, bg, bold, ... })`: define a highlight group
+    /// (colours "#rrggbb", a palette index, or "default").
+    fn define_highlight(&mut self, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
+        use temzdf_scene::{Attrs, Color, Underline};
+        let name = args.first().and_then(ScriptValue::as_str).ok_or("which group?")?;
+        let spec = args.get(1).ok_or("which style?")?;
+        let color = |k: &str| -> Result<Option<Color>, String> {
+            Ok(match spec.get(k) {
+                None | Some(ScriptValue::Null) => None,
+                Some(ScriptValue::Num(n)) if (0.0..=255.0).contains(n) => Some(Color::Indexed(*n as u8)),
+                Some(ScriptValue::Str(s)) if s == "default" => Some(Color::Default),
+                Some(ScriptValue::Str(s)) if s.len() == 7 && s.starts_with('#') => {
+                    let v = u32::from_str_radix(&s[1..], 16).map_err(|_| format!("{k}: {s:?} is no colour"))?;
+                    Some(Color::Rgb([(v >> 16) as u8, (v >> 8) as u8, v as u8]))
+                }
+                Some(other) => return Err(format!("{k}: {other:?} is no colour (\"#rrggbb\", 0-255, \"default\")")),
+            })
+        };
+        let flag = |k: &str| spec.get(k) == Some(&ScriptValue::Bool(true));
+        let names = ["bold", "italic", "underline", "undercurl", "inverse", "strikethrough", "faint", "overline"];
+        let any_attr = names.iter().any(|k| spec.get(k).is_some());
+        let attrs = any_attr.then(|| Attrs {
+            bold: flag("bold"),
+            italic: flag("italic"),
+            faint: flag("faint"),
+            inverse: flag("inverse"),
+            strikethrough: flag("strikethrough"),
+            overline: flag("overline"),
+            underline: if flag("undercurl") {
+                Underline::Curly
+            } else if flag("underline") {
+                Underline::Single
+            } else {
+                Underline::None
+            },
+            ..Attrs::default()
+        });
+        let style = temzdf_texteditor::Style { fg: color("fg")?, bg: color("bg")?, attrs };
+        self.highlights.set(name, style);
+        Ok((ScriptValue::Null, Outcome::Redraw))
+    }
+
+    /// Drop decorations whose time is up; whether any were.
+    pub(super) fn expire_decorations(&mut self, now: std::time::Instant) -> bool {
+        let mut any = false;
+        for t in self.texts.values_mut() {
+            any |= t.buf.marks_mut().expire(now);
+        }
+        any
+    }
+
+    /// When the next decoration's time is up.
+    pub(super) fn decorations_deadline(&self) -> Option<std::time::Instant> {
+        self.texts.values().filter_map(|t| t.buf.marks().next_expiry()).min()
     }
 
     fn text_file_command(&mut self, name: &str, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
@@ -626,6 +683,74 @@ impl Session {
                 let (a, b) = get("range").and_then(range).map_or((0, text.len_chars()), |r| text.offsets(r));
                 let all = temzdf_texteditor::find_all(text, &pattern, a, b, &so, &t.buf.wordchars);
                 none(ScriptValue::List(all.iter().map(found).collect()))
+            }
+            // Decorations and marks (a mark: no width, no style).
+            "add-decoration" => {
+                let (a, b) = text.offsets(arg_range(0).ok_or("which range?")?);
+                let get = |k: &str| opts.and_then(|o| o.get(k));
+                let gravity = |k: &str| match get(k).and_then(ScriptValue::as_str) {
+                    Some("after") => temzdf_texteditor::Gravity::After,
+                    _ => temzdf_texteditor::Gravity::Before,
+                };
+                let spec = temzdf_texteditor::MarkSpec {
+                    namespace: get("namespace").and_then(ScriptValue::as_str).unwrap_or("").to_owned(),
+                    style: get("style").and_then(ScriptValue::as_str).map(str::to_owned),
+                    priority: get("priority").and_then(ScriptValue::as_num).map_or(0, |p| p as i32),
+                    pane: get("showIn").and_then(ScriptValue::as_num).map(|p| p as u32),
+                    start_gravity: gravity("startGravity"),
+                    end_gravity: gravity("endGravity"),
+                    expires: get("ttl")
+                        .and_then(ScriptValue::as_num)
+                        .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms.max(0.0) as u64)),
+                };
+                let id = self.texts.get_mut(&buf).expect("found").buf.marks_mut().add(a, b, spec);
+                Ok((ScriptValue::Num(id as f64), Outcome::Redraw))
+            }
+            "decoration" | "decorations" => {
+                let value = |m: &temzdf_texteditor::Mark| {
+                    ScriptValue::map([
+                        ("id", ScriptValue::Num(m.id as f64)),
+                        ("range", range_value(text, m.start, m.end)),
+                        ("deleted", ScriptValue::Bool(m.deleted)),
+                        ("namespace", ScriptValue::Str(m.spec.namespace.clone())),
+                        ("style", m.spec.style.clone().map_or(ScriptValue::Null, ScriptValue::Str)),
+                    ])
+                };
+                if name == "decoration" {
+                    let id = num(0).ok_or("which decoration?")? as u64;
+                    return none(t.buf.marks().get(id).map_or(ScriptValue::Null, value));
+                }
+                let ns = opts.and_then(|o| o.get("namespace")).and_then(ScriptValue::as_str);
+                let (a, b) = opts
+                    .and_then(|o| o.get("range"))
+                    .and_then(range)
+                    .map_or((0, text.len_chars()), |r| text.offsets(r));
+                let mut list: Vec<&temzdf_texteditor::Mark> = t
+                    .buf
+                    .marks()
+                    .iter()
+                    .filter(|m| ns.is_none_or(|n| m.spec.namespace == n) && m.start <= b && m.end >= a)
+                    .collect();
+                list.sort_by_key(|m| (m.start, m.id));
+                none(ScriptValue::List(list.into_iter().map(value).collect()))
+            }
+            "move-decoration" => {
+                let id = num(0).ok_or("which decoration?")? as u64;
+                let (a, b) = text.offsets(arg_range(1).ok_or("to which range?")?);
+                if !self.texts.get_mut(&buf).expect("found").buf.marks_mut().set(id, a, b) {
+                    return Err(format!("no decoration {id}"));
+                }
+                redrawn
+            }
+            "delete-decoration" => {
+                let id = num(0).ok_or("which decoration?")? as u64;
+                self.texts.get_mut(&buf).expect("found").buf.marks_mut().remove(id);
+                redrawn
+            }
+            "clear-namespace" => {
+                let ns = args.first().and_then(ScriptValue::as_str).ok_or("which namespace?")?.to_owned();
+                self.texts.get_mut(&buf).expect("found").buf.marks_mut().clear(&ns);
+                redrawn
             }
             "visible-range" => {
                 let (a, b) = tv.view.visible_range(text);
@@ -913,6 +1038,29 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
         "text.search-all",
         "(pattern: string, opts?: { range?: Range, group?: number, word?: boolean, pane?: number }): { range: Range, groups: (Range | null)[] }[]",
         "Every match in a range (the whole text)",
+    ),
+    (
+        "text.add-decoration",
+        "(range: Range, opts?: { style?: string, namespace?: string, priority?: number, showIn?: number, startGravity?: \"before\" | \"after\", endGravity?: \"before\" | \"after\", ttl?: number, pane?: number }): number",
+        "Decorate a range (an empty one without a style is a mark): it follows edits, collapses and is flagged deleted when its text goes (undo restores it). `style` a highlight group, `showIn` a pane only, gravity where each end goes on an insertion exactly there, `ttl` milliseconds until it goes. Returns its id",
+    ),
+    ("text.decoration", "(id: number, opts?: { pane?: number }): Decoration | null", "A decoration or mark by id"),
+    (
+        "text.decorations",
+        "(opts?: { namespace?: string, range?: Range, pane?: number }): Decoration[]",
+        "The decorations of a namespace and range (all of them), in order",
+    ),
+    (
+        "text.move-decoration",
+        "(id: number, range: Range, opts?: { pane?: number }): void",
+        "Move a decoration (no longer deleted)",
+    ),
+    ("text.delete-decoration", "(id: number, opts?: { pane?: number }): void", "Delete a decoration"),
+    ("text.clear-namespace", "(namespace: string, opts?: { pane?: number }): void", "Delete a namespace's decorations"),
+    (
+        "highlight",
+        "(name: string, style: { fg?: string | number, bg?: string | number, bold?: boolean, italic?: boolean, underline?: boolean, undercurl?: boolean, inverse?: boolean, strikethrough?: boolean, faint?: boolean, overline?: boolean }): void",
+        "Define a highlight group for text panes: colours \"#rrggbb\", a palette index or \"default\" (left out: unchanged under it)",
     ),
     (
         "highlight-pattern",

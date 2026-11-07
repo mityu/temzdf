@@ -188,6 +188,14 @@ declare module "temzdf" {{
     start: Position;
     end: Position;
   }}
+  /** A decoration or mark of a text buffer (`deleted`: its text went; it collapsed there). */
+  export interface Decoration {{
+    id: number;
+    range: Range;
+    deleted: boolean;
+    namespace: string;
+    style: string | null;
+  }}
   /** What `text.move` and `text.positionOf` move by. */
   export type TextUnit =
     | "grapheme" | "wordStart" | "wordEnd" | "lineStart" | "firstNonBlank" | "lineEnd"

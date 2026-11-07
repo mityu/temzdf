@@ -2414,7 +2414,8 @@ impl Session {
     /// [`Session::tick`], plus scripting's timers (the configuration's load
     /// timeout, the "running a script" notice). For event loops.
     pub fn poll(&mut self, now: Instant) -> Outcome {
-        let mut out = self.script_tick(now).or(self.tick(now)).or(self.expire_notices(now));
+        let mut out =
+            self.script_tick(now).or(self.tick(now)).or(self.expire_notices(now)).or(self.expire_decorations(now));
         if self.matcher.deadline(self.options.timeoutlen).is_some_and(|d| now >= d) {
             out = out.merge(self.drive(now));
         }
@@ -2440,6 +2441,7 @@ impl Session {
             .chain(docs)
             .chain(terms)
             .chain(self.script_deadline())
+            .chain(self.decorations_deadline())
             .chain(self.matcher.deadline(self.options.timeoutlen))
             .chain(self.submode_deadline())
             .chain(self.notice_deadline())
@@ -4941,6 +4943,45 @@ mod tests {
         );
         run(&mut s, "highlight-pattern", &[ScriptValue::Str("hl".into()), ScriptValue::Null]);
         assert_eq!(s.frame().text[0].rows[0][4].bg, temzdf_scene::Color::Default, "removed");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn scripts_decorate_text_and_define_highlight_groups() {
+        let (mut s, path) = text_session("deco.txt", "keep gone keep\n");
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
+            s.run_command(name, args, None, Instant::now()).unwrap().0
+        };
+        let range = |a: usize, b: usize| ScriptValue::map([("start", pos(0, a)), ("end", pos(0, b))]);
+        let o = |pairs: Vec<(&str, ScriptValue)>| ScriptValue::map(pairs);
+        let red = o(vec![("bg", ScriptValue::Str("#ff0000".into())), ("bold", ScriptValue::Bool(true))]);
+        run(&mut s, "highlight", &[ScriptValue::Str("Red".into()), red]);
+        let style = o(vec![("style", ScriptValue::Str("Red".into())), ("namespace", ScriptValue::Str("ns".into()))]);
+        let id = run(&mut s, "text.add-decoration", &[range(5, 9), style]);
+        let cell = s.frame().text[0].rows[0][5].clone();
+        assert_eq!((cell.bg, cell.attrs.bold), (temzdf_scene::Color::Rgb([255, 0, 0]), true));
+        // Its text deleted: flagged, and undo restores it.
+        run(&mut s, "text.delete", &[range(5, 10)]);
+        let d = run(&mut s, "text.decoration", std::slice::from_ref(&id));
+        assert_eq!(d.get("deleted"), Some(&ScriptValue::Bool(true)));
+        run(&mut s, "text.undo", &[]);
+        let d = run(&mut s, "text.decoration", std::slice::from_ref(&id));
+        assert_eq!((d.get("deleted"), d.get("range")), (Some(&ScriptValue::Bool(false)), Some(&range(5, 9))));
+        let ScriptValue::List(list) =
+            run(&mut s, "text.decorations", &[o(vec![("namespace", ScriptValue::Str("ns".into()))])])
+        else {
+            panic!()
+        };
+        assert_eq!(list.len(), 1);
+        run(&mut s, "text.clear-namespace", &[ScriptValue::Str("ns".into())]);
+        assert_eq!(run(&mut s, "text.decoration", &[id]), ScriptValue::Null);
+        // A flash: gone once its time is up.
+        let flash = o(vec![("style", ScriptValue::Str("Red".into())), ("ttl", ScriptValue::Num(1.0))]);
+        run(&mut s, "text.add-decoration", &[range(0, 4), flash]);
+        let due = s.next_deadline().unwrap();
+        assert_eq!(s.poll(due + Duration::from_millis(1)), Outcome::Redraw);
+        assert_eq!(s.frame().text[0].rows[0][0].bg, temzdf_scene::Color::Default);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

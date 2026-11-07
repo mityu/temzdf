@@ -474,6 +474,18 @@ JavaScript strings index; out of range is clamped), ranges
   and give `{ range, groups }`; `highlightPattern(ns, pattern | null,
   style?)` paints a pattern's matches in every text pane (`Search` by
   default), what hlsearch is;
+- decorations and marks: `text.addDecoration(range, { style?, namespace?,
+  priority?, showIn?, startGravity?, endGravity?, ttl? })` returns an id
+  (an empty range without a style is a mark); they follow edits, collapse
+  and are flagged `deleted` when their text goes (undo restores them).
+  `text.decoration(id)`, `text.decorations({ namespace?, range? })`,
+  `text.moveDecoration(id, range)`, `text.deleteDecoration(id)`,
+  `text.clearNamespace(ns)`. Styles are highlight groups:
+  `highlight(name, { fg, bg, bold, italic, underline, undercurl, inverse,
+  strikethrough, faint, overline })`, colours `"#rrggbb"`, a palette index
+  or `"default"`; built in: `Selection`, `Search`, `IncSearch`,
+  `CursorLine`, `LineNr`, `CursorLineNr`, `NonText`, `SpecialKey`,
+  `CursorUnfocused`;
 - undo: `text.undo()` and `text.redo()` (return the changed ranges; the
   cursor goes back where the step started), `text.undoBegin()` /
   `text.undoEnd()` (one step across mappings, e.g. a Vim Insert session),

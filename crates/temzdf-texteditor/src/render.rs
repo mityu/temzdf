@@ -54,6 +54,8 @@ impl Default for Highlights {
             ("LineNr", dim),
             ("CursorLineNr", Style { attrs: attrs(|a| a.bold = true), ..Style::default() }),
             ("CursorLine", Style::default()),
+            ("Search", Style { fg: Some(Color::Indexed(0)), bg: Some(Color::Indexed(3)), attrs: None }),
+            ("IncSearch", Style { attrs: attrs(|a| a.inverse = true), ..Style::default() }),
             ("NonText", dim),
             ("SpecialKey", Style { fg: Some(Color::Indexed(4)), ..Style::default() }),
             // The cursor of a pane without the focus (terminals draw only
