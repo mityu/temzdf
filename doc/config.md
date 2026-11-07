@@ -313,7 +313,8 @@ terminal pane starts a new shell, `showBuffer` shows the same terminal).
   `remainonexit`); a hidden one stays, marked as ended, until it was shown
   and hidden again.
 - `buffers()` lists them (`id`, `kind`, `name`, the `panes` showing it,
-  `exited`); `showBuffer(id, pane?)` shows one in a pane (Vim's `:buffer`);
+  `exited`, `modified`, `attrs`), but `unlisted` ones (`buffers({ all:
+  true })` lists those too); `showBuffer(id, pane?)` shows one in a pane (Vim's `:buffer`);
   `edit(path)` opens a PDF in the focused pane (`:edit`); `deleteBuffer(id?)`
   ends a terminal's program or closes a document and closes its panes.
 - A terminal shown in several panes is as large as the largest (as in
@@ -465,8 +466,13 @@ Panes showing one buffer share its text, each with its own caret.
 A file opens as text unless its extension is `.pdf` (`temzdf FILE`,
 `newPane`, `split({ file })`, ...; a file that does not exist yet opens
 empty), or with `openFile(path, { basemode? })`, which returns the pane.
-`newBuffer({ text?, path?, basemode? })` makes a text buffer without a
-pane (returns it; show it as any buffer). Files are UTF-8 (a BOM kept);
+`newBuffer({ text?, path?, basemode?, attrs? })` makes a text buffer
+without a pane (returns it; show it as any buffer). `attrs` (Vim's
+`buftype`, several at once; `setBufferAttrs(buf, attrs)` changes them,
+`text.info().attrs` reads them): `"nofile"` is tied to no file, never
+modified (nothing to lose: no unsaved-changes refusal) and written only to
+a path given; `"unlisted"` is for a script's own use, left out of
+`buffers()`, `temzdf ls` and the Vim mode's `:ls`. Files are UTF-8 (a BOM kept);
 binary files are refused, and so are others unless named:
 `openFile(path, { encoding: "shift_jis" })` (Encoding Standard labels;
 nothing is guessed) reads one, and writing keeps its encoding. Line endings stay as read (CRLF

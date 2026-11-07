@@ -32,6 +32,47 @@ pub(super) struct TextEntry {
     /// The modification time last told in FileChangedOnDisk (once per
     /// change, however many events it makes).
     disk_seen: Option<std::time::SystemTime>,
+    /// Its attributes (Vim's buftype, several at once): [`BUFFER_ATTRS`].
+    pub attrs: Vec<String>,
+}
+
+/// The attributes a text buffer may have, and what each does.
+pub(super) const BUFFER_ATTRS: &[(&str, &str)] = &[
+    ("nofile", "tied to no file: never modified (nothing to lose), written only to a path given"),
+    ("unlisted", "for a script's own use: buffers() leaves it out (buffers({ all: true }) lists it)"),
+];
+
+/// Attributes from a script's list, each known.
+pub(super) fn parse_attrs(v: Option<&ScriptValue>) -> Result<Vec<String>, String> {
+    let Some(v) = v.filter(|v| **v != ScriptValue::Null) else { return Ok(Vec::new()) };
+    let ScriptValue::List(l) = v else { return Err("attrs: a list of names".into()) };
+    let mut out = Vec::new();
+    for a in l {
+        let a = a.as_str().ok_or("attrs: a list of names")?;
+        if !BUFFER_ATTRS.iter().any(|(n, _)| *n == a) {
+            let known: Vec<_> = BUFFER_ATTRS.iter().map(|(n, _)| *n).collect();
+            return Err(format!("no buffer attribute {a:?} (known: {})", known.join(", ")));
+        }
+        if !out.iter().any(|o| o == a) {
+            out.push(a.to_owned());
+        }
+    }
+    Ok(out)
+}
+
+impl TextEntry {
+    pub(super) fn has(&self, attr: &str) -> bool {
+        self.attrs.iter().any(|a| a == attr)
+    }
+
+    /// Unsaved changes (a `nofile` buffer has none to lose).
+    pub(super) fn modified(&self) -> bool {
+        !self.has("nofile") && self.buf.modified()
+    }
+
+    pub(super) fn attrs_value(&self) -> ScriptValue {
+        ScriptValue::List(self.attrs.iter().map(|a| ScriptValue::Str(a.clone())).collect())
+    }
 }
 
 /// A text pane: its view of the buffer, and its cursor's shape.
@@ -167,8 +208,19 @@ impl Session {
         let id = self.alloc_id();
         let buf = Buffer::new(text, file.as_ref().map_or(LineEnding::Lf, |f| f.line_ending));
         let name = name_of(file.as_ref().map(|f| f.path.as_path()));
-        self.texts
-            .insert(id, TextEntry { buf, file, name, invocation: 0, basemode: None, watcher: None, disk_seen: None });
+        self.texts.insert(
+            id,
+            TextEntry {
+                buf,
+                file,
+                name,
+                invocation: 0,
+                basemode: None,
+                watcher: None,
+                disk_seen: None,
+                attrs: Vec::new(),
+            },
+        );
         self.watch_text(id);
         self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("edit".into())]);
         id
@@ -340,6 +392,9 @@ impl Session {
     /// Write `buf` (to `path`, which becomes its file, when given).
     fn text_write(&mut self, buf: BufferId, path: Option<PathBuf>, force: bool) -> Result<(), String> {
         let t = self.texts.get_mut(&buf).ok_or_else(|| format!("no text buffer {buf}"))?;
+        if path.is_none() && t.has("nofile") {
+            return Err("a nofile buffer is written only to a path given (write({ path }))".into());
+        }
         let mut info = match (path, &t.file) {
             (Some(p), Some(f)) => FileInfo { path: std::path::absolute(&p).unwrap_or(p), mtime: None, ..f.clone() },
             (Some(p), None) => FileInfo {
@@ -431,7 +486,7 @@ impl Session {
             text: vec![TextGrid { col: 0, row: 0, rows: drawn.rows }],
             cursor: drawn.cursor,
             cursor_shape: tv.shape,
-            title: format!("{}{}", t.name, if t.buf.modified() { " [+]" } else { "" }),
+            title: format!("{}{}", t.name, if t.modified() { " [+]" } else { "" }),
             ..Frame::default()
         }
     }
@@ -451,7 +506,7 @@ impl Session {
         );
         let bom = if t.file.as_ref().is_some_and(|f| f.bom) { "-bom" } else { "" };
         termpix_ui::StatusBar {
-            left: format!("{}{}", t.name, if t.buf.modified() { " [+]" } else { "" }),
+            left: format!("{}{}", t.name, if t.modified() { " [+]" } else { "" }),
             right: format!("{mode}  {enc}{bom} {eol}  {}:{}  {pct}%", pos.line + 1, pos.character + 1),
             ..Default::default()
         }
@@ -467,6 +522,7 @@ impl Session {
     ) -> Option<Result<(ScriptValue, Outcome), String>> {
         let result = match name {
             "open-file" | "new-buffer" | "write" | "reload" => self.text_file_command(name, args),
+            "set-buffer-attrs" => self.set_buffer_attrs(args),
             "highlight-pattern" => self.highlight_pattern(args),
             "highlight" => self.define_highlight(args),
             "get-var" | "set-var" => self.var_command(name, args),
@@ -591,6 +647,14 @@ impl Session {
         self.texts.values().filter_map(|t| t.buf.marks().next_expiry()).min()
     }
 
+    fn set_buffer_attrs(&mut self, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
+        let buf = args.first().and_then(ScriptValue::as_num).ok_or("which buffer?")? as BufferId;
+        let attrs = parse_attrs(args.get(1))?;
+        let t = self.texts.get_mut(&buf).ok_or_else(|| format!("no text buffer {buf}"))?;
+        t.attrs = attrs;
+        Ok((ScriptValue::Null, Outcome::Redraw))
+    }
+
     fn text_file_command(&mut self, name: &str, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
         let opts = args.get(1).or(args.first()).filter(|v| matches!(v, ScriptValue::Map(_)));
         let opt_str = |k: &str| opts.and_then(|o| o.get(k)).and_then(ScriptValue::as_str).map(str::to_owned);
@@ -631,8 +695,11 @@ impl Session {
                     encoding: "utf-8".into(),
                     ..FileInfo::default()
                 });
+                let attrs = parse_attrs(opts.and_then(|o| o.get("attrs")))?;
                 let buf = self.add_text_buffer(Text::from(text.as_str()), info);
-                self.texts.get_mut(&buf).expect("made").basemode = opt_str("basemode");
+                let t = self.texts.get_mut(&buf).expect("made");
+                t.basemode = opt_str("basemode");
+                t.attrs = attrs;
                 Ok((ScriptValue::Num(buf as f64), Outcome::None))
             }
             _ => {
@@ -703,7 +770,8 @@ impl Session {
                 ("buffer", ScriptValue::Num(buf as f64)),
                 ("path", t.file.as_ref().map_or(ScriptValue::Null, |f| ScriptValue::Str(f.path.display().to_string()))),
                 ("name", ScriptValue::Str(t.name.clone())),
-                ("modified", ScriptValue::Bool(t.buf.modified())),
+                ("modified", ScriptValue::Bool(t.modified())),
+                ("attrs", t.attrs_value()),
                 ("encoding", ScriptValue::Str(t.file.as_ref().map_or("utf-8".into(), |f| f.encoding.clone()))),
                 (
                     "lineEnding",
@@ -1134,8 +1202,13 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "new-buffer",
-        "(opts?: { text?: string, path?: string, basemode?: string }): number",
-        "A new text buffer (no pane); with only `path`, a new file. `basemode`: the base mode of panes on it (never changed after). Returns the buffer",
+        "(opts?: { text?: string, path?: string, basemode?: string, attrs?: BufferAttr[] }): number",
+        "A new text buffer (no pane); with only `path`, a new file. `basemode`: the base mode of panes on it (never changed after); `attrs` its attributes (Vim's buftype, several at once): `nofile` never modified and written only to a path given, `unlisted` left out of buffers(). Returns the buffer",
+    ),
+    (
+        "set-buffer-attrs",
+        "(buffer: number, attrs: BufferAttr[]): void",
+        "Set a text buffer's attributes (see newBuffer)",
     ),
     (
         "write",

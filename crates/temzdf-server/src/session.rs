@@ -1035,7 +1035,8 @@ impl Session {
     }
 
     /// The buffers, for `buffers()`.
-    fn buffer_list(&self) -> ScriptValue {
+    /// The buffers, `unlisted` ones only with `all`.
+    fn buffer_list(&self, all: bool) -> ScriptValue {
         let mut list: Vec<(BufferId, &str, String, bool)> = self
             .docs
             .iter()
@@ -1047,7 +1048,12 @@ impl Session {
                     .map(|(id, t)| (*id, "terminal", t.term.title().unwrap_or_else(|| "shell".into()), t.exited)),
             )
             .chain(self.inputs.iter().map(|(id, b)| (*id, "input", b.prompt.clone(), false)))
-            .chain(self.texts.iter().map(|(id, t)| (*id, "edit", t.name.clone(), false)))
+            .chain(
+                self.texts
+                    .iter()
+                    .filter(|(_, t)| all || !t.has("unlisted"))
+                    .map(|(id, t)| (*id, "edit", t.name.clone(), false)),
+            )
             .collect();
         list.sort_by_key(|b| b.0);
         ScriptValue::List(
@@ -1060,7 +1066,8 @@ impl Session {
                         ("name", ScriptValue::Str(name)),
                         ("panes", ScriptValue::List(panes)),
                         ("exited", ScriptValue::Bool(exited)),
-                        ("modified", ScriptValue::Bool(self.texts.get(&id).is_some_and(|t| t.buf.modified()))),
+                        ("modified", ScriptValue::Bool(self.texts.get(&id).is_some_and(|t| t.modified()))),
+                        ("attrs", self.texts.get(&id).map_or(ScriptValue::List(Vec::new()), |t| t.attrs_value())),
                     ])
                 })
                 .collect(),
@@ -1072,7 +1079,7 @@ impl Session {
         self.docs.values().filter(|d| d.host.is_some()).count()
             + self.terms.len()
             + self.inputs.len()
-            + self.texts.len()
+            + self.texts.values().filter(|t| !t.has("unlisted")).count()
     }
 
     /// The focused pane's terminal.
@@ -3292,7 +3299,7 @@ mod tests {
         key(&mut s, "<C-b>%<C-b>h<C-b>x");
         pump(&mut s, &rx, |s| s.terms[&first].exited);
         assert_eq!((s.pane_count(), s.buffer_count()), (1, 2));
-        let list = s.buffer_list();
+        let list = s.buffer_list(false);
         let ScriptValue::List(items) = &list else { panic!() };
         let entry = items.iter().find(|b| b.get("id") == Some(&ScriptValue::Num(first as f64))).unwrap();
         assert_eq!(entry.get("exited"), Some(&ScriptValue::Bool(true)));
@@ -5015,6 +5022,42 @@ mod tests {
         let due = s.next_deadline().unwrap();
         assert_eq!(s.poll(due + Duration::from_millis(1)), Outcome::Redraw);
         assert_eq!(s.frame().text[0].rows[0][0].bg, temzdf_scene::Color::Default);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn buffer_attributes_nofile_and_unlisted() {
+        let (mut s, path) = text_session("attrs.txt", "x\n");
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        let names = |s: &mut Session, all: bool| -> Vec<String> {
+            let o = ScriptValue::map([("all", ScriptValue::Bool(all))]);
+            match run(s, "buffers", &[o]).unwrap().0 {
+                ScriptValue::List(l) => l.iter().map(|b| b.get("name").unwrap().as_str().unwrap().to_owned()).collect(),
+                _ => Vec::new(),
+            }
+        };
+        let o = ScriptValue::map([("attrs", ScriptValue::List(vec![str("nofile"), str("unlisted")]))]);
+        let buf = run(&mut s, "new-buffer", &[o]).unwrap().0;
+        assert_eq!(names(&mut s, false), ["attrs.txt"], "unlisted: left out");
+        assert_eq!(names(&mut s, true).len(), 2, "all: listed");
+        let count = s.buffer_count();
+        // nofile: typed into, never modified; written only to a path given.
+        let split = ScriptValue::map([("side", str("right")), ("buffer", buf.clone())]);
+        run(&mut s, "split", &[split]).unwrap();
+        run(&mut s, "text.type", &[str("typed")]).unwrap();
+        let info = run(&mut s, "text.info", &[]).unwrap().0;
+        assert_eq!(info.get("modified"), Some(&ScriptValue::Bool(false)));
+        assert_eq!(info.get("attrs"), Some(&ScriptValue::List(vec![str("nofile"), str("unlisted")])));
+        assert!(run(&mut s, "write", &[]).is_err());
+        // Changed: listed and modified like any.
+        run(&mut s, "set-buffer-attrs", &[buf.clone(), ScriptValue::List(vec![])]).unwrap();
+        assert_eq!(names(&mut s, false).len(), 2);
+        assert_eq!(s.buffer_count(), count + 1);
+        let info = run(&mut s, "text.info", &[]).unwrap().0;
+        assert_eq!(info.get("modified"), Some(&ScriptValue::Bool(true)));
+        assert!(run(&mut s, "set-buffer-attrs", &[buf, ScriptValue::List(vec![str("bogus")])]).is_err());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

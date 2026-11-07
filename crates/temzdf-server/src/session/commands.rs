@@ -73,8 +73,8 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("toggle-floating", "(pane?: number): void", "Turn a pane (the focused one) floating, or tiled again"),
     (
         "buffers",
-        "(): { id: number; kind: PaneKind; name: string; panes: number[]; exited: boolean; modified: boolean }[]",
-        "The buffers (documents, terminals, inputs, text), shown or hidden; `modified`: a text buffer with unsaved changes",
+        "(opts?: { all?: boolean }): { id: number; kind: PaneKind; name: string; panes: number[]; exited: boolean; modified: boolean; attrs: BufferAttr[] }[]",
+        "The buffers (documents, terminals, inputs, text), shown or hidden, but `unlisted` ones (all: those too); `modified`: a text buffer with unsaved changes; `attrs` a text buffer's attributes",
     ),
     (
         "show-buffer",
@@ -620,7 +620,10 @@ impl Session {
                 }
                 ok(self.request_close(pane))
             }
-            "buffers" => Ok((self.buffer_list(), Outcome::None)),
+            "buffers" => {
+                let all = args.first().and_then(|o| o.get("all")) == Some(&ScriptValue::Bool(true));
+                Ok((self.buffer_list(all), Outcome::None))
+            }
             "show-buffer" => {
                 let buf = id(0).ok_or("showBuffer: which buffer?")?;
                 let pane = id(1).unwrap_or(self.focus);

@@ -260,8 +260,11 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
 
 ## 13. Files and buffers
 
-- `newBuffer({ basemode, text?, path? })`: buffers without a file; with
-  only `path`, a new file. `openFile(path, { encoding?, basemode? })`:
+- `newBuffer({ basemode, text?, path?, attrs? })`: buffers without a file;
+  with only `path`, a new file. Attributes as Vim's `buftype`, but a list
+  **(user)** so that several hold at once: `nofile` (never modified,
+  written only to a path given), `unlisted` (a script's own: not listed);
+  unknown names are errors, more come as needed. `openFile(path, { encoding?, basemode? })`:
   errors when unreadable; returns the existing buffer for the same file.
   Choosing PDF or text by extension is `defaults.ts`'s policy.
 - `write(buffer, { path?, encoding?, force? })` writes a temporary file and

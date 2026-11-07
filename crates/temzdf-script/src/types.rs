@@ -319,6 +319,8 @@ declare module "temzdf" {{
   export function schedule(fn: () => void): void;
   /** The kinds of panes and buffers. */
   export type PaneKind = "pdf" | "terminal" | "input" | "edit";
+  /** A text buffer's attributes (Vim's buftype, several at once): `nofile` never modified, written only to a path given; `unlisted` left out of buffers(). */
+  export type BufferAttr = "nofile" | "unlisted";
   export function on<E extends keyof Events>(
     event: E,
     fn: (...args: Events[E]) => void | HookAnswer,
