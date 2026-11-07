@@ -103,13 +103,19 @@ pub fn name_for(file: &Path) -> Result<String> {
     Ok(name)
 }
 
+/// Whether a missing `file` cannot be opened: a PDF (by its extension, as
+/// the server decides) must exist; a text file that does not is a new one.
+pub fn must_exist(file: &Path) -> bool {
+    file.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) && !file.exists()
+}
+
 /// What a new session's first pane shows, as `new-pane` takes it: `file`
 /// (made absolute), or a shell.
 pub fn first_pane(file: Option<&Path>) -> Result<Vec<String>> {
     Ok(match file {
         // Checked here: the server finds out in the background, too late
         // to fail the command.
-        Some(f) if !f.exists() => bail!("{}: no such file", f.display()),
+        Some(f) if must_exist(f) => bail!("{}: no such file", f.display()),
         Some(f) => vec![utf8(&std::path::absolute(f)?)?],
         None => Vec::new(),
     })

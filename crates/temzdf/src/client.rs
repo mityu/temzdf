@@ -312,13 +312,14 @@ pub fn action(name: &str, mut words: Vec<String>, timeout: Duration) -> Result<(
 
 /// Paths in `temzdf action` words are the caller's: resolve them against
 /// `cwd` here (the server has its own working directory) and check that
-/// files exist (opening happens later in the server, too late to fail the
+/// PDFs exist (a missing text file is a new one; opening happens later in
+/// the server, too late to fail the
 /// command). `new-pane`, `open-float` and `new-tab` `[--cwd DIR] [FILE | -- COMMAND...]`
 /// get `--cwd` (the caller's directory unless given; relative to it), and
 /// FILE is relative to that directory; `edit FILE` is relative to `cwd`.
 fn resolve_paths(words: &mut Vec<String>, cwd: &Path) -> Result<()> {
     let existing = |p: PathBuf| -> Result<String> {
-        if !p.exists() {
+        if temzdf_client::must_exist(&p) {
             bail!("{}: no such file", p.display());
         }
         utf8(&p)
@@ -391,6 +392,10 @@ mod tests {
         let e = resolve_paths(&mut w(&["edit", "missing.pdf"]), &tmp).unwrap_err();
         assert!(e.to_string().contains("no such file"), "{e}");
         assert!(resolve_paths(&mut w(&["new-pane", "missing.pdf"]), &tmp).is_err());
+        // A missing text file is a new one.
+        let mut words = w(&["new-pane", "new.txt"]);
+        resolve_paths(&mut words, &tmp).unwrap();
+        assert_eq!(words[3], t("new.txt"));
         let mut words = w(&["split", "right"]);
         resolve_paths(&mut words, &tmp).unwrap();
         assert_eq!(words, w(&["split", "right"]));

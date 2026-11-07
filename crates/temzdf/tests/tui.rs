@@ -1696,3 +1696,18 @@ keymap.add("edit", "<C-f>", () => cmd.switchMode("find"));
     t.type_text("X");
     t.wait_text("abcXdef");
 }
+
+#[test]
+fn a_file_that_does_not_exist_opens_as_a_new_text_file() {
+    let env = Env::new("text-new");
+    let file = env.path("new.txt");
+    let mut t = Term::spawn(&[BIN, "-s", "n", file.to_str().unwrap()], &env.options());
+    t.wait_text("new.txt");
+    t.type_text("first line");
+    t.keys(&["C-s"]);
+    wait_file(&file, "first line");
+    // A missing PDF is still an error, before any session starts.
+    let out = env.command().arg(env.path("missing.pdf")).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no such file"));
+}
