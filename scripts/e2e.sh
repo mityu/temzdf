@@ -377,6 +377,13 @@ fi
 # keys through its remote control (it ignores key events posted to its
 # process), screenshots of the display, the clipboard with pbcopy/pbpaste.
 if [[ $display == macos ]]; then
+  # A locked screen takes no screenshots ("could not create image from
+  # rect"): every run would fail while starting.
+  # (Not `ioreg | grep -q`: with pipefail, ioreg's SIGPIPE fails it.)
+  if [[ $(ioreg -n Root -d1) == *'"IOConsoleLocked" = Yes'* ]]; then
+    echo "e2e.sh: the screen is locked; unlock it (or use scripts/macos-vm.sh)" >&2
+    exit 2
+  fi
   ctl=target/macos-gui/termctl
   tc() {
     local answer
@@ -411,6 +418,11 @@ if [[ $display == macos ]]; then
       Delete) name=delete ;; space) name=space c=" " ;; Prior | Page_Up) name=page_up ;; Next | Page_Down) name=page_down ;;
       plus) c=+ ;; minus) c=- ;; equal) c="=" ;; slash) c=/ ;; question) c="?" ;; less) c="<" ;;
       greater) c=">" ;; colon) c=: ;; semicolon) c=";" ;; percent) c=% ;; comma) c=, ;; period) c=. ;;
+      bracketleft) c="[" ;; bracketright) c="]" ;; braceleft) c="{" ;; braceright) c="}" ;;
+      parenleft) c="(" ;; parenright) c=")" ;; backslash) c="\\" ;; bar) c="|" ;; apostrophe) c="'" ;;
+      quotedbl) c='"' ;; grave) c='`' ;; asciitilde) c="~" ;; exclam) c="!" ;; at) c=@ ;;
+      numbersign) c="#" ;; dollar) c='$' ;; asciicircum) c="^" ;; ampersand) c="&" ;; asterisk) c="*" ;;
+      underscore) c=_ ;;
       ?) c=$k ;;
       *) name=${k,,} ;;
     esac
