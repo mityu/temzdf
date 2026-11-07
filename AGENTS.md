@@ -56,7 +56,13 @@ heading (a tmux-like session server with terminal, PDF and web panes) is in
 Everything runs inside the Nix dev shell (`flake.nix`). Its Rust toolchain
 (rust-overlay) has the `wasm32-wasip1` target, and `CC_wasm32_wasip1` names
 nixpkgs' WASI clang (for the script host's guest; never put that clang on
-`PATH`, it would replace the native `cc`). Agents are started
+`PATH`, it would replace the native `cc`). The shipped scripts
+(`crates/temzdf-script/runtime/`, an npm package) are bundled by
+`crates/temzdf-script/build.rs` with esbuild; their npm packages come from
+`runtime/package-lock.json`, built by Nix into `$TEMZDF_NODE_MODULES` (no
+network in builds). To add one: `npm install --package-lock-only PKG` in
+`runtime/` (widely used, maintained, plain ES code: it runs in QuickJS),
+then restart the dev shell. Agents are started
 inside it, so run tools directly, not through `nix develop -c` (it costs a
 shell evaluation each time); if a tool the dev shell should provide is
 missing, say so instead of working around it. A tool added to `flake.nix`

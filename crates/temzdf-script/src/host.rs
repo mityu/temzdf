@@ -26,7 +26,12 @@ use crate::link::{Link, Received, StreamLink};
 
 const PRELUDE: &str = include_str!("prelude.js");
 /// The shipped default configuration, loaded before the user's.
-const DEFAULTS: &str = include_str!("../runtime/defaults.ts");
+const DEFAULTS: &str = include_str!(concat!(env!("OUT_DIR"), "/defaults.js"));
+/// Globals QuickJS lacks (AbortController, ...), evaluated before any
+/// configuration (bundled by build.rs from runtime/polyfills.ts).
+const POLYFILLS: &str = include_str!(concat!(env!("OUT_DIR"), "/polyfills.js"));
+/// The modules scripts import as `temzdf/NAME` (bundled by build.rs).
+const BUNDLED: &[(&str, &str)] = &[("temzdf/vim", include_str!(concat!(env!("OUT_DIR"), "/vim.js")))];
 const DEFAULTS_NAME: &str = "temzdf:defaults";
 /// What `import ... from "temzdf"` gets.
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
@@ -319,7 +324,8 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
         })?,
     )?;
     ctx.globals().set("__host", host)?;
-    ctx.eval::<(), _>(PRELUDE)
+    ctx.eval::<(), _>(PRELUDE)?;
+    ctx.eval::<(), _>(POLYFILLS)
 }
 
 #[derive(serde::Deserialize)]
@@ -630,8 +636,7 @@ fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: Option<&Path>) -> Result<(),
     let result = (|| {
         let fill: Function = ctx.globals().get("__temzdfLoad").map_err(|e| error_of(ctx, e))?;
         fill.call::<_, ()>(()).map_err(|e| error_of(ctx, e))?;
-        let defaults = crate::strip::strip(DEFAULTS_NAME, DEFAULTS).map_err(ScriptError::new)?;
-        evaluate(ctx, DEFAULTS_NAME, defaults)?;
+        evaluate(ctx, DEFAULTS_NAME, DEFAULTS.to_owned())?;
         let Some(path) = path else { return Ok(()) };
         let source = read_module(path).map_err(ScriptError::new)?;
         evaluate(ctx, &path.display().to_string(), source)
@@ -750,7 +755,7 @@ impl Resolver for Resolve {
         name: &str,
         _: Option<ImportAttributes<'js>>,
     ) -> rquickjs::Result<String> {
-        if name == "temzdf" {
+        if name == "temzdf" || BUNDLED.iter().any(|(n, _)| *n == name) {
             return Ok(name.into());
         }
         if name.starts_with("./") || name.starts_with("../") || name.starts_with('/') {
@@ -759,7 +764,10 @@ impl Resolver for Resolve {
         }
         Err(Exception::throw_message(
             ctx,
-            &format!("cannot import {name:?} from {base}: only \"temzdf\" and relative paths can be imported"),
+            &format!(
+                "cannot import {name:?} from {base}: only \"temzdf\", {} and relative paths can be imported",
+                BUNDLED.iter().map(|(n, _)| format!("{n:?}")).collect::<Vec<_>>().join(", ")
+            ),
         ))
     }
 }
@@ -796,6 +804,8 @@ impl Loader for Load {
     ) -> rquickjs::Result<Module<'js>> {
         let source = if name == "temzdf" {
             TEMZDF_MODULE.to_owned()
+        } else if let Some((_, source)) = BUNDLED.iter().find(|(n, _)| *n == name) {
+            (*source).to_owned()
         } else {
             read_module(Path::new(name)).map_err(|e| Exception::throw_message(ctx, &e))?
         };

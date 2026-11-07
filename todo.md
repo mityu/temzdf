@@ -94,6 +94,8 @@ server on one `Session`). Next and open:
   bump it and the commit in `nix/libghostty-vt.nix`, remove the byte limit,
   set the line limit, and add the setting (user's decision, 2026-11-02).
   Neovim's switch to libghostty-vt (neovim/neovim#39773) does the same.
+  libghostty 1.0 is out (the user, 2026-11-07: its API may now stay
+  stable): see whether the `libghostty-vt` crate has followed.
 - The terminal visual mode (`crates/temzdf-term/src/visual.rs`), left for
   later (2026-11-06):
   - text objects (`iw`, `aw`, `iW`, `aW`), the user chose to wait;

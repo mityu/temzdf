@@ -72,6 +72,16 @@
             # rquickjs-sys would otherwise download the WASI SDK.
             RQUICKJS_SYS_NO_WASI_SDK = "1";
           };
+          # The shipped scripts (crates/temzdf-script/runtime) are bundled by
+          # crates/temzdf-script/build.rs with esbuild; their npm packages
+          # come from the lock file, built here so builds need no network.
+          runtimeNodeModules = pkgs.importNpmLock.buildNodeModules {
+            npmRoot = ./crates/temzdf-script/runtime;
+            nodejs = pkgs.nodejs;
+          };
+          scriptEnv = {
+            TEMZDF_NODE_MODULES = "${runtimeNodeModules}/node_modules";
+          };
           stableToolchain = pkgs.rust-bin.stable.latest.minimal.override {
             targets = wasmTargets;
             extensions = [
@@ -123,8 +133,14 @@
                   {
                     packages =
                       with pkgs;
-                      [ shellcheck ]
+                      [
+                        shellcheck
+                        esbuild
+                      ]
                       ++ lib.optionals (!forCi) [
+                        # npm install --package-lock-only in
+                        # crates/temzdf-script/runtime (adding a package).
+                        nodejs
                         agent-browser
                         python3
                         imagemagick # Screenshots compared in scripts/e2e.sh (expect).
@@ -218,6 +234,7 @@
                     TEMZDF_BUNDLED_FONTS = bundleFontPath;
                   }
                   // wasmEnv
+                  // scriptEnv
                   // lib.optionalAttrs enableFixedFontSet {
                     # `nix develop .#ci`: what scripts/check.sh needs on a bare machine
                     # (.github/workflows/ci.yml): the toolchain, TeX for the fixtures, and
@@ -300,6 +317,7 @@
                     clang
                     # mupdf-sys runs bindgen, which needs libclang.
                     rustPlatform.bindgenHook
+                    esbuild
                   ];
                   # In RUNPATH rather than a wrapper script, so the binary works
                   # alone (copied, or a symlink to it) outside the dev shell;
@@ -323,6 +341,7 @@
                   # not exported).
                   env =
                     wasmEnv
+                    // scriptEnv
                     // lib.optionalAttrs withGui {
                       TEMZDF_BUNDLED_FONTS = bundleFontPath;
                     };

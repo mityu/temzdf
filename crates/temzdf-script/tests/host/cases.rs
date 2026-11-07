@@ -335,7 +335,11 @@ fn top_level_await_and_syntax_errors_fail_the_load() {
     assert!(e.message.contains("enum.ts:2:"), "{e}");
     s.load("bare.js");
     let FromHost::Ready(Err(e)) = s.serve(&mut Vec::new()) else { panic!() };
-    assert!(e.to_string().contains("only \"temzdf\" and relative paths"), "{e}");
+    let e = e.to_string();
+    assert!(
+        e.contains("cannot import \"lodash\"") && e.contains("\"temzdf/vim\"") && e.contains("relative paths"),
+        "{e}"
+    );
 }
 
 #[test]
@@ -418,6 +422,44 @@ cmd.message("ok");
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
     assert_eq!(log, ["load message(ok)"]);
+}
+
+#[test]
+fn abort_controllers_come_from_the_polyfills() {
+    // AbortController (an npm polyfill, runtime/polyfills.ts): abort with a
+    // reason, its event, throwIfAborted, and AbortSignal.timeout firing
+    // through the host's timers inside a dispatched task.
+    let config = r#"import { cmd, dispatch } from "temzdf";
+const c = new AbortController();
+let heard = "";
+c.signal.addEventListener("abort", () => { heard = String(c.signal.reason); });
+c.abort("why");
+let thrown = "";
+try { c.signal.throwIfAborted(); } catch (e) { thrown = String(e); }
+cmd.message(`${c.signal.aborted} ${heard} ${thrown}`);
+dispatch(async (ctx) => {
+  const t = AbortSignal.timeout(5);
+  await new Promise<void>((resolve) => t.addEventListener("abort", () => resolve()));
+  ctx.atomic(() => ctx.cmd.message(`timeout ${(t.reason as Error).name}`));
+});
+"#;
+    let mut s = Session::start(&[("config.ts", config)]);
+    s.load("config.ts");
+    let mut log = Vec::new();
+    let (mut ready, mut done) = (false, false);
+    while !(ready && done) {
+        match s.serve(&mut log) {
+            FromHost::Ready(r) => {
+                ready_ok(FromHost::Ready(r));
+                ready = true;
+            }
+            FromHost::TaskDone { .. } => done = true,
+            FromHost::TaskStart(_) | FromHost::AtomicBegin(_) | FromHost::AtomicEnd(_) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(log[0], "load message(true why why)");
+    assert!(log.iter().any(|l| l.ends_with("message(timeout TimeoutError)")), "{log:?}");
 }
 
 #[test]
