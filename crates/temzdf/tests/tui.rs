@@ -1940,6 +1940,35 @@ fn the_vim_mode_edits_and_writes_a_file() {
 }
 
 #[test]
+fn the_vim_mode_runs_macros_and_splits_panes() {
+    let env = Env::new("vim-macro");
+    env.config("config.ts", "import \"temzdf/vim\";\n");
+    let file = env.path("m.txt");
+    std::fs::write(&file, "a1\na2\na3\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "vm", file.to_str().unwrap()], &env.options());
+    t.wait_text("a3");
+    t.wait_text("vim/normal");
+    // A macro, run until j fails at the last line.
+    t.type_text("qaA!");
+    t.key("Esc");
+    t.type_text("jq9@a");
+    t.wait_for("every line", |s| ["a1!", "a2!", "a3!"].iter().all(|l| s.lines().iter().any(|x| x.starts_with(l))));
+    t.pump(std::time::Duration::from_millis(300));
+    assert!(!t.screen().text().contains("a3!!"), "it stopped at the last line");
+    // :vnew beside it, :bn shows m.txt there too, :only leaves one pane.
+    t.type_text(":vnew\n");
+    t.wait_for("two panes", |s| {
+        s.lines().iter().filter(|l| l.contains("a1!")).count() == 1 && s.text().contains("[No Name]")
+    });
+    t.type_text(":bn\n");
+    t.wait_for("m.txt in both", |s| s.lines().iter().any(|l| l.matches("a1!").count() == 2));
+    t.type_text(":only\n");
+    t.wait_for("one pane", |s| s.lines().iter().all(|l| l.matches("a1!").count() <= 1) && s.text().contains("a1!"));
+    t.type_text(":wq\n");
+    wait_file(&file, "a1!\na2!\na3!\n");
+}
+
+#[test]
 fn a_pdfs_selection_goes_into_the_copy_history() {
     // What a PDF pane copies is in the session's copy history, as a
     // terminal's copy (doc/design/registers.md).

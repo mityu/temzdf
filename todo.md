@@ -124,9 +124,10 @@ server on one `Session`). Next and open:
   (OSC 52 queries) is untried in real terminals and inside tmux: check
   kitty, Ghostty, WezTerm, tmux and record it in
   doc/terminals/terminal-compat.md. The Vim mode
-  is built (`doc/design/vim-mode.md`; marks, the jump list and macros left
-  for later, with what that document lists as not there yet). Deferred
-  there:
+  is built (`doc/design/vim-mode.md`), with marks, the jump list,
+  macros, incsearch, `:s///c`, Ex commands for panes, buffers and tab
+  pages, block `I`/`A`/`c` and `<C-r>{reg}` (2026-11-07); what that
+  document lists as not there yet is left. Deferred there:
   - `getchar()`/`input()`-like reading (`readKey`, `await` in
     asynchronous mappings; the user wants `input()`-driven operations
     such as sandwich.vim's function surround later);
