@@ -1,0 +1,200 @@
+# Marks and the jump list (marks.ts).
+
+=== 'a goes to the mark's line, `a to the mark
+text:
+one
+tw|o
+three
+keys: maG'a
+want:
+one
+|two
+three
+
+=== `a goes to the mark itself
+text:
+one
+tw|o
+three
+keys: maG`a
+want:
+one
+tw|o
+three
+
+=== a mark follows edits above it
+text:
+one
+tw|o
+keys: makOnew<Esc>j0`a
+want:
+new
+one
+tw|o
+
+=== a mark whose text went is not set
+text:
+one
+tw|o
+three
+keys: maggjdd`a
+want:
+one
+|three
+error: yes
+
+=== d'a deletes lines to the mark
+text:
+|one
+two
+three
+four
+keys: jjmaggd'a
+want:
+|four
+
+=== y`a yanks to the mark (exclusive)
+text:
+|hello world
+keys: wmaggy`aP
+want:
+hello| hello world
+
+=== '' goes back where the last jump began
+text:
+|one
+two
+three
+keys: jG''
+want:
+one
+|two
+three
+
+=== `` swaps back and forth
+text:
+o|ne
+two
+three
+keys: G````
+want:
+one
+two
+|three
+
+=== an unset mark is an error
+text:
+|one
+keys: 'z
+want:
+|one
+error: yes
+
+=== <C-o> and <C-i> go through the jump list
+text:
+|one
+two
+three
+four
+keys: 3GG<C-o><C-o><C-i>
+want:
+one
+two
+|three
+four
+
+=== a search is a jump
+text:
+|one
+two
+three
+keys: /three<CR><C-o>
+want:
+|one
+two
+three
+
+=== :N is a jump
+text:
+|one
+two
+three
+keys: :3<CR><C-o>
+want:
+|one
+two
+three
+
+=== '[ and '] are the last change's ends
+text:
+|one
+two
+three
+four
+keys: jyjG'[
+want:
+one
+|two
+three
+four
+
+=== '. is the last change
+text:
+one
+|two
+three
+keys: xgg`.
+want:
+one
+|wo
+three
+
+=== `^ is where the insert mode was left
+text:
+|one
+two
+keys: Aab<Esc>j`^
+want:
+onea|b
+two
+
+=== a mark in an Ex range
+text:
+|a
+b
+c
+d
+keys: jmajmb:'a,'bd<CR>
+want:
+a
+|d
+
+=== :delm deletes marks
+text:
+|one
+two
+keys: majmb:delm a<CR>'b'a
+want:
+one
+|two
+error: yes
+
+=== :mark sets a mark at a line
+text:
+|one
+two
+three
+keys: :3mark c<CR>'c
+want:
+one
+two
+|three
+
+=== a mark in the visual mode moves its end
+text:
+|one
+two
+three
+keys: Gmaggv'ad
+want:
+|hree

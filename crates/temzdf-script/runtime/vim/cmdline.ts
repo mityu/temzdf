@@ -3,6 +3,7 @@
 // <CR> runs it in the text pane, <Esc> cancels.
 import { cmd } from "temzdf";
 import { ex } from "./ex";
+import { recordJump } from "./marks";
 import { leaveTransient, operator } from "./normal";
 import { again, find, wordUnder } from "./search";
 import { state } from "./state";
@@ -80,12 +81,13 @@ export function goTo(to: ReturnType<typeof find>, count: number | null): void {
     operator(p.op, m, p.register, () => (last === null ? null : { to: find(last.pattern, last.backward, count ?? 1)!, kind: "exclusive" }), count);
     return;
   }
+  const at = cursor();
+  if (to.line !== at.line || to.character !== at.character) recordJump(at);
   if (state.visual !== null) {
     moveVisual(m);
     return;
   }
   setCursor(clampNormal(to));
-  void cursor;
 }
 
 export function searchAgain(reverse: boolean, count: number | null): void {

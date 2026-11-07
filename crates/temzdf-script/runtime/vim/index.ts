@@ -30,7 +30,8 @@ import {
 import { options, state } from "./state";
 import type { MotionFn, Operator } from "./state";
 import { textObjectKeys } from "./textobjects";
-import { cursor, t } from "./util";
+import { isMarkName, jump, markPos, setMark } from "./marks";
+import { cursor, firstNonBlank, t } from "./util";
 import { draw, enterVisual, exitVisual, reselect, swapEnds } from "./visual";
 
 const NS = { namespace: "vim" };
@@ -71,7 +72,7 @@ for (const k of [...motionKeys, ...Object.keys(aliases)]) {
 }
 
 // f F t T and r read one character.
-let charFor: null | { kind: "f" | "F" | "t" | "T"; count: number | null } | { kind: "r"; count: number | null } = null;
+let charFor: null | { kind: "f" | "F" | "t" | "T" | "r" | "m" | "'" | "`"; count: number | null } = null;
 
 function readChar(key: KeyInfo): void {
   const what = charFor;
@@ -84,6 +85,10 @@ function readChar(key: KeyInfo): void {
   }
   if (what.kind === "r") {
     replaceChars(key, what.count);
+    return;
+  }
+  if (what.kind === "m" || what.kind === "'" || what.kind === "`") {
+    markKey(what.kind, key.text ?? "", what.count);
     return;
   }
   const ch = key.text;
@@ -106,6 +111,37 @@ map([N], ["r"], (ctx) => {
   charFor = { kind: "r", count: ctx.count ?? null };
   cmd.switchMode("vim/char");
 });
+
+// Marks: m{x} sets one; '{x} goes to its line, `{x} to it (motions).
+map([N], ["m"], () => {
+  charFor = { kind: "m", count: null };
+  cmd.switchMode("vim/char");
+});
+for (const kind of ["'", "`"] as const) {
+  map([N, P, V], [kind], (ctx) => {
+    charFor = { kind, count: ctx.count ?? null };
+    cmd.switchMode("vim/char");
+  });
+}
+
+function markKey(kind: "m" | "'" | "`", name: string, count: number | null): void {
+  if (kind === "m") {
+    cancelPending();
+    setMark(name);
+    return;
+  }
+  if (!isMarkName(name)) {
+    cancelPending();
+    return;
+  }
+  runMotion(kind, (from) => {
+    // Another buffer's mark: shown first, without an operator only.
+    const p = markPos(name, state.pending === null && state.visual === null);
+    if (p === null) throw new Error("E20: Mark not set");
+    void from;
+    return kind === "'" ? { to: firstNonBlank(p.line), kind: "linewise" } : { to: p, kind: "exclusive" };
+  }, count);
+}
 
 // Operators.
 const operators: [string, Operator][] = [
@@ -168,6 +204,8 @@ map([N, V], ["<C-f>", "<PageDown>"], (ctx) => scroll("page", true, ctx.count ?? 
 map([N, V], ["<C-b>", "<PageUp>"], (ctx) => scroll("page", false, ctx.count ?? null));
 map([N, V], ["<C-e>"], (ctx) => scroll("line", true, ctx.count ?? null));
 map([N, V], ["<C-y>"], (ctx) => scroll("line", false, ctx.count ?? null));
+map([N], ["<C-o>"], (ctx) => jump(-(ctx.count ?? 1)));
+map([N], ["<C-i>", "<Tab>"], (ctx) => jump(ctx.count ?? 1));
 map([N], ["zz"], () => t.reveal(cursor(), "center"));
 map([N], ["zt"], () => t.reveal(cursor(), "top"));
 

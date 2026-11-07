@@ -50,6 +50,23 @@ user's.
   answered), `_`. Yanks and deletes go to the clipboard too, as Vim's
   `clipboard=unnamedplus` (`o.clipboard`); `"_` or a named register keeps
   it.
+- Marks (`marks.ts`) are the framework's marks (empty decorations without
+  a style: they follow edits, and a mark whose text was deleted is unset,
+  `E20`), named in the buffer variable `vim.marks`, so they outlive a
+  restarted script host and go with their buffer; in memory only, as the
+  copy history. `a`-`z` are the buffer's; `A`-`Z` one in the session (kept
+  in the buffer it was set in: going there shows that buffer in the pane);
+  `'` (where the last jump began), `[` `]` (the last change or yank), `.`,
+  `^` (where the insert mode was left) and `<` `>` (the last visual
+  selection) are set by the editing commands. `'x` (linewise) and `` `x ``
+  (exclusive) are motions; Ex ranges take `'x`; `:marks`, `:delm[arks][!]`,
+  `:ma[rk]`/`:k`.
+- The jump list is per pane (the pane variable `vim.jumps`, at most 100
+  entries, each a mark): `G`, `gg`, `%`, `(`, `)`, `{`, `}`, `H`, `M`, `L`,
+  marks, searches (`/ ? n N * #`) and `:N` leave an entry where they began
+  (others on that line go); `<C-o>` goes back (taking the cursor's place
+  along first), `<C-i>` and `<Tab>` forward, showing another buffer's entry
+  in the pane.
 - The visual selection is a decoration (style `Selection`), not the
   framework's selection, so the cursor stays on Vim's character
   (inclusive ends).
@@ -76,8 +93,10 @@ user's.
 
 ## Differences from Vim, and what is not there yet
 
-- Not yet: marks and the jump list, macros (the user chose to leave them
-  for later), `:g`, `:normal`, `:map`, folds, text formatting (`gq`),
+- A mark at a line's start survives deleting that line (`dd` deletes from
+  the line's start: the mark is at the edge, not inside); it moves to the
+  next line. Vim deletes it.
+- Not yet: macros (the user chose to leave them for later), `:g`, `:normal`, `:map`, folds, text formatting (`gq`),
   `gJ`, the insert mode's `<C-o>`, `<C-r>{reg}` and completion, `I`/`A` on
   a block, `incsearch`, search offsets (`/pat/e`), `:s` with `c`, `&`
   and `~`, counts on visual operators.

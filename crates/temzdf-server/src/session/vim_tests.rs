@@ -234,6 +234,9 @@ fn run(case: &Case, dir: &Path) -> Result<(), String> {
     if !seen.is_empty() && !case.want_error {
         errors.push(format!("errors: {seen:?}"));
     }
+    if seen.is_empty() && case.want_error {
+        errors.push("no error shown (want one)".to_owned());
+    }
     if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
 }
 

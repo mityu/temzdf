@@ -2,8 +2,9 @@
 // remembered for `.` (between a mark where it began and the cursor where it
 // ends).
 import { cmd } from "temzdf";
+import { setChanged, setMark } from "./marks";
 import { state } from "./state";
-import { clampNormal, cmp, cursor, prevChar, setCursor, t, text } from "./util";
+import { clampNormal, cmp, cursor, min, prevChar, setCursor, t, text } from "./util";
 
 /** What `.` runs before typing the text again: it positions the cursor (and
  * may delete, as `c` does); it returns how many times the text goes in. */
@@ -37,6 +38,9 @@ export function endInsert(): void {
     const d = t.decoration(ins.mark);
     const c = cursor();
     if (d !== null && cmp(d.range.start, c) < 0) typed = text({ start: d.range.start, end: c });
+    // ^ where it was left; [ ] and . what was typed.
+    setMark("^", c);
+    if (d !== null) setChanged(min(d.range.start, c), c, true);
     t.clearNamespace("vim-insert");
     if (typed !== "" && ins.count !== null && ins.count > 1) t.insert((insertPrefix + typed).repeat(ins.count - 1));
     const replay = insertReplay;

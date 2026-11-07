@@ -3,6 +3,7 @@
 import { cmd, dispatch } from "temzdf";
 import type { KeyInfo, Position } from "temzdf";
 import { endInsert, startInsert } from "./insert";
+import { recordJump } from "./marks";
 import { motions } from "./motions";
 import { operate, put, span } from "./operators";
 import type { Span } from "./operators";
@@ -90,6 +91,10 @@ function runOperator(op: Operator, s: Span, register: string | null, respan: (co
   }
 }
 
+/** The motions that are jumps (Vim's :help jump-motions; searches in
+ * cmdline.ts). */
+const JUMPS = new Set(["G", "gg", "%", "(", ")", "{", "}", "H", "M", "L", "'", "`"]);
+
 /** A motion key: move, or finish a pending operator, or move the visual
  * selection's end. */
 export function runMotion(key: string, fn: MotionFn, count: number | null): void {
@@ -107,8 +112,15 @@ export function runMotion(key: string, fn: MotionFn, count: number | null): void
     operator(p.op, f(cursor(), total), p.register, (c) => f(cursor(), c ?? total), total);
     return;
   }
-  const m = fn(cursor(), count);
+  const before = cursor();
+  const buf = JUMPS.has(key) ? t.info().buffer : null;
+  const m = fn(before, count);
   if (m === null) return;
+  // A jump (G, gg, %, a mark, ...) within the buffer goes into the jump
+  // list (one to another buffer did, as it left).
+  if (buf !== null && t.info().buffer === buf && (m.to.line !== before.line || m.to.character !== before.character)) {
+    recordJump(before);
+  }
   if (state.visual !== null) {
     moveVisual(m);
     return;

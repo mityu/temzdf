@@ -1,6 +1,7 @@
 // Operators on the range a motion or text object covers: delete, change,
 // yank, shift, case.
 import type { Position, Range } from "temzdf";
+import { setChanged } from "./marks";
 import * as registers from "./registers";
 import { options, state } from "./state";
 import type { Motion, Operator } from "./state";
@@ -87,6 +88,22 @@ function changeCase(s: string, how: "g~" | "gu" | "gU"): string {
 /** Do `op` on `s`; the register named for it (`"x`) or the default one.
  * Returns whether the insert mode should follow (c). */
 export function operate(op: Operator, s: Span, register: string | null): boolean {
+  const changes = op !== "y" && op !== "c";
+  const first = s.kind === "char" ? s.start : pos(s.first, 0);
+  const last = s.kind === "char" ? (cmp(s.end, s.start) > 0 ? t.positionOf(s.end, "grapheme", -1) : s.end) : pos(s.last, Math.max(0, lineLength(s.last) - 1));
+  const c = operate1(op, s, register);
+  // The [ ] marks: what was yanked, or where the change was (its text,
+  // or where it was taken out); c sets them when its insert ends.
+  if (op === "d") {
+    const p = clampNormal(first);
+    setChanged(p, p, true);
+  } else if (op !== "c") {
+    setChanged(first, last, changes);
+  }
+  return c;
+}
+
+function operate1(op: Operator, s: Span, register: string | null): boolean {
   const at = cursor();
   switch (op) {
     case "y": {
@@ -154,10 +171,16 @@ export function put(reg: registers.Register, after: boolean, count: number): voi
       t.insert(lines, pos(line, 0));
     }
     setCursor(firstNonBlank(line));
+    const n = (lines.match(/\n/g) ?? []).length;
+    setChanged(pos(line, 0), pos(line + n - 1, 0), true);
     return;
   }
   const where = after && lineLength(at.line) > 0 ? nextChar(at) : at;
   t.insert(body, where);
+  {
+    const end = t.positionOf(where, "grapheme", [...body].length);
+    setChanged(where, end.character > 0 ? t.positionOf(end, "grapheme", -1) : end, true);
+  }
   // On the last character put (a multi-line put: on its start).
   if (body.includes("\n")) {
     setCursor(where);

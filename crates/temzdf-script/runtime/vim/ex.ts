@@ -3,6 +3,7 @@
 import { cmd } from "temzdf";
 import { operate } from "./operators";
 import { convert } from "./pattern";
+import { deleteMarks, listMarks, markLine, recordJump, setMark } from "./marks";
 import { noHighlight } from "./search";
 import { options, state } from "./state";
 import { cursor, firstNonBlank, lastLine, lineEnd, pos, t, text } from "./util";
@@ -19,11 +20,8 @@ function address(s: string, i: number): [number | null, number] {
   } else if (s[i] === "$") {
     line = lastLine();
     i++;
-  } else if (s[i] === "'" && (s[i + 1] === "<" || s[i + 1] === ">")) {
-    const v = state.lastVisual;
-    if (v === null) throw new Error("E20: Mark not set");
-    const lines = [v.anchor.line, v.cursor.line];
-    line = s[i + 1] === "<" ? Math.min(...lines) : Math.max(...lines);
+  } else if (s[i] === "'" && s[i + 1] !== undefined) {
+    line = markLine(s[i + 1]);
     i += 2;
   } else {
     const m = /^\d+/.exec(s.slice(i));
@@ -178,7 +176,12 @@ export function ex(input: string): void {
   const arg = m[3].trim();
   const is = (short: string, full: string) => name.length >= short.length && full.startsWith(name);
   if (name === "" && arg === "") {
-    if (range !== null) t.setCursor(firstNonBlank(clampRange(range).last));
+    if (range !== null) {
+      const to = firstNonBlank(clampRange(range).last);
+      const at = cursor();
+      if (to.line !== at.line) recordJump(at);
+      t.setCursor(to);
+    }
     return;
   }
   if (name === "" || is("s", "substitute")) {
@@ -207,6 +210,21 @@ export function ex(input: string): void {
     } else {
       throw new Error("E37: No write since last change (add ! to override)");
     }
+    return;
+  }
+  if (is("marks", "marks")) {
+    cmd.message(listMarks());
+    return;
+  }
+  if (is("delm", "delmarks")) {
+    if (arg === "" && !bang) throw new Error("E471: Argument required");
+    deleteMarks(arg, bang);
+    return;
+  }
+  if (is("ma", "mark") || name === "k") {
+    const r = clampRange(range ?? { first: cursor().line, last: cursor().line });
+    if (arg.length !== 1) throw new Error("E471: Argument required");
+    setMark(arg, pos(r.last, 0));
     return;
   }
   if (is("noh", "nohlsearch")) {
