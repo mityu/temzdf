@@ -89,8 +89,18 @@ pub(crate) fn command_names() -> Vec<String> {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let defaults = include_str!("../../runtime/defaults.ts");
-    for part in defaults.split("action.").skip(1) {
+    // The shipped modules the defaults enable (their mappings name actions).
+    let shipped = [
+        include_str!("../../runtime/defaults.ts"),
+        include_str!("../../runtime/pane/pdf.ts"),
+        include_str!("../../runtime/pane/terminal.ts"),
+        include_str!("../../runtime/mode/normal.ts"),
+        include_str!("../../runtime/mode/input.ts"),
+        include_str!("../../runtime/edit/notepad.ts"),
+        include_str!("../../runtime/buffers.ts"),
+    ]
+    .concat();
+    for part in shipped.split("action.").skip(1) {
         let camel: String = part.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
         let kebab: String = camel
             .chars()
@@ -164,6 +174,9 @@ fn describe(token: Token, op: &HostOp) -> String {
         }
         // The shipped defaults map actions; leave them out.
         HostOp::Map { rhs: MapRhs::Actions(_), .. } => String::new(),
+        // And they enable the Vim mode: its modes and base mode.
+        HostOp::DefineMode { name, .. } if name.starts_with("vim/") => String::new(),
+        HostOp::GetOption { name } | HostOp::SetOption { name, .. } if name == "basemode" => String::new(),
         other => format!("{t} {other:?}"),
     }
 }
@@ -337,7 +350,7 @@ fn top_level_await_and_syntax_errors_fail_the_load() {
     let FromHost::Ready(Err(e)) = s.serve(&mut Vec::new()) else { panic!() };
     let e = e.to_string();
     assert!(
-        e.contains("cannot import \"lodash\"") && e.contains("\"temzdf/vim\"") && e.contains("relative paths"),
+        e.contains("cannot import \"lodash\"") && e.contains("\"temzdf/edit/vim\"") && e.contains("relative paths"),
         "{e}"
     );
 }
@@ -575,8 +588,9 @@ keymap.add("normal", "w", () => {
     let ready = loop {
         match s.recv() {
             FromHost::Request { req, op, .. } => {
+                // (Not the shipped modules' mappings.)
                 if let HostOp::Map { keys, rhs, when, namespace, .. } = &op
-                    && namespace.as_deref() != Some("default")
+                    && !namespace.as_deref().is_some_and(|n| n.starts_with("builtin-"))
                 {
                     maps.push((keys.clone(), rhs.clone(), *when, namespace.clone()));
                 }

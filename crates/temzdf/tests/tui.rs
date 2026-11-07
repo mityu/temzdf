@@ -164,6 +164,10 @@ impl Drop for Env {
     }
 }
 
+/// A configuration editing text panes without modes (Notepad), for tests
+/// of that editing (the default editor is Vim's).
+const NOTEPAD: &str = "import notepad from \"temzdf/edit/notepad\";\nimport vim from \"temzdf/edit/vim\";\nvim.disable();\nnotepad.enable();\n";
+
 fn fixture(name: &str) -> PathBuf {
     temzdf_pdfcore::pdf::fixture(name)
 }
@@ -625,10 +629,10 @@ keymap.add("terminal", "<C-x>f", () => feedkeys("echo fed<CR>"));
 keymap.add("terminal", "<C-x>k", () => cmd.sendText("echo cond-yes\n"), { when: (ctx) => ctx.paneKind === "terminal" });
 keymap.add("terminal", "<C-x>k", () => cmd.sendText("echo never\n"), { when: (ctx) => ctx.floating });
 keymap.add("terminal", "<C-x>s", () => cmd.sendText("echo side-effect\n"), { when: () => { cmd.split("right"); return true; } });
-keymap.remove("normal", "x", { namespace: "default" });
+keymap.remove("normal", "x", { namespace: "builtin-mode-normal" });
 keymap.add(["normal", "pdf"], "Q", action.exitMode(), { namespace: "gone" });
 keymap.clear({ namespace: "gone" });
-console.log(`cleared ${keymap.get({ namespace: "gone" }).length} ${keymap.get({ mode: "pdf", namespace: "default" }).length > 0}`);
+console.log(`cleared ${keymap.get({ namespace: "gone" }).length} ${keymap.get({ mode: "pdf", namespace: "builtin-pane-pdf" }).length > 0}`);
 keymap.add(["normal", "pdf"], "<C-b>z", action.exitMode(), { namespace: "lhs" });
 keymap.add("normal", "<C-b>y", action.exitMode(), { namespace: "lhs" });
 console.log(`by lhs ${keymap.get({ namespace: "lhs", lhs: "<C-b>z" }).map((m) => `${m.mode}:${m.lhs}`).join(",")}`);
@@ -1683,8 +1687,19 @@ fn wait_file(path: &std::path::Path, want: &str) {
 }
 
 #[test]
+fn text_panes_edit_as_vim_without_a_configuration() {
+    let env = Env::new("text-default");
+    let file = env.path("d.txt");
+    std::fs::write(&file, "one\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "td", file.to_str().unwrap()], &env.options());
+    t.wait_text("one");
+    t.wait_text("vim/normal");
+}
+
+#[test]
 fn a_text_file_is_edited_without_modes_and_written() {
     let env = Env::new("text-edit");
+    env.config("config.ts", NOTEPAD);
     let file = env.path("notes.txt");
     std::fs::write(&file, "hello world\nsecond\n").unwrap();
     let mut t = Term::spawn(&[BIN, "-s", "e", file.to_str().unwrap()], &env.options());
@@ -1717,7 +1732,11 @@ fn a_mode_with_a_fallback_function_reads_one_key() {
     let env = Env::new("text-fallback");
     env.config(
         "config.ts",
-        r#"import { cmd, defineMode, keymap } from "temzdf";
+        r#"import notepad from "temzdf/edit/notepad";
+import vim from "temzdf/edit/vim";
+vim.disable();
+notepad.enable();
+import { cmd, defineMode, keymap } from "temzdf";
 // f{char}: the next key goes to a function, then the mode is left.
 defineMode("find", {
   transient: true,
@@ -1746,6 +1765,7 @@ keymap.add("edit", "<C-f>", () => cmd.switchMode("find"));
 #[test]
 fn a_file_that_does_not_exist_opens_as_a_new_text_file() {
     let env = Env::new("text-new");
+    env.config("config.ts", NOTEPAD);
     let file = env.path("new.txt");
     let mut t = Term::spawn(&[BIN, "-s", "n", file.to_str().unwrap()], &env.options());
     t.wait_text("new.txt");
@@ -1813,7 +1833,11 @@ fn invocations_text_changes_typed_keys_and_scheduled_functions_are_heard_in_orde
     let env = Env::new("text-events");
     env.config(
         "config.ts",
-        r#"import { cmd, keymap, on, schedule } from "temzdf";
+        r#"import notepad from "temzdf/edit/notepad";
+import vim from "temzdf/edit/vim";
+vim.disable();
+notepad.enable();
+import { cmd, keymap, on, schedule } from "temzdf";
 import type { InvokeTarget } from "temzdf";
 const log = (s: string) => console.log(s);
 const what = (t: InvokeTarget) =>
@@ -1872,6 +1896,7 @@ keymap.add("edit", "<C-t>", () => {
 #[test]
 fn a_text_file_changed_elsewhere_is_read_again_unless_it_has_changes() {
     let env = Env::new("text-disk");
+    env.config("config.ts", NOTEPAD);
     let file = env.path("d.txt");
     std::fs::write(&file, "one\ntwo\n").unwrap();
     let mut t = Term::spawn(&[BIN, "-s", "dk", file.to_str().unwrap()], &env.options());
@@ -1918,7 +1943,7 @@ fn a_text_file_saved_elsewhere_by_renaming_is_read_again() {
 #[test]
 fn the_vim_mode_edits_and_writes_a_file() {
     let env = Env::new("vim");
-    env.config("config.ts", "import \"temzdf/vim\";\n");
+    env.config("config.ts", "import vim from \"temzdf/edit/vim\";\nvim.enable();\n");
     let file = env.path("v.txt");
     std::fs::write(&file, "one\ntwo\nthree\n").unwrap();
     let mut t = Term::spawn(&[BIN, "-s", "vi", file.to_str().unwrap()], &env.options());
@@ -1942,7 +1967,7 @@ fn the_vim_mode_edits_and_writes_a_file() {
 #[test]
 fn the_vim_mode_runs_macros_and_splits_panes() {
     let env = Env::new("vim-macro");
-    env.config("config.ts", "import \"temzdf/vim\";\n");
+    env.config("config.ts", "import vim from \"temzdf/edit/vim\";\nvim.enable();\n");
     let file = env.path("m.txt");
     std::fs::write(&file, "a1\na2\na3\n").unwrap();
     let mut t = Term::spawn(&[BIN, "-s", "vm", file.to_str().unwrap()], &env.options());

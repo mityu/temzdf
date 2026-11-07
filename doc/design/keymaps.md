@@ -44,7 +44,7 @@ configurations are written with the same system.
   modifier but Shift go in, the rest are dropped; editing is `text.*`
   commands mapped there).
   The pane kinds decide them, so switching panes changes the mode without
-  anything to configure. Their mappings come from `defaults.ts`, as now.
+  anything to configure. Their mappings come from the shipped modules `defaults.ts` enables (`temzdf/pane/pdf`, ...; `doc/config.md`).
 - **`visual`** (added 2026-11-06, with the user) is built in too, though no
   pane kind starts in it: entered from a terminal pane (`<C-b>[`, the
   `normal` mode's `v`), unmapped keys dropped, counts. It drives the

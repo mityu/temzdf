@@ -332,6 +332,12 @@ declare module "temzdf" {{
     /** Run `fn` with everything else held; `fn` must be synchronous. */
     atomic<T>(fn: () => T): T;
   }}
+  /** A shipped set of mappings and hooks (temzdf/edit/vim, temzdf/pane/pdf, ...): defined when enabled, taken away when disabled. */
+  export interface Keyset {{
+    enable(): void;
+    disable(): void;
+    readonly enabled: boolean;
+  }}
   /** What openPrompt is given. */
   export interface PromptOptions {{
     /** Shown before the text (inline virtual text, style `style`, default `Prompt`). */
@@ -362,21 +368,51 @@ declare module "temzdf" {{
   export function atomic<T>(fn: () => T): T;
 }}
 
-/** temzdf's Vim mode (doc/design/vim-mode.md): importing it makes text panes start in vim/normal. */
-declare module "temzdf/vim" {{
-  const vim: {{
-    /** Vim's settings the mode reads. */
+/** temzdf's Vim mode for text panes (doc/design/vim-mode.md), namespace builtin-edit-vim; the default editor (defaults.ts enables it). */
+declare module "temzdf/edit/vim" {{
+  const vim: import("temzdf").Keyset & {{
+    /** Vim's settings the mode reads (:set changes them too). */
     options: {{
       shiftwidth: number;
       expandtab: boolean;
       ignorecase: boolean;
       smartcase: boolean;
       hlsearch: boolean;
+      incsearch: boolean;
       wrapscan: boolean;
     }};
   }};
   export default vim;
-  export const options: typeof vim.options;
+}}
+/** Editing text panes without modes, as Notepad does (namespace builtin-edit-notepad, the mode `edit`). */
+declare module "temzdf/edit/notepad" {{
+  const notepad: import("temzdf").Keyset;
+  export default notepad;
+}}
+/** PDF panes' keys (namespace builtin-pane-pdf). */
+declare module "temzdf/pane/pdf" {{
+  const pdf: import("temzdf").Keyset;
+  export default pdf;
+}}
+/** Terminal panes' keys and their visual mode (namespace builtin-pane-terminal). */
+declare module "temzdf/pane/terminal" {{
+  const terminal: import("temzdf").Keyset;
+  export default terminal;
+}}
+/** The normal mode: panes, tab pages, sessions (namespace builtin-mode-normal). */
+declare module "temzdf/mode/normal" {{
+  const normal: import("temzdf").Keyset;
+  export default normal;
+}}
+/** Prompts' input mode (namespace builtin-mode-input). */
+declare module "temzdf/mode/input" {{
+  const input: import("temzdf").Keyset;
+  export default input;
+}}
+/** What happens to buffers: unsaved changes kept, files read again (hooks; namespace builtin-buffers). */
+declare module "temzdf/buffers" {{
+  const buffers: import("temzdf").Keyset;
+  export default buffers;
 }}
 "#
     )

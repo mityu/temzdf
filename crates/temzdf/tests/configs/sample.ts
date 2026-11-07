@@ -25,10 +25,10 @@ keymap.add(["pdf", "terminal"], "<C-b>%", (ctx) => {
   cmd.split(ctx.count === null ? "right" : "bottom");
 }, { when: (ctx) => !ctx.floating && ctx.keys === "" });
 keymap.remove("normal", "x");
-keymap.remove("normal", "q", { namespace: "default" });
+keymap.remove("normal", "q", { namespace: "builtin-mode-normal" });
 keymap.clear({ mode: "window", namespace: "mine" });
 keymap.clear({ namespace: "nobody" });
-for (const m of keymap.get({ mode: "normal", namespace: "default" })) {
+for (const m of keymap.get({ mode: "normal", namespace: "builtin-mode-normal" })) {
   keymap.add("resize", m.lhs, m.rhs, { when: m.when, nowait: m.nowait, desc: m.desc });
 }
 

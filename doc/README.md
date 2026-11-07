@@ -40,7 +40,7 @@ the way, with the reasons.
   do, key input, base modes, files, drawing; editors such as Vim are
   scripts.
 - [design/vim-mode.md](design/vim-mode.md): the Vim mode for text panes,
-  a script on the text editor framework (`import "temzdf/vim"`): how it is
+  a script on the text editor framework (`temzdf/edit/vim`): how it is
   built, its differences from Vim, its tests.
 - [design/registers.md](design/registers.md): registers and the copy
   history kept by the session (every pane's copies, Vim's registers as

@@ -31,7 +31,7 @@ const DEFAULTS: &str = include_str!(concat!(env!("OUT_DIR"), "/defaults.js"));
 /// configuration (bundled by build.rs from runtime/polyfills.ts).
 const POLYFILLS: &str = include_str!(concat!(env!("OUT_DIR"), "/polyfills.js"));
 /// The modules scripts import as `temzdf/NAME` (bundled by build.rs).
-const BUNDLED: &[(&str, &str)] = &[("temzdf/vim", include_str!(concat!(env!("OUT_DIR"), "/vim.js")))];
+const BUNDLED: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/bundled.rs"));
 const DEFAULTS_NAME: &str = "temzdf:defaults";
 /// What `import ... from "temzdf"` gets.
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\

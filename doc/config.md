@@ -8,6 +8,28 @@ a vimrc: `$XDG_CONFIG_HOME/temzdf/config.ts` or `config.js` (falling back to
 (`crates/temzdf-script/runtime/defaults.ts`) run first; the configuration can
 map over or remove anything in them. `--clean` runs only the defaults.
 
+The defaults only enable shipped modules. Importing one does nothing by
+itself; `enable()` defines its mappings (in a namespace of its own) and
+hooks, `disable()` takes them away (`keymap.clear({ namespace })` and
+removing the hooks), `enabled` says which:
+
+| Module | Namespace | What |
+|---|---|---|
+| `temzdf/pane/pdf` | `builtin-pane-pdf` | PDF panes' keys, `/` to search |
+| `temzdf/pane/terminal` | `builtin-pane-terminal` | terminal panes' keys, their visual mode (`<C-b>[`), no status line on terminal panes |
+| `temzdf/mode/normal` | `builtin-mode-normal` | the normal mode: panes, tab pages, floating panes, `<C-b>]` put, detach, kill |
+| `temzdf/mode/input` | `builtin-mode-input` | prompts' `input` mode (readline's keys, `<CR>`, `<Esc>`) |
+| `temzdf/buffers` | `builtin-buffers` | hooks: unsaved changes kept, files changed elsewhere read again |
+| `temzdf/edit/vim` | `builtin-edit-vim` | text panes edit as Vim does (the default) |
+| `temzdf/edit/notepad` | `builtin-edit-notepad` | text panes edit without modes, as Notepad does (not enabled by default) |
+
+```ts
+import vim from "temzdf/edit/vim";
+import notepad from "temzdf/edit/notepad";
+vim.disable();
+notepad.enable(); // text panes without modes
+```
+
 A broken configuration (a syntax error, an exception, a top-level `await`,
 taking longer than 5 s) is reported in a floating message and the log, and
 temzdf runs with what was registered before the problem (at least the
@@ -30,7 +52,7 @@ keymap.add("window", "v", [action.split("right"), action.exitMode()]);
 keymap.add("terminal", "<C-b>m", (ctx) => cmd.sendText(`make -j${ctx.count ?? 4}\n`));
 // Only in floating terminal panes.
 keymap.add("terminal", "<C-b>q", action.toggleFloating(), { when: (ctx) => ctx.floating });
-keymap.remove("normal", "x", { namespace: "default" });
+keymap.remove("normal", "x", { namespace: "builtin-mode-normal" });
 on("ModeChanged", (old, now) => console.log(`${old} -> ${now}`));
 ```
 
@@ -90,13 +112,14 @@ mode keys that time out go to the pane.
   longer mapping does not make a key wait.
 - **`namespace`**: mapping the same mode, keys and namespace again
   replaces that mapping; without a namespace mappings are added. The
-  shipped defaults are in the namespace `"default"`: `keymap.remove(mode,
-  lhs, { namespace: "default" })` removes one, `keymap.remove(mode, lhs)`
-  every mapping of the keys.
+  shipped modules have a namespace each (the table above):
+  `keymap.remove(mode, lhs, { namespace: "builtin-pane-pdf" })` removes
+  one, `keymap.remove(mode, lhs)` every mapping of the keys.
 - `keymap.clear({ mode, namespace })` removes every mapping of the mode and
   the namespace (as Vim's `:mapclear`); each one left out means all of
-  them: `keymap.clear({ namespace: "default" })` removes the shipped
-  defaults, `keymap.clear()` every mapping.
+  them: `keymap.clear({ namespace: "builtin-pane-pdf" })` removes a shipped
+  module's (its `disable()` also removes its hooks), `keymap.clear()` every
+  mapping.
 - `keymap.get({ mode, namespace, lhs })` lists the mappings of the mode,
   the namespace and the keys (each one left out means all of them) as
   `keymap.add` takes them (functions included): to copy some into another
@@ -285,7 +308,7 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `palette` | `[]` | the first colours of the 256-colour palette (`["#000000", "#cd0000", ...]`), for GUI clients and terminal panes (OSC 4); the rest stay the default |
 | `guifont` | `[{ font: "JetBrains Mono", size: 14 }]` | the GUI client's fonts, `{ font, size? }` (size in points, 4 to 200; left out: the first font's, else 14). The first installed one sets the cell size; a character goes to the first font of the list that has it, at that font's size, then (as WezTerm) to the built-in JetBrains Mono, Noto Color Emoji and Symbols Nerd Font Mono, then the system's fonts for its script. A font that is not installed is skipped: `temzdf ls-fonts` shows what the list resolves to |
 | `guifontwide` | `[]` | fonts tried first for wide (CJK) characters, as `guifont` |
-| `basemode` | `{}` | the base mode (the bottom of the mode history) of panes of each kind by its name, e.g. `{ edit: "vim/normal" }`; a kind left out (or a mode not defined) has its own mode. Set while the configuration loads only. A text buffer made with `newBuffer({ basemode })` or `openFile(path, { basemode })` uses its own |
+| `basemode` | `{}` | the base mode (the bottom of the mode history) of panes of each kind by its name, e.g. `{ edit: "vim/normal" }`; a kind left out (or a mode not defined) has its own mode. Set any time (editors' `enable()` do): the focused pane takes its new base at once, the others when focused. A text buffer made with `newBuffer({ basemode })` or `openFile(path, { basemode })` uses its own |
 | `wrap` | `true` | text panes wrap long lines (else they scroll sideways) |
 | `linebreak` | `false` | wrap after a blank rather than anywhere |
 | `breakindent` | `false` | continuation rows start at the line's indent |
@@ -569,8 +592,8 @@ ending, the line and column and the position in the file.
 
 ### The Vim mode
 
-`import "temzdf/vim";` makes text panes start in Vim's normal mode
-(`doc/design/vim-mode.md` has what it does and does not do): motions,
+Text panes start in Vim's normal mode (`temzdf/edit/vim`, enabled by the
+defaults; `doc/design/vim-mode.md` has what it does and does not do): motions,
 operators with counts and text objects, registers (on the copy history:
 `"0` is also a terminal's newest copy, `"+p` reads the client's
 clipboard), the insert and visual
@@ -579,9 +602,10 @@ list (`m`, `'`, `` ` ``, `<C-o>`, `<C-i>`), macros (`q`, `@`), searching
 with Vim's patterns (`/ ? n N * #`, hlsearch, incsearch) and Ex commands
 (`:w :q :wq :x :e :s :d :y :noh :set :marks :delm`, `:s///c`, ranges; for
 panes, buffers and tab pages `:sp :vs :new :vnew :enew :close :only :bn
-:bp :b :ls :bd :tabnew :tabn :tabp :tabc :tabo :wa :qa :wqa`). `import vim from "temzdf/vim";
+:bp :b :ls :bd :tabnew :tabn :tabp :tabc :tabo :wa :qa :wqa`). `import vim from "temzdf/edit/vim";
 vim.options.shiftwidth = 2;` changes its settings. Its mappings are in the
-namespace `vim`.
+namespace `builtin-edit-vim`; `vim.disable()` takes them away
+(`temzdf/edit/notepad` edits without modes instead).
 
 ## Commands
 

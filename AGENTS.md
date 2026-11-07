@@ -210,7 +210,7 @@ dependencies with `Swatinem/rust-cache`), and `nix build` on Linux and macOS.
 
 - `doc/architecture.md` (start here) and `doc/config.md` (the
   configuration, for users; keep it in sync with
-  `crates/temzdf-script/runtime/defaults.ts` and the registry in
+  `crates/temzdf-script/runtime/` (`defaults.ts` and the modules it enables) and the registry in
   `crates/temzdf-server/src/session/commands.rs`) at the top;
 - `doc/design/`: how the existing parts are built and what was decided
   with the user, with the reasons (session server, scripting, key maps,

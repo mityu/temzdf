@@ -7,21 +7,24 @@ user's.
 
 ## Using it
 
-- Shipped and turned on by the configuration **(user)**: `import
-  "temzdf/vim";` in `config.ts` makes text panes start in `vim/normal`
-  (`o.basemode`). Without it, text panes edit without modes (the shipped
-  `defaults.ts`).
-- `import vim from "temzdf/vim"; vim.options.shiftwidth = 2;` changes its
-  settings (`shiftwidth`, `expandtab`, `ignorecase`, `smartcase`,
-  `hlsearch`, `incsearch`, `wrapscan`); `:set` changes them too.
-- Its mappings are in the namespace `vim`: a configuration maps over them
-  or removes them as any.
+- The module `temzdf/edit/vim`; importing it does nothing **(user,
+  2026-11-08)**: `vim.enable()` defines its modes, mappings and hook and
+  makes text panes start in `vim/normal` (`o.basemode`, the focused pane at
+  once), `vim.disable()` takes them away (text panes back to `edit`, what
+  was open closed). The defaults enable it: text panes edit as Vim does
+  **(user, 2026-11-08)**; `temzdf/edit/notepad` edits without modes.
+- `vim.options.shiftwidth = 2` changes its settings (`shiftwidth`,
+  `expandtab`, `ignorecase`, `smartcase`, `hlsearch`, `incsearch`,
+  `wrapscan`); `:set` changes them too.
+- Its mappings are in the namespace `builtin-edit-vim`: a configuration
+  maps over them or removes them as any.
 
 ## How it is built
 
-- Sources: `crates/temzdf-script/runtime/vim/*.ts`, bundled by
-  `crates/temzdf-script/build.rs` with esbuild into the module
-  `temzdf/vim` (`doc/design/script-host.md`). No npm package of its own so
+- Sources: `crates/temzdf-script/runtime/vim/*.ts` (entry
+  `runtime/edit/vim.ts`), bundled by `crates/temzdf-script/build.rs` with
+  esbuild into the module `temzdf/edit/vim` (`doc/design/script-host.md`);
+  `runtime/lib/keyset.ts` makes enable/disable. No npm package of its own so
   far: none fitted (Vim emulations are tied to their editors).
 - Modes: `vim/normal`, `vim/insert` (pass-through: typed text goes in),
   `vim/visual`, and transient ones: `vim/pending` (an operator waiting for

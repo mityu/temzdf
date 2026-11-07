@@ -184,23 +184,35 @@ fn settle(s: &mut Session, rx: &Receiver<SessionEvent>, flush: bool, clipboard: 
     }
 }
 
+/// The configuration the cases run with: the Vim mode enabled explicitly
+/// (not relying on the default editor).
+const VIM_CONFIG: &str = "import vim from \"temzdf/edit/vim\";\nvim.enable();\n";
+
 /// A session editing `text` in the Vim mode.
 fn vim_session(dir: &Path, text: &str) -> Result<(Session, Receiver<SessionEvent>), String> {
-    let file = dir.join("case.txt");
-    std::fs::write(&file, text).unwrap();
-    let config = dir.join("config.ts");
-    std::fs::write(&config, "import \"temzdf/vim\";\n").unwrap();
-    let (tx, rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
-    let settings =
-        Settings { serve_forward: false, script: Some(ScriptSettings { config: Some(config) }), overrides: Vec::new() };
-    let mut s = Session::new("vim".into(), GEOMETRY, Hints::default(), settings, sink);
-    s.start(PaneSpec::File(file), None).map_err(|e| format!("{e:#}"))?;
-    settle(&mut s, &rx, true, None);
+    let (s, rx) = config_session(dir, text, Some(VIM_CONFIG))?;
     if s.history.current() != "vim/normal" {
         return Err(format!("the Vim mode did not load: mode {}; {:?}", s.history.current(), errors(&s)));
     }
+    Ok((s, rx))
+}
+
+/// A session editing `text`, with `config` (none: the defaults alone).
+fn config_session(dir: &Path, text: &str, config: Option<&str>) -> Result<(Session, Receiver<SessionEvent>), String> {
+    let file = dir.join("case.txt");
+    std::fs::write(&file, text).unwrap();
+    let config = config.map(|c| {
+        let path = dir.join("config.ts");
+        std::fs::write(&path, c).unwrap();
+        path
+    });
+    let (tx, rx) = mpsc::channel();
+    let tx = std::sync::Mutex::new(tx);
+    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let settings = Settings { serve_forward: false, script: Some(ScriptSettings { config }), overrides: Vec::new() };
+    let mut s = Session::new("vim".into(), GEOMETRY, Hints::default(), settings, sink);
+    s.start(PaneSpec::File(file), None).map_err(|e| format!("{e:#}"))?;
+    settle(&mut s, &rx, true, None);
     Ok((s, rx))
 }
 
@@ -381,5 +393,49 @@ fn ex_commands_split_switch_and_close_panes_buffers_and_tabs() {
     ex(&mut s, "tabo");
     assert_eq!(s.tabs.len(), 1);
     assert!(ex(&mut s, "tabc").iter().any(|e| e.contains("E784")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn text_panes_edit_as_vim_by_default() {
+    let dir = std::env::temp_dir().join(format!("temzdf-vim-default-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (s, _rx) = config_session(&dir, "x\n", None).unwrap();
+    assert_eq!(s.history.current(), "vim/normal", "{:?}", errors(&s));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn editors_are_enabled_and_disabled_while_running() {
+    // <F2> swaps Vim and Notepad editing in the focused pane, at once.
+    let config = "import vim from \"temzdf/edit/vim\";\nimport notepad from \"temzdf/edit/notepad\";\n\
+        import { keymap } from \"temzdf\";\nvim.enable();\n\
+        keymap.add([\"vim/normal\", \"edit\"], \"<F2>\", () => {\n\
+          if (vim.enabled) { vim.disable(); notepad.enable(); } else { notepad.disable(); vim.enable(); }\n\
+        });\n";
+    let dir = std::env::temp_dir().join(format!("temzdf-vim-swap-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (mut s, rx) = config_session(&dir, "ab\n", Some(config)).unwrap();
+    assert_eq!(s.history.current(), "vim/normal");
+    let ns = |s: &mut Session, n: &str| -> usize {
+        s.modes.names().iter().map(|m| s.modes.mappings(m, Some(n)).len()).sum()
+    };
+    let vim_maps = ns(&mut s, "builtin-edit-vim");
+    assert!(vim_maps > 100, "{vim_maps}");
+    // Notepad: the edit mode at once, typed text goes in, Vim's keys gone.
+    type_keys(&mut s, &rx, "<F2>", None).unwrap();
+    assert_eq!(s.history.current(), "edit");
+    assert_eq!(ns(&mut s, "builtin-edit-vim"), 0);
+    assert!(!s.script.hooks_on("ModeChanged"), "its hook went");
+    type_keys(&mut s, &rx, "x<Right>y", None).unwrap();
+    let text = s.run_command("text.get-text", &[], None, Instant::now()).unwrap().0;
+    assert_eq!(text, ScriptValue::Str("xayb\n".into()));
+    // Vim again: once only, however often enabled.
+    type_keys(&mut s, &rx, "<F2>", None).unwrap();
+    assert_eq!(s.history.current(), "vim/normal");
+    assert_eq!(ns(&mut s, "builtin-edit-vim"), vim_maps);
+    assert_eq!(ns(&mut s, "builtin-edit-notepad"), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
