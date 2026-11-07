@@ -371,6 +371,7 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
                 .map_or(Vec::new(), |a| a.iter().map(to_script).collect()),
         },
         "schedule" => HostOp::Schedule { func: func() },
+        "off" => HostOp::Off { event: text("event"), func: func() },
         "on" => HostOp::On {
             event: text("event"),
             func: func(),

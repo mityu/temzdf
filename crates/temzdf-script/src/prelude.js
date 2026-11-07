@@ -219,8 +219,12 @@
         },
       },
     ),
+    // Returns a function that stops it (a hook only while it is wanted:
+    // KeyTyped hooks hold every key until they ran).
     on(event, fn, options = {}) {
-      request(current(), "on", { event, func: register(fn, `on(${event})`), nested: !!options.nested });
+      const func = register(fn, `on(${event})`);
+      request(current(), "on", { event, func, nested: !!options.nested });
+      return () => request(current(), "off", { event, func });
     },
     // Run `fn` at the safe point (after the invocation and its hooks), in
     // the order scheduled: what a hook does to change anything.

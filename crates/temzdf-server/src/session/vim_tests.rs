@@ -184,10 +184,10 @@ fn settle(s: &mut Session, rx: &Receiver<SessionEvent>, flush: bool, clipboard: 
     }
 }
 
-fn run(case: &Case, dir: &Path) -> Result<(), String> {
-    let (text, cursor) = split_cursor(&case.text);
+/// A session editing `text` in the Vim mode.
+fn vim_session(dir: &Path, text: &str) -> Result<(Session, Receiver<SessionEvent>), String> {
     let file = dir.join("case.txt");
-    std::fs::write(&file, &text).unwrap();
+    std::fs::write(&file, text).unwrap();
     let config = dir.join("config.ts");
     std::fs::write(&config, "import \"temzdf/vim\";\n").unwrap();
     let (tx, rx) = mpsc::channel();
@@ -201,6 +201,29 @@ fn run(case: &Case, dir: &Path) -> Result<(), String> {
     if s.history.current() != "vim/normal" {
         return Err(format!("the Vim mode did not load: mode {}; {:?}", s.history.current(), errors(&s)));
     }
+    Ok((s, rx))
+}
+
+/// Type `keys` one at a time, settling after each; the errors shown.
+fn type_keys(
+    s: &mut Session,
+    rx: &Receiver<SessionEvent>,
+    keys: &str,
+    clipboard: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut seen = Vec::new();
+    let keys = notation::parse(keys).map_err(|e| format!("keys: {e:#}"))?;
+    for (i, k) in keys.iter().enumerate() {
+        s.key(&k.event(), Instant::now());
+        settle(s, rx, i + 1 == keys.len(), clipboard);
+        seen.extend(errors(s));
+    }
+    Ok(seen)
+}
+
+fn run(case: &Case, dir: &Path) -> Result<(), String> {
+    let (text, cursor) = split_cursor(&case.text);
+    let (mut s, rx) = vim_session(dir, &text)?;
     let pos = ScriptValue::map([
         ("line", ScriptValue::Num(cursor.0 as f64)),
         ("character", ScriptValue::Num(cursor.1 as f64)),
@@ -211,12 +234,7 @@ fn run(case: &Case, dir: &Path) -> Result<(), String> {
         s.run_command("copy-text", &[ScriptValue::Str(text.clone()), opts], None, Instant::now())?;
     }
     let mut seen = errors(&s);
-    let keys = notation::parse(&case.keys).map_err(|e| format!("keys: {e:#}"))?;
-    for (i, k) in keys.iter().enumerate() {
-        s.key(&k.event(), Instant::now());
-        settle(&mut s, &rx, i + 1 == keys.len(), case.clipboard.as_deref());
-        seen.extend(errors(&s));
-    }
+    seen.extend(type_keys(&mut s, &rx, &case.keys, case.clipboard.as_deref())?);
     let got_text = s.run_command("text.get-text", &[], None, Instant::now())?.0;
     let c = s.run_command("text.cursor", &[], None, Instant::now())?.0;
     let n = |k: &str| c.get(k).and_then(ScriptValue::as_num).unwrap_or(0.0) as usize;
@@ -288,4 +306,18 @@ fn cases_parse_and_cursors_mark() {
     assert_eq!((cases[1].text.as_str(), cases[1].keys.as_str(), cases[1].want.as_str()), ("|x\ny\n", "dd", "|y\n"));
     assert_eq!(split_cursor("ab\nc|d\n"), ("ab\ncd\n".to_owned(), (1, 1)));
     assert_eq!(mark("ab\ncd\n", (1, 1)), "ab\nc|d\n");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn recording_a_macro_hooks_keys_only_while_it_records() {
+    let dir = std::env::temp_dir().join(format!("temzdf-vim-rec-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (mut s, rx) = vim_session(&dir, "x\n").unwrap();
+    assert!(!s.script.hooks_on("KeyTyped"));
+    type_keys(&mut s, &rx, "qa", None).unwrap();
+    assert!(s.script.hooks_on("KeyTyped"), "recording");
+    type_keys(&mut s, &rx, "lq", None).unwrap();
+    assert!(!s.script.hooks_on("KeyTyped"), "keys are not held after it");
+    let _ = std::fs::remove_dir_all(&dir);
 }

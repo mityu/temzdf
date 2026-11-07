@@ -30,6 +30,8 @@ import {
 import { options, state } from "./state";
 import type { MotionFn, Operator } from "./state";
 import { textObjectKeys } from "./textobjects";
+import { ex } from "./ex";
+import { isRecording, runMacro, startRecording, stopRecording } from "./macros";
 import { isMarkName, jump, markPos, setMark } from "./marks";
 import { cursor, firstNonBlank, t } from "./util";
 import { draw, enterVisual, exitVisual, reselect, swapEnds } from "./visual";
@@ -72,7 +74,7 @@ for (const k of [...motionKeys, ...Object.keys(aliases)]) {
 }
 
 // f F t T and r read one character.
-let charFor: null | { kind: "f" | "F" | "t" | "T" | "r" | "m" | "'" | "`"; count: number | null } = null;
+let charFor: null | { kind: "f" | "F" | "t" | "T" | "r" | "m" | "'" | "`" | "q" | "@"; count: number | null } = null;
 
 function readChar(key: KeyInfo): void {
   const what = charFor;
@@ -85,6 +87,14 @@ function readChar(key: KeyInfo): void {
   }
   if (what.kind === "r") {
     replaceChars(key, what.count);
+    return;
+  }
+  if (what.kind === "q") {
+    if (key.text !== null) startRecording(key.text);
+    return;
+  }
+  if (what.kind === "@") {
+    if (key.text !== null) runMacro(key.text, what.count, ex);
     return;
   }
   if (what.kind === "m" || what.kind === "'" || what.kind === "`") {
@@ -123,6 +133,21 @@ for (const kind of ["'", "`"] as const) {
     cmd.switchMode("vim/char");
   });
 }
+
+// Macros: q{reg} records, q stops; @{reg} runs one, @@ the last, @: the
+// last Ex command.
+map([N], ["q"], () => {
+  if (isRecording()) {
+    stopRecording();
+    return;
+  }
+  charFor = { kind: "q", count: null };
+  cmd.switchMode("vim/char");
+});
+map([N], ["@"], (ctx) => {
+  charFor = { kind: "@", count: ctx.count ?? null };
+  cmd.switchMode("vim/char");
+});
 
 function markKey(kind: "m" | "'" | "`", name: string, count: number | null): void {
   if (kind === "m") {

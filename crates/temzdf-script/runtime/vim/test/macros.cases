@@ -1,0 +1,103 @@
+# Macros (macros.ts): q{reg} records the keys typed, @{reg} runs them.
+
+=== a recorded macro runs with @
+text:
+|a1
+a2
+a3
+keys: qaA!<Esc>jq@a
+want:
+a1!
+a2!
+a|3
+
+=== a count runs it again
+text:
+|1
+2
+3
+4
+keys: qaI-<Esc>jq2@a
+want:
+-1
+-2
+-3
+|4
+
+=== @@ runs the last macro again
+text:
+|x
+x
+x
+keys: qbrYjq@b@@
+want:
+Y
+Y
+|Y
+
+=== an uppercase register appends
+text:
+|abcdef
+keys: qaxqqAxq0@a
+want:
+|ef
+
+=== keys typed on the command line are recorded
+text:
+|foo
+foo
+foo
+keys: qa:s/foo/bar/<CR>jq@a
+want:
+bar
+bar
+|foo
+
+=== @: repeats the last Ex command
+text:
+|a
+a
+a
+keys: :s/a/b/<CR>j@:j@:
+want:
+b
+b
+|b
+
+=== a motion that fails stops the macro
+text:
+|a1
+a2
+a3
+keys: qaA!<Esc>jq100@a
+want:
+a1!
+a2!
+a3|!
+
+=== an error stops the macro
+text:
+|xa1
+b
+xc2
+keys: qa/a<CR>xjq5@a
+want:
+x1
+|b
+xc2
+error: yes
+
+=== the macro's text is in its register
+text:
+|x
+keys: qaixy<Esc>q"ap
+want:
+xyixy<Esc|>x
+
+=== an empty register is an error
+text:
+|x
+keys: @z
+want:
+|x
+error: yes

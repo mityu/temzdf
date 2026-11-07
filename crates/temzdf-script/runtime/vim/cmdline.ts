@@ -3,6 +3,7 @@
 // <CR> runs it in the text pane, <Esc> cancels.
 import { cmd } from "temzdf";
 import { ex } from "./ex";
+import { rememberEx } from "./macros";
 import { recordJump } from "./marks";
 import { leaveTransient, operator } from "./normal";
 import { again, find, wordUnder } from "./search";
@@ -63,6 +64,7 @@ export function runCmdline(): void {
   if (c === null) return;
   if (c.kind === ":") {
     state.pending = null;
+    rememberEx(c.line);
     ex(c.line);
     return;
   }

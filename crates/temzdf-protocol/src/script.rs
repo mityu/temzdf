@@ -191,6 +191,11 @@ pub enum HostOp {
         func: FuncId,
         nested: bool,
     },
+    /// Stop running `func` on `event` (what `on` returned does it).
+    Off {
+        event: String,
+        func: FuncId,
+    },
     /// Call `func` at the safe point: after the current invocation and its
     /// hooks, before the next key (how hooks change things); in the order
     /// they were scheduled.

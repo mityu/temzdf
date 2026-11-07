@@ -316,7 +316,7 @@ declare module "temzdf" {{
     event: E,
     fn: (...args: Events[E]) => void | HookAnswer,
     options?: {{ nested?: boolean }},
-  ): void;
+  ): () => void;
 
   /** What a dispatched task gets: commands under its own context. */
   export interface TaskContext {{

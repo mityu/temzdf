@@ -142,7 +142,12 @@ legacy terminals send, so mapping `A` or `<Tab>` covers both everywhere.
 cancels pending keys and counts.
 
 `feedkeys(keys, { remap })` feeds keys as if typed (after the running
-mapping); `cmd.sendText(text)` writes straight to the terminal pane.
+mapping); an error in a script function, or `cmd.beep()` (failing
+quietly, as Vim's beep), drops what was fed and not yet run (a macro
+stops). `cmd.sendText(text)` writes straight to the terminal pane.
+
+`on(event, fn)` returns a function that removes the hook; a `KeyTyped`
+hook holds every key until it ran, so hook it only while needed.
 
 ### Default mappings
 

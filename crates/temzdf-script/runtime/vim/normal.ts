@@ -109,13 +109,22 @@ export function runMotion(key: string, fn: MotionFn, count: number | null): void
     // With an operator, w stops at the end of the line its last word is on
     // (dw on a line's last word leaves the line break).
     else if (key === "w" || key === "W") f = wordToLineEnd(fn);
-    operator(p.op, f(cursor(), total), p.register, (c) => f(cursor(), c ?? total), total);
+    const m = f(cursor(), total);
+    if (m === null) {
+      // A motion that fails stops a macro (Vim's beep).
+      cmd.beep();
+      return;
+    }
+    operator(p.op, m, p.register, (c) => f(cursor(), c ?? total), total);
     return;
   }
   const before = cursor();
   const buf = JUMPS.has(key) ? t.info().buffer : null;
   const m = fn(before, count);
-  if (m === null) return;
+  if (m === null) {
+    cmd.beep();
+    return;
+  }
   // A jump (G, gg, %, a mark, ...) within the buffer goes into the jump
   // list (one to another buffer did, as it left).
   if (buf !== null && t.info().buffer === buf && (m.to.line !== before.line || m.to.character !== before.character)) {

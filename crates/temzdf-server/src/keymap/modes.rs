@@ -363,6 +363,12 @@ impl Matcher {
         }
     }
 
+    /// Drop the keys `feed_front` queued, keeping typed ones: an error
+    /// stops what was fed (Vim flushes typeahead: a macro stops).
+    pub fn drop_fed(&mut self) {
+        self.input.retain(|(_, ev, _)| ev.is_some());
+    }
+
     fn requeue(&mut self, keys: Vec<(Stroke, Option<KeyEvent>)>) {
         for (k, ev) in keys.into_iter().rev() {
             self.input.push_front((k, ev, true));
@@ -791,6 +797,12 @@ mod tests {
         matcher.cancel();
         assert_eq!((matcher.count(), matcher.pending().len()), (None, 0));
         assert_eq!(matcher.step(&m, &base, T, now), Step::Wait(None));
+        // drop_fed keeps what was typed.
+        matcher.push(&k("x")[0].event());
+        matcher.feed_front(&k("jk"), false);
+        matcher.drop_fed();
+        assert!(matches!(matcher.step(&m, &base, T, now), Step::Run { target: "close", .. }), "x is mapped");
+        assert_eq!(matcher.step(&m, &base, T, now), Step::Wait(None), "j and k went");
     }
 
     #[test]

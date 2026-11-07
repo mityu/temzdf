@@ -132,6 +132,11 @@ const SESSION: &[(&str, &str, &str)] = &[
         "Keys as if typed, after the running mapping; remap false skips mappings",
     ),
     (
+        "beep",
+        "(): void",
+        "Fail quietly, as Vim's beep: the keys feedkeys queued are dropped (a macro stops); an error does the same",
+    ),
+    (
         "invoke",
         "(target: InvokeTarget, opts?: { count?: number }): void",
         "Run an invocation's target again (as InvokePre and InvokePost give it), as part of what runs now",
@@ -673,6 +678,10 @@ impl Session {
                     }
                 }
                 self.matcher.feed_front(&keys, remap);
+                ok(Outcome::None)
+            }
+            "beep" => {
+                self.matcher.drop_fed();
                 ok(Outcome::None)
             }
             // An invocation's target again (as InvokePre/InvokePost give it),

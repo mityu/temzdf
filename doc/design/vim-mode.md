@@ -67,6 +67,16 @@ user's.
   (others on that line go); `<C-o>` goes back (taking the cursor's place
   along first), `<C-i>` and `<Tab>` forward, showing another buffer's entry
   in the pane.
+- Macros (`macros.ts`): `q{a-z0-9}` records the keys typed (`A`-`Z`
+  append) with a `KeyTyped` hook, hooked only while recording (it holds
+  every key); `q` stops (that `q` is not kept). The keys go into the
+  register as key notation (`<Esc>`), so `"ap` puts them so. `@{reg}`
+  feeds them back (`feedkeys`, through the mappings; a count repeats
+  them), `@@` the last, `@:` the last Ex command, `@+` the clipboard. An
+  error, or a motion that fails (`beep()`), drops the rest of what was
+  fed: `100@a` stops at the last line. Recording is said by a message
+  when it starts, not on the status line (that waits for configurable
+  status lines).
 - The visual selection is a decoration (style `Selection`), not the
   framework's selection, so the cursor stays on Vim's character
   (inclusive ends).
@@ -96,7 +106,7 @@ user's.
 - A mark at a line's start survives deleting that line (`dd` deletes from
   the line's start: the mark is at the edge, not inside); it moves to the
   next line. Vim deletes it.
-- Not yet: macros (the user chose to leave them for later), `:g`, `:normal`, `:map`, folds, text formatting (`gq`),
+- Not yet: `:g`, `:normal`, `:map`, folds, text formatting (`gq`),
   `gJ`, the insert mode's `<C-o>`, `<C-r>{reg}` and completion, `I`/`A` on
   a block, `incsearch`, search offsets (`/pat/e`), `:s` with `c`, `&`
   and `~`, counts on visual operators.

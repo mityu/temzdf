@@ -673,6 +673,8 @@ impl Session {
                 let mut out = Outcome::None;
                 match result {
                     Err(e) => {
+                        // What feedkeys queued stops (a macro, as Vim's).
+                        self.matcher.drop_fed();
                         self.script_error(&e);
                         out = Outcome::Redraw;
                     }
@@ -921,6 +923,17 @@ impl Session {
                     return (Err(format!("unknown event {event:?}; known: {}", EVENTS.join(", "))), Outcome::None);
                 }
                 self.script.hooks.entry(event).or_default().push(Hook { func, nested });
+                (Ok(ScriptValue::Null), Outcome::None)
+            }
+            HostOp::Off { event, func } => {
+                if let Some(hooks) = self.script.hooks.get_mut(&event) {
+                    hooks.retain(|h| h.func != func);
+                    // No hook left: the event costs nothing again (KeyTyped
+                    // holds keys while hooked).
+                    if hooks.is_empty() {
+                        self.script.hooks.remove(&event);
+                    }
+                }
                 (Ok(ScriptValue::Null), Outcome::None)
             }
             HostOp::DefineMode { name, fallback, count, transient, keepalive, timeout } => {
@@ -1323,7 +1336,7 @@ struct MapSpec {
 /// What a hook may do: read, subscribe, schedule, and show messages.
 fn hook_may(op: &HostOp) -> bool {
     read_only(op)
-        || matches!(op, HostOp::On { .. } | HostOp::Schedule { .. })
+        || matches!(op, HostOp::On { .. } | HostOp::Off { .. } | HostOp::Schedule { .. })
         || matches!(op, HostOp::Command { name, .. } if QUERIES.contains(&name.as_str()))
 }
 

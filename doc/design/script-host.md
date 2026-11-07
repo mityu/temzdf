@@ -128,7 +128,8 @@ declarations. In short, `import { ... } from "temzdf"`:
   { fallback, count, transient, keepalive, timeout })`,
   `feedkeys(keys, { remap })`, `currentMode()` (doc/design/keymaps.md).
 - `o.<option>` reads and sets options.
-- `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,
+- `on(event, fn, { nested })` (returns a function removing the hook,
+  `HostOp::Off`): `SessionReady`, `PaneOpened(id, kind)`,
   `PaneClosePre(id)` (also for each pane of a tab page `closeTab` or a
   middle click closes; not when `deleteBuffer` closes the pane: the buffer
   goes either way), `PaneClosed(id)`, `PaneFocused(id)`, `TabEntered(n)`,
@@ -167,7 +168,11 @@ declarations. In short, `import { ... } from "temzdf"`:
   otherwise say so.
 - **`KeyTyped({ keys, text, source })`**: a key arrived (`"typed"`, or
   `"feedkeys"` when fed), before it is matched: the key waits for these
-  hooks. Observe only.
+  hooks, so a script hooks it only while it needs it (the Vim mode while
+  recording a macro) and removes the hook then. Observe only.
+- An error in a script function drops the keys `feedkeys` queued and not
+  yet matched (typed keys stay), as Vim flushes typeahead; `beep()` does
+  the same without a message (a failed motion stops a macro).
 - **Hooks only read** (doc/design/text-editor.md section 10): a hook's
   commands may read (queries, options, mappings), show a `message`,
   subscribe (`on`) and `schedule(fn)`; anything else fails ("change
