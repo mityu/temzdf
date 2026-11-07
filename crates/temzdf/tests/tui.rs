@@ -1770,6 +1770,11 @@ fn a_running_sessions_swap_file_is_passed_over() {
             && names.iter().any(|p| p.to_string_lossy().ends_with(".swo")),
         "{names:?}"
     );
+    // A normal end: the session's swap file goes, the other's stays.
+    env.run(&["kill-session", "rb"]);
+    b.wait_text("[session rb was killed]");
+    let names = swap_files(&env, &file);
+    assert!(names.len() == 1 && names[0].to_string_lossy().ends_with(".swp"), "{names:?}");
     drop(a);
 }
 
