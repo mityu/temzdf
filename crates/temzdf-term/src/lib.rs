@@ -755,8 +755,8 @@ impl TermBuffer {
                 };
             }
         }
-        // In the visual mode the cursor is its own.
-        if self.visual_on() {
+        // In the visual mode (or typing its search) the cursor is its own.
+        if self.visual_shown().is_some() {
             cursor = self.visual_cursor();
             cursor_shape = CursorShape::Block { blink: false };
         }

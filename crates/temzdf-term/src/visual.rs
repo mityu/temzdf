@@ -256,15 +256,21 @@ impl TermBuffer {
         })
     }
 
+    /// The visual mode whose search and cursor are shown: on, or suspended
+    /// while its search is typed on the input line (`search-preview`).
+    pub(crate) fn visual_shown(&self) -> Option<&Visual> {
+        self.visual.as_ref().filter(|v| !v.suspended || v.origin.is_some())
+    }
+
     /// The search to highlight (the one being typed, else the last one).
     pub fn visual_query(&self) -> Option<&str> {
-        let v = self.visual.as_ref().filter(|v| !v.suspended)?;
+        let v = self.visual_shown()?;
         v.search.as_ref().map(|s| s.query.as_str()).filter(|q| !q.is_empty())
     }
 
     /// The visual cursor in viewport cells, when shown.
     pub(crate) fn visual_cursor(&self) -> Option<(u16, u16)> {
-        let v = self.visual.as_ref().filter(|v| !v.suspended)?;
+        let v = self.visual_shown()?;
         let p = v.cursor.point(PointSpace::Viewport).ok()??;
         Some((p.x, p.y.try_into().ok()?))
     }
@@ -1259,6 +1265,17 @@ mod tests {
         assert_eq!(at(&t), (3, 0));
         assert!(t.visual_search_cancel());
         assert_eq!(at(&t), (2, 5));
+        // Typed on the input line (the visual mode suspended meanwhile), a
+        // preview still shows its matches and the cursor.
+        t.visual_suspend();
+        t.visual_search("cher", false, true);
+        let frame = TermView::new(GEOMETRY).frame(&mut t, &mut Images::new());
+        assert_eq!(frame.text[0].rows[3][0].bg, Color::Indexed(11), "the match while typing");
+        assert_eq!(frame.cursor, Some((0, 3)), "the visual cursor while typing");
+        assert!(t.visual_search_cancel());
+        let frame = TermView::new(GEOMETRY).frame(&mut t, &mut Images::new());
+        assert_ne!(frame.text[0].rows[3][0].bg, Color::Indexed(11), "cancelled: gone");
+        t.visual_begin();
         // Backwards.
         assert!(t.visual_search("an", true, false));
         assert_eq!(at(&t), (1, 3));

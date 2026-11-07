@@ -785,6 +785,12 @@ fn the_visual_mode_copies_a_shells_output_by_keys() {
     // Search with / (an input line below), then select the match.
     t.keys(&["C-b", "["]);
     t.type_text("gg/alpha");
+    // While typed, the match shows (black on yellow).
+    let s = t.wait_for("the match previewed", |s| {
+        s.find("alpha beta").is_some_and(|r| s.cell(0, r as u16).bg != tuitest::Color::Default)
+    });
+    let row = s.find("alpha beta").unwrap() as u16;
+    assert_eq!(s.cell(0, row).bg, tuitest::Color::Palette(11));
     t.key("Enter");
     t.wait_for("at the match", |s| s.lines().iter().any(|l| l == "alpha beta") && mode_shown(s) == "VISUAL");
     t.type_text("vey");
