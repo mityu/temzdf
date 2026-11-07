@@ -188,12 +188,13 @@ if [[ $# -lt 3 || $2 != "--" ]]; then
 fi
 actions=$(realpath "$1")
 shift 2
-# Runs of temzdf take the shipped defaults, not the user's config.ts. A
-# word naming temzdf or temzdf-gui (also inside `sh -c '...'`), not any
-# path with "temzdf" in it.
+# Runs of temzdf take the shipped defaults (--clean) or a configuration of
+# the repository's (--config FILE), not the user's config.ts. A word naming
+# temzdf or temzdf-gui (also inside `sh -c '...'`), not any path with
+# "temzdf" in it.
 runs_temzdf() { grep -qE "(^|[ /'\"])temzdf(-gui)?( |\$)" <<<"$*"; }
-if runs_temzdf "$@" && [[ "$*" != *--clean* ]]; then
-  echo "e2e.sh: COMMAND runs temzdf without --clean (it would load your config.ts)" >&2
+if runs_temzdf "$@" && [[ "$*" != *--clean* && "$*" != *--config\ * ]]; then
+  echo "e2e.sh: COMMAND runs temzdf without --clean or --config (it would load your config.ts)" >&2
   exit 2
 fi
 case $display in

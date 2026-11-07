@@ -86,7 +86,7 @@ scenario() {
     edit)
       mkdir -p target/e2e-edit
       printf 'hello world\n数式 wide\n\tindented\n' >target/e2e-edit/notes.txt
-      cmd=(sh -c 'target/debug/temzdf --clean -s e2e-ed target/e2e-edit/notes.txt; exec sh')
+      cmd=(sh -c 'target/debug/temzdf --config tests/e2e/configs/notepad.ts -s e2e-ed target/e2e-edit/notes.txt; exec sh')
       ;;
     visual) mkdir -p target/e2e-visual; session e2e-v ;;
     tabs) mkdir -p target/e2e-tabs; session e2e-t ;;

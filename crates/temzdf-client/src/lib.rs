@@ -167,8 +167,9 @@ pub fn spawn_server(
     if let Some(p) = &log {
         cmd.arg("--log").arg(std::path::absolute(p)?);
     }
+    // As the log: the server is told absolute paths.
     if let Some(c) = config_path {
-        cmd.arg("--config").arg(c);
+        cmd.arg("--config").arg(std::path::absolute(c)?);
     }
     if let Some(e) = editor {
         cmd.arg("--editor").arg(e);
