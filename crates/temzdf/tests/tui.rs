@@ -1622,3 +1622,77 @@ fn options_a_command_does_not_use_are_named() {
     assert!(err.contains("--forward is not used by --render-frame"), "{err}");
     assert!(err.contains("--clean is not used by --render-frame"), "{err}");
 }
+
+/// Wait until `path` holds `want` (a write by the session).
+fn wait_file(path: &std::path::Path, want: &str) {
+    let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
+    loop {
+        let now = std::fs::read_to_string(path).unwrap_or_default();
+        if now == want {
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline, "{}: {now:?}, waiting for {want:?}", path.display());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn a_text_file_is_edited_without_modes_and_written() {
+    let env = Env::new("text-edit");
+    let file = env.path("notes.txt");
+    std::fs::write(&file, "hello world\nsecond\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "e", file.to_str().unwrap()], &env.options());
+    t.wait_text("hello world");
+    // Typing goes in at the cursor; the status line shows the change.
+    t.type_text("abc ");
+    t.wait_text("abc hello world");
+    t.wait_text("notes.txt [+]");
+    // Shift with arrows selects; typing replaces the selection.
+    t.keys(&["End", "S-C-Left"]);
+    t.type_text("there");
+    t.wait_text("abc hello there");
+    // A new line, a word deleted, then <C-s> writes it.
+    t.keys(&["Down", "End", "Enter"]);
+    t.type_text("third");
+    t.wait_for("the new line", |s| s.text().contains("second\nthird"));
+    t.keys(&["C-s"]);
+    wait_file(&file, "abc hello there\nsecond\nthird\n");
+    t.wait_for("not modified", |s| !s.text().contains("[+]"));
+    // Undo takes back the typing (one step) and the line break.
+    t.keys(&["C-z", "C-z"]);
+    t.wait_for("the undo", |s| s.text().contains("second\n") && !s.text().contains("third"));
+    t.wait_text("notes.txt [+]");
+    // <C-b> reaches the normal mode as from other panes.
+    t.keys(&["C-b", "q"]);
+}
+
+#[test]
+fn a_mode_with_a_fallback_function_reads_one_key() {
+    let env = Env::new("text-fallback");
+    env.config(
+        "config.ts",
+        r#"import { cmd, defineMode, keymap } from "temzdf";
+// f{char}: the next key goes to a function, then the mode is left.
+defineMode("find", {
+  transient: true,
+  fallback: (_ctx, key) => {
+    const line = cmd.text.line(cmd.text.cursor().line);
+    const at = line.indexOf(key.text ?? "", cmd.text.cursor().character + 1);
+    if (at >= 0) cmd.text.setCursor({ line: cmd.text.cursor().line, character: at });
+    console.log(`found ${key.keys} at ${at}`);
+    cmd.exitMode();
+  },
+});
+keymap.add("edit", "<C-f>", () => cmd.switchMode("find"));
+"#,
+    );
+    let file = env.path("f.txt");
+    std::fs::write(&file, "abcdef\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "f", file.to_str().unwrap()], &env.options());
+    t.wait_text("abcdef");
+    t.keys(&["C-f", "d"]);
+    env.wait_log("f", "the fallback", |l| l.contains("found d at 3"));
+    // Back in the edit mode, at the d: typing goes in there.
+    t.type_text("X");
+    t.wait_text("abcXdef");
+}

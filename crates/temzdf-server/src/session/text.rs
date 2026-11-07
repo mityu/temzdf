@@ -258,9 +258,17 @@ impl Session {
             _ => (c.pos, c.pos),
         };
         if let Some(v) = self.view_mut(pane) {
-            v.view.cursor = Cursor::at(c.pos);
+            v.view.cursor = Cursor::at(a);
         }
         self.text_apply(pane, buf, vec![TextEdit::new(a, b, s)], StepKind::Typing)?;
+        // After what was typed (a replaced selection's start stays before
+        // the replacement otherwise).
+        let after = a + s.chars().count();
+        if let Some(t) = self.texts.get(&buf)
+            && let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind)
+        {
+            view.view.set_cursor(t.buf.text(), after, false);
+        }
         Ok(Outcome::Redraw)
     }
 
@@ -619,6 +627,46 @@ impl Session {
             }
             other => Err(format!("no command text.{other}")),
         }
+    }
+}
+
+/// The mouse in a text pane (`m` in its content's coordinates): a click
+/// puts the cursor there, dragging selects, the wheel scrolls three rows.
+pub(super) fn mouse(
+    t: &mut TextEntry,
+    tv: &mut TextView,
+    m: &termpix_core::input::MouseEvent,
+    cell: termpix_core::geom::CellSize,
+) -> Outcome {
+    use termpix_core::input::{CoordUnit, MouseButton, MouseEventKind, ScrollDirection, ScrollUnit};
+    let (col, row) = match m.unit {
+        CoordUnit::Pixel => (m.x.div_euclid(cell.width.max(1) as i32), m.y.div_euclid(cell.height.max(1) as i32)),
+        CoordUnit::Cell => (m.x, m.y),
+    };
+    let (col, row) = (col.max(0) as usize, row.max(0) as usize);
+    let text = t.buf.text();
+    match m.kind {
+        MouseEventKind::Press(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
+            let select = matches!(m.kind, MouseEventKind::Drag(_));
+            let at = tv.view.offset_at_cell(text, col, row);
+            tv.view.set_cursor(text, at, select);
+            t.buf.undo_tree_mut().cursor_moved();
+            Outcome::Redraw
+        }
+        MouseEventKind::Scroll(d @ (ScrollDirection::Up | ScrollDirection::Down)) => {
+            tv.view.scroll(text, if d == ScrollDirection::Up { -3 } else { 3 });
+            Outcome::Redraw
+        }
+        MouseEventKind::ScrollBy { dy, unit, .. } if dy != 0 => {
+            let rows = match unit {
+                ScrollUnit::Line => dy as f64 / 100.0 * 3.0,
+                ScrollUnit::Pixel => dy as f64 / 100.0 / cell.height.max(1) as f64,
+            };
+            let rows = if rows.abs() < 1.0 { rows.signum() } else { rows.round() };
+            tv.view.scroll(text, rows as i64);
+            Outcome::Redraw
+        }
+        _ => Outcome::None,
     }
 }
 

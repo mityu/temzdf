@@ -1,7 +1,8 @@
 # Text editor framework: specification
 
 The text editing pane, as specified with the user on 2026-11-07. **This is
-a specification; nothing is built yet.** The research behind it (VS Code,
+a specification, built in part** (what is, and the order of the rest:
+`todo.md`). The research behind it (VS Code,
 Neovim, Zed, Vim's undo, swap files and regular expressions, Tree-sitter) is
 in `doc/survey/text-editor.md`. Decisions marked **(user)** were the user's
 own call or correction; the others were proposals the user accepted. The

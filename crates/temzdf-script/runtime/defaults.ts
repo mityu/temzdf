@@ -5,7 +5,7 @@
 // namespace: "default" })` removes one, `keymap.clear({ namespace: "default" })`
 // all of them). Built-in modes: `normal` (operating),
 // `terminal` (pass-through, terminal panes), `pdf` (PDF panes), `input`
-// (input panes: typed characters go in) and `visual` (a terminal's visual
+// and `edit` (input and text panes: typed characters go in) and `visual` (a terminal's visual
 // mode: a cursor over the screen and scrollback, selecting and copying).
 import { action, cmd, keymap, on } from "temzdf";
 import type { Rhs } from "temzdf";
@@ -188,6 +188,41 @@ each("input", ["<Esc>"], (ctx) => {
 });
 each("input", ["<C-S-v>", "<D-v>"], action.paste());
 each("input", [prefix], action.switchMode("normal"));
+
+// Text panes (the `edit` mode): editing without modes, as most editors do.
+// Typed text goes in (the mode passes it through); arrows move, with Shift
+// they select; <C-s> writes, <C-z>/<C-y> undo and redo. A Vim-like editor
+// is a script mapping its own modes (o.basemode = { edit: "..." }).
+const sel = { select: true };
+for (const [keys, unit, n] of [
+  [["<Left>"], "grapheme", -1],
+  [["<Right>"], "grapheme", 1],
+  [["<Up>"], "displayLine", -1],
+  [["<Down>"], "displayLine", 1],
+  [["<Home>"], "lineStart", 1],
+  [["<End>"], "lineEnd", 1],
+  [["<C-Left>"], "wordStart", -1],
+  [["<C-Right>"], "wordEnd", 1],
+  [["<C-Home>"], "documentStart", 1],
+  [["<C-End>"], "documentEnd", 1],
+  [["<PageUp>"], "page", -1],
+  [["<PageDown>"], "page", 1],
+] as const) {
+  each("edit", [...keys], action.text.move(unit, n));
+  each("edit", keys.map((k) => k.replace("<", "<S-").replace("<S-C-", "<C-S-")), action.text.move(unit, n, sel));
+}
+each("edit", ["<CR>"], action.text.type("\n"));
+each("edit", ["<Tab>"], action.text.type("\t"));
+each("edit", ["<BS>"], action.text.erase("grapheme", -1));
+each("edit", ["<Del>"], action.text.erase("grapheme", 1));
+each("edit", ["<C-BS>"], action.text.erase("wordStart", -1));
+each("edit", ["<C-Del>"], action.text.erase("wordEnd", 1));
+each("edit", ["<Esc>"], action.text.clearSelection());
+each("edit", ["<C-s>"], action.write());
+each("edit", ["<C-z>"], action.text.undo());
+each("edit", ["<C-y>", "<C-S-z>"], action.text.redo());
+each("edit", ["<C-S-v>", "<D-v>"], action.paste());
+each("edit", [prefix], action.switchMode("normal"));
 
 // The visual mode (a terminal's output, selected and copied by keys): <C-b>[
 // (tmux's copy-mode key) or v in the normal mode enter it, at the program's

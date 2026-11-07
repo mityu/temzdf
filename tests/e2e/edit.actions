@@ -1,0 +1,33 @@
+# A text pane in a session: editing without modes, drawn as the session's
+# frame says (wide characters, the selection, the status line), and written.
+# Used with:
+#   mkdir -p target/e2e-edit && printf 'hello world\n数式 wide\n\tindented\n' > target/e2e-edit/notes.txt
+#   scripts/e2e.sh -o target/e2e-edit tests/e2e/edit.actions -- sh -c \
+#     'target/debug/temzdf --clean -s e2e-ed target/e2e-edit/notes.txt; exec sh'
+# Judged: expect (the screen against the session's frame) for start, typed,
+# selected, replaced and written; check for the file after <C-s>.
+# Expected:
+#   start.png     the three lines, the cursor at the top left, "notes.txt"
+#                 in the status line
+#   typed.png     ">> hello world" (typed at the start), "[+]" shown
+#   selected.png  "world" selected (Shift+Left five times from the line's
+#                 end; not Shift+Ctrl+Left, kitty's previous_tab)
+#   replaced.png  ">> hello there"
+#   written.png   the same, "[+]" gone
+pause 1
+expect start
+type ">> "
+pause 0.5
+expect typed
+keys End shift+Left shift+Left shift+Left shift+Left shift+Left
+pause 0.5
+expect selected
+type "there"
+pause 0.5
+expect replaced
+keys ctrl+s
+pause 0.5
+expect written
+check saved sh -c 'printf ">> hello there\n数式 wide\n\tindented\n" | cmp -s - target/e2e-edit/notes.txt'
+target/debug/temzdf kill-session e2e-ed
+pause 0.5

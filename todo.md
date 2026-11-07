@@ -104,13 +104,17 @@ server on one `Session`). Next and open:
     the cursor in rows it does not show;
   - a visual mode for PDF panes (keyboard selection of text).
 - The text editor framework, specified with the user on 2026-11-07
-  (`doc/design/text-editor.md`; nothing built). The script host now runs
-  in wasmtime inside the server (`doc/design/script-host.md`). Next: the
-  design. It includes
-  the key mapping pieces scripts need for operators and motions: a mode's
-  `unmapped` renamed `fallback` and accepting a function given the
-  unmatched key (leave-and-swallow, reading one key), and the `KeyTyped`
-  event. Deferred there:
+  (`doc/design/text-editor.md`, "Implementation" for the order). Built:
+  `crates/temzdf-texteditor` (text, positions, edits, marks, the undo
+  tree, motions, layout and drawing, files), the `edit` pane with
+  `text.*`, `openFile`/`newBuffer`/`write`, `fallback` (with functions),
+  `basemode`, mode-less editing in `defaults.ts` and the mouse (click,
+  drag, wheel). Waiting for the user to try it. Next: the events and hooks
+  of sections 9 and 10 (invocations, `TextChanged`, `KeyTyped`, `defer`,
+  hook return values and unsaved changes on close, `FileChangedOnDisk`
+  and `reload`), then search, `highlightPattern`, decorations for
+  scripts, highlight groups for scripts, encodings, `wordchars`,
+  `findPair`, variables and `copy`. Deferred there:
   - `getchar()`/`input()`-like reading (`readKey`, `await` in
     asynchronous mappings; the user wants `input()`-driven operations
     such as sandwich.vim's function surround later);

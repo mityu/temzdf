@@ -61,7 +61,7 @@ fi
 # The terminal scenarios, in a stable order, and the GUI's. Not on macOS:
 # gui-focus (AppKit sends no presses for keys held on focus-in) and gui-ime
 # (-I, fcitx5, is Linux's).
-judged=(session terminal terminal-extras tabs floats resize float-wide expect links preview search select
+judged=(session terminal terminal-extras edit tabs floats resize float-wide expect links preview search select
   select-autoscroll viewer viewer-stress synctex synctex-reload reload no-graphics visual)
 gui_judged=(gui gui-focus gui-ime)
 if [[ $(uname) == Darwin ]]; then
@@ -83,6 +83,11 @@ scenario() {
       ;;
     terminal) mkdir -p target/e2e-terminal; session e2e-term ;;
     terminal-extras) mkdir -p target/e2e-term-extras; session e2e-x ;;
+    edit)
+      mkdir -p target/e2e-edit
+      printf 'hello world\n数式 wide\n\tindented\n' >target/e2e-edit/notes.txt
+      cmd=(sh -c 'target/debug/temzdf --clean -s e2e-ed target/e2e-edit/notes.txt; exec sh')
+      ;;
     visual) mkdir -p target/e2e-visual; session e2e-v ;;
     tabs) mkdir -p target/e2e-tabs; session e2e-t ;;
     floats) mkdir -p target/e2e-floats; session e2e-f ;;

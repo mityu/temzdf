@@ -109,8 +109,9 @@ takes do: `"drop"`, `"passthrough"` (to the focused pane: typed into a
 terminal, an input or a text pane), or a function `(ctx, key) => void`
 given the key (`key.keys` in notation, `key.text` what it types or
 null): reading one key (`f{char}`) is a transient mode with a fallback
-function, and leaving a mode on a key it does not know is
-`fallback: () => cmd.exitMode()`. A **transient** mode (a submode, as
+function (a transient mode's own fallback function takes the keys it
+does not map instead of leaving, whatever its `keepalive`), and leaving a
+mode on a key it does not know is `fallback: () => cmd.exitMode()`. A **transient** mode (a submode, as
 kana/vim-submode or Emacs' transient keymaps) sits over the mode it was
 entered from:
 
@@ -407,6 +408,68 @@ pane's buffer by default); the hook `InputChanged(buffer, text)` hears every
 change of it. An input buffer stays when its last pane closes, as others do;
 `BufferHidden(buffer, kind)` says so (delete it there if it is done with).
 Panes showing one buffer share its text, each with its own caret.
+
+## Text panes
+
+A file opens as text unless its extension is `.pdf` (`temzdf FILE`,
+`newPane`, `split({ file })`, ...; a file that does not exist yet opens
+empty), or with `openFile(path, { basemode? })`, which returns the pane.
+`newBuffer({ text?, path?, basemode? })` makes a text buffer without a
+pane (returns it; show it as any buffer). Files are UTF-8 (a BOM kept);
+binary files and others are refused. Line endings stay as read (CRLF
+files are LF inside), and `write({ path?, force?, buffer? })` writes the
+focused pane's buffer to a temporary file renamed over the file (its
+permissions kept, a symlink's target written); a file changed on disk
+since it was read needs `force`.
+
+Focused, a text pane puts the session in its base mode, `edit` unless
+`o.basemode` or the buffer says otherwise (see Options): pass-through,
+so typed text, input-method text and pastes go in at the cursor,
+replacing the selection. The shipped mappings edit without modes: arrows,
+`<Home>`, `<End>`, `<C-Left>`/`<C-Right>` (words), `<C-Home>`/`<C-End>`,
+`<PageUp>`/`<PageDown>` move, with Shift they select; `<CR>`, `<Tab>`,
+`<BS>`, `<Del>`, `<C-BS>`/`<C-Del>` (words), `<Esc>` drops the selection,
+`<C-s>` writes, `<C-z>`/`<C-y>` (or `<C-S-z>`) undo and redo, `<C-b>` is
+the prefix. The mouse: a click puts the cursor, dragging selects, the
+wheel scrolls.
+
+Editors are scripts on the primitives in the `text` namespace (the
+focused pane's unless `{ pane }` is given last). Positions are
+`{ line, character }` (zero based, `character` in UTF-16 units, as
+JavaScript strings index; out of range is clamped), ranges
+`{ start, end }`:
+
+- queries: `text.lineCount()`, `text.line(n)`, `text.getText(range?)`,
+  `text.cursor()`, `text.selection()`, `text.offsetAt(pos)`,
+  `text.positionAt(offset)`, `text.info()`, `text.visibleRange()`;
+- edits: `text.edit([{ range, text }, ...])` (ranges in the text before
+  the edit, not overlapping), `text.insert(text, at?)`,
+  `text.delete(range)`, `text.replace(range, text)`, `text.type(text)`
+  (as typed: replaces the selection, consecutive typing is one undo
+  step), `text.erase(unit?, count?)` (the selection, else from the
+  cursor);
+- motions: `text.positionOf(from, unit, count?)` (where, without moving)
+  and `text.move(unit, count?, { select? })`, by `"grapheme"`,
+  `"wordStart"`, `"wordEnd"` (just after a word; words split at
+  punctuation and between scripts, so unspaced Japanese is several
+  words), `"lineStart"`, `"firstNonBlank"`, `"lineEnd"`, `"line"` (keeping
+  the column), `"displayLine"`, `"page"`, `"documentStart"`,
+  `"documentEnd"`; negative counts go backwards, and a mapping's count
+  multiplies;
+- the cursor and view: `text.setCursor(pos, { select? })`,
+  `text.setSelection(anchor, active, kind?)` (`"char"`, `"line"`,
+  `"block"`), `text.clearSelection()`, `text.setCursorStyle(style)`,
+  `text.scroll(rows)`, `text.reveal(pos?, "minimal" | "center" | "top")`;
+- undo: `text.undo()` and `text.redo()` (return the changed ranges; the
+  cursor goes back where the step started), `text.undoBegin()` /
+  `text.undoEnd()` (one step across mappings, e.g. a Vim Insert session),
+  `text.undoBoundary()`. A step is one mapping (or key, paste, `temzdf
+  action`), typing merged; moving the cursor ends a typing step.
+
+Options for text panes: `wrap`, `linebreak`, `breakindent`, `showbreak`,
+`tabstop`, `number`, `cursorline`, `scrolloff` (see Options). The status
+line shows the file, `[+]` when modified, the mode, the encoding, the line
+ending, the line and column and the position in the file.
 
 ## Commands
 

@@ -291,6 +291,20 @@ impl View {
         }
     }
 
+    /// The offset shown at cell (`col`, `row`) of the pane (gutter
+    /// included): a row's end past its text, the last row's below the text.
+    pub fn offset_at_cell(&self, text: &Text, col: usize, row: usize) -> usize {
+        let rows = self.rows(text);
+        let Some(r) = rows.get(row).or(rows.last()) else { return 0 };
+        if row >= rows.len() {
+            return r.end;
+        }
+        let col = (col + self.left).saturating_sub(self.gutter(text.line_count())).max(r.prefix);
+        let at = r.offset_at(col);
+        // Past a wrapped row's text: its last character, not the next row.
+        if r.wrapped && at >= r.end { r.glyphs.last().map_or(r.start, |g| g.offset) } else { at }
+    }
+
     /// The text shown: from the top row's start to the last row's end.
     pub fn visible_range(&self, text: &Text) -> (usize, usize) {
         let rows = self.rows(text);
@@ -357,6 +371,24 @@ mod tests {
         assert_eq!(v.cursor.selection(), Some((0, 6, SelectionKind::Char)));
         v.move_cursor(&buf, ViewUnit::Text(Unit::LineEnd), 1, false);
         assert_eq!(v.cursor.selection(), None);
+    }
+
+    #[test]
+    fn cells_map_to_offsets() {
+        let buf = Buffer::new(
+            Text::from(
+                "abcdef
+xy",
+            ),
+            LineEnding::Lf,
+        );
+        let v = View { number: NumberMode::Absolute, ..view(8, 4) };
+        // A gutter of four columns, four of text: "abcd", "ef", "xy".
+        assert_eq!(v.offset_at_cell(buf.text(), 5, 0), 1);
+        assert_eq!(v.offset_at_cell(buf.text(), 0, 0), 0, "in the gutter: the row's start");
+        assert_eq!(v.offset_at_cell(buf.text(), 7, 1), 6, "past the text: the line's end");
+        assert_eq!(v.offset_at_cell(buf.text(), 9, 0), 3, "past a wrapped row: its last character");
+        assert_eq!(v.offset_at_cell(buf.text(), 4, 3), 9, "below the text: its end");
     }
 
     #[test]

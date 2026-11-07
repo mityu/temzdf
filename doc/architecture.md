@@ -45,7 +45,8 @@
   output interpreted by `libghostty-vt`, the screen as scene text cells).
 - `temzdf-texteditor`: a framework for text editors (text, positions,
   edits, marks, the undo tree, motions; `doc/design/text-editor.md`),
-  under construction: no pane uses it yet.
+  layout and drawing, files), behind the server's `edit` panes
+  (`session/text.rs`); under construction.
 - `temzdf-tty`: the terminal frontend (`TtyFrontend`: terminal setup, frame
   pacing, effects; `Presenter`, `Screen`).
 - `temzdf-protocol`: the session protocol (messages, framing, sockets).

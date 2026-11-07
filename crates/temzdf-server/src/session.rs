@@ -1529,6 +1529,9 @@ impl Session {
             match def {
                 Some(d) if d.transient => match d.keepalive {
                     Keepalive::Always => continue,
+                    // Its own fallback function takes the keys it does not
+                    // map, rather than leaving (reading one key).
+                    _ if i == 0 && matches!(d.fallback, Some(Fallback::Func(_))) => break,
                     k if i == 0 => {
                         keep = Some(k);
                         break;
@@ -1973,7 +1976,11 @@ impl Session {
                 Some(t) => out.or(view.mouse(&mut t.term, &local, select)),
                 None => out,
             },
-            Kind::Input { .. } | Kind::Text { .. } => out,
+            Kind::Text { buf, view } => match self.texts.get_mut(buf) {
+                Some(t) => out.merge(text::mouse(t, view, &local, cell)),
+                None => out,
+            },
+            Kind::Input { .. } => out,
         }
     }
 
@@ -4616,6 +4623,7 @@ mod tests {
         s.run_command("text.set-selection", &[pos(0, 3), pos(0, 6)], None, Instant::now()).unwrap();
         key(&mut s, "X");
         assert_eq!(text_of(&mut s), ">> X\n");
+        assert_eq!(cursor_of(&mut s), (0, 4), "after the replacement");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
