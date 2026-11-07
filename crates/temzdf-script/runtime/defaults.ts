@@ -242,6 +242,16 @@ on("SessionEndPre", () => {
   }
 });
 
+// A text buffer's file changed elsewhere: read again when it has no
+// unsaved changes (Vim's autoread); otherwise say so (writing then needs
+// write({ force: true }), or reload() to drop the changes).
+on("FileChangedOnDisk", (buf: number) => {
+  const b = cmd.buffers().find((b) => b.id === buf);
+  if (b === undefined) return;
+  if (b.modified) cmd.message(`${b.name} changed on disk (reload() drops your changes)`);
+  else schedule(() => cmd.reload(buf));
+});
+
 // The visual mode (a terminal's output, selected and copied by keys): <C-b>[
 // (tmux's copy-mode key) or v in the normal mode enter it, at the program's
 // cursor with nothing selected; v, V, <C-v> select characters, rows or a

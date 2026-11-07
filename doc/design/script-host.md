@@ -153,6 +153,12 @@ declarations. In short, `import { ... } from "temzdf"`:
   (`{ range, rangeLength, text }`, LSP's form), `cause` `"typing"`,
   `"script"`, `"undo"`, `"redo"`; heard before the editing command
   returns (the host serves the hooks while it waits).
+- **`FileChangedOnDisk(buffer)`**: a text buffer's file changed elsewhere
+  (its modification time differs from what was read or written; once per
+  change). `reload(buffer?)` reads it again as one undoable edit (a line
+  diff: marks and cursors outside it stay), the result the saved state.
+  The shipped defaults reload a buffer without unsaved changes and
+  otherwise say so.
 - **`KeyTyped({ keys, text, source })`**: a key arrived (`"typed"`, or
   `"feedkeys"` when fed), before it is matched: the key waits for these
   hooks. Observe only.

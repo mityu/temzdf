@@ -416,6 +416,14 @@ pub fn spawn_document(path: PathBuf, events: Sink, snapshot: Snapshot) -> std::i
 /// changing. Symlinks are resolved and their target is watched as well. Keep
 /// the returned watcher alive.
 pub fn spawn_watcher(path: &Path, events: Sink) -> notify::Result<notify::RecommendedWatcher> {
+    watch_file(path, move || {
+        events(DocEvent::FileChanged);
+    })
+}
+
+/// [`spawn_watcher`] for any file: `on_change` hears each change (not
+/// accesses), several for one write.
+pub fn watch_file(path: &Path, on_change: impl Fn() + Send + 'static) -> notify::Result<notify::RecommendedWatcher> {
     use notify::{RecursiveMode, Watcher};
 
     let abs = std::path::absolute(path)?;
@@ -432,7 +440,7 @@ pub fn spawn_watcher(path: &Path, events: Sink) -> notify::Result<notify::Recomm
             return;
         }
         if ev.paths.iter().any(|p| p.file_name().is_some_and(|n| names.iter().any(|m| m == n))) {
-            events(DocEvent::FileChanged);
+            on_change();
         }
     })?;
     for t in &targets {

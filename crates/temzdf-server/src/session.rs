@@ -62,6 +62,8 @@ pub enum SessionEvent {
     Script(u32, FromHost),
     /// The script host of this generation ended.
     ScriptExited(u32),
+    /// A text buffer's file changed (or may have: a watcher's event).
+    TextFile(BufferId),
 }
 
 /// Where a session's events go (returns false once nobody listens).
@@ -1260,6 +1262,10 @@ impl Session {
     fn handle_inner(&mut self, ev: SessionEvent, now: Instant) -> Outcome {
         match ev {
             SessionEvent::Script(..) | SessionEvent::ScriptExited(_) => Outcome::None,
+            SessionEvent::TextFile(buf) => {
+                self.text_file_changed(buf);
+                Outcome::None
+            }
             SessionEvent::Doc(id, DocEvent::Opened(result)) => {
                 let Some(entry) = self.docs.get_mut(&id) else { return Outcome::None };
                 let Some(opening) = entry.opening.take() else { return Outcome::None };
@@ -1494,7 +1500,7 @@ impl Session {
                         break;
                     }
                     let keys = keys.iter().map(|k| k.notation()).collect();
-                    out = out.merge(self.invoke(Invoked::Target { target, count }, "key", keys));
+                    out = out.merge(self.invoke(Invoked::Target { target, count, at: now }, "key", keys));
                 }
                 Step::Unmapped(stroke, ev) => {
                     let ev = ev.unwrap_or_else(|| stroke.event());
@@ -1554,7 +1560,7 @@ impl Session {
     /// Run what an invocation invokes (also `invoke`, again).
     pub(super) fn run_invoked(&mut self, what: Invoked) -> Outcome {
         match what {
-            Invoked::Target { target, count } => self.run_target(target, count, Instant::now()),
+            Invoked::Target { target, count, at } => self.run_target(target, count, at),
             Invoked::Text(t) => self.text_type(&t).or_else(|_| self.input_insert(&t)).unwrap_or(Outcome::None),
             Invoked::Fallback { func, key } => {
                 let ctx = self.key_context(None);
@@ -2473,8 +2479,9 @@ impl Session {
 /// from the others; see [`Session::mode_changed`]).
 /// What an invocation runs.
 pub(super) enum Invoked {
-    /// A mapping's right-hand side (or `invoke`'s target).
-    Target { target: Target, count: Option<usize> },
+    /// A mapping's right-hand side (or `invoke`'s target), and when its
+    /// key came (animations start from it, not from when it runs).
+    Target { target: Target, count: Option<usize>, at: Instant },
     /// Text typed into a text or input pane (keys no mapping took, input
     /// methods, pastes).
     Text(String),

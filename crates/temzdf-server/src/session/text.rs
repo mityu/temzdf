@@ -27,6 +27,11 @@ pub(super) struct TextEntry {
     invocation: u64,
     /// The base mode of panes showing it, chosen when it was made.
     pub basemode: Option<String>,
+    /// Watches its file (kept alive here).
+    watcher: Option<Box<dyn std::any::Any + Send>>,
+    /// The modification time last told in FileChangedOnDisk (once per
+    /// change, however many events it makes).
+    disk_seen: Option<std::time::SystemTime>,
 }
 
 /// A text pane: its view of the buffer, and its cursor's shape.
@@ -143,7 +148,9 @@ impl Session {
         let id = self.alloc_id();
         let buf = Buffer::new(text, file.as_ref().map_or(LineEnding::Lf, |f| f.line_ending));
         let name = name_of(file.as_ref().map(|f| f.path.as_path()));
-        self.texts.insert(id, TextEntry { buf, file, name, invocation: 0, basemode: None });
+        self.texts
+            .insert(id, TextEntry { buf, file, name, invocation: 0, basemode: None, watcher: None, disk_seen: None });
+        self.watch_text(id);
         self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("edit".into())]);
         id
     }
@@ -331,6 +338,61 @@ impl Session {
         t.name = name_of(Some(&info.path));
         t.file = Some(info);
         t.buf.undo_tree_mut().mark_saved();
+        // Its file may be another one now.
+        self.watch_text(buf);
+        Ok(())
+    }
+
+    /// Watch text buffer `buf`'s file (if it has one): changes made
+    /// elsewhere come as `SessionEvent::TextFile`.
+    fn watch_text(&mut self, buf: BufferId) {
+        let events = self.events.clone();
+        let Some(t) = self.texts.get_mut(&buf) else { return };
+        t.watcher = t.file.as_ref().and_then(|f| {
+            temzdf_pdfcore::workers::watch_file(&f.path, move || {
+                events(super::SessionEvent::TextFile(buf));
+            })
+            .ok()
+            .map(|w| Box::new(w) as Box<dyn std::any::Any + Send>)
+        });
+    }
+
+    /// A watcher saw `buf`'s file change: when it differs from what was
+    /// read or written (its modification time), `FileChangedOnDisk(buf)`,
+    /// once per change. Reloading is the scripts' policy.
+    pub(super) fn text_file_changed(&mut self, buf: BufferId) {
+        let Some(t) = self.texts.get_mut(&buf) else { return };
+        let Some(f) = &t.file else { return };
+        let Ok(now) = std::fs::metadata(&f.path).and_then(|m| m.modified()) else { return };
+        if Some(now) == f.mtime || Some(now) == t.disk_seen {
+            return;
+        }
+        t.disk_seen = Some(now);
+        self.event("FileChangedOnDisk", vec![ScriptValue::Num(buf as f64)]);
+    }
+
+    /// Read `buf`'s file again: the difference as one undoable edit (marks
+    /// and cursors outside it stay), then it is the saved state.
+    fn text_reload(&mut self, buf: BufferId) -> Result<(), String> {
+        let t = self.texts.get(&buf).ok_or_else(|| format!("no text buffer {buf}"))?;
+        let path = t.file.as_ref().map(|f| f.path.clone()).ok_or("the buffer has no file")?;
+        let (text, info) = file::read(&path)?;
+        let pane = self.panes.iter().find_map(|(id, e)| match &e.kind {
+            Kind::Text { buf: b, .. } if *b == buf => Some(*id),
+            _ => None,
+        });
+        let cursor = pane.and_then(|p| self.view_mut(p)).map(|v| v.view.cursor).unwrap_or_default();
+        let t = self.texts.get_mut(&buf).expect("found");
+        let edited = t
+            .buf
+            .reload(&text.to_string(), Origin { kind: StepKind::Other, pane, cursor })
+            .map_err(|e| e.to_string())?;
+        t.buf.line_ending = info.line_ending;
+        (t.file, t.disk_seen) = (Some(info), None);
+        if let Some(p) = pane {
+            self.text_follow(buf, &edited, p);
+        }
+        self.text_changed(buf, &edited, "reload");
         Ok(())
     }
 
@@ -383,7 +445,7 @@ impl Session {
         count: Option<usize>,
     ) -> Option<Result<(ScriptValue, Outcome), String>> {
         let result = match name {
-            "open-file" | "new-buffer" | "write" => self.text_file_command(name, args),
+            "open-file" | "new-buffer" | "write" | "reload" => self.text_file_command(name, args),
             n if n.starts_with("text.") => self.text_primitive(&n["text.".len()..], args, count),
             _ => return None,
         };
@@ -408,6 +470,14 @@ impl Session {
                     self.refocus_mode();
                 }
                 Ok((ScriptValue::Num(id as f64), Outcome::Redraw))
+            }
+            "reload" => {
+                let buf = match args.first().and_then(ScriptValue::as_num) {
+                    Some(b) => b as BufferId,
+                    None => self.text_target(None)?.1,
+                };
+                self.text_reload(buf)?;
+                Ok((ScriptValue::Null, Outcome::Redraw))
             }
             "new-buffer" => {
                 let text = opt_str("text").unwrap_or_default();
@@ -745,6 +815,11 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
         "write",
         "(opts?: { path?: string, force?: boolean, buffer?: number }): void",
         "Write a text buffer (the focused pane's) to its file, or to `path`; a file changed on disk since it was read needs `force`",
+    ),
+    (
+        "reload",
+        "(buffer?: number): void",
+        "Read a text buffer (the focused pane's) from its file again: the difference is one undoable edit, and the result the saved state",
     ),
     ("text.line-count", "(opts?: { pane?: number }): number", "Lines of the text pane's buffer"),
     ("text.line", "(line: number, opts?: { pane?: number }): string", "A line, without its line break"),

@@ -111,8 +111,8 @@ server on one `Session`). Next and open:
   `basemode`, mode-less editing in `defaults.ts` and the mouse (click,
   drag, wheel). Also built: the events and hooks of sections 9 and 10
   (invocations, `TextChanged`, `KeyTyped`, `schedule`, hooks that only
-  read, cancelling "before" hooks and unsaved changes). Next:
-  `FileChangedOnDisk` and `reload`, then search, `highlightPattern`, decorations for
+  read, cancelling "before" hooks and unsaved changes,
+  `FileChangedOnDisk` and `reload`). Next (step 6 of the plan): search, `highlightPattern`, decorations for
   scripts, highlight groups for scripts, encodings, `wordchars`,
   `findPair`, variables and `copy`. Deferred there:
   - `getchar()`/`input()`-like reading (`readKey`, `await` in

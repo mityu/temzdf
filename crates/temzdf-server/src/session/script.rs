@@ -59,6 +59,7 @@ pub const EVENTS: &[&str] = &[
     "BufferDeleted",
     "BufferHidden",
     "InputChanged",
+    "FileChangedOnDisk",
 ];
 
 /// Input that arrived while a script ran.

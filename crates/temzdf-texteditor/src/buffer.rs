@@ -132,6 +132,39 @@ impl Buffer {
         Ok(Edited { batches: vec![changes], cursor: None, reported })
     }
 
+    /// Make the text `new` (the file as it is on disk now) with the fewest
+    /// changed lines, as one undoable step: marks outside what changed
+    /// stay. The result is the saved state.
+    pub fn reload(&mut self, new: &str, origin: Origin) -> Result<Edited, EditError> {
+        let old = self.text.to_string();
+        let diff = similar::TextDiff::from_lines(old.as_str(), new);
+        // Lines to offsets in characters, for both texts.
+        let starts = |s: &str| {
+            let mut v = vec![0usize];
+            let mut n = 0;
+            for line in s.split_inclusive('\n') {
+                n += line.chars().count();
+                v.push(n);
+            }
+            v
+        };
+        let old_at = starts(&old);
+        let new_lines: Vec<&str> = new.split_inclusive('\n').collect();
+        let mut edits = Vec::new();
+        for op in diff.ops() {
+            if let similar::DiffOp::Equal { .. } = op {
+                continue;
+            }
+            let (o, n) = (op.old_range(), op.new_range());
+            edits.push(TextEdit::new(old_at[o.start], old_at[o.end], new_lines[n.start..n.end].concat()));
+        }
+        self.undo.invocation();
+        let edited = self.edit(edits, origin)?;
+        self.undo.split();
+        self.undo.mark_saved();
+        Ok(edited)
+    }
+
     /// Undo the current step: its cursor goes back to where it was before.
     pub fn undo(&mut self) -> Option<Edited> {
         let node = self.undo.back()?;
@@ -233,6 +266,20 @@ mod tests {
         assert_eq!((r[1].range.start.line, r[1].range.start.character, r[1].range_length), (1, 0, 1));
         let u = b.undo().unwrap();
         assert_eq!(u.reported.len(), 2, "undo reports its changes too");
+    }
+
+    #[test]
+    fn a_reload_changes_only_what_differs_and_undoes() {
+        let mut b = Buffer::new(Text::from("one\ntwo\nthree\n"), LineEnding::Lf);
+        let keep = b.marks_mut().add(0, 3, MarkSpec::default());
+        let e = b.reload("one\n2\nthree\nfour\n", Origin::default()).unwrap();
+        assert_eq!(b.text().to_string(), "one\n2\nthree\nfour\n");
+        assert_eq!(e.reported.len(), 2, "the second line and the new last one");
+        assert!(!b.modified(), "what was read is the saved state");
+        assert_eq!(b.marks().get(keep).map(|m| (m.start, m.end, m.deleted)), Some((0, 3, false)));
+        b.undo().unwrap();
+        assert_eq!(b.text().to_string(), "one\ntwo\nthree\n");
+        assert!(b.modified());
     }
 
     #[test]

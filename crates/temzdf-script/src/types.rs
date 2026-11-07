@@ -25,6 +25,7 @@ const EVENTS: &[(&str, &str)] = &[
     ("InvokePost", "[info: Invocation & { cursor: Position | null; selection: Range | null }]"),
     ("KeyTyped", "[key: { keys: string; text: string | null; source: \"typed\" | \"feedkeys\" }]"),
     ("TextChanged", "[buffer: number, change: TextChange]"),
+    ("FileChangedOnDisk", "[buffer: number]"),
 ];
 
 fn camel(name: &str) -> String {

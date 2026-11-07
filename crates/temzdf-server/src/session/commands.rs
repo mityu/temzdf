@@ -678,7 +678,7 @@ impl Session {
                 let count = args.get(1).and_then(|o| o.get("count")).and_then(ScriptValue::as_num).map(|c| c as usize);
                 let what = match args.first() {
                     Some(ScriptValue::Num(f)) => {
-                        super::Invoked::Target { target: crate::keymap::Target::Func(*f as u32), count }
+                        super::Invoked::Target { target: crate::keymap::Target::Func(*f as u32), count, at: now }
                     }
                     Some(ScriptValue::List(acts)) => {
                         let acts = acts
@@ -695,7 +695,7 @@ impl Session {
                                 Ok(crate::keymap::Act::new(name, args))
                             })
                             .collect::<Result<Vec<_>, String>>()?;
-                        super::Invoked::Target { target: crate::keymap::Target::Actions(acts), count }
+                        super::Invoked::Target { target: crate::keymap::Target::Actions(acts), count, at: now }
                     }
                     Some(v) if let Some(t) = v.get("textInput").and_then(ScriptValue::as_str) => {
                         super::Invoked::Text(t.to_owned())

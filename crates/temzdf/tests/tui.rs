@@ -1835,3 +1835,31 @@ keymap.add("edit", "<C-t>", () => {
         ]
     );
 }
+
+#[test]
+fn a_text_file_changed_elsewhere_is_read_again_unless_it_has_changes() {
+    let env = Env::new("text-disk");
+    let file = env.path("d.txt");
+    std::fs::write(&file, "one\ntwo\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "dk", file.to_str().unwrap()], &env.options());
+    t.wait_text("two");
+    // No unsaved changes: read again by itself (the shipped defaults).
+    std::fs::write(&file, "one\nTWO\n").unwrap();
+    t.wait_text("TWO");
+    t.wait_for("not modified", |s| !s.text().contains("[+]"));
+    // With changes: said, and writing over it is refused.
+    t.keys(&["C-End"]);
+    t.type_text("mine");
+    t.wait_text("d.txt [+]");
+    std::fs::write(&file, "one\nTWO\nthree\n").unwrap();
+    t.wait_text("changed on disk");
+    t.keys(&["C-s"]);
+    t.wait_text("changed on disk since it was read");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "one\nTWO\nthree\n");
+    // reload() takes the file's text; undo brings the changes back.
+    env.run(&["action", "-s", "dk", "reload"]);
+    t.wait_text("three");
+    t.wait_for("not modified", |s| !s.text().contains("[+]"));
+    env.run(&["action", "-s", "dk", "text.undo"]);
+    t.wait_text("mine");
+}
