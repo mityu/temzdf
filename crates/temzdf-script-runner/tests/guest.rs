@@ -195,7 +195,7 @@ fn keys_and_startup() {
             let t = Instant::now();
             host.send(ToHost::Call { id: i as u64, func, args: Vec::new() });
             match until_answer(&host, &rx, &mut Vec::new()) {
-                FromHost::Done { result: Ok(()), .. } => {}
+                FromHost::Done { result: Ok(ScriptValue::Null), .. } => {}
                 other => panic!("{other:?}"),
             }
             if i >= 200 {

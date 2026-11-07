@@ -149,10 +149,11 @@ pub enum FromHost {
         token: Token,
         op: HostOp,
     },
-    /// A [`ToHost::Call`] finished.
+    /// A [`ToHost::Call`] finished, with what the function returned (a
+    /// hook's answer, e.g. `{ cancel: true, reason }`; null for nothing).
     Done {
         id: CallId,
-        result: Result<(), ScriptError>,
+        result: Result<ScriptValue, ScriptError>,
     },
     /// A [`ToHost::Eval`] finished: each condition's value, in order.
     Values {

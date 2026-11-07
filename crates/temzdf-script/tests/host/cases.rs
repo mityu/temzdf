@@ -207,7 +207,7 @@ keymap.clear();
     log.clear();
     s.send(ToHost::Call { id: 5, func: user(1), args: vec![] });
     match s.serve(&mut log) {
-        FromHost::Done { id: 5, result: Ok(()) } => {}
+        FromHost::Done { id: 5, result: Ok(ScriptValue::Null) } => {}
         other => panic!("{other:?}"),
     }
     assert_eq!(log, ["call5 split(right)", "call5 new-pane()"]);
@@ -215,7 +215,7 @@ keymap.clear();
     // A hook gets its arguments.
     log.clear();
     s.send(ToHost::Call { id: 6, func: user(0), args: vec![ScriptValue::Num(3.0)] });
-    assert!(matches!(s.serve(&mut log), FromHost::Done { id: 6, result: Ok(()) }));
+    assert!(matches!(s.serve(&mut log), FromHost::Done { id: 6, result: Ok(ScriptValue::Null) }));
     assert_eq!(log, ["call6 message(opened 3)"]);
 }
 
@@ -240,7 +240,7 @@ cmd.message(typeof cmd.input + " " + Object.isFrozen(cmd.input) + " " + typeof a
         .unwrap();
     log.clear();
     s.send(ToHost::Call { id: 1, func: user(f), args: vec![] });
-    assert!(matches!(s.serve(&mut log), FromHost::Done { id: 1, result: Ok(()) }));
+    assert!(matches!(s.serve(&mut log), FromHost::Done { id: 1, result: Ok(ScriptValue::Null) }));
     assert_eq!(log, ["call1 input.delete-word()"], "the command's whole name");
 }
 
@@ -261,10 +261,10 @@ keymap.add("normal", "s", () => { cmd.split("right"); cmd.message("after split")
     let FromHost::Request { req, token: Token::Call(2), op } = s.recv() else { panic!() };
     assert_eq!(describe(Token::Call(2), &op), "call2 message(hook)");
     s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
-    assert!(matches!(s.recv(), FromHost::Done { id: 2, result: Ok(()) }));
+    assert!(matches!(s.recv(), FromHost::Done { id: 2, result: Ok(ScriptValue::Null) }));
     s.send(ToHost::Reply { req: split, result: Ok(ScriptValue::Null) });
     let mut log = Vec::new();
-    assert!(matches!(s.serve(&mut log), FromHost::Done { id: 1, result: Ok(()) }));
+    assert!(matches!(s.serve(&mut log), FromHost::Done { id: 1, result: Ok(ScriptValue::Null) }));
     assert_eq!(log, ["call1 message(after split)"]);
 }
 
@@ -437,7 +437,7 @@ keymap.add("normal", "x", () => cmd.message("ran"));
     s.send(ToHost::Interrupt);
     log.clear();
     match s.serve(&mut log) {
-        FromHost::Done { id: 1, result: Ok(()) } => {}
+        FromHost::Done { id: 1, result: Ok(ScriptValue::Null) } => {}
         other => panic!("{other:?}"),
     }
     assert_eq!(log, ["call1 message(ran)"]);
@@ -446,7 +446,7 @@ keymap.add("normal", "x", () => cmd.message("ran"));
     s.load("config.js");
     ready_ok(s.serve(&mut Vec::new()));
     s.send(ToHost::Call { id: 2, func: user(0), args: vec![] });
-    assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 2, result: Ok(()) }));
+    assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 2, result: Ok(ScriptValue::Null) }));
 }
 
 #[test]
@@ -648,7 +648,7 @@ dispatch(async (ctx) => { await new Promise((r) => setTimeout(r, 30)); ctx.cmd.m
     // The task has waited past the limit when the user's mapping runs.
     std::thread::sleep(Duration::from_millis(400));
     s.send(ToHost::Call { id: 9, func: user(0), args: vec![] });
-    assert!(matches!(s.recv(), FromHost::Done { id: 9, result: Ok(()) }));
+    assert!(matches!(s.recv(), FromHost::Done { id: 9, result: Ok(ScriptValue::Null) }));
     s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::TaskDone { task: 1, result: Ok(()) }));
 }

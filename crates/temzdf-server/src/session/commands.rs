@@ -73,8 +73,8 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("toggle-floating", "(pane?: number): void", "Turn a pane (the focused one) floating, or tiled again"),
     (
         "buffers",
-        "(): { id: number; kind: \"pdf\" | \"terminal\"; name: string; panes: number[]; exited: boolean }[]",
-        "The buffers (documents and terminals), shown or hidden",
+        "(): { id: number; kind: PaneKind; name: string; panes: number[]; exited: boolean; modified: boolean }[]",
+        "The buffers (documents, terminals, inputs, text), shown or hidden; `modified`: a text buffer with unsaved changes",
     ),
     (
         "show-buffer",
@@ -85,9 +85,13 @@ const SESSION: &[(&str, &str, &str)] = &[
     (
         "delete-buffer",
         "(buffer?: number): void",
-        "Delete a buffer (the focused pane's): end its program or close its document, and close its panes",
+        "Delete a buffer (the focused pane's): end its program or close its document, and close its panes; a BufferDeletePre hook may cancel it",
     ),
-    ("kill-session", "(): void", "End the session"),
+    (
+        "kill-session",
+        "(opts?: { force?: boolean }): void",
+        "End the session; a SessionEndPre hook may cancel it (unsaved changes), unless `force`",
+    ),
     ("detach", "(): void", "The operating client detaches"),
     ("reload-config", "(): void", "Restart the script host and load the configuration again"),
     ("message", "(text: string): void", "Show a message"),
@@ -614,9 +618,16 @@ impl Session {
                     Some(b) => b,
                     None => self.panes.get(&self.focus).map(PaneEntry::buffer).ok_or("deleteBuffer: which buffer?")?,
                 };
-                ok(self.delete_buffer(buf).map_err(|e| format!("deleteBuffer: {e}"))?)
+                ok(self.request_delete_buffer(buf).map_err(|e| format!("deleteBuffer: {e}"))?)
             }
-            "kill-session" => ok(Outcome::Quit),
+            "kill-session" => {
+                let force = match args.first() {
+                    None => false,
+                    Some(ScriptValue::Str(s)) if s == "--force" => true,
+                    Some(v) => v.get("force") == Some(&ScriptValue::Bool(true)),
+                };
+                ok(self.request_end(force))
+            }
             "detach" => ok(Outcome::Detach),
             "reload-config" => act(self, Action::ReloadConfig),
             // Not in the registry (no type, no documentation): for tests.
@@ -944,6 +955,9 @@ impl Session {
     /// strings.
     pub fn run_cli(&mut self, words: &[String]) -> anyhow::Result<Outcome> {
         self.invocation += 1;
+        // Why a "before" hook cancelled what it asked for, if one did
+        // (answered once the scripts it started are done: take_cli_answer).
+        self.cli_cancel = Some(None);
         let Some((name, rest)) = words.split_first() else { anyhow::bail!("which action?") };
         let args: Vec<ScriptValue> = rest.iter().map(|w| ScriptValue::Str(w.clone())).collect();
         self.map_depth = 0;

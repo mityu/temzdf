@@ -104,6 +104,9 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     let mut shown_pointer = Pointer::Default;
     // `temzdf action` requests that arrived while a script ran.
     let mut queued: VecDeque<(ClientId, Vec<String>)> = VecDeque::new();
+    // An action that started scripts ("before" hooks): answered when they
+    // are done, with why one cancelled it if one did.
+    let mut answering: Option<ClientId> = None;
     // When the last frame was made: busy terminals get at most one per FRAME.
     let mut made = Instant::now() - FRAME;
     let mut socket_checked = Instant::now();
@@ -320,18 +323,25 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 }
                 ClientMsg::Action(words) => {
                     // Scripts run synchronously: actions wait, like input.
-                    if session.holds_input() {
+                    if session.holds_input() || answering.is_some() {
                         queued.push_back((id, words));
                     } else {
-                        outcome = run_action(&mut session, &mut clients, id, &words, now);
+                        outcome = run_action(&mut session, &mut clients, &mut answering, id, &words, now);
                     }
                 }
             },
         }
+        if !session.holds_input()
+            && let Some(id) = answering.take()
+            && let Some(c) = clients.remove(&id)
+        {
+            let _ = c.tx.send(ServerMsg::Done(session.take_cli_answer()));
+        }
         while !session.holds_input()
+            && answering.is_none()
             && let Some((id, words)) = queued.pop_front()
         {
-            outcome = outcome.merge(run_action(&mut session, &mut clients, id, &words, Instant::now()));
+            outcome = outcome.merge(run_action(&mut session, &mut clients, &mut answering, id, &words, Instant::now()));
         }
         outcome = outcome.merge(session.poll(Instant::now()));
         // The latest client left (went, detached): another takes over.
@@ -342,12 +352,17 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         }
         match outcome {
             Outcome::Quit => {
+                // What it asked for happened (the session ends with it).
+                if let Some(c) = answering.take().and_then(|id| clients.remove(&id)) {
+                    let _ = c.tx.send(ServerMsg::Done(Ok(())));
+                }
                 // The first pane could not open: the clients say why.
                 let reason = match session.error() {
                     Some(e) => {
                         eprintln!("temzdf server: {e}");
                         ExitReason::Error(e.to_owned())
                     }
+                    None if session.was_killed() => ExitReason::Killed,
                     None => ExitReason::SessionEnded,
                 };
                 for c in clients.values() {
@@ -414,6 +429,7 @@ fn wait_for(
 fn run_action(
     session: &mut Session,
     clients: &mut HashMap<ClientId, Client>,
+    answering: &mut Option<ClientId>,
     id: ClientId,
     words: &[String],
     now: Instant,
@@ -421,7 +437,12 @@ fn run_action(
     let _ = now;
     let result = session.run_cli(words);
     let action_outcome = *result.as_ref().unwrap_or(&Outcome::Redraw);
-    let result = result.map(|_| ()).map_err(|e| format!("{e:#}"));
+    // It started scripts: the answer waits for them (they may cancel it).
+    if result.is_ok() && session.holds_input() && action_outcome != Outcome::Quit {
+        *answering = Some(id);
+        return action_outcome;
+    }
+    let result = result.map(|_| ()).map_err(|e| format!("{e:#}")).and(session.take_cli_answer());
     if let Some(c) = clients.remove(&id) {
         let _ = c.tx.send(ServerMsg::Done(result));
     }

@@ -475,7 +475,13 @@ fn run_call_now(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, func: FuncId, args: Vec<
         None => Err(ScriptError::new(format!("no function {func}"))),
         Some(f) => {
             let args = serde_json::to_string(&args.iter().map(from_script).collect::<Vec<_>>()).unwrap_or_default();
-            f.restore(ctx).and_then(|f| f.call::<_, ()>((args,))).map_err(|e| error_of(ctx, e))
+            f.restore(ctx)
+                .and_then(|f| f.call::<_, Option<String>>((args,)))
+                .map(|r| {
+                    r.and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                        .map_or(ScriptValue::Null, |v| to_script(&v))
+                })
+                .map_err(|e| error_of(ctx, e))
         }
     };
     st.tokens.borrow_mut().pop();

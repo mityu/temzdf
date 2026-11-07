@@ -128,12 +128,20 @@ enum Cmd {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// End a session.
+    /// End a session. Its configuration may refuse (unsaved changes in
+    /// text buffers: a SessionEndPre hook) unless --force.
     #[command(alias = "k")]
-    KillSession { name: String },
-    /// End every session.
+    KillSession {
+        name: String,
+        #[arg(long)]
+        force: bool,
+    },
+    /// End every session (as kill-session, each one).
     #[command(alias = "ka")]
-    KillAllSessions,
+    KillAllSessions {
+        #[arg(long)]
+        force: bool,
+    },
     /// Run a command in a session: any command of the registry (`temzdf
     /// print-types` lists them), e.g. new-pane [FILE | -- COMMAND...], split
     /// right|down, move-focus left|right|up|down, close-pane, detach.
@@ -249,13 +257,13 @@ fn main() -> Result<()> {
             warn_unused(&start_flags, "list-sessions");
             return client::list_sessions(verbose);
         }
-        Some(Cmd::KillSession { name }) => {
+        Some(Cmd::KillSession { name, force }) => {
             warn_unused(&start_flags, "kill-session");
-            return client::kill_session(&name);
+            return client::kill_session(&name, force);
         }
-        Some(Cmd::KillAllSessions) => {
+        Some(Cmd::KillAllSessions { force }) => {
             warn_unused(&start_flags, "kill-all-sessions");
-            return client::kill_all_sessions();
+            return client::kill_all_sessions(force);
         }
         Some(Cmd::Action { session, timeout, action }) => {
             warn_unused(&start_flags, "action");

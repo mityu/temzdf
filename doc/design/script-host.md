@@ -119,7 +119,7 @@ declarations. In short, `import { ... } from "temzdf"`:
 - `keymap.add(modes, lhs, rhs, { nowait, desc, when, namespace, priority })`,
   `keymap.remove(modes, lhs, { namespace })`, `keymap.clear({ mode,
   namespace })`, `keymap.get({ mode, namespace, lhs })`, `defineMode(name,
-  { unmapped, count, transient, keepalive, timeout })`,
+  { fallback, count, transient, keepalive, timeout })`,
   `feedkeys(keys, { remap })`, `currentMode()` (doc/design/keymaps.md).
 - `o.<option>` reads and sets options.
 - `on(event, fn, { nested })`: `SessionReady`, `PaneOpened(id, kind)`,
@@ -132,7 +132,19 @@ declarations. In short, `import { ... } from "temzdf"`:
   showing it went: closed, showing another buffer, its tab page closed;
   before `BufferDeleted` when `deleteBuffer` closes its panes),
   `InputChanged(id, text)` (an input buffer's text changed: typed, pasted,
-  edited, set; not when only its caret moved).
+  edited, set; not when only its caret moved), `BufferDeletePre(id)`
+  (before `deleteBuffer`), `SessionEndPre()` (before `kill-session` and
+  before closing the last pane).
+- **"Before" hooks may cancel** (`PaneClosePre`, `BufferDeletePre`,
+  `SessionEndPre`; doc/design/text-editor.md section 13): one returning
+  `{ cancel: true, reason }` stops the operation, and the reason goes to
+  whoever asked: a script's command throws it, `temzdf action` (and
+  `temzdf kill-session`) fails with it, a key shows it in a message.
+  `temzdf action` answers once the hooks it started ran. `kill-session
+  --force` (`killSession({ force: true })`) ends without asking. The
+  shipped defaults refuse to delete a text buffer with unsaved changes or
+  to end the session while one has them. Every hook returns what it
+  likes; only "before" hooks' answers are read.
 - `dispatch(async (ctx) => ...)` with `ctx.cmd` and `ctx.atomic(fn)`;
   `atomic(fn)`.
 - Globals: `setTimeout`, `clearTimeout`, `console`.

@@ -419,6 +419,11 @@ pub struct Session {
     texts: HashMap<BufferId, text::TextEntry>,
     /// Highlight groups for text panes (scripts define them).
     highlights: temzdf_texteditor::Highlights,
+    /// While a `temzdf action` request waits for the scripts it started:
+    /// why a "before" hook cancelled what it asked for, if one did.
+    cli_cancel: Option<Option<String>>,
+    /// The session ends because it was killed (`kill-session`).
+    killed: bool,
     /// Counts invocations (keys, text, pastes, CLI requests): a text
     /// buffer's undo step ends when a new one edits it.
     invocation: u64,
@@ -493,6 +498,8 @@ impl Session {
             texts: HashMap::new(),
             highlights: temzdf_texteditor::Highlights::default(),
             invocation: 0,
+            cli_cancel: None,
+            killed: false,
             shell: None,
             panes: HashMap::new(),
             layout: None,
@@ -950,15 +957,32 @@ impl Session {
         out
     }
 
+    /// The answer to the last `temzdf action` request, once the scripts it
+    /// started are done: an error when a "before" hook cancelled it.
+    pub fn take_cli_answer(&mut self) -> Result<(), String> {
+        match self.cli_cancel.take() {
+            Some(Some(reason)) => Err(reason),
+            _ => Ok(()),
+        }
+    }
+
+    /// It ends because `kill-session` asked (clients say it was killed).
+    pub fn was_killed(&self) -> bool {
+        self.killed
+    }
+
+    fn has_buffer(&self, buf: BufferId) -> bool {
+        self.terms.contains_key(&buf)
+            || self.docs.contains_key(&buf)
+            || self.inputs.contains_key(&buf)
+            || self.texts.contains_key(&buf)
+    }
+
     /// Delete a buffer: end its program or close its document, and close the
     /// panes showing it (the last pane: the session ends). `PaneClosePre`
     /// hooks do not run (the buffer goes either way); `PaneClosed` does.
     fn delete_buffer(&mut self, buf: BufferId) -> Result<Outcome, String> {
-        if !self.terms.contains_key(&buf)
-            && !self.docs.contains_key(&buf)
-            && !self.inputs.contains_key(&buf)
-            && !self.texts.contains_key(&buf)
-        {
+        if !self.has_buffer(buf) {
             return Err(format!("no buffer {buf}"));
         }
         for p in self.panes_showing(buf) {
@@ -1010,6 +1034,7 @@ impl Session {
                         ("name", ScriptValue::Str(name)),
                         ("panes", ScriptValue::List(panes)),
                         ("exited", ScriptValue::Bool(exited)),
+                        ("modified", ScriptValue::Bool(self.texts.get(&id).is_some_and(|t| t.buf.modified()))),
                     ])
                 })
                 .collect(),
@@ -1320,6 +1345,8 @@ impl Session {
             return Outcome::None;
         }
         self.invocation += 1;
+        // A cancelled operation a key asked for is told in a message.
+        self.cli_cancel = None;
         // A key dismisses error messages (and is handled as usual).
         let dismissed = Outcome::None.or(self.dismiss_errors());
         self.map_depth = 0;

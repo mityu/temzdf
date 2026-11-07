@@ -276,7 +276,14 @@ pub fn list_sessions(verbose: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn kill_session(name: &str) -> Result<()> {
+/// End session `name`: as its `kill-session` command, which its
+/// configuration's SessionEndPre hooks may refuse (unsaved changes), or
+/// with `force` at once.
+pub fn kill_session(name: &str, force: bool) -> Result<()> {
+    if !force {
+        return action(name, vec!["kill-session".into()], REQUEST_TIMEOUT)
+            .map_err(|e| anyhow::anyhow!("{e:#} (kill-session --force ends it anyway)"));
+    }
     match request(name, ClientMsg::Kill, REQUEST_TIMEOUT)? {
         ServerMsg::Done(Ok(())) => Ok(()),
         other => bail!("unexpected answer {other:?}"),
@@ -285,11 +292,13 @@ pub fn kill_session(name: &str) -> Result<()> {
 
 /// End every session, those of other versions too when they still take the
 /// request; one that fails does not stop the others.
-pub fn kill_all_sessions() -> Result<()> {
+pub fn kill_all_sessions(force: bool) -> Result<()> {
     let (sessions, other) = daemon::list_all()?;
     let mut failed = Vec::new();
-    for name in sessions.into_iter().map(|s| s.name).chain(other) {
-        if let Err(e) = kill_session(&name) {
+    // Another version's sessions only take the plain request.
+    let sessions = sessions.into_iter().map(|s| (s.name, force)).chain(other.into_iter().map(|n| (n, true)));
+    for (name, force) in sessions {
+        if let Err(e) = kill_session(&name, force) {
             failed.push(format!("{name}: {e:#}"));
         }
     }

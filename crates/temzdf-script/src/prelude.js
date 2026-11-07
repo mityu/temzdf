@@ -81,7 +81,8 @@
             : `${what}: mapped and hook functions must be synchronous (use dispatch for asynchronous work)`,
         );
       }
-      return condition ? !!r : undefined;
+      // A hook's answer (`{ cancel: true, reason }`) goes back as JSON.
+      return condition ? !!r : r === undefined ? undefined : JSON.stringify(r);
     });
     registered[id] = { fn, condition };
     return id;

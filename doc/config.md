@@ -430,7 +430,12 @@ replacing the selection. The shipped mappings edit without modes: arrows,
 `<PageUp>`/`<PageDown>` move, with Shift they select; `<CR>`, `<Tab>`,
 `<BS>`, `<Del>`, `<C-BS>`/`<C-Del>` (words), `<Esc>` drops the selection,
 `<C-s>` writes, `<C-z>`/`<C-y>` (or `<C-S-z>`) undo and redo, `<C-b>` is
-the prefix. The mouse: a click puts the cursor, dragging selects, the
+the prefix. Unsaved changes are kept: deleting the buffer or ending the
+session (`kill-session`, closing the last pane) is refused while a text
+buffer has them (the shipped `BufferDeletePre` and `SessionEndPre` hooks
+cancel it, saying why); `temzdf kill-session --force` ends anyway. Closing
+a pane is fine: its buffer stays, hidden (`buffers()` lists it,
+`modified` true). The mouse: a click puts the cursor, dragging selects, the
 wheel scrolls.
 
 Editors are scripts on the primitives in the `text` namespace (the

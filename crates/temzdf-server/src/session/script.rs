@@ -41,6 +41,7 @@ const MAX_HOOK_DEPTH: usize = 10;
 /// Events scripts can hook (`on(name, fn)`).
 pub const EVENTS: &[&str] = &[
     "SessionReady",
+    "SessionEndPre",
     "PaneOpened",
     "PaneClosePre",
     "PaneClosed",
@@ -50,6 +51,7 @@ pub const EVENTS: &[&str] = &[
     "DocumentReloaded",
     "ModeChanged",
     "BufferCreated",
+    "BufferDeletePre",
     "BufferDeleted",
     "BufferHidden",
     "InputChanged",
@@ -69,11 +71,12 @@ enum Frame {
     Call { id: CallId, hook: bool },
     /// Conditions sent to the host for the matcher; waiting for `Values`.
     Eval { id: CallId, funcs: Vec<FuncId> },
-    /// Hooks still to run (one at a time), at this nesting depth.
-    Hooks { queue: VecDeque<(FuncId, Vec<ScriptValue>)>, depth: usize },
+    /// Hooks still to run (one at a time), at this nesting depth. `pre`:
+    /// "before" hooks of the operation below, which may cancel it.
+    Hooks { queue: VecDeque<(FuncId, Vec<ScriptValue>)>, depth: usize, pre: bool },
     /// An operation to perform once the frames above it are done (after its
-    /// "before" hooks).
-    Op(Deferred),
+    /// "before" hooks), unless one of them cancelled it (why).
+    Op { op: Deferred, cancel: Option<String> },
     /// The answer to a request, sent once the frames above it are done. The
     /// result is filled in by a deferred operation when there is one.
     Reply { req: u64, result: Option<Result<ScriptValue, String>> },
@@ -82,6 +85,8 @@ enum Frame {
 enum Deferred {
     ClosePane(PaneId),
     CloseTab(super::tabs::TabId),
+    DeleteBuffer(super::BufferId),
+    EndSession,
 }
 
 struct Hook {
@@ -233,7 +238,7 @@ impl Session {
         self.script.atomic = None;
         let mut out = Outcome::None;
         for f in std::mem::take(&mut self.script.frames) {
-            if let Frame::Op(op) = f {
+            if let Frame::Op { op, cancel: None } = f {
                 out = out.merge(self.run_deferred(op));
             }
         }
@@ -396,21 +401,58 @@ impl Session {
         if queue.is_empty() {
             return Outcome::None;
         }
-        self.script.frames.push(Frame::Hooks { queue, depth: 0 });
+        self.script.frames.push(Frame::Hooks { queue, depth: 0, pre: false });
         self.pump()
     }
 
-    /// Close a pane after its `PaneClosePre` hooks, if any.
-    pub(super) fn request_close(&mut self, id: PaneId) -> Outcome {
-        let pre = vec![("PaneClosePre".to_owned(), vec![ScriptValue::Num(id as f64)])];
-        let queue = self.hooks_for(&pre, self.script.hook_depth());
-        if queue.is_empty() || self.script.host.is_none() {
-            return self.close(id);
-        }
+    /// Run `op` after the "before" hooks of `pre`, unless one of them
+    /// returns `{ cancel: true, reason }`: then the reason goes to whoever
+    /// asked (the script's command fails with it, `temzdf action` answers
+    /// it, a key shows it).
+    fn request_op(&mut self, pre: Vec<(String, Vec<ScriptValue>)>, op: Deferred) -> Outcome {
         let depth = self.script.hook_depth();
-        self.script.frames.push(Frame::Op(Deferred::ClosePane(id)));
-        self.script.frames.push(Frame::Hooks { queue, depth });
+        let queue = self.hooks_for(&pre, depth);
+        if queue.is_empty() || self.script.host.is_none() {
+            return self.run_deferred(op);
+        }
+        self.script.frames.push(Frame::Op { op, cancel: None });
+        self.script.frames.push(Frame::Hooks { queue, depth, pre: true });
         self.pump()
+    }
+
+    /// `SessionEndPre`, when closing the panes `closing` would end the
+    /// session (no pane would be left).
+    fn ends_session(&self, closing: &[PaneId]) -> Option<(String, Vec<ScriptValue>)> {
+        self.panes.keys().all(|p| closing.contains(p)).then(|| ("SessionEndPre".to_owned(), Vec::new()))
+    }
+
+    /// Close a pane after its `PaneClosePre` hooks (and `SessionEndPre`
+    /// for the last one), if any.
+    pub(super) fn request_close(&mut self, id: PaneId) -> Outcome {
+        let mut pre = vec![("PaneClosePre".to_owned(), vec![ScriptValue::Num(id as f64)])];
+        pre.extend(self.ends_session(&[id]));
+        self.request_op(pre, Deferred::ClosePane(id))
+    }
+
+    /// Delete a buffer after its `BufferDeletePre` hooks (and
+    /// `SessionEndPre` when that closes every pane).
+    pub(super) fn request_delete_buffer(&mut self, buf: super::BufferId) -> Result<Outcome, String> {
+        if !self.has_buffer(buf) {
+            return Err(format!("no buffer {buf}"));
+        }
+        let mut pre = vec![("BufferDeletePre".to_owned(), vec![ScriptValue::Num(buf as f64)])];
+        pre.extend(self.ends_session(&self.panes_showing(buf)));
+        Ok(self.request_op(pre, Deferred::DeleteBuffer(buf)))
+    }
+
+    /// End the session after its `SessionEndPre` hooks (`kill-session`;
+    /// with `force`, without asking them).
+    pub(super) fn request_end(&mut self, force: bool) -> Outcome {
+        if force {
+            self.killed = true;
+            return Outcome::Quit;
+        }
+        self.request_op(vec![("SessionEndPre".to_owned(), Vec::new())], Deferred::EndSession)
     }
 
     /// Close tab page `i` (`closeTab`, a middle click on the tab line) once
@@ -421,14 +463,7 @@ impl Session {
             .into_iter()
             .map(|p| ("PaneClosePre".to_owned(), vec![ScriptValue::Num(p as f64)]))
             .collect();
-        let queue = self.hooks_for(&pre, self.script.hook_depth());
-        if queue.is_empty() || self.script.host.is_none() {
-            return self.remove_tab(i);
-        }
-        let depth = self.script.hook_depth();
-        self.script.frames.push(Frame::Op(Deferred::CloseTab(self.tabs[i].id)));
-        self.script.frames.push(Frame::Hooks { queue, depth });
-        self.pump()
+        self.request_op(pre, Deferred::CloseTab(self.tabs[i].id))
     }
 
     fn run_deferred(&mut self, op: Deferred) -> Outcome {
@@ -439,6 +474,11 @@ impl Session {
                 Some(i) if self.tabs.len() > 1 => self.remove_tab(i),
                 _ => Outcome::None,
             },
+            Deferred::DeleteBuffer(buf) => self.delete_buffer(buf).unwrap_or(Outcome::None),
+            Deferred::EndSession => {
+                self.killed = true;
+                Outcome::Quit
+            }
         }
     }
 
@@ -453,16 +493,28 @@ impl Session {
                     self.script.frames.push(f);
                     return out;
                 }
-                Some(Frame::Hooks { mut queue, depth }) => {
+                Some(Frame::Hooks { mut queue, depth, pre }) => {
                     if let Some((func, args)) = queue.pop_front() {
-                        self.script.frames.push(Frame::Hooks { queue, depth });
+                        self.script.frames.push(Frame::Hooks { queue, depth, pre });
                         self.call(func, args, true);
                         if matches!(self.script.frames.last(), Some(Frame::Call { .. })) {
                             return out;
                         }
                     }
                 }
-                Some(Frame::Op(op)) => {
+                Some(Frame::Op { cancel: Some(reason), .. }) => {
+                    if let Some(Frame::Reply { result, .. }) = self.script.frames.last_mut()
+                        && result.is_none()
+                    {
+                        *result = Some(Err(reason));
+                    } else if let Some(slot) = &mut self.cli_cancel {
+                        slot.get_or_insert(reason);
+                    } else {
+                        self.message(&reason);
+                        out = out.merge(Outcome::Redraw);
+                    }
+                }
+                Some(Frame::Op { op, cancel: None }) => {
                     let depth = self.script.hook_depth();
                     let before = std::mem::take(&mut self.script_events);
                     let o = self.run_deferred(op);
@@ -475,7 +527,7 @@ impl Session {
                     }
                     let queue = self.hooks_for(&events, depth);
                     if !queue.is_empty() {
-                        self.script.frames.push(Frame::Hooks { queue, depth });
+                        self.script.frames.push(Frame::Hooks { queue, depth, pre: false });
                     }
                 }
                 Some(Frame::Reply { req, result }) => {
@@ -498,7 +550,7 @@ impl Session {
             let events = std::mem::take(&mut self.script.deferred_events);
             let queue = self.hooks_for(&events, 0);
             if !queue.is_empty() {
-                self.script.frames.push(Frame::Hooks { queue, depth: 0 });
+                self.script.frames.push(Frame::Hooks { queue, depth: 0, pre: false });
                 return out.merge(self.pump());
             }
         }
@@ -535,9 +587,24 @@ impl Session {
                     }
                 }
                 let mut out = Outcome::None;
-                if let Err(e) = result {
-                    self.script_error(&e);
-                    out = Outcome::Redraw;
+                match result {
+                    Err(e) => {
+                        self.script_error(&e);
+                        out = Outcome::Redraw;
+                    }
+                    // A "before" hook cancelled the operation below its
+                    // frame (the first reason counts).
+                    Ok(v) if v.get("cancel") == Some(&ScriptValue::Bool(true)) => {
+                        let reason = v.get("reason").and_then(ScriptValue::as_str).unwrap_or("cancelled").to_owned();
+                        let n = self.script.frames.len();
+                        if n >= 2
+                            && matches!(self.script.frames[n - 1], Frame::Hooks { pre: true, .. })
+                            && let Frame::Op { cancel, .. } = &mut self.script.frames[n - 2]
+                        {
+                            cancel.get_or_insert(reason);
+                        }
+                    }
+                    Ok(_) => {}
                 }
                 out.merge(self.pump())
             }
@@ -743,7 +810,7 @@ impl Session {
         }
         let queue = self.hooks_for(&events, depth);
         if !queue.is_empty() {
-            self.script.frames.push(Frame::Hooks { queue, depth });
+            self.script.frames.push(Frame::Hooks { queue, depth, pre: false });
         }
         out = out.merge(self.pump());
         out

@@ -224,6 +224,21 @@ each("edit", ["<C-y>", "<C-S-z>"], action.text.redo());
 each("edit", ["<C-S-v>", "<D-v>"], action.paste());
 each("edit", [prefix], action.switchMode("normal"));
 
+// Unsaved changes are not lost by accident: deleting a text buffer, or
+// ending the session (kill-session, closing the last pane), is refused
+// while one has them (`kill-session --force` ends anyway). Closing a pane
+// is fine: its buffer stays, hidden.
+on("BufferDeletePre", (buf: number) => {
+  const b = cmd.buffers().find((b) => b.id === buf);
+  if (b?.modified) return { cancel: true, reason: `${b.name} has unsaved changes (write it first)` };
+});
+on("SessionEndPre", () => {
+  const names = cmd.buffers().filter((b) => b.modified).map((b) => b.name);
+  if (names.length > 0) {
+    return { cancel: true, reason: `unsaved changes in ${names.join(", ")} (write them, or kill-session --force)` };
+  }
+});
+
 // The visual mode (a terminal's output, selected and copied by keys): <C-b>[
 // (tmux's copy-mode key) or v in the normal mode enter it, at the program's
 // cursor with nothing selected; v, V, <C-v> select characters, rows or a

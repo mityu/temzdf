@@ -7,15 +7,19 @@ use temzdf_protocol::script::CommandSpec;
 /// The events hooks can name, with their arguments.
 const EVENTS: &[(&str, &str)] = &[
     ("SessionReady", "[]"),
-    ("PaneOpened", "[pane: number, kind: \"pdf\" | \"terminal\" | \"input\"]"),
+    ("SessionEndPre", "[]"),
+    ("PaneOpened", "[pane: number, kind: PaneKind]"),
     ("PaneClosePre", "[pane: number]"),
     ("PaneClosed", "[pane: number]"),
     ("PaneFocused", "[pane: number]"),
+    ("TabEntered", "[tab: number]"),
+    ("TabClosed", "[tab: number]"),
     ("DocumentReloaded", "[path: string]"),
     ("ModeChanged", "[old: string, new: string]"),
-    ("BufferCreated", "[buffer: number, kind: \"pdf\" | \"terminal\" | \"input\"]"),
+    ("BufferCreated", "[buffer: number, kind: PaneKind]"),
+    ("BufferDeletePre", "[buffer: number]"),
     ("BufferDeleted", "[buffer: number]"),
-    ("BufferHidden", "[buffer: number, kind: \"pdf\" | \"terminal\" | \"input\"]"),
+    ("BufferHidden", "[buffer: number, kind: PaneKind]"),
     ("InputChanged", "[buffer: number, text: string]"),
 ];
 
@@ -247,9 +251,16 @@ declare module "temzdf" {{
   export interface Events {{
 {events}  }}
   /** Run `fn` when `event` happens (synchronously, as Vim's autocmds). */
+  /** What a "before" hook (PaneClosePre, BufferDeletePre, SessionEndPre) may answer: cancel the operation, saying why (to whoever asked). */
+  export interface HookAnswer {{
+    cancel?: boolean;
+    reason?: string;
+  }}
+  /** The kinds of panes and buffers. */
+  export type PaneKind = "pdf" | "terminal" | "input" | "edit";
   export function on<E extends keyof Events>(
     event: E,
-    fn: (...args: Events[E]) => void,
+    fn: (...args: Events[E]) => void | HookAnswer,
     options?: {{ nested?: boolean }},
   ): void;
 

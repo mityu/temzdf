@@ -160,7 +160,7 @@ impl Env {
 impl Drop for Env {
     fn drop(&mut self) {
         // End whatever server a failed test left running.
-        let _ = self.command().arg("kill-all-sessions").output();
+        let _ = self.command().args(["kill-all-sessions", "--force"]).output();
     }
 }
 
@@ -1710,4 +1710,54 @@ fn a_file_that_does_not_exist_opens_as_a_new_text_file() {
     let out = env.command().arg(env.path("missing.pdf")).output().unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("no such file"));
+}
+
+#[test]
+fn unsaved_changes_stop_the_session_ending_until_forced() {
+    let env = Env::new("text-unsaved");
+    let file = env.path("draft.txt");
+    std::fs::write(&file, "x\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "u", file.to_str().unwrap()], &env.options());
+    t.wait_text("draft.txt");
+    t.type_text("more ");
+    t.wait_text("draft.txt [+]");
+    // temzdf kill-session: refused, with the reason.
+    let out = env.command().args(["kill-session", "u"]).output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("unsaved changes in draft.txt") && err.contains("--force"), "{err}");
+    // Closing the last pane by keys: refused, said in a message.
+    t.keys(&["C-b", "x"]);
+    t.wait_text("unsaved changes in draft.txt");
+    // Deleting the buffer from the command line: refused too.
+    let out = env.command().args(["action", "-s", "u", "delete-buffer"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stderr).contains("draft.txt has unsaved changes"), "{out:?}");
+    // Forced, it ends.
+    env.run(&["kill-session", "--force", "u"]);
+    t.wait_text("[session u was killed]");
+}
+
+#[test]
+fn a_cancelling_hook_makes_the_scripts_command_fail_and_kill_session_still_ends_a_clean_session() {
+    let env = Env::new("hook-cancel");
+    env.config(
+        "config.ts",
+        r#"import { cmd, keymap, on } from "temzdf";
+on("PaneClosePre", () => ({ cancel: true, reason: "kept by a hook" }));
+keymap.add("normal", "c", () => {
+  try {
+    cmd.closePane();
+  } catch (e) {
+    console.log(`closePane: ${(e as Error).message}`);
+  }
+});
+"#,
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "h"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.keys(&["C-b", "c"]);
+    env.wait_log("h", "the refusal", |l| l.contains("closePane: kept by a hook"));
+    // Nothing unsaved: kill-session ends it as before.
+    env.run(&["kill-session", "h"]);
+    t.wait_text("[session h was killed]");
 }
