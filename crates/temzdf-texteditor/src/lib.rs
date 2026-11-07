@@ -26,7 +26,7 @@ pub use cursor::{Cursor, SelectionKind};
 pub use edit::{Change, Gravity, TextEdit, map_offset};
 pub use layout::{Glyph, GlyphKind, Layout, LayoutOptions, Row, grapheme_width};
 pub use marks::{Mark, MarkId, MarkSpec, Marks};
-pub use motion::{Class, Unit, WordChars, char_class, next_grapheme, position_of, prev_grapheme};
+pub use motion::{Class, Unit, WordChars, char_class, find_pair, next_grapheme, position_of, prev_grapheme};
 pub use render::{Drawn, Highlights, Style, render};
 pub use search::{Found, Pattern, SearchOptions, find_all, search};
 pub use text::{LineEnding, Position, Range, Text};

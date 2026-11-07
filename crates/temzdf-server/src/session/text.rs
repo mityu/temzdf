@@ -120,12 +120,24 @@ impl Session {
     /// Open `path` as text in a new pane at `spot`: the buffer already
     /// showing it if any. A missing file is a new one when `create`.
     pub(super) fn open_text(&mut self, path: &Path, spot: Spot, create: bool) -> anyhow::Result<PaneId> {
+        self.open_text_as(path, spot, create, None)
+    }
+
+    /// [`open_text`](Self::open_text) in `encoding` (an Encoding Standard
+    /// label), for a file that is not UTF-8.
+    pub(super) fn open_text_as(
+        &mut self,
+        path: &Path,
+        spot: Spot,
+        create: bool,
+        encoding: Option<&str>,
+    ) -> anyhow::Result<PaneId> {
         let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::absolute(path).unwrap_or_default());
         let existing = self.texts.iter().find(|(_, t)| t.file.as_ref().is_some_and(|f| f.path == canonical));
         let buf = match existing {
             Some((&id, _)) => id,
             None => {
-                let (text, info) = match file::read(&canonical) {
+                let (text, info) = match file::read_as(&canonical, encoding) {
                     Ok(read) => read,
                     Err(_) if create && !canonical.exists() => (
                         Text::default(),
@@ -376,7 +388,8 @@ impl Session {
     fn text_reload(&mut self, buf: BufferId) -> Result<(), String> {
         let t = self.texts.get(&buf).ok_or_else(|| format!("no text buffer {buf}"))?;
         let path = t.file.as_ref().map(|f| f.path.clone()).ok_or("the buffer has no file")?;
-        let (text, info) = file::read(&path)?;
+        let encoding = t.file.as_ref().map(|f| f.encoding.clone()).filter(|e| e != "utf-8");
+        let (text, info) = file::read_as(&path, encoding.as_deref())?;
         let pane = self.panes.iter().find_map(|(id, e)| match &e.kind {
             Kind::Text { buf: b, .. } if *b == buf => Some(*id),
             _ => None,
@@ -450,6 +463,14 @@ impl Session {
             "open-file" | "new-buffer" | "write" | "reload" => self.text_file_command(name, args),
             "highlight-pattern" => self.highlight_pattern(args),
             "highlight" => self.define_highlight(args),
+            "get-var" | "set-var" => self.var_command(name, args),
+            "set-clipboard" => {
+                let text = args.first().and_then(ScriptValue::as_str).ok_or_else(|| "what text?".to_owned());
+                text.map(|t| {
+                    self.effects.push(temzdf_scene::Effect::Copy(t.to_owned()));
+                    (ScriptValue::Null, Outcome::None)
+                })
+            }
             n if n.starts_with("text.") => self.text_primitive(&n["text.".len()..], args, count),
             _ => return None,
         };
@@ -510,6 +531,53 @@ impl Session {
         Ok((ScriptValue::Null, Outcome::Redraw))
     }
 
+    /// `getVar(scope, name, id?)`, `setVar(scope, name, value, id?)`: a
+    /// buffer's, pane's or tab page's variable (the focused one's; tabs by
+    /// number from 1), held by the server (it outlives script host
+    /// restarts), gone with its owner.
+    fn var_command(&mut self, name: &str, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
+        let scope = args.first().and_then(ScriptValue::as_str).ok_or("which scope?")?;
+        let var = args.get(1).and_then(ScriptValue::as_str).ok_or("which variable?")?.to_owned();
+        let id_arg = if name == "set-var" { args.get(3) } else { args.get(2) };
+        let id = id_arg.and_then(ScriptValue::as_num).map(|n| n as u32);
+        let owner = match scope {
+            "buffer" => {
+                let b = id.unwrap_or_else(|| self.panes.get(&self.focus).map_or(0, |e| e.buffer()));
+                self.has_buffer(b).then_some(super::VarOwner::Buffer(b))
+            }
+            "pane" => {
+                let p = id.unwrap_or(self.focus);
+                self.panes.contains_key(&p).then_some(super::VarOwner::Pane(p))
+            }
+            "tab" => {
+                let i = id.map_or(self.tab, |n| (n as usize).wrapping_sub(1));
+                self.tabs.get(i).map(|t| super::VarOwner::Tab(t.id))
+            }
+            other => return Err(format!("no scope {other:?} (buffer, pane, tab)")),
+        }
+        .ok_or_else(|| format!("no {scope} {}", id.map_or("focused".into(), |i| i.to_string())))?;
+        // Owners are never reused: forget those that went.
+        let live: Vec<super::VarOwner> =
+            self.vars.keys().map(|(o, _)| *o).filter(|o| self.var_owner_lives(*o)).collect();
+        self.vars.retain(|(o, _), _| live.contains(o));
+        if name == "get-var" {
+            return Ok((self.vars.get(&(owner, var)).cloned().unwrap_or(ScriptValue::Null), Outcome::None));
+        }
+        match args.get(2) {
+            None | Some(ScriptValue::Null) => self.vars.remove(&(owner, var)),
+            Some(v) => self.vars.insert((owner, var), v.clone()),
+        };
+        Ok((ScriptValue::Null, Outcome::None))
+    }
+
+    fn var_owner_lives(&self, o: super::VarOwner) -> bool {
+        match o {
+            super::VarOwner::Buffer(b) => self.has_buffer(b),
+            super::VarOwner::Pane(p) => self.panes.contains_key(&p),
+            super::VarOwner::Tab(t) => self.tab_index(t).is_some(),
+        }
+    }
+
     /// Drop decorations whose time is up; whether any were.
     pub(super) fn expire_decorations(&mut self, now: std::time::Instant) -> bool {
         let mut any = false;
@@ -531,7 +599,10 @@ impl Session {
             "open-file" => {
                 let path = args.first().and_then(ScriptValue::as_str).ok_or("which file?")?;
                 let known: Vec<BufferId> = self.texts.keys().copied().collect();
-                let id = self.open_text(Path::new(path), self.next_spot(), false).map_err(|e| format!("{e:#}"))?;
+                let encoding = opt_str("encoding");
+                let id = self
+                    .open_text_as(Path::new(path), self.next_spot(), false, encoding.as_deref())
+                    .map_err(|e| format!("{e:#}"))?;
                 // A buffer it made takes the base mode asked for.
                 if let Some(mode) = opt_str("basemode")
                     && let Some(Kind::Text { buf, .. }) = self.panes.get(&id).map(|e| &e.kind)
@@ -751,6 +822,26 @@ impl Session {
                 let ns = args.first().and_then(ScriptValue::as_str).ok_or("which namespace?")?.to_owned();
                 self.texts.get_mut(&buf).expect("found").buf.marks_mut().clear(&ns);
                 redrawn
+            }
+            "find-pair" => {
+                let at = arg_pos(0).map_or(cursor.pos, |p| text.offset(p));
+                let ch =
+                    |k: &str| opts.and_then(|o| o.get(k)).and_then(ScriptValue::as_str).and_then(|s| s.chars().next());
+                let (open, close) = (ch("open").unwrap_or('('), ch("close").unwrap_or(')'));
+                let dir = match opts.and_then(|o| o.get("direction")).and_then(ScriptValue::as_str) {
+                    Some("forward") => Some(true),
+                    Some("backward") => Some(false),
+                    _ => None,
+                };
+                let found = temzdf_texteditor::find_pair(text, at, open, close, dir);
+                none(found.map_or(ScriptValue::Null, |o| position_value(text.position(o))))
+            }
+            "wordchars" => none(ScriptValue::Str(t.buf.wordchars.class().to_owned())),
+            "set-wordchars" => {
+                let class = args.first().and_then(ScriptValue::as_str).ok_or("which class?")?;
+                let w = temzdf_texteditor::WordChars::new(class)?;
+                self.texts.get_mut(&buf).expect("found").buf.wordchars = w;
+                none(ScriptValue::Null)
             }
             "visible-range" => {
                 let (a, b) = tv.view.visible_range(text);
@@ -981,8 +1072,8 @@ fn camel(name: &str) -> String {
 pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "open-file",
-        "(path: string, opts?: { basemode?: string }): number",
-        "Open a file as text in a new pane (its buffer if it is open); returns the pane. `basemode`: the base mode of panes on a buffer made now",
+        "(path: string, opts?: { basemode?: string, encoding?: string }): number",
+        "Open a file as text in a new pane (its buffer if it is open); returns the pane. `basemode`: the base mode of panes on a buffer made now; `encoding`: an Encoding Standard label (shift_jis, euc-jp, ...) for a file that is not UTF-8 (nothing is guessed), written back in it",
     ),
     (
         "new-buffer",
@@ -1039,6 +1130,28 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
         "(pattern: string, opts?: { range?: Range, group?: number, word?: boolean, pane?: number }): { range: Range, groups: (Range | null)[] }[]",
         "Every match in a range (the whole text)",
     ),
+    (
+        "text.find-pair",
+        "(at?: Position, opts?: { open?: string, close?: string, direction?: \"forward\" | \"backward\", pane?: number }): Position | null",
+        "The matching bracket (Vim's %; ( and ) by default): from one on `open` forward, on `close` backward; with `direction`, the enclosing one that way. Nesting counts; strings and comments do not",
+    ),
+    ("text.wordchars", "(opts?: { pane?: number }): string", "The buffer's word characters, a regex character class"),
+    (
+        "text.set-wordchars",
+        "(chars: string, opts?: { pane?: number }): void",
+        "Set the buffer's word characters (Vim's iskeyword): one regex character class, e.g. [\\p{L}\\p{N}_]",
+    ),
+    (
+        "get-var",
+        "(scope: \"buffer\" | \"pane\" | \"tab\", name: string, id?: number): unknown",
+        "A buffer's, pane's or tab page's variable (Vim's b:, w:, t:; the focused one's; tabs by number from 1); null when unset",
+    ),
+    (
+        "set-var",
+        "(scope: \"buffer\" | \"pane\" | \"tab\", name: string, value: unknown, id?: number): void",
+        "Set one (JSON values; null unsets it). Held by the server: it outlives script host restarts and goes with its owner",
+    ),
+    ("set-clipboard", "(text: string): void", "Put text on the clipboard (in the client)"),
     (
         "text.add-decoration",
         "(range: Range, opts?: { style?: string, namespace?: string, priority?: number, showIn?: number, startGravity?: \"before\" | \"after\", endGravity?: \"before\" | \"after\", ttl?: number, pane?: number }): number",

@@ -416,7 +416,9 @@ A file opens as text unless its extension is `.pdf` (`temzdf FILE`,
 empty), or with `openFile(path, { basemode? })`, which returns the pane.
 `newBuffer({ text?, path?, basemode? })` makes a text buffer without a
 pane (returns it; show it as any buffer). Files are UTF-8 (a BOM kept);
-binary files and others are refused. Line endings stay as read (CRLF
+binary files are refused, and so are others unless named:
+`openFile(path, { encoding: "shift_jis" })` (Encoding Standard labels;
+nothing is guessed) reads one, and writing keeps its encoding. Line endings stay as read (CRLF
 files are LF inside), and `write({ path?, force?, buffer? })` writes the
 focused pane's buffer to a temporary file renamed over the file (its
 permissions kept, a symlink's target written); a file changed on disk
@@ -486,6 +488,13 @@ JavaScript strings index; out of range is clamped), ranges
   or `"default"`; built in: `Selection`, `Search`, `IncSearch`,
   `CursorLine`, `LineNr`, `CursorLineNr`, `NonText`, `SpecialKey`,
   `CursorUnfocused`;
+- smaller ones: `text.findPair(at?, { open?, close?, direction? })` (Vim's
+  `%`, nesting counted), `text.wordchars()` and
+  `text.setWordChars(class)` (a buffer's word characters, a regex class:
+  Vim's `iskeyword`), `getVar(scope, name, id?)` and
+  `setVar(scope, name, value, id?)` (`"buffer"`, `"pane"`, `"tab"`: Vim's
+  `b:`, `w:`, `t:`; JSON values, kept by the server, gone with their
+  owner), `setClipboard(text)`;
 - undo: `text.undo()` and `text.redo()` (return the changed ranges; the
   cursor goes back where the step started), `text.undoBegin()` /
   `text.undoEnd()` (one step across mappings, e.g. a Vim Insert session),

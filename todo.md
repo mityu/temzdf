@@ -114,9 +114,10 @@ server on one `Session`). Next and open:
   drag, wheel). Also built: the events and hooks of sections 9 and 10
   (invocations, `TextChanged`, `KeyTyped`, `schedule`, hooks that only
   read, cancelling "before" hooks and unsaved changes,
-  `FileChangedOnDisk` and `reload`). Next (step 6 of the plan): search, `highlightPattern`, decorations for
-  scripts, highlight groups for scripts, encodings, `wordchars`,
-  `findPair`, variables and `copy`. Deferred there:
+  `FileChangedOnDisk` and `reload`), search and `highlightPattern`,
+  decorations and highlight groups for scripts, named encodings,
+  `wordchars`, `findPair`, variables and `setClipboard`. Next: the Vim
+  mode (being written). Deferred there:
   - `getchar()`/`input()`-like reading (`readKey`, `await` in
     asynchronous mappings; the user wants `input()`-driven operations
     such as sandwich.vim's function surround later);

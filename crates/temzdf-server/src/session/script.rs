@@ -1326,6 +1326,9 @@ const QUERIES: &[&str] = &[
     "text.search-all",
     "text.decoration",
     "text.decorations",
+    "text.find-pair",
+    "text.wordchars",
+    "get-var",
 ];
 
 fn read_only(op: &HostOp) -> bool {

@@ -421,6 +421,8 @@ pub struct Session {
     texts: HashMap<BufferId, text::TextEntry>,
     /// Highlight groups for text panes (scripts define them).
     highlights: temzdf_texteditor::Highlights,
+    /// Buffer, pane and tab page variables (`getVar`, `setVar`).
+    vars: HashMap<(VarOwner, String), ScriptValue>,
     /// `highlightPattern`: (namespace, pattern, style), painted in text panes.
     patterns: Vec<(String, temzdf_texteditor::Pattern, String)>,
     /// While a `temzdf action` request waits for the scripts it started:
@@ -506,6 +508,7 @@ impl Session {
             texts: HashMap::new(),
             highlights: temzdf_texteditor::Highlights::default(),
             patterns: Vec::new(),
+            vars: HashMap::new(),
             invocation: 0,
             cli_cancel: None,
             killed: false,
@@ -2482,6 +2485,14 @@ impl Session {
 /// (operating), `terminal` (pass-through), `pdf`, `input` and `edit`
 /// (pass-through: typed characters go in) and `visual` (a terminal's visual mode, entered
 /// from the others; see [`Session::mode_changed`]).
+/// Who a variable belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum VarOwner {
+    Buffer(BufferId),
+    Pane(PaneId),
+    Tab(tabs::TabId),
+}
+
 /// What an invocation runs.
 pub(super) enum Invoked {
     /// A mapping's right-hand side (or `invoke`'s target), and when its
@@ -4982,6 +4993,54 @@ mod tests {
         let due = s.next_deadline().unwrap();
         assert_eq!(s.poll(due + Duration::from_millis(1)), Outcome::Redraw);
         assert_eq!(s.frame().text[0].rows[0][0].bg, temzdf_scene::Color::Default);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn encodings_pairs_word_characters_variables_and_the_clipboard() {
+        let (mut s, path) = text_session("misc.txt", "f(a, (b))\nfoo-bar\n");
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
+            s.run_command(name, args, None, Instant::now()).unwrap().0
+        };
+        let str = |v: &str| ScriptValue::Str(v.into());
+        // A Shift_JIS file, named.
+        let sjis = path.parent().unwrap().join("sjis.txt");
+        std::fs::write(&sjis, b"\x82\xa0\n").unwrap();
+        assert!(s.run_command("open-file", &[str(sjis.to_str().unwrap())], None, Instant::now()).is_err());
+        let o = ScriptValue::map([("encoding", str("shift_jis"))]);
+        run(&mut s, "open-file", &[str(sjis.to_str().unwrap()), o]);
+        assert_eq!(text_of(&mut s), "あ\n");
+        key(&mut s, "い");
+        cmd(&mut s, "write", &[], None).unwrap();
+        assert_eq!(std::fs::read(&sjis).unwrap(), b"\x82\xa2\x82\xa0\n", "written back in Shift_JIS");
+        cmd(&mut s, "close-pane", &[], None).unwrap();
+        // Brackets.
+        let p = run(&mut s, "text.find-pair", &[pos(0, 1)]);
+        assert_eq!(p, pos(0, 8));
+        let inner = ScriptValue::map([("direction", str("backward"))]);
+        assert_eq!(run(&mut s, "text.find-pair", &[pos(0, 7), inner]), pos(0, 5));
+        // Word characters per buffer.
+        run(&mut s, "text.set-cursor", &[pos(1, 0)]);
+        run(&mut s, "text.set-wordchars", &[str(r"[\p{L}\p{N}_-]")]);
+        run(&mut s, "text.move", &[str("wordEnd")]);
+        assert_eq!(cursor_of(&mut s), (1, 7), "foo-bar is one word now");
+        assert!(s.run_command("text.set-wordchars", &[str("[")], None, Instant::now()).is_err());
+        // Variables, kept by the server, gone with their owner.
+        run(&mut s, "set-var", &[str("buffer"), str("x"), ScriptValue::Num(3.0)]);
+        run(&mut s, "set-var", &[str("pane"), str("y"), str("p")]);
+        assert_eq!(run(&mut s, "get-var", &[str("buffer"), str("x")]), ScriptValue::Num(3.0));
+        assert_eq!(run(&mut s, "get-var", &[str("pane"), str("y")]), str("p"));
+        assert_eq!(run(&mut s, "get-var", &[str("tab"), str("y")]), ScriptValue::Null);
+        let (pane, _) = s.run_command("split", &[], None, Instant::now()).unwrap();
+        let pane = pane.as_num().unwrap();
+        assert_eq!(run(&mut s, "get-var", &[str("pane"), str("y")]), ScriptValue::Null, "the new pane's own");
+        cmd(&mut s, "close-pane", &[], None).unwrap();
+        assert!(
+            s.run_command("get-var", &[str("pane"), str("y"), ScriptValue::Num(pane)], None, Instant::now()).is_err()
+        );
+        run(&mut s, "set-clipboard", &[str("copied")]);
+        assert!(s.take_effects().contains(&temzdf_scene::Effect::Copy("copied".into())));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

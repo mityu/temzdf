@@ -25,19 +25,40 @@ const SNIFF: usize = 8192;
 
 /// Read `path`: its text (LF inside) and what writing it back needs.
 pub fn read(path: &Path) -> Result<(Text, FileInfo), String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    if bytes[..bytes.len().min(SNIFF)].contains(&0) {
-        return Err(format!("{}: a binary file", path.display()));
-    }
-    let s = std::str::from_utf8(&bytes)
-        .map_err(|_| format!("{}: not UTF-8 (open it naming its encoding)", path.display()))?;
-    let (s, bom) = match s.strip_prefix('\u{feff}') {
-        Some(rest) => (rest, true),
-        None => (s, false),
+    read_as(path, None)
+}
+
+/// [`read`], in `encoding` (an Encoding Standard label: "shift_jis",
+/// "euc-jp", ...) rather than UTF-8. Nothing is guessed: text that is not
+/// valid in the encoding is an error, not replaced.
+pub fn read_as(path: &Path, encoding: Option<&str>) -> Result<(Text, FileInfo), String> {
+    let shown = path.display();
+    let bytes = std::fs::read(path).map_err(|e| format!("{shown}: {e}"))?;
+    let enc = match encoding {
+        Some(label) => {
+            encoding_rs::Encoding::for_label(label.as_bytes()).ok_or_else(|| format!("{label:?}: no such encoding"))?
+        }
+        None => encoding_rs::UTF_8,
     };
-    let (text, line_ending) = Text::from_file_text(s);
+    // UTF-16 has NUL bytes; anything else with one is binary.
+    if enc != encoding_rs::UTF_16LE && enc != encoding_rs::UTF_16BE && bytes[..bytes.len().min(SNIFF)].contains(&0) {
+        return Err(format!("{shown}: a binary file"));
+    }
+    let (body, bom) = match encoding_rs::Encoding::for_bom(&bytes) {
+        Some((e, len)) if e == enc => (&bytes[len..], true),
+        _ => (&bytes[..], false),
+    };
+    let s = enc.decode_without_bom_handling_and_without_replacement(body).ok_or_else(|| {
+        if encoding.is_none() {
+            format!("{shown}: not UTF-8 (open it naming its encoding)")
+        } else {
+            format!("{shown}: not valid {}", enc.name())
+        }
+    })?;
+    let (text, line_ending) = Text::from_file_text(&s);
     let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
-    Ok((text, FileInfo { path: path.to_owned(), bom, encoding: "utf-8".into(), line_ending, mtime }))
+    let encoding = enc.name().to_ascii_lowercase();
+    Ok((text, FileInfo { path: path.to_owned(), bom, encoding, line_ending, mtime }))
 }
 
 /// Write `text` to `info.path` (or the file a symlink there points to):
@@ -56,11 +77,30 @@ pub fn write(text: &Text, info: &FileInfo, force: bool) -> Result<Option<SystemT
     {
         return Err(format!("{shown}: changed on disk since it was read (write with force to replace it)"));
     }
+    let body = text.to_file_text(info.line_ending);
+    let enc = encoding_rs::Encoding::for_label(info.encoding.as_bytes()).unwrap_or(encoding_rs::UTF_8);
     let mut bytes = Vec::new();
+    let encoded: Vec<u8> = if enc == encoding_rs::UTF_8 {
+        body.into_bytes()
+    } else if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
+        // encoding_rs encodes nothing into UTF-16: by hand.
+        let be = enc == encoding_rs::UTF_16BE;
+        body.encode_utf16().flat_map(|u| if be { u.to_be_bytes() } else { u.to_le_bytes() }).collect()
+    } else {
+        let (out, _, unmappable) = enc.encode(&body);
+        if unmappable {
+            return Err(format!("{shown}: the text has characters {} cannot hold", enc.name()));
+        }
+        out.into_owned()
+    };
     if info.bom {
-        bytes.extend_from_slice("\u{feff}".as_bytes());
+        bytes.extend_from_slice(match enc.name() {
+            "UTF-16LE" => &[0xff, 0xfe][..],
+            "UTF-16BE" => &[0xfe, 0xff][..],
+            _ => "\u{feff}".as_bytes(),
+        });
     }
-    bytes.extend_from_slice(text.to_file_text(info.line_ending).as_bytes());
+    bytes.extend_from_slice(&encoded);
     let dir = target.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let tmp = dir.join(format!(".{name}.temzdf-{}.tmp", std::process::id()));
@@ -106,6 +146,25 @@ mod tests {
         assert!(info.bom && info.line_ending == LineEnding::CrLf);
         info.mtime = write(&Text::from("one\nthree\n"), &info, false).unwrap();
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "\u{feff}one\r\nthree\r\n");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn other_encodings_are_read_and_written_when_named() {
+        let d = dir("encodings");
+        let p = d.join("sjis.txt");
+        // 「あ」 in Shift_JIS, CRLF.
+        std::fs::write(&p, b"\x82\xa0\r\n").unwrap();
+        assert!(read(&p).unwrap_err().contains("not UTF-8"));
+        let (text, mut info) = read_as(&p, Some("shift_jis")).unwrap();
+        assert_eq!((text.to_string().as_str(), info.encoding.as_str()), ("あ\n", "shift_jis"));
+        info.mtime = write(&Text::from("あい\n"), &info, false).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"\x82\xa0\x82\xa2\r\n");
+        let e = write(&Text::from("😀\n"), &info, true).unwrap_err();
+        assert!(e.contains("cannot hold"), "{e}");
+        assert!(read_as(&p, Some("euc-jp")).unwrap_err().contains("not valid EUC-JP"));
+        assert!(read_as(&p, Some("klingon")).is_err());
         let _ = std::fs::remove_dir_all(d);
     }
 

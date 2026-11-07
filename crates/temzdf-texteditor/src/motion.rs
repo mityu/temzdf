@@ -257,6 +257,37 @@ pub fn position_of(text: &Text, from: usize, unit: Unit, count: i64, words: &Wor
     }
 }
 
+/// The matching bracket (Vim's `%`): from `at` on `open`, forward to its
+/// `close`; on `close`, back to its `open`; with `forward` given, the
+/// enclosing one that way. Nesting counts; strings and comments do not.
+pub fn find_pair(text: &Text, at: usize, open: char, close: char, forward: Option<bool>) -> Option<usize> {
+    let here = text.char_at(at);
+    let (forward, mut o) = match forward {
+        Some(f) => (f, if f { at } else { at.checked_sub(1)? }),
+        None if here == Some(open) => (true, at + 1),
+        None if here == Some(close) => (false, at.checked_sub(1)?),
+        None => return None,
+    };
+    let (inner, outer) = if forward { (open, close) } else { (close, open) };
+    let mut depth = 0usize;
+    loop {
+        let c = text.char_at(o)?;
+        if c == outer {
+            if depth == 0 {
+                return Some(o);
+            }
+            depth -= 1;
+        } else if c == inner {
+            depth += 1;
+        }
+        if forward {
+            o += 1;
+        } else {
+            o = o.checked_sub(1)?;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,6 +338,18 @@ mod tests {
         assert_eq!(position_of(&t, 6, Unit::LineStart, 1, &w), 0);
         assert_eq!(position_of(&t, 1, Unit::LineEnd, 1, &w), 8);
         assert_eq!(position_of(&t, 1, Unit::DocumentEnd, 1, &w), 10);
+    }
+
+    #[test]
+    fn pairs_count_nesting() {
+        let t = Text::from("f(a, (b), c)");
+        assert_eq!(find_pair(&t, 1, '(', ')', None), Some(11));
+        assert_eq!(find_pair(&t, 11, '(', ')', None), Some(1));
+        assert_eq!(find_pair(&t, 7, '(', ')', None), Some(5));
+        assert_eq!(find_pair(&t, 9, '(', ')', Some(false)), Some(1), "the enclosing one");
+        assert_eq!(find_pair(&t, 3, '(', ')', Some(true)), Some(11));
+        assert_eq!(find_pair(&t, 2, '(', ')', None), None, "not on a bracket");
+        assert_eq!(find_pair(&Text::from("(("), 0, '(', ')', None), None);
     }
 
     #[test]

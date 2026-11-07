@@ -416,6 +416,11 @@ Decided with the user on 2026-11-07, before building:
 - `defer(fn)` of section 10 is **`schedule(fn)`** **(user renamed it)**:
   Go's `defer` runs in reverse order; these run in the order scheduled.
   At the safe point the scheduled functions run before `InvokePost`.
+- `copy(text, { primary })` of section 15 is `setClipboard(text)` (`copy`
+  is the PDF pane's command); the primary selection needs the protocol's
+  `Effect::Copy` to carry it, and waits.
+- Searching, `^` and `$` match at lines (multi-line mode); `\A` and `\z`
+  at the text's ends.
 - `KeyTyped` hooks run before the key is matched: the key waits for them.
   `invoke` runs a target as part of what runs now, without invocation
   events of its own; the mouse is not an invocation yet.
