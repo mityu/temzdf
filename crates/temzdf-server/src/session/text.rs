@@ -148,6 +148,11 @@ impl Session {
                 self.add_text_buffer(text, Some(info))
             }
         };
+        // Into an existing pane (`:e`): it shows the buffer instead.
+        if let Spot::Replace(pane) = spot {
+            self.show_in(pane, buf).map_err(anyhow::Error::msg)?;
+            return Ok(pane);
+        }
         let id = self.alloc_id();
         let focus = self.takes_focus(&spot);
         let rect = self.place(id, spot)?;
@@ -600,8 +605,10 @@ impl Session {
                 let path = args.first().and_then(ScriptValue::as_str).ok_or("which file?")?;
                 let known: Vec<BufferId> = self.texts.keys().copied().collect();
                 let encoding = opt_str("encoding");
+                let into = opts.and_then(|o| o.get("pane")).and_then(ScriptValue::as_num);
+                let spot = into.map_or_else(|| self.next_spot(), |p| Spot::Replace(p as PaneId));
                 let id = self
-                    .open_text_as(Path::new(path), self.next_spot(), false, encoding.as_deref())
+                    .open_text_as(Path::new(path), spot, false, encoding.as_deref())
                     .map_err(|e| format!("{e:#}"))?;
                 // A buffer it made takes the base mode asked for.
                 if let Some(mode) = opt_str("basemode")
@@ -919,10 +926,14 @@ impl Session {
             }
             "set-cursor" => {
                 let at = text.offset(arg_pos(0).ok_or("where?")?);
-                let select = flag("select");
+                let (select, keep) = (flag("select"), flag("keepColumn"));
                 let text = self.texts[&buf].buf.text();
                 if let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) {
+                    let want = view.view.cursor.want_col;
                     view.view.set_cursor(text, at, select);
+                    if keep {
+                        view.view.cursor.want_col = want;
+                    }
                 }
                 redrawn
             }
@@ -1072,8 +1083,8 @@ fn camel(name: &str) -> String {
 pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "open-file",
-        "(path: string, opts?: { basemode?: string, encoding?: string }): number",
-        "Open a file as text in a new pane (its buffer if it is open); returns the pane. `basemode`: the base mode of panes on a buffer made now; `encoding`: an Encoding Standard label (shift_jis, euc-jp, ...) for a file that is not UTF-8 (nothing is guessed), written back in it",
+        "(path: string, opts?: { basemode?: string, encoding?: string, pane?: number }): number",
+        "Open a file as text in a new pane (its buffer if it is open); returns the pane. `basemode`: the base mode of panes on a buffer made now; `encoding`: an Encoding Standard label (shift_jis, euc-jp, ...) for a file that is not UTF-8 (nothing is guessed), written back in it; `pane`: show it in that pane instead (Vim's :e)",
     ),
     (
         "new-buffer",
@@ -1209,8 +1220,8 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "text.set-cursor",
-        "(pos: Position, opts?: { select?: boolean, pane?: number }): void",
-        "Put the cursor at a position",
+        "(pos: Position, opts?: { select?: boolean, keepColumn?: boolean, pane?: number }): void",
+        "Put the cursor at a position; `keepColumn` keeps the column vertical moves aim for (Vim's cursor kept off a line's end)",
     ),
     (
         "text.set-selection",

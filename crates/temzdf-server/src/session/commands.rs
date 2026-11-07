@@ -141,7 +141,7 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("current-mode", "(): string", "The current mode's name"),
     (
         "panes",
-        "(): { id: number; kind: \"pdf\" | \"terminal\" | \"input\"; buffer: number; focused: boolean; floating: boolean; tab: number | null; rect: { col: number; row: number; width: number; height: number } }[]",
+        "(): { id: number; kind: PaneKind; buffer: number; focused: boolean; floating: boolean; tab: number | null; rect: { col: number; row: number; width: number; height: number } }[]",
         "The panes of every tab (tab: its index from 1, null for a float on all tabs; rect: the content, in cells)",
     ),
     ("focused-pane", "(): number | null", "The focused pane's id"),

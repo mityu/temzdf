@@ -74,6 +74,9 @@ pub enum Unit {
     /// Just after the end of a word (Vim's `e` is one grapheme before;
     /// backwards `ge`).
     WordEnd,
+    /// The same for blank-separated words (Vim's `W`, `B`, `E`, `gE`).
+    BigWordStart,
+    BigWordEnd,
     LineStart,
     /// The first character that is not a blank.
     FirstNonBlank,
@@ -88,6 +91,8 @@ impl Unit {
             "grapheme" => Unit::Grapheme,
             "wordStart" => Unit::WordStart,
             "wordEnd" => Unit::WordEnd,
+            "bigWordStart" => Unit::BigWordStart,
+            "bigWordEnd" => Unit::BigWordEnd,
             "lineStart" => Unit::LineStart,
             "firstNonBlank" => Unit::FirstNonBlank,
             "lineEnd" => Unit::LineEnd,
@@ -147,9 +152,13 @@ pub fn prev_grapheme(text: &Text, offset: usize) -> usize {
 }
 
 /// A line break counts as a blank between words, and an empty line as a
-/// word of its own (Vim stops there).
-fn class_at(text: &Text, offset: usize, words: &WordChars) -> Option<Class> {
-    text.char_at(offset).map(|c| if c == '\n' { Class::Blank } else { char_class(c, words) })
+/// word of its own (Vim stops there). `big`: every non-blank is one class.
+fn class_of(text: &Text, offset: usize, words: &WordChars, big: bool) -> Option<Class> {
+    text.char_at(offset).map(|c| match c {
+        '\n' => Class::Blank,
+        c if big && !c.is_whitespace() => Class::Punct,
+        c => char_class(c, words),
+    })
 }
 
 fn empty_line_at(text: &Text, offset: usize) -> bool {
@@ -157,7 +166,8 @@ fn empty_line_at(text: &Text, offset: usize) -> bool {
     text.line_start(line) == offset && text.line_end(line) == offset
 }
 
-fn word_start_forward(text: &Text, mut at: usize, words: &WordChars) -> usize {
+fn word_start_forward(text: &Text, mut at: usize, words: &WordChars, big: bool) -> usize {
+    let class_at = |t: &Text, o: usize, w: &WordChars| class_of(t, o, w, big);
     let len = text.len_chars();
     let first = class_at(text, at, words);
     // Leave the current word.
@@ -176,7 +186,8 @@ fn word_start_forward(text: &Text, mut at: usize, words: &WordChars) -> usize {
     at
 }
 
-fn word_start_backward(text: &Text, mut at: usize, words: &WordChars) -> usize {
+fn word_start_backward(text: &Text, mut at: usize, words: &WordChars, big: bool) -> usize {
+    let class_at = |t: &Text, o: usize, w: &WordChars| class_of(t, o, w, big);
     while at > 0 && class_at(text, at - 1, words) == Some(Class::Blank) {
         at -= 1;
         if empty_line_at(text, at) && at > 0 {
@@ -193,7 +204,8 @@ fn word_start_backward(text: &Text, mut at: usize, words: &WordChars) -> usize {
     at
 }
 
-fn word_end_forward(text: &Text, mut at: usize, words: &WordChars) -> usize {
+fn word_end_forward(text: &Text, mut at: usize, words: &WordChars, big: bool) -> usize {
+    let class_at = |t: &Text, o: usize, w: &WordChars| class_of(t, o, w, big);
     let len = text.len_chars();
     while at < len && class_at(text, at, words) == Some(Class::Blank) {
         at += 1;
@@ -205,7 +217,8 @@ fn word_end_forward(text: &Text, mut at: usize, words: &WordChars) -> usize {
     at
 }
 
-fn word_end_backward(text: &Text, mut at: usize, words: &WordChars) -> usize {
+fn word_end_backward(text: &Text, mut at: usize, words: &WordChars, big: bool) -> usize {
+    let class_at = |t: &Text, o: usize, w: &WordChars| class_of(t, o, w, big);
     // Leave the word the position is in or just after.
     if at > 0
         && let Some(c) = class_at(text, at - 1, words).filter(|c| *c != Class::Blank)
@@ -236,16 +249,20 @@ pub fn position_of(text: &Text, from: usize, unit: Unit, count: i64, words: &Wor
         }
         Unit::DocumentStart => 0,
         Unit::DocumentEnd => text.len_chars(),
-        Unit::Grapheme | Unit::WordStart | Unit::WordEnd => {
+        Unit::Grapheme | Unit::WordStart | Unit::WordEnd | Unit::BigWordStart | Unit::BigWordEnd => {
             let mut at = from;
             for _ in 0..n {
                 let next = match (unit, back) {
                     (Unit::Grapheme, false) => next_grapheme(text, at),
                     (Unit::Grapheme, true) => prev_grapheme(text, at),
-                    (Unit::WordStart, false) => word_start_forward(text, at, words),
-                    (Unit::WordStart, true) => word_start_backward(text, at, words),
-                    (Unit::WordEnd, false) => word_end_forward(text, at, words),
-                    (_, _) => word_end_backward(text, at, words),
+                    (Unit::WordStart, false) => word_start_forward(text, at, words, false),
+                    (Unit::WordStart, true) => word_start_backward(text, at, words, false),
+                    (Unit::WordEnd, false) => word_end_forward(text, at, words, false),
+                    (Unit::WordEnd, true) => word_end_backward(text, at, words, false),
+                    (Unit::BigWordStart, false) => word_start_forward(text, at, words, true),
+                    (Unit::BigWordStart, true) => word_start_backward(text, at, words, true),
+                    (Unit::BigWordEnd, false) => word_end_forward(text, at, words, true),
+                    (_, _) => word_end_backward(text, at, words, true),
                 };
                 if next == at {
                     break;
@@ -338,6 +355,12 @@ mod tests {
         assert_eq!(position_of(&t, 6, Unit::LineStart, 1, &w), 0);
         assert_eq!(position_of(&t, 1, Unit::LineEnd, 1, &w), 8);
         assert_eq!(position_of(&t, 1, Unit::DocumentEnd, 1, &w), 10);
+    }
+
+    #[test]
+    fn big_words_are_blank_separated() {
+        assert_eq!(walk("foo.bar  baz-q x", Unit::BigWordStart, 1), vec![0, 9, 15, 16]);
+        assert_eq!(walk("foo.bar  baz", Unit::BigWordEnd, -1), vec![12, 7, 0]);
     }
 
     #[test]
