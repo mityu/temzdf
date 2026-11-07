@@ -1182,6 +1182,7 @@ impl Session {
             "tabstop" => o.text.layout.tabstop = (num()? as usize).clamp(1, 64),
             "cursorline" => o.text.cursorline = flag()?,
             "scrolloff" => o.text.scrolloff = num()? as usize,
+            "undofile" => o.undofile = flag()?,
             "number" => {
                 o.text.number = super::text::number_mode(value.as_str())
                     .ok_or("o.number: expected \"off\", \"absolute\", \"relative\" or \"both\"")?;
@@ -1242,6 +1243,7 @@ impl Session {
             "tabstop" => ScriptValue::Num(o.text.layout.tabstop as f64),
             "cursorline" => ScriptValue::Bool(o.text.cursorline),
             "scrolloff" => ScriptValue::Num(o.text.scrolloff as f64),
+            "undofile" => ScriptValue::Bool(o.undofile),
             "number" => ScriptValue::Str(
                 match o.text.number {
                     temzdf_texteditor::NumberMode::Off => "off",

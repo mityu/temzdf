@@ -105,6 +105,65 @@ impl TextView {
     }
 }
 
+/// Where text buffers' undo files go (o.undofile):
+/// `$XDG_STATE_HOME/temzdf/undo`, else `~/.local/state/temzdf/undo` (the
+/// clients' state directory).
+pub(super) fn undo_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+    Some(base.join("temzdf").join("undo"))
+}
+
+/// The undo file of `file` in `dir` (its path hashed; the file names the
+/// path inside too, so a collision is no mistake).
+pub(super) fn undo_file_of(dir: &Path, file: &Path) -> PathBuf {
+    let name = temzdf_texteditor::fnv1a(file.as_os_str().as_encoded_bytes().iter().copied());
+    dir.join(format!("{name}.json"))
+}
+
+/// Write `buf`'s undo tree as the undo file of `file` (just saved): only the
+/// user may read it (deleted text is in it), and it is replaced whole.
+fn write_undo_file(dir: Option<&Path>, buf: &Buffer, file: &Path) -> Result<(), String> {
+    use std::io::Write;
+    let dir = dir.ok_or("no state directory (HOME and XDG_STATE_HOME unset)")?;
+    let path = undo_file_of(dir, file);
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let json = buf.undo_tree().to_file(buf.text(), file);
+    let tmp = path.with_extension("json.tmp");
+    let mut open = std::fs::OpenOptions::new();
+    open.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
+    let written = open.open(&tmp).and_then(|mut f| f.write_all(json.as_bytes()).and_then(|()| f.sync_all()));
+    written.and_then(|()| std::fs::rename(&tmp, &path)).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("{}: {e}", path.display())
+    })
+}
+
+/// The undo tree kept for `file`, read as `text`; none when there is none,
+/// or it is for other text (changed elsewhere since) or broken (said in the
+/// log).
+fn read_undo_file(dir: Option<&Path>, text: &Text, file: &Path) -> Option<temzdf_texteditor::UndoTree> {
+    let path = undo_file_of(dir?, file);
+    let json = std::fs::read_to_string(&path).ok()?;
+    match temzdf_texteditor::UndoTree::from_file(&json, text, file) {
+        Ok(tree) => Some(tree),
+        Err(e) => {
+            if !e.contains("changed since") {
+                eprintln!("temzdf: {}: {e}", path.display());
+            }
+            None
+        }
+    }
+}
+
 /// A number column's mode by name.
 pub(super) fn number_mode(name: Option<&str>) -> Option<temzdf_texteditor::NumberMode> {
     use temzdf_texteditor::NumberMode;
@@ -218,7 +277,17 @@ impl Session {
                     ),
                     Err(e) => anyhow::bail!(e),
                 };
-                self.add_text_buffer(text, Some(info))
+                // Its undo tree, kept when it was written (o.undofile).
+                let undo = self
+                    .options
+                    .undofile
+                    .then(|| read_undo_file(self.undo_dir.as_deref(), &text, &info.path))
+                    .flatten();
+                let buf = self.add_text_buffer(text, Some(info));
+                if let Some(tree) = undo {
+                    *self.texts.get_mut(&buf).expect("made").buf.undo_tree_mut() = tree;
+                }
+                buf
             }
         };
         // Into an existing pane (`:e`): it shows the buffer instead.
@@ -441,8 +510,16 @@ impl Session {
         t.name = name_of(Some(&info.path));
         t.file = Some(info);
         t.buf.undo_tree_mut().mark_saved();
+        // Its undo tree beside it (o.undofile): a failure there is said,
+        // the file is written all the same.
+        let undo = (self.options.undofile && !t.has("nofile"))
+            .then(|| t.file.as_ref().map(|f| write_undo_file(self.undo_dir.as_deref(), &t.buf, &f.path)))
+            .flatten();
         // Its file may be another one now.
         self.watch_text(buf);
+        if let Some(Err(e)) = undo {
+            self.message(&format!("undo file: {e}"));
+        }
         Ok(())
     }
 

@@ -284,6 +284,8 @@ declare module "temzdf" {{
     cursorline: boolean;
     /** Rows kept between the cursor and the top or bottom of text panes. */
     scrolloff: number;
+    /** Keep text buffers' undo trees in files (written with the file, read back when it is opened). */
+    undofile: boolean;
   }}
   export const o: Options;
 

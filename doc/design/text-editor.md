@@ -160,6 +160,15 @@ Following VS Code **(user)**:
   change (in the pane that ran it), and `undo()` returns the changed ranges
   (a Vim script moves to their start).
 - The saved state is remembered: undoing back to it clears "modified".
+- Kept in files (`o.undofile`, 2026-11-08; off by default **(user)**:
+  deleted text, a removed password too, stays in them): written when the
+  buffer is written, only then **(user)**, as Vim's undofile, read back
+  when its file is opened again (`undofile.rs`: JSON, versioned; every
+  node, its changes and cursors, the saved state; refused for another path
+  or text other than what was written, a FNV-1a of it; it starts at the
+  saved state). The marks a step collapsed and the panes are not kept.
+  `$XDG_STATE_HOME/temzdf/undo/<FNV-1a of the path>.json`, 0600 in a 0700
+  directory, written to a temporary file and renamed.
 
 ## 9. Events
 
@@ -451,8 +460,8 @@ Decided with the user on 2026-11-07, before building:
 - `readKey`/`input()` and asynchronous mappings; reading the clipboard;
   function values in variables.
 - Decorations beyond highlights and virtual text; folding; `listchars`.
-- Swap files, backups, persistent undo (until then a forced end loses
-  unsaved changes).
+- Swap files, backups (until then a forced end loses unsaved changes;
+  undo trees are kept in files since 2026-11-08, `o.undofile`).
 - Customising the status line.
 - Not discussed yet: SyncTeX between this pane and PDF panes (forward and
   inverse search), syntax highlighting (`doc/survey/text-editor.md`,

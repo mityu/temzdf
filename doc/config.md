@@ -317,6 +317,7 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `number` | `"off"` | line numbers in text panes: `"off"`, `"absolute"`, `"relative"`, `"both"` (relative, the cursor's line absolute) |
 | `cursorline` | `false` | highlight the cursor's line |
 | `scrolloff` | `0` | rows kept between the cursor and the top or bottom of text panes |
+| `undofile` | `false` | keep text buffers' undo trees in files (Vim's undofile): written when the buffer is written, read back when the file is opened again if it still holds what was written. In `$XDG_STATE_HOME/temzdf/undo/` (else `~/.local/state/temzdf/undo/`), readable by the user only. Off by default: deleted text stays in them |
 
 ## Buffers
 

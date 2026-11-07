@@ -133,6 +133,9 @@ pub struct Options {
     pub splitbelow: bool,
     /// How many modes the history keeps.
     pub modehistory: usize,
+    /// Keep text buffers' undo trees in files (Vim's undofile): written
+    /// with the file, read back when it is opened.
+    pub undofile: bool,
     /// Pixels per wheel step, and the easing's time constant.
     pub scrollstep: f64,
     pub scrollsmoothness: Duration,
@@ -208,6 +211,7 @@ impl Default for Options {
         Self {
             timeoutlen: Duration::from_millis(1000),
             splitright: true,
+            undofile: false,
             splitbelow: true,
             modehistory: 100,
             scrollstep: scroll.step,
@@ -424,6 +428,8 @@ pub struct Session {
     docs: HashMap<DocId, DocEntry>,
     terms: HashMap<BufferId, TermEntry>,
     texts: HashMap<BufferId, text::TextEntry>,
+    /// Where undo files go (o.undofile; tests set their own).
+    undo_dir: Option<PathBuf>,
     /// Highlight groups for text panes (scripts define them).
     highlights: temzdf_texteditor::Highlights,
     /// Buffer, pane and tab page variables (`getVar`, `setVar`).
@@ -512,6 +518,7 @@ impl Session {
             docs: HashMap::new(),
             terms: HashMap::new(),
             texts: HashMap::new(),
+            undo_dir: text::undo_dir(),
             highlights: temzdf_texteditor::Highlights::default(),
             patterns: Vec::new(),
             vars: HashMap::new(),
@@ -4966,6 +4973,66 @@ mod tests {
         assert_eq!(s.poll(due + Duration::from_millis(1)), Outcome::Redraw);
         assert_eq!(s.frame().text[0].rows[0][0].bg, temzdf_scene::Color::Default);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn undo_trees_are_kept_in_files_when_written_and_read_back() {
+        let (mut s, path) = text_session("undo.txt", "one\n");
+        let dir = path.parent().unwrap().to_owned();
+        let undo_dir = dir.join("state-undo");
+        // A session on `path` with undo files in `undo_dir` (o.undofile).
+        let session = |undofile: bool| {
+            let sink: EventSink = Arc::new(|_| true);
+            let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+            let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
+            s.undo_dir = Some(undo_dir.clone());
+            s.options.undofile = undofile;
+            s.start(PaneSpec::File(path.clone()), None).unwrap();
+            s
+        };
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        // Off (the default): nothing written.
+        run(&mut s, "text.insert", &[str("zero "), pos(0, 0)]).unwrap();
+        run(&mut s, "write", &[]).unwrap();
+        assert!(!undo_dir.exists());
+        // On: written with the file, 0600 in a 0700 directory.
+        s.undo_dir = Some(undo_dir.clone());
+        s.options.undofile = true;
+        // (Commands run here are one invocation: a boundary between the
+        // two edits.)
+        run(&mut s, "text.undo-boundary", &[]).unwrap();
+        run(&mut s, "text.insert", &[str("two "), pos(0, 0)]).unwrap();
+        run(&mut s, "write", &[]).unwrap();
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        let file = text::undo_file_of(&undo_dir, &canonical);
+        assert!(file.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(std::fs::metadata(&undo_dir).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        // Opened again: undo goes back through both edits.
+        let mut again = session(true);
+        assert_eq!(text_of(&mut again), "two zero one\n");
+        let info = run(&mut again, "text.info", &[]).unwrap().0;
+        assert_eq!(info.get("modified"), Some(&ScriptValue::Bool(false)));
+        run(&mut again, "text.undo", &[]).unwrap();
+        assert_eq!(text_of(&mut again), "zero one\n");
+        run(&mut again, "text.undo", &[]).unwrap();
+        assert_eq!(text_of(&mut again), "one\n");
+        // Without o.undofile it is not read.
+        let mut off = session(false);
+        run(&mut off, "text.undo", &[]).unwrap();
+        assert_eq!(text_of(&mut off), "two zero one\n");
+        // Changed elsewhere: the old tree is not put on other text.
+        std::fs::write(&path, "changed\n").unwrap();
+        let mut changed = session(true);
+        run(&mut changed, "text.undo", &[]).unwrap();
+        assert_eq!(text_of(&mut changed), "changed\n");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

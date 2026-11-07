@@ -1697,6 +1697,41 @@ fn text_panes_edit_as_vim_without_a_configuration() {
 }
 
 #[test]
+fn undo_goes_back_past_a_restart_with_undo_files() {
+    // Saving and ending through actions (commands will be the user's own).
+    let env = Env::new("undofile");
+    env.config(
+        "config.ts",
+        r#"import { action, keymap, o } from "temzdf";
+import notepad from "temzdf/edit/notepad";
+import vim from "temzdf/edit/vim";
+vim.disable();
+notepad.enable();
+o.undofile = true;
+keymap.add("edit", "<F5>", action.write());
+keymap.add("edit", "<F6>", action.text.undo());
+keymap.add("edit", "<F7>", action.killSession());
+"#,
+    );
+    let file = env.path("u.txt");
+    std::fs::write(&file, "base\n").unwrap();
+    let args = [BIN, "-s", "u", file.to_str().unwrap()];
+    let mut t = Term::spawn(&args, &env.options());
+    t.wait_text("base");
+    t.type_text("new ");
+    t.wait_text("new base");
+    t.key("F5");
+    wait_file(&file, "new base\n");
+    t.key("F7");
+    t.wait_text("[session u was killed]");
+    // Again: the undo tree came back with the file.
+    let mut t = Term::spawn(&args, &env.options());
+    t.wait_text("new base");
+    t.key("F6");
+    t.wait_for("undone", |s| s.lines().iter().any(|l| l.trim_end() == "base"));
+}
+
+#[test]
 fn a_text_file_is_edited_without_modes_and_written() {
     let env = Env::new("text-edit");
     env.config("config.ts", NOTEPAD);
