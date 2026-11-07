@@ -377,6 +377,13 @@ fi
 # keys through its remote control (it ignores key events posted to its
 # process), screenshots of the display, the clipboard with pbcopy/pbpaste.
 if [[ $display == macos ]]; then
+  # A locked screen takes no screenshots ("could not create image from
+  # rect"): every run would fail while starting.
+  # (Not `ioreg | grep -q`: with pipefail, ioreg's SIGPIPE fails it.)
+  if [[ $(ioreg -n Root -d1) == *'"IOConsoleLocked" = Yes'* ]]; then
+    echo "e2e.sh: the screen is locked; unlock it (or use scripts/macos-vm.sh)" >&2
+    exit 2
+  fi
   ctl=target/macos-gui/termctl
   tc() {
     local answer
