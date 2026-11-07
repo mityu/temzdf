@@ -131,3 +131,114 @@ text:
 keys: Vjd.
 want:
 |5
+
+=== a block's I types on every line
+text:
+|abc
+abc
+abc
+keys: l<C-v>jjI-<Esc>
+want:
+a|-bc
+a-bc
+a-bc
+
+=== a block's I leaves shorter lines alone
+text:
+a|bc
+x
+abc
+keys: <C-v>jjI-<Esc>
+want:
+a|-bc
+x
+a-bc
+
+=== a block's A pads shorter lines
+text:
+|abc
+x
+abc
+keys: <C-v>jjlA!<Esc>
+want:
+ab|!c
+x !
+ab!c
+
+=== $A appends at every line's end
+text:
+|abc
+x
+abcd
+keys: <C-v>jj$A;<Esc>
+want:
+abc|;
+x;
+abcd;
+
+=== a block's c replaces it on every line
+text:
+|abcd
+abcd
+keys: l<C-v>jlcX<Esc>
+want:
+a|Xd
+aXd
+
+=== a block insert is one undo step
+text:
+|abc
+abc
+keys: <C-v>jI-<Esc>u
+want:
+|abc
+abc
+
+=== a block insert repeats with .
+text:
+|ab
+ab
+ab
+ab
+keys: <C-v>jI-<Esc>jj.
+want:
+-ab
+-ab
+|-ab
+-ab
+
+=== $ in a block selects to every line's end
+text:
+|abcd
+x
+abc
+keys: l<C-v>jj$d
+want:
+|a
+x
+a
+
+=== r in the visual mode replaces every character
+text:
+|hello world
+keys: verx
+want:
+|xxxxx world
+
+=== r on lines keeps the line breaks
+text:
+|ab
+cd
+keys: Vjr-
+want:
+|--
+--
+
+=== r on a block
+text:
+|abc
+abc
+keys: l<C-v>jr*
+want:
+a|*c
+a*c

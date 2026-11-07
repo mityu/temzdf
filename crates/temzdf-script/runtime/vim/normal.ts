@@ -131,7 +131,7 @@ export function runMotion(key: string, fn: MotionFn, count: number | null): void
     recordJump(before);
   }
   if (state.visual !== null) {
-    moveVisual(m);
+    moveVisual(m, key);
     return;
   }
   if ("vertical" in m) {
@@ -251,8 +251,90 @@ function blockOperator(op: Operator, register: string | null): void {
   if (op === "y" || op === "d" || op === "c") registers.store(register, { text: pieces.join("\n"), kind: "block" }, op === "y" ? "yank" : "delete");
   if (op === "c") t.undoBegin();
   if (edits.length > 0) t.edit(edits);
+  if (op === "c") {
+    // What is typed on the first line goes into the lines that had text in
+    // the block.
+    const lines = [];
+    for (let l = b.first; l <= b.last; l++) if (pieces[l - b.first] !== "") lines.push(l);
+    setCursor(pos(b.first, Math.min(b.c0, lineLength(b.first))));
+    startInsert(null, null, true, "", { first: b.first, last: b.last, col: b.c0, pad: false, lines });
+    return;
+  }
   setCursor(clampNormal(pos(b.first, b.c0)));
-  if (op === "c") startInsert(null, null, true);
+}
+
+/** I and A in the visual mode: on a block, typed on its first line and put
+ * into the others at <Esc> (A pads short lines; after $ each line's end);
+ * otherwise at the selection's start or after its end. */
+export function visualInsert(where: "I" | "A"): void {
+  const v = state.visual;
+  if (v === null) return;
+  if (v.kind !== "block") {
+    const s = selection();
+    exitVisual();
+    if (where === "I") {
+      setCursor(s.kind === "char" ? s.start : firstNonBlank(s.first));
+      insert("i", null);
+    } else {
+      setCursor(s.kind === "char" ? t.positionOf(s.end, "grapheme", -1) : lineEnd(s.last));
+      insert(s.kind === "char" ? "a" : "A", null);
+    }
+    return;
+  }
+  const b = block();
+  exitVisual();
+  const lines = [];
+  // I: the lines that reach the block (A pads the others).
+  for (let l = b.first; l <= b.last; l++) if (where === "A" || lineLength(l) > b.c0) lines.push(l);
+  t.undoBegin();
+  if (where === "I") {
+    setCursor(pos(b.first, Math.min(b.c0, lineLength(b.first))));
+    startInsert(null, null, true, "", { first: b.first, last: b.last, col: b.c0, pad: false, lines });
+    return;
+  }
+  if (b.toEnd) {
+    setCursor(lineEnd(b.first));
+    startInsert(null, null, true, "", { first: b.first, last: b.last, col: "end", pad: false, lines });
+    return;
+  }
+  const col = b.c1 + 1;
+  const len = lineLength(b.first);
+  if (len < col) t.insert(" ".repeat(col - len), lineEnd(b.first));
+  setCursor(pos(b.first, col));
+  startInsert(null, null, true, "", { first: b.first, last: b.last, col, pad: true, lines });
+}
+
+/** r{char} in the visual mode: every selected character becomes `char`. */
+export function visualReplace(key: KeyInfo): void {
+  const v = state.visual;
+  const ch = key.text;
+  if (v === null) return;
+  if (ch === null || ch === "" || key.keys === "<Esc>" || key.keys === "<CR>") {
+    exitVisual();
+    return;
+  }
+  const edits = [];
+  let start: Position;
+  if (v.kind === "block") {
+    const b = block();
+    start = pos(b.first, b.c0);
+    for (let l = b.first; l <= b.last; l++) {
+      const line = t.line(l);
+      if (b.c0 >= line.length) continue;
+      const end = Math.min(line.length, b.c1 + 1);
+      const piece = line.slice(b.c0, end);
+      edits.push({ range: { start: pos(l, b.c0), end: pos(l, end) }, text: ch.repeat([...piece].length) });
+    }
+  } else {
+    const s = selection();
+    const r = s.kind === "char" ? { start: s.start, end: s.end } : { start: pos(s.first, 0), end: lineEnd(s.last) };
+    start = r.start;
+    const old = t.getText(r);
+    edits.push({ range: r, text: [...old].map((c) => (c === "\n" ? c : ch)).join("") });
+  }
+  exitVisual();
+  if (edits.length > 0) t.edit(edits);
+  setCursor(clampNormal(start));
 }
 
 // The normal mode's own commands.

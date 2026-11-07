@@ -55,7 +55,7 @@ export function draw(): void {
   const deco = (start: Position, end: Position) =>
     t.addDecoration({ start, end }, { namespace: "vim-visual", style: "Selection", priority: 100 });
   if (v.kind === "block") {
-    const [c0, c1] = blockColumns(v.anchor, c);
+    const { c0, c1 } = block();
     for (let l = Math.min(v.anchor.line, c.line); l <= Math.max(v.anchor.line, c.line); l++) {
       const len = lineLength(l);
       if (c0 < len) deco(pos(l, c0), pos(l, Math.min(len, c1 + 1)));
@@ -85,16 +85,23 @@ export function selection(): Span {
   return { kind: "char", start, end };
 }
 
-/** The block's lines and columns. */
-export function block(): { first: number; last: number; c0: number; c1: number } {
+/** A block after $: to every line's end. */
+export const TO_END = Number.MAX_SAFE_INTEGER - 1;
+
+/** The block's lines and columns (c1 TO_END after $). */
+export function block(): { first: number; last: number; c0: number; c1: number; toEnd: boolean } {
   const v = state.visual!;
   const c = cursor();
   const [c0, c1] = blockColumns(v.anchor, c);
-  return { first: Math.min(v.anchor.line, c.line), last: Math.max(v.anchor.line, c.line), c0, c1 };
+  const toEnd = v.toEnd === true;
+  return { first: Math.min(v.anchor.line, c.line), last: Math.max(v.anchor.line, c.line), c0, c1: toEnd ? TO_END : c1, toEnd };
 }
 
-/** A motion in the visual mode moves the cursor; the anchor stays. */
-export function moveVisual(m: Motion): void {
+/** A motion in the visual mode moves the cursor; the anchor stays. `key`:
+ * $ makes a block reach every line's end, until a motion across. */
+export function moveVisual(m: Motion, key = ""): void {
+  const sel = state.visual;
+  if (sel !== null && sel.kind === "block") sel.toEnd = key === "$" || ("vertical" in m && sel.toEnd === true);
   if ("vertical" in m) {
     const v = (m as Motion & { vertical: { unit: "line"; count: number } }).vertical;
     t.move(v.unit, v.count);

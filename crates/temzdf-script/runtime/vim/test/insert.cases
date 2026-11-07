@@ -166,3 +166,50 @@ keys: Snew<Esc>
 want:
 ne|w
 next
+
+=== <C-r> puts a register's text as typed
+text:
+|hello
+keys: yiwA <C-r>"<Esc>
+want:
+hello hell|o
+
+=== <C-r> with a named register
+text:
+|abc
+keys: "ayiwo<C-r>a!<Esc>
+want:
+abc
+abc|!
+
+=== <C-r> of lines brings their line break
+text:
+|one
+keys: yyA<C-r>0x<Esc>
+want:
+oneone
+|x
+
+=== what <C-r> put repeats with .
+text:
+|ab
+cd
+keys: yiwjA<C-r>0<Esc>.
+want:
+ab
+cdaba|b
+
+=== <C-r> reads the clipboard
+text:
+|x
+clipboard: CLIP
+keys: A<C-r>+<Esc>
+want:
+xCLI|P
+
+=== <C-r><Esc> puts nothing
+text:
+|x
+keys: i<C-r><Esc>y<Esc>
+want:
+|yx

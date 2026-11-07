@@ -7,7 +7,7 @@
 import { cmd, defineMode, keymap, o, on, schedule } from "temzdf";
 import type { KeyInfo, MapContext } from "temzdf";
 import { backspace, cancelCmdline, openCmdline, runCmdline, searchAgain, searchWord } from "./cmdline";
-import { abandonInsert, endInsert } from "./insert";
+import { abandonInsert, endInsert, insertRegister } from "./insert";
 import { aliases, findChar, motions } from "./motions";
 import {
   cancelPending,
@@ -26,6 +26,8 @@ import {
   startOperator,
   tilde,
   undo,
+  visualInsert,
+  visualReplace,
 } from "./normal";
 import { options, state } from "./state";
 import type { MotionFn, Operator } from "./state";
@@ -61,6 +63,8 @@ defineMode(P, { transient: true, count: true, fallback: () => cancelPending() })
 // Digits are what they read (f1, r1, "1), not counts.
 defineMode("vim/char", { transient: true, count: false, fallback: (_ctx, key) => readChar(key) });
 defineMode("vim/register", { transient: true, count: false, fallback: (_ctx, key) => selectRegister(key) });
+// <C-r> in the insert mode reads a register's name.
+defineMode("vim/insreg", { transient: true, count: false, fallback: (_ctx, key) => insertRegister(key) });
 // :s///c reads its answers one key at a time.
 defineMode("vim/confirm", { transient: false, count: false, fallback: (_ctx, key) => confirmKey(key) });
 // The input mode's editing keys below it work.
@@ -88,7 +92,8 @@ function readChar(key: KeyInfo): void {
     return;
   }
   if (what.kind === "r") {
-    replaceChars(key, what.count);
+    if (state.visual !== null) visualReplace(key);
+    else replaceChars(key, what.count);
     return;
   }
   if (what.kind === "q") {
@@ -247,6 +252,12 @@ map([V], ["s"], () => startOperator("c", null));
 map([V], ["~"], () => startOperator("g~", null));
 map([V], ["u"], () => startOperator("gu", null));
 map([V], ["U"], () => startOperator("gU", null));
+map([V], ["I"], () => visualInsert("I"));
+map([V], ["A"], () => visualInsert("A"));
+map([V], ["r"], () => {
+  charFor = { kind: "r", count: null };
+  cmd.switchMode("vim/char");
+});
 map([V], ["J"], () => {
   const v = state.visual!;
   const c = cursor();
@@ -268,6 +279,7 @@ map([I], ["<C-u>"], () => {
   const c = cursor();
   t.delete({ start: { line: c.line, character: 0 }, end: c });
 });
+map([I], ["<C-r>"], () => cmd.switchMode("vim/insreg"));
 map([I], ["<Left>"], () => t.move("grapheme", -1));
 map([I], ["<Right>"], () => t.move("grapheme", 1));
 map([I], ["<Up>"], () => t.move("displayLine", -1));
@@ -289,9 +301,11 @@ on("ModeChanged", (old: string, now: string) => {
   schedule(() => {
     const focused = cmd.panes().find((p) => p.focused);
     if (focused === undefined || focused.kind !== "edit") return;
-    const style = now === I ? "bar" : now === P ? "underline" : "block";
+    // vim/insreg (<C-r>) is a key read inside the insert mode.
+    const inserting = (m: string) => m === I || m === "vim/insreg";
+    const style = inserting(now) ? "bar" : now === P ? "underline" : "block";
     if (now.startsWith("vim/") || now === "edit") t.setCursorStyle(style);
-    if (old === I && now !== I && state.insert !== null) abandonInsert();
+    if (inserting(old) && !inserting(now) && state.insert !== null) abandonInsert();
     if (old === V && now !== V && !now.startsWith("vim/") && state.visual !== null) {
       state.visual = null;
       t.clearNamespace("vim-visual");

@@ -18,6 +18,18 @@ export type Operator = "d" | "c" | "y" | ">" | "<" | "g~" | "gu" | "gU";
 
 export type VisualKind = "char" | "line" | "block";
 
+/** A block's I, A or c: what is typed on its first line goes into the
+ * others at <Esc>, at column `col` ("end": each line's end); a line
+ * shorter than `col` is padded (`pad`, A) or left alone. */
+export interface BlockInsert {
+  first: number;
+  last: number;
+  col: number | "end";
+  pad: boolean;
+  /** The lines that get it (c: those that had text in the block). */
+  lines: number[];
+}
+
 export const state = {
   /** An operator waiting for its motion. */
   pending: null as null | { op: Operator; count: number | null; register: string | null },
@@ -26,7 +38,7 @@ export const state = {
   /** The last f, F, t or T, for ; and ,. */
   lastFind: null as null | { kind: "f" | "F" | "t" | "T"; char: string },
   /** The visual selection: where it started, and how. */
-  visual: null as null | { anchor: Position; kind: VisualKind },
+  visual: null as null | { anchor: Position; kind: VisualKind; toEnd?: boolean },
   /** The last visual selection, for gv and '< '>. */
   lastVisual: null as null | { anchor: Position; cursor: Position; kind: VisualKind },
   /** The last search (Vim's pattern and its direction), for n and N. */
@@ -34,7 +46,7 @@ export const state = {
   /** The last change, for `.`: run it again (a count replaces its own). */
   lastChange: null as null | ((count: number | null) => void),
   /** An insert session: where it began (a mark), and how `.` begins it again. */
-  insert: null as null | { mark: number; replay: ((count: number | null) => void) | null; count: number | null },
+  insert: null as null | { mark: number; replay: ((count: number | null) => void) | null; count: number | null; block?: BlockInsert },
 };
 
 /** Settings of the Vim mode (vim.options in a configuration). */

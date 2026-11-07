@@ -108,6 +108,18 @@ user's.
   `forceDelete` the shipped `BufferDeletePre` hook honours), `:tabnew`/
   `:tabe [file]`, `:tabn [N]`, `:tabp`, `:tabc`, `:tabo`, `:wa`, `:qa[!]`,
   `:wqa`/`:xa`.
+- A block's `I` types on its first line and, at `<Esc>`, puts the text
+  (when it has no line break) into the block's other lines that reach the
+  block's start; `A` after the block, padding shorter lines with spaces;
+  after `$` (the block reaches every line's end, until a motion across)
+  `A` appends at each line's end; `c` deletes the block, then the same as
+  `I` on the lines that had text in it. One undo step; `.` does it again
+  from the cursor on as many lines. `I` and `A` on characters or lines
+  insert at the selection's start or after its end. `r{char}` in the
+  visual mode replaces every selected character (line breaks stay).
+- `<C-r>{reg}` in the insert mode (the transient mode `vim/insreg` reads
+  the name) types the register's text, so `.` and counts repeat it; `+`
+  and `*` read the client's clipboard first.
 - `:s` with `c` asks about each match in the transient-like mode
   `vim/confirm` (a fallback function reading one key): the match shown
   with `IncSearch`, the question as a message; `y`, `n`, `a`, `l`, `q`
@@ -129,9 +141,9 @@ user's.
   the line's start: the mark is at the edge, not inside); it moves to the
   next line. Vim deletes it.
 - Not yet: `:g`, `:normal`, `:map`, folds, text formatting (`gq`),
-  `gJ`, the insert mode's `<C-o>`, `<C-r>{reg}` and completion, `I`/`A` on
-  a block, search offsets (`/pat/e`), `&` and `~`, counts on visual
-  operators.
+  `gJ`, the insert mode's completion, search offsets (`/pat/e`), `&` and
+  `~`, counts on visual operators, `.` after a visual `r`. Not wanted
+  (the user, 2026-11-07): the insert mode's `<C-o>`.
 - In a `:s` replacement `\n` is a line break (Vim inserts a NUL), as `\r`.
 - `:q` on the last pane ends the session (refused with unsaved changes by
   the shipped hooks); `:q!` there ends it anyway. On another pane it
