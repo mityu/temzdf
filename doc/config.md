@@ -317,6 +317,8 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `number` | `"off"` | line numbers in text panes: `"off"`, `"absolute"`, `"relative"`, `"both"` (relative, the cursor's line absolute) |
 | `cursorline` | `false` | highlight the cursor's line |
 | `scrolloff` | `0` | rows kept between the cursor and the top or bottom of text panes |
+| `swapfile` | `true` | keep text buffers' text in swap files while they are edited (as Neovim), so what was not saved survives a crash: `$XDG_STATE_HOME/temzdf/swap/` (else `~/.local/state/temzdf/swap/`), readable by the user only, gone when the buffer is deleted or the session ends normally |
+| `updatetime` | `4000` | milliseconds after the last change before a swap file is written |
 | `undofile` | `false` | keep text buffers' undo trees in files (Vim's undofile): written when the buffer is written, read back when the file is opened again if it still holds what was written. In `$XDG_STATE_HOME/temzdf/undo/` (else `~/.local/state/temzdf/undo/`), readable by the user only. Off by default: deleted text stays in them |
 
 ## Buffers
@@ -492,7 +494,8 @@ without a pane (returns it; show it as any buffer). `attrs` (Vim's
 `text.info().attrs` reads them): `"nofile"` is tied to no file, never
 modified (nothing to lose: no unsaved-changes refusal) and written only to
 a path given; `"unlisted"` is for a script's own use, left out of
-`buffers()`, `temzdf ls` and the Vim mode's `:ls`. Files are UTF-8 (a BOM kept);
+`buffers()`, `temzdf ls` and the Vim mode's `:ls`; `"readonly"` is
+written only with `force` (Vim's `'readonly'`). Files are UTF-8 (a BOM kept);
 binary files are refused, and so are others unless named:
 `openFile(path, { encoding: "shift_jis" })` (Encoding Standard labels;
 nothing is guessed) reads one, and writing keeps its encoding. Line endings stay as read (CRLF
@@ -520,6 +523,26 @@ has no unsaved changes (`FileChangedOnDisk`, `reload(buffer?)`: one
 undoable step); otherwise a message says so, and writing it then needs
 `write({ force: true })`. The mouse: a click puts the cursor, dragging selects, the
 wheel scrolls.
+
+Swap files (`o.swapfile`) are named as Neovim's (`%path%of%it.swp`, then
+`.swo`, `.swn`, ... when taken) and hold the owner (session, pid, host)
+and the whole text; written when the file is opened, `o.updatetime` after
+the last change and when the file is written. Opening a file whose swap
+file belongs to a session still running passes over it with a message
+(Neovim's W325) and starts the next name. One of a session that is gone
+(it crashed, or was killed) is told by the hook `SwapExists(buffer,
+info)` (`info`: `{ swap, session, pid, host, time, modified, newer }`,
+also `swapInfo(buffer?)`), and the buffer waits for an answer: the
+shipped `temzdf/buffers` asks as Neovim does (E325 ATTENTION: `o` open
+read-only, `e` edit anyway, `r` recover, `d` delete it, `q`/`a` quit;
+the message stays until the key). A configuration answers with
+`text.recover({ swap? })` (its text, as one undoable change),
+`deleteSwap(path)` and `useSwap(buffer?)` (its own swap file, the first
+free name); nobody hearing `SwapExists`, the file is edited anyway.
+Buffers without a file have no swap file. The buffer attribute
+`"readonly"` makes `write` need `force` and shows `[RO]`.
+`message(text, { error: true })` shows a message until the next key, as
+errors are (questions asked).
 
 Editors are scripts on the primitives in the `text` namespace (the
 focused pane's unless `{ pane }` is given last). Positions are

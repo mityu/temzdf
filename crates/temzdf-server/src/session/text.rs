@@ -1411,7 +1411,7 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ("text.position-at", "(offset: number, opts?: { pane?: number }): Position", "The position at a UTF-16 offset"),
     (
         "text.info",
-        "(opts?: { pane?: number }): { buffer: number, path: string | null, name: string, modified: boolean, encoding: string, lineEnding: \"lf\" | \"crlf\", version: number }",
+        "(opts?: { pane?: number }): { buffer: number, path: string | null, name: string, modified: boolean, encoding: string, lineEnding: \"lf\" | \"crlf\", version: number, attrs: BufferAttr[] }",
         "About the buffer",
     ),
     (

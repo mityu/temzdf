@@ -1696,6 +1696,83 @@ fn text_panes_edit_as_vim_without_a_configuration() {
     t.wait_text("vim/normal");
 }
 
+/// The swap files of `file` in `env`'s state directory, by name.
+fn swap_files(env: &Env, file: &std::path::Path) -> Vec<PathBuf> {
+    let canonical = std::fs::canonicalize(file).unwrap();
+    let base = canonical.to_string_lossy().replace('/', "%");
+    let dir = env.path("state/temzdf/swap");
+    let mut v: Vec<PathBuf> =
+        std::fs::read_dir(&dir).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+    v.retain(|p| {
+        p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(&base) && !n.to_string_lossy().ends_with(".tmp"))
+    });
+    v.sort();
+    v
+}
+
+#[test]
+fn a_crashed_sessions_swap_file_is_asked_about_and_recovers() {
+    let env = Env::new("swap-crash");
+    env.config("config.ts", &format!("{NOTEPAD}import {{ o }} from \"temzdf\";\no.updatetime = 100;\n"));
+    let file = env.path("s.txt");
+    std::fs::write(&file, "base\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "s1", file.to_str().unwrap()], &env.options());
+    t.wait_text("base");
+    t.type_text("lost ");
+    t.wait_text("lost base");
+    // Written o.updatetime after the last change.
+    let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
+    let swap = loop {
+        let found = swap_files(&env, &file)
+            .into_iter()
+            .find(|p| std::fs::read_to_string(p).is_ok_and(|s| s.contains("lost base")));
+        if let Some(p) = found {
+            break p;
+        }
+        assert!(std::time::Instant::now() < deadline, "no swap file with the change: {:?}", swap_files(&env, &file));
+        t.pump(std::time::Duration::from_millis(50));
+    };
+    assert!(swap.to_string_lossy().ends_with(".swp"));
+    // The server killed (a crash): its swap file stays.
+    let json = std::fs::read_to_string(&swap).unwrap();
+    let pid = json.split("\"pid\":").nth(1).unwrap().split([',', '}']).next().unwrap().to_owned();
+    assert!(std::process::Command::new("kill").args(["-9", &pid]).status().unwrap().success());
+    t.pump(std::time::Duration::from_millis(300));
+    assert!(swap.exists());
+    // Opened again: Neovim's ATTENTION, and R recovers.
+    let mut t = Term::spawn(&[BIN, "-s", "s2", file.to_str().unwrap()], &env.options());
+    t.wait_text("E325: ATTENTION");
+    t.wait_text("(R)ecover");
+    t.type_text("r");
+    t.wait_text("lost base");
+    t.wait_text("s.txt [+]");
+    t.wait_text("Recovery completed");
+    let names = swap_files(&env, &file);
+    assert_eq!(names.len(), 2, "the old one and its own (.swo): {names:?}");
+    assert!(names.iter().any(|p| p.to_string_lossy().ends_with(".swo")));
+}
+
+#[test]
+fn a_running_sessions_swap_file_is_passed_over() {
+    let env = Env::new("swap-running");
+    env.config("config.ts", NOTEPAD);
+    let file = env.path("r.txt");
+    std::fs::write(&file, "shared\n").unwrap();
+    let mut a = Term::spawn(&[BIN, "-s", "ra", file.to_str().unwrap()], &env.options());
+    a.wait_text("shared");
+    let mut b = Term::spawn(&[BIN, "-s", "rb", file.to_str().unwrap()], &env.options());
+    b.wait_text("Ignoring the swap file of session ra");
+    let s = b.wait_text("shared");
+    assert!(!s.text().contains("E325"), "not asked");
+    let names = swap_files(&env, &file);
+    assert!(
+        names.iter().any(|p| p.to_string_lossy().ends_with(".swp"))
+            && names.iter().any(|p| p.to_string_lossy().ends_with(".swo")),
+        "{names:?}"
+    );
+    drop(a);
+}
+
 #[test]
 fn undo_goes_back_past_a_restart_with_undo_files() {
     // Saving and ending through actions (commands will be the user's own).

@@ -439,3 +439,54 @@ fn editors_are_enabled_and_disabled_while_running() {
     assert_eq!(ns(&mut s, "builtin-edit-notepad"), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn a_gone_sessions_swap_file_is_asked_about_as_neovim_does() {
+    let dir = std::env::temp_dir().join(format!("temzdf-swap-ask-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("case.txt");
+    std::fs::write(&file, "base\n").unwrap();
+    let swaps = dir.join("swap");
+    let canonical = std::fs::canonicalize(&file).unwrap();
+    let names = super::swap::candidates(&swaps, &canonical);
+    let gone = super::swap::SwapFile {
+        version: 1,
+        path: canonical.to_string_lossy().into_owned(),
+        session: "gone".into(),
+        pid: 1,
+        host: String::new(),
+        time: 0,
+        modified: true,
+        encoding: "utf-8".into(),
+        line_ending: "lf".into(),
+        text: "lost base\n".into(),
+    };
+    super::swap::write(&names[0], &gone).unwrap();
+    let (tx, rx) = mpsc::channel();
+    let tx = std::sync::Mutex::new(tx);
+    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let settings =
+        Settings { serve_forward: false, script: Some(ScriptSettings { config: None }), overrides: Vec::new() };
+    let mut s = Session::new("asks".into(), GEOMETRY, Hints::default(), settings, sink);
+    s.swap_dir = Some(swaps.clone());
+    s.start(PaneSpec::File(file.clone()), None).unwrap();
+    settle(&mut s, &rx, true, None);
+    let shown = || -> Vec<String> { Vec::new() };
+    let _ = shown;
+    let texts: Vec<String> = s.notices.iter().map(|n| n.text.clone()).collect();
+    assert!(
+        texts.iter().any(|t| t.contains("E325: ATTENTION") && t.contains("(R)ecover")),
+        "{texts:?} {:?}",
+        errors(&s)
+    );
+    assert_eq!(s.history.current(), "swap-choice");
+    // R: the text not saved comes back, and its own swap file is the next name.
+    type_keys(&mut s, &rx, "r", None).unwrap();
+    let text = s.run_command("text.get-text", &[], None, Instant::now()).unwrap().0;
+    assert_eq!(text, ScriptValue::Str("lost base\n".into()));
+    assert!(names[1].exists(), "its own swap file");
+    assert!(names[0].exists(), "the old one stays until deleted");
+    let _ = std::fs::remove_dir_all(&dir);
+}

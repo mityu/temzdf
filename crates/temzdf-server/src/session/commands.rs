@@ -93,7 +93,11 @@ const SESSION: &[(&str, &str, &str)] = &[
     ),
     ("detach", "(): void", "The operating client detaches"),
     ("reload-config", "(): void", "Restart the script host and load the configuration again"),
-    ("message", "(text: string): void", "Show a message"),
+    (
+        "message",
+        "(text: string, opts?: { error?: boolean }): void",
+        "Show a message: it fades after a few seconds; with error, it stays until the next key (an error, a question asked)",
+    ),
     (
         "status-line",
         "(show?: boolean, pane?: number): void",
@@ -637,7 +641,9 @@ impl Session {
                 ok(Outcome::None)
             }
             "message" => {
-                self.notify(super::notices::Kind::Info, &text(0).unwrap_or_default());
+                let error = args.get(1).and_then(|o| o.get("error")) == Some(&ScriptValue::Bool(true));
+                let kind = if error { super::notices::Kind::Error } else { super::notices::Kind::Info };
+                self.notify(kind, &text(0).unwrap_or_default());
                 ok(Outcome::Redraw)
             }
             "font-size" => {

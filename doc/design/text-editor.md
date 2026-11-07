@@ -278,6 +278,18 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   unknown names are errors, more come as needed. `openFile(path, { encoding?, basemode? })`:
   errors when unreadable; returns the existing buffer for the same file.
   Choosing PDF or text by extension is `defaults.ts`'s policy.
+- Swap files (2026-11-08; on by default **(user)**, as Neovim;
+  `session/swap.rs`): the mechanism is the server's, the asking the
+  scripts'. Named as Neovim's in `$XDG_STATE_HOME/temzdf/swap/`, JSON
+  with the owner and the whole text, 0600, replaced whole; written when
+  the file is opened, `o.updatetime` after the last change, when it is
+  written; removed with the buffer and at a normal end (explicitly, not
+  in `Drop`: a panic must leave them). Opening behaves as Neovim's
+  **(user)**: a running owner (its session answers on its socket with
+  the swap file's pid) is passed over (W325) and the next name taken; a
+  gone one is `SwapExists`, answered by `temzdf/buffers` with Neovim's
+  E325 prompt (a mode reading one key; the message an error notice, so it
+  stays until the key). Not yet: buffers without a file.
 - `write(buffer, { path?, encoding?, force? })` writes a temporary file and
   renames it over the target, copying permissions, replacing a symlink's
   target, writing in place when the directory is not writable. It keeps the
@@ -460,8 +472,8 @@ Decided with the user on 2026-11-07, before building:
 - `readKey`/`input()` and asynchronous mappings; reading the clipboard;
   function values in variables.
 - Decorations beyond highlights and virtual text; folding; `listchars`.
-- Swap files, backups (until then a forced end loses unsaved changes;
-  undo trees are kept in files since 2026-11-08, `o.undofile`).
+- Backups, and swap files of buffers without a file (swap files and undo
+  files are built: `o.swapfile`, `o.undofile`).
 - Customising the status line.
 - Not discussed yet: SyncTeX between this pane and PDF panes (forward and
   inverse search), syntax highlighting (`doc/survey/text-editor.md`,

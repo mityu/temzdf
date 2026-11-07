@@ -176,6 +176,10 @@ fn describe(token: Token, op: &HostOp) -> String {
         HostOp::Map { rhs: MapRhs::Actions(_), .. } => String::new(),
         // And they enable the Vim mode: its modes and base mode.
         HostOp::DefineMode { name, .. } if name.starts_with("vim/") => String::new(),
+        // Modes the defaults define with their own functions (swap-choice).
+        HostOp::DefineMode { fallback: Some(temzdf_protocol::script::Fallback::Func(f)), .. } if *f < base() => {
+            String::new()
+        }
         HostOp::GetOption { name } | HostOp::SetOption { name, .. } if name == "basemode" => String::new(),
         other => format!("{t} {other:?}"),
     }

@@ -135,9 +135,8 @@ server on one `Session`). Next and open:
   - function values in buffer, pane and tab variables;
   - decorations beyond highlights and virtual text (images, conceal and
     math previews, signs, virtual lines), folding, `listchars`;
-  - swap files, backups (until then `kill-session --force` and signals
-    lose unsaved changes; undo trees are kept in files with `o.undofile`
-    since 2026-11-08);
+  - backups, and swap files of buffers without a file (swap files,
+    `o.swapfile`, and undo files, `o.undofile`, are built, 2026-11-08);
   - customising the editor's status line;
   - not discussed yet: SyncTeX with editor panes, syntax highlighting.
 - zellij delays keyboard input (even its own prefix commands) while it
