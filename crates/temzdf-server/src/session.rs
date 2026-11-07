@@ -886,7 +886,7 @@ impl Session {
         } else if let Some(b) = self.inputs.get(&buf) {
             Kind::Input { buf, view: input::InputView::at_end(b) }
         } else if self.texts.contains_key(&buf) {
-            let mut tv = self.text_view_for(buf);
+            let mut tv = self.text_view_for(buf, pane);
             (tv.view.width, tv.view.height) = (g.cols, g.rows);
             Kind::Text { buf, view: Box::new(tv) }
         } else if let Some(d) = self.docs.get_mut(&buf) {
@@ -1856,7 +1856,7 @@ impl Session {
             (view.view.layout, view.view.number, view.view.cursorline, view.view.scrolloff) =
                 (layout, o.number, o.cursorline, o.scrolloff);
             if let Some(t) = self.texts.get(buf) {
-                view.view.relayout(t.buf.text());
+                view.view.relayout(&t.buf);
             }
         }
     }
@@ -5015,6 +5015,40 @@ mod tests {
         let due = s.next_deadline().unwrap();
         assert_eq!(s.poll(due + Duration::from_millis(1)), Outcome::Redraw);
         assert_eq!(s.frame().text[0].rows[0][0].bg, temzdf_scene::Color::Default);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn virtual_text_shows_in_the_pane_and_the_cursor_skips_it() {
+        let (mut s, path) = text_session("virt.txt", "abc\n");
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let at = |a: usize| ScriptValue::map([("start", pos(0, a)), ("end", pos(0, a))]);
+        let virt = |text: &str, where_: &str| {
+            ScriptValue::map([
+                ("virtText", ScriptValue::List(vec![ScriptValue::map([("text", ScriptValue::Str(text.into()))])])),
+                ("virtTextPos", ScriptValue::Str(where_.into())),
+            ])
+        };
+        let row = |s: &mut Session| -> String {
+            s.frame().text[0].rows[0]
+                .iter()
+                .filter(|c| c.width > 0)
+                .map(|c| if c.text.is_empty() { " " } else { c.text.as_str() })
+                .collect::<String>()
+        };
+        let id = run(&mut s, "text.add-decoration", &[at(0), virt("> ", "inline")]).unwrap().0;
+        run(&mut s, "text.add-decoration", &[at(3), virt("note", "eol")]).unwrap();
+        run(&mut s, "text.add-decoration", &[at(1), virt("B", "overlay")]).unwrap();
+        assert!(row(&mut s).starts_with("> aBc note"), "{:?}", row(&mut s));
+        assert_eq!(s.frame().cursor, Some((2, 0)), "after the prompt");
+        // Typed at its place: after it (it stays before what is inserted).
+        run(&mut s, "text.insert", &[ScriptValue::Str("x".into()), pos(0, 0)]).unwrap();
+        assert!(row(&mut s).starts_with("> xaBc note"), "{:?}", row(&mut s));
+        let d = run(&mut s, "text.decoration", &[id]).unwrap().0;
+        assert_eq!(d.get("virtTextPos"), Some(&ScriptValue::Str("inline".into())));
+        let bad = ScriptValue::map([("virtTextPos", ScriptValue::Str("left".into()))]);
+        assert!(run(&mut s, "text.add-decoration", &[at(0), bad]).is_err());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

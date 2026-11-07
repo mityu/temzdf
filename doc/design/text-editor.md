@@ -134,9 +134,16 @@ Following VS Code **(user)**:
 - `highlightPattern(ns, pattern, style)` paints matches of a pattern found
   while drawing, only in what is drawn: `hlsearch`, trailing blanks,
   `TODO`, cheap on large files.
-- First version: highlights only **(user)**. Later: virtual text and images
-  before or after a range, replacement (conceal, math previews), signs,
-  virtual lines.
+- First version: highlights only **(user)**. Then virtual text (2026-11-07,
+  the user asking for Neovim's three places): a decoration's `virt_text`
+  at its start, `inline` (layout places it before the character there:
+  it takes columns, has no characters, so the cursor and offsets skip it;
+  it goes with that character when rows wrap, so a row still depends only
+  on its start, and one too wide for a row is cut), `eol` and `overlay`
+  (drawn over the rows, layout unchanged). View methods take the buffer
+  (its marks) and a view knows its pane (decorations shown only there).
+  Later: images before or after a range, replacement (conceal, math
+  previews), signs, virtual lines.
 
 ## 8. Undo
 
@@ -438,7 +445,7 @@ Decided with the user on 2026-11-07, before building:
 
 - `readKey`/`input()` and asynchronous mappings; reading the clipboard;
   function values in variables.
-- Decorations beyond highlights; folding; `listchars`.
+- Decorations beyond highlights and virtual text; folding; `listchars`.
 - Swap files, backups, persistent undo (until then a forced end loses
   unsaved changes).
 - Customising the status line.

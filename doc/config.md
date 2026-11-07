@@ -529,9 +529,16 @@ JavaScript strings index; out of range is clamped), ranges
   style?)` paints a pattern's matches in every text pane (`Search` by
   default), what hlsearch is;
 - decorations and marks: `text.addDecoration(range, { style?, namespace?,
-  priority?, showIn?, startGravity?, endGravity?, ttl? })` returns an id
-  (an empty range without a style is a mark); they follow edits, collapse
-  and are flagged `deleted` when their text goes (undo restores them).
+  priority?, showIn?, startGravity?, endGravity?, ttl?, virtText?,
+  virtTextPos? })` returns an id (an empty range without a style is a
+  mark); they follow edits, collapse and are flagged `deleted` when their
+  text goes (undo restores them). `virtText: [{ text, style? }]` shows text
+  that is not in the buffer at the range's start: `virtTextPos: "inline"`
+  (the default) between the characters, taking columns (the cursor never
+  goes in it; text inserted at its place goes after it with the default
+  gravity), `"eol"` after the line's end, `"overlay"` over the text (as
+  Neovim's `virt_text_pos`); a prompt is inline virtual text at a line's
+  start.
   `text.decoration(id)`, `text.decorations({ namespace?, range? })`,
   `text.moveDecoration(id, range)`, `text.deleteDecoration(id)`,
   `text.clearNamespace(ns)`. Styles are highlight groups:

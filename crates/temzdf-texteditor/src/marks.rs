@@ -8,6 +8,26 @@ use crate::edit::{Change, Gravity, map_offset};
 
 pub type MarkId = u64;
 
+/// Where a decoration's virtual text shows (Neovim's `virt_text_pos`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VirtPos {
+    /// Between the characters, before the one at the decoration's start:
+    /// it takes columns (layout counts it), the cursor never goes in it.
+    #[default]
+    Inline,
+    /// After the end of the line (one blank between).
+    Eol,
+    /// Over the text from the decoration's start, hiding what is there.
+    Overlay,
+}
+
+/// A piece of virtual text and its style (a highlight group).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VirtChunk {
+    pub text: String,
+    pub style: Option<String>,
+}
+
 /// What a decoration is made of, apart from where it is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MarkSpec {
@@ -23,6 +43,10 @@ pub struct MarkSpec {
     pub end_gravity: Gravity,
     /// Gone after this (a yank flash).
     pub expires: Option<Instant>,
+    /// Text shown that is not in the buffer (a prompt, a hint), at
+    /// `virt_pos`.
+    pub virt_text: Vec<VirtChunk>,
+    pub virt_pos: VirtPos,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

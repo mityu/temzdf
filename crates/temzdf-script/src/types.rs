@@ -196,6 +196,13 @@ declare module "temzdf" {{
     deleted: boolean;
     namespace: string;
     style: string | null;
+    virtText: VirtChunk[];
+    virtTextPos: "inline" | "eol" | "overlay";
+  }}
+  /** A piece of virtual text and its style (a highlight group). */
+  export interface VirtChunk {{
+    text: string;
+    style?: string | null;
   }}
   /** What copied text is, as Vim's register types: characters, whole lines (ending with a line break), or a block (one line of it per line). */
   export type CopyKind = "char" | "line" | "block";

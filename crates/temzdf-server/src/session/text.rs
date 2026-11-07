@@ -93,8 +93,8 @@ fn cursor_shape(name: &str) -> Result<CursorShape, String> {
 impl Session {
     /// The view a new pane on `buf` starts with: the options, and the
     /// cursor of another pane on it (a split shows the same place).
-    pub(super) fn text_view_for(&self, buf: BufferId) -> TextView {
-        let mut tv = self.text_view();
+    pub(super) fn text_view_for(&self, buf: BufferId, pane: PaneId) -> TextView {
+        let mut tv = self.text_view(pane);
         if let Some(other) = self.panes.values().find_map(|e| match &e.kind {
             Kind::Text { buf: b, view } if *b == buf => Some(view.view.cursor),
             _ => None,
@@ -105,9 +105,11 @@ impl Session {
     }
 
     /// The view a new text pane starts with, from the options.
-    fn text_view(&self) -> TextView {
+    fn text_view(&self, pane: PaneId) -> TextView {
         let o = &self.options;
         let view = View {
+            // Decorations shown only in it count there (inline virtual text).
+            pane: Some(pane),
             layout: o.text.layout.clone(),
             number: o.text.number,
             cursorline: o.text.cursorline,
@@ -174,7 +176,7 @@ impl Session {
 
     /// Pane `id`, placed at `rect`, shows text `buf`.
     pub(super) fn text_pane(&mut self, id: PaneId, buf: BufferId, rect: Rect, focus: bool) {
-        let tv = self.text_view_for(buf);
+        let tv = self.text_view_for(buf, id);
         self.panes.insert(id, PaneEntry::new(Kind::Text { buf, view: Box::new(tv) }, rect));
         self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("edit".into())]);
         if focus {
@@ -202,7 +204,7 @@ impl Session {
             let (w, h) = (content.w.max(1) as u16, content.h.max(1) as u16);
             if (view.view.width, view.view.height) != (w, h) {
                 (view.view.width, view.view.height) = (w, h);
-                view.view.relayout(t.buf.text());
+                view.view.relayout(&t.buf);
             }
         }
     }
@@ -283,7 +285,6 @@ impl Session {
     /// restores goes to its pane (or `by`'s when that one is gone).
     fn text_follow(&mut self, buf: BufferId, edited: &Edited, by: PaneId) {
         let Some(t) = self.texts.get(&buf) else { return };
-        let text = t.buf.text();
         let restore = edited.cursor.map(|(p, c)| {
             let p = p
                 .filter(|p| matches!(self.panes.get(p).map(|e| &e.kind), Some(Kind::Text { buf: b, .. }) if *b == buf));
@@ -295,7 +296,7 @@ impl Session {
                 continue;
             }
             for batch in &edited.batches {
-                view.view.follow(text, batch);
+                view.view.follow(&t.buf, batch);
             }
             if let Some((p, c)) = restore
                 && p == *id
@@ -304,7 +305,7 @@ impl Session {
             }
             if *id == by || restore.is_some_and(|(p, _)| p == *id) {
                 let pos = view.view.cursor.pos;
-                view.view.reveal(text, pos, Reveal::Minimal);
+                view.view.reveal(&t.buf, pos, Reveal::Minimal);
             }
         }
     }
@@ -331,7 +332,7 @@ impl Session {
         if let Some(t) = self.texts.get(&buf)
             && let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind)
         {
-            view.view.set_cursor(t.buf.text(), after, false);
+            view.view.set_cursor(&t.buf, after, false);
         }
         Ok(Outcome::Redraw)
     }
@@ -763,6 +764,31 @@ impl Session {
                     Some("after") => temzdf_texteditor::Gravity::After,
                     _ => temzdf_texteditor::Gravity::Before,
                 };
+                use temzdf_texteditor::{VirtChunk, VirtPos};
+                let virt_text = match get("virtText") {
+                    None | Some(ScriptValue::Null) => Vec::new(),
+                    Some(ScriptValue::List(l)) => l
+                        .iter()
+                        .map(|c| match c {
+                            ScriptValue::Str(s) => Ok(VirtChunk { text: s.clone(), style: None }),
+                            c => Ok(VirtChunk {
+                                text: c
+                                    .get("text")
+                                    .and_then(ScriptValue::as_str)
+                                    .ok_or("virtText: { text, style? }")?
+                                    .to_owned(),
+                                style: c.get("style").and_then(ScriptValue::as_str).map(str::to_owned),
+                            }),
+                        })
+                        .collect::<Result<_, String>>()?,
+                    Some(_) => return Err("virtText: a list of { text, style? }".into()),
+                };
+                let virt_pos = match get("virtTextPos").and_then(ScriptValue::as_str) {
+                    None | Some("inline") => VirtPos::Inline,
+                    Some("eol") => VirtPos::Eol,
+                    Some("overlay") => VirtPos::Overlay,
+                    Some(other) => return Err(format!("virtTextPos: no {other:?} (inline, eol, overlay)")),
+                };
                 let spec = temzdf_texteditor::MarkSpec {
                     namespace: get("namespace").and_then(ScriptValue::as_str).unwrap_or("").to_owned(),
                     style: get("style").and_then(ScriptValue::as_str).map(str::to_owned),
@@ -773,6 +799,8 @@ impl Session {
                     expires: get("ttl")
                         .and_then(ScriptValue::as_num)
                         .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms.max(0.0) as u64)),
+                    virt_text,
+                    virt_pos,
                 };
                 let id = self.texts.get_mut(&buf).expect("found").buf.marks_mut().add(a, b, spec);
                 Ok((ScriptValue::Num(id as f64), Outcome::Redraw))
@@ -785,6 +813,32 @@ impl Session {
                         ("deleted", ScriptValue::Bool(m.deleted)),
                         ("namespace", ScriptValue::Str(m.spec.namespace.clone())),
                         ("style", m.spec.style.clone().map_or(ScriptValue::Null, ScriptValue::Str)),
+                        (
+                            "virtText",
+                            ScriptValue::List(
+                                m.spec
+                                    .virt_text
+                                    .iter()
+                                    .map(|c| {
+                                        ScriptValue::map([
+                                            ("text", ScriptValue::Str(c.text.clone())),
+                                            ("style", c.style.clone().map_or(ScriptValue::Null, ScriptValue::Str)),
+                                        ])
+                                    })
+                                    .collect(),
+                            ),
+                        ),
+                        (
+                            "virtTextPos",
+                            ScriptValue::Str(
+                                match m.spec.virt_pos {
+                                    temzdf_texteditor::VirtPos::Inline => "inline",
+                                    temzdf_texteditor::VirtPos::Eol => "eol",
+                                    temzdf_texteditor::VirtPos::Overlay => "overlay",
+                                }
+                                .into(),
+                            ),
+                        ),
                     ])
                 };
                 if name == "decoration" {
@@ -844,7 +898,7 @@ impl Session {
                 none(ScriptValue::Null)
             }
             "visible-range" => {
-                let (a, b) = tv.view.visible_range(text);
+                let (a, b) = tv.view.visible_range(&t.buf);
                 none(range_value(text, a, b))
             }
             // Edits.
@@ -920,10 +974,10 @@ impl Session {
             "set-cursor" => {
                 let at = text.offset(arg_pos(0).ok_or("where?")?);
                 let (select, keep) = (flag("select"), flag("keepColumn"));
-                let text = self.texts[&buf].buf.text();
+                let b = &self.texts[&buf].buf;
                 if let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) {
                     let want = view.view.cursor.want_col;
-                    view.view.set_cursor(text, at, select);
+                    view.view.set_cursor(b, at, select);
                     if keep {
                         view.view.cursor.want_col = want;
                     }
@@ -933,9 +987,9 @@ impl Session {
             "set-selection" => {
                 let (a, b) = (text.offset(arg_pos(0).ok_or("anchor?")?), text.offset(arg_pos(1).ok_or("active?")?));
                 let kind = selection_kind(args.get(2).and_then(ScriptValue::as_str))?;
-                let text = self.texts[&buf].buf.text();
+                let tb = &self.texts[&buf].buf;
                 if let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) {
-                    view.view.set_cursor(text, b, false);
+                    view.view.set_cursor(tb, b, false);
                     view.view.cursor.anchor = Some((a, kind));
                 }
                 redrawn
@@ -956,9 +1010,9 @@ impl Session {
             // The view.
             "scroll" => {
                 let n = num(0).ok_or("how many rows?")? as i64 * count.unwrap_or(1) as i64;
-                let text = self.texts[&buf].buf.text();
+                let b = &self.texts[&buf].buf;
                 if let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) {
-                    view.view.scroll(text, n);
+                    view.view.scroll(b, n);
                 }
                 redrawn
             }
@@ -970,9 +1024,9 @@ impl Session {
                     Some("top") => Reveal::Top,
                     Some(other) => return Err(format!("no way {other:?} (minimal, center, top)")),
                 };
-                let text = self.texts[&buf].buf.text();
+                let b = &self.texts[&buf].buf;
                 if let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) {
-                    view.view.reveal(text, at, how);
+                    view.view.reveal(b, at, how);
                 }
                 redrawn
             }
@@ -1028,17 +1082,16 @@ pub(super) fn mouse(
         CoordUnit::Cell => (m.x, m.y),
     };
     let (col, row) = (col.max(0) as usize, row.max(0) as usize);
-    let text = t.buf.text();
     match m.kind {
         MouseEventKind::Press(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
             let select = matches!(m.kind, MouseEventKind::Drag(_));
-            let at = tv.view.offset_at_cell(text, col, row);
-            tv.view.set_cursor(text, at, select);
+            let at = tv.view.offset_at_cell(&t.buf, col, row);
+            tv.view.set_cursor(&t.buf, at, select);
             t.buf.undo_tree_mut().cursor_moved();
             Outcome::Redraw
         }
         MouseEventKind::Scroll(d @ (ScrollDirection::Up | ScrollDirection::Down)) => {
-            tv.view.scroll(text, if d == ScrollDirection::Up { -3 } else { 3 });
+            tv.view.scroll(&t.buf, if d == ScrollDirection::Up { -3 } else { 3 });
             Outcome::Redraw
         }
         MouseEventKind::ScrollBy { dy, unit, .. } if dy != 0 => {
@@ -1047,7 +1100,7 @@ pub(super) fn mouse(
                 ScrollUnit::Pixel => dy as f64 / 100.0 / cell.height.max(1) as f64,
             };
             let rows = if rows.abs() < 1.0 { rows.signum() } else { rows.round() };
-            tv.view.scroll(text, rows as i64);
+            tv.view.scroll(&t.buf, rows as i64);
             Outcome::Redraw
         }
         _ => Outcome::None,
@@ -1157,8 +1210,8 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "text.add-decoration",
-        "(range: Range, opts?: { style?: string, namespace?: string, priority?: number, showIn?: number, startGravity?: \"before\" | \"after\", endGravity?: \"before\" | \"after\", ttl?: number, pane?: number }): number",
-        "Decorate a range (an empty one without a style is a mark): it follows edits, collapses and is flagged deleted when its text goes (undo restores it). `style` a highlight group, `showIn` a pane only, gravity where each end goes on an insertion exactly there, `ttl` milliseconds until it goes. Returns its id",
+        "(range: Range, opts?: { style?: string, namespace?: string, priority?: number, showIn?: number, startGravity?: \"before\" | \"after\", endGravity?: \"before\" | \"after\", ttl?: number, virtText?: (VirtChunk | string)[], virtTextPos?: \"inline\" | \"eol\" | \"overlay\", pane?: number }): number",
+        "Decorate a range (an empty one without a style is a mark): it follows edits, collapses and is flagged deleted when its text goes (undo restores it). `style` a highlight group, `showIn` a pane only, gravity where each end goes on an insertion exactly there, `ttl` milliseconds until it goes. `virtText` is text shown that is not in the buffer, at the range's start: `inline` between the characters (it takes columns; the cursor never goes in it), `eol` after the line's end, `overlay` over the text. Returns its id",
     ),
     ("text.decoration", "(id: number, opts?: { pane?: number }): Decoration | null", "A decoration or mark by id"),
     (

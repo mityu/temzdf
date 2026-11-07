@@ -132,7 +132,7 @@ server on one `Session`). Next and open:
     asynchronous mappings; the user wants `input()`-driven operations
     such as sandwich.vim's function surround later);
   - function values in buffer, pane and tab variables;
-  - decorations beyond highlights (virtual text and images, conceal and
+  - decorations beyond highlights and virtual text (images, conceal and
     math previews, signs, virtual lines), folding, `listchars`;
   - swap files, backups, persistent undo (until then `kill-session
     --force` and signals lose unsaved changes);

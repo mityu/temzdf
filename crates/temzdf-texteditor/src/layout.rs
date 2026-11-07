@@ -8,6 +8,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::marks::{Marks, VirtPos};
 use crate::text::Text;
 
 /// How a pane lays text out.
@@ -49,6 +50,58 @@ pub enum GlyphKind {
     Tab,
     /// `^X` for a control character.
     Control(char),
+    /// A grapheme of inline virtual text (no characters of the text: its
+    /// `offset` is where it shows, before the character there).
+    Virtual {
+        text: String,
+        style: Option<String>,
+    },
+}
+
+/// Inline virtual text at `offset`, as layout places it: its graphemes, each
+/// with its width and style.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Inline {
+    pub offset: usize,
+    pub graphemes: Vec<(String, usize, Option<String>)>,
+}
+
+impl Inline {
+    fn width(&self) -> usize {
+        self.graphemes.iter().map(|g| g.1).sum()
+    }
+
+    /// The inline virtual text of `marks` shown in `pane`, by offset (then
+    /// priority, then age).
+    pub fn of(marks: &Marks, pane: Option<u32>) -> Vec<Inline> {
+        let mut v: Vec<_> = marks
+            .iter()
+            .filter(|m| {
+                m.spec.virt_pos == VirtPos::Inline
+                    && !m.spec.virt_text.is_empty()
+                    && !m.deleted
+                    && m.spec.pane.is_none_or(|p| Some(p) == pane)
+            })
+            .collect();
+        v.sort_by_key(|m| (m.start, m.spec.priority, m.id));
+        v.into_iter()
+            .map(|m| Inline {
+                offset: m.start,
+                graphemes: m
+                    .spec
+                    .virt_text
+                    .iter()
+                    .flat_map(|c| {
+                        c.text
+                            .graphemes(true)
+                            .filter(|g| !g.chars().any(control))
+                            .map(|g| (g.to_owned(), grapheme_width(g), c.style.clone()))
+                    })
+                    .collect(),
+            })
+            .filter(|i| !i.graphemes.is_empty())
+            .collect()
+    }
 }
 
 /// A display row: part of one line.
@@ -107,6 +160,8 @@ pub struct Layout<'a> {
     pub opts: &'a LayoutOptions,
     /// Columns for text (the pane minus the gutter).
     pub width: usize,
+    /// Inline virtual text, by offset ([`Inline::of`]).
+    pub inline: Vec<Inline>,
 }
 
 /// How far ahead a row is read at once (more if it needs it).
@@ -127,6 +182,10 @@ impl Layout<'_> {
         let mut row = Row { line, start, end: line_end, first, prefix, glyphs: Vec::new(), wrapped: false };
         let mut col = prefix;
         let mut at = start;
+        // Inline virtual text goes with the character after it (a row break
+        // never comes between them), so a row still depends only on its
+        // start: this row shows that at offsets from `start` on.
+        let mut vi = self.inline.partition_point(|v| v.offset < start);
         // Where a `linebreak` row may end: after the last blank.
         let mut last_blank: Option<usize> = None;
         while at < line_end {
@@ -149,7 +208,10 @@ impl Layout<'_> {
                 } else {
                     (GlyphKind::Text(g.to_owned()), grapheme_width(g))
                 };
-                if self.opts.wrap && col + w > width && col > prefix {
+                // The virtual text before this character, and its width.
+                let vj = vi + self.inline[vi..].iter().take_while(|v| v.offset == at).count();
+                let vw: usize = self.inline[vi..vj].iter().map(Inline::width).sum();
+                if self.opts.wrap && col + vw + w > width && col > prefix {
                     row.wrapped = true;
                     row.end = at;
                     if self.opts.linebreak
@@ -160,6 +222,14 @@ impl Layout<'_> {
                     }
                     return row;
                 }
+                if !self.opts.wrap && col >= limit {
+                    return row;
+                }
+                // In a row of its own it may not fit: cut, the character
+                // still shown.
+                let room = if self.opts.wrap { width.saturating_sub(col + w) } else { usize::MAX };
+                self.place_inline(&mut row, &mut col, &self.inline[vi..vj], at, room);
+                vi = vj;
                 if !self.opts.wrap && col >= limit {
                     return row;
                 }
@@ -176,7 +246,42 @@ impl Layout<'_> {
                 at = to;
             }
         }
+        // Virtual text at the line's end (a prompt on an empty line).
+        let vj = vi + self.inline[vi..].iter().take_while(|v| v.offset == line_end).count();
+        if vj > vi && at == line_end {
+            let vw: usize = self.inline[vi..vj].iter().map(Inline::width).sum();
+            if self.opts.wrap && col + vw > width && col > prefix {
+                // On a row of its own after this one (same start and end).
+                row.wrapped = true;
+                row.end = line_end;
+                return row;
+            }
+            let room = if self.opts.wrap { width.saturating_sub(col) } else { usize::MAX };
+            self.place_inline(&mut row, &mut col, &self.inline[vi..vj], line_end, room);
+        }
         row
+    }
+
+    /// Put inline virtual text at `offset` into `row`, at most `room`
+    /// columns of it.
+    fn place_inline(&self, row: &mut Row, col: &mut usize, inline: &[Inline], offset: usize, room: usize) {
+        let mut left = room;
+        for v in inline {
+            for (g, w, style) in &v.graphemes {
+                if *w > left {
+                    return;
+                }
+                row.glyphs.push(Glyph {
+                    offset,
+                    chars: 0,
+                    col: *col,
+                    width: *w,
+                    kind: GlyphKind::Virtual { text: g.clone(), style: style.clone() },
+                });
+                *col += w;
+                left -= w;
+            }
+        }
     }
 
     fn continuation_prefix(&self, line_start: usize, line_end: usize) -> usize {
@@ -279,8 +384,22 @@ mod tests {
     use super::*;
 
     fn rows(text: &str, width: usize, opts: LayoutOptions) -> Vec<String> {
+        rows_with(text, width, opts, &[])
+    }
+
+    /// Inline virtual text `(offset, text)`.
+    fn inline(v: &[(usize, &str)]) -> Vec<Inline> {
+        v.iter()
+            .map(|(offset, text)| Inline {
+                offset: *offset,
+                graphemes: text.graphemes(true).map(|g| (g.to_owned(), grapheme_width(g), None)).collect(),
+            })
+            .collect()
+    }
+
+    fn rows_with(text: &str, width: usize, opts: LayoutOptions, virt: &[(usize, &str)]) -> Vec<String> {
         let t = Text::from(text);
-        let l = Layout { text: &t, opts: &opts, width };
+        let l = Layout { text: &t, opts: &opts, width, inline: inline(virt) };
         let mut out = Vec::new();
         let mut at = Some(0);
         while let Some(start) = at {
@@ -291,6 +410,8 @@ mod tests {
                     GlyphKind::Text(t) => s.push_str(t),
                     GlyphKind::Tab => s.push_str(&">".repeat(g.width)),
                     GlyphKind::Control(c) => s.push_str(&format!("^{}", ((*c as u8) ^ 0x40) as char)),
+                    // Virtual text is written in capitals in these tests.
+                    GlyphKind::Virtual { text, .. } => s.push_str(text),
                 }
             }
             out.push(s);
@@ -319,7 +440,7 @@ mod tests {
     fn rows_are_found_from_offsets_and_columns_kept_across_them() {
         let t = Text::from("abcdefgh\nxy");
         let opts = LayoutOptions::default();
-        let l = Layout { text: &t, opts: &opts, width: 3 };
+        let l = Layout { text: &t, opts: &opts, width: 3, inline: Vec::new() };
         assert_eq!(l.row_start_of(4), 3);
         assert_eq!(l.prev_row(6), Some(3));
         assert_eq!(l.prev_row(9), Some(6), "the last row of the line before");
@@ -334,8 +455,53 @@ mod tests {
         let long = "x".repeat(1 << 20);
         let t = Text::from(long.as_str());
         let opts = LayoutOptions { wrap: false, ..Default::default() };
-        let l = Layout { text: &t, opts: &opts, width: 80 };
+        let l = Layout { text: &t, opts: &opts, width: 80, inline: Vec::new() };
         let r = l.row_at(0, 80);
         assert_eq!(r.glyphs.len(), 80);
+    }
+
+    #[test]
+    fn inline_virtual_text_takes_columns_before_its_character() {
+        let nowrap = || LayoutOptions { wrap: false, ..Default::default() };
+        assert_eq!(rows_with("abc", 80, nowrap(), &[(1, "XY")]), ["aXYbc"]);
+        // On an empty line, and at a line's end.
+        assert_eq!(rows_with("", 80, nowrap(), &[(0, "> ")]), ["> "]);
+        assert_eq!(rows_with("ab\ncd", 80, nowrap(), &[(2, "!")]), ["ab!", "cd"]);
+        // The cursor goes after it: columns of offsets skip it.
+        let t = Text::from("abc");
+        let opts = nowrap();
+        let l = Layout { text: &t, opts: &opts, width: 80, inline: inline(&[(0, "> "), (1, "XY")]) };
+        let r = l.row_at(0, usize::MAX);
+        assert_eq!((r.col_of(0), r.col_of(1), r.col_of(3)), (2, 5, 7));
+        assert_eq!(r.offset_at(0), 0, "a click on it: where it is");
+        assert_eq!(r.offset_at(3), 1);
+        assert_eq!(l.line_col(2), 6, "vertical moves count it");
+    }
+
+    #[test]
+    fn inline_virtual_text_wraps_with_the_character_after_it() {
+        let wrap = LayoutOptions::default;
+        // Never alone at a row's end: with the character it is before.
+        assert_eq!(rows_with("abcd", 4, wrap(), &[(3, "XY")]), ["abc", "XYd"]);
+        assert_eq!(rows_with("abcd", 4, wrap(), &[(2, "X")]), ["abXc", "d"]);
+        // At the line's end: on a row of its own when it does not fit.
+        assert_eq!(rows_with("abcd", 4, wrap(), &[(4, "XY")]), ["abcd", "XY"]);
+        // Too wide for any row: cut, the character still shown.
+        assert_eq!(rows_with("ab", 4, wrap(), &[(0, "XXXXXX")]), ["XXXa", "b"]);
+        // linebreak: a row ending at a blank keeps what follows together.
+        let lb = LayoutOptions { linebreak: true, ..Default::default() };
+        assert_eq!(rows_with("aa bb", 5, lb, &[(3, "X")]), ["aa ", "Xbb"]);
+    }
+
+    #[test]
+    fn rows_with_inline_virtual_text_are_found_from_offsets() {
+        let t = Text::from("abcdef");
+        let opts = LayoutOptions::default();
+        let l = Layout { text: &t, opts: &opts, width: 4, inline: inline(&[(2, "XY")]) };
+        // "abXY", "cdef".
+        assert_eq!(l.row_start_of(1), 0);
+        assert_eq!(l.row_start_of(2), 2, "it went down with its character");
+        assert_eq!(l.prev_row(2), Some(0));
+        assert_eq!(l.offset_at_line_col(0, 4), 2);
     }
 }

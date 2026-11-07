@@ -8,6 +8,7 @@ use temzdf_scene::{Attrs, Cell, Color, Underline};
 use crate::buffer::Buffer;
 use crate::cursor::SelectionKind;
 use crate::layout::GlyphKind;
+use crate::marks::{Mark, VirtPos};
 use crate::search::{Pattern, SearchOptions, find_all};
 use crate::view::{NumberMode, View};
 
@@ -101,13 +102,25 @@ pub fn render(
     let text = buf.text();
     let (width, height) = (view.width as usize, view.height as usize);
     let gutter = view.gutter(text.line_count());
-    let rows = view.rows(text);
+    let rows = view.rows(buf);
     let (vis_start, vis_end) = (view.top, rows.last().map_or(view.top, |r| r.end));
     let marks: Vec<_> = buf
         .marks()
         .overlapping(vis_start, vis_end)
         .into_iter()
         .filter(|m| m.spec.style.is_some() && m.start < m.end && m.spec.pane.is_none_or(|p| Some(p) == pane))
+        .collect();
+    // Virtual text drawn over the rows (end of line, overlay).
+    let virt: Vec<&Mark> = buf
+        .marks()
+        .overlapping(vis_start, vis_end)
+        .into_iter()
+        .filter(|m| {
+            m.spec.virt_pos != VirtPos::Inline
+                && !m.spec.virt_text.is_empty()
+                && !m.deleted
+                && m.spec.pane.is_none_or(|p| Some(p) == pane)
+        })
         .collect();
     // Matches of the patterns in the rows shown.
     let painted: Vec<(usize, usize, &str)> = patterns
@@ -123,7 +136,7 @@ pub fn render(
     let selection = view.cursor.selection();
     // A block selection's display columns.
     let block = selection.filter(|s| s.2 == SelectionKind::Block).map(|(a, b, _)| {
-        let l = view.layouter(text);
+        let l = view.layouter(buf);
         let (ca, cb) = (l.line_col(a), l.line_col(b));
         (text.line_of(a), text.line_of(b), ca.min(cb), ca.max(cb) + 1)
     });
@@ -177,6 +190,15 @@ pub fn render(
             if x < gutter || x + g.width > width {
                 continue;
             }
+            // Inline virtual text: its own style only.
+            if let GlyphKind::Virtual { text, style: vs } = &g.kind {
+                let mut cell = base.clone();
+                if let Some(name) = vs {
+                    style(name, &mut cell);
+                }
+                put(&mut cells, x, text, g.width, cell);
+                continue;
+            }
             let mut cell = base.clone();
             for (a, b, name) in &painted {
                 if *a <= g.offset && g.offset < *b {
@@ -224,6 +246,42 @@ pub fn render(
                     let shown = char::from_u32((*c as u32) ^ 0x40).unwrap_or('?');
                     cells[x + 1] = Cell { text: shown.to_string(), width: 1, ..cell };
                 }
+                // Drawn above.
+                GlyphKind::Virtual { .. } => {}
+            }
+        }
+        // Virtual text at the end of the line (its last row) and over the
+        // text.
+        let mut eol = row.glyphs.last().map_or(row.prefix, |g| g.col + g.width) + 1;
+        for m in &virt {
+            let at = match m.spec.virt_pos {
+                VirtPos::Eol if !row.wrapped && text.line_of(m.start) == row.line => {
+                    let at = eol;
+                    eol += m.spec.virt_text.iter().map(|c| text_width(&c.text)).sum::<usize>() + 1;
+                    at
+                }
+                VirtPos::Overlay if row.contains(m.start) => row.col_of(m.start),
+                _ => continue,
+            };
+            let mut col = at + gutter;
+            for chunk in &m.spec.virt_text {
+                let mut cell = base.clone();
+                if let Some(name) = &chunk.style {
+                    style(name, &mut cell);
+                }
+                for g in unicode_segmentation::UnicodeSegmentation::graphemes(chunk.text.as_str(), true) {
+                    if g.chars().any(char::is_control) {
+                        continue;
+                    }
+                    let w = crate::layout::grapheme_width(g);
+                    if let Some(x) = col.checked_sub(view.left)
+                        && x >= gutter
+                        && x + w <= width
+                    {
+                        put(&mut cells, x, g, w, cell.clone());
+                    }
+                    col += w;
+                }
             }
         }
         // The cursor.
@@ -251,6 +309,22 @@ pub fn render(
         drawn.rows.push(cells);
     }
     drawn
+}
+
+/// Put a grapheme `w` columns wide at `x` (a wide one takes the next cell
+/// too); a wide character it covers half of is mended after.
+fn put(cells: &mut [Cell], x: usize, text: &str, w: usize, cell: Cell) {
+    cells[x] = Cell { text: text.to_owned(), width: w as u8, ..cell.clone() };
+    if w == 2 && x + 1 < cells.len() {
+        cells[x + 1] = Cell { text: String::new(), width: 0, ..cell };
+    }
+}
+
+fn text_width(s: &str) -> usize {
+    unicode_segmentation::UnicodeSegmentation::graphemes(s, true)
+        .filter(|g| !g.chars().any(char::is_control))
+        .map(crate::layout::grapheme_width)
+        .sum()
 }
 
 #[cfg(test)]
@@ -338,5 +412,42 @@ mod tests {
         assert_eq!(line(&d, 0), "a^Ab");
         assert_eq!(line(&d, 1), "+cde");
         assert_eq!(line(&d, 2), "+f  ");
+    }
+
+    fn virt(text: &str, pos: crate::marks::VirtPos, style: Option<&str>) -> MarkSpec {
+        MarkSpec {
+            virt_text: vec![crate::marks::VirtChunk { text: text.into(), style: style.map(str::to_owned) }],
+            virt_pos: pos,
+            ..MarkSpec::default()
+        }
+    }
+
+    #[test]
+    fn virtual_text_inline_at_the_end_and_over_the_text() {
+        use crate::marks::VirtPos;
+        let mut buf = Buffer::new(Text::from("abcd\nあいう"), LineEnding::Lf);
+        let mut hl = Highlights::default();
+        hl.set("Comment", Style { fg: Some(Color::Indexed(4)), ..Style::default() });
+        buf.marks_mut().add(0, 0, virt("> ", VirtPos::Inline, Some("Comment")));
+        buf.marks_mut().add(2, 2, virt("hint", VirtPos::Eol, None));
+        buf.marks_mut().add(1, 1, virt("ZZ", VirtPos::Overlay, None));
+        // Over the first half of あ: the rest of it goes (no half
+        // characters).
+        buf.marks_mut().add(5, 5, virt("Q", VirtPos::Overlay, None));
+        let mut v = View { width: 16, height: 2, ..View::default() };
+        v.cursor = Cursor::at(0);
+        let d = render(&buf, &v, &hl, None, true, &[]);
+        assert_eq!(line(&d, 0), "> aZZd hint     ");
+        assert_eq!(d.rows[0][0].fg, Color::Indexed(4), "in its style");
+        assert_eq!(d.cursor, Some((2, 0)), "after the inline text");
+        assert_eq!(line(&d, 1), "Q いう          ");
+        // Another pane's is not shown, and takes no columns there.
+        buf.marks_mut().add(3, 3, MarkSpec { pane: Some(9), ..virt("P", VirtPos::Inline, None) });
+        let d = render(&buf, &v, &hl, None, true, &[]);
+        assert_eq!(line(&d, 0), "> aZZd hint     ");
+        let mut v9 = View { pane: Some(9), ..v.clone() };
+        v9.cursor = Cursor::at(0);
+        let d = render(&buf, &v9, &hl, Some(9), true, &[]);
+        assert_eq!(line(&d, 0), "> aZZPd hint    ");
     }
 }

@@ -5,7 +5,7 @@
 use crate::buffer::Buffer;
 use crate::cursor::{Cursor, SelectionKind};
 use crate::edit::{Change, Gravity, map_offset};
-use crate::layout::{Layout, LayoutOptions, Row};
+use crate::layout::{Inline, Layout, LayoutOptions, Row};
 use crate::motion::{self, Unit};
 use crate::text::Text;
 
@@ -68,6 +68,9 @@ pub struct View {
     pub cursorline: bool,
     /// Rows kept between the cursor and the top or bottom.
     pub scrolloff: usize,
+    /// The pane it is in: decorations shown only there count (inline
+    /// virtual text takes columns).
+    pub pane: Option<u32>,
 }
 
 impl Default for View {
@@ -82,6 +85,7 @@ impl Default for View {
             number: NumberMode::Off,
             cursorline: false,
             scrolloff: 0,
+            pane: None,
         }
     }
 }
@@ -100,13 +104,15 @@ impl View {
         (self.width as usize).saturating_sub(self.gutter(text.line_count())).max(1)
     }
 
-    pub fn layouter<'a>(&'a self, text: &'a Text) -> Layout<'a> {
-        Layout { text, opts: &self.layout, width: self.text_width(text) }
+    /// Lays out `buf` as this view shows it (its inline virtual text too).
+    pub fn layouter<'a>(&'a self, buf: &'a Buffer) -> Layout<'a> {
+        let text = buf.text();
+        Layout { text, opts: &self.layout, width: self.text_width(text), inline: Inline::of(buf.marks(), self.pane) }
     }
 
     /// The rows shown, top first.
-    pub fn rows(&self, text: &Text) -> Vec<Row> {
-        let l = self.layouter(text);
+    pub fn rows(&self, buf: &Buffer) -> Vec<Row> {
+        let l = self.layouter(buf);
         let limit = self.left + l.width;
         let mut rows = Vec::with_capacity(self.height as usize);
         let mut at = Some(self.top);
@@ -122,26 +128,26 @@ impl View {
 
     /// Follow edits: the cursor (an insertion at it leaves it after) and
     /// the top (kept at a row start).
-    pub fn follow(&mut self, text: &Text, changes: &[Change]) {
+    pub fn follow(&mut self, buf: &Buffer, changes: &[Change]) {
         self.cursor.follow(changes);
         let top = map_offset(self.top, changes, Gravity::Before).0;
-        let top = self.layouter(text).row_start_of(top);
+        let top = self.layouter(buf).row_start_of(top);
         self.top = top;
     }
 
     /// The layout changed (width, wrapping): the top must be a row start
     /// again.
-    pub fn relayout(&mut self, text: &Text) {
-        let top = self.layouter(text).row_start_of(self.top.min(text.len_chars()));
+    pub fn relayout(&mut self, buf: &Buffer) {
+        let top = self.layouter(buf).row_start_of(self.top.min(buf.text().len_chars()));
         self.top = top;
-        self.reveal(text, self.cursor.pos, Reveal::Minimal);
+        self.reveal(buf, self.cursor.pos, Reveal::Minimal);
     }
 
     /// Where `count` units from `from` is, and the column vertical moves
     /// keep (`None` for other units).
     pub fn position_of(&self, buf: &Buffer, from: usize, unit: ViewUnit, count: i64) -> (usize, Option<usize>) {
         let text = buf.text();
-        let l = self.layouter(text);
+        let l = self.layouter(buf);
         match unit {
             ViewUnit::Text(u) => (motion::position_of(text, from, u, count, &buf.wordchars), None),
             ViewUnit::Line => {
@@ -187,13 +193,13 @@ impl View {
     /// at the old position), else drop it. Then keep it in sight.
     pub fn move_cursor(&mut self, buf: &Buffer, unit: ViewUnit, count: i64, select: bool) {
         let (to, want) = self.position_of(buf, self.cursor.pos, unit, count);
-        self.set_cursor(buf.text(), to, select);
+        self.set_cursor(buf, to, select);
         self.cursor.want_col = want;
     }
 
     /// Put the cursor at `offset` (see [`move_cursor`](Self::move_cursor)).
-    pub fn set_cursor(&mut self, text: &Text, offset: usize, select: bool) {
-        let offset = offset.min(text.len_chars());
+    pub fn set_cursor(&mut self, buf: &Buffer, offset: usize, select: bool) {
+        let offset = offset.min(buf.text().len_chars());
         if select {
             let anchor = self.cursor.anchor.unwrap_or((self.cursor.pos, SelectionKind::Char));
             self.cursor.anchor = Some(anchor);
@@ -202,14 +208,15 @@ impl View {
         }
         self.cursor.pos = offset;
         self.cursor.want_col = None;
-        self.reveal(text, offset, Reveal::Minimal);
+        self.reveal(buf, offset, Reveal::Minimal);
     }
 
     /// Scroll by `rows` display rows (negative: up); the cursor stays in
     /// sight.
-    pub fn scroll(&mut self, text: &Text, rows: i64) {
+    pub fn scroll(&mut self, buf: &Buffer, rows: i64) {
         let opts = self.layout.clone();
-        let l = Layout { text, opts: &opts, width: self.text_width(text) };
+        let text = buf.text();
+        let l = Layout { text, opts: &opts, width: self.text_width(text), inline: Inline::of(buf.marks(), self.pane) };
         for _ in 0..rows.unsigned_abs() {
             let next = if rows < 0 { l.prev_row(self.top) } else { l.next_row(&l.row_at(self.top, usize::MAX)) };
             match next {
@@ -218,7 +225,7 @@ impl View {
             }
         }
         // The cursor into the rows shown (keeping its column).
-        let shown = self.rows(text);
+        let shown = self.rows(buf);
         let (Some(first), Some(last)) = (shown.first(), shown.last()) else { return };
         let so = self.scrolloff.min(shown.len().saturating_sub(1) / 2);
         let pos = self.cursor.pos;
@@ -239,9 +246,10 @@ impl View {
     }
 
     /// Scroll so `offset` is shown, as `how` says.
-    pub fn reveal(&mut self, text: &Text, offset: usize, how: Reveal) {
+    pub fn reveal(&mut self, buf: &Buffer, offset: usize, how: Reveal) {
         let opts = self.layout.clone();
-        let l = Layout { text, opts: &opts, width: self.text_width(text) };
+        let text = buf.text();
+        let l = Layout { text, opts: &opts, width: self.text_width(text), inline: Inline::of(buf.marks(), self.pane) };
         let target = l.row_start_of(offset.min(text.len_chars()));
         let height = self.height.max(1) as usize;
         let so = self.scrolloff.min((height - 1) / 2);
@@ -293,8 +301,9 @@ impl View {
 
     /// The offset shown at cell (`col`, `row`) of the pane (gutter
     /// included): a row's end past its text, the last row's below the text.
-    pub fn offset_at_cell(&self, text: &Text, col: usize, row: usize) -> usize {
-        let rows = self.rows(text);
+    pub fn offset_at_cell(&self, buf: &Buffer, col: usize, row: usize) -> usize {
+        let text = buf.text();
+        let rows = self.rows(buf);
         let Some(r) = rows.get(row).or(rows.last()) else { return 0 };
         if row >= rows.len() {
             return r.end;
@@ -306,8 +315,8 @@ impl View {
     }
 
     /// The text shown: from the top row's start to the last row's end.
-    pub fn visible_range(&self, text: &Text) -> (usize, usize) {
-        let rows = self.rows(text);
+    pub fn visible_range(&self, buf: &Buffer) -> (usize, usize) {
+        let rows = self.rows(buf);
         (self.top, rows.last().map_or(self.top, |r| r.end))
     }
 }
@@ -325,7 +334,7 @@ mod tests {
     fn vertical_moves_keep_the_column_across_short_lines() {
         let buf = Buffer::new(Text::from("abcdef\nab\nabcdef"), LineEnding::Lf);
         let mut v = view(20, 5);
-        v.set_cursor(buf.text(), 5, false);
+        v.set_cursor(&buf, 5, false);
         v.move_cursor(&buf, ViewUnit::Line, 1, false);
         assert_eq!(buf.text().position(v.cursor.pos).character, 2, "clamped to the short line");
         v.move_cursor(&buf, ViewUnit::Line, 1, false);
@@ -336,7 +345,7 @@ mod tests {
     fn display_lines_step_through_wrapped_rows() {
         let buf = Buffer::new(Text::from("abcdefgh\nxy"), LineEnding::Lf);
         let mut v = view(3, 5);
-        v.set_cursor(buf.text(), 1, false);
+        v.set_cursor(&buf, 1, false);
         v.move_cursor(&buf, ViewUnit::DisplayLine, 1, false);
         assert_eq!(v.cursor.pos, 4);
         v.move_cursor(&buf, ViewUnit::DisplayLine, 2, false);
@@ -350,15 +359,15 @@ mod tests {
         let text: String = (0..50).map(|i| format!("{i}\n")).collect();
         let buf = Buffer::new(Text::from(text.as_str()), LineEnding::Lf);
         let mut v = View { scrolloff: 2, ..view(10, 10) };
-        v.set_cursor(buf.text(), buf.text().line_start(20), false);
+        v.set_cursor(&buf, buf.text().line_start(20), false);
         assert_eq!(buf.text().line_of(v.top), 13, "line 20 two rows above the bottom");
-        v.set_cursor(buf.text(), buf.text().line_start(16), false);
+        v.set_cursor(&buf, buf.text().line_start(16), false);
         assert_eq!(buf.text().line_of(v.top), 13, "within sight: no scroll");
-        v.set_cursor(buf.text(), buf.text().line_start(14), false);
+        v.set_cursor(&buf, buf.text().line_start(14), false);
         assert_eq!(buf.text().line_of(v.top), 12, "two rows kept above");
-        v.reveal(buf.text(), v.cursor.pos, Reveal::Center);
+        v.reveal(&buf, v.cursor.pos, Reveal::Center);
         assert_eq!(buf.text().line_of(v.top), 10);
-        v.scroll(buf.text(), 10);
+        v.scroll(&buf, 10);
         assert_eq!(buf.text().line_of(v.top), 20);
         assert_eq!(buf.text().line_of(v.cursor.pos), 22, "pulled down, scrolloff kept");
     }
@@ -384,20 +393,20 @@ xy",
         );
         let v = View { number: NumberMode::Absolute, ..view(8, 4) };
         // A gutter of four columns, four of text: "abcd", "ef", "xy".
-        assert_eq!(v.offset_at_cell(buf.text(), 5, 0), 1);
-        assert_eq!(v.offset_at_cell(buf.text(), 0, 0), 0, "in the gutter: the row's start");
-        assert_eq!(v.offset_at_cell(buf.text(), 7, 1), 6, "past the text: the line's end");
-        assert_eq!(v.offset_at_cell(buf.text(), 9, 0), 3, "past a wrapped row: its last character");
-        assert_eq!(v.offset_at_cell(buf.text(), 4, 3), 9, "below the text: its end");
+        assert_eq!(v.offset_at_cell(&buf, 5, 0), 1);
+        assert_eq!(v.offset_at_cell(&buf, 0, 0), 0, "in the gutter: the row's start");
+        assert_eq!(v.offset_at_cell(&buf, 7, 1), 6, "past the text: the line's end");
+        assert_eq!(v.offset_at_cell(&buf, 9, 0), 3, "past a wrapped row: its last character");
+        assert_eq!(v.offset_at_cell(&buf, 4, 3), 9, "below the text: its end");
     }
 
     #[test]
     fn without_wrapping_the_view_scrolls_sideways() {
         let buf = Buffer::new(Text::from(&*"x".repeat(100)), LineEnding::Lf);
         let mut v = View { layout: LayoutOptions { wrap: false, ..Default::default() }, ..view(10, 3) };
-        v.set_cursor(buf.text(), 50, false);
+        v.set_cursor(&buf, 50, false);
         assert_eq!(v.left, 41);
-        v.set_cursor(buf.text(), 3, false);
+        v.set_cursor(&buf, 3, false);
         assert_eq!(v.left, 3);
     }
 }
