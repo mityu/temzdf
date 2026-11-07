@@ -490,13 +490,15 @@ mod tests {
         }
         // It reads again a little later; quitting must not have given up.
         let r = room.clone();
-        std::thread::spawn(move || {
+        let reader = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(100));
             *lock(&r) = usize::MAX;
         });
         let start = Instant::now();
         out.close(b"RESET", Duration::from_secs(2));
         assert!(start.elapsed() < Duration::from_secs(1));
+        // It may still be ending after its write (Miri insists on it).
+        reader.join().unwrap();
         let got = lock(&inner.0).clone();
         assert_eq!(got.len(), CHUNK + 100 + 2 + 5, "exactly what was taken, the terminator and the reset");
         assert!(got.ends_with(b"\x1b\\RESET"));
