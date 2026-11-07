@@ -1156,9 +1156,6 @@ impl Session {
                 }
             }
             "basemode" => {
-                if self.script.loading.is_none() {
-                    return Err("o.basemode is set while the configuration loads only".into());
-                }
                 let ScriptValue::Map(pairs) = value else {
                     return Err("o.basemode: expected { kind: mode, ... }".into());
                 };
@@ -1168,6 +1165,15 @@ impl Session {
                     map.insert(kind.clone(), mode.to_owned());
                 }
                 self.options.basemode = map;
+                // The focused pane's base changed (an editor enabled or
+                // disabled): its history starts again from it, as when
+                // focused; other panes take theirs when focused.
+                let mode = self.pane_mode(self.focus);
+                if self.history.modes().last() != Some(mode.as_str()) {
+                    let old = self.history.current().to_owned();
+                    self.history.reset(&mode);
+                    self.mode_changed(&old);
+                }
             }
             "wrap" => o.text.layout.wrap = flag()?,
             "linebreak" => o.text.layout.linebreak = flag()?,
