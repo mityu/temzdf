@@ -13,7 +13,8 @@ temzdf-pdfview.workspace = true
 temzdf-protocol = { workspace = true, features = ["session"] }
 temzdf-script-runner.workspace = true
 temzdf-texteditor.workspace = true
-serde = "1.0.229"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.149"
 temzdf-scene.workspace = true
 temzdf-term.workspace = true
 termpix-core.workspace = true

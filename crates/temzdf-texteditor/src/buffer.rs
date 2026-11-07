@@ -315,6 +315,20 @@ mod tests {
     }
 
     #[test]
+    fn a_change_after_saving_is_a_step_of_its_own() {
+        let mut b = Buffer::new(Text::from(""), LineEnding::Lf);
+        other(&mut b, TextEdit::new(0, 0, "a"));
+        b.undo_tree_mut().mark_saved();
+        // The same invocation: no boundary but the save.
+        let o = Origin { kind: StepKind::Other, pane: Some(1), cursor: Cursor::at(1) };
+        b.edit(vec![TextEdit::new(1, 1, "b")], o).unwrap();
+        assert!(b.modified());
+        b.undo().unwrap();
+        assert_eq!(b.text().to_string(), "a");
+        assert!(!b.modified());
+    }
+
+    #[test]
     fn undo_restores_deleted_marks() {
         let mut b = Buffer::new(Text::from("keep gone keep"), LineEnding::Lf);
         let m = b.marks_mut().add(5, 9, MarkSpec::default());

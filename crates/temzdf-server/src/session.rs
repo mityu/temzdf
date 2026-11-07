@@ -37,6 +37,7 @@ mod notices;
 mod registers;
 mod script;
 mod statusline;
+mod swap;
 mod tabs;
 mod text;
 #[cfg(test)]
@@ -136,6 +137,10 @@ pub struct Options {
     /// Keep text buffers' undo trees in files (Vim's undofile): written
     /// with the file, read back when it is opened.
     pub undofile: bool,
+    /// Keep text buffers' text in swap files while they are edited.
+    pub swapfile: bool,
+    /// How long after the last change a swap file is written.
+    pub updatetime: Duration,
     /// Pixels per wheel step, and the easing's time constant.
     pub scrollstep: f64,
     pub scrollsmoothness: Duration,
@@ -211,6 +216,8 @@ impl Default for Options {
         Self {
             timeoutlen: Duration::from_millis(1000),
             splitright: true,
+            swapfile: true,
+            updatetime: Duration::from_millis(4000),
             undofile: false,
             splitbelow: true,
             modehistory: 100,
@@ -430,6 +437,8 @@ pub struct Session {
     texts: HashMap<BufferId, text::TextEntry>,
     /// Where undo files go (o.undofile; tests set their own).
     undo_dir: Option<PathBuf>,
+    /// Where swap files go (o.swapfile; tests set their own).
+    swap_dir: Option<PathBuf>,
     /// Highlight groups for text panes (scripts define them).
     highlights: temzdf_texteditor::Highlights,
     /// Buffer, pane and tab page variables (`getVar`, `setVar`).
@@ -519,6 +528,8 @@ impl Session {
             terms: HashMap::new(),
             texts: HashMap::new(),
             undo_dir: text::undo_dir(),
+            // (Unit tests set theirs: none in the user's state directory.)
+            swap_dir: if cfg!(test) { None } else { swap::swap_dir() },
             highlights: temzdf_texteditor::Highlights::default(),
             patterns: Vec::new(),
             vars: HashMap::new(),
@@ -1024,8 +1035,11 @@ impl Session {
             }
         } else if let Some(mut t) = self.terms.remove(&buf) {
             t.term.release(&mut self.images);
-        } else if self.texts.remove(&buf).is_none() {
-            return;
+        } else {
+            self.drop_swap(buf);
+            if self.texts.remove(&buf).is_none() {
+                return;
+            }
         }
         self.event("BufferDeleted", vec![ScriptValue::Num(buf as f64)]);
     }
@@ -2394,6 +2408,7 @@ impl Session {
     /// timeout, the "running a script" notice). For event loops.
     pub fn poll(&mut self, now: Instant) -> Outcome {
         self.expire_clipboard_reads(now);
+        self.write_due_swaps(now);
         let mut out =
             self.script_tick(now).or(self.tick(now)).or(self.expire_notices(now)).or(self.expire_decorations(now));
         if self.matcher.deadline(self.options.timeoutlen).is_some_and(|d| now >= d) {
@@ -2423,6 +2438,7 @@ impl Session {
             .chain(self.script_deadline())
             .chain(self.decorations_deadline())
             .chain(self.copies_deadline())
+            .chain(self.swap_deadline())
             .chain(self.matcher.deadline(self.options.timeoutlen))
             .chain(self.submode_deadline())
             .chain(self.notice_deadline())
@@ -4973,6 +4989,108 @@ mod tests {
         assert_eq!(s.poll(due + Duration::from_millis(1)), Outcome::Redraw);
         assert_eq!(s.frame().text[0].rows[0][0].bg, temzdf_scene::Color::Default);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn swap_files_follow_the_buffer_and_a_gone_sessions_is_recovered() {
+        let (s0, path) = text_session("swap.txt", "one\n");
+        drop(s0);
+        let dir = path.parent().unwrap().to_owned();
+        let swaps = dir.join("state-swap");
+        // A session `name` on `path`, swap files in `swaps`, SwapExists heard
+        // (`listen`) or not.
+        let session = |name: &str, listen: bool| {
+            let sink: EventSink = Arc::new(|_| true);
+            let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+            let mut s = Session::new(name.into(), GEOMETRY, Hints::default(), settings, sink);
+            s.swap_dir = Some(swaps.clone());
+            if listen {
+                s.listen(&["SwapExists"]);
+            }
+            s.start(PaneSpec::File(path.clone()), None).unwrap();
+            s
+        };
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        let names = swap::candidates(&swaps, &canonical);
+        let swapped = |p: &std::path::Path| swap::read(p).unwrap();
+        // Opened: its swap file, written as edits settle (o.updatetime).
+        let mut a = session("first", true);
+        assert_eq!((swapped(&names[0]).text.as_str(), swapped(&names[0]).modified), ("one\n", false));
+        run(&mut a, "text.insert", &[str("x"), pos(0, 0)]).unwrap();
+        assert_eq!(swapped(&names[0]).text, "one\n", "not before o.updatetime");
+        assert_eq!(a.swap_deadline(), a.next_deadline(), "its deadline is the session's");
+        a.poll(Instant::now() + a.options.updatetime + Duration::from_millis(1));
+        assert_eq!((swapped(&names[0]).text.as_str(), swapped(&names[0]).modified), ("xone\n", true));
+        run(&mut a, "write", &[]).unwrap();
+        assert!(!swapped(&names[0]).modified, "written with the file");
+        // (In the same invocation as the write: still a change of its own.)
+        run(&mut a, "text.insert", &[str("y"), pos(0, 0)]).unwrap();
+        a.poll(Instant::now() + a.options.updatetime + Duration::from_millis(1));
+        // `first` is gone (as after a crash: its swap file stays). Another
+        // session opening the file hears of it and waits.
+        // (Starting runs the events: SwapExists said what swapInfo says.)
+        let mut b = session("second", true);
+        let info = run(&mut b, "swap-info", &[]).unwrap().0;
+        assert_eq!(info.get("session"), Some(&str("first")));
+        assert_eq!(info.get("modified"), Some(&ScriptValue::Bool(true)));
+        assert!(!names[1].exists(), "no swap file of its own until answered");
+        // Recover: the text that was not saved, as one change.
+        run(&mut b, "text.recover", &[]).unwrap();
+        assert_eq!(text_of(&mut b), "yxone\n");
+        assert_eq!(run(&mut b, "text.info", &[]).unwrap().0.get("modified"), Some(&ScriptValue::Bool(true)));
+        run(&mut b, "text.undo", &[]).unwrap();
+        assert_eq!(text_of(&mut b), "xone\n");
+        // Its own swap file next to that one; the old one deleted.
+        let own = run(&mut b, "use-swap", &[]).unwrap().0;
+        assert_eq!(own, str(names[1].to_str().unwrap()));
+        run(&mut b, "delete-swap", &[str(names[0].to_str().unwrap())]).unwrap();
+        assert!(!names[0].exists());
+        assert_eq!(run(&mut b, "swap-info", &[]).unwrap().0, ScriptValue::Null);
+        assert!(run(&mut b, "delete-swap", &[str("/etc/passwd")]).is_err(), "only swap files");
+        // A normal end: its swap files go.
+        b.end_swaps();
+        assert!(!names[1].exists());
+        // Nobody hearing SwapExists: edited anyway, with its own swap file.
+        swap::write(&names[0], &swapped_of("first", "lost\n")).unwrap();
+        let mut c = session("third", false);
+        assert!(names[1].exists());
+        assert!(c.notices.iter().any(|n| n.text.contains("found the swap file")));
+        c.end_swaps();
+        // o.swapfile off: none.
+        std::fs::remove_file(&names[0]).unwrap();
+        let sink: EventSink = Arc::new(|_| true);
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut d = Session::new("fourth".into(), GEOMETRY, Hints::default(), settings, sink);
+        d.swap_dir = Some(swaps.clone());
+        d.options.swapfile = false;
+        d.start(PaneSpec::File(path.clone()), None).unwrap();
+        assert!(!names[0].exists());
+        // Read-only: written with force only.
+        let attrs = ScriptValue::List(vec![str("readonly")]);
+        let buf = run(&mut d, "text.info", &[]).unwrap().0.get("buffer").cloned().unwrap();
+        run(&mut d, "set-buffer-attrs", &[buf, attrs]).unwrap();
+        assert!(run(&mut d, "write", &[]).unwrap_err().contains("read-only"));
+        run(&mut d, "write", &[ScriptValue::map([("force", ScriptValue::Bool(true))])]).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A swap file of session `session` (gone) holding `text`.
+    fn swapped_of(session: &str, text: &str) -> swap::SwapFile {
+        swap::SwapFile {
+            version: 1,
+            path: String::new(),
+            session: session.into(),
+            pid: 1,
+            host: String::new(),
+            time: 0,
+            modified: true,
+            encoding: "utf-8".into(),
+            line_ending: "lf".into(),
+            text: text.into(),
+        }
     }
 
     #[test]

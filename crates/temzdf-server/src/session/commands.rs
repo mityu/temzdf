@@ -222,11 +222,11 @@ pub fn command_specs() -> Vec<CommandSpec> {
         doc: format!("Visual mode: {doc} (the focused terminal; a mapping's count applies)"),
         ts: "(): void".into(),
     });
-    let text = super::text::COMMANDS.iter().chain(super::registers::COMMANDS).map(|(name, ts, doc)| CommandSpec {
-        name: (*name).into(),
-        doc: (*doc).into(),
-        ts: (*ts).into(),
-    });
+    let text = super::text::COMMANDS
+        .iter()
+        .chain(super::registers::COMMANDS)
+        .chain(super::swap::COMMANDS)
+        .map(|(name, ts, doc)| CommandSpec { name: (*name).into(), doc: (*doc).into(), ts: (*ts).into() });
     session.chain(text).chain(visual).chain(pdf).collect()
 }
 

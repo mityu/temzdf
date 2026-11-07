@@ -23,6 +23,7 @@ const EVENTS: &[(&str, &str)] = &[
     ("InvokePre", "[info: Invocation]"),
     ("InvokePost", "[info: Invocation & { cursor: Position | null; selection: Range | null }]"),
     ("KeyTyped", "[key: { keys: string; text: string | null; source: \"typed\" | \"feedkeys\" }]"),
+    ("SwapExists", "[buffer: number, info: SwapInfo]"),
     ("TextChanged", "[buffer: number, change: TextChange]"),
     ("FileChangedOnDisk", "[buffer: number]"),
     ("Copied", "[entry: Copied]"),
@@ -286,6 +287,10 @@ declare module "temzdf" {{
     scrolloff: number;
     /** Keep text buffers' undo trees in files (written with the file, read back when it is opened). */
     undofile: boolean;
+    /** Keep text buffers' text in swap files while they are edited (recovering after a crash). */
+    swapfile: boolean;
+    /** Milliseconds after the last change before the swap file is written. */
+    updatetime: number;
   }}
   export const o: Options;
 
@@ -321,7 +326,17 @@ declare module "temzdf" {{
   /** The kinds of panes and buffers. */
   export type PaneKind = "pdf" | "terminal" | "edit";
   /** A text buffer's attributes (Vim's buftype, several at once): `nofile` never modified, written only to a path given; `unlisted` left out of buffers(). */
-  export type BufferAttr = "nofile" | "unlisted";
+  export type BufferAttr = "nofile" | "unlisted" | "readonly";
+  /** A swap file found when a file was opened, of a session that is gone (SwapExists, swapInfo). `time` is milliseconds since the epoch; `newer`: the file is newer than the swap file. */
+  export interface SwapInfo {{
+    swap: string;
+    session: string;
+    pid: number;
+    host: string;
+    time: number;
+    modified: boolean;
+    newer: boolean;
+  }}
   export function on<E extends keyof Events>(
     event: E,
     fn: (...args: Events[E]) => void | HookAnswer,

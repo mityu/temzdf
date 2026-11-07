@@ -175,9 +175,12 @@ impl UndoTree {
         Self { nodes, current: at, saved: Some(at), open: false, depth: 0, typing_tail: false }
     }
 
-    /// The buffer was saved as it is now.
+    /// The buffer was saved as it is now. A change after it is a step of
+    /// its own (joining the saved one, the buffer would look unmodified).
     pub fn mark_saved(&mut self) {
         self.saved = Some(self.current);
+        self.open = false;
+        self.typing_tail = false;
     }
 
     /// Differs from what was saved (or read).

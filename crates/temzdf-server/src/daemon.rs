@@ -401,6 +401,8 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
             Outcome::None => {}
         }
     }
+    // A normal end: the swap files go (a crash leaves them).
+    session.end_swaps();
     // Let writer threads deliver the last messages.
     drop(clients);
     std::thread::sleep(Duration::from_millis(100));

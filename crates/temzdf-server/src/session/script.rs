@@ -44,6 +44,7 @@ pub const EVENTS: &[&str] = &[
     "SessionEndPre",
     "InvokePre",
     "InvokePost",
+    "SwapExists",
     "KeyTyped",
     "TextChanged",
     "PaneOpened",
@@ -1183,6 +1184,8 @@ impl Session {
             "cursorline" => o.text.cursorline = flag()?,
             "scrolloff" => o.text.scrolloff = num()? as usize,
             "undofile" => o.undofile = flag()?,
+            "swapfile" => o.swapfile = flag()?,
+            "updatetime" => o.updatetime = Duration::from_millis(num()?.max(0.0) as u64),
             "number" => {
                 o.text.number = super::text::number_mode(value.as_str())
                     .ok_or("o.number: expected \"off\", \"absolute\", \"relative\" or \"both\"")?;
@@ -1244,6 +1247,8 @@ impl Session {
             "cursorline" => ScriptValue::Bool(o.text.cursorline),
             "scrolloff" => ScriptValue::Num(o.text.scrolloff as f64),
             "undofile" => ScriptValue::Bool(o.undofile),
+            "swapfile" => ScriptValue::Bool(o.swapfile),
+            "updatetime" => ScriptValue::Num(o.updatetime.as_millis() as f64),
             "number" => ScriptValue::Str(
                 match o.text.number {
                     temzdf_texteditor::NumberMode::Off => "off",

@@ -34,12 +34,17 @@ pub(super) struct TextEntry {
     disk_seen: Option<std::time::SystemTime>,
     /// Its attributes (Vim's buftype, several at once): [`BUFFER_ATTRS`].
     pub attrs: Vec<String>,
+    /// Its swap file (o.swapfile), and one of a session gone found when its
+    /// file was opened (waiting for SwapExists to be answered).
+    pub swap: Option<super::swap::Swap>,
+    pub found: Option<super::swap::Found>,
 }
 
 /// The attributes a text buffer may have, and what each does.
 pub(super) const BUFFER_ATTRS: &[(&str, &str)] = &[
     ("nofile", "tied to no file: never modified (nothing to lose), written only to a path given"),
     ("unlisted", "for a script's own use: buffers() leaves it out (buffers({ all: true }) lists it)"),
+    ("readonly", "written only with force (Vim's 'readonly')"),
 ];
 
 /// Attributes from a script's list, each known.
@@ -161,6 +166,17 @@ fn read_undo_file(dir: Option<&Path>, text: &Text, file: &Path) -> Option<temzdf
             }
             None
         }
+    }
+}
+
+/// What a text buffer's name is followed by: `[+]` unsaved changes, `[RO]`
+/// read-only (as Neovim's).
+fn flags(t: &TextEntry) -> &'static str {
+    match (t.modified(), t.has("readonly")) {
+        (true, true) => " [+][RO]",
+        (true, false) => " [+]",
+        (false, true) => " [RO]",
+        (false, false) => "",
     }
 }
 
@@ -287,6 +303,7 @@ impl Session {
                 if let Some(tree) = undo {
                     *self.texts.get_mut(&buf).expect("made").buf.undo_tree_mut() = tree;
                 }
+                self.swap_opened(buf);
                 buf
             }
         };
@@ -318,6 +335,8 @@ impl Session {
                 watcher: None,
                 disk_seen: None,
                 attrs: Vec::new(),
+                swap: None,
+                found: None,
             },
         );
         self.watch_text(id);
@@ -361,7 +380,7 @@ impl Session {
     }
 
     /// The text pane `pane` (the focused one for `None`) and its buffer.
-    fn text_target(&self, pane: Option<PaneId>) -> Result<(PaneId, BufferId), String> {
+    pub(super) fn text_target(&self, pane: Option<PaneId>) -> Result<(PaneId, BufferId), String> {
         let pane = pane.unwrap_or(self.focus);
         match self.panes.get(&pane).map(|e| &e.kind) {
             Some(Kind::Text { buf, .. }) => Ok((pane, *buf)),
@@ -379,7 +398,13 @@ impl Session {
 
     /// Apply edits to `buf` from `pane`, as one batch: every pane on it
     /// follows, and `pane` keeps its cursor in sight.
-    fn text_apply(&mut self, pane: PaneId, buf: BufferId, edits: Vec<TextEdit>, kind: StepKind) -> Result<(), String> {
+    pub(super) fn text_apply(
+        &mut self,
+        pane: PaneId,
+        buf: BufferId,
+        edits: Vec<TextEdit>,
+        kind: StepKind,
+    ) -> Result<(), String> {
         let cursor = self.view_mut(pane).map(|v| v.view.cursor).unwrap_or_default();
         let invocation = self.invocation;
         let t = self.texts.get_mut(&buf).ok_or("its buffer is gone")?;
@@ -435,6 +460,7 @@ impl Session {
     /// The panes on `buf` follow what changed; the cursor undo or redo
     /// restores goes to its pane (or `by`'s when that one is gone).
     fn text_follow(&mut self, buf: BufferId, edited: &Edited, by: PaneId) {
+        self.swap_changed(buf);
         let Some(t) = self.texts.get(&buf) else { return };
         let restore = edited.cursor.map(|(p, c)| {
             let p = p
@@ -491,6 +517,9 @@ impl Session {
     /// Write `buf` (to `path`, which becomes its file, when given).
     fn text_write(&mut self, buf: BufferId, path: Option<PathBuf>, force: bool) -> Result<(), String> {
         let t = self.texts.get_mut(&buf).ok_or_else(|| format!("no text buffer {buf}"))?;
+        if !force && t.has("readonly") {
+            return Err("the buffer is read-only (write with force)".into());
+        }
         if path.is_none() && t.has("nofile") {
             return Err("a nofile buffer is written only to a path given (write({ path }))".into());
         }
@@ -517,6 +546,9 @@ impl Session {
             .flatten();
         // Its file may be another one now.
         self.watch_text(buf);
+        if let Err(e) = self.write_swap(buf) {
+            eprintln!("temzdf: swap file: {e}");
+        }
         if let Some(Err(e)) = undo {
             self.message(&format!("undo file: {e}"));
         }
@@ -593,7 +625,7 @@ impl Session {
             text: vec![TextGrid { col: 0, row: 0, rows: drawn.rows }],
             cursor: drawn.cursor,
             cursor_shape: tv.shape,
-            title: format!("{}{}", t.name, if t.modified() { " [+]" } else { "" }),
+            title: format!("{}{}", t.name, flags(t)),
             ..Frame::default()
         }
     }
@@ -613,7 +645,7 @@ impl Session {
         );
         let bom = if t.file.as_ref().is_some_and(|f| f.bom) { "-bom" } else { "" };
         termpix_ui::StatusBar {
-            left: format!("{}{}", t.name, if t.modified() { " [+]" } else { "" }),
+            left: format!("{}{}", t.name, flags(t)),
             right: format!("{mode}  {enc}{bom} {eol}  {}:{}  {pct}%", pos.line + 1, pos.character + 1),
             ..Default::default()
         }
@@ -630,6 +662,7 @@ impl Session {
         let result = match name {
             "open-file" | "new-buffer" | "write" | "reload" => self.text_file_command(name, args),
             "set-buffer-attrs" => self.set_buffer_attrs(args),
+            "swap-info" | "use-swap" | "delete-swap" | "text.recover" => self.swap_command(name, args),
             "highlight-pattern" => self.highlight_pattern(args),
             "highlight" => self.define_highlight(args),
             "get-var" | "set-var" => self.var_command(name, args),
