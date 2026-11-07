@@ -19,7 +19,9 @@ fn check(files: &[(&str, &str)]) -> Result<(), String> {
     std::fs::write(dir.path().join("temzdf.d.ts"), &d.stdout).unwrap();
     let mut names = vec!["\"temzdf.d.ts\"".to_owned()];
     for (name, text) in files {
-        std::fs::write(dir.path().join(name), text).unwrap();
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
         names.push(format!("{name:?}"));
     }
     let tsconfig = format!(
@@ -61,6 +63,29 @@ fn the_shipped_defaults_type_check() {
     }
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../temzdf-script/runtime/defaults.ts");
     check(&[("defaults.ts", &std::fs::read_to_string(path).unwrap())]).unwrap();
+}
+
+#[test]
+fn the_vim_mode_type_checks() {
+    if !have_tsc() {
+        eprintln!("SKIPPED: tsc not found");
+        return;
+    }
+    // Its sources (as their own modules: the generated declarations stand
+    // for "temzdf"), and a configuration using it.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../temzdf-script/runtime/vim");
+    let mut files: Vec<(String, String)> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "ts"))
+        .map(|p| (format!("vim/{}", p.file_name().unwrap().to_string_lossy()), std::fs::read_to_string(&p).unwrap()))
+        .collect();
+    files.sort();
+    let config = "import vim from \"temzdf/vim\";\nvim.options.shiftwidth = 2;\n";
+    files.push(("config.ts".into(), config.into()));
+    let refs: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    check(&refs).unwrap();
 }
 
 #[test]

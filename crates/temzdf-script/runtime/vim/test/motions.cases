@@ -1,0 +1,171 @@
+# Motions in the normal mode. `|` is the cursor (Vim's cursor is on the
+# character after it). See crates/temzdf-server/src/session/vim_tests.rs.
+
+=== h and l stay on the line
+text:
+|abc
+keys: hlll
+want:
+ab|c
+
+=== counts
+text:
+|abcdef
+keys: 3l
+want:
+abc|def
+
+=== j and k keep the column across a short line
+text:
+abcdef|g
+ab
+abcdefgh
+keys: jj
+want:
+abcdefg
+ab
+abcdef|gh
+
+=== j on a short line lands on its last character
+text:
+abc|def
+ab
+keys: j
+want:
+abcdef
+a|b
+
+=== w b e ge
+text:
+|foo.bar baz
+keys: www
+want:
+foo.bar |baz
+
+=== b goes back
+text:
+foo.bar |baz
+keys: bb
+want:
+foo|.bar baz
+
+=== e to word ends
+text:
+|foo bar
+keys: ee
+want:
+foo ba|r
+
+=== ge back to word ends
+text:
+foo bar |baz
+keys: ge
+want:
+foo ba|r baz
+
+=== W B E by blank-separated words
+text:
+|foo.bar baz-q x
+keys: WE
+want:
+foo.bar baz-|q x
+
+=== 0 ^ $
+text:
+  ab|c def
+keys: 0
+want:
+|  abc def
+
+=== ^ the first non-blank
+text:
+  abc d|ef
+keys: ^
+want:
+  |abc def
+
+=== $ the last character
+text:
+|abc def
+keys: $
+want:
+abc de|f
+
+=== gg and G
+text:
+one
+two
+th|ree
+keys: gg
+want:
+|one
+two
+three
+
+=== G and a count
+text:
+|one
+  two
+three
+keys: 2G
+want:
+one
+  |two
+three
+
+=== G to the last line
+text:
+|one
+two
+keys: G
+want:
+one
+|two
+
+=== f t and repeats
+text:
+|a,b,c,d
+keys: f,;
+want:
+a,b|,c,d
+
+=== t stops before, ; goes on
+text:
+|a,b,c,d
+keys: t,;
+want:
+a,|b,c,d
+
+=== F and ,
+text:
+a,b,c,|d
+keys: F,,
+want:
+a,b,c|,d
+
+=== percent finds the pair
+text:
+|f(a, (b), c)
+keys: %
+want:
+f(a, (b), c|)
+
+=== paragraphs
+text:
+|one
+two
+
+three
+keys: }
+want:
+one
+two
+|
+three
+
+=== Japanese words split by script
+text:
+|日本語のテキスト
+keys: ww
+want:
+日本語の|テキスト

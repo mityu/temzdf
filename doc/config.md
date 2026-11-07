@@ -506,6 +506,17 @@ Options for text panes: `wrap`, `linebreak`, `breakindent`, `showbreak`,
 line shows the file, `[+]` when modified, the mode, the encoding, the line
 ending, the line and column and the position in the file.
 
+### The Vim mode
+
+`import "temzdf/vim";` makes text panes start in Vim's normal mode
+(`doc/design/vim-mode.md` has what it does and does not do): motions,
+operators with counts and text objects, registers, the insert and visual
+modes (characters, lines, blocks), `u`, `<C-r>`, `.`, searching with
+Vim's patterns (`/ ? n N * #`, hlsearch) and Ex commands (`:w :q :wq :x
+:e :s :d :y :noh :set`, ranges). `import vim from "temzdf/vim";
+vim.options.shiftwidth = 2;` changes its settings. Its mappings are in the
+namespace `vim`.
+
 ## Commands
 
 `cmd.*` and `action.*` share the command registry

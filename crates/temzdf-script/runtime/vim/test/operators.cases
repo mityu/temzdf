@@ -1,0 +1,273 @@
+# Operators with motions and text objects, registers and puts.
+
+=== dw deletes a word and its blanks
+text:
+|foo bar baz
+keys: dw
+want:
+|bar baz
+
+=== dw on the last word stays on its line
+text:
+foo |bar
+next
+keys: dw
+want:
+foo| 
+next
+
+=== d2w and 2dw
+text:
+|a b c d
+keys: d2w
+want:
+|c d
+
+=== counts multiply
+text:
+|a b c d e f g
+keys: 2d3w
+want:
+|g
+
+=== de keeps the blank
+text:
+|foo bar
+keys: de
+want:
+| bar
+
+=== cw is ce
+text:
+|foo bar
+keys: cwxy<Esc>
+want:
+x|y bar
+
+=== dd and a count
+text:
+one
+|two
+three
+four
+keys: 2dd
+want:
+one
+|four
+
+=== dd on the last line
+text:
+one
+|two
+keys: dd
+want:
+|one
+
+=== dj deletes two lines
+text:
+|one
+two
+three
+keys: dj
+want:
+|three
+
+=== d$ and D
+text:
+ab|cdef
+keys: D
+want:
+a|b
+
+=== x and a count
+text:
+|abcdef
+keys: 3x
+want:
+|def
+
+=== X deletes before
+text:
+abc|d
+keys: X
+want:
+ab|d
+
+=== dt and df
+text:
+|one, two, three
+keys: dt,
+want:
+|, two, three
+
+=== df includes the character
+text:
+|one, two
+keys: df,
+want:
+| two
+
+=== diw and daw
+text:
+foo b|ar baz
+keys: daw
+want:
+foo |baz
+
+=== ciw changes the word
+text:
+foo b|ar baz
+keys: ciwQ<Esc>
+want:
+foo |Q baz
+
+=== di( inside parentheses
+text:
+f(a, |b, c)
+keys: di(
+want:
+f(|)
+
+=== da( takes the parentheses
+text:
+x = f(a, (|b), c)
+keys: 2da(
+want:
+x = |f
+
+=== ci" inside quotes
+text:
+say "hel|lo" now
+keys: ci"bye<Esc>
+want:
+say "by|e" now
+
+=== yank and put
+text:
+|foo bar
+keys: yiwP
+want:
+fo|ofoo bar
+
+=== yy and p put a line below
+text:
+|one
+two
+keys: yyjp
+want:
+one
+two
+|one
+
+=== P puts a line above
+text:
+one
+|two
+keys: yyP
+want:
+one
+|two
+two
+
+=== named registers
+text:
+|one two
+keys: "ayiwwdiw"aP
+want:
+oneon|e 
+
+=== appending to a register
+text:
+|a b
+keys: "ayiww"Ayiw$"ap
+want:
+a ba|b
+
+=== the black hole keeps the unnamed register
+text:
+|keep drop
+keys: yiww"_dawp
+want:
+keepkee|p
+
+=== deleting lines fills register 1
+text:
+|one
+two
+keys: dd"1p
+want:
+two
+|one
+
+=== >> and <<
+text:
+|one
+two
+keys: >j
+want:
+	|one
+	two
+
+=== << takes a tab
+text:
+	|one
+keys: <lt><lt>
+want:
+|one
+
+=== g~ gu gU
+text:
+|Hello World
+keys: g~iw
+want:
+|hELLO World
+
+=== gUU upper-cases the line
+text:
+he|llo
+keys: gUU
+want:
+|HELLO
+
+=== guiw
+text:
+|ABC def
+keys: guiw
+want:
+|abc def
+
+=== J joins with a space
+text:
+|one
+   two
+keys: J
+want:
+one| two
+
+=== r replaces characters
+text:
+|abc
+keys: 2rx
+want:
+x|xc
+
+=== ~ switches case and moves
+text:
+|abc
+keys: ~~
+want:
+AB|c
+
+=== an operator cancelled by Esc
+text:
+|abc
+keys: d<Esc>x
+want:
+|bc
+
+=== d with a search
+text:
+|one two three
+keys: d/thr<CR>
+want:
+|three

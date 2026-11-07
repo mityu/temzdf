@@ -39,6 +39,8 @@ mod script;
 mod statusline;
 mod tabs;
 mod text;
+#[cfg(test)]
+mod vim_tests;
 
 pub use commands::command_specs;
 

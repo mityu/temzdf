@@ -198,7 +198,7 @@ declare module "temzdf" {{
   }}
   /** What `text.move` and `text.positionOf` move by. */
   export type TextUnit =
-    | "grapheme" | "wordStart" | "wordEnd" | "lineStart" | "firstNonBlank" | "lineEnd"
+    | "grapheme" | "wordStart" | "wordEnd" | "bigWordStart" | "bigWordEnd" | "lineStart" | "firstNonBlank" | "lineEnd"
     | "documentStart" | "documentEnd" | "line" | "displayLine" | "page";
 
   export interface Options {{
@@ -307,6 +307,23 @@ declare module "temzdf" {{
   /** Start an asynchronous task without waiting for it. */
   export function dispatch(fn: (ctx: TaskContext) => Promise<void> | void): void;
   export function atomic<T>(fn: () => T): T;
+}}
+
+/** temzdf's Vim mode (doc/design/vim-mode.md): importing it makes text panes start in vim/normal. */
+declare module "temzdf/vim" {{
+  const vim: {{
+    /** Vim's settings the mode reads. */
+    options: {{
+      shiftwidth: number;
+      expandtab: boolean;
+      ignorecase: boolean;
+      smartcase: boolean;
+      hlsearch: boolean;
+      wrapscan: boolean;
+    }};
+  }};
+  export default vim;
+  export const options: typeof vim.options;
 }}
 "#
     )

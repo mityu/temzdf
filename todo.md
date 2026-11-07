@@ -116,8 +116,10 @@ server on one `Session`). Next and open:
   read, cancelling "before" hooks and unsaved changes,
   `FileChangedOnDisk` and `reload`), search and `highlightPattern`,
   decorations and highlight groups for scripts, named encodings,
-  `wordchars`, `findPair`, variables and `setClipboard`. Next: the Vim
-  mode (being written). Deferred there:
+  `wordchars`, `findPair`, variables and `setClipboard`. The Vim mode
+  is built (`doc/design/vim-mode.md`; marks, the jump list and macros left
+  for later, with what that document lists as not there yet). Deferred
+  there:
   - `getchar()`/`input()`-like reading (`readKey`, `await` in
     asynchronous mappings; the user wants `input()`-driven operations
     such as sandwich.vim's function surround later);

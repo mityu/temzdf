@@ -1,0 +1,137 @@
+# Ex commands after :.
+
+=== :s replaces the first match on the line
+text:
+|a a a
+keys: :s/a/b/<CR>
+want:
+|b a a
+
+=== :s with g replaces all
+text:
+|a a a
+keys: :s/a/b/g<CR>
+want:
+|b b b
+
+=== :%s on every line
+text:
+|foo 1
+foo 2
+bar foo
+keys: :%s/foo/x/<CR>
+want:
+x 1
+x 2
+|bar x
+
+=== groups and & in the replacement
+text:
+|john smith
+keys: :s/\(\w\+\) \(\w\+\)/\2, \1 (&)/<CR>
+want:
+|smith, john (john smith)
+
+=== case modifiers
+text:
+|hello world
+keys: :s/\w\+/\u&/g<CR>
+want:
+|Hello World
+
+=== \r inserts a line break
+text:
+|a,b
+keys: :s/,/\r/<CR>
+want:
+a
+|b
+
+=== a range of lines
+text:
+|x
+x
+x
+x
+keys: :2,3s/x/y/<CR>
+want:
+x
+y
+|y
+x
+
+=== the visual lines as the range
+text:
+|a
+a
+a
+keys: Vj:s/a/b/<CR>
+want:
+b
+|b
+a
+
+=== a line number moves there
+text:
+|one
+  two
+three
+keys: :2<CR>
+want:
+one
+  |two
+three
+
+=== :d deletes lines
+text:
+|1
+2
+3
+keys: :2,3d<CR>
+want:
+|1
+
+=== an unknown command is an error
+text:
+|x
+keys: :nosuch<CR>
+want:
+|x
+error: yes
+
+=== :s without a match is an error
+text:
+|x
+keys: :s/zzz/y/<CR>
+want:
+|x
+error: yes
+
+=== :noh and :set keep the text
+text:
+|x
+keys: :set ic<CR>:noh<CR>
+want:
+|x
+
+=== ignorecase set by :set
+text:
+|a FOO
+keys: :set ic<CR>/foo<CR>
+want:
+a |FOO
+
+=== Esc cancels the command line
+text:
+|abc
+keys: :s/a/b/<Esc>
+want:
+|abc
+mode: vim/normal
+
+=== :w writes the file
+text:
+|abc
+keys: xx:w<CR>
+want:
+|c

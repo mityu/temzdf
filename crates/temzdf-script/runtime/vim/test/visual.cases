@@ -1,0 +1,133 @@
+# The visual mode.
+
+=== v and d delete the selection (inclusive)
+text:
+|abcdef
+keys: vlld
+want:
+|def
+
+=== v backwards
+text:
+abc|def
+keys: vhhd
+want:
+a|ef
+
+=== V deletes lines
+text:
+one
+|two
+three
+four
+keys: Vjd
+want:
+one
+|four
+
+=== y in the visual mode yanks
+text:
+|foo bar
+keys: veyP
+want:
+fo|ofoo bar
+mode: vim/normal
+
+=== o goes to the other end
+text:
+ab|cdef
+keys: vllohd
+want:
+a|f
+
+=== c in the visual mode
+text:
+|foo bar
+keys: vecbaz<Esc>
+want:
+ba|z bar
+
+=== iw in the visual mode
+text:
+foo b|ar baz
+keys: viwd
+want:
+foo | baz
+
+=== gv selects again
+text:
+|abcdef
+keys: vl<Esc>$gvd
+want:
+|cdef
+
+=== Esc leaves without changing
+text:
+|abc
+keys: vl<Esc>
+want:
+a|bc
+mode: vim/normal
+
+=== U and u change case
+text:
+|abc def
+keys: veU
+want:
+|ABC def
+
+=== > shifts the lines
+text:
+|one
+two
+keys: Vj>
+want:
+	|one
+	two
+
+=== J joins the lines
+text:
+|a
+b
+c
+keys: VjjJ
+want:
+a b| c
+
+=== p replaces the selection
+text:
+|one two
+keys: yiwwviwp
+want:
+one on|e
+
+=== a block deletes columns
+text:
+|abcd
+efgh
+ijkl
+keys: <C-v>jjld
+want:
+|cd
+gh
+kl
+
+=== a block yank and P
+text:
+|ab
+cd
+keys: <C-v>jyx
+want:
+|b
+cd
+
+=== dot repeats a visual delete of lines
+text:
+|1
+2
+3
+4
+5
+keys: Vjd.
+want:
+|5

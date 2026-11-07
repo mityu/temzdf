@@ -39,6 +39,9 @@ the way, with the reasons.
   selection, primitives, search, decorations, undo, events, what hooks may
   do, key input, base modes, files, drawing; editors such as Vim are
   scripts.
+- [design/vim-mode.md](design/vim-mode.md): the Vim mode for text panes,
+  a script on the text editor framework (`import "temzdf/vim"`): how it is
+  built, its differences from Vim, its tests.
 - [design/dot-repeat.md](design/dot-repeat.md): Vim's `.` for the future
   text editor, a draft (nothing built): recorded as actions, units,
   `repeat.set`, nesting.

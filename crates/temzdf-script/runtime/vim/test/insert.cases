@@ -1,0 +1,168 @@
+# The insert mode, undo and the dot repeat.
+
+=== i inserts and Esc goes back one
+text:
+a|bc
+keys: iXY<Esc>
+want:
+aX|Ybc
+mode: vim/normal
+
+=== a appends after the cursor
+text:
+a|bc
+keys: aX<Esc>
+want:
+ab|Xc
+
+=== A and I
+text:
+  |abc
+keys: AX<Esc>IY<Esc>
+want:
+  |YabcX
+
+=== o and O open lines
+text:
+|one
+two
+keys: onew<Esc>
+want:
+one
+ne|w
+two
+
+=== O opens above
+text:
+one
+|two
+keys: Onew<Esc>
+want:
+one
+ne|w
+two
+
+=== a count repeats the text
+text:
+|x
+keys: 3ia<Esc>
+want:
+aa|ax
+
+=== 3o opens three lines
+text:
+|one
+keys: 3ox<Esc>
+want:
+one
+x
+x
+|x
+
+=== Enter and backspace in the insert mode
+text:
+|abc
+keys: Iab<BS><CR><Esc>
+want:
+a
+|abc
+
+=== insert mode stays until Esc
+text:
+|abc
+keys: ix
+want:
+x|abc
+mode: vim/insert
+
+=== u undoes an insert as one step
+text:
+|abc
+keys: ifoo bar<Esc>u
+want:
+|abc
+
+=== u and Ctrl-r
+text:
+|one two
+keys: dwdwu<C-r>
+want:
+|
+
+=== dot repeats a delete
+text:
+|a b c d
+keys: dw..
+want:
+|d
+
+=== dot repeats an insert
+text:
+|x
+keys: ia<Esc>.
+want:
+|aax
+
+=== dot repeats a change at the cursor
+text:
+|foo foo foo
+keys: cwbar<Esc>w.
+want:
+bar ba|r foo
+
+=== dot with a count
+text:
+|abcdef
+keys: x3.
+want:
+|ef
+
+=== dot repeats o
+text:
+|one
+keys: otwo<Esc>.
+want:
+one
+two
+tw|o
+
+=== dot repeats a put
+text:
+|a
+keys: yl..
+want:
+|a
+
+=== dot repeats dd
+text:
+|1
+2
+3
+4
+keys: dd.
+want:
+|3
+4
+
+=== C changes to the end
+text:
+ab|cdef
+keys: CX<Esc>
+want:
+ab|X
+
+=== s and S
+text:
+|abc
+keys: sX<Esc>
+want:
+|Xbc
+
+=== S changes the line
+text:
+  |abc
+next
+keys: Snew<Esc>
+want:
+ne|w
+next

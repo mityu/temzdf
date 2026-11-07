@@ -1863,3 +1863,27 @@ fn a_text_file_changed_elsewhere_is_read_again_unless_it_has_changes() {
     env.run(&["action", "-s", "dk", "text.undo"]);
     t.wait_text("mine");
 }
+
+#[test]
+fn the_vim_mode_edits_and_writes_a_file() {
+    let env = Env::new("vim");
+    env.config("config.ts", "import \"temzdf/vim\";\n");
+    let file = env.path("v.txt");
+    std::fs::write(&file, "one\ntwo\nthree\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "vi", file.to_str().unwrap()], &env.options());
+    t.wait_text("three");
+    t.wait_text("vim/normal");
+    // Normal-mode keys do not type; i does, Esc goes back.
+    t.type_text("jdd");
+    t.wait_for("the line deleted", |s| !s.text().contains("two"));
+    t.type_text("ONEW");
+    t.wait_text("vim/insert");
+    t.key("Esc");
+    t.wait_text("vim/normal");
+    // :w writes, through the command line below the pane.
+    t.type_text(":w\n");
+    wait_file(&file, "one\nNEW\nthree\n");
+    // :q with the only pane ends the session (nothing unsaved).
+    t.type_text(":q\n");
+    t.wait_text("[session vi was killed]");
+}

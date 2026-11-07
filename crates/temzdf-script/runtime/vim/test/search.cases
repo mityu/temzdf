@@ -1,0 +1,116 @@
+# Searching with Vim's patterns.
+
+=== slash finds the next match
+text:
+|foo bar foo baz
+keys: /foo<CR>
+want:
+foo bar |foo baz
+
+=== n and N
+text:
+|x a x a x
+keys: /x<CR>nN
+want:
+x a |x a x
+
+=== search wraps around
+text:
+a x |b
+c
+keys: /x<CR>
+want:
+a |x b
+c
+
+=== question mark searches backwards
+text:
+foo bar foo |baz
+keys: ?foo<CR>
+want:
+foo bar |foo baz
+
+=== star searches the word under the cursor
+text:
+|foo foobar foo
+keys: *
+want:
+foo foobar |foo
+
+=== hash searches it backwards
+text:
+foo foobar |foo
+keys: #
+want:
+|foo foobar foo
+
+=== word boundaries
+text:
+|ab xab ab
+keys: /\<ab\><CR>
+want:
+ab xab |ab
+
+=== magic groups and alternation
+text:
+|cat dog bird
+keys: /\(dog\|bird\)<CR>n
+want:
+cat dog |bird
+
+=== quantifiers
+text:
+|ax aax aaax
+keys: /a\{3}x<CR>
+want:
+ax aax |aaax
+
+=== very magic
+text:
+|a1 b22 c333
+keys: /\v[a-z]\d{3}<CR>
+want:
+a1 b22 |c333
+
+=== zs and ze
+text:
+|foobar bazbar
+keys: /baz\zsbar<CR>
+want:
+foobar baz|bar
+
+=== ignore case with \c
+text:
+|x FOO
+keys: /\cfoo<CR>
+want:
+x |FOO
+
+=== a count with n
+text:
+|1 a 2 a 3 a
+keys: /a<CR>2n
+want:
+1 a 2 a 3 |a
+
+=== a pattern not found is an error and the cursor stays
+text:
+a|bc
+keys: /zzz<CR>
+want:
+a|bc
+error: yes
+
+=== backslash classes in Vim's ASCII meaning
+text:
+|ab 12 cd
+keys: /\d\d<CR>
+want:
+ab |12 cd
+
+=== search in the visual mode extends the selection
+text:
+|abc def ghi
+keys: v/gh<CR>d
+want:
+|hi
