@@ -418,6 +418,11 @@ if [[ $display == macos ]]; then
       Delete) name=delete ;; space) name=space c=" " ;; Prior | Page_Up) name=page_up ;; Next | Page_Down) name=page_down ;;
       plus) c=+ ;; minus) c=- ;; equal) c="=" ;; slash) c=/ ;; question) c="?" ;; less) c="<" ;;
       greater) c=">" ;; colon) c=: ;; semicolon) c=";" ;; percent) c=% ;; comma) c=, ;; period) c=. ;;
+      bracketleft) c="[" ;; bracketright) c="]" ;; braceleft) c="{" ;; braceright) c="}" ;;
+      parenleft) c="(" ;; parenright) c=")" ;; backslash) c="\\" ;; bar) c="|" ;; apostrophe) c="'" ;;
+      quotedbl) c='"' ;; grave) c='`' ;; asciitilde) c="~" ;; exclam) c="!" ;; at) c=@ ;;
+      numbersign) c="#" ;; dollar) c='$' ;; asciicircum) c="^" ;; ampersand) c="&" ;; asterisk) c="*" ;;
+      underscore) c=_ ;;
       ?) c=$k ;;
       *) name=${k,,} ;;
     esac
