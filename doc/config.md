@@ -468,6 +468,12 @@ JavaScript strings index; out of range is clamped), ranges
   `text.setSelection(anchor, active, kind?)` (`"char"`, `"line"`,
   `"block"`), `text.clearSelection()`, `text.setCursorStyle(style)`,
   `text.scroll(rows)`, `text.reveal(pos?, "minimal" | "center" | "top")`;
+- search: `text.search(pattern, { from?, backward?, wrap?, lines?, group?,
+  word? })` and `text.searchAll(pattern, { range? })` take Rust regex
+  syntax (`^` and `$` at lines; back references and look-around work too),
+  and give `{ range, groups }`; `highlightPattern(ns, pattern | null,
+  style?)` paints a pattern's matches in every text pane (`Search` by
+  default), what hlsearch is;
 - undo: `text.undo()` and `text.redo()` (return the changed ranges; the
   cursor goes back where the step started), `text.undoBegin()` /
   `text.undoEnd()` (one step across mappings, e.g. a Vim Insert session),

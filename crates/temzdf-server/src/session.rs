@@ -421,6 +421,8 @@ pub struct Session {
     texts: HashMap<BufferId, text::TextEntry>,
     /// Highlight groups for text panes (scripts define them).
     highlights: temzdf_texteditor::Highlights,
+    /// `highlightPattern`: (namespace, pattern, style), painted in text panes.
+    patterns: Vec<(String, temzdf_texteditor::Pattern, String)>,
     /// While a `temzdf action` request waits for the scripts it started:
     /// why a "before" hook cancelled what it asked for, if one did.
     cli_cancel: Option<Option<String>>,
@@ -503,6 +505,7 @@ impl Session {
             inputs: HashMap::new(),
             texts: HashMap::new(),
             highlights: temzdf_texteditor::Highlights::default(),
+            patterns: Vec::new(),
             invocation: 0,
             cli_cancel: None,
             killed: false,
@@ -2267,7 +2270,7 @@ impl Session {
             let frame = match &mut e.kind {
                 Kind::Input { buf, view } => input::frame(self.inputs.get(buf), view, cols),
                 Kind::Text { buf, view } => {
-                    Self::text_frame(self.texts.get(buf), view, id, id == self.focus, &self.highlights)
+                    Self::text_frame(self.texts.get(buf), view, id, id == self.focus, &self.highlights, &self.patterns)
                 }
                 Kind::Pdf { pane, doc } => {
                     let (frame, pane_needs) = pane.frame(&mut self.images);
@@ -4901,6 +4904,43 @@ mod tests {
         let (second, _) = s.run_command("split", &[], None, Instant::now()).unwrap();
         assert_eq!(s.focus, second.as_num().unwrap() as PaneId);
         assert_eq!(s.history.current(), "edit");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn text_panes_search_and_paint_patterns() {
+        let (mut s, path) = text_session("search.txt", "one two\ntwo three two\n");
+        let o = |pairs: Vec<(&str, ScriptValue)>| ScriptValue::map(pairs);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
+            s.run_command(name, args, None, Instant::now()).unwrap().0
+        };
+        let start = |v: &ScriptValue| {
+            let p = v.get("range").unwrap().get("start").unwrap();
+            (p.get("line").unwrap().as_num().unwrap() as usize, p.get("character").unwrap().as_num().unwrap() as usize)
+        };
+        let two = ScriptValue::Str("two".into());
+        assert_eq!(start(&run(&mut s, "text.search", std::slice::from_ref(&two))), (0, 4), "from the cursor");
+        let back = o(vec![("from", pos(1, 0)), ("backward", ScriptValue::Bool(true))]);
+        assert_eq!(start(&run(&mut s, "text.search", &[two.clone(), back])), (0, 4));
+        let lines = o(vec![("lines", ScriptValue::List(vec![ScriptValue::Num(1.0), ScriptValue::Num(1.0)]))]);
+        assert_eq!(start(&run(&mut s, "text.search", &[two.clone(), lines])), (1, 0));
+        let ScriptValue::List(all) = run(&mut s, "text.search-all", std::slice::from_ref(&two)) else { panic!() };
+        assert_eq!(all.len(), 3);
+        assert_eq!(run(&mut s, "text.search", &[ScriptValue::Str("nothing".into())]), ScriptValue::Null);
+        assert!(s.run_command("text.search", &[ScriptValue::Str("(".into())], None, Instant::now()).is_err());
+        // hlsearch: the matches painted in Search's colours.
+        let hl = temzdf_texteditor::Style { bg: Some(temzdf_scene::Color::Indexed(3)), ..Default::default() };
+        s.highlights.set("Search", hl);
+        run(&mut s, "highlight-pattern", &[ScriptValue::Str("hl".into()), two]);
+        let frame = s.frame();
+        let row = &frame.text[0].rows[0];
+        assert_eq!(
+            (row[3].bg, row[4].bg, row[6].bg, row[7].bg),
+            (temzdf_scene::Color::Default, hl.bg.unwrap(), hl.bg.unwrap(), temzdf_scene::Color::Default)
+        );
+        run(&mut s, "highlight-pattern", &[ScriptValue::Str("hl".into()), ScriptValue::Null]);
+        assert_eq!(s.frame().text[0].rows[0][4].bg, temzdf_scene::Color::Default, "removed");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

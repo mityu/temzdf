@@ -8,6 +8,7 @@ use temzdf_scene::{Attrs, Cell, Color, Underline};
 use crate::buffer::Buffer;
 use crate::cursor::SelectionKind;
 use crate::layout::GlyphKind;
+use crate::search::{Pattern, SearchOptions, find_all};
 use crate::view::{NumberMode, View};
 
 /// A style: what it sets of the colours and attributes. Later styles drawn
@@ -84,8 +85,17 @@ pub struct Drawn {
 }
 
 /// Draw `view` of `buf`. `pane` picks the decorations shown only in it;
-/// `focused` decides how the cursor is shown.
-pub fn render(buf: &Buffer, view: &View, hl: &Highlights, pane: Option<u32>, focused: bool) -> Drawn {
+/// `focused` decides how the cursor is shown. `patterns` paint their
+/// matches in what is shown (`highlightPattern`: hlsearch), under
+/// decorations.
+pub fn render(
+    buf: &Buffer,
+    view: &View,
+    hl: &Highlights,
+    pane: Option<u32>,
+    focused: bool,
+    patterns: &[(&Pattern, &str)],
+) -> Drawn {
     let text = buf.text();
     let (width, height) = (view.width as usize, view.height as usize);
     let gutter = view.gutter(text.line_count());
@@ -96,6 +106,16 @@ pub fn render(buf: &Buffer, view: &View, hl: &Highlights, pane: Option<u32>, foc
         .overlapping(vis_start, vis_end)
         .into_iter()
         .filter(|m| m.spec.style.is_some() && m.start < m.end && m.spec.pane.is_none_or(|p| Some(p) == pane))
+        .collect();
+    // Matches of the patterns in the rows shown.
+    let painted: Vec<(usize, usize, &str)> = patterns
+        .iter()
+        .flat_map(|(p, style)| {
+            find_all(text, p, vis_start, vis_end, &SearchOptions::default(), &buf.wordchars)
+                .into_iter()
+                .filter(|m| m.start < m.end)
+                .map(move |m| (m.start, m.end, *style))
+        })
         .collect();
     let cursor_line = text.line_of(view.cursor.pos);
     let selection = view.cursor.selection();
@@ -156,6 +176,11 @@ pub fn render(buf: &Buffer, view: &View, hl: &Highlights, pane: Option<u32>, foc
                 continue;
             }
             let mut cell = base.clone();
+            for (a, b, name) in &painted {
+                if *a <= g.offset && g.offset < *b {
+                    style(name, &mut cell);
+                }
+            }
             for m in &marks {
                 if m.start <= g.offset
                     && g.offset < m.end
@@ -254,7 +279,7 @@ mod tests {
         let mut v = View { width: 10, height: 4, number: NumberMode::Both, ..View::default() };
         v.layout.tabstop = 4;
         v.cursor = Cursor::at(5);
-        let d = render(&buf, &v, &Highlights::default(), None, true);
+        let d = render(&buf, &v, &Highlights::default(), None, true, &[]);
         // Three columns of numbers (at least) and a space; the cursor's
         // line absolute, the others relative.
         assert_eq!(line(&d, 0), "  1 one   ");
@@ -262,7 +287,7 @@ mod tests {
         assert_eq!(line(&d, 2), "  1     x ");
         assert_eq!(line(&d, 3), "~         ");
         assert_eq!(d.cursor, Some((6, 1)), "after あ, two columns wide");
-        let unfocused = render(&buf, &v, &Highlights::default(), None, false);
+        let unfocused = render(&buf, &v, &Highlights::default(), None, false, &[]);
         assert_eq!(unfocused.cursor, None);
         assert_eq!(unfocused.rows[1][6].attrs.underline, Underline::Single, "drawn in the cell instead");
     }
@@ -276,7 +301,7 @@ mod tests {
         buf.marks_mut().add(0, 6, MarkSpec { style: Some("Search".into()), pane: Some(9), ..MarkSpec::default() });
         let mut v = View { width: 8, height: 1, ..View::default() };
         v.cursor = Cursor { pos: 3, anchor: Some((2, SelectionKind::Char)), want_col: None };
-        let d = render(&buf, &v, &hl, Some(1), true);
+        let d = render(&buf, &v, &hl, Some(1), true, &[]);
         let r = &d.rows[0];
         assert_eq!(
             (r[0].bg, r[1].bg, r[3].bg, r[4].bg),
@@ -287,11 +312,27 @@ mod tests {
     }
 
     #[test]
+    fn patterns_paint_their_matches_under_decorations() {
+        let mut buf = Buffer::new(Text::from("foo bar foo"), LineEnding::Lf);
+        let mut hl = Highlights::default();
+        hl.set("Search", Style { bg: Some(Color::Indexed(3)), ..Style::default() });
+        hl.set("Mark", Style { bg: Some(Color::Indexed(5)), ..Style::default() });
+        buf.marks_mut().add(8, 9, MarkSpec { style: Some("Mark".into()), ..MarkSpec::default() });
+        let v = View { width: 12, height: 1, ..View::default() };
+        let p = Pattern::new("foo").unwrap();
+        let d = render(&buf, &v, &hl, None, false, &[(&p, "Search")]);
+        let bg: Vec<Color> = d.rows[0].iter().map(|c| c.bg).collect();
+        assert_eq!(&bg[..4], [Color::Indexed(3), Color::Indexed(3), Color::Indexed(3), Color::Default]);
+        assert_eq!(bg[8], Color::Indexed(5), "a decoration over the match");
+        assert_eq!(bg[9], Color::Indexed(3));
+    }
+
+    #[test]
     fn control_characters_and_wrapped_rows() {
         let buf = Buffer::new(Text::from("a\x01bcdef"), LineEnding::Lf);
         let mut v = View { width: 4, height: 3, ..View::default() };
         v.layout.showbreak = "+".into();
-        let d = render(&buf, &v, &Highlights::default(), None, true);
+        let d = render(&buf, &v, &Highlights::default(), None, true, &[]);
         assert_eq!(line(&d, 0), "a^Ab");
         assert_eq!(line(&d, 1), "+cde");
         assert_eq!(line(&d, 2), "+f  ");

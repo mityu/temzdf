@@ -1322,6 +1322,8 @@ const QUERIES: &[&str] = &[
     "text.info",
     "text.position-of",
     "text.visible-range",
+    "text.search",
+    "text.search-all",
 ];
 
 fn read_only(op: &HostOp) -> bool {

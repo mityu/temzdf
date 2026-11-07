@@ -10,8 +10,8 @@ use temzdf_protocol::script::ScriptValue;
 use temzdf_scene::{CursorShape, Frame, TextGrid};
 use temzdf_texteditor::file::{self, FileInfo};
 use temzdf_texteditor::{
-    Buffer, Cursor, Edited, Highlights, LineEnding, Origin, Position, Range, Reveal, SelectionKind, StepKind, Text,
-    TextEdit, View, ViewUnit,
+    Buffer, Cursor, Edited, Found, Highlights, LineEnding, Origin, Pattern, Position, Range, Reveal, SearchOptions,
+    SelectionKind, StepKind, Text, TextEdit, View, ViewUnit,
 };
 
 use super::{BufferId, Kind, Outcome, PaneEntry, PaneId, Session, Spot};
@@ -403,9 +403,11 @@ impl Session {
         pane: PaneId,
         focused: bool,
         hl: &Highlights,
+        patterns: &[(String, Pattern, String)],
     ) -> Frame {
         let Some(t) = t else { return Frame::default() };
-        let drawn = temzdf_texteditor::render(&t.buf, &tv.view, hl, Some(pane), focused);
+        let painted: Vec<(&Pattern, &str)> = patterns.iter().map(|(_, p, s)| (p, s.as_str())).collect();
+        let drawn = temzdf_texteditor::render(&t.buf, &tv.view, hl, Some(pane), focused, &painted);
         Frame {
             text: vec![TextGrid { col: 0, row: 0, rows: drawn.rows }],
             cursor: drawn.cursor,
@@ -446,10 +448,23 @@ impl Session {
     ) -> Option<Result<(ScriptValue, Outcome), String>> {
         let result = match name {
             "open-file" | "new-buffer" | "write" | "reload" => self.text_file_command(name, args),
+            "highlight-pattern" => self.highlight_pattern(args),
             n if n.starts_with("text.") => self.text_primitive(&n["text.".len()..], args, count),
             _ => return None,
         };
         Some(result.map_err(|e| format!("{}: {e}", camel(name))))
+    }
+
+    /// `highlightPattern(ns, pattern, style)`: paint `pattern`'s matches in
+    /// every text pane (null: no more); one pattern per namespace.
+    fn highlight_pattern(&mut self, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
+        let ns = args.first().and_then(ScriptValue::as_str).ok_or("which namespace?")?.to_owned();
+        self.patterns.retain(|(n, _, _)| *n != ns);
+        if let Some(p) = args.get(1).and_then(ScriptValue::as_str) {
+            let style = args.get(2).and_then(ScriptValue::as_str).unwrap_or("Search").to_owned();
+            self.patterns.push((ns, Pattern::new(p)?, style));
+        }
+        Ok((ScriptValue::Null, Outcome::Redraw))
     }
 
     fn text_file_command(&mut self, name: &str, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
@@ -573,6 +588,44 @@ impl Session {
                 let unit = ViewUnit::from_name(unit).ok_or_else(|| format!("no unit {unit:?}"))?;
                 let n = num(2).unwrap_or(1.0) as i64;
                 none(position_value(text.position(tv.view.position_of(&t.buf, from, unit, n).0)))
+            }
+            "search" | "search-all" => {
+                let pattern = Pattern::new(args.first().and_then(ScriptValue::as_str).ok_or("which pattern?")?)?;
+                let get = |k: &str| opts.and_then(|o| o.get(k));
+                let mut so = SearchOptions {
+                    from: get("from").and_then(position).map_or(cursor.pos, |p| text.offset(p)),
+                    backward: flag("backward"),
+                    wrap: flag("wrap"),
+                    group: get("group").and_then(ScriptValue::as_num).map_or(0, |g| g as usize),
+                    word: flag("word"),
+                    lines: None,
+                };
+                if let Some(ScriptValue::List(l)) = get("lines")
+                    && let [a, b] = l.as_slice()
+                {
+                    so.lines = Some((a.as_num().unwrap_or(0.0) as usize, b.as_num().unwrap_or(0.0) as usize));
+                }
+                let found = |m: &Found| {
+                    ScriptValue::map([
+                        ("range", range_value(text, m.start, m.end)),
+                        (
+                            "groups",
+                            ScriptValue::List(
+                                m.groups
+                                    .iter()
+                                    .map(|g| g.map_or(ScriptValue::Null, |(a, b)| range_value(text, a, b)))
+                                    .collect(),
+                            ),
+                        ),
+                    ])
+                };
+                if name == "search" {
+                    let m = temzdf_texteditor::search(text, &pattern, &so, &t.buf.wordchars);
+                    return none(m.as_ref().map_or(ScriptValue::Null, found));
+                }
+                let (a, b) = get("range").and_then(range).map_or((0, text.len_chars()), |r| text.offsets(r));
+                let all = temzdf_texteditor::find_all(text, &pattern, a, b, &so, &t.buf.wordchars);
+                none(ScriptValue::List(all.iter().map(found).collect()))
             }
             "visible-range" => {
                 let (a, b) = tv.view.visible_range(text);
@@ -851,6 +904,21 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
         "Where `count` units from `from` is, without moving (negative counts go backwards)",
     ),
     ("text.visible-range", "(opts?: { pane?: number }): Range", "The text the pane shows"),
+    (
+        "text.search",
+        "(pattern: string, opts?: { from?: Position, backward?: boolean, wrap?: boolean, lines?: [number, number], group?: number, word?: boolean, pane?: number }): { range: Range, groups: (Range | null)[] } | null",
+        "Search with a Rust regex (^ and $ at lines): forward the first match starting at or after `from` (the cursor), backward the last one starting before it; `wrap` goes on from the other end; `lines` (zero based, inclusive) narrows it; `group` is the capture that counts as the match; `word` wants word boundaries of the buffer's word characters",
+    ),
+    (
+        "text.search-all",
+        "(pattern: string, opts?: { range?: Range, group?: number, word?: boolean, pane?: number }): { range: Range, groups: (Range | null)[] }[]",
+        "Every match in a range (the whole text)",
+    ),
+    (
+        "highlight-pattern",
+        "(namespace: string, pattern: string | null, style?: string): void",
+        "Paint a pattern's matches in every text pane with a highlight group (Search by default), one pattern per namespace; null removes it (hlsearch)",
+    ),
     (
         "text.edit",
         "(edits: { range: Range, text: string }[], opts?: { pane?: number }): void",
