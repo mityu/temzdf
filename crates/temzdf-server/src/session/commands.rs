@@ -58,7 +58,7 @@ const SESSION: &[(&str, &str, &str)] = &[
         "(reverse?: boolean): void",
         "Rotate the panes in the focused pane's row or column, each to the next place (Vim's <C-w>r; reverse: <C-w>R); a mapping's count repeats it",
     ),
-    ("close-pane", "(): void", "Close the focused pane (its buffer stays, hidden)"),
+    ("close-pane", "(pane?: number): void", "Close a pane, the focused one by default (its buffer stays, hidden)"),
     (
         "open-float",
         "(what?: { buffer: number } | { file: string } | { command: string[] } | null, opts?: { width?: number | string; height?: number | string; col?: number | string; row?: number | string; title?: string; focus?: boolean; tabpage?: number }): number | null",
@@ -613,7 +613,13 @@ impl Session {
                 }
                 ok(if changed { Outcome::Redraw } else { Outcome::None })
             }
-            "close-pane" => ok(self.request_close(self.focus)),
+            "close-pane" => {
+                let pane = id(0).unwrap_or(self.focus);
+                if !self.panes.contains_key(&pane) {
+                    return Err(format!("closePane: no pane {pane}"));
+                }
+                ok(self.request_close(pane))
+            }
             "buffers" => Ok((self.buffer_list(), Outcome::None)),
             "show-buffer" => {
                 let buf = id(0).ok_or("showBuffer: which buffer?")?;

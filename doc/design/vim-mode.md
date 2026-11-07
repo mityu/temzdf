@@ -97,6 +97,17 @@ user's.
   `:s/pat/rep/[gieIc]` (`&`, `\0`-`\9`, `\r`, `\n`, `\t`, `\u \l \U \L \E`),
   `:d`, `:y`, `:noh`, `:set`, a line number. Errors are Vim's (`E486` and
   such), shown as error messages.
+- Panes, buffers and tab pages, as Vim's windows, buffers and tabs:
+  `:sp[lit]`/`:vs[plit] [file]` (the same buffer, or the file, in a pane
+  beside: `o.splitbelow`, `o.splitright`), `:new`/`:vne[w] [file]` (a new
+  buffer), `:ene[w]`, `:clo[se]` (`E444` on the last pane), `:on[ly]`
+  (the tab page's other panes close, with `closePane(pane)`; their buffers
+  stay hidden), `:bn`, `:bp`/`:bN`, `:b {N|name}`, `:ls`/`:buffers`/
+  `:files`, `:bd[!] [N|name]` (its panes show another buffer first, a new
+  empty one when it was the last; `!` sets the buffer variable
+  `forceDelete` the shipped `BufferDeletePre` hook honours), `:tabnew`/
+  `:tabe [file]`, `:tabn [N]`, `:tabp`, `:tabc`, `:tabo`, `:wa`, `:qa[!]`,
+  `:wqa`/`:xa`.
 - `:s` with `c` asks about each match in the transient-like mode
   `vim/confirm` (a fallback function reading one key): the match shown
   with `IncSearch`, the question as a message; `y`, `n`, `a`, `l`, `q`

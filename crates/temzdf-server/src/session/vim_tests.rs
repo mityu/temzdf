@@ -324,3 +324,62 @@ fn recording_a_macro_hooks_keys_only_while_it_records() {
     assert!(!s.script.hooks_on("KeyTyped"), "keys are not held after it");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn ex_commands_split_switch_and_close_panes_buffers_and_tabs() {
+    let dir = std::env::temp_dir().join(format!("temzdf-vim-ex-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (mut s, rx) = vim_session(&dir, "one\n").unwrap();
+    let ex = |s: &mut Session, line: &str| type_keys(s, &rx, &format!(":{line}<CR>"), None).unwrap();
+    let shown = |s: &mut Session| {
+        let info = s.run_command("text.info", &[], None, Instant::now()).unwrap().0;
+        info.get("name").and_then(ScriptValue::as_str).unwrap_or_default().to_owned()
+    };
+    let buffer_count = |s: &mut Session| match s.run_command("buffers", &[], None, Instant::now()).unwrap().0 {
+        ScriptValue::List(l) => l.iter().filter(|b| b.get("kind") != Some(&ScriptValue::Str("input".into()))).count(),
+        _ => 0,
+    };
+    let first = s.focus;
+    ex(&mut s, "sp");
+    assert_eq!(s.pane_count(), 2);
+    assert_ne!(s.focus, first, "the new pane has the focus");
+    assert_eq!(shown(&mut s), "case.txt", "showing the same buffer");
+    ex(&mut s, "vnew");
+    assert_eq!(s.pane_count(), 3);
+    assert_ne!(shown(&mut s), "case.txt", "a new buffer");
+    assert_eq!(buffer_count(&mut s), 2);
+    ex(&mut s, "only");
+    assert_eq!(s.pane_count(), 1);
+    assert!(ex(&mut s, "close").iter().any(|e| e.contains("E444")), "the last pane stays");
+    ex(&mut s, "bn");
+    assert_eq!(shown(&mut s), "case.txt", "round to the first buffer");
+    ex(&mut s, "bp");
+    assert_ne!(shown(&mut s), "case.txt");
+    ex(&mut s, "enew");
+    assert_eq!(buffer_count(&mut s), 3);
+    // Changes keep a buffer, unless :bd!; its pane shows another then.
+    type_keys(&mut s, &rx, "ix<Esc>", None).unwrap();
+    assert!(ex(&mut s, "bd").iter().any(|e| e.contains("E89")));
+    ex(&mut s, "bd!");
+    assert_eq!(buffer_count(&mut s), 2);
+    assert_eq!(s.pane_count(), 1, "the pane stays");
+    ex(&mut s, "ls");
+    let ls: Vec<String> = s.notices.iter().map(|n| n.text.clone()).collect();
+    assert!(ls.iter().any(|t| t.contains("\"case.txt\"")), "{ls:?}");
+    // By name; :wa writes what changed.
+    ex(&mut s, "enew");
+    ex(&mut s, "b case");
+    assert_eq!(shown(&mut s), "case.txt");
+    type_keys(&mut s, &rx, "Atwo<Esc>", None).unwrap();
+    ex(&mut s, "wa");
+    assert_eq!(std::fs::read_to_string(dir.join("case.txt")).unwrap(), "onetwo\n");
+    // Tab pages.
+    ex(&mut s, "tabnew");
+    assert_eq!(s.tabs.len(), 2);
+    ex(&mut s, "tabnew");
+    ex(&mut s, "tabo");
+    assert_eq!(s.tabs.len(), 1);
+    assert!(ex(&mut s, "tabc").iter().any(|e| e.contains("E784")));
+    let _ = std::fs::remove_dir_all(&dir);
+}

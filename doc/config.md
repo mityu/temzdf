@@ -486,7 +486,8 @@ replacing the selection. The shipped mappings edit without modes: arrows,
 the prefix. Unsaved changes are kept: deleting the buffer or ending the
 session (`kill-session`, closing the last pane) is refused while a text
 buffer has them (the shipped `BufferDeletePre` and `SessionEndPre` hooks
-cancel it, saying why); `temzdf kill-session --force` ends anyway. Closing
+cancel it, saying why, unless the buffer's variable `forceDelete` is true,
+as the Vim mode's `:bd!` sets it); `temzdf kill-session --force` ends anyway. Closing
 a pane is fine: its buffer stays, hidden (`buffers()` lists it,
 `modified` true). A file changed elsewhere is read again when its buffer
 has no unsaved changes (`FileChangedOnDisk`, `reload(buffer?)`: one
@@ -564,9 +565,12 @@ ending, the line and column and the position in the file.
 operators with counts and text objects, registers (on the copy history:
 `"0` is also a terminal's newest copy, `"+p` reads the client's
 clipboard), the insert and visual
-modes (characters, lines, blocks), `u`, `<C-r>`, `.`, searching with
-Vim's patterns (`/ ? n N * #`, hlsearch) and Ex commands (`:w :q :wq :x
-:e :s :d :y :noh :set`, ranges). `import vim from "temzdf/vim";
+modes (characters, lines, blocks), `u`, `<C-r>`, `.`, marks and the jump
+list (`m`, `'`, `` ` ``, `<C-o>`, `<C-i>`), macros (`q`, `@`), searching
+with Vim's patterns (`/ ? n N * #`, hlsearch, incsearch) and Ex commands
+(`:w :q :wq :x :e :s :d :y :noh :set :marks :delm`, `:s///c`, ranges; for
+panes, buffers and tab pages `:sp :vs :new :vnew :enew :close :only :bn
+:bp :b :ls :bd :tabnew :tabn :tabp :tabc :tabo :wa :qa :wqa`). `import vim from "temzdf/vim";
 vim.options.shiftwidth = 2;` changes its settings. Its mappings are in the
 namespace `vim`.
 

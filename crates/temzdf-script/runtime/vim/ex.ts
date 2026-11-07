@@ -1,6 +1,6 @@
 // Ex commands (after :): ranges (% . $ numbers '< '> and +N -N), :w :q :wq
 // :x :e :s :noh :d :y, a line number alone, and a few of :set.
-import { cmd } from "temzdf";
+import { cmd, o } from "temzdf";
 import type { KeyInfo, Position, Range as TextRange } from "temzdf";
 import { operate } from "./operators";
 import { convert } from "./pattern";
@@ -59,6 +59,94 @@ function clampRange(r: Range): Range {
   const last = lastLine();
   const first = Math.max(0, Math.min(last, Math.min(r.first, r.last)));
   return { first, last: Math.max(0, Math.min(last, Math.max(r.first, r.last))) };
+}
+
+// Panes, buffers and tab pages (Vim's windows, buffers and tabs).
+
+/** The panes of the current tab page a user works in (not command lines). */
+function workPanes(): ReturnType<typeof cmd.panes> {
+  const all = cmd.panes();
+  const tab = all.find((p) => p.focused)?.tab ?? null;
+  return all.filter((p) => p.kind !== "input" && p.tab === tab);
+}
+
+/** :split, :vsplit, :new, :vnew: a pane beside, showing `buffer`, or the
+ * file `file` (o.splitbelow and o.splitright say where). */
+function splitPane(vertical: boolean, buffer: number, file: string): void {
+  const side = vertical ? (o.splitright ? "right" : "left") : o.splitbelow ? "bottom" : "top";
+  const pane = cmd.split({ side, buffer });
+  if (pane !== null && file !== "") cmd.openFile(file, { pane });
+}
+
+/** The buffers :bnext, :ls and such go through. */
+function bufferList(): ReturnType<typeof cmd.buffers> {
+  return cmd
+    .buffers()
+    .filter((b) => b.kind !== "input")
+    .sort((a, b) => a.id - b.id);
+}
+
+/** The buffer `arg` names: its number, or a unique part of its name. */
+function bufferNamed(arg: string): number {
+  const list = bufferList();
+  if (/^\d+$/.test(arg)) {
+    const n = Number(arg);
+    if (!list.some((b) => b.id === n)) throw new Error(`E86: Buffer ${n} does not exist`);
+    return n;
+  }
+  const hits = list.filter((b) => b.name.includes(arg));
+  if (hits.length === 0) throw new Error(`E94: No matching buffer for ${arg}`);
+  if (hits.length > 1) throw new Error(`E93: More than one match for ${arg}`);
+  return hits[0].id;
+}
+
+/** :bnext (`delta` 1) and :bprevious (-1), `count` times. */
+function cycleBuffer(delta: number, count: number): void {
+  const list = bufferList();
+  if (list.length === 0) return;
+  const cur = t.info().buffer;
+  let i = list.findIndex((b) => b.id === cur);
+  if (i < 0) i = 0;
+  const n = list.length;
+  i = (((i + delta * count) % n) + n) % n;
+  cmd.showBuffer(list[i].id, cmd.focusedPane() ?? undefined);
+}
+
+/** :ls: Vim's list (% the pane's, a shown, h hidden, + modified). */
+function listBuffers(): string {
+  const cur = t.info().buffer;
+  return bufferList()
+    .map((b) => {
+      const flags = `${b.id === cur ? "%" : " "}${b.panes.length > 0 ? "a" : "h"} ${b.modified ? "+" : " "}`;
+      return `${String(b.id).padStart(3)} ${flags} "${b.name}"`;
+    })
+    .join("\n");
+}
+
+/** :bdelete: the buffer goes; its panes show another one (a new empty one
+ * when it was the last), as Vim's windows do. */
+function deleteBuffer(id: number, force: boolean): void {
+  const list = bufferList();
+  const b = list.find((x) => x.id === id);
+  if (b === undefined) throw new Error(`E516: No buffers were deleted: ${id}`);
+  if (b.modified && !force) throw new Error(`E89: No write since last change for buffer ${id} (add ! to override)`);
+  if (force) cmd.setVar("buffer", "forceDelete", true, id);
+  const others = list.filter((x) => x.id !== id);
+  const alt = others.find((x) => x.panes.length === 0) ?? others[0];
+  const instead = alt?.id ?? cmd.newBuffer();
+  for (const pane of b.panes) cmd.showBuffer(instead, pane);
+  cmd.deleteBuffer(id);
+}
+
+/** :wall: every text buffer with unsaved changes. */
+function writeAll(): void {
+  for (const b of cmd.buffers()) if (b.kind === "edit" && b.modified) cmd.write({ buffer: b.id });
+}
+
+/** :tabonly: the other tab pages close. */
+function onlyTab(): void {
+  const tabs = cmd.tabs();
+  for (const tab of [...tabs].reverse()) if (!tab.current) cmd.closeTab(tab.index);
 }
 
 /** Quit the pane; the last one ends the session (refused with unsaved
@@ -343,6 +431,80 @@ export function ex(input: string): void {
     } else {
       throw new Error("E37: No write since last change (add ! to override)");
     }
+    return;
+  }
+  if (is("sp", "split") || is("vs", "vsplit")) {
+    splitPane(is("vs", "vsplit"), t.info().buffer, arg);
+    return;
+  }
+  if (is("new", "new") || is("vne", "vnew")) {
+    splitPane(is("vne", "vnew"), cmd.newBuffer(), arg);
+    return;
+  }
+  if (is("ene", "enew")) {
+    cmd.showBuffer(cmd.newBuffer(), cmd.focusedPane() ?? undefined);
+    return;
+  }
+  if (is("clo", "close")) {
+    if (workPanes().length <= 1) throw new Error("E444: Cannot close last window");
+    cmd.closePane();
+    return;
+  }
+  if (is("on", "only")) {
+    const me = cmd.focusedPane();
+    for (const p of workPanes()) if (p.id !== me) cmd.closePane(p.id);
+    return;
+  }
+  if (is("bn", "bnext") || is("bp", "bprevious") || is("bN", "bNext")) {
+    cycleBuffer(is("bn", "bnext") ? 1 : -1, arg === "" ? 1 : Number(arg) || 1);
+    return;
+  }
+  if (is("b", "buffer")) {
+    if (arg === "" && range === null) return;
+    cmd.showBuffer(bufferNamed(arg === "" ? String(range!.last + 1) : arg), cmd.focusedPane() ?? undefined);
+    return;
+  }
+  if (is("ls", "ls") || is("buffers", "buffers") || is("files", "files")) {
+    cmd.message(listBuffers());
+    return;
+  }
+  if (is("bd", "bdelete")) {
+    deleteBuffer(arg === "" ? t.info().buffer : bufferNamed(arg), bang);
+    return;
+  }
+  if (is("tabnew", "tabnew") || is("tabe", "tabedit")) {
+    cmd.newTab(arg === "" ? { buffer: cmd.newBuffer() } : { file: arg });
+    return;
+  }
+  if (is("tabn", "tabnext")) {
+    if (arg === "") cmd.nextTab();
+    else cmd.gotoTab(Number(arg));
+    return;
+  }
+  if (is("tabp", "tabprevious") || is("tabN", "tabNext")) {
+    cmd.prevTab();
+    return;
+  }
+  if (is("tabc", "tabclose")) {
+    if (cmd.tabs().length <= 1) throw new Error("E784: Cannot close last tab page");
+    cmd.closeTab();
+    return;
+  }
+  if (is("tabo", "tabonly")) {
+    onlyTab();
+    return;
+  }
+  if (is("wa", "wall")) {
+    writeAll();
+    return;
+  }
+  if (is("qa", "qall") || is("quita", "quitall")) {
+    cmd.killSession({ force: bang });
+    return;
+  }
+  if (is("wqa", "wqall") || is("xa", "xall")) {
+    writeAll();
+    cmd.killSession({ force: bang });
     return;
   }
   if (is("marks", "marks")) {

@@ -231,9 +231,11 @@ each("edit", [prefix], action.switchMode("normal"));
 // ending the session (kill-session, closing the last pane), is refused
 // while one has them (`kill-session --force` ends anyway). Closing a pane
 // is fine: its buffer stays, hidden.
+// A buffer with unsaved changes is not deleted, unless its variable
+// forceDelete says so (Vim's :bd!).
 on("BufferDeletePre", (buf: number) => {
   const b = cmd.buffers().find((b) => b.id === buf);
-  if (b?.modified) return { cancel: true, reason: `${b.name} has unsaved changes (write it first)` };
+  if (b?.modified && cmd.getVar("buffer", "forceDelete", buf) !== true) return { cancel: true, reason: `${b.name} has unsaved changes (write it first)` };
 });
 on("SessionEndPre", () => {
   const names = cmd.buffers().filter((b) => b.modified).map((b) => b.name);
