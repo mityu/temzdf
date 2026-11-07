@@ -58,7 +58,6 @@ pub const EVENTS: &[&str] = &[
     "BufferDeletePre",
     "BufferDeleted",
     "BufferHidden",
-    "InputChanged",
     "FileChangedOnDisk",
     "Copied",
 ];
@@ -1178,14 +1177,8 @@ impl Session {
             "cursorline" => o.text.cursorline = flag()?,
             "scrolloff" => o.text.scrolloff = num()? as usize,
             "number" => {
-                use temzdf_texteditor::NumberMode;
-                o.text.number = match value.as_str() {
-                    Some("off") => NumberMode::Off,
-                    Some("absolute") => NumberMode::Absolute,
-                    Some("relative") => NumberMode::Relative,
-                    Some("both") => NumberMode::Both,
-                    _ => return Err("o.number: expected \"off\", \"absolute\", \"relative\" or \"both\"".into()),
-                }
+                o.text.number = super::text::number_mode(value.as_str())
+                    .ok_or("o.number: expected \"off\", \"absolute\", \"relative\" or \"both\"")?;
             }
             "showstatusline" => {
                 o.showstatusline = match value.as_str() {
@@ -1347,7 +1340,6 @@ const QUERIES: &[&str] = &[
     "register",
     "registers",
     "tabs",
-    "input-text",
     "message",
     "text.line-count",
     "text.line",

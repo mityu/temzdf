@@ -58,7 +58,7 @@ property and Blender's `bl_options` do:
 by accident.
 
 Only operations started by the user's input (keys, mouse) change the
-record. Hooks (formatting on save, `InputChanged`), `temzdf action` and
+record. Hooks (formatting on save, `TextChanged`), `temzdf action` and
 other clients leave it alone unless they call `repeat.set` explicitly;
 otherwise background edits would replace what `.` repeats. Recording keys
 avoids this by construction; recording actions has to rule it out.
@@ -71,7 +71,7 @@ A **unit** is what one `.` replays:
   in the base mode (`normal`).
 - It holds everything that invocation consumes: the motion after an
   operator, the character a command waits for, text typed in Insert mode,
-  an answer typed into an input pane.
+  an answer typed into a prompt.
 - It ends when the base mode is back and nothing is pending (`cw
   foo<Esc>` is one unit, up to `<Esc>`).
 - It commits at its end. A unit cancelled on the way (`<Esc>` while an

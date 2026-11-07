@@ -7,7 +7,7 @@
 // `terminal` (pass-through, terminal panes), `pdf` (PDF panes), `input`
 // and `edit` (input and text panes: typed characters go in) and `visual` (a terminal's visual
 // mode: a cursor over the screen and scrollback, selecting and copying).
-import { action, cmd, keymap, on, schedule } from "temzdf";
+import { acceptPrompt, action, cancelPrompt, cmd, keymap, on, openPrompt, schedule } from "temzdf";
 import type { Rhs } from "temzdf";
 
 /** The prefix: enters the normal mode from a pane. */
@@ -100,95 +100,71 @@ on("PaneOpened", (id: number, kind: string) => {
   if (kind === "terminal") schedule(() => cmd.statusLine(false, id));
 });
 
-// Searching a PDF pane (/) or a terminal in the visual mode (/ and ?): an
-// input pane one row high below it, without a status line. As the query is
-// typed the pane shows its first match (searchPreview, as Vim's incsearch);
-// <CR> searches, <Esc> cancels (back where it began), and either closes the
-// input, back to the pane (and its visual mode). Closed any other way, the
-// search is cancelled.
-/** A search being typed: the pane searched, a terminal's visual mode, its
- * direction. */
-type Searching = { pane: number; visual: boolean; backward: boolean };
-/** The searches being typed, by input buffer. */
-const searches = new Map<number, Searching>();
-
+// Searching a PDF pane (/) or a terminal in the visual mode (/ and ?): a
+// prompt (openPrompt) one row high below it. As the query is typed the
+// pane shows its first match (searchPreview, as Vim's incsearch); <CR>
+// searches, <Esc> cancels (back where it began), and either closes the
+// prompt, back to the pane (and its visual mode). Closed any other way,
+// the search is cancelled.
 function openSearch(backward = false): void {
   const pane = cmd.focusedPane();
   if (pane === null) return;
   const visual = cmd.currentMode() === "visual";
-  const buf = cmd.newInput({ prompt: backward ? "?" : "/" });
-  searches.set(buf, { pane, visual, backward });
-  try {
-    const pane = cmd.split({ side: "bottom", buffer: buf, height: 1 });
-    if (pane !== null) cmd.statusLine(false, pane);
-  } catch (e) {
-    searches.delete(buf);
-    cmd.deleteBuffer(buf);
-    throw e;
-  }
-}
-
-/** End the search typed into `buf`: search (`confirm`) or cancel, back to
- * its pane (in the visual mode again for a terminal), and the input goes. */
-function endSearch(buf: number, confirm: boolean): void {
-  const s = searches.get(buf);
-  if (s === undefined) return;
-  searches.delete(buf);
-  const query = cmd.inputText(buf);
-  try {
-    if (s.visual) {
-      cmd.focusPane(s.pane);
-      cmd.switchMode("visual");
-      if (confirm) cmd.visual.searchFor(query, s.pane, s.backward);
-      else cmd.visual.searchCancel(s.pane);
-    } else {
-      if (confirm) cmd.searchFor(query, s.pane);
-      else cmd.searchCancel(s.pane);
-      cmd.focusPane(s.pane);
+  const back = () => {
+    if (visual) cmd.switchMode("visual");
+  };
+  const guard = (f: () => void) => {
+    try {
+      f();
+    } catch {
+      // The pane is gone.
     }
-  } catch {
-    // The pane is gone.
-  }
-  cmd.deleteBuffer(buf);
-}
-
-/** The input buffer pane `pane` shows. */
-function bufferOf(pane: number): number | undefined {
-  return cmd.panes().find((p) => p.id === pane)?.buffer;
-}
-
-on("InputChanged", (buf: number, text: string) => {
-  const s = searches.get(buf);
-  if (s === undefined) return;
-  schedule(() => {
-    if (s.visual) cmd.visual.searchPreview(text, s.pane, s.backward);
-    else cmd.searchPreview(text, s.pane);
+  };
+  openPrompt({
+    prompt: backward ? "?" : "/",
+    onChange: (query) => {
+      if (visual) cmd.visual.searchPreview(query, pane, backward);
+      else cmd.searchPreview(query, pane);
+    },
+    onLine: (query) =>
+      guard(() => {
+        back();
+        if (visual) cmd.visual.searchFor(query, pane, backward);
+        else cmd.searchFor(query, pane);
+      }),
+    onCancel: () =>
+      guard(() => {
+        back();
+        if (visual) cmd.visual.searchCancel(pane);
+        else cmd.searchCancel(pane);
+      }),
   });
-});
-on("BufferHidden", (buf: number) => schedule(() => endSearch(buf, false)));
+}
 
-// The input mode: editing (readline's keys), the search's <CR> and <Esc>,
-// the prefix.
-each("input", ["<BS>", "<C-h>"], action.input.backspace());
-each("input", ["<Del>", "<C-d>"], action.input.delete());
+// The input mode (prompts): editing with readline's keys, <CR> runs the
+// cursor's line, <Esc> cancels, the prefix. Pasted lines go in as they are.
+each("input", ["<BS>", "<C-h>"], action.text.erase("grapheme", -1));
+each("input", ["<Del>", "<C-d>"], action.text.erase("grapheme", 1));
 // (Not readline's <C-b> and <C-f>: <C-b> is the prefix.)
-each("input", ["<Left>"], action.input.left());
-each("input", ["<Right>"], action.input.right());
-each("input", ["<Home>", "<C-a>"], action.input.home());
-each("input", ["<End>", "<C-e>"], action.input.end());
-each("input", ["<M-b>", "<C-Left>"], action.input.wordLeft());
-each("input", ["<M-f>", "<C-Right>"], action.input.wordRight());
-each("input", ["<C-w>"], action.input.deleteWord());
-each("input", ["<C-u>"], action.input.deleteToStart());
-each("input", ["<C-k>"], action.input.deleteToEnd());
-each("input", ["<CR>"], (ctx) => {
-  const buf = bufferOf(ctx.pane);
-  if (buf !== undefined) endSearch(buf, true);
+each("input", ["<Left>"], action.text.move("grapheme", -1));
+each("input", ["<Right>"], action.text.move("grapheme", 1));
+each("input", ["<Home>", "<C-a>"], action.text.move("lineStart"));
+each("input", ["<End>", "<C-e>"], action.text.move("lineEnd"));
+each("input", ["<M-b>", "<C-Left>"], action.text.move("wordStart", -1));
+each("input", ["<M-f>", "<C-Right>"], action.text.move("wordEnd", 1));
+each("input", ["<Up>"], action.text.move("line", -1));
+each("input", ["<Down>"], action.text.move("line", 1));
+each("input", ["<C-w>"], action.text.erase("wordStart", -1));
+each("input", ["<C-u>"], () => {
+  const c = cmd.text.cursor();
+  cmd.text.delete({ start: { line: c.line, character: 0 }, end: c });
 });
-each("input", ["<Esc>"], (ctx) => {
-  const buf = bufferOf(ctx.pane);
-  if (buf !== undefined) endSearch(buf, false);
+each("input", ["<C-k>"], () => {
+  const c = cmd.text.cursor();
+  cmd.text.delete({ start: c, end: { line: c.line, character: cmd.text.line(c.line).length } });
 });
+each("input", ["<CR>"], () => acceptPrompt());
+each("input", ["<Esc>"], () => cancelPrompt());
 each("input", ["<C-S-v>", "<D-v>"], action.paste());
 each("input", [prefix], action.switchMode("normal"));
 

@@ -125,10 +125,10 @@ runs the tests with another shell, e.g. `TEMZDF_TEST_SHELL=$(nix build
 --print-out-paths nixpkgs#dash)/bin/dash`; tests compare a command's
 output with `shows_output`, which takes either.
 
-Searches are typed into an input pane by the shipped configuration (`/`):
+Searches are typed into a prompt by the shipped configuration (`/`):
 the PDF pane's side is tested with `PdfPane::search_preview`,
 `search_for` and `search_cancel` (incremental search, Enter before
-results, going back), the input pane's in the session's tests (editing,
+results, going back), the prompt's in the session's tests (typed text,
 the cursor, hooks), the whole in `tui.rs` and the e2e searches
 (`tests/e2e/search.actions`, `expect.actions`' `search` and `next`).
 

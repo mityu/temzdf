@@ -144,14 +144,13 @@ declarations. In short, `import { ... } from "temzdf"`:
   kind)`, `BufferDeleted(id)`, `BufferHidden(id, kind)` (the last pane
   showing it went: closed, showing another buffer, its tab page closed;
   before `BufferDeleted` when `deleteBuffer` closes its panes),
-  `InputChanged(id, text)` (an input buffer's text changed: typed, pasted,
-  edited, set; not when only its caret moved), `BufferDeletePre(id)`
+  `BufferDeletePre(id)`
   (before `deleteBuffer`), `SessionEndPre()` (before `kill-session` and
   before closing the last pane), `InvokePre(info)` and `InvokePost(info)`
   (around each invocation), `TextChanged(buffer, change)`,
   `KeyTyped(key)`.
 - **Invocations** (doc/design/text-editor.md section 9): a key sequence
-  that runs a mapping, text typed into a text or input pane (keys no
+  that runs a mapping, text typed into a text pane (keys no
   mapping took, input methods, pastes), a mode's fallback function, a
   `temzdf action` request. `InvokePre` hooks hear it first (and may
   cancel it, as "before" hooks); `InvokePost` comes at the safe point

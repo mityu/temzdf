@@ -85,11 +85,10 @@ impl Drop for Session {
 /// `action.fooBar(` in runtime/defaults.ts as `foo-bar`, `action.ns.fooBar(`
 /// as `ns.foo-bar`).
 pub(crate) fn command_names() -> Vec<String> {
-    let mut names: Vec<String> =
-        ["split", "new-pane", "message", "input.backspace", "input.delete-word", "read-clipboard"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+    let mut names: Vec<String> = ["split", "new-pane", "message", "text.erase", "text.get-text", "read-clipboard"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let defaults = include_str!("../../runtime/defaults.ts");
     for part in defaults.split("action.").skip(1) {
         let camel: String = part.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
@@ -224,9 +223,9 @@ keymap.clear();
 fn namespaced_commands_are_objects_of_their_own() {
     let config = r#"
 import { action, cmd, keymap } from "temzdf";
-keymap.add("input", "<C-w>", () => cmd.input.deleteWord());
-keymap.add("input", "<BS>", action.input.backspace());
-cmd.message(typeof cmd.input + " " + Object.isFrozen(cmd.input) + " " + typeof action.input.deleteWord);
+keymap.add("input", "<C-w>", () => cmd.text.getText());
+keymap.add("input", "<BS>", action.text.erase());
+cmd.message(typeof cmd.text + " " + Object.isFrozen(cmd.text) + " " + typeof action.text.getText);
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
     s.load("config.ts");
@@ -242,7 +241,7 @@ cmd.message(typeof cmd.input + " " + Object.isFrozen(cmd.input) + " " + typeof a
     log.clear();
     s.send(ToHost::Call { id: 1, func: user(f), args: vec![] });
     assert!(matches!(s.serve(&mut log), FromHost::Done { id: 1, result: Ok(ScriptValue::Null) }));
-    assert_eq!(log, ["call1 input.delete-word()"], "the command's whole name");
+    assert_eq!(log, ["call1 text.get-text()"], "the command's whole name");
 }
 
 #[test]

@@ -57,7 +57,7 @@ built in for now. Built in:
 | `normal` | dropped | yes | operating mode: panes and the session |
 | `terminal` | to the pane | no | terminal panes (pass-through, like Neovim's Terminal mode) |
 | `pdf` | dropped | yes | PDF panes |
-| `input` | typed characters go in | no | input panes (the search's line) |
+| `input` | typed characters go in | no | prompts (`openPrompt`: the search's line) |
 | `visual` | dropped | yes | a terminal's output selected and copied by keys (see "The visual mode") |
 
 Focusing a pane puts temzdf in that pane's mode. `switchMode` enters a
@@ -184,7 +184,7 @@ hook holds every key until it ran, so hook it only while needed.
 | `pdf` | `g` `<Home>` / `G` `<End>` | first page / end (or page N with a count) |
 | `pdf` | `<C-o>` `<BS>` `<M-Left>` / `<M-Right>` | link history back / forward (counts) |
 | `pdf` | `+` `=` / `-` / `0` `w` | zoom in / out (counts) / fit width |
-| `pdf` | `/` | search: an input line below the pane (typing shows the first hit; `<CR>` searches, `<Esc>` cancels) |
+| `pdf` | `/` | search: a prompt below the pane (typing shows the first hit; `<CR>` searches, `<Esc>` cancels) |
 | `pdf` | `n` / `N` | next / previous match of the search (`searchFor`; counts) |
 | `pdf` | `y` | copy the selection (into the copy history and the clipboard) |
 | `pdf` | `<Tab>` | outline |
@@ -205,7 +205,7 @@ hook holds every key until it ran, so hook it only while needed.
 | `visual` | `v` / `V` / `<C-v>` | select characters / rows / a block from the cursor; the same key again stops selecting |
 | `visual` | `o` | the cursor to the other end of the selection |
 | `visual` | `y` / `Y` | copy the selection / the selected rows (else the cursor's, counts) and leave |
-| `visual` | `/` / `?` / `n` `N` | search the scrollback forwards / backwards (an input line, as the PDF search) / next, previous match |
+| `visual` | `/` / `?` / `n` `N` | search the scrollback forwards / backwards (a prompt, as the PDF search) / next, previous match |
 | `visual` | `<Esc>` / `q` | drop the selection, else leave / leave |
 | `visual` | `<C-b>` | the normal mode (`<Esc>` there comes back) |
 
@@ -214,11 +214,9 @@ press it twice there).
 
 While a PDF pane's outline has the focus, keys go to it directly (fixed
 keys). The search (`/`) is the shipped configuration's: a function mapped
-in `defaults.ts` opens an input buffer (`newInput`) in a one-row pane split
-below the PDF pane (`split({ height: 1 })`, its status line off), an
-`InputChanged` hook previews the query (`searchPreview`), `<CR>` and
-`<Esc>` in the `input` mode search or cancel and delete the input buffer;
-closed any other way (`BufferHidden`), the search is cancelled. A
+in `defaults.ts` opens a prompt (`openPrompt`) below the PDF pane, whose
+`onChange` previews the query (`searchPreview`) and whose `<CR>` and
+`<Esc>` search or cancel; closed any other way, the search is cancelled. A
 configuration can replace it with its own (`keymap.add("pdf", "/", ...)`).
 Mouse handling is built in. Dragging a
 border between panes resizes them, in any mode (the pointer shows a resize
@@ -347,7 +345,7 @@ most `o.copyhistory`): `{ id, text, kind, how, register, source, time }`,
   `a`-`z`);
 - `put({ register?, index?, pane? })` puts an entry into a pane: pasted
   into a terminal (lines without their last line break), typed into a text
-  pane (lines go in before the cursor's line) or an input pane;
+  pane (lines go in before the cursor's line), a prompt too;
 - `forgetCopy(id?)` drops an entry, or everything; the hook `Copied(entry)`
   hears every new one;
 - `readClipboard({ primary? })` reads the client's clipboard and returns a
@@ -441,25 +439,23 @@ configuration hides the terminals' (a `PaneOpened` hook calling
 A pane one row high shows its status line only. Changing what they say
 comes later (`doc/design/floating-panes.md`).
 
-## Input buffers
+## Prompts
 
-An input buffer is one line of text with a prompt, as Vim's command line,
-shown in input panes. `newInput({ prompt: "/", text })` makes one and
-returns it; a pane shows it like any buffer (`split({ buffer, height: 1
-})`, `openFloat({ buffer })`, `showBuffer`). Focused, an input pane puts
-the session in the `input` mode: keys no mapping takes that type a character
-(no modifier but Shift), committed input-method text and pastes go in at
-its caret (the terminal cursor, where input methods show their preedit);
-the line scrolls to keep the caret in sight. Editing is commands in the
-`input` namespace, for mappings: `input.backspace`, `input.delete`,
-`input.left`, `input.right`, `input.home`, `input.end`, `input.wordLeft`,
-`input.wordRight`, `input.deleteWord`, `input.deleteToStart`,
-`input.deleteToEnd`, `input.insert(text)`. `inputText(buffer?)` and
-`setInputText(text, buffer?)` read and set the text (the focused input
-pane's buffer by default); the hook `InputChanged(buffer, text)` hears every
-change of it. An input buffer stays when its last pane closes, as others do;
-`BufferHidden(buffer, kind)` says so (delete it there if it is done with).
-Panes showing one buffer share its text, each with its own caret.
+A prompt is a line typed and then run, as Vim's command-line window: a
+text buffer (`nofile`, `unlisted`) in a pane, its base mode `input`, its
+prompt inline virtual text at its start (style `Prompt`).
+`openPrompt({ prompt, text?, side?, height?, mode?, style?, onLine?,
+onCancel?, onChange? })` opens one below the focused pane (one row high,
+without wrapping or numbers: `text.setOptions` for the pane) and returns
+`{ buffer, pane }`. It is an ordinary text pane: typed characters,
+input-method text and pastes go in (lines and all), `text.*` edits it.
+`acceptPrompt()` (the `input` mode's `<CR>`) hands the cursor's line to
+`onLine`; `cancelPrompt()` (`<Esc>`), or closing it any other way, calls
+`onCancel`; `onChange(line)` hears the cursor's line as it changes (a
+preview). Either way the pane and the buffer go and the focus goes back.
+`isPrompt(buffer?)` says whether a buffer is an open prompt. The `input`
+mode maps readline's keys (`<C-a>`, `<C-e>`, `<C-w>`, `<C-u>`, `<C-k>`,
+`<M-b>`, `<M-f>`, arrows) to `text.*`.
 
 ## Text panes
 
@@ -625,7 +621,7 @@ history; `searchCancel(pane?)` drops the search, a preview's view back
 where it began.
 Commands named `ns.name` are in a namespace: `cmd.ns.name()` and
 `action.ns.name()` (`temzdf action ns.name`), the name camelCased as the
-others (`input.delete-word` is `cmd.input.deleteWord`).
+others (`text.get-text` is `cmd.text.getText`).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
 action split right`). `resizePane("left", 5)` moves a border of the focused
 pane five cells left (as tmux's `resize-pane -L 5`), `resizePane("wider",

@@ -126,7 +126,7 @@ user's.
   (`<Esc>`), `<C-e>`/`<C-y>`. A mark follows the range's end through the
   replacements; all of them are one undo step.
 - `incsearch` (on by default): while `/` or `?` is typed, an
-  `InputChanged` hook schedules a search from where the command line
+  `onChange` of its prompt runs a search from where the command line
   opened; the text pane's cursor goes to the match (`IncSearch`), every
   match is highlighted with `hlsearch`, and the cursor goes back when
   nothing matches, on `<Esc>`, and before `<CR>` searches. Not for `:s`

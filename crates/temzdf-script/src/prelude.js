@@ -248,6 +248,68 @@
           (e) => host.taskDone(task, errorJson(e)),
         );
     },
+    // Prompts: a text buffer (nofile, unlisted) in a pane below, its base
+    // mode `input`, the prompt inline virtual text at its start (Vim's
+    // command-line window). <CR> (acceptPrompt) hands the cursor's line to
+    // onLine, <Esc> (cancelPrompt) or closing it otherwise calls onCancel;
+    // onChange hears the cursor's line as it changes. Either way the pane
+    // and the buffer go, and the focus goes back.
+    openPrompt(opts = {}) {
+      const c = globalCmd;
+      const origin = c.focusedPane();
+      const buffer = c.newBuffer({ text: opts.text ?? "", basemode: opts.mode ?? "input", attrs: ["nofile", "unlisted"] });
+      let pane = null;
+      try {
+        pane = c.split({ side: opts.side ?? "bottom", buffer, height: opts.height ?? 1 });
+      } catch (e) {
+        c.deleteBuffer(buffer);
+        throw e;
+      }
+      if (pane === null) {
+        c.deleteBuffer(buffer);
+        return null;
+      }
+      c.statusLine(false, pane);
+      c.text.setOptions({ wrap: false, number: "off", cursorline: false, scrolloff: 0 }, { pane });
+      const origin0 = { line: 0, character: 0 };
+      if ((opts.prompt ?? "") !== "") {
+        c.text.addDecoration(
+          { start: origin0, end: origin0 },
+          { virtText: [{ text: opts.prompt, style: opts.style ?? "Prompt" }], namespace: "prompt", pane },
+        );
+      }
+      const last = c.text.lineCount({ pane }) - 1;
+      c.text.setCursor({ line: last, character: c.text.line(last, { pane }).length }, { pane });
+      prompts.set(buffer, { pane, origin, onLine: opts.onLine, onCancel: opts.onCancel, onChange: opts.onChange });
+      if (promptHooks === null) {
+        // Only while a prompt is open: TextChanged hooks cost every edit.
+        promptHooks = [
+          temzdf.on("TextChanged", (buf) => {
+            if (prompts.has(buf)) {
+              temzdf.schedule(() => {
+                const p = prompts.get(buf);
+                if (p !== undefined && p.onChange) p.onChange(promptLine(p));
+              });
+            }
+          }),
+          temzdf.on("BufferHidden", (buf) => {
+            if (prompts.has(buf)) temzdf.schedule(() => closePrompt(buf)?.p.onCancel?.());
+          }),
+        ];
+      }
+      return { buffer, pane };
+    },
+    acceptPrompt(buffer) {
+      const r = closePrompt(buffer ?? focusedBuffer());
+      if (r !== null) r.p.onLine?.(r.line);
+    },
+    cancelPrompt(buffer) {
+      const r = closePrompt(buffer ?? focusedBuffer());
+      if (r !== null) r.p.onCancel?.();
+    },
+    isPrompt(buffer) {
+      return prompts.has(buffer ?? focusedBuffer());
+    },
     // Inside a mapped or hook function everything is atomic already.
     atomic(fn) {
       const token = current();
@@ -255,6 +317,42 @@
       return fn();
     },
   };
+  // Open prompts by buffer (openPrompt), and their hooks while any is.
+  const prompts = new Map();
+  let promptHooks = null;
+  const focusedBuffer = () => globalCmd.panes().find((p) => p.focused)?.buffer;
+  // The cursor's line of a prompt (what is run, and previewed).
+  const promptLine = (p) => {
+    const at = globalCmd.text.cursor({ pane: p.pane });
+    return globalCmd.text.line(at.line, { pane: p.pane });
+  };
+  // Close a prompt: its line, back to where it was opened, the buffer gone.
+  function closePrompt(buffer) {
+    const p = prompts.get(buffer);
+    if (p === undefined) return null;
+    prompts.delete(buffer);
+    let line = "";
+    try {
+      line = promptLine(p);
+    } catch {
+      // Its pane is gone.
+    }
+    if (prompts.size === 0 && promptHooks !== null) {
+      for (const off of promptHooks) off();
+      promptHooks = null;
+    }
+    try {
+      if (p.origin !== null) globalCmd.focusPane(p.origin);
+    } catch {
+      // That pane is gone.
+    }
+    try {
+      globalCmd.deleteBuffer(buffer);
+    } catch {
+      // Gone already.
+    }
+    return { p, line };
+  }
   globalThis.__temzdf = Object.freeze(temzdf);
 
   // Delays as browsers take them: not a number is 0; at most 2^31 - 1 ms.

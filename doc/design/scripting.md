@@ -356,7 +356,7 @@ with the plan.
 - `timeoutlen` defaults to 1000 ms, for every mode. Counts are digits; `0`
   counts only after another digit (as in Vim).
 - While a PDF pane has its outline focused, keys go to the pane directly
-  (fixed keys, as today). The search is typed into an input pane (its own
+  (fixed keys, as today). The search is typed into a prompt (its own
   `input` mode, mappable; 2026-11-02).
 - Key strings are written as for Vim's `feedkeys` (`jjj++02G/needle<CR>`);
   `--keys`, `scripts/frames.sh` and the judged e2e scenarios switch to it.

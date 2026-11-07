@@ -20,7 +20,6 @@ const EVENTS: &[(&str, &str)] = &[
     ("BufferDeletePre", "[buffer: number]"),
     ("BufferDeleted", "[buffer: number]"),
     ("BufferHidden", "[buffer: number, kind: PaneKind]"),
-    ("InputChanged", "[buffer: number, text: string]"),
     ("InvokePre", "[info: Invocation]"),
     ("InvokePost", "[info: Invocation & { cursor: Position | null; selection: Range | null }]"),
     ("KeyTyped", "[key: { keys: string; text: string | null; source: \"typed\" | \"feedkeys\" }]"),
@@ -104,7 +103,7 @@ declare module "temzdf" {{
     /** The focused pane. */
     pane: number;
     /** Its kind; null without a pane. */
-    paneKind: "terminal" | "pdf" | "input" | null;
+    paneKind: "terminal" | "pdf" | "edit" | null;
     /** Whether it is a floating pane. */
     floating: boolean;
     /** The current mode. */
@@ -318,7 +317,7 @@ declare module "temzdf" {{
   /** Run `fn` at the safe point: after the current invocation and its hooks, before the next key, in the order scheduled. Hooks change things this way (only InvokePost and SessionReady hooks may act themselves). */
   export function schedule(fn: () => void): void;
   /** The kinds of panes and buffers. */
-  export type PaneKind = "pdf" | "terminal" | "input" | "edit";
+  export type PaneKind = "pdf" | "terminal" | "edit";
   /** A text buffer's attributes (Vim's buftype, several at once): `nofile` never modified, written only to a path given; `unlisted` left out of buffers(). */
   export type BufferAttr = "nofile" | "unlisted";
   export function on<E extends keyof Events>(
@@ -333,6 +332,31 @@ declare module "temzdf" {{
     /** Run `fn` with everything else held; `fn` must be synchronous. */
     atomic<T>(fn: () => T): T;
   }}
+  /** What openPrompt is given. */
+  export interface PromptOptions {{
+    /** Shown before the text (inline virtual text, style `style`, default `Prompt`). */
+    prompt?: string;
+    text?: string;
+    side?: "bottom" | "top" | "left" | "right";
+    height?: number;
+    /** The base mode of its pane (default `input`). */
+    mode?: string;
+    style?: string;
+    /** <CR> (acceptPrompt): the cursor's line. */
+    onLine?: (line: string) => void;
+    /** <Esc> (cancelPrompt), or the prompt closed otherwise. */
+    onCancel?: () => void;
+    /** The cursor's line as it changes (a preview). */
+    onChange?: (line: string) => void;
+  }}
+  /** A prompt (Vim's command-line window): a text buffer (nofile, unlisted) in a pane, its base mode `input`, the prompt inline virtual text at its start. Returns its buffer and pane, or null. */
+  export function openPrompt(opts?: PromptOptions): {{ buffer: number; pane: number }} | null;
+  /** Run the prompt (the focused pane's, or `buffer`) with the cursor's line, closing it. */
+  export function acceptPrompt(buffer?: number): void;
+  /** Close the prompt (the focused pane's, or `buffer`) without running it. */
+  export function cancelPrompt(buffer?: number): void;
+  /** Whether `buffer` (the focused pane's) is an open prompt. */
+  export function isPrompt(buffer?: number): boolean;
   /** Start an asynchronous task without waiting for it. */
   export function dispatch(fn: (ctx: TaskContext) => Promise<void> | void): void;
   export function atomic<T>(fn: () => T): T;

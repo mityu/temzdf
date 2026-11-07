@@ -28,9 +28,11 @@ below); how it is built is in "Implementation" at the end.
 
 ## 2. Uses and scope
 
-- Two uses **(user)**: a component for command-input panes (today's
-  one-line input pane becomes a one-line buffer of this framework once it
-  exists), and editing arbitrary files.
+- Two uses **(user)**: a component for command-input panes (prompts:
+  done 2026-11-07, `openPrompt`, a `nofile`, `unlisted` buffer with its
+  prompt as inline virtual text; not limited to one line, `<CR>` runs the
+  cursor's line, as Vim's command-line window **(user)**), and editing
+  arbitrary files.
 - Read-only views (help, command output) are not considered now **(user)**.
 - Encodings: UTF-8 by default, a BOM kept on save. A file that is not
   valid UTF-8 is not opened (with a message); the user can reopen it naming
@@ -175,7 +177,7 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   function's id), the keys, the count, the mode, the pane and the source
   (key, mouse, CLI, replay); `InvokePost` adds the cursor and selection
   after. `invoke(target, { count })` runs it again.
-- Unmapped keys: a key that types into an editor or input buffer is an
+- Unmapped keys: a key that types into an editor buffer (a prompt too) is an
   invocation ("text input", with the text; IME commits and pastes too); keys
   passed to a terminal program or dropped are not **(user asked; agreed)**.
 - **`TextChanged`**: once per editing primitive call, with the changes
@@ -217,8 +219,8 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   at all. Per-event locks (as Vim's `textlock`) and an allow-list were the
   alternatives.
 - `defaults.ts` changes accordingly: hiding terminals' status lines in
-  `PaneOpened`, ending a search in `BufferHidden` and previewing it in
-  `InputChanged` move to `defer` (or, for the status line, a per-kind
+  `PaneOpened`, ending a search in `BufferHidden` and previewing it on
+  each change (now a prompt's `onChange`) move to `defer` (or, for the status line, a per-kind
   setting).
 
 ## 11. Key input
@@ -412,7 +414,7 @@ Decided with the user on 2026-11-07, before building:
   name (and default base mode) is `edit`.
 - **Scripts reach the primitives under `text.*`** **(user)**:
   `cmd.text.edit([...])`, `cmd.text.move("word", 1)`,
-  `action.text.move(...)`, as `input.*` today. The existing `edit(path)`
+  `action.text.move(...)` (prompts are edited with them too). The existing `edit(path)`
   (open a PDF in the focused pane, Vim's `:edit`) stays. The names in the
   sections above (`edit`, `move`, `positionOf`, ...) are these.
 - **A position is `{ line, character }`** **(user)**, LSP's names: zero
@@ -452,7 +454,6 @@ Decided with the user on 2026-11-07, before building:
 - Swap files, backups, persistent undo (until then a forced end loses
   unsaved changes).
 - Customising the status line.
-- Replacing the input pane with a one-line buffer.
 - Not discussed yet: SyncTeX between this pane and PDF panes (forward and
   inverse search), syntax highlighting (`doc/survey/text-editor.md`,
   section 3), whether the TUI panes' styled text

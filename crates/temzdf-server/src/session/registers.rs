@@ -184,9 +184,6 @@ impl Session {
             if let Some(t) = self.texts.get(&b) {
                 return Some(("edit", t.name.clone()));
             }
-            if let Some(i) = self.inputs.get(&b) {
-                return Some(("input", i.prompt.clone()));
-            }
             self.docs.get(&b).map(|d| ("pdf", d.name.clone()))
         });
         match found {
@@ -479,10 +476,6 @@ impl Session {
             Some(Kind::Text { .. }) => {
                 let args = [ScriptValue::Str(text.clone()), ScriptValue::map([("pane", num(pane))])];
                 Ok(self.run_command("text.type", &args, None, Instant::now())?.1)
-            }
-            Some(Kind::Input { .. }) if pane == self.focus => {
-                let one_line = text.trim_end_matches('\n').replace('\n', " ");
-                Ok(self.run_command("input.insert", &[ScriptValue::Str(one_line)], None, Instant::now())?.1)
             }
             Some(_) => Err(format!("put: pane {pane} takes no text")),
             None => Err(format!("put: no pane {pane}")),

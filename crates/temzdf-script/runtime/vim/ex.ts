@@ -63,11 +63,23 @@ function clampRange(r: Range): Range {
 
 // Panes, buffers and tab pages (Vim's windows, buffers and tabs).
 
+/** Panes on a script's own buffers (unlisted: prompts, the command line). */
+function ownPanes(): (p: { buffer: number }) => boolean {
+  const own = new Set(
+    cmd
+      .buffers({ all: true })
+      .filter((b) => b.attrs.includes("unlisted"))
+      .map((b) => b.id),
+  );
+  return (p) => own.has(p.buffer);
+}
+
 /** The panes of the current tab page a user works in (not command lines). */
 function workPanes(): ReturnType<typeof cmd.panes> {
   const all = cmd.panes();
   const tab = all.find((p) => p.focused)?.tab ?? null;
-  return all.filter((p) => p.kind !== "input" && p.tab === tab);
+  const own = ownPanes();
+  return all.filter((p) => !own(p) && p.tab === tab);
 }
 
 /** :split, :vsplit, :new, :vnew: a pane beside, showing `buffer`, or the
@@ -82,7 +94,6 @@ function splitPane(vertical: boolean, buffer: number, file: string): void {
 function bufferList(): ReturnType<typeof cmd.buffers> {
   return cmd
     .buffers()
-    .filter((b) => b.kind !== "input")
     .sort((a, b) => a.id - b.id);
 }
 
@@ -152,7 +163,8 @@ function onlyTab(): void {
 /** Quit the pane; the last one ends the session (refused with unsaved
  * changes unless `force`). */
 function quit(force: boolean): void {
-  const panes = cmd.panes().filter((p) => p.kind !== "input");
+  const own = ownPanes();
+  const panes = cmd.panes().filter((p) => !own(p));
   if (panes.length <= 1) cmd.killSession({ force });
   else cmd.closePane();
 }

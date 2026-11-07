@@ -59,6 +59,8 @@ impl Default for Highlights {
             ("IncSearch", Style { attrs: attrs(|a| a.inverse = true), ..Style::default() }),
             ("NonText", dim),
             ("SpecialKey", Style { fg: Some(Color::Indexed(4)), ..Style::default() }),
+            // A prompt's virtual text (the theme's accent).
+            ("Prompt", Style { fg: Some(Color::Rgb([0x61, 0xaf, 0xef])), ..Style::default() }),
             // The cursor of a pane without the focus (terminals draw only
             // one cursor).
             ("CursorUnfocused", Style { attrs: attrs(|a| a.underline = Underline::Single), ..Style::default() }),

@@ -1,7 +1,7 @@
-// The command line (/ ? :): an input pane one row high below the text pane,
-// in the mode vim/cmdline over the input mode (its editing keys work);
-// <CR> runs it in the text pane, <Esc> cancels.
-import { cmd, on, schedule } from "temzdf";
+// The command line (/ ? :): a prompt (openPrompt) one row high below the
+// text pane, in the mode vim/cmdline over the input mode (its editing keys
+// work); <CR> runs the cursor's line in the text pane, <Esc> cancels.
+import { acceptPrompt, cancelPrompt, cmd, openPrompt } from "temzdf";
 import type { Position } from "temzdf";
 import { ex } from "./ex";
 import { rememberEx } from "./macros";
@@ -14,7 +14,8 @@ import type { Motion } from "./state";
 import { clampNormal, cursor, setCursor, t } from "./util";
 import { exitVisual, moveVisual } from "./visual";
 
-let open: null | { buf: number; pane: number; kind: string; count: number | null; origin: Position } = null;
+type Open = { buf: number; pane: number; kind: string; count: number | null; origin: Position };
+let open: null | Open = null;
 
 export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
   const pane = cmd.focusedPane();
@@ -25,17 +26,22 @@ export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
     exitVisual();
     initial = "'<,'>";
   }
-  const origin = cursor();
-  const buf = cmd.newInput({ prompt: kind, text: initial });
-  open = { buf, pane, kind, count, origin };
-  try {
-    const p = cmd.split({ side: "bottom", buffer: buf, height: 1 });
-    if (p !== null) cmd.statusLine(false, p);
-  } catch (e) {
+  const o: Open = { buf: -1, pane, kind, count, origin: cursor() };
+  open = o;
+  const p = openPrompt({
+    prompt: kind,
+    text: initial,
+    onChange: (line) => {
+      if (open === o && kind !== ":" && options.incsearch) preview(o, line);
+    },
+    onLine: (line) => finish(o, line, true),
+    onCancel: () => finish(o, "", false),
+  });
+  if (p === null) {
     open = null;
-    cmd.deleteBuffer(buf);
-    throw e;
+    return;
   }
+  o.buf = p.buffer;
   cmd.switchMode("vim/cmdline");
 }
 
@@ -43,14 +49,6 @@ export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
 // first match from where it began (IncSearch), every match highlighted
 // with hlsearch; back there when nothing matches, or on <Esc>.
 const INC = "vim-incsearch";
-
-on("InputChanged", (buf: number, text: string) => {
-  const o = open;
-  if (o === null || o.buf !== buf || o.kind === ":" || !options.incsearch) return;
-  schedule(() => {
-    if (open === o) preview(o, text);
-  });
-});
 
 function preview(o: NonNullable<typeof open>, text: string): void {
   const pane = { pane: o.pane };
@@ -84,46 +82,44 @@ function preview(o: NonNullable<typeof open>, text: string): void {
   if (options.hlsearch) cmd.highlightPattern("vim-search", rust, "Search");
 }
 
-/** Back to the text pane; what was typed. The cursor is where the command
- * line opened (incsearch moved it). */
-function close(): { line: string; kind: string; count: number | null } | null {
-  const o = open;
+/** The prompt closed (back in the text pane): run the line (`run`) or
+ * not. The cursor is where the command line opened (incsearch moved it). */
+function finish(o: Open, line: string, run: boolean): void {
+  if (open !== o) return;
   open = null;
-  if (o === null) return null;
-  const line = cmd.inputText(o.buf);
   leaveTransient();
-  cmd.deleteBuffer(o.buf);
-  cmd.focusPane(o.pane);
   if (o.kind !== ":") {
     t.clearNamespace(INC);
     t.setCursor(o.origin);
   }
-  return { line, kind: o.kind, count: o.count };
+  if (!run) {
+    if (o.kind !== ":") restoreHighlight();
+    state.pending = null;
+    return;
+  }
+  if (o.kind === ":") {
+    state.pending = null;
+    rememberEx(line);
+    ex(line);
+    return;
+  }
+  goTo(find(line, o.kind === "?", o.count ?? 1), o.count);
 }
 
 export function cancelCmdline(): void {
-  const searching = open !== null && open.kind !== ":";
-  close();
-  if (searching) restoreHighlight();
-  state.pending = null;
+  leaveTransient();
+  cancelPrompt();
 }
 
 /** <BS> on an empty line cancels, as in Vim. */
 export function backspace(): void {
-  if (open !== null && cmd.inputText(open.buf) === "") cancelCmdline();
-  else cmd.input.backspace();
+  if (open !== null && t.lineCount() === 1 && t.line(0) === "") cancelCmdline();
+  else t.erase("grapheme", -1);
 }
 
 export function runCmdline(): void {
-  const c = close();
-  if (c === null) return;
-  if (c.kind === ":") {
-    state.pending = null;
-    rememberEx(c.line);
-    ex(c.line);
-    return;
-  }
-  goTo(find(c.line, c.kind === "?", c.count ?? 1), c.count);
+  leaveTransient();
+  acceptPrompt();
 }
 
 /** A search's result as a motion: the cursor moves there, or a pending

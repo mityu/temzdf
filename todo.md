@@ -41,10 +41,11 @@ server on one `Session`). Next and open:
   could skip rendering PDF tiles while no attached client draws images (the
   Hello would say); a PDF pane could show its text instead (the page's text
   lines) in such terminals.
-- [ ] Input panes (done: one line, the search on them, 2026-11-02): input
-  history (`<Up>`/`<Down>`), several lines, a `:` command line on them,
-  clicks moving the caret; choosing how the search's input pane shows
-  (the user: a configuration's own action opening it, mapped).
+- [ ] Prompts (input panes were replaced by text panes on 2026-11-07:
+  `openPrompt`, the Vim mode's command line on it): a history
+  (`<Up>`/`<Down>` move between the lines now); choosing how the search's
+  prompt shows (the user: a configuration's own action opening it,
+  mapped).
 - [ ] A log level (or verbosity) for temzdf's logs: today some lines are
   there for scripts/e2e.sh (`complete frame written`, `incomplete frame
   shown`, geometry) and others only with variables (`TEMZDF_TIMING`); the
@@ -137,7 +138,6 @@ server on one `Session`). Next and open:
   - swap files, backups, persistent undo (until then `kill-session
     --force` and signals lose unsaved changes);
   - customising the editor's status line;
-  - replacing the one-line input pane with a one-line editor buffer;
   - not discussed yet: SyncTeX with editor panes, syntax highlighting.
 - zellij delays keyboard input (even its own prefix commands) while it
   processes a frame, so `q` waits there; sending less data per frame is the

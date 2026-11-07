@@ -37,7 +37,8 @@ const DEFAULTS_NAME: &str = "temzdf:defaults";
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
      export const cmd = t.cmd, action = t.action, on = t.on, keymap = t.keymap, defineMode = t.defineMode,\n\
      o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, dispatch = t.dispatch,\n\
-     atomic = t.atomic, schedule = t.schedule;\n\
+     atomic = t.atomic, schedule = t.schedule, openPrompt = t.openPrompt, acceptPrompt = t.acceptPrompt,\n\
+     cancelPrompt = t.cancelPrompt, isPrompt = t.isPrompt;\n\
      export default t;\n";
 
 use crate::UNATTENDED_LIMIT;

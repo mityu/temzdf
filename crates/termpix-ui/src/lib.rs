@@ -8,7 +8,7 @@ pub mod canvas;
 pub mod widgets;
 
 pub use canvas::{Canvas, Color, Text, TextLayout, TextStyle};
-pub use widgets::{EditResult, LineInput, ListItem, ListView, StatusBar, Theme};
+pub use widgets::{ListItem, ListView, StatusBar, Theme};
 
 #[cfg(test)]
 mod tests {

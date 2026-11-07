@@ -292,7 +292,9 @@ impl View {
             let col = l.row_at(l.text.line_start(l.text.line_of(offset)), usize::MAX).col_of(offset);
             let width = l.width;
             if col < self.left {
-                self.left = col;
+                // Back to the start when the cursor fits there (a prompt's
+                // inline virtual text before it shows again).
+                self.left = if col < width { 0 } else { col };
             } else if col >= self.left + width {
                 self.left = col + 1 - width;
             }
@@ -406,7 +408,9 @@ xy",
         let mut v = View { layout: LayoutOptions { wrap: false, ..Default::default() }, ..view(10, 3) };
         v.set_cursor(&buf, 50, false);
         assert_eq!(v.left, 41);
+        v.set_cursor(&buf, 30, false);
+        assert_eq!(v.left, 30);
         v.set_cursor(&buf, 3, false);
-        assert_eq!(v.left, 3);
+        assert_eq!(v.left, 0, "back to the start when it fits there");
     }
 }

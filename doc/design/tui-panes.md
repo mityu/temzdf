@@ -91,8 +91,8 @@ Common rules:
   anchor stay on the same key across updates, which Magit sections and
   nui.nvim each reinvent.
 - **Editable regions are uncontrolled**: the server owns their text while
-  the user types and reports changes to the script (as input buffers do
-  with `InputChanged`, `doc/config.md`). A re-render does not overwrite
+  the user types and reports changes to the script (as prompts do with
+  `onChange`, `doc/config.md`). A re-render does not overwrite
   the text being edited unless the script asks for it.
 
 ## Existing libraries

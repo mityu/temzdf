@@ -39,9 +39,10 @@ configurations are written with the same system.
 - **Built-in modes stay**: `normal` (operating: keys act on temzdf, unmapped
   keys are dropped, counts), `terminal` (pass-through: unmapped keys go to
   the pane, no counts), `pdf` (PDF panes: unmapped keys dropped, counts)
-  and `input` (input panes, pass-through: unmapped keys that type a
-  character with no modifier but Shift go in, the rest are dropped; editing
-  is `input.*` commands mapped there).
+  and `input` (prompts, `openPrompt`: text panes whose buffer's base mode
+  it is; pass-through: unmapped keys that type a character with no
+  modifier but Shift go in, the rest are dropped; editing is `text.*`
+  commands mapped there).
   The pane kinds decide them, so switching panes changes the mode without
   anything to configure. Their mappings come from `defaults.ts`, as now.
 - **`visual`** (added 2026-11-06, with the user) is built in too, though no
@@ -49,7 +50,7 @@ configurations are written with the same system.
   `normal` mode's `v`), unmapped keys dropped, counts. It drives the
   terminal's own state (a cursor, a selection, a search), so the server
   begins that state when the mode is entered and ends it when the mode is
-  left in the same pane. Leaving for another pane (the search's input line)
+  left in the same pane. Leaving for another pane (the search's prompt)
   or for a mode pushed above it (the prefix's `normal`) suspends the state
   instead, to go on when `visual` comes back: the focus rule below rebuilds
   the history, and the search must not lose the cursor and selection on the

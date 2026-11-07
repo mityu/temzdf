@@ -4,7 +4,7 @@
 // Emacs: modes vim/normal, vim/insert, vim/visual, and the transient
 // vim/pending (an operator waiting for its motion), vim/char (the
 // character of f, t, r), vim/register ("x) and vim/cmdline (/ ? :).
-import { cmd, defineMode, keymap, o, on, schedule } from "temzdf";
+import { cmd, defineMode, isPrompt, keymap, o, on, schedule } from "temzdf";
 import type { KeyInfo, MapContext } from "temzdf";
 import { backspace, cancelCmdline, openCmdline, runCmdline, searchAgain, searchWord } from "./cmdline";
 import { abandonInsert, endInsert, insertRegister } from "./insert";
@@ -300,7 +300,8 @@ map([N, V, I], ["<C-b>"], () => cmd.switchMode("normal"));
 on("ModeChanged", (old: string, now: string) => {
   schedule(() => {
     const focused = cmd.panes().find((p) => p.focused);
-    if (focused === undefined || focused.kind !== "edit") return;
+    // Not a text pane, or a prompt (the command line): not the Vim mode's.
+    if (focused === undefined || focused.kind !== "edit" || isPrompt(focused.buffer)) return;
     // vim/insreg (<C-r>) is a key read inside the insert mode.
     const inserting = (m: string) => m === I || m === "vim/insreg";
     const style = inserting(now) ? "bar" : now === P ? "underline" : "block";

@@ -11,7 +11,6 @@ use temzdf_term::Spawn;
 use temzdf_term::visual::{Op as VisualOp, Outcome as VisualOutcome};
 
 use super::floats::{self, FloatSpec, FloatWhat};
-use super::input::InputOp;
 use super::{BufferId, Outcome, PaneEntry, Session, Spot};
 use crate::action::{Action, PaneSpec};
 use crate::keymap::notation;
@@ -74,7 +73,7 @@ const SESSION: &[(&str, &str, &str)] = &[
     (
         "buffers",
         "(opts?: { all?: boolean }): { id: number; kind: PaneKind; name: string; panes: number[]; exited: boolean; modified: boolean; attrs: BufferAttr[] }[]",
-        "The buffers (documents, terminals, inputs, text), shown or hidden, but `unlisted` ones (all: those too); `modified`: a text buffer with unsaved changes; `attrs` a text buffer's attributes",
+        "The buffers (documents, terminals, text), shown or hidden, but `unlisted` ones (all: those too); `modified`: a text buffer with unsaved changes; `attrs` a text buffer's attributes",
     ),
     (
         "show-buffer",
@@ -190,18 +189,6 @@ const SESSION: &[(&str, &str, &str)] = &[
     ("current-tab", "(): number", "The current tab page's index (from 1, as Vim's tabpagenr())"),
     ("session-name", "(): string", "The session's name"),
     (
-        "new-input",
-        "(opts?: { prompt?: string; text?: string }): number",
-        "A new input buffer (one line of text, as Vim's command line) to show in a pane (split, openFloat); returns the buffer",
-    ),
-    ("input-text", "(buffer?: number): string", "An input buffer's text (the focused input pane's)"),
-    (
-        "set-input-text",
-        "(text: string, buffer?: number): void",
-        "Set an input buffer's text (the focused input pane's); its carets go to the end",
-    ),
-    ("input.insert", "(text: string): void", "Insert text at the focused input pane's caret"),
-    (
         "visual.search-for",
         "(query: string, pane?: number, backward?: boolean): void",
         "Visual mode: to the next match of `query` (plain text, case-insensitive) in the terminal's screen and scrollback (the focused pane's), after the cursor or where a preview began, backwards with `backward`; n and N go on",
@@ -230,11 +217,6 @@ pub fn command_specs() -> Vec<CommandSpec> {
         doc: format!("Page view: {name} in the focused PDF pane (a mapping's count applies)"),
         ts: "(): void".into(),
     });
-    let input = InputOp::NAMES.iter().map(|(_, name, doc)| CommandSpec {
-        name: format!("input.{name}"),
-        doc: format!("{doc} (the focused input pane)"),
-        ts: "(): void".into(),
-    });
     let visual = VisualOp::NAMES.iter().map(|(_, name, doc)| CommandSpec {
         name: format!("visual.{name}"),
         doc: format!("Visual mode: {doc} (the focused terminal; a mapping's count applies)"),
@@ -245,7 +227,7 @@ pub fn command_specs() -> Vec<CommandSpec> {
         doc: (*doc).into(),
         ts: (*ts).into(),
     });
-    session.chain(text).chain(input).chain(visual).chain(pdf).collect()
+    session.chain(text).chain(visual).chain(pdf).collect()
 }
 
 /// What a new pane shows (`openFloat`, `newTab`): `{ buffer }`, `{ file }`,
@@ -366,9 +348,6 @@ impl Session {
                 temzdf_pdfview::pane::Action::Redraw => ok(Outcome::Redraw),
                 temzdf_pdfview::pane::Action::None => ok(Outcome::None),
             };
-        }
-        if let Some(op) = InputOp::from_name(name) {
-            return Ok((ScriptValue::Null, self.input_edit(op).map_err(|e| format!("{name}: {e}"))?));
         }
         if let "visual.search-for" | "visual.search-preview" | "visual.search-cancel" = name {
             let cancel = name == "visual.search-cancel";
@@ -832,25 +811,6 @@ impl Session {
                 };
                 self.move_tab(to.as_deref()).map_err(|e| format!("moveTab: {e}"))?;
                 ok(Outcome::Redraw)
-            }
-            "new-input" => {
-                let o = args.first().filter(|o| matches!(o, ScriptValue::Map(_)));
-                let field = |k: &str| o.and_then(|o| o.get(k)).and_then(ScriptValue::as_str).unwrap_or("").to_owned();
-                let buf = self.new_input(&field("prompt"), &field("text"));
-                Ok((ScriptValue::Num(buf as f64), Outcome::None))
-            }
-            "input-text" => {
-                let buf = self.input_buffer(id(0)).map_err(|e| format!("inputText: {e}"))?;
-                Ok((ScriptValue::Str(self.inputs[&buf].text.clone()), Outcome::None))
-            }
-            "set-input-text" => {
-                let t = text(0).ok_or("setInputText: what text?")?;
-                let buf = self.input_buffer(id(1)).map_err(|e| format!("setInputText: {e}"))?;
-                Ok((ScriptValue::Null, self.set_input_text(buf, &t)))
-            }
-            "input.insert" => {
-                let t = text(0).ok_or("input.insert: what text?")?;
-                Ok((ScriptValue::Null, self.input_insert(&t).map_err(|e| format!("{name}: {e}"))?))
             }
             "status-line" => {
                 let show = match args.first() {

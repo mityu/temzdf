@@ -75,10 +75,46 @@ impl TextEntry {
     }
 }
 
-/// A text pane: its view of the buffer, and its cursor's shape.
+/// A text pane: its view of the buffer, its cursor's shape, and the
+/// options it sets for itself.
 pub(super) struct TextView {
     pub view: View,
     pub shape: CursorShape,
+    pub local: LocalOptions,
+}
+
+/// Options a pane sets for itself over the session's (Vim's window-local
+/// options; `text.setOptions`): a prompt goes without wrapping and numbers.
+#[derive(Clone, Debug, Default)]
+pub(super) struct LocalOptions {
+    pub wrap: Option<bool>,
+    pub number: Option<temzdf_texteditor::NumberMode>,
+    pub cursorline: Option<bool>,
+    pub scrolloff: Option<usize>,
+}
+
+impl TextView {
+    /// The session's options `o`, then the pane's own over them.
+    pub(super) fn apply(&mut self, o: &super::TextOptions) {
+        let v = &mut self.view;
+        v.layout = o.layout.clone();
+        v.layout.wrap = self.local.wrap.unwrap_or(o.layout.wrap);
+        v.number = self.local.number.unwrap_or(o.number);
+        v.cursorline = self.local.cursorline.unwrap_or(o.cursorline);
+        v.scrolloff = self.local.scrolloff.unwrap_or(o.scrolloff);
+    }
+}
+
+/// A number column's mode by name.
+pub(super) fn number_mode(name: Option<&str>) -> Option<temzdf_texteditor::NumberMode> {
+    use temzdf_texteditor::NumberMode;
+    Some(match name? {
+        "off" => NumberMode::Off,
+        "absolute" => NumberMode::Absolute,
+        "relative" => NumberMode::Relative,
+        "both" => NumberMode::Both,
+        _ => return None,
+    })
 }
 
 fn name_of(path: Option<&Path>) -> String {
@@ -147,17 +183,11 @@ impl Session {
 
     /// The view a new text pane starts with, from the options.
     fn text_view(&self, pane: PaneId) -> TextView {
-        let o = &self.options;
-        let view = View {
-            // Decorations shown only in it count there (inline virtual text).
-            pane: Some(pane),
-            layout: o.text.layout.clone(),
-            number: o.text.number,
-            cursorline: o.text.cursorline,
-            scrolloff: o.text.scrolloff,
-            ..View::default()
-        };
-        TextView { view, shape: CursorShape::Default }
+        // Decorations shown only in it count there (inline virtual text).
+        let view = View { pane: Some(pane), ..View::default() };
+        let mut tv = TextView { view, shape: CursorShape::Default, local: LocalOptions::default() };
+        tv.apply(&self.options.text);
+        tv
     }
 
     /// Open `path` as text in a new pane at `spot`: the buffer already
@@ -1068,6 +1098,36 @@ impl Session {
                 }
                 redrawn
             }
+            "set-options" => {
+                let o = args.first().ok_or("which options?")?;
+                let flag = |k: &str| match o.get(k) {
+                    None | Some(ScriptValue::Null) => Ok(None),
+                    Some(ScriptValue::Bool(b)) => Ok(Some(*b)),
+                    Some(_) => Err(format!("{k}: true or false")),
+                };
+                let mut local = self.view_mut(pane).map(|v| v.local.clone()).unwrap_or_default();
+                if let Some(w) = flag("wrap")? {
+                    local.wrap = Some(w);
+                }
+                if let Some(c) = flag("cursorline")? {
+                    local.cursorline = Some(c);
+                }
+                if let Some(n) = o.get("number") {
+                    local.number =
+                        Some(number_mode(n.as_str()).ok_or("number: \"off\", \"absolute\", \"relative\" or \"both\"")?);
+                }
+                if let Some(n) = o.get("scrolloff") {
+                    local.scrolloff = Some(n.as_num().ok_or("scrolloff: a number")? as usize);
+                }
+                let text_opts = self.options.text.clone();
+                let b = &self.texts[&buf].buf;
+                if let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) {
+                    view.local = local;
+                    view.apply(&text_opts);
+                    view.view.relayout(b);
+                }
+                redrawn
+            }
             "set-cursor-style" => {
                 let shape = cursor_shape(args.first().and_then(ScriptValue::as_str).ok_or("which style?")?)?;
                 if let Some(v) = self.view_mut(pane) {
@@ -1287,6 +1347,11 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
         "Decorate a range (an empty one without a style is a mark): it follows edits, collapses and is flagged deleted when its text goes (undo restores it). `style` a highlight group, `showIn` a pane only, gravity where each end goes on an insertion exactly there, `ttl` milliseconds until it goes. `virtText` is text shown that is not in the buffer, at the range's start: `inline` between the characters (it takes columns; the cursor never goes in it), `eol` after the line's end, `overlay` over the text. Returns its id",
     ),
     ("text.decoration", "(id: number, opts?: { pane?: number }): Decoration | null", "A decoration or mark by id"),
+    (
+        "text.set-options",
+        "(options: { wrap?: boolean, number?: \"off\" | \"absolute\" | \"relative\" | \"both\", cursorline?: boolean, scrolloff?: number }, opts?: { pane?: number }): void",
+        "Options of the pane alone, over the session's (Vim's window-local options: a prompt goes without wrapping and numbers)",
+    ),
     (
         "text.decorations",
         "(opts?: { namespace?: string, range?: Range, pane?: number }): Decoration[]",

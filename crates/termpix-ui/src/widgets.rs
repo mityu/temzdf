@@ -15,7 +15,6 @@ pub struct Theme {
     pub accent: Color,
     pub selection_bg: Color,
     pub hover_bg: Color,
-    pub input_bg: Color,
     pub error: Color,
     /// Font size relative to the row height.
     pub font_ratio: f32,
@@ -39,7 +38,6 @@ impl Theme {
             accent: Color::rgb(0x61, 0xaf, 0xef),
             selection_bg: Color::rgb(0x2f, 0x4f, 0x75),
             hover_bg: Color::rgb(0x2c, 0x30, 0x37),
-            input_bg: Color::rgb(0x16, 0x18, 0x1c),
             error: Color::rgb(0xe0, 0x6c, 0x75),
             font_ratio: 0.62,
         }
@@ -184,219 +182,15 @@ impl ListView {
     }
 }
 
-/// Single-line text input with a caret (byte index into `text`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LineInput {
-    pub prompt: String,
-    pub text: String,
-    pub caret: usize,
-    /// Right-aligned hint (e.g. "3/12").
-    pub hint: String,
-}
-
-/// What an edit key did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EditResult {
-    Changed,
-    Moved,
-    Ignored,
-}
-
-impl LineInput {
-    pub fn insert(&mut self, s: &str) {
-        let s: String = s.chars().filter(|c| !c.is_control()).collect();
-        self.text.insert_str(self.caret, &s);
-        self.caret += s.len();
-    }
-
-    pub fn backspace(&mut self) -> EditResult {
-        let Some((i, _)) = self.text[..self.caret].char_indices().next_back() else { return EditResult::Ignored };
-        self.text.replace_range(i..self.caret, "");
-        self.caret = i;
-        EditResult::Changed
-    }
-
-    pub fn delete(&mut self) -> EditResult {
-        let Some(c) = self.text[self.caret..].chars().next() else { return EditResult::Ignored };
-        self.text.replace_range(self.caret..self.caret + c.len_utf8(), "");
-        EditResult::Changed
-    }
-
-    pub fn left(&mut self) -> EditResult {
-        match self.text[..self.caret].char_indices().next_back() {
-            Some((i, _)) => {
-                self.caret = i;
-                EditResult::Moved
-            }
-            None => EditResult::Ignored,
-        }
-    }
-
-    pub fn right(&mut self) -> EditResult {
-        match self.text[self.caret..].chars().next() {
-            Some(c) => {
-                self.caret += c.len_utf8();
-                EditResult::Moved
-            }
-            None => EditResult::Ignored,
-        }
-    }
-
-    pub fn home(&mut self) {
-        self.caret = 0;
-    }
-
-    pub fn end(&mut self) {
-        self.caret = self.text.len();
-    }
-
-    /// Delete the word before the caret (Ctrl+W).
-    pub fn delete_word(&mut self) -> EditResult {
-        let start = word_start(&self.text[..self.caret]);
-        if start == self.caret {
-            return EditResult::Ignored;
-        }
-        self.text.replace_range(start..self.caret, "");
-        self.caret = start;
-        EditResult::Changed
-    }
-
-    /// To the start of the word before the caret (readline's Alt+B).
-    pub fn word_left(&mut self) -> EditResult {
-        let start = word_start(&self.text[..self.caret]);
-        if start == self.caret {
-            return EditResult::Ignored;
-        }
-        self.caret = start;
-        EditResult::Moved
-    }
-
-    /// To the end of the word after the caret (readline's Alt+F).
-    pub fn word_right(&mut self) -> EditResult {
-        let after = &self.text[self.caret..];
-        let skipped = after.len() - after.trim_start().len();
-        let word = after[skipped..].find(char::is_whitespace).unwrap_or(after.len() - skipped);
-        if skipped + word == 0 {
-            return EditResult::Ignored;
-        }
-        self.caret += skipped + word;
-        EditResult::Moved
-    }
-
-    /// Delete from the start to the caret (Ctrl+U).
-    pub fn delete_to_start(&mut self) -> EditResult {
-        if self.caret == 0 {
-            return EditResult::Ignored;
-        }
-        self.text.replace_range(..self.caret, "");
-        self.caret = 0;
-        EditResult::Changed
-    }
-
-    /// Delete from the caret to the end (Ctrl+K).
-    pub fn delete_to_end(&mut self) -> EditResult {
-        if self.caret == self.text.len() {
-            return EditResult::Ignored;
-        }
-        self.text.truncate(self.caret);
-        EditResult::Changed
-    }
-
-    pub fn clear(&mut self) {
-        self.text.clear();
-        self.caret = 0;
-    }
-
-    /// Where the text starts (after the prompt), in pixels.
-    fn text_x(&self, text: &mut Text, theme: &Theme, h: f32) -> f32 {
-        let pad = h * 0.4;
-        pad + text.layout(&self.prompt, &theme.style(h, theme.accent, true), None).width() + pad * 0.5
-    }
-
-    /// The caret's x position for a widget of height `height` (for placing the
-    /// terminal cursor, so IME preedit appears at the caret).
-    pub fn caret_x(&self, text: &mut Text, theme: &Theme, height: u32) -> f32 {
-        let h = height as f32;
-        self.text_x(text, theme, h)
-            + text.layout(&self.text[..self.caret], &theme.style(h, theme.bar_fg, false), None).width()
-    }
-
-    /// Render and return the pixels plus the caret x position.
-    pub fn render(&self, text: &mut Text, theme: &Theme, width: u32, height: u32) -> (Vec<u8>, f32) {
-        let (w, h) = (width as f32, height as f32);
-        let pad = h * 0.4;
-        let mut c = Canvas::new(width, height);
-        c.fill_rect(0.0, 0.0, w, h, theme.input_bg);
-        let prompt = text.layout(&self.prompt, &theme.style(h, theme.accent, true), None);
-        c.text(&prompt, pad, (h - prompt.height()) / 2.0);
-        let x0 = self.text_x(text, theme, h);
-        let hint = text.line(&self.hint, &theme.style(h, theme.bar_dim, false), w / 3.0);
-        c.text(&hint, w - pad - hint.width(), (h - hint.height()) / 2.0);
-        let body = text.layout(&self.text, &theme.style(h, theme.bar_fg, false), None);
-        c.text(&body, x0, (h - body.height()) / 2.0);
-        let caret_x = self.caret_x(text, theme, height);
-        c.fill_rect(caret_x, h * 0.18, (h * 0.08).max(1.0), h * 0.64, theme.accent);
-        (c.finish(), caret_x)
-    }
-}
-
-/// Where the word that ends `before` starts (blanks after it skipped).
-fn word_start(before: &str) -> usize {
-    let trimmed = before.trim_end();
-    trimmed.rfind(char::is_whitespace).map_or(0, |i| i + trimmed[i..].chars().next().map_or(1, char::len_utf8))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn line_input_words_and_ends() {
-        let mut i = LineInput { text: "ab  数式 cd".into(), ..Default::default() };
-        i.end();
-        assert_eq!(i.word_left(), EditResult::Moved);
-        assert_eq!(&i.text[i.caret..], "cd");
-        i.word_left();
-        assert_eq!(&i.text[i.caret..], "数式 cd");
-        i.home();
-        assert_eq!(i.word_left(), EditResult::Ignored);
-        i.word_right();
-        assert_eq!(&i.text[..i.caret], "ab");
-        i.word_right();
-        assert_eq!(&i.text[..i.caret], "ab  数式");
-        assert_eq!(i.delete_to_end(), EditResult::Changed);
-        assert_eq!(i.text, "ab  数式");
-        assert_eq!(i.delete_to_end(), EditResult::Ignored);
-        i.left();
-        assert_eq!(i.delete_to_start(), EditResult::Changed);
-        assert_eq!((i.text.as_str(), i.caret), ("式", 0));
-    }
 
     fn save(name: &str, w: u32, h: u32, px: Vec<u8>) {
         if let Ok(dir) = std::env::var("TERMPIX_UI_SNAPSHOT_DIR") {
             let img = termpix_core::raster::RgbaImage::from_raw(w, h, px).unwrap();
             img.save_png(&std::path::Path::new(&dir).join(name)).unwrap();
         }
-    }
-
-    #[test]
-    fn line_input_editing() {
-        let mut i = LineInput::default();
-        i.insert("数式 ab");
-        assert_eq!(i.caret, i.text.len());
-        i.left();
-        i.backspace();
-        assert_eq!(i.text, "数式 b");
-        i.home();
-        i.right();
-        i.delete();
-        assert_eq!(i.text, "数 b");
-        i.end();
-        i.insert(" word");
-        i.delete_word();
-        assert_eq!(i.text, "数 b ");
-        i.insert("\x1bx\n");
-        assert_eq!(i.text, "数 b x");
     }
 
     #[test]
@@ -438,9 +232,5 @@ mod tests {
             scroll: 0,
         };
         save("list.png", 220, 100, list.render(&mut text, &theme, 220, 100, 20));
-        let input = LineInput { prompt: "/".into(), text: "needle 数式".into(), caret: 6, hint: "2/5".into() };
-        let (px, caret) = input.render(&mut text, &theme, 400, 20);
-        assert!(caret > 10.0);
-        save("input.png", 400, 20, px);
     }
 }
