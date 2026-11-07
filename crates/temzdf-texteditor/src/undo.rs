@@ -158,6 +158,23 @@ impl UndoTree {
         }
     }
 
+    pub(crate) fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
+    pub(crate) fn current(&self) -> usize {
+        self.current
+    }
+
+    pub(crate) fn saved(&self) -> Option<usize> {
+        self.saved
+    }
+
+    /// A tree read back (an undo file): at node `at`, which is saved.
+    pub(crate) fn restored(nodes: Vec<Node>, at: usize) -> Self {
+        Self { nodes, current: at, saved: Some(at), open: false, depth: 0, typing_tail: false }
+    }
+
     /// The buffer was saved as it is now.
     pub fn mark_saved(&mut self) {
         self.saved = Some(self.current);

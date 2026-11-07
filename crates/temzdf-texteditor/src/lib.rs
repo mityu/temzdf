@@ -19,6 +19,7 @@ mod render;
 mod search;
 mod text;
 mod undo;
+mod undofile;
 mod view;
 
 pub use buffer::{Buffer, EditError, Edited, Origin, Reported};
@@ -31,4 +32,5 @@ pub use render::{Drawn, Highlights, Style, render};
 pub use search::{Found, Pattern, SearchOptions, find_all, search};
 pub use text::{LineEnding, Position, Range, Text};
 pub use undo::{StepKind, UndoTree};
+pub use undofile::fnv1a;
 pub use view::{NumberMode, Reveal, View, ViewUnit};
