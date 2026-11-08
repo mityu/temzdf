@@ -315,7 +315,7 @@ impl Viewer {
         ViewState {
             top: self.top_position(),
             left: self.view.scroll_x / self.view.scale,
-            zoom: (!self.fit_mode).then(|| self.view.scale / fit),
+            zoom: (!self.fit_mode).then_some(self.view.scale / fit),
         }
     }
 
