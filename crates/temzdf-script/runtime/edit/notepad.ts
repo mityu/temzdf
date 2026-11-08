@@ -16,6 +16,11 @@ function useEditMode(): void {
   }
 }
 
+/** A key with Shift added: <Left> is <S-Left>, <C-Left> is <C-S-Left>. */
+function shifted(key: string): string {
+  return key.startsWith("<C-") ? `<C-S-${key.slice(3)}` : `<S-${key.slice(1)}`;
+}
+
 export default keyset("builtin-edit-notepad", (d) => {
   useEditMode();
   const sel = { select: true };
@@ -34,7 +39,7 @@ export default keyset("builtin-edit-notepad", (d) => {
     [["<PageDown>"], "page", 1],
   ] as const) {
     d.map("edit", [...keys], action.text.move(unit, n));
-    d.map("edit", keys.map((k) => k.replace("<", "<S-").replace("<S-C-", "<C-S-")), action.text.move(unit, n, sel));
+    d.map("edit", keys.map(shifted), action.text.move(unit, n, sel));
   }
   d.map("edit", ["<CR>"], action.text.type("\n"));
   d.map("edit", ["<Tab>"], action.text.type("\t"));
