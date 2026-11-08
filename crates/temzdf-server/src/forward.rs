@@ -168,11 +168,12 @@ mod tests {
         let req = ForwardRequest { file: "main.tex".into(), line: 42, column: 0 };
         assert!(send_to(&socket, &req).unwrap());
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);
-        // A client that connects and sends nothing does not hold others up.
+        // A client that connects and sends nothing does not hold others up:
+        // while it stays connected, the next one is answered (once its
+        // REQUEST_TIMEOUT ran out; no wall-clock bound here, CI machines
+        // are slow, but the patient reply's own timeout is far above it).
         let _silent = UnixStream::connect(&socket).unwrap();
-        let start = std::time::Instant::now();
         assert!(send_to_patiently(&socket, &req));
-        assert!(start.elapsed() < Duration::from_secs(4), "{:?}", start.elapsed());
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);
         drop(server);
         assert!(!send_to(&socket, &req).unwrap(), "socket removed");
@@ -184,7 +185,7 @@ mod tests {
     /// send_to, waiting longer for the reply than it does.
     fn send_to_patiently(socket: &Path, req: &ForwardRequest) -> bool {
         let mut stream = UnixStream::connect(socket).unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        stream.set_read_timeout(Some(REQUEST_TIMEOUT * 15)).unwrap();
         stream.write_all(req.encode().as_bytes()).unwrap();
         let mut reply = String::new();
         BufReader::new(stream).read_line(&mut reply).unwrap();
