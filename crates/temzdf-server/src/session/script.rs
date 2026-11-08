@@ -1186,6 +1186,10 @@ impl Session {
             "undofile" => o.undofile = flag()?,
             "swapfile" => o.swapfile = flag()?,
             "updatetime" => o.updatetime = Duration::from_millis(num()?.max(0.0) as u64),
+            // Where undo and swap files go (Vim's undodir and directory);
+            // null or "" the state directory's.
+            "undodir" => self.undo_dir = super::text::dir_option(text()?, super::text::undo_dir)?,
+            "directory" => self.swap_dir = super::text::dir_option(text()?, super::swap::swap_dir)?,
             "number" => {
                 o.text.number = super::text::number_mode(value.as_str())
                     .ok_or("o.number: expected \"off\", \"absolute\", \"relative\" or \"both\"")?;
@@ -1249,6 +1253,12 @@ impl Session {
             "undofile" => ScriptValue::Bool(o.undofile),
             "swapfile" => ScriptValue::Bool(o.swapfile),
             "updatetime" => ScriptValue::Num(o.updatetime.as_millis() as f64),
+            "undodir" => {
+                self.undo_dir.as_ref().map_or(ScriptValue::Null, |d| ScriptValue::Str(d.display().to_string()))
+            }
+            "directory" => {
+                self.swap_dir.as_ref().map_or(ScriptValue::Null, |d| ScriptValue::Str(d.display().to_string()))
+            }
             "number" => ScriptValue::Str(
                 match o.text.number {
                     temzdf_texteditor::NumberMode::Off => "off",

@@ -5077,6 +5077,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn options_choose_where_undo_and_swap_files_go() {
+        let (s0, path) = text_session("dirs.txt", "one\n");
+        drop(s0);
+        let dir = path.parent().unwrap().to_owned();
+        let str = |v: &str| ScriptValue::Str(v.into());
+        let sink: EventSink = Arc::new(|_| true);
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut s = Session::new("dirs".into(), GEOMETRY, Hints::default(), settings, sink);
+        let (undo, swaps) = (dir.join("my-undo"), dir.join("my-swap"));
+        s.set_option("undodir", &str(undo.to_str().unwrap())).unwrap();
+        s.set_option("directory", &str(swaps.to_str().unwrap())).unwrap();
+        s.set_option("undofile", &ScriptValue::Bool(true)).unwrap();
+        assert_eq!(s.get_option("directory").unwrap(), str(swaps.to_str().unwrap()));
+        s.start(PaneSpec::File(path.clone()), None).unwrap();
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        assert!(swap::candidates(&swaps, &canonical)[0].exists(), "the swap file there");
+        s.run_command("text.insert", &[str("x"), pos(0, 0)], None, Instant::now()).unwrap();
+        s.run_command("write", &[], None, Instant::now()).unwrap();
+        assert!(text::undo_file_of(&undo, &canonical).exists(), "the undo file there");
+        s.end_swaps();
+        // "~/" is the home directory; null or "" the default.
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        assert_eq!(text::dir_option(Some("~/u".into()), text::undo_dir).unwrap(), Some(home.join("u")));
+        assert_eq!(text::dir_option(None, text::undo_dir).unwrap(), text::undo_dir());
+        assert_eq!(text::dir_option(Some(String::new()), swap::swap_dir).unwrap(), swap::swap_dir());
+        assert!(text::dir_option(Some("rel".into()), text::undo_dir).unwrap().unwrap().is_absolute());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A swap file of session `session` (gone) holding `text`.
     fn swapped_of(session: &str, text: &str) -> swap::SwapFile {
         swap::SwapFile {

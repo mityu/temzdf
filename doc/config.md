@@ -319,6 +319,8 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `scrolloff` | `0` | rows kept between the cursor and the top or bottom of text panes |
 | `swapfile` | `true` | keep text buffers' text in swap files while they are edited (as Neovim), so what was not saved survives a crash: `$XDG_STATE_HOME/temzdf/swap/` (else `~/.local/state/temzdf/swap/`), readable by the user only, gone when the buffer is deleted or the session ends normally |
 | `updatetime` | `4000` | milliseconds after the last change before a swap file is written |
+| `directory` | `null` | where swap files go (Vim's `'directory'`): a path (`~/` is the home directory, a relative one from where the session started); `null` or `""` is `$XDG_STATE_HOME/temzdf/swap/`. Swap files started before a change stay where they are |
+| `undodir` | `null` | where undo files go (Vim's `'undodir'`), as `directory`; `null` or `""` is `$XDG_STATE_HOME/temzdf/undo/` |
 | `undofile` | `false` | keep text buffers' undo trees in files (Vim's undofile): written when the buffer is written, read back when the file is opened again if it still holds what was written. In `$XDG_STATE_HOME/temzdf/undo/` (else `~/.local/state/temzdf/undo/`), readable by the user only. Off by default: deleted text stays in them |
 
 ## Buffers

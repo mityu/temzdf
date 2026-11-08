@@ -289,7 +289,9 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   the swap file's pid) is passed over (W325) and the next name taken; a
   gone one is `SwapExists`, answered by `temzdf/buffers` with Neovim's
   E325 prompt (a mode reading one key; the message an error notice, so it
-  stays until the key). Not yet: buffers without a file.
+  stays until the key). Not yet: buffers without a file. `o.directory`
+  and `o.undodir` (Vim's names, one path each, `~/` expanded) choose
+  where swap and undo files go.
 - `write(buffer, { path?, encoding?, force? })` writes a temporary file and
   renames it over the target, copying permissions, replacing a symlink's
   target, writing in place when the directory is not writable. It keeps the

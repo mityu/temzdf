@@ -291,6 +291,10 @@ declare module "temzdf" {{
     swapfile: boolean;
     /** Milliseconds after the last change before the swap file is written. */
     updatetime: number;
+    /** Where undo files go (null or "": $XDG_STATE_HOME/temzdf/undo; "~/" is the home directory). */
+    undodir: string | null;
+    /** Where swap files go (null or "": $XDG_STATE_HOME/temzdf/swap; "~/" is the home directory). */
+    directory: string | null;
   }}
   export const o: Options;
 

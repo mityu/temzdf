@@ -121,6 +121,21 @@ pub(super) fn undo_dir() -> Option<PathBuf> {
     Some(base.join("temzdf").join("undo"))
 }
 
+/// A directory option's value (`o.undodir`, `o.directory`): null or ""
+/// the `default`, `~/` the home directory, a relative path from where the
+/// server runs (made absolute).
+pub(super) fn dir_option(value: Option<String>, default: fn() -> Option<PathBuf>) -> Result<Option<PathBuf>, String> {
+    let Some(v) = value.filter(|v| !v.is_empty()) else { return Ok(default()) };
+    let path = match v.strip_prefix("~/").or(if v == "~" { Some("") } else { None }) {
+        Some(rest) => {
+            let home = std::env::var_os("HOME").ok_or("~: HOME is not set")?;
+            PathBuf::from(home).join(rest)
+        }
+        None => PathBuf::from(&v),
+    };
+    std::path::absolute(&path).map(Some).map_err(|e| format!("{v}: {e}"))
+}
+
 /// The undo file of `file` in `dir` (its path hashed; the file names the
 /// path inside too, so a collision is no mistake).
 pub(super) fn undo_file_of(dir: &Path, file: &Path) -> PathBuf {
