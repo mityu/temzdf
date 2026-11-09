@@ -13,7 +13,7 @@ use mupdf::DisplayList;
 use temzdf_scene::{ImageKey, Images, Layer};
 use termpix_core::geom::Rect;
 use termpix_core::raster::{RgbaImage, RgbaRef, blit};
-use termpix_core::scroll::KineticScroll;
+use termpix_core::viewport::Viewport;
 
 use crate::doc_cache::{DocCache, LAYER_BACKGROUND, dequantize, quantize};
 pub use crate::doc_cache::{LAYER_KEYS_END, Need, RenderJob, Rendered, TILE, TileKey, TileKind};
@@ -79,8 +79,8 @@ pub struct Viewer {
     pub doc: SharedDocument,
     pub layout: Layout,
     pub view: View,
-    pub scroll_x: KineticScroll,
-    pub scroll_y: KineticScroll,
+    /// The scrolling (its sizes follow `view` and `layout`).
+    pub viewport: Viewport,
     /// Frames built so far (stand-ins not shown in the latest one are dropped).
     frame_no: u64,
     /// Page-area-sized background image and its size. Not a scaled 1x1 image:
@@ -159,8 +159,7 @@ impl Viewer {
             doc,
             layout,
             view,
-            scroll_x: KineticScroll::default(),
-            scroll_y: KineticScroll::default(),
+            viewport: Viewport::default(),
             frame_no: 0,
             background: None,
             origin_x: 0,
@@ -200,20 +199,19 @@ impl Viewer {
     }
 
     pub fn is_animating(&self) -> bool {
-        self.scroll_x.is_animating() || self.scroll_y.is_animating()
+        self.viewport.is_animating()
     }
 
     /// Advance scroll animations. Returns true if the view moved.
     pub fn tick(&mut self, now: Instant) -> bool {
-        let a = self.scroll_x.tick(now);
-        let b = self.scroll_y.tick(now);
+        let moved = self.viewport.tick(now);
         self.sync_view();
-        a || b
+        moved
     }
 
-    fn sync_view(&mut self) {
-        self.view.scroll_x = self.scroll_x.offset() as f32;
-        self.view.scroll_y = self.scroll_y.offset() as f32;
+    pub(crate) fn sync_view(&mut self) {
+        self.view.scroll_x = self.viewport.x.offset() as f32;
+        self.view.scroll_y = self.viewport.y.offset() as f32;
     }
 
     /// After `view` was changed directly (zoom, resize, new layout): update the
@@ -223,15 +221,17 @@ impl Viewer {
     /// the top-left corner instead of the pointer).
     fn update_scroll_bounds(&mut self) {
         let (x, y) = (self.view.scroll_x, self.view.scroll_y);
-        self.scroll_x.set_bounds(0.0, self.view.max_scroll_x(&self.layout) as f64);
-        self.scroll_y.set_bounds(0.0, self.view.max_scroll_y(&self.layout) as f64);
+        let v = self.view;
+        self.viewport.set_sizes(
+            (f64::from(v.screen_w), f64::from(v.screen_h)),
+            (f64::from(self.layout.width * v.scale), f64::from(self.layout.height * v.scale)),
+        );
         self.jump_to(x, y);
     }
 
     /// Jump (no animation) so the view's top-left is at the given doc-space pixels.
     pub fn jump_to(&mut self, scroll_x: f32, scroll_y: f32) {
-        self.scroll_x.jump_to(scroll_x as f64);
-        self.scroll_y.jump_to(scroll_y as f64);
+        self.viewport.jump_to(f64::from(scroll_x), f64::from(scroll_y));
         self.sync_view();
     }
 
@@ -248,9 +248,9 @@ impl Viewer {
         }
         let px = (self.target_top(target) * self.view.scale) as f64;
         if animate {
-            self.scroll_y.scroll_by(px - self.scroll_y.target(), now);
+            self.viewport.y.scroll_by(px - self.viewport.y.target(), now);
         } else {
-            self.scroll_y.jump_to(px);
+            self.viewport.y.jump_to(px);
             self.sync_view();
         }
     }
@@ -375,7 +375,7 @@ impl Viewer {
     /// jump, a forward search) ends where it was going first: settling the
     /// new size ends animations, and it would have stopped where it was.
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.jump_to(self.scroll_x.target() as f32, self.scroll_y.target() as f32);
+        self.jump_to(self.viewport.x.target() as f32, self.viewport.y.target() as f32);
         let (dx, dy) = self.view.screen_to_doc(&self.layout, 0.0, 0.0);
         self.view.screen_w = width as f32;
         self.view.screen_h = height as f32;

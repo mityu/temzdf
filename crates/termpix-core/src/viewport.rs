@@ -82,6 +82,13 @@ impl Viewport {
         self.update_bounds();
     }
 
+    /// Both sizes at once (one after the other would clamp to limits
+    /// that hold for neither).
+    pub fn set_sizes(&mut self, view: (f64, f64), content: (f64, f64)) {
+        (self.view, self.content) = (view, content);
+        self.update_bounds();
+    }
+
     fn update_bounds(&mut self) {
         self.x.set_bounds(0.0, (self.content.0 - self.view.0).max(0.0));
         self.y.set_bounds(0.0, (self.content.1 - self.view.1).max(0.0));
@@ -125,17 +132,17 @@ impl Viewport {
     }
 
     /// The content's rows `y0..y1` in sight: where they are if they are,
-    /// else a third of the view from the top.
-    pub fn reveal(&mut self, y0: f64, y1: f64, animate: bool, now: Instant) {
+    /// else a third of the view from the top; animated from `now` when
+    /// given, else at once.
+    pub fn reveal(&mut self, y0: f64, y1: f64, animate: Option<Instant>) {
         let top = self.y.target();
         if y0 >= top && y1 <= top + self.view.1 {
             return;
         }
         let to = y0 - self.view.1 / 3.0;
-        if animate {
-            self.y.scroll_by(to - top, now);
-        } else {
-            self.y.jump_to(to);
+        match animate {
+            Some(now) => self.y.scroll_by(to - top, now),
+            None => self.y.jump_to(to),
         }
     }
 
@@ -322,11 +329,11 @@ mod tests {
     #[test]
     fn reveal_leaves_rows_in_sight_and_brings_others_a_third_down() {
         let (mut v, now) = (view(), Instant::now());
-        v.reveal(100.0, 120.0, false, now);
+        v.reveal(100.0, 120.0, None);
         assert_eq!(v.offset(), (0.0, 0.0));
-        v.reveal(1000.0, 1020.0, false, now);
+        v.reveal(1000.0, 1020.0, None);
         assert_eq!(v.offset(), (0.0, 800.0));
-        v.reveal(200.0, 220.0, true, now);
+        v.reveal(200.0, 220.0, Some(now));
         assert!(v.is_animating());
         settle(&mut v, now);
         assert_eq!(v.offset(), (0.0, 0.0));

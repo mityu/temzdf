@@ -13,6 +13,7 @@ use termpix_core::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
     ScrollPhase, ScrollUnit,
 };
+use termpix_core::viewport::Input;
 use termpix_ui::{Canvas, Color, ListView, StatusBar, Text, Theme};
 
 use crate::document::{self, Document, SharedDocument};
@@ -172,8 +173,6 @@ pub struct PdfPane {
     /// Selection auto-scroll speed in pixels per second (0 when off).
     autoscroll: f32,
     autoscroll_at: Option<Instant>,
-    /// Wheel notches of `ScrollBy` not yet a whole step (x, y).
-    scroll_rest: (f32, f32),
     /// `[reload] anchor = "text"`: keep the line being read in place on reload.
     pub anchor_by_text: bool,
     /// Page-view key bindings (`[keys]` in the config).
@@ -232,7 +231,6 @@ impl PdfPane {
             selecting: false,
             autoscroll: 0.0,
             autoscroll_at: None,
-            scroll_rest: (0.0, 0.0),
             anchor_by_text: false,
             keymap: Keymap::default(),
             text_anchor: None,
@@ -781,8 +779,8 @@ impl PdfPane {
         let v = &mut self.viewer;
         let b = v.layout.pages[pos.page.min(v.page_count() - 1)];
         let y = (b.y + pos.y.unwrap_or(0.0)) * v.view.scale;
-        v.scroll_y.scroll_by(y as f64 - v.scroll_y.target(), now);
-        v.scroll_x.jump_to(sx as f64);
+        v.viewport.y.scroll_by(y as f64 - v.viewport.y.target(), now);
+        v.viewport.x.jump_to(sx as f64);
     }
 
     fn follow(&mut self, target: LinkTarget, now: Instant) {
@@ -1303,12 +1301,12 @@ impl PdfPane {
             Command::ToggleSidebar => self.toggle_sidebar(),
             Command::ScrollDown => wheel_n(v, 1.0, count, now),
             Command::ScrollUp => wheel_n(v, -1.0, count, now),
-            Command::ScrollRight => (0..n).for_each(|_| v.scroll_x.wheel(1.0, now)),
-            Command::ScrollLeft => (0..n).for_each(|_| v.scroll_x.wheel(-1.0, now)),
-            Command::PageDown => v.scroll_y.scroll_by(page, now),
-            Command::PageUp => v.scroll_y.scroll_by(-page, now),
-            Command::HalfPageDown => v.scroll_y.scroll_by(half, now),
-            Command::HalfPageUp => v.scroll_y.scroll_by(-half, now),
+            Command::ScrollRight => (0..n).for_each(|_| v.viewport.x.wheel(1.0, now)),
+            Command::ScrollLeft => (0..n).for_each(|_| v.viewport.x.wheel(-1.0, now)),
+            Command::PageDown => v.viewport.y.scroll_by(page, now),
+            Command::PageUp => v.viewport.y.scroll_by(-page, now),
+            Command::HalfPageDown => v.viewport.y.scroll_by(half, now),
+            Command::HalfPageUp => v.viewport.y.scroll_by(-half, now),
             Command::FirstPage => {
                 self.push_history();
                 self.viewer.goto_page(count.map_or(0, |c| c.saturating_sub(1)), true, now);
@@ -1317,7 +1315,7 @@ impl PdfPane {
                 self.push_history();
                 match count {
                     Some(c) => self.viewer.goto_page(c.saturating_sub(1), true, now),
-                    None => self.viewer.scroll_y.scroll_by(f64::INFINITY, now),
+                    None => self.viewer.viewport.y.scroll_by(f64::INFINITY, now),
                 }
             }
             Command::Back => (0..n).for_each(|_| self.history(true, now)),
@@ -1424,22 +1422,15 @@ impl PdfPane {
         phase: ScrollPhase,
         now: Instant,
     ) -> bool {
-        let (dx, dy) = (dx as f32 / 100.0, dy as f32 / 100.0);
+        let (dx, dy) = (f64::from(dx) / 100.0, f64::from(dy) / 100.0);
         let (x, y) = self.pointer;
-        let row = 3.0 * self.geometry.cell.height.max(1) as f32;
+        let row = 3.0 * f64::from(self.geometry.cell.height.max(1));
         let over_list =
             self.preview.is_some() || (self.sidebar_open && self.sidebar_rect().contains(x as i32, y as i32));
         let mods = m.modifiers;
         if unit == ScrollUnit::Line || over_list || mods.contains(Modifiers::CTRL) {
-            let (lx, ly) = if unit == ScrollUnit::Line { (dx, dy) } else { (dx / row, dy / row) };
-            self.scroll_rest.0 += lx;
-            self.scroll_rest.1 += ly;
-            let steps = |rest: &mut f32| {
-                let whole = rest.trunc();
-                *rest -= whole;
-                whole as i32
-            };
-            let (sx, sy) = (steps(&mut self.scroll_rest.0), steps(&mut self.scroll_rest.1));
+            // Wheel steps, to whatever is under the pointer.
+            let (sx, sy) = self.viewer.viewport.notches(dx, dy, unit, row);
             let mut redraw = false;
             for (n, pos, neg) in
                 [(sy, ScrollDirection::Down, ScrollDirection::Up), (sx, ScrollDirection::Right, ScrollDirection::Left)]
@@ -1451,15 +1442,8 @@ impl PdfPane {
             }
             return redraw;
         }
-        // Shift turns vertical scrolling sideways, as for the wheel.
-        let (dx, dy) = if mods.contains(Modifiers::SHIFT) && dx == 0.0 { (dy, 0.0) } else { (dx, dy) };
-        let v = &mut self.viewer;
-        if phase == ScrollPhase::Wheel {
-            v.scroll_x.scroll_by(dx as f64, now);
-            v.scroll_y.scroll_by(dy as f64, now);
-        } else {
-            v.jump_to(v.view.scroll_x + dx, v.view.scroll_y + dy);
-        }
+        self.viewer.viewport.pixels(dx, dy, phase, mods, now);
+        self.viewer.sync_view();
         true
     }
 
@@ -1469,23 +1453,12 @@ impl PdfPane {
         let pointer = (self.pointer.0 - v.origin_x() as f32, self.pointer.1);
         let mods = m.modifiers;
         match m.kind {
-            MouseEventKind::Scroll(dir) if mods.contains(Modifiers::CTRL) => {
-                let f = match dir {
-                    ScrollDirection::Up => ZOOM_STEP,
-                    ScrollDirection::Down => 1.0 / ZOOM_STEP,
-                    _ => return false,
-                };
-                v.zoom(f, pointer);
-            }
-            MouseEventKind::Scroll(dir) => {
-                let shift = mods.contains(Modifiers::SHIFT);
-                match (dir, shift) {
-                    (ScrollDirection::Down, false) => v.scroll_y.wheel(1.0, now),
-                    (ScrollDirection::Up, false) => v.scroll_y.wheel(-1.0, now),
-                    (ScrollDirection::Right, _) | (ScrollDirection::Down, true) => v.scroll_x.wheel(1.0, now),
-                    (ScrollDirection::Left, _) | (ScrollDirection::Up, true) => v.scroll_x.wheel(-1.0, now),
-                }
-            }
+            MouseEventKind::Scroll(dir) => match v.viewport.wheel(dir, mods, now) {
+                Input::Zoom(n) if n > 0 => v.zoom(ZOOM_STEP.powi(n), pointer),
+                Input::Zoom(n) => v.zoom(1.0 / ZOOM_STEP.powi(-n), pointer),
+                Input::Scrolled => {}
+                Input::Ignored => return false,
+            },
             // Left drag over text selects; elsewhere (and with the middle or
             // right button) it pans. Pressing on a link does neither (it is a click).
             // Ctrl+click: SyncTeX inverse search (open the source in the editor).
@@ -1568,7 +1541,7 @@ fn page_area(g: Geometry) -> (u32, u32) {
 
 fn wheel_n(v: &mut Viewer, dir: f64, count: Option<usize>, now: Instant) {
     for _ in 0..count.unwrap_or(1).min(100) {
-        v.scroll_y.wheel(dir, now);
+        v.viewport.y.wheel(dir, now);
     }
 }
 
@@ -1763,9 +1736,9 @@ mod tests {
         s.command(Command::ZoomIn, Some(2), now);
         assert!((s.viewer.view.scale - scale * ZOOM_STEP * ZOOM_STEP).abs() < 1e-3, "two steps");
         let page = s.viewer.view.screen_h as f64 * 0.9;
-        let from = s.viewer.scroll_y.target();
+        let from = s.viewer.viewport.y.target();
         s.command(Command::PageDown, Some(2), now);
-        let moved = s.viewer.scroll_y.target() - from;
+        let moved = s.viewer.viewport.y.target() - from;
         assert!(moved > page * 1.5, "two pages, not one: {moved} vs {page}");
         // The jump history too (Vim's 3<C-o>): three jumps, then back two
         // entries and forward two.

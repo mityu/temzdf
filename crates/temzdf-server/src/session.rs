@@ -890,8 +890,7 @@ impl Session {
         let mut pane = PdfPane::with_document(entry.name.clone(), host.info.clone(), host.doc.clone(), geometry);
         pane.preview_delay = self.options.preview_delay();
         pane.anchor_by_text = self.options.reloadanchor_text;
-        pane.viewer.scroll_x.config = self.options.scroll();
-        pane.viewer.scroll_y.config = self.options.scroll();
+        pane.viewer.viewport.set_config(self.options.scroll());
         pane.viewer.stand_in_mode = StandIn::for_hints(self.hints);
         pane.set_search_base((id as u64) << 32);
         if let Some(e) = host.watcher_error.take() {
@@ -1884,8 +1883,7 @@ impl Session {
         let (scroll, preview, anchor, host) =
             (self.options.scroll(), self.options.preview_delay(), self.options.reloadanchor_text, self.options.host());
         for p in self.panes.values_mut().filter_map(PaneEntry::pdf) {
-            p.viewer.scroll_x.config = scroll;
-            p.viewer.scroll_y.config = scroll;
+            p.viewer.viewport.set_config(scroll);
             p.preview_delay = preview;
             p.anchor_by_text = anchor;
         }
