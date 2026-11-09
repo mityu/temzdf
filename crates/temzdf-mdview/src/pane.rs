@@ -39,8 +39,10 @@ pub struct MdPane {
     hover: Option<String>,
     press: Option<(f64, f64)>,
     requests: Vec<Request>,
-    /// Images of the search highlight (all hits, the current one).
-    marks: Option<(ImageKey, ImageKey)>,
+    /// Images of the search's marks by size and whether current: as
+    /// large as they are shown (terminals scale a stretched pixel each
+    /// their own way).
+    marks: std::collections::HashMap<(u32, u32, bool), ImageKey>,
 }
 
 impl MdPane {
@@ -54,7 +56,7 @@ impl MdPane {
             hover: None,
             press: None,
             requests: Vec::new(),
-            marks: None,
+            marks: Default::default(),
         }
     }
 
@@ -197,7 +199,8 @@ impl MdPane {
         current.is_some()
     }
 
-    /// Back to where the search began, its marks gone.
+    /// Back to where the search began, its marks gone (their images go
+    /// with `release`, or the next search).
     pub fn search_cancel(&mut self, page: &Page) {
         if let Some(from) = self.search.from {
             self.scroll_to(page, from);
@@ -245,24 +248,23 @@ impl MdPane {
                 z: 0,
             });
         }
-        if !self.search.hits.is_empty() {
-            let (all, current) = *self.marks.get_or_insert_with(|| {
-                (images.add(1, 1, vec![255, 214, 0, 110]), images.add(1, 1, vec![255, 140, 0, 160]))
-            });
-            for (i, r) in self.search.hits.iter().enumerate() {
-                if r.y1 < self.scroll || r.y0 > self.scroll + f64::from(self.height) {
-                    continue;
-                }
-                let image = if Some(i) == self.search.current { current } else { all };
-                let (w, h) = ((r.x1 - r.x0).ceil().max(1.0) as u32, (r.y1 - r.y0).ceil().max(1.0) as u32);
-                layers.push(Layer {
-                    key: 0x8000_0000 | i as u32,
-                    image,
-                    src: SceneRect::new(0, 0, 1, 1),
-                    dst: SceneRect::new(r.x0.floor() as i32, (r.y0 - self.scroll).floor() as i32, w, h),
-                    z: 1,
-                });
+        for (i, r) in self.search.hits.iter().enumerate() {
+            if r.y1 < self.scroll || r.y0 > self.scroll + f64::from(self.height) {
+                continue;
             }
+            let current = Some(i) == self.search.current;
+            let (w, h) = ((r.x1 - r.x0).ceil().max(1.0) as u32, (r.y1 - r.y0).ceil().max(1.0) as u32);
+            let image = *self.marks.entry((w, h, current)).or_insert_with(|| {
+                let px: [u8; 4] = if current { [255, 140, 0, 160] } else { [255, 214, 0, 110] };
+                images.add(w, h, px.repeat((w * h) as usize))
+            });
+            layers.push(Layer {
+                key: 0x8000_0000 | i as u32,
+                image,
+                src: SceneRect::new(0, 0, w, h),
+                dst: SceneRect::new(r.x0.floor() as i32, (r.y0 - self.scroll).floor() as i32, w, h),
+                z: 1,
+            });
         }
         Frame { layers, pointer: self.pointer(), ..Frame::default() }
     }
@@ -275,9 +277,8 @@ impl MdPane {
 
     /// The pane's own images leave the store.
     pub fn release(&mut self, images: &mut Images) {
-        if let Some((a, b)) = self.marks.take() {
-            images.remove(a);
-            images.remove(b);
+        for (_, k) in self.marks.drain() {
+            images.remove(k);
         }
     }
 }

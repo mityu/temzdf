@@ -30,7 +30,11 @@ body { margin: 0; }
 .markdown-body hr { height: .25em; background: #d1d9e0; border: 0; margin: 24px 0; }
 .markdown-body img { max-width: 100%; }
 .markdown-body .math-display { text-align: center; margin: 16px 0; }
-.markdown-body ul.contains-task-list { list-style: none; padding-left: 1em; }
-.markdown-body ol { padding-left: 2.5em; }
+.markdown-body li.task-list-item { list-style: none; margin-left: -1.4em; }
+/* Ordered lists' numbers are written into the items (Blitz puts its
+   markers right against the text). */
+.markdown-body ol { list-style: none; padding-left: 2.5em; }
+.markdown-body li { position: relative; }
+.markdown-body .list-number { position: absolute; left: -2.5em; width: 2em; text-align: right; }
 .markdown-body .footnotes { font-size: 85%; color: #59636e; }
 .markdown-body .footnote-number { margin-right: .3em; }

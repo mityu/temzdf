@@ -60,8 +60,11 @@ fn block(b: &Block, math: MathHtml<'_>, out: &mut String) {
                 Some(_) => out.push_str(&format!("<ol{class} data-line=\"{line}\">\n")),
                 None => out.push_str(&format!("<ul{class} data-line=\"{line}\">\n")),
             }
-            for item in items {
+            for (n, item) in items.iter().enumerate() {
                 out.push_str(if item.task.is_some() { "<li class=\"task-list-item\">" } else { "<li>" });
+                if let Some(s) = start {
+                    out.push_str(&format!("<span class=\"list-number\">{}.</span>", s + n));
+                }
                 if let Some(done) = item.task {
                     out.push_str(if done {
                         "<input type=\"checkbox\" checked disabled> "
@@ -225,6 +228,11 @@ mod tests {
     fn math_links_images_and_footnotes() {
         let h = html("$x$ [l](u \"t\") ![a](i.png)[^n]\n\n$$\ny\n$$\n\n[^n]: F.\n");
         assert!(h.contains("[x] <a href=\"u\">l</a> <img src=\"i.png\" alt=\"a\">"), "{h}");
+        let ol = html("3. a\n4. b\n");
+        assert!(
+            ol.contains("<ol start=\"3\" data-line=\"0\">\n<li><span class=\"list-number\">3.</span>a</li>"),
+            "{ol}"
+        );
         assert!(h.contains("<sup class=\"footnote-ref\"><a href=\"#fn-n\">1</a></sup>"), "{h}");
         assert!(h.contains("<div class=\"math-display\" data-line=\"2\">[D:y]</div>"), "{h}");
         assert!(
