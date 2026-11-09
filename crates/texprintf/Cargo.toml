@@ -1,0 +1,15 @@
+[package]
+name = "texprintf"
+description = "TeX math drawn as Unicode text with libtexprintf (utftex), for the Markdown viewer's text mode."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+# libtexprintf is GPL-3.0-or-later; it links into the AGPL-3.0 binary.
+links = "texprintf"
+
+[build-dependencies]
+pkg-config = "0.3.34"
+
+[lints]
+workspace = true
