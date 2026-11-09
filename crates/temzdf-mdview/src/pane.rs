@@ -3,13 +3,21 @@
 //! zoom) is the session's to keep, shared by panes that need the same.
 
 use std::time::Instant;
+use temzdf_scene::tiles::{self, Schedule, TileCache, Want};
 use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer, Rect as SceneRect};
 
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
 use termpix_core::scroll::ScrollConfig;
 use termpix_core::viewport::{Input, Viewport};
 
-use crate::page::{Page, Rect};
+use crate::page::{BACKGROUND, Page, Rect, STRIP, StripJob, StripKey};
+
+/// Placement keys of painted strips (the strip cache hands them out).
+pub const STRIP_LAYERS: std::ops::Range<u32> = 1..0x7000_0000;
+/// Placement keys of the background under strips not painted yet (by strip).
+const PLACEHOLDER_LAYERS: u32 = 0x7000_0000;
+/// Placement keys of search marks (by hit).
+const MARK_LAYERS: u32 = 0x8000_0000;
 
 /// Zoom steps (`zoom-in`, `zoom-out`).
 pub const ZOOMS: &[f32] = &[0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
@@ -50,6 +58,11 @@ pub struct MdPane {
     /// large as they are shown (terminals scale a stretched pixel each
     /// their own way).
     marks: std::collections::HashMap<(u32, u32, bool), ImageKey>,
+    /// A strip of the page's background (its width), under strips not
+    /// painted yet: as large as shown, as the marks.
+    background: Option<(ImageKey, u32)>,
+    /// The last frame showed every strip in sight painted.
+    complete: bool,
 }
 
 impl MdPane {
@@ -66,6 +79,8 @@ impl MdPane {
             press: None,
             requests: Vec::new(),
             marks: Default::default(),
+            background: None,
+            complete: false,
         }
     }
 
@@ -273,22 +288,67 @@ impl MdPane {
         self.viewport.reveal(r.y0, r.y1, None);
     }
 
-    /// The pane's frame (pane pixels): the page's strips in sight, the
-    /// search's marks over them.
-    pub fn frame(&mut self, page: &mut Page, images: &mut Images) -> Frame {
+    /// The pane's frame (pane pixels): the page's strips in sight (from
+    /// `strips`, the page's painted strips shared by the panes on it; the
+    /// background where one is not painted yet), the search's marks over
+    /// them; and the strips to paint, in sight first, then those within a
+    /// screen above and below (tagged `tag`; those being painted as
+    /// wanted still). `view` tells this pane from
+    /// others drawing from `strips` in one frame.
+    pub fn frame(
+        &mut self,
+        view: u64,
+        page: &mut Page,
+        strips: &mut TileCache<StripKey>,
+        tag: u32,
+        images: &mut Images,
+    ) -> (Frame, Vec<Want<StripJob>>) {
         self.clamp(page);
+        strips.begin_frame(view);
         let scroll = self.scroll();
         let top = scroll.round() as u32;
         let mut layers = Vec::new();
-        for (y, key) in page.strips(top, self.height, images) {
-            let rows = crate::page::STRIP.min(page.height() - y);
-            layers.push(Layer {
-                key: y / crate::page::STRIP,
-                image: key,
-                src: SceneRect::new(0, 0, page.width, rows),
-                dst: SceneRect::new(0, y as i32 - top as i32, page.width, rows),
-                z: 0,
-            });
+        let screen = SceneRect::new(0, 0, self.width.max(1), self.height.max(1));
+        let centre = (screen.w as f32 / 2.0, screen.h as f32 / 2.0);
+        let mut work = Schedule::new();
+        self.complete = true;
+        let size = (page.width, page.height());
+        for cell in tiles::grid((0, -(top as i32)), size, (page.width.max(1), STRIP), screen) {
+            let key = StripKey { page: page.id, strip: cell.ty };
+            let src = SceneRect::new(0, 0, cell.area.2, cell.area.3);
+            if let Some((image, layer)) = strips.touch(key) {
+                if cell.on_screen {
+                    layers.push(Layer { key: layer, image, src, dst: cell.dst, z: 0 });
+                }
+                continue;
+            }
+            if cell.on_screen {
+                self.complete = false;
+                let image = match self.background {
+                    Some((image, w)) if w == page.width => image,
+                    old => {
+                        if let Some((image, _)) = old {
+                            images.remove(image);
+                        }
+                        let w = page.width.max(1);
+                        let image = images.add(w, STRIP, BACKGROUND.repeat((w * STRIP) as usize));
+                        self.background = Some((image, w));
+                        image
+                    }
+                };
+                layers.push(Layer { key: PLACEHOLDER_LAYERS + cell.ty, image, src, dst: cell.dst, z: 0 });
+            }
+            let want = if strips.is_in_flight(key) {
+                Some(Want::Queued((tag, key)))
+            } else {
+                page.record(cell.ty, tag).map(Want::New)
+            };
+            if let Some(want) = want {
+                let d = cell.dst;
+                let dy = d.y as f32 + d.h as f32 / 2.0 - centre.1;
+                let dx = d.x as f32 + d.w as f32 / 2.0 - centre.0;
+                work.push(cell.on_screen, dx.hypot(dy), want);
+            }
         }
         for (i, r) in self.search.hits.iter().enumerate() {
             if r.y1 < scroll || r.y0 > scroll + f64::from(self.height) {
@@ -301,14 +361,19 @@ impl MdPane {
                 images.add(w, h, px.repeat((w * h) as usize))
             });
             layers.push(Layer {
-                key: 0x8000_0000 | i as u32,
+                key: MARK_LAYERS | i as u32,
                 image,
                 src: SceneRect::new(0, 0, w, h),
                 dst: SceneRect::new(r.x0.floor() as i32, (r.y0 - scroll).floor() as i32, w, h),
                 z: 1,
             });
         }
-        Frame { layers, pointer: self.pointer(), ..Frame::default() }
+        (Frame { layers, pointer: self.pointer(), ..Frame::default() }, work.into_sorted().collect())
+    }
+
+    /// Whether the last frame showed every strip in sight painted.
+    pub fn is_complete(&self) -> bool {
+        self.complete
     }
 
     /// How far down the page the pane is, in percent.
@@ -320,6 +385,9 @@ impl MdPane {
     /// The pane's own images leave the store.
     pub fn release(&mut self, images: &mut Images) {
         for (_, k) in self.marks.drain() {
+            images.remove(k);
+        }
+        if let Some((k, _)) = self.background.take() {
             images.remove(k);
         }
     }

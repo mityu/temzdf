@@ -74,6 +74,8 @@ pub enum SessionEvent {
     /// A Markdown viewer's remote image arrived: its URL and bytes, or why
     /// not.
     MarkdownImage(u32, String, std::result::Result<Vec<u8>, String>),
+    /// A strip of a Markdown viewer's page was painted.
+    MarkdownStrip(temzdf_mdview::Strip),
 }
 
 /// Where a session's events go (returns false once nobody listens).
@@ -471,6 +473,8 @@ pub struct Session {
     /// Where each viewer pane was before it followed a link to another
     /// file (`markdown.back`): the file and the source line at the top.
     md_history: HashMap<PaneId, Vec<(PathBuf, usize)>>,
+    /// The threads painting Markdown viewers' strips (once one needs them).
+    md_pool: Option<temzdf_scene::tiles::WorkPool<temzdf_mdview::StripJob>>,
     /// Where swap files go (o.swapfile; tests set their own).
     swap_dir: Option<PathBuf>,
     /// Highlight groups for text panes (scripts define them).
@@ -565,6 +569,7 @@ impl Session {
             loaded_images: HashMap::new(),
             md_docs: HashMap::new(),
             md_history: HashMap::new(),
+            md_pool: None,
             // (Unit tests set theirs: none in the user's state directory.)
             swap_dir: if cfg!(test) { None } else { swap::swap_dir() },
             highlights: temzdf_texteditor::Highlights::default(),
@@ -1336,6 +1341,7 @@ impl Session {
             }
             SessionEvent::Markdown(md) => self.md_file_changed(md),
             SessionEvent::MarkdownImage(md, url, got) => self.md_image_fetched(md, url, got),
+            SessionEvent::MarkdownStrip(s) => self.md_strip_painted(s),
             SessionEvent::Doc(id, DocEvent::Opened(result)) => {
                 let Some(entry) = self.docs.get_mut(&id) else { return Outcome::None };
                 let Some(opening) = entry.opening.take() else { return Outcome::None };
@@ -2352,6 +2358,7 @@ impl Session {
         let mut order = self.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
         order.extend(self.shown_floats().iter().map(|f| f.pane));
         let mut needs: HashMap<DocId, Vec<Need>> = HashMap::new();
+        let mut md_jobs = Vec::new();
         let mut cursor = None;
         let mut cursor_shape = CursorShape::Default;
         let mut title = self.name.clone();
@@ -2378,8 +2385,13 @@ impl Session {
                     cell,
                 ),
                 Kind::Markdown { pane, doc } => {
-                    match self.md_docs.get_mut(doc).and_then(|d| d.page_mut(pane.page_key())) {
-                        Some(page) => pane.frame(page, &mut self.images),
+                    match self.md_docs.get_mut(doc).and_then(|d| d.page_and_strips(pane.page_key())) {
+                        Some((page, strips)) => {
+                            let (frame, jobs) = pane.frame(u64::from(id), page, strips, *doc, &mut self.images);
+                            md_jobs.extend(jobs);
+                            complete &= pane.is_complete();
+                            frame
+                        }
                         None => Frame::default(),
                     }
                 }
@@ -2469,6 +2481,7 @@ impl Session {
                 host.dispatch(needs);
             }
         }
+        self.md_dispatch(md_jobs);
         // Floating messages over everything.
         text.extend(self.notice_grids());
         Frame { layers, text, cursor, cursor_shape, pointer: self.pointer(), title, regions, fallback_text }
@@ -2499,6 +2512,7 @@ impl Session {
     pub fn is_idle(&self) -> bool {
         !self.script.busy()
             && self.docs.values().all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle()))
+            && self.md_docs.values().all(|d| d.strips.is_idle())
             && self.panes.values().all(|e| match &e.kind {
                 Kind::Pdf { pane, .. } => !pane.search.is_active() || pane.search.is_complete(),
                 Kind::Term { .. } | Kind::Text { .. } | Kind::Markdown { .. } => true,
@@ -5109,18 +5123,48 @@ mod tests {
         run(&mut s, "markdown.goto", &[str("section-5")]).unwrap();
         s.options.scrollstep = 100.0;
         s.apply_options();
+        // Strips come from worker threads.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        s.events = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let painted = move |s: &mut Session| {
+            // (As headless renders wait: until idle, the strips around too.)
+            let mut frame = s.frame();
+            while !s.is_complete() || !s.is_idle() {
+                let ev = rx.recv_timeout(Duration::from_secs(20)).expect("a strip");
+                s.handle(ev, Instant::now());
+                frame = s.frame();
+            }
+            frame
+        };
         run(&mut s, "markdown.set-mode", &[str("graphics")]).unwrap();
         assert_eq!(run(&mut s, "markdown.mode", &[]).unwrap().0, str("graphics"));
         assert_eq!(s.pane_mode(s.focus), "markdown");
+        // Before they arrive, the page's background stands in; the strips
+        // in sight are asked for first, then those a screen above and below.
+        let first = s.frame();
+        assert!(!s.is_complete() && !s.is_idle(), "strips are being painted");
+        let one_image = |f: &Frame| f.layers.windows(2).all(|w| w[0].image == w[1].image);
+        assert!(first.layers.len() > 1 && one_image(&first), "{:?}", first.layers);
+        let md = *s.md_docs.keys().next().unwrap();
+        let in_flight = |s: &Session, strip| {
+            let page = s.md_docs[&md].pages[0].id;
+            s.md_docs[&md].strips.is_in_flight(temzdf_mdview::StripKey { page, strip })
+        };
+        let top_strip = s.md_graphics(s.focus).unwrap().0.scroll() as u32 / 256;
+        assert!(in_flight(&s, top_strip) && in_flight(&s, top_strip + 3), "in sight and below");
+        assert!(in_flight(&s, top_strip - 2), "above");
+        assert!(!in_flight(&s, top_strip + 8), "not two screens away");
         // Strips cover the pane (90x29 cells of 10x20 pixels).
-        let frame = s.frame();
+        let frame = painted(&mut s);
         let covered: u32 = frame.layers.iter().map(|l| l.dst.h).sum();
         assert!(covered >= 29 * 20 && frame.layers.iter().all(|l| l.dst.w == 900), "{:?}", frame.layers);
+        assert!(!one_image(&frame), "painted: {:?}", frame.layers);
         let top = |s: &mut Session| s.md_top_line(s.focus).unwrap();
         let section = |n: usize| 2 + 4 * n;
         assert_eq!(top(&mut s), section(5), "at the same heading");
         // Scrolling moves the strips; the top and bottom are the page's ends.
-        let ys = |s: &mut Session| s.frame().layers.iter().map(|l| (l.key, l.dst.y)).collect::<Vec<_>>();
+        let ys = |s: &mut Session| painted(s).layers.iter().map(|l| (l.key, l.dst.y)).collect::<Vec<_>>();
         let settle = |s: &mut Session| {
             s.tick(Instant::now() + Duration::from_secs(5));
             assert!(!s.is_animating());
@@ -5156,7 +5200,6 @@ mod tests {
         run(&mut s, "markdown.goto", &[str("section-5")]).unwrap();
         wheel(&mut s, termpix_core::input::ScrollDirection::Up, Modifiers::CTRL);
         assert!(!s.is_animating(), "a zoom does not scroll");
-        let md = *s.md_docs.keys().next().unwrap();
         assert!((s.md_docs[&md].pages[0].zoom - 1.1).abs() < 1e-3);
         assert_eq!(top(&mut s), section(5), "zoomed in place");
         run(&mut s, "markdown.zoom", &[str("reset")]).unwrap();
@@ -5172,10 +5215,20 @@ mod tests {
             s.mouse(&MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE }, Instant::now());
         }
         assert_eq!(top(&mut s), section(12), "followed");
-        // Zoom: laid out again at the same place, one page kept.
+        // Zoom: laid out again at the same place, one page kept; the old
+        // page's strips go, and one painted for it arriving late is dropped.
+        painted(&mut s);
+        let old = s.md_docs[&md].pages[0].id;
         run(&mut s, "markdown.zoom", &[str("in")]).unwrap();
         assert_eq!(top(&mut s), section(12));
         assert_eq!(s.md_docs[&md].pages.len(), 1);
+        painted(&mut s);
+        assert!(s.md_docs[&md].strips.iter_used().all(|(k, _)| k.page != old), "the old page's strips went");
+        let n = s.md_docs[&md].strips.len();
+        let key = temzdf_mdview::StripKey { page: old, strip: 0 };
+        let late = temzdf_mdview::Strip { key, tag: md, width: 900, rows: 1, pixels: vec![0; 900 * 4] };
+        assert_eq!(s.handle(SessionEvent::MarkdownStrip(late), Instant::now()), Outcome::None);
+        assert_eq!(s.md_docs[&md].strips.len(), n);
         assert!((s.md_docs[&md].pages[0].zoom - 1.1).abs() < 1e-3);
         // Search: the matches marked, n moves on.
         run(&mut s, "search-for", &[str("Section 1")]).unwrap();

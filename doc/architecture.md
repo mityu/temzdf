@@ -36,7 +36,11 @@
 - `termpix-ui`: pixel widgets (below); no dependency on `termpix`.
 - `temzdf-scene`: what a pane shows, independent of the frontend: an image
   store whose changes frontends mirror, and frames (layers, text cursor,
-  pointer shape, title).
+  pointer shape, title); `tiles`: content painted in tiles by worker
+  threads, shared by the PDF and Markdown panes (a tile cache with the
+  work in flight and LRU eviction, the grid of tiles on and near the
+  screen, a frame's work in order, a worker pool whose queue each frame
+  replaces).
 - `temzdf-pdfcore`: the PDF backend: MuPDF wrapper, `DocCache` (display lists
   and tiles), page text and selection, SyncTeX, background workers.
 - `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys)

@@ -273,6 +273,13 @@ pub trait Job: Send + 'static {
     fn run(self) -> Self::Output;
 }
 
+/// A frame's want of a tile: work to queue, or work queued before to
+/// keep (where the frame wants it now).
+pub enum Want<J: Job> {
+    New(J),
+    Queued(J::Key),
+}
+
 /// Where a pool's results go; false when nobody listens any more (the
 /// thread ends).
 pub type JobSink<O> = Arc<dyn Fn(O) -> bool + Send + Sync>;
@@ -338,6 +345,33 @@ impl<J: Job> WorkPool<J> {
         q.extend(jobs);
         cv.notify_all();
         dropped
+    }
+
+    /// Replace the queue with what a frame wants, in its order: new jobs,
+    /// and jobs already queued that it still wants (a job wanted but not
+    /// queued is running or done). Returns the keys of the queued jobs
+    /// not wanted any more, dropped. (Replacing with new jobs alone would
+    /// drop work asked for by an earlier frame not started yet, which no
+    /// frame asks for again while it counts as in flight.)
+    pub fn replace_wanted(&self, wants: Vec<Want<J>>) -> Vec<J::Key>
+    where
+        J::Key: PartialEq,
+    {
+        let (lock, cv) = &*self.shared;
+        let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut old: Vec<J> = q.drain(..).collect();
+        for w in wants {
+            match w {
+                Want::New(j) => q.push_back(j),
+                Want::Queued(k) => {
+                    if let Some(i) = old.iter().position(|j| j.key() == k) {
+                        q.push_back(old.remove(i));
+                    }
+                }
+            }
+        }
+        cv.notify_all();
+        old.iter().map(Job::key).collect()
     }
 }
 
@@ -474,5 +508,25 @@ mod tests {
         gate.1.notify_all();
         let got: Vec<u32> = (0..2).map(|_| rx.recv_timeout(Duration::from_secs(10)).unwrap()).collect();
         assert_eq!(got, [1, 4]);
+    }
+
+    #[test]
+    fn wanted_work_already_queued_stays_in_the_new_order() {
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let pool = WorkPool::new("test-pool", 1, Arc::new(move |n| tx.lock().unwrap().send(n).is_ok())).unwrap();
+        pool.replace(vec![Wait(1, gate.clone())]);
+        while !pool.shared.0.lock().unwrap().is_empty() {
+            std::thread::yield_now();
+        }
+        pool.replace(vec![Wait(2, gate.clone()), Wait(3, gate.clone())]);
+        // 3 still wanted (first now), 2 not, 1 is running, 4 is new.
+        let wants = vec![Want::Queued(3), Want::Queued(1), Want::New(Wait(4, gate.clone()))];
+        assert_eq!(pool.replace_wanted(wants), [2]);
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+        let got: Vec<u32> = (0..3).map(|_| rx.recv_timeout(Duration::from_secs(10)).unwrap()).collect();
+        assert_eq!(got, [1, 3, 4]);
     }
 }

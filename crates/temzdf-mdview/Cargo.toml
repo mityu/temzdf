@@ -15,6 +15,7 @@ blitz-paint = "=0.3.0-beta.4"
 blitz-traits = "=0.3.0-beta.4"
 anyrender = "0.14.0"
 anyrender_vello_cpu = "0.18.0"
+kurbo = "0.13.1"
 parley = "0.12.0"
 url = "2"
 # Math as SVG (glyphs as paths, KaTeX's fonts embedded).

@@ -1,22 +1,75 @@
 //! A page: a Markdown document laid out by Blitz at one width and zoom,
-//! painted in strips the panes on it share, with what panes ask of it:
-//! where source lines and anchors are, the link at a point, search hits.
+//! with what panes ask of it: where source lines and anchors are, the
+//! link at a point, search hits, and its strips' drawing recorded for
+//! worker threads to paint ([`StripJob`]).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use blitz_dom::{BaseDocument, DocumentConfig, local_name};
 use blitz_html::HtmlDocument;
 use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
 use blitz_traits::shell::{ColorScheme, Viewport};
-use temzdf_scene::{ImageKey, Images};
+use temzdf_scene::tiles::Job;
 
 /// Strips are this many device pixels high (the full page width).
 pub const STRIP: u32 = 256;
 
-/// Painted strips kept per page.
-const KEEP: usize = 32;
+/// The page's background (`markdown.css`), under strips not painted yet.
+pub const BACKGROUND: [u8; 4] = [255, 255, 255, 255];
+
+/// Tells pages apart, for ever (a page laid out again is a new one).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PageId(u64);
+
+/// A strip of a page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StripKey {
+    pub page: PageId,
+    pub strip: u32,
+}
+
+/// A strip's drawing, to paint on a worker thread.
+pub struct StripJob {
+    pub key: StripKey,
+    /// Whose it is, for the caller (passed on to [`Strip`]).
+    pub tag: u32,
+    scene: anyrender::Scene,
+    width: u32,
+    rows: u32,
+}
+
+/// A painted strip.
+pub struct Strip {
+    pub key: StripKey,
+    pub tag: u32,
+    pub width: u32,
+    pub rows: u32,
+    pub pixels: Vec<u8>,
+}
+
+impl Job for StripJob {
+    type Key = (u32, StripKey);
+    type Output = Strip;
+
+    fn key(&self) -> (u32, StripKey) {
+        (self.tag, self.key)
+    }
+
+    fn run(self) -> Strip {
+        use anyrender::PaintScene;
+        let (w, h) = (self.width, self.rows);
+        let scene = self.scene;
+        let pixels = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |p| p.append_scene(scene, kurbo::Affine::IDENTITY),
+            w,
+            h,
+        );
+        Strip { key: self.key, tag: self.tag, width: w, rows: h, pixels }
+    }
+}
 
 /// Images fetched before (remote ones, by URL): the page reads only these
 /// and local files, never the network.
@@ -51,12 +104,11 @@ pub struct Rect {
 }
 
 pub struct Page {
+    pub id: PageId,
     doc: BaseDocument,
     pub width: u32,
     pub zoom: f32,
     height: u32,
-    strips: HashMap<u32, ImageKey>,
-    used: VecDeque<u32>,
     /// Blocks' first source lines and where they start (device pixels),
     /// by position.
     lines: Vec<(f64, usize)>,
@@ -86,8 +138,9 @@ impl Page {
             ..Default::default()
         };
         let doc = HtmlDocument::from_html(&html, config).into_inner();
-        let mut page =
-            Page { doc, width, zoom, height: 0, strips: HashMap::new(), used: VecDeque::new(), lines: Vec::new() };
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let id = PageId(NEXT.fetch_add(1, Ordering::Relaxed));
+        let mut page = Page { id, doc, width, zoom, height: 0, lines: Vec::new() };
         page.resolve();
         page
     }
@@ -127,59 +180,21 @@ impl Page {
         self.height
     }
 
-    /// The strips covering rows `y..y + h` (device pixels), painted if not
-    /// yet: each strip's top and its image.
-    pub fn strips(&mut self, y: u32, h: u32, images: &mut Images) -> Vec<(u32, ImageKey)> {
-        let mut out = Vec::new();
-        if self.height == 0 {
-            return out;
-        }
-        let last = (self.height - 1) / STRIP;
-        let (first, end) = (y / STRIP, ((y + h).saturating_sub(1) / STRIP).min(last));
-        for i in first..=end {
-            let key = match self.strips.get(&i) {
-                Some(k) => *k,
-                None => {
-                    let rows = STRIP.min(self.height - i * STRIP);
-                    let px = self.paint(i * STRIP, rows);
-                    let key = images.add(self.width, rows, px);
-                    self.strips.insert(i, key);
-                    key
-                }
-            };
-            self.used.retain(|u| *u != i);
-            self.used.push_back(i);
-            out.push((i * STRIP, key));
-        }
-        // The least used go, not the ones shown now.
-        while self.used.len() > KEEP.max(out.len()) {
-            if let Some(old) = self.used.pop_front()
-                && let Some(k) = self.strips.remove(&old)
-            {
-                images.remove(k);
-            }
-        }
-        out
+    /// How many strips the page has.
+    pub fn strips(&self) -> u32 {
+        self.height.div_ceil(STRIP)
     }
 
-    fn paint(&mut self, y: u32, h: u32) -> Vec<u8> {
+    /// Strip `strip`'s drawing recorded (cheap: its painting is the
+    /// work), for `tag`'s caller; none past the last.
+    pub fn record(&mut self, strip: u32, tag: u32) -> Option<StripJob> {
+        let y = strip.checked_mul(STRIP).filter(|y| *y < self.height)?;
+        let rows = STRIP.min(self.height - y);
         let scale = self.scale();
         self.doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: f64::from(y) / scale });
-        let (w, doc) = (self.width, &mut self.doc);
-        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
-            |scene| blitz_paint::paint_scene(scene, doc, scale, w, h, 0, 0),
-            w,
-            h,
-        )
-    }
-
-    /// The strips' images leave the store (the page goes, or is drawn
-    /// again).
-    pub fn release(&mut self, images: &mut Images) {
-        for (_, k) in self.strips.drain() {
-            images.remove(k);
-        }
-        self.used.clear();
+        let mut scene = anyrender::Scene::new();
+        blitz_paint::paint_scene(&mut scene, &mut self.doc, scale, self.width, rows, 0, 0);
+        Some(StripJob { key: StripKey { page: self.id, strip }, tag, scene, width: self.width, rows })
     }
 
     /// The link (`href`, as written) at device pixel (`x`, `y`) of the page.
@@ -273,20 +288,22 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Blitz under Miri is far too slow")]
-    fn strips_are_painted_once_and_shared() {
+    fn strips_are_recorded_and_painted_as_the_page_draws_them() {
         let mut p = page(900, 1.0);
         assert!(p.height() > 1000, "{}", p.height());
-        let mut images = Images::new();
-        let a = p.strips(0, 600, &mut images);
-        assert_eq!(a.iter().map(|s| s.0).collect::<Vec<_>>(), [0, 256, 512]);
-        let b = p.strips(300, 600, &mut images);
-        assert_eq!(b[0], a[1], "the same strip, not painted again");
-        // The last strip is as high as what is left.
-        let last = p.strips(p.height() - 1, 1, &mut images);
-        let (w, h) = images.get(last[0].1).map(|i| (i.width, i.height)).unwrap();
-        assert_eq!((w, h), (900, p.height() - last[0].0));
-        p.release(&mut images);
-        assert!(images.get(a[0].1).is_none());
+        assert_eq!(p.strips(), p.height().div_ceil(STRIP));
+        // A strip painted from its recording: the page's own pixels (its
+        // background white, its heading's text dark somewhere).
+        let s = p.record(0, 7).unwrap().run();
+        assert_eq!((s.key, s.tag, s.width, s.rows), (StripKey { page: p.id, strip: 0 }, 7, 900, STRIP));
+        assert_eq!(&s.pixels[..4], &BACKGROUND);
+        assert!(s.pixels.chunks(4).any(|px| px[0] < 100), "text drawn");
+        // The last is as high as what is left; none after it.
+        let last = p.strips() - 1;
+        assert_eq!(p.record(last, 0).unwrap().run().rows, p.height() - last * STRIP);
+        assert!(p.record(last + 1, 0).is_none());
+        // Another page is another, even at the same size.
+        assert_ne!(page(900, 1.0).id, p.id);
     }
 
     #[test]

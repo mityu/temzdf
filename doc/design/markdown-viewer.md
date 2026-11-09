@@ -96,8 +96,21 @@ would fail the link rather than go unnoticed.
   RaTeX's SVG (glyphs as paths, no fonts). Blitz lays it out (style:
   `crates/temzdf-mdview/src/markdown.css`, GitHub-like, light); a page is
   one layout at a width and zoom, shared by the panes that need it, and
-  painted in strips 256 pixels high, kept (32 a page) and shared. Pages no
-  pane needs go.
+  painted in strips 256 pixels high, shared by its panes (64 MiB of
+  strips a document, least recently used going first). Pages no pane
+  needs go, and their strips.
+- Strips are painted as PDF tiles are (`temzdf_scene::tiles`, the same
+  cache, schedule and kind of worker pool): a strip's drawing is recorded
+  on the session's thread (`blitz_paint::paint_scene` into an
+  `anyrender::Scene`, about a tenth of painting it) and painted by worker
+  threads (`anyrender_vello_cpu`), the same pixels. Strips in sight come
+  first, then those within a screen above and below; until one arrives
+  the page's background stands in. Strips are keyed by their page, which
+  is new at every layout, so ones painted for a page gone are dropped.
+  A frame keeps the strips it still wants queued (`WorkPool::replace_wanted`):
+  replacing the queue with new work alone dropped work an earlier frame
+  had asked for and nothing asked for again while it counted as in
+  flight.
 - Positions: `data-line` elements give (y, source line) pairs, both ways;
   `#anchor` is the element with that id; a point's link is the `href` up
   from Blitz's hit test; search hits come from inline roots' text and
@@ -116,10 +129,11 @@ would fail the link rather than go unnoticed.
   zoom means different things (a PDF scales, a page lays out again) and
   stays each pane's, and a webview's engine scrolls by itself. Sharing
   the painting schedule (prefetch, workers) is in `todo.md`.
-- Differences from the plan, decided while building it: layout and
-  painting run on the session's thread (a page of `tests/fixtures/sample.md` lays out in
-  about 4 ms and paints a screen in 4-5 ms; 50 copies of it 33 ms and
-  4-7 ms; a worker thread is in `todo.md`); the outline is a floating list
+- Differences from the plan, decided while building it: layout runs on
+  the session's thread (a page of `tests/fixtures/sample.md` lays out in about 4 ms, 50
+  copies of it 33 ms; a worker thread is in `todo.md`), painting on
+  workers since 2026-11-09 (a strip took 0.6-0.8 ms there, its recording
+  0.03-0.08 ms, release build); the outline is a floating list
   in both modes (`gO`, `o`) rather than the PDF pane's sidebar; ordered
   lists' numbers are written into the items (Blitz puts its markers right
   against the text).

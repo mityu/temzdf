@@ -7,5 +7,5 @@ pub mod math;
 pub mod page;
 pub mod pane;
 
-pub use page::{Fetched, Page};
+pub use page::{Fetched, Page, Strip, StripJob, StripKey};
 pub use pane::{MdPane, Request};

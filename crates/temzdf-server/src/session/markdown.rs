@@ -5,17 +5,24 @@
 //! width moves to another (keeping its place by the source line).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use temzdf_markdown::{Deco, Document, Rendered};
+use temzdf_mdview::{Strip, StripJob, StripKey};
 use temzdf_protocol::script::ScriptValue;
 use temzdf_scene::Effect;
+use temzdf_scene::tiles::{Job, TileCache, Want, WorkPool};
 use temzdf_texteditor::{MarkSpec, Text};
 
 use super::text::TextView;
 use super::{BufferId, Kind, Outcome, PaneId, Session, SessionEvent, Spot};
 
 pub(super) type MdId = u32;
+
+/// Bytes of painted strips a document keeps (32 strips of a 1800 pixel
+/// wide page, about).
+const STRIP_BUDGET: usize = 64 << 20;
 
 /// A Markdown file shown in panes.
 pub(super) struct MdDoc {
@@ -38,6 +45,9 @@ pub(super) struct MdDoc {
     body: Option<String>,
     /// The graphics mode laid out for each width and zoom panes have.
     pub pages: Vec<temzdf_mdview::Page>,
+    /// The pages' painted strips (and those being painted), shared by the
+    /// panes on them.
+    pub strips: TileCache<StripKey>,
     _watcher: Option<Box<dyn std::any::Any + Send>>,
 }
 
@@ -59,11 +69,23 @@ impl MdDoc {
         self.pages.last_mut()
     }
 
+    /// The page at `key` (laid out now if it was not) and the strips.
+    pub fn page_and_strips(&mut self, key: (u32, f32)) -> Option<(&mut temzdf_mdview::Page, &mut TileCache<StripKey>)> {
+        self.page_mut(key)?;
+        let i = self.pages.iter().position(|p| (p.width, p.zoom) == key)?;
+        Some((&mut self.pages[i], &mut self.strips))
+    }
+
+    /// These pages go, and their strips.
+    fn drop_pages(&mut self, gone: Vec<temzdf_mdview::Page>, images: &mut temzdf_scene::Images) {
+        let ids: Vec<_> = gone.iter().map(|p| p.id).collect();
+        self.strips.drop_tiles(images, |k| ids.contains(&k.page));
+    }
+
     /// Pages drawn again from the document (it or its images changed).
     fn relayout(&mut self, images: &mut temzdf_scene::Images) {
-        for mut p in self.pages.drain(..) {
-            p.release(images);
-        }
+        let gone = std::mem::take(&mut self.pages);
+        self.drop_pages(gone, images);
         self.body = None;
     }
 }
@@ -277,6 +299,66 @@ impl Session {
             }
             _ => return None,
         })
+    }
+
+    /// Hand a frame's strips to paint (from every viewer, most urgent
+    /// first) to the threads; strips asked for twice are painted once.
+    /// Strips over each document's budget go.
+    pub(super) fn md_dispatch(&mut self, wants: Vec<Want<StripJob>>) {
+        if wants.is_empty() && self.md_pool.is_none() {
+            return;
+        }
+        if self.md_pool.is_none() {
+            let events = self.events.clone();
+            let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
+            match WorkPool::new("temzdf-markdown", threads, Arc::new(move |s| events(SessionEvent::MarkdownStrip(s)))) {
+                Ok(pool) => self.md_pool = Some(pool),
+                Err(e) => {
+                    self.message(&format!("markdown: no threads to paint with: {e}"));
+                    return;
+                }
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        let wants: Vec<Want<StripJob>> = wants
+            .into_iter()
+            .filter(|w| {
+                seen.insert(match w {
+                    Want::New(j) => j.key(),
+                    Want::Queued(k) => *k,
+                })
+            })
+            .collect();
+        for w in &wants {
+            if let Want::New(j) = w
+                && let Some(d) = self.md_docs.get_mut(&j.tag)
+            {
+                d.strips.mark_in_flight(j.key);
+            }
+        }
+        let dropped = self.md_pool.as_ref().map(|p| p.replace_wanted(wants)).unwrap_or_default();
+        for (md, key) in dropped {
+            if let Some(d) = self.md_docs.get_mut(&md) {
+                d.strips.cancelled(key);
+            }
+        }
+        for d in self.md_docs.values_mut() {
+            d.strips.evict(&mut self.images);
+        }
+    }
+
+    /// A strip was painted: shown, unless its page went meanwhile.
+    pub(super) fn md_strip_painted(&mut self, s: Strip) -> Outcome {
+        let Some(d) = self.md_docs.get_mut(&s.tag) else { return Outcome::None };
+        if !d.pages.iter().any(|p| p.id == s.key.page) {
+            d.strips.cancelled(s.key);
+            return Outcome::None;
+        }
+        if d.strips.rendered(&mut self.images, s.key, s.width, s.rows, s.pixels) {
+            Outcome::Redraw
+        } else {
+            Outcome::None
+        }
     }
 
     /// Open `path` in the viewer at `spot`; returns the pane.
@@ -508,6 +590,7 @@ impl Session {
                 fetched: Default::default(),
                 body: None,
                 pages: Vec::new(),
+                strips: TileCache::new(STRIP_BUDGET, temzdf_mdview::pane::STRIP_LAYERS),
                 _watcher: watcher,
             },
         );
@@ -702,15 +785,14 @@ impl Session {
         d.renders = keep;
         let (pages, unused): (Vec<_>, Vec<_>) = d.pages.drain(..).partition(|p| keys.contains(&(p.width, p.zoom)));
         d.pages = pages;
-        for mut p in unused {
-            p.release(&mut self.images);
-        }
+        d.drop_pages(unused, &mut self.images);
         for r in gone {
             self.remove_buffer(r.buf);
         }
         if self.md_docs.get(&md).is_some_and(|d| d.renders.is_empty() && keys.is_empty())
-            && let Some(d) = self.md_docs.remove(&md)
+            && let Some(mut d) = self.md_docs.remove(&md)
         {
+            d.strips.clear(&mut self.images);
             // Its images, unless another document shows them.
             for id in d.images.into_values() {
                 if !self.md_docs.values().any(|o| o.images.values().any(|i| *i == id))

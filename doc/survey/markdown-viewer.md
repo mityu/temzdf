@@ -145,7 +145,11 @@ Results (i7-14700, release build):
   substitute.
 - Painting a part: `paint_scene` paints a rectangle of the document at a
   scale; the part is chosen with `set_viewport_scroll` (its x/y offsets
-  move the content the other way). Strips for tiles work.
+  move the content the other way). Strips for tiles work. Painting into
+  `anyrender::Scene` (a recording, `Send + Sync`) and replaying it with
+  `PaintScene::append_scene` on another thread gives the same pixels
+  (measured 2026-11-09, release, `tests/fixtures/sample.md` and 50 copies, 900 and 1800
+  pixels wide: recording a strip 0.03-0.08 ms, painting it 0.55-0.8 ms).
 - Hit testing: `hit(x, y)` finds the text node under a point; walking up to
   an `href` finds links. Inline elements (`<a>`, `<em>`) have no boxes of
   their own (0x0 layouts), so a range's position comes from its inline
