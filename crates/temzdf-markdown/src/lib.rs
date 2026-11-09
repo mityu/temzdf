@@ -3,5 +3,8 @@
 //! code; the server shows it.
 
 pub mod doc;
+pub mod highlight;
+pub mod render;
 
 pub use doc::{Block, Document, Heading, Inline, Lines};
+pub use render::{Deco, Rendered, render};
