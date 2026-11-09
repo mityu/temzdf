@@ -71,6 +71,9 @@ pub struct View {
     /// The pane it is in: decorations shown only there count (inline
     /// virtual text takes columns).
     pub pane: Option<u32>,
+    /// A cell's size in pixels (images take as many cells as their pixels
+    /// fill).
+    pub cell: (u32, u32),
 }
 
 impl Default for View {
@@ -86,6 +89,7 @@ impl Default for View {
             cursorline: false,
             scrolloff: 0,
             pane: None,
+            cell: (10, 20),
         }
     }
 }
@@ -107,7 +111,8 @@ impl View {
     /// Lays out `buf` as this view shows it (its inline virtual text too).
     pub fn layouter<'a>(&'a self, buf: &'a Buffer) -> Layout<'a> {
         let text = buf.text();
-        Layout { text, opts: &self.layout, width: self.text_width(text), inline: Inline::of(buf.marks(), self.pane) }
+        let width = self.text_width(text);
+        Layout { text, opts: &self.layout, width, inline: Inline::of(buf.marks(), self.pane, self.cell, width) }
     }
 
     /// The rows shown, top first.
@@ -216,7 +221,8 @@ impl View {
     pub fn scroll(&mut self, buf: &Buffer, rows: i64) {
         let opts = self.layout.clone();
         let text = buf.text();
-        let l = Layout { text, opts: &opts, width: self.text_width(text), inline: Inline::of(buf.marks(), self.pane) };
+        let width = self.text_width(text);
+        let l = Layout { text, opts: &opts, width, inline: Inline::of(buf.marks(), self.pane, self.cell, width) };
         for _ in 0..rows.unsigned_abs() {
             let next = if rows < 0 { l.prev_row(self.top) } else { l.next_row(&l.row_at(self.top, usize::MAX)) };
             match next {
@@ -249,7 +255,8 @@ impl View {
     pub fn reveal(&mut self, buf: &Buffer, offset: usize, how: Reveal) {
         let opts = self.layout.clone();
         let text = buf.text();
-        let l = Layout { text, opts: &opts, width: self.text_width(text), inline: Inline::of(buf.marks(), self.pane) };
+        let width = self.text_width(text);
+        let l = Layout { text, opts: &opts, width, inline: Inline::of(buf.marks(), self.pane, self.cell, width) };
         let target = l.row_start_of(offset.min(text.len_chars()));
         let height = self.height.max(1) as usize;
         let so = self.scrolloff.min((height - 1) / 2);

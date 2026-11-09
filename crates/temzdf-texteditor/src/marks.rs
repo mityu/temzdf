@@ -28,6 +28,21 @@ pub struct VirtChunk {
     pub style: Option<String>,
 }
 
+/// An image a decoration shows (the session's, by id), its size in pixels
+/// (layout turns it into cells), and the text shown instead where images
+/// cannot be.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VirtImage {
+    pub id: u64,
+    pub width: u32,
+    pub height: u32,
+    pub alt: String,
+    /// At most this many columns.
+    pub max_cols: Option<usize>,
+    /// The image is gone (unloaded): `alt` is shown as text.
+    pub missing: bool,
+}
+
 /// What a decoration is made of, apart from where it is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MarkSpec {
@@ -47,6 +62,8 @@ pub struct MarkSpec {
     /// `virt_pos`.
     pub virt_text: Vec<VirtChunk>,
     pub virt_pos: VirtPos,
+    /// An image at `virt_pos` (inline: one row high, after `virt_text`).
+    pub virt_image: Option<VirtImage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +163,18 @@ impl Marks {
             }
         }
         moved
+    }
+
+    /// Image `id` now has this size (read again), or is gone.
+    pub fn set_image(&mut self, id: u64, size: Option<(u32, u32)>) {
+        for m in &mut self.marks {
+            if let Some(img) = m.spec.virt_image.as_mut().filter(|i| i.id == id) {
+                match size {
+                    Some((w, h)) => (img.width, img.height, img.missing) = (w, h, false),
+                    None => img.missing = true,
+                }
+            }
+        }
     }
 
     /// Put back marks as they were (undo).

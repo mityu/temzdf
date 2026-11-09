@@ -56,6 +56,12 @@ pub enum GlyphKind {
         text: String,
         style: Option<String>,
     },
+    /// An inline image, `width` columns and one row (no characters either),
+    /// and what is shown where images cannot be.
+    Image {
+        id: u64,
+        alt: String,
+    },
 }
 
 /// Inline virtual text at `offset`, as layout places it: its graphemes, each
@@ -64,42 +70,61 @@ pub enum GlyphKind {
 pub struct Inline {
     pub offset: usize,
     pub graphemes: Vec<(String, usize, Option<String>)>,
+    /// An image after them: its id, columns and text instead.
+    pub image: Option<(u64, usize, String)>,
+}
+
+/// Columns an image `w` x `h` pixels takes one row high, cells being
+/// `cell` pixels: as wide as its aspect asks, at least one, at most `max`.
+pub fn image_cols(w: u32, h: u32, cell: (u32, u32), max: usize) -> usize {
+    if h == 0 || cell.0 == 0 {
+        return 1;
+    }
+    let cols = (u64::from(w) * u64::from(cell.1)).div_ceil(u64::from(h) * u64::from(cell.0)) as usize;
+    cols.clamp(1, max.max(1))
 }
 
 impl Inline {
     fn width(&self) -> usize {
-        self.graphemes.iter().map(|g| g.1).sum()
+        self.graphemes.iter().map(|g| g.1).sum::<usize>() + self.image.as_ref().map_or(0, |i| i.1)
     }
 
-    /// The inline virtual text of `marks` shown in `pane`, by offset (then
-    /// priority, then age).
-    pub fn of(marks: &Marks, pane: Option<u32>) -> Vec<Inline> {
+    /// The inline virtual text (and images) of `marks` shown in `pane`, by
+    /// offset (then priority, then age); images in `cell`-pixel cells, at
+    /// most `width` columns.
+    pub fn of(marks: &Marks, pane: Option<u32>, cell: (u32, u32), width: usize) -> Vec<Inline> {
         let mut v: Vec<_> = marks
             .iter()
             .filter(|m| {
                 m.spec.virt_pos == VirtPos::Inline
-                    && !m.spec.virt_text.is_empty()
+                    && (!m.spec.virt_text.is_empty() || m.spec.virt_image.is_some())
                     && !m.deleted
                     && m.spec.pane.is_none_or(|p| Some(p) == pane)
             })
             .collect();
         v.sort_by_key(|m| (m.start, m.spec.priority, m.id));
+        let text = |t: &str, style: &Option<String>| -> Vec<(String, usize, Option<String>)> {
+            t.graphemes(true)
+                .filter(|g| !g.chars().any(control))
+                .map(|g| (g.to_owned(), grapheme_width(g), style.clone()))
+                .collect()
+        };
         v.into_iter()
-            .map(|m| Inline {
-                offset: m.start,
-                graphemes: m
-                    .spec
-                    .virt_text
-                    .iter()
-                    .flat_map(|c| {
-                        c.text
-                            .graphemes(true)
-                            .filter(|g| !g.chars().any(control))
-                            .map(|g| (g.to_owned(), grapheme_width(g), c.style.clone()))
-                    })
-                    .collect(),
+            .map(|m| {
+                let mut graphemes: Vec<_> = m.spec.virt_text.iter().flat_map(|c| text(&c.text, &c.style)).collect();
+                let mut image = None;
+                if let Some(img) = &m.spec.virt_image {
+                    if img.missing {
+                        // Gone: its text instead.
+                        graphemes.extend(text(&img.alt, &None));
+                    } else {
+                        let max = img.max_cols.unwrap_or(usize::MAX).min(width);
+                        image = Some((img.id, image_cols(img.width, img.height, cell, max), img.alt.clone()));
+                    }
+                }
+                Inline { offset: m.start, graphemes, image }
             })
-            .filter(|i| !i.graphemes.is_empty())
+            .filter(|i| !i.graphemes.is_empty() || i.image.is_some())
             .collect()
     }
 }
@@ -281,6 +306,17 @@ impl Layout<'_> {
                 *col += w;
                 left -= w;
             }
+            // An image is not cut: shown whole or not at all.
+            if let Some((id, w, alt)) = &v.image {
+                let w = *w;
+                if w > left {
+                    return;
+                }
+                let kind = GlyphKind::Image { id: *id, alt: alt.clone() };
+                row.glyphs.push(Glyph { offset, chars: 0, col: *col, width: w, kind });
+                *col += w;
+                left -= w;
+            }
         }
     }
 
@@ -393,6 +429,7 @@ mod tests {
             .map(|(offset, text)| Inline {
                 offset: *offset,
                 graphemes: text.graphemes(true).map(|g| (g.to_owned(), grapheme_width(g), None)).collect(),
+                image: None,
             })
             .collect()
     }
@@ -412,6 +449,8 @@ mod tests {
                     GlyphKind::Control(c) => s.push_str(&format!("^{}", ((*c as u8) ^ 0x40) as char)),
                     // Virtual text is written in capitals in these tests.
                     GlyphKind::Virtual { text, .. } => s.push_str(text),
+                    // Images are written as # per column in these tests.
+                    GlyphKind::Image { .. } => s.push_str(&"#".repeat(g.width)),
                 }
             }
             out.push(s);
@@ -503,5 +542,29 @@ mod tests {
         assert_eq!(l.row_start_of(2), 2, "it went down with its character");
         assert_eq!(l.prev_row(2), Some(0));
         assert_eq!(l.offset_at_line_col(0, 4), 2);
+    }
+
+    #[test]
+    fn images_take_the_columns_their_aspect_asks_one_row_high() {
+        // 10x20-pixel cells: a 40x20 image is two rows' worth wide -> 4
+        // columns one row high; a square one 2 columns.
+        assert_eq!(image_cols(40, 20, (10, 20), 80), 4);
+        assert_eq!(image_cols(20, 20, (10, 20), 80), 2);
+        assert_eq!(image_cols(21, 20, (10, 20), 80), 3, "rounded up");
+        assert_eq!(image_cols(400, 20, (10, 20), 6), 6, "at most the limit");
+        assert_eq!(image_cols(1, 100, (10, 20), 80), 1, "at least one");
+        // Other cells, other columns.
+        assert_eq!(image_cols(40, 20, (8, 16), 80), 4);
+        assert_eq!(image_cols(40, 20, (16, 16), 80), 2);
+        // In a row: whole, with the character after it.
+        let t = Text::from("ab");
+        let opts = LayoutOptions::default();
+        let img = Inline { offset: 1, graphemes: Vec::new(), image: Some((7, 3, "x".into())) };
+        let l = Layout { text: &t, opts: &opts, width: 5, inline: vec![img.clone()] };
+        let r = l.row_at(0, usize::MAX);
+        assert_eq!(r.glyphs.iter().map(|g| g.width).collect::<Vec<_>>(), [1, 3, 1]);
+        assert_eq!(r.col_of(1), 4, "the cursor after it");
+        let l = Layout { text: &t, opts: &opts, width: 4, inline: vec![img] };
+        assert_eq!(l.row_at(0, usize::MAX).end, 1, "wrapped before it, with the b");
     }
 }

@@ -144,8 +144,16 @@ Following VS Code **(user)**:
   on its start, and one too wide for a row is cut), `eol` and `overlay`
   (drawn over the rows, layout unchanged). View methods take the buffer
   (its marks) and a view knows its pane (decorations shown only there).
-  Later: images before or after a range, replacement (conceal, math
-  previews), signs, virtual lines.
+  Images (2026-11-09, the user's three placements, built in the order
+  inline, conceal, virtual lines): PNG files read with `loadImage` into
+  the session's image store (decoded as `temzdf-term` decodes programs'
+  images); sizes from their pixels and the client's cell size, which the
+  view keeps (`View.cell`, from the session's geometry). An inline image
+  is a piece of inline virtual text, one row high and as wide as its
+  aspect asks, never cut. Drawn, it leaves blank cells and a placement
+  (`Drawn.images`); the server makes it an image layer over a hole cut in
+  the text grid, and puts its alt text in the frame's `fallback_text`,
+  which only frontends without images draw. Later: signs.
 
 ## 8. Undo
 

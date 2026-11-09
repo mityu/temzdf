@@ -589,7 +589,13 @@ JavaScript strings index; out of range is clamped), ranges
   goes in it; text inserted at its place goes after it with the default
   gravity), `"eol"` after the line's end, `"overlay"` over the text (as
   Neovim's `virt_text_pos`); a prompt is inline virtual text at a line's
-  start.
+  start. Images: `loadImage(path)` reads a PNG and returns its id (the
+  same file again replaces it under that id, redrawn), `unloadImage(id)`
+  drops it; `virtImage: { image, alt?, maxCols? }` with `virtTextPos:
+  "inline"` shows it between the characters, one row high and as wide as
+  its aspect asks in the client's cells (at most `maxCols` and the pane),
+  after any `virtText`; frontends that draw no images (and a dropped
+  image) show `alt` there.
   `text.decoration(id)`, `text.decorations({ namespace?, range? })`,
   `text.moveDecoration(id, range)`, `text.deleteDecoration(id)`,
   `text.clearNamespace(ns)`. Styles are highlight groups:

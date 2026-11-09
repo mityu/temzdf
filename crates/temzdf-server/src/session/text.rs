@@ -387,8 +387,9 @@ impl Session {
             && let Some(t) = self.texts.get(buf)
         {
             let (w, h) = (content.w.max(1) as u16, content.h.max(1) as u16);
-            if (view.view.width, view.view.height) != (w, h) {
-                (view.view.width, view.view.height) = (w, h);
+            let cell = (self.geometry.cell.width, self.geometry.cell.height);
+            if (view.view.width, view.view.height, view.view.cell) != (w, h, cell) {
+                (view.view.width, view.view.height, view.view.cell) = (w, h, cell);
                 view.view.relayout(&t.buf);
             }
         }
@@ -625,6 +626,7 @@ impl Session {
     }
 
     /// A text pane's frame and status bar.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn text_frame(
         t: Option<&TextEntry>,
         tv: &TextView,
@@ -632,12 +634,19 @@ impl Session {
         focused: bool,
         hl: &Highlights,
         patterns: &[(String, Pattern, String)],
+        images: &super::images::LoadedImages,
+        cell: termpix_core::geom::CellSize,
     ) -> Frame {
         let Some(t) = t else { return Frame::default() };
         let painted: Vec<(&Pattern, &str)> = patterns.iter().map(|(_, p, s)| (p, s.as_str())).collect();
         let drawn = temzdf_texteditor::render(&t.buf, &tv.view, hl, Some(pane), focused, &painted);
+        // Images over holes in the text; their alt text where they cannot be.
+        let (layers, holes, fallback_text) = super::images::image_layers(&drawn.images, images, cell);
+        let text = crate::clip::text_pieces(TextGrid { col: 0, row: 0, rows: drawn.rows }, &holes);
         Frame {
-            text: vec![TextGrid { col: 0, row: 0, rows: drawn.rows }],
+            layers,
+            fallback_text,
+            text,
             cursor: drawn.cursor,
             cursor_shape: tv.shape,
             title: format!("{}{}", t.name, flags(t)),
@@ -678,6 +687,7 @@ impl Session {
             "open-file" | "new-buffer" | "write" | "reload" => self.text_file_command(name, args),
             "set-buffer-attrs" => self.set_buffer_attrs(args),
             "swap-info" | "use-swap" | "delete-swap" | "text.recover" => self.swap_command(name, args),
+            "load-image" | "unload-image" => self.image_command(name, args),
             "highlight-pattern" => self.highlight_pattern(args),
             "highlight" => self.define_highlight(args),
             "get-var" | "set-var" => self.var_command(name, args),
@@ -1012,6 +1022,27 @@ impl Session {
                     Some("overlay") => VirtPos::Overlay,
                     Some(other) => return Err(format!("virtTextPos: no {other:?} (inline, eol, overlay)")),
                 };
+                let virt_image = match get("virtImage") {
+                    None | Some(ScriptValue::Null) => None,
+                    Some(v) => {
+                        let id = v
+                            .get("image")
+                            .and_then(ScriptValue::as_num)
+                            .ok_or("virtImage: { image, alt?, maxCols? }")? as u64;
+                        let l = self
+                            .loaded_images
+                            .get(&id)
+                            .ok_or_else(|| format!("virtImage: no image {id} (loadImage)"))?;
+                        Some(temzdf_texteditor::VirtImage {
+                            id,
+                            width: l.width,
+                            height: l.height,
+                            alt: v.get("alt").and_then(ScriptValue::as_str).unwrap_or("").to_owned(),
+                            max_cols: v.get("maxCols").and_then(ScriptValue::as_num).map(|n| n.max(1.0) as usize),
+                            missing: false,
+                        })
+                    }
+                };
                 let spec = temzdf_texteditor::MarkSpec {
                     namespace: get("namespace").and_then(ScriptValue::as_str).unwrap_or("").to_owned(),
                     style: get("style").and_then(ScriptValue::as_str).map(str::to_owned),
@@ -1024,6 +1055,7 @@ impl Session {
                         .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms.max(0.0) as u64)),
                     virt_text,
                     virt_pos,
+                    virt_image,
                 };
                 let id = self.texts.get_mut(&buf).expect("found").buf.marks_mut().add(a, b, spec);
                 Ok((ScriptValue::Num(id as f64), Outcome::Redraw))
@@ -1468,8 +1500,8 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "text.add-decoration",
-        "(range: Range, opts?: { style?: string, namespace?: string, priority?: number, showIn?: number, startGravity?: \"before\" | \"after\", endGravity?: \"before\" | \"after\", ttl?: number, virtText?: (VirtChunk | string)[], virtTextPos?: \"inline\" | \"eol\" | \"overlay\", pane?: number }): number",
-        "Decorate a range (an empty one without a style is a mark): it follows edits, collapses and is flagged deleted when its text goes (undo restores it). `style` a highlight group, `showIn` a pane only, gravity where each end goes on an insertion exactly there, `ttl` milliseconds until it goes. `virtText` is text shown that is not in the buffer, at the range's start: `inline` between the characters (it takes columns; the cursor never goes in it), `eol` after the line's end, `overlay` over the text. Returns its id",
+        "(range: Range, opts?: { style?: string, namespace?: string, priority?: number, showIn?: number, startGravity?: \"before\" | \"after\", endGravity?: \"before\" | \"after\", ttl?: number, virtText?: (VirtChunk | string)[], virtTextPos?: \"inline\" | \"eol\" | \"overlay\", virtImage?: VirtImage, pane?: number }): number",
+        "Decorate a range (an empty one without a style is a mark): it follows edits, collapses and is flagged deleted when its text goes (undo restores it). `style` a highlight group, `showIn` a pane only, gravity where each end goes on an insertion exactly there, `ttl` milliseconds until it goes. `virtText` is text shown that is not in the buffer, at the range's start: `inline` between the characters (it takes columns; the cursor never goes in it), `eol` after the line's end, `overlay` over the text. `virtImage` (inline) is an image read with loadImage, one row high and as wide as its aspect asks (at most `maxCols`), `alt` shown where images cannot be. Returns its id",
     ),
     ("text.decoration", "(id: number, opts?: { pane?: number }): Decoration | null", "A decoration or mark by id"),
     (

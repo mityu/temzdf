@@ -12,6 +12,7 @@
 //! thread: [`TermBuffer::feed`] the bytes, then build a [`TermView::frame`].
 
 mod graphics;
+pub use graphics::decode_png;
 pub mod keys;
 
 mod pty;

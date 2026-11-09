@@ -79,11 +79,25 @@ impl Highlights {
     }
 }
 
+/// Where an image goes in a drawn view: its cells (the view's, gutter
+/// included), and the text shown instead where images cannot be.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DrawnImage {
+    pub id: u64,
+    pub col: u16,
+    pub row: u16,
+    pub cols: u16,
+    pub rows: u16,
+    pub alt: String,
+}
+
 /// A drawn view.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Drawn {
     /// `height` rows of `width` cells.
     pub rows: Vec<Vec<Cell>>,
+    /// The images over them (their cells blank below).
+    pub images: Vec<DrawnImage>,
     /// Where the cursor is (column, row), when it is shown and the pane has
     /// the focus.
     pub cursor: Option<(u16, u16)>,
@@ -192,6 +206,21 @@ pub fn render(
             if x < gutter || x + g.width > width {
                 continue;
             }
+            // An image: blank cells, the image over them.
+            if let GlyphKind::Image { id, alt } = &g.kind {
+                for c in &mut cells[x..x + g.width] {
+                    *c = base.blanked();
+                }
+                drawn.images.push(DrawnImage {
+                    id: *id,
+                    col: x as u16,
+                    row: y as u16,
+                    cols: g.width as u16,
+                    rows: 1,
+                    alt: alt.clone(),
+                });
+                continue;
+            }
             // Inline virtual text: its own style only.
             if let GlyphKind::Virtual { text, style: vs } = &g.kind {
                 let mut cell = base.clone();
@@ -249,7 +278,7 @@ pub fn render(
                     cells[x + 1] = Cell { text: shown.to_string(), width: 1, ..cell };
                 }
                 // Drawn above.
-                GlyphKind::Virtual { .. } => {}
+                GlyphKind::Virtual { .. } | GlyphKind::Image { .. } => {}
             }
         }
         // Virtual text at the end of the line (its last row) and over the
@@ -451,5 +480,27 @@ mod tests {
         v9.cursor = Cursor::at(0);
         let d = render(&buf, &v9, &hl, Some(9), true, &[]);
         assert_eq!(line(&d, 0), "> aZZPd hint    ");
+    }
+
+    #[test]
+    fn images_leave_their_cells_blank_and_say_where_they_go() {
+        use crate::marks::{VirtImage, VirtPos};
+        let mut buf = Buffer::new(Text::from("ab"), LineEnding::Lf);
+        let img = VirtImage { id: 7, width: 40, height: 20, alt: "pic".into(), max_cols: None, missing: false };
+        buf.marks_mut().add(1, 1, MarkSpec { virt_image: Some(img), virt_pos: VirtPos::Inline, ..MarkSpec::default() });
+        let mut v = View { width: 10, height: 1, ..View::default() };
+        v.cursor = Cursor::at(0);
+        let d = render(&buf, &v, &Highlights::default(), None, true, &[]);
+        assert_eq!(line(&d, 0), "a    b    ");
+        assert_eq!(d.images, [DrawnImage { id: 7, col: 1, row: 0, cols: 4, rows: 1, alt: "pic".into() }]);
+        // Gone: its text instead, no image.
+        buf.marks_mut().set_image(7, None);
+        let d = render(&buf, &v, &Highlights::default(), None, true, &[]);
+        assert_eq!(line(&d, 0), "apicb     ");
+        assert!(d.images.is_empty());
+        // Back, another size.
+        buf.marks_mut().set_image(7, Some((20, 20)));
+        let d = render(&buf, &v, &Highlights::default(), None, true, &[]);
+        assert_eq!(d.images[0].cols, 2);
     }
 }

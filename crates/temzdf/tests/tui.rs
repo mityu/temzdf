@@ -1813,6 +1813,59 @@ keymap.add("edit", "<F7>", action.killSession());
     t.wait_for("undone", |s| s.lines().iter().any(|l| l.trim_end() == "base"));
 }
 
+/// Write a `w` x `h` PNG of one colour at `path`.
+fn write_png(path: &std::path::Path, w: u32, h: u32) {
+    let file = std::fs::File::create(path).unwrap();
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().unwrap();
+    writer.write_image_data(&vec![200; (w * h * 4) as usize]).unwrap();
+}
+
+/// A configuration that edits without modes and, on <F5>, decorates the
+/// buffer with `decoration` (JavaScript, `id` the image read from `png`).
+fn image_config(png: &std::path::Path, decoration: &str) -> String {
+    format!(
+        "{NOTEPAD}import {{ cmd, keymap }} from \"temzdf\";\n\
+         keymap.add(\"edit\", \"<F5>\", () => {{ const id = cmd.loadImage({png:?}); {decoration} }});\n"
+    )
+}
+
+#[test]
+fn an_inline_image_is_placed_in_its_cells_or_its_alt_text_shown() {
+    let png = |env: &Env| {
+        let p = env.path("pic.png");
+        // tuitest's cells are 10x20 pixels: four columns one row high.
+        write_png(&p, 40, 20);
+        p
+    };
+    let deco = "cmd.text.addDecoration({ start: { line: 0, character: 1 }, end: { line: 0, character: 1 } }, \
+                { virtImage: { image: id, alt: \"pic\" }, virtTextPos: \"inline\" });";
+    let env = Env::new("text-image");
+    env.config("config.ts", &image_config(&png(&env), deco));
+    let file = env.path("i.txt");
+    std::fs::write(&file, "abc\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "ti", file.to_str().unwrap()], &env.options());
+    t.wait_text("abc");
+    t.key("F5");
+    let s = t.wait_for("the image", |s| s.images.iter().any(|p| p.width == 40));
+    let p = s.images.iter().find(|p| p.width == 40).unwrap();
+    assert_eq!((p.col, p.row, p.cols, p.rows), (1, 0, 4, 1), "{p:?}");
+    assert!(s.lines()[0].starts_with("a    bc"), "{:?}", s.lines()[0]);
+    // Without images: the alt text there.
+    let env = Env::new("text-image-off");
+    env.config("config.ts", &image_config(&png(&env), deco));
+    let file = env.path("i.txt");
+    std::fs::write(&file, "abc\n").unwrap();
+    let mut opts = env.options();
+    opts.env.push(("TERMPIX_GRAPHICS".into(), "off".into()));
+    let mut t = Term::spawn(&[BIN, "-s", "to", file.to_str().unwrap()], &opts);
+    t.wait_text("abc");
+    t.key("F5");
+    t.wait_for("the alt text", |s| s.lines()[0].starts_with("apic bc"));
+}
+
 #[test]
 fn a_text_file_is_edited_without_modes_and_written() {
     let env = Env::new("text-edit");

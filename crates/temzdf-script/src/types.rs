@@ -199,6 +199,12 @@ declare module "temzdf" {{
     virtText: VirtChunk[];
     virtTextPos: "inline" | "eol" | "overlay";
   }}
+  /** An image a decoration shows (an id from loadImage), the text shown where images cannot be, and at most how many columns it takes. */
+  export interface VirtImage {{
+    image: number;
+    alt?: string;
+    maxCols?: number;
+  }}
   /** A piece of virtual text and its style (a highlight group). */
   export interface VirtChunk {{
     text: string;

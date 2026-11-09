@@ -22,6 +22,8 @@ temzdf-tty.workspace = true
 [dev-dependencies]
 temzdf-pdfcore = { workspace = true, features = ["test-support"] }
 tuitest.workspace = true
+# Images written in tests (loadImage).
+png = "0.18.1"
 
 [lints]
 workspace = true

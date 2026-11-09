@@ -21,6 +21,8 @@ termpix-core.workspace = true
 termpix-ui.workspace = true
 
 [dev-dependencies]
+# Images written in tests (loadImage).
+png = "0.18.1"
 temzdf-pdfcore = { workspace = true, features = ["test-support"] }
 temzdf-tty.workspace = true
 termpix.workspace = true

@@ -33,6 +33,7 @@ use temzdf_protocol::script::{FromHost, ScriptValue};
 mod borders;
 mod commands;
 mod floats;
+mod images;
 mod notices;
 mod registers;
 mod script;
@@ -437,6 +438,8 @@ pub struct Session {
     texts: HashMap<BufferId, text::TextEntry>,
     /// Where undo files go (o.undofile; tests set their own).
     undo_dir: Option<PathBuf>,
+    /// Images read for text panes' decorations (loadImage), by id.
+    loaded_images: images::LoadedImages,
     /// Where swap files go (o.swapfile; tests set their own).
     swap_dir: Option<PathBuf>,
     /// Highlight groups for text panes (scripts define them).
@@ -528,6 +531,7 @@ impl Session {
             terms: HashMap::new(),
             texts: HashMap::new(),
             undo_dir: text::undo_dir(),
+            loaded_images: HashMap::new(),
             // (Unit tests set theirs: none in the user's state directory.)
             swap_dir: if cfg!(test) { None } else { swap::swap_dir() },
             highlights: temzdf_texteditor::Highlights::default(),
@@ -2262,9 +2266,16 @@ impl Session {
             let covers_px: Vec<Rect> = covers.iter().map(|r| self.pixels(r)).collect();
             let Some(e) = self.panes.get_mut(&id) else { continue };
             let frame = match &mut e.kind {
-                Kind::Text { buf, view } => {
-                    Self::text_frame(self.texts.get(buf), view, id, id == self.focus, &self.highlights, &self.patterns)
-                }
+                Kind::Text { buf, view } => Self::text_frame(
+                    self.texts.get(buf),
+                    view,
+                    id,
+                    id == self.focus,
+                    &self.highlights,
+                    &self.patterns,
+                    &self.loaded_images,
+                    cell,
+                ),
                 Kind::Pdf { pane, doc } => {
                     let (frame, pane_needs) = pane.frame(&mut self.images);
                     needs.entry(*doc).or_default().extend(pane_needs);
@@ -2311,6 +2322,11 @@ impl Session {
             for g in frame.text {
                 let g = TextGrid { col: g.col + content.x as u16, row: g.row + content.y as u16, ..g };
                 text.extend(clip::text_pieces(g, &covers));
+            }
+            // A text pane's images' alt text, where images cannot be shown.
+            for g in frame.fallback_text {
+                let g = TextGrid { col: g.col + content.x as u16, row: g.row + content.y as u16, ..g };
+                fallback_text.extend(clip::text_pieces(g, &covers));
             }
             if id == self.focus {
                 cursor = frame
@@ -5218,6 +5234,56 @@ mod tests {
         assert_eq!(info.get("modified"), Some(&ScriptValue::Bool(true)));
         assert!(run(&mut s, "set-buffer-attrs", &[buf, ScriptValue::List(vec![str("bogus")])]).is_err());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Write a `w` x `h` PNG of one colour at `path`.
+    fn write_png(path: &std::path::Path, w: u32, h: u32) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header().unwrap();
+        writer.write_image_data(&vec![200; (w * h * 4) as usize]).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn inline_images_are_layers_over_holes_in_the_text() {
+        let (mut s, path) = text_session("img.txt", "abc\n");
+        let dir = path.parent().unwrap().to_owned();
+        let png = dir.join("pic.png");
+        // 10x20-pixel cells (GEOMETRY): 40x20 is four columns one row high.
+        write_png(&png, 40, 20);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        let id = run(&mut s, "load-image", &[str(png.to_str().unwrap())]).unwrap().0;
+        let at = ScriptValue::map([("start", pos(0, 1)), ("end", pos(0, 1))]);
+        let o = ScriptValue::map([
+            ("virtImage", ScriptValue::map([("image", id.clone()), ("alt", str("pic"))])),
+            ("virtTextPos", str("inline")),
+        ]);
+        run(&mut s, "text.add-decoration", &[at, o]).unwrap();
+        let frame = s.frame();
+        assert_eq!(frame.layers.len(), 1, "{:?}", frame.layers);
+        let l = frame.layers[0];
+        assert_eq!((l.dst.x, l.dst.y, l.dst.w, l.dst.h), (10, 0, 40, 20), "after the a, its pixels");
+        assert_eq!(s.frame().cursor, Some((0, 0)));
+        // A hole in the text there; the alt text for frontends without images.
+        let row = screen_text(&frame, GEOMETRY)[0].clone();
+        assert!(row.starts_with("a    bc"), "{row:?}");
+        let fallback = screen_text(&Frame { text: frame.fallback_text.clone(), ..Frame::default() }, GEOMETRY);
+        assert!(fallback[0].starts_with(" pic"), "{:?}", fallback[0]);
+        // Read again at another size: the same id, redrawn.
+        write_png(&png, 20, 20);
+        assert_eq!(run(&mut s, "load-image", &[str(png.to_str().unwrap())]).unwrap().0, id);
+        assert_eq!(s.frame().layers[0].dst.w, 20);
+        // Unloaded: its alt text in the text, no layer.
+        run(&mut s, "unload-image", &[id]).unwrap();
+        let frame = s.frame();
+        assert!(frame.layers.is_empty());
+        assert!(screen_text(&frame, GEOMETRY)[0].starts_with("apicbc"));
+        assert!(run(&mut s, "load-image", &[str(path.to_str().unwrap())]).unwrap_err().contains("not a PNG"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

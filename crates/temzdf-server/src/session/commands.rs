@@ -230,6 +230,7 @@ pub fn command_specs() -> Vec<CommandSpec> {
         .iter()
         .chain(super::registers::COMMANDS)
         .chain(super::swap::COMMANDS)
+        .chain(super::images::COMMANDS)
         .map(|(name, ts, doc)| CommandSpec { name: (*name).into(), doc: (*doc).into(), ts: (*ts).into() });
     session.chain(text).chain(visual).chain(pdf).collect()
 }

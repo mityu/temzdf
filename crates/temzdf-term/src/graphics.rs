@@ -147,8 +147,8 @@ impl DecodePng for PngDecoder {
     }
 }
 
-/// A PNG as 8-bit RGBA.
-fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+/// A PNG as 8-bit RGBA (also the text editor's images).
+pub fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;
