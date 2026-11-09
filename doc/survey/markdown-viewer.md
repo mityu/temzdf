@@ -7,7 +7,7 @@ be built? Target: preview Markdown beside Vim/Neovim, GitHub-flavoured
 editor <-> preview position sync like SyncTeX. CPU only, Linux and macOS,
 usable over SSH.
 
-Status: research only, no decision yet. The scope later grew to a general
+Status: decided 2026-11-09 (see "Blitz spike" below); the rest is the research that led there. The scope later grew to a general
 webview-based previewer (arbitrary HTML/CSS/JS); see `doc/survey/webview-viewer.md`,
 which supersedes the engine choice below for that case. Versions and dates were collected by
 research agents from crates.io and GitHub on that date; latency figures are
@@ -105,7 +105,62 @@ approximations, silent failures of external renderers.
    rendered images by content hash.
 6. Single binary plus a tiny plugin; render only the visible range.
 
-## Suggested next steps (not started)
+## Blitz spike (2026-11-09, measured)
+
+Decided with the user the same day: a Markdown viewer of its own (for the
+built-in help and, later, LSP hover too), with a text mode drawn by temzdf
+itself on the text-editor pane and a graphics mode drawn by Blitz; comrak
+as the parser, RaTeX for math (MathML later: Blitz lays out next to none
+of it, see blitz.is/wpt/mathml). The spike is `experiments/blitz-md/`
+(outside the workspace, its own `Cargo.lock`): `cargo run --release --
+tests/fixtures/sample.md OUTDIR [REPEAT]` turns the fixture into HTML with
+comrak (math as RaTeX SVG with glyphs as paths), lays it out with Blitz
+at 1800x1200 and writes PNGs of screens, a strip and two zoom levels.
+
+Results (i7-14700, release build):
+
+| | `tests/fixtures/sample.md` | 50 copies of it |
+|---|---|---|
+| Markdown -> HTML (with math) | 1.5 ms | 22 ms (100 formulas, 17 ms) |
+| HTML parse | 40 ms | 40 ms |
+| style + layout | 4.3 ms (1774 px tall) | 33 ms (84051 px) |
+| paint 1800x1200 | 4-5 ms | 4.5-7 ms |
+| paint a 1800x256 strip | 3 ms | 8 ms |
+| zoom (relayout) | 0.5 ms | 19 ms |
+
+- Dependencies: `blitz-dom`/`-html`/`-paint`/`-traits` 0.3.0-beta.4 and
+  `anyrender_vello_cpu` 0.18 are on crates.io (no git, so no
+  `outputHashes` for `nix build`), MSRV 1.91, and use exactly our `parley`
+  0.12, `vello_cpu` 0.3, `peniko` 0.6.1 and `kurbo` 0.13.1: one text and
+  raster stack. About 130 crates more than the workspace (Stylo the
+  biggest); a full release build of the spike takes under a minute on 28
+  threads; the stripped spike binary is 23 MB (Stylo, RaTeX's embedded
+  KaTeX fonts).
+- Looks: headings, paragraphs (Japanese included), emphasis, inline code,
+  links, GFM tables with alignment, task lists, nested lists, code blocks,
+  block quotes, GitHub alerts (with a hand-written GitHub-like CSS), SVG
+  images, footnotes and inline and display math all come out right. Small
+  flaws: ordered list markers have no space before the text ("1.One"),
+  and without an italic face the system font's slant is a poor
+  substitute.
+- Painting a part: `paint_scene` paints a rectangle of the document at a
+  scale; the part is chosen with `set_viewport_scroll` (its x/y offsets
+  move the content the other way). Strips for tiles work.
+- Hit testing: `hit(x, y)` finds the text node under a point; walking up to
+  an `href` finds links. Inline elements (`<a>`, `<em>`) have no boxes of
+  their own (0x0 layouts), so a range's position comes from its inline
+  root's `inline_layout_data` (the text and its parley `Layout`), which is
+  what search highlighting needs. Block elements (headings) have positions.
+- Zoom: `zoom_to(z)` and painting at `viewport().scale_f64()` lays out
+  again at the new size (heights stay in CSS px).
+- Images: through a `NetProvider`; the spike's reads `file://` URLs only
+  (relative to the base URL), which is the viewer's default.
+
+Conclusion: Blitz is usable for the graphics mode.
+
+## Earlier suggested next steps
+
+
 
 1. One-day Blitz spike: render a fixture `.md` to PNG the way `--render-frame`
    does, measure layout and raster times, and check that its dependencies

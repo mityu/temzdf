@@ -97,7 +97,8 @@ branch. The decisions taken from it are in the design documents.
   `doc/design/scripting.md`).
 - [survey/markdown-viewer.md](survey/markdown-viewer.md) and
   [survey/webview-viewer.md](survey/webview-viewer.md): previewers on
-  `termpix` (Markdown, web pages).
+  `termpix` (Markdown, web pages); the Blitz spike for the Markdown
+  viewer's graphics mode (`experiments/blitz-md/`).
 - [survey/text-editor.md](survey/text-editor.md): an embedded text editor:
   text and decorations (VS Code, Neovim, Zed), Vim's undo tree, undo files,
   swap files and regular expressions, syntax highlighting and Tree-sitter
