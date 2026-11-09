@@ -39,6 +39,8 @@ pub struct VirtImage {
     pub alt: String,
     /// At most this many columns.
     pub max_cols: Option<usize>,
+    /// At most this many rows (virtual lines; one row elsewhere).
+    pub max_rows: Option<usize>,
     /// The image is gone (unloaded): `alt` is shown as text.
     pub missing: bool,
 }
@@ -51,6 +53,16 @@ pub struct Conceal {
     pub image: Option<VirtImage>,
     /// Hidden on the cursor's line too (else that line shows the text).
     pub cursor_line: bool,
+}
+
+/// Lines shown below (or above) the line a decoration starts in, not in
+/// the buffer: rows of text, then an image as many rows high as its
+/// pixels fill.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VirtLines {
+    pub text: Vec<Vec<VirtChunk>>,
+    pub image: Option<VirtImage>,
+    pub above: bool,
 }
 
 /// What a decoration is made of, apart from where it is.
@@ -76,6 +88,8 @@ pub struct MarkSpec {
     pub virt_image: Option<VirtImage>,
     /// The range (within one line) shown as something else.
     pub conceal: Option<Conceal>,
+    /// Lines below or above its line.
+    pub virt_lines: Option<VirtLines>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,7 +194,12 @@ impl Marks {
     /// Image `id` now has this size (read again), or is gone.
     pub fn set_image(&mut self, id: u64, size: Option<(u32, u32)>) {
         for m in &mut self.marks {
-            let images = m.spec.virt_image.iter_mut().chain(m.spec.conceal.iter_mut().filter_map(|c| c.image.as_mut()));
+            let images = m
+                .spec
+                .virt_image
+                .iter_mut()
+                .chain(m.spec.conceal.iter_mut().filter_map(|c| c.image.as_mut()))
+                .chain(m.spec.virt_lines.iter_mut().filter_map(|v| v.image.as_mut()));
             for img in images.filter(|i| i.id == id) {
                 match size {
                     Some((w, h)) => (img.width, img.height, img.missing) = (w, h, false),

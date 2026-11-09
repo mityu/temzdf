@@ -86,6 +86,89 @@ pub fn image_cols(w: u32, h: u32, cell: (u32, u32), max: usize) -> usize {
     cols.clamp(1, max.max(1))
 }
 
+/// The cells an image of `w` x `h` pixels takes in `cell`-pixel cells: as
+/// many as its pixels fill, scaled down (keeping its aspect) to at most
+/// `max_cols` x `max_rows`.
+pub fn image_cells(w: u32, h: u32, cell: (u32, u32), max_cols: usize, max_rows: usize) -> (usize, usize) {
+    if w == 0 || h == 0 || cell.0 == 0 || cell.1 == 0 {
+        return (1, 1);
+    }
+    let (w, h, cw, ch) = (w as f64, h as f64, cell.0 as f64, cell.1 as f64);
+    let scale = 1f64.min(max_cols.max(1) as f64 * cw / w).min(max_rows.max(1) as f64 * ch / h);
+    let fit = |px: f64, c: f64, max: usize| ((px * scale / c - 1e-9).ceil() as usize).clamp(1, max.max(1));
+    (fit(w, cw, max_cols), fit(h, ch, max_rows))
+}
+
+/// A row of virtual lines: text, or one row of an image (`index` of its
+/// `rows`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VirtRow {
+    Text(Vec<(String, usize, Option<String>)>),
+    Image { id: u64, alt: String, cols: usize, rows: usize, index: usize },
+}
+
+/// The virtual lines of one decoration, below or above `line`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VirtLine {
+    pub line: usize,
+    pub above: bool,
+    pub rows: Vec<VirtRow>,
+}
+
+impl VirtLine {
+    /// The virtual lines of `marks` shown in `pane`, by line (then
+    /// priority, then age); images in `cell`-pixel cells, at most `width`
+    /// columns.
+    pub fn of(text: &Text, marks: &Marks, pane: Option<u32>, cell: (u32, u32), width: usize) -> Vec<VirtLine> {
+        let mut v: Vec<_> = marks
+            .iter()
+            .filter(|m| !m.deleted && m.spec.pane.is_none_or(|p| Some(p) == pane))
+            .filter_map(|m| Some((m, m.spec.virt_lines.as_ref()?)))
+            .collect();
+        v.sort_by_key(|(m, _)| (m.start, m.spec.priority, m.id));
+        let mut out: Vec<VirtLine> = v
+            .into_iter()
+            .map(|(m, vl)| {
+                let mut rows: Vec<VirtRow> = vl.text.iter().map(|chunks| VirtRow::Text(graphemes(chunks))).collect();
+                if let Some(img) = &vl.image {
+                    if img.missing {
+                        rows.push(VirtRow::Text(graphemes(&[VirtChunk { text: img.alt.clone(), style: None }])));
+                    } else {
+                        let max_cols = img.max_cols.unwrap_or(usize::MAX).min(width);
+                        let (cols, n) =
+                            image_cells(img.width, img.height, cell, max_cols, img.max_rows.unwrap_or(usize::MAX));
+                        rows.extend((0..n).map(|index| VirtRow::Image {
+                            id: img.id,
+                            alt: img.alt.clone(),
+                            cols,
+                            rows: n,
+                            index,
+                        }));
+                    }
+                }
+                VirtLine { line: text.line_of(m.start), above: vl.above, rows }
+            })
+            .filter(|v| !v.rows.is_empty())
+            .collect();
+        out.sort_by_key(|v| v.line);
+        out
+    }
+}
+
+/// Virtual text as graphemes with their widths and styles (control
+/// characters left out).
+fn graphemes(chunks: &[VirtChunk]) -> Vec<(String, usize, Option<String>)> {
+    chunks
+        .iter()
+        .flat_map(|c| {
+            c.text
+                .graphemes(true)
+                .filter(|g| !g.chars().any(control))
+                .map(|g| (g.to_owned(), grapheme_width(g), c.style.clone()))
+        })
+        .collect()
+}
+
 impl Inline {
     fn width(&self) -> usize {
         self.graphemes.iter().map(|g| g.1).sum::<usize>() + self.image.as_ref().map_or(0, |i| i.1)
@@ -113,18 +196,12 @@ impl Inline {
 
     /// Text and an image at `offset`, as layout places them.
     fn pieces(offset: usize, chunks: &[VirtChunk], img: Option<&VirtImage>, cell: (u32, u32), width: usize) -> Inline {
-        let text = |t: &str, style: &Option<String>| -> Vec<(String, usize, Option<String>)> {
-            t.graphemes(true)
-                .filter(|g| !g.chars().any(control))
-                .map(|g| (g.to_owned(), grapheme_width(g), style.clone()))
-                .collect()
-        };
-        let mut graphemes: Vec<_> = chunks.iter().flat_map(|c| text(&c.text, &c.style)).collect();
+        let mut graphemes = graphemes(chunks);
         let mut image = None;
         if let Some(img) = img {
             if img.missing {
                 // Gone: its text instead.
-                graphemes.extend(text(&img.alt, &None));
+                graphemes.extend(self::graphemes(&[VirtChunk { text: img.alt.clone(), style: None }]));
             } else {
                 let max = img.max_cols.unwrap_or(usize::MAX).min(width);
                 image = Some((img.id, image_cols(img.width, img.height, cell, max), img.alt.clone()));
@@ -196,6 +273,9 @@ pub struct Row {
     pub glyphs: Vec<Glyph>,
     /// The line goes on in the next row.
     pub wrapped: bool,
+    /// A row of virtual lines (no glyphs; `start` and `end` its line's
+    /// end, or start above it, where a click puts the cursor).
+    pub virt: Option<VirtRow>,
 }
 
 impl Row {
@@ -241,6 +321,8 @@ pub struct Layout<'a> {
     pub inline: Vec<Inline>,
     /// Concealed ranges, by start ([`Concealed::of`]).
     pub concealed: Vec<Concealed>,
+    /// Virtual lines, by line ([`VirtLine::of`]).
+    pub virt_lines: Vec<VirtLine>,
 }
 
 /// How far ahead a row is read at once (more if it needs it).
@@ -258,7 +340,7 @@ impl Layout<'_> {
         let start = start.max(line_start).min(line_end);
         let prefix = if first || !self.opts.wrap { 0 } else { self.continuation_prefix(line_start, line_end) };
         let width = if self.opts.wrap { self.width.max(prefix + 2) } else { usize::MAX };
-        let mut row = Row { line, start, end: line_end, first, prefix, glyphs: Vec::new(), wrapped: false };
+        let mut row = Row { line, start, end: line_end, first, prefix, glyphs: Vec::new(), wrapped: false, virt: None };
         let mut col = prefix;
         let mut at = start;
         // Inline virtual text goes with the character after it (a row break
@@ -425,6 +507,80 @@ impl Layout<'_> {
         (show + indent).min(self.width.saturating_sub(2))
     }
 
+    /// The rows of virtual lines above (or below) `line`.
+    fn virt_rows(&self, line: usize, above: bool) -> impl Iterator<Item = &VirtRow> {
+        let i = self.virt_lines.partition_point(|v| v.line < line);
+        self.virt_lines[i..]
+            .iter()
+            .take_while(move |v| v.line == line)
+            .filter(move |v| v.above == above)
+            .flat_map(|v| &v.rows)
+    }
+
+    /// Rows of virtual lines shown before `row` (above its line, before
+    /// its first row).
+    pub fn above_len(&self, row: &Row) -> usize {
+        if row.virt.is_some() || !row.first { 0 } else { self.virt_rows(row.line, true).count() }
+    }
+
+    /// Rows of virtual lines shown after `row` (below its line, after its
+    /// last row).
+    pub fn below_len(&self, row: &Row) -> usize {
+        if row.virt.is_some() || row.wrapped { 0 } else { self.virt_rows(row.line, false).count() }
+    }
+
+    /// `row` with the rows of virtual lines before and after it.
+    pub fn group(&self, row: Row) -> Vec<Row> {
+        let virt = |r: &VirtRow, at: usize| Row {
+            line: row.line,
+            start: at,
+            end: at,
+            first: false,
+            prefix: 0,
+            glyphs: Vec::new(),
+            wrapped: false,
+            virt: Some(r.clone()),
+        };
+        let line_start = self.text.line_start(row.line);
+        let line_end = self.text.line_end(row.line);
+        let mut out = Vec::new();
+        if self.above_len(&row) > 0 {
+            out.extend(self.virt_rows(row.line, true).map(|r| virt(r, line_start)));
+        }
+        let below: Vec<Row> = if self.below_len(&row) > 0 {
+            self.virt_rows(row.line, false).map(|r| virt(r, line_end)).collect()
+        } else {
+            Vec::new()
+        };
+        out.push(row);
+        out.extend(below);
+        out
+    }
+
+    /// Display rows of the row starting at `start` with its virtual lines.
+    pub fn group_len(&self, start: usize) -> usize {
+        let row = self.row_at(start, usize::MAX);
+        self.above_len(&row) + 1 + self.below_len(&row)
+    }
+
+    /// The display row after `spot` (a row's start and how far into its
+    /// group).
+    pub fn down(&self, (start, k): (usize, usize)) -> Option<(usize, usize)> {
+        let row = self.row_at(start, usize::MAX);
+        if k + 1 < self.above_len(&row) + 1 + self.below_len(&row) {
+            return Some((start, k + 1));
+        }
+        self.next_row(&row).map(|s| (s, 0))
+    }
+
+    /// The display row before `spot`.
+    pub fn up(&self, (start, k): (usize, usize)) -> Option<(usize, usize)> {
+        if k > 0 {
+            return Some((start, k - 1));
+        }
+        self.prev_row(start).map(|s| (s, self.group_len(s) - 1))
+    }
+
     /// The start of the row after `row`, if any.
     pub fn next_row(&self, row: &Row) -> Option<usize> {
         if row.wrapped {
@@ -522,7 +678,14 @@ mod tests {
 
     fn rows_with(text: &str, width: usize, opts: LayoutOptions, virt: &[(usize, &str)]) -> Vec<String> {
         let t = Text::from(text);
-        let l = Layout { text: &t, opts: &opts, width, inline: inline(virt), concealed: Vec::new() };
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width,
+            inline: inline(virt),
+            concealed: Vec::new(),
+            virt_lines: Vec::new(),
+        };
         show(&l)
     }
 
@@ -541,7 +704,14 @@ mod tests {
     fn rows_concealed(text: &str, width: usize, v: &[(usize, usize, &str, bool)], cursor: usize) -> Vec<String> {
         let t = Text::from(text);
         let opts = LayoutOptions::default();
-        let l = Layout { text: &t, opts: &opts, width, inline: Vec::new(), concealed: concealed(&t, v, cursor) };
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width,
+            inline: Vec::new(),
+            concealed: concealed(&t, v, cursor),
+            virt_lines: Vec::new(),
+        };
         show(&l)
     }
 
@@ -589,7 +759,14 @@ mod tests {
     fn rows_are_found_from_offsets_and_columns_kept_across_them() {
         let t = Text::from("abcdefgh\nxy");
         let opts = LayoutOptions::default();
-        let l = Layout { text: &t, opts: &opts, width: 3, inline: Vec::new(), concealed: Vec::new() };
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width: 3,
+            inline: Vec::new(),
+            concealed: Vec::new(),
+            virt_lines: Vec::new(),
+        };
         assert_eq!(l.row_start_of(4), 3);
         assert_eq!(l.prev_row(6), Some(3));
         assert_eq!(l.prev_row(9), Some(6), "the last row of the line before");
@@ -604,7 +781,14 @@ mod tests {
         let long = "x".repeat(1 << 20);
         let t = Text::from(long.as_str());
         let opts = LayoutOptions { wrap: false, ..Default::default() };
-        let l = Layout { text: &t, opts: &opts, width: 80, inline: Vec::new(), concealed: Vec::new() };
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width: 80,
+            inline: Vec::new(),
+            concealed: Vec::new(),
+            virt_lines: Vec::new(),
+        };
         let r = l.row_at(0, 80);
         assert_eq!(r.glyphs.len(), 80);
     }
@@ -619,8 +803,14 @@ mod tests {
         // The cursor goes after it: columns of offsets skip it.
         let t = Text::from("abc");
         let opts = nowrap();
-        let l =
-            Layout { text: &t, opts: &opts, width: 80, inline: inline(&[(0, "> "), (1, "XY")]), concealed: Vec::new() };
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width: 80,
+            inline: inline(&[(0, "> "), (1, "XY")]),
+            concealed: Vec::new(),
+            virt_lines: Vec::new(),
+        };
         let r = l.row_at(0, usize::MAX);
         assert_eq!((r.col_of(0), r.col_of(1), r.col_of(3)), (2, 5, 7));
         assert_eq!(r.offset_at(0), 0, "a click on it: where it is");
@@ -647,7 +837,14 @@ mod tests {
     fn rows_with_inline_virtual_text_are_found_from_offsets() {
         let t = Text::from("abcdef");
         let opts = LayoutOptions::default();
-        let l = Layout { text: &t, opts: &opts, width: 4, inline: inline(&[(2, "XY")]), concealed: Vec::new() };
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width: 4,
+            inline: inline(&[(2, "XY")]),
+            concealed: Vec::new(),
+            virt_lines: Vec::new(),
+        };
         // "abXY", "cdef".
         assert_eq!(l.row_start_of(1), 0);
         assert_eq!(l.row_start_of(2), 2, "it went down with its character");
@@ -671,11 +868,25 @@ mod tests {
         let t = Text::from("ab");
         let opts = LayoutOptions::default();
         let img = Inline { offset: 1, graphemes: Vec::new(), image: Some((7, 3, "x".into())) };
-        let l = Layout { text: &t, opts: &opts, width: 5, inline: vec![img.clone()], concealed: Vec::new() };
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width: 5,
+            inline: vec![img.clone()],
+            concealed: Vec::new(),
+            virt_lines: Vec::new(),
+        };
         let r = l.row_at(0, usize::MAX);
         assert_eq!(r.glyphs.iter().map(|g| g.width).collect::<Vec<_>>(), [1, 3, 1]);
         assert_eq!(r.col_of(1), 4, "the cursor after it");
-        let l = Layout { text: &t, opts: &opts, width: 4, inline: vec![img], concealed: Vec::new() };
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width: 4,
+            inline: vec![img],
+            concealed: Vec::new(),
+            virt_lines: Vec::new(),
+        };
         assert_eq!(l.row_at(0, usize::MAX).end, 1, "wrapped before it, with the b");
     }
 
@@ -703,6 +914,7 @@ mod tests {
             width: 80,
             inline: Vec::new(),
             concealed: concealed(&t, &[(1, 4, "X", true)], 0),
+            virt_lines: Vec::new(),
         };
         let r = l.row_at(0, usize::MAX);
         assert_eq!((r.col_of(1), r.col_of(2), r.col_of(4)), (1, 1, 2));
@@ -715,9 +927,21 @@ mod tests {
             width: 80,
             inline: Vec::new(),
             concealed: concealed(&t, &[(1, 4, "", true)], 0),
+            virt_lines: Vec::new(),
         };
         let r = l.row_at(0, usize::MAX);
         assert_eq!((r.col_of(2), r.col_of(4)), (1, 1));
         assert_eq!(r.offset_at(1), 4);
+    }
+
+    #[test]
+    fn images_in_virtual_lines_take_the_cells_their_pixels_fill() {
+        // 10x20-pixel cells: 40x60 pixels are 4x3 cells, 41x61 5x4.
+        assert_eq!(image_cells(40, 60, (10, 20), 80, 80), (4, 3));
+        assert_eq!(image_cells(41, 61, (10, 20), 80, 80), (5, 4));
+        // Scaled down to the limits, keeping the aspect.
+        assert_eq!(image_cells(400, 60, (10, 20), 20, 80), (20, 2));
+        assert_eq!(image_cells(40, 600, (10, 20), 80, 6), (1, 6));
+        assert_eq!(image_cells(0, 10, (10, 20), 80, 80), (1, 1));
     }
 }

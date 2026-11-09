@@ -7,7 +7,7 @@ use temzdf_scene::{Attrs, Cell, Color, Underline};
 
 use crate::buffer::Buffer;
 use crate::cursor::SelectionKind;
-use crate::layout::GlyphKind;
+use crate::layout::{GlyphKind, VirtRow};
 use crate::marks::{Mark, VirtPos};
 use crate::search::{Pattern, SearchOptions, find_all};
 use crate::view::{NumberMode, View};
@@ -86,8 +86,11 @@ pub struct DrawnImage {
     pub id: u64,
     pub col: u16,
     pub row: u16,
+    /// The cells shown (`rows` of its `total`, `skip` above the view).
     pub cols: u16,
     pub rows: u16,
+    pub skip: u16,
+    pub total: u16,
     pub alt: String,
 }
 
@@ -163,6 +166,45 @@ pub fn render(
     };
     let mut drawn = Drawn::default();
     for (y, row) in rows.iter().enumerate() {
+        // Virtual lines: from the text's first column, cut at the pane's
+        // edge; an image drawn from its first row shown.
+        if let Some(v) = &row.virt {
+            let mut cells = vec![Cell::blank(); width];
+            match v {
+                VirtRow::Text(graphemes) => {
+                    let mut x = gutter;
+                    for (g, w, vs) in graphemes {
+                        if x + w > width {
+                            break;
+                        }
+                        let mut cell = Cell::blank();
+                        if let Some(name) = vs {
+                            style(name, &mut cell);
+                        }
+                        put(&mut cells, x, g, *w, cell);
+                        x += w;
+                    }
+                }
+                VirtRow::Image { id, alt, cols, rows: total, index } => {
+                    let cols = (*cols).min(width.saturating_sub(gutter));
+                    if (*index == 0 || y == 0) && cols > 0 {
+                        drawn.images.push(DrawnImage {
+                            id: *id,
+                            col: gutter as u16,
+                            row: y as u16,
+                            cols: cols as u16,
+                            rows: (total - index).min(height - y) as u16,
+                            skip: *index as u16,
+                            total: *total as u16,
+                            alt: alt.clone(),
+                        });
+                    }
+                }
+            }
+            temzdf_scene::mend_wide(&mut cells);
+            drawn.rows.push(cells);
+            continue;
+        }
         let on_cursor_line = view.cursorline && row.line == cursor_line;
         let mut base = Cell::blank();
         if on_cursor_line {
@@ -217,6 +259,8 @@ pub fn render(
                     row: y as u16,
                     cols: g.width as u16,
                     rows: 1,
+                    skip: 0,
+                    total: 1,
                     alt: alt.clone(),
                 });
                 continue;
@@ -486,13 +530,16 @@ mod tests {
     fn images_leave_their_cells_blank_and_say_where_they_go() {
         use crate::marks::{VirtImage, VirtPos};
         let mut buf = Buffer::new(Text::from("ab"), LineEnding::Lf);
-        let img = VirtImage { id: 7, width: 40, height: 20, alt: "pic".into(), max_cols: None, missing: false };
+        let img = VirtImage { id: 7, width: 40, height: 20, alt: "pic".into(), ..Default::default() };
         buf.marks_mut().add(1, 1, MarkSpec { virt_image: Some(img), virt_pos: VirtPos::Inline, ..MarkSpec::default() });
         let mut v = View { width: 10, height: 1, ..View::default() };
         v.cursor = Cursor::at(0);
         let d = render(&buf, &v, &Highlights::default(), None, true, &[]);
         assert_eq!(line(&d, 0), "a    b    ");
-        assert_eq!(d.images, [DrawnImage { id: 7, col: 1, row: 0, cols: 4, rows: 1, alt: "pic".into() }]);
+        assert_eq!(
+            d.images,
+            [DrawnImage { id: 7, col: 1, row: 0, cols: 4, rows: 1, skip: 0, total: 1, alt: "pic".into() }]
+        );
         // Gone: its text instead, no image.
         buf.marks_mut().set_image(7, None);
         let d = render(&buf, &v, &Highlights::default(), None, true, &[]);
@@ -502,5 +549,42 @@ mod tests {
         buf.marks_mut().set_image(7, Some((20, 20)));
         let d = render(&buf, &v, &Highlights::default(), None, true, &[]);
         assert_eq!(d.images[0].cols, 2);
+    }
+
+    #[test]
+    fn virtual_lines_are_drawn_from_the_text_column_and_images_cut_at_the_top() {
+        use crate::marks::{VirtChunk, VirtImage, VirtLines};
+        let mut buf = Buffer::new(Text::from("ab\ncd"), LineEnding::Lf);
+        // 10x20-pixel cells: 30x60 pixels are 3x3 cells.
+        let image = Some(VirtImage { id: 7, width: 30, height: 60, alt: "pic".into(), ..Default::default() });
+        let text = vec![vec![VirtChunk { text: "note!".into(), style: Some("Search".into()) }]];
+        buf.marks_mut().add(
+            0,
+            0,
+            MarkSpec { virt_lines: Some(VirtLines { text, image, above: false }), ..Default::default() },
+        );
+        let hl = Highlights::default();
+        let mut v = View { width: 8, height: 6, number: NumberMode::Absolute, ..View::default() };
+        v.cursor = Cursor::at(0);
+        let d = render(&buf, &v, &hl, None, true, &[]);
+        // A gutter of four columns: the line cut after four.
+        let lines: Vec<String> = (0..6).map(|y| line(&d, y)).collect();
+        assert_eq!(lines, ["  1 ab  ", "    note", "        ", "        ", "        ", "  2 cd  "]);
+        assert_ne!(d.rows[1][4].bg, Cell::blank().bg, "in its style");
+        assert_eq!(
+            d.images,
+            [DrawnImage { id: 7, col: 4, row: 2, cols: 3, rows: 3, skip: 0, total: 3, alt: "pic".into() }]
+        );
+        // Scrolled into it: the rest of it; the bottom: cut there.
+        v.top_skip = 3;
+        let d = render(&buf, &v, &hl, None, true, &[]);
+        assert_eq!(
+            d.images,
+            [DrawnImage { id: 7, col: 4, row: 0, cols: 3, rows: 2, skip: 1, total: 3, alt: "pic".into() }]
+        );
+        v.top_skip = 0;
+        v.height = 3;
+        let d = render(&buf, &v, &hl, None, true, &[]);
+        assert_eq!(d.images[0].rows, 1);
     }
 }

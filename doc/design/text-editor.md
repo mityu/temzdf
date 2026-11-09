@@ -160,7 +160,18 @@ Following VS Code **(user)**:
   shown as nothing leaves a glyph of no columns. Off the cursor's line
   only, unless the decoration says so (Vim's `concealcursor`, per
   decoration): the view hands layout the cursor's line. Of overlapping
-  ranges the first is shown. Later: signs.
+  ranges the first is shown. Virtual lines (`virt_lines`) are rows of
+  their own (`Row.virt`, no glyphs): those above a line before its first
+  row, those below after its last, a row and its virtual lines a group.
+  Text rows are cut at the pane's edge, never wrapped; an image takes as
+  many rows as its pixels fill (scaled down to `maxRows`, `maxCols` and
+  the pane), drawn once from its first row shown with the part scrolled
+  past cut off (`DrawnImage.skip`). The view's top is a row start and how
+  many rows of its group are scrolled past (`View.top_skip`), so scrolling
+  goes a row at a time through a tall image; motions go by text rows and
+  skip them, a click on one puts the cursor at its line's end (start
+  above), and revealing a line from below shows the lines above it too.
+  Later: signs.
 
 ## 8. Undo
 
@@ -347,7 +358,7 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   Customising it comes later, all at once **(user)**.
 - Colours come from highlight groups; their definitions and the default
   scheme are the scripts'.
-- Later: folding, conceal, `listchars`, signs, virtual lines.
+- Later: folding, `listchars`, signs.
 
 ## 15. Smaller primitives
 

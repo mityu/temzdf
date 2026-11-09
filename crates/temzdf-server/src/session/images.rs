@@ -87,15 +87,24 @@ pub(super) fn image_layers(
     let mut alt = Vec::new();
     for d in drawn {
         let Some(l) = loaded.get(&d.id) else { continue };
-        let (bw, bh) = (u32::from(d.cols) * cw, u32::from(d.rows) * ch);
+        let total = u32::from(d.total.max(1));
+        let (bw, bh) = (u32::from(d.cols) * cw, total * ch);
         // As tall as its cells, as wide as its aspect asks (within them).
         let w =
             if l.height == 0 { bw } else { (u64::from(l.width) * u64::from(bh) / u64::from(l.height)) as u32 }.min(bw);
+        // The part in the rows shown.
+        let part = |r: u32| (u64::from(l.height) * u64::from(r) / u64::from(total)) as u32;
+        let (sy, sh) = (part(u32::from(d.skip)), part(u32::from(d.skip + d.rows)) - part(u32::from(d.skip)));
         layers.push(Layer {
             key: (u32::from(d.row) << 16) | u32::from(d.col),
             image: l.key,
-            src: Rect::new(0, 0, l.width, l.height),
-            dst: Rect::new(i32::from(d.col) * cw as i32, i32::from(d.row) * ch as i32, w.max(1), bh),
+            src: Rect::new(0, sy as i32, l.width, sh.max(1)),
+            dst: Rect::new(
+                i32::from(d.col) * cw as i32,
+                i32::from(d.row) * ch as i32,
+                w.max(1),
+                u32::from(d.rows) * ch,
+            ),
             z: 1,
         });
         holes.push(termpix_core::geom::Rect::new(
@@ -106,7 +115,8 @@ pub(super) fn image_layers(
         ));
         let mut rows = Vec::new();
         for r in 0..d.rows {
-            let text: String = if r == 0 { d.alt.chars().take(usize::from(d.cols)).collect() } else { String::new() };
+            let text: String =
+                if r == 0 && d.skip == 0 { d.alt.chars().take(usize::from(d.cols)).collect() } else { String::new() };
             let mut row: Vec<temzdf_scene::Cell> = text
                 .chars()
                 .map(|c| temzdf_scene::Cell { text: c.to_string(), ..temzdf_scene::Cell::blank() })

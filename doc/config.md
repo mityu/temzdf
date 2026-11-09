@@ -600,6 +600,12 @@ JavaScript strings index; out of range is clamped), ranges
   string, `\alpha` as `α`), an image (one row high, as `virtImage`) or
   nothing (as Vim's `conceal`); the cursor's line shows its text unless
   `cursorLine: true`. Searching, selecting and editing see the text.
+  `virtLines: { text?, image?, above? }` shows lines that are not in the
+  buffer below the range's first line (above it with `above: true`):
+  each of `text` one line (`[{ text, style? }]` or a string, cut at the
+  pane's edge), then `image` (`{ image, alt?, maxCols?, maxRows? }`) as
+  many rows high as its pixels fill; the cursor skips them and scrolling
+  goes through them a row at a time.
   `text.decoration(id)`, `text.decorations({ namespace?, range? })`,
   `text.moveDecoration(id, range)`, `text.deleteDecoration(id)`,
   `text.clearNamespace(ns)`. Styles are highlight groups:

@@ -5330,6 +5330,48 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "the file system")]
+    fn virtual_lines_are_rows_of_text_and_images_cut_where_scrolled() {
+        let (mut s, path) = text_session("vlines.txt", "ab\ncd\n");
+        let dir = path.parent().unwrap().to_owned();
+        let png = dir.join("pic.png");
+        // 10x20-pixel cells: 30x60 pixels are three columns, three rows.
+        write_png(&png, 30, 60);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        let at = |l| ScriptValue::map([("start", pos(l, 0)), ("end", pos(l, 0))]);
+        let id = run(&mut s, "load-image", &[str(png.to_str().unwrap())]).unwrap().0;
+        let below = ScriptValue::map([(
+            "virtLines",
+            ScriptValue::map([
+                ("text", ScriptValue::List(vec![str("note")])),
+                ("image", ScriptValue::map([("image", id), ("alt", str("P"))])),
+            ]),
+        )]);
+        run(&mut s, "text.add-decoration", &[at(0), below]).unwrap();
+        let above = ScriptValue::map([(
+            "virtLines",
+            ScriptValue::map([
+                ("text", ScriptValue::List(vec![ScriptValue::List(vec![str("u"), str("p")])])),
+                ("above", ScriptValue::Bool(true)),
+            ]),
+        )]);
+        run(&mut s, "text.add-decoration", &[at(1), above]).unwrap();
+        let rows = screen_text(&s.frame(), GEOMETRY);
+        assert_eq!(rows[..7].iter().map(|r| r.trim_end()).collect::<Vec<_>>(), ["ab", "note", "", "", "", "up", "cd"]);
+        let l = s.frame().layers[0];
+        assert_eq!((l.dst.x, l.dst.y, l.dst.w, l.dst.h), (0, 40, 30, 60));
+        assert_eq!((l.src.y, l.src.h), (0, 60));
+        // Scrolled into the image: its lower two thirds at the top.
+        run(&mut s, "text.scroll", &[ScriptValue::Num(3.0)]).unwrap();
+        let l = s.frame().layers[0];
+        assert_eq!((l.dst.y, l.dst.h, l.src.y, l.src.h), (0, 40, 20, 40));
+        let bad = ScriptValue::map([("virtLines", ScriptValue::map([("text", str("x"))]))]);
+        assert!(run(&mut s, "text.add-decoration", &[at(0), bad]).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
     fn virtual_text_shows_in_the_pane_and_the_cursor_skips_it() {
         let (mut s, path) = text_session("virt.txt", "abc\n");
         let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());

@@ -199,17 +199,24 @@ declare module "temzdf" {{
     virtText: VirtChunk[];
     virtTextPos: "inline" | "eol" | "overlay";
   }}
-  /** An image a decoration shows (an id from loadImage), the text shown where images cannot be, and at most how many columns it takes. */
+  /** An image a decoration shows (an id from loadImage), the text shown where images cannot be, and at most how many columns (and rows, in virtual lines) it takes. */
   export interface VirtImage {{
     image: number;
     alt?: string;
     maxCols?: number;
+    maxRows?: number;
   }}
   /** A range (within one line) shown as text, an image or nothing instead of its text; on the cursor's line shown as it is unless `cursorLine`. */
   export interface Conceal {{
     text?: (VirtChunk | string)[] | string;
     image?: VirtImage;
     cursorLine?: boolean;
+  }}
+  /** Lines shown below (or `above`) a decoration's first line, not in the buffer: each of `text` one line, then `image` as many rows high as its pixels fill. */
+  export interface VirtLines {{
+    text?: ((VirtChunk | string)[] | string)[];
+    image?: VirtImage;
+    above?: boolean;
   }}
   /** A piece of virtual text and its style (a highlight group). */
   export interface VirtChunk {{

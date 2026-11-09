@@ -1895,6 +1895,42 @@ fn a_concealed_range_shows_its_image_off_the_cursor_line() {
 }
 
 #[test]
+fn virtual_lines_show_text_and_an_image_between_the_lines() {
+    let deco = "cmd.text.addDecoration({ start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, \
+                { virtLines: { image: { image: id, alt: \"P\" } } });\
+                cmd.text.addDecoration({ start: { line: 1, character: 0 }, end: { line: 1, character: 0 } }, \
+                { virtLines: { text: [\"-- up --\"], above: true } });";
+    for graphics in [true, false] {
+        let env = Env::new(if graphics { "text-vlines" } else { "text-vlines-off" });
+        let png = env.path("pic.png");
+        // tuitest's cells are 10x20 pixels: two columns, two rows.
+        write_png(&png, 20, 40);
+        env.config("config.ts", &image_config(&png, deco));
+        let file = env.path("v.txt");
+        std::fs::write(&file, "ab\ncd\n").unwrap();
+        let mut opts = env.options();
+        if !graphics {
+            opts.env.push(("TERMPIX_GRAPHICS".into(), "off".into()));
+        }
+        let mut t = Term::spawn(&[BIN, "-s", "tv", file.to_str().unwrap()], &opts);
+        t.wait_text("cd");
+        t.key("F5");
+        let s = t.wait_for("the lines", |s| s.lines()[4].starts_with("cd"));
+        let l = s.lines();
+        assert!(l[0].starts_with("ab") && l[3].starts_with("-- up --"), "{l:?}");
+        if graphics {
+            let p = s.images.iter().find(|p| p.width == 20).expect("the image");
+            assert_eq!((p.col, p.row, p.cols, p.rows), (0, 1, 2, 2), "{p:?}");
+        } else {
+            assert!(l[1].starts_with("P ") && l[2].chars().take(10).all(|c| c == ' '), "{l:?}");
+        }
+        // The cursor goes from ab to cd.
+        t.key("Down");
+        t.wait_for("the cursor on cd", |s| s.cursor.is_some_and(|c| c.1 == 4));
+    }
+}
+
+#[test]
 fn a_text_file_is_edited_without_modes_and_written() {
     let env = Env::new("text-edit");
     env.config("config.ts", NOTEPAD);

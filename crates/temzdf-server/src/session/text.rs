@@ -252,7 +252,15 @@ fn virt_chunks(v: Option<&ScriptValue>, what: &str) -> Result<Vec<temzdf_textedi
     }
 }
 
-/// An image read with loadImage: `{ image, alt?, maxCols? }`.
+/// Virtual text as a plain string or a list of chunks.
+fn virt_text_or_str(v: Option<&ScriptValue>, what: &str) -> Result<Vec<temzdf_texteditor::VirtChunk>, String> {
+    match v {
+        Some(ScriptValue::Str(s)) => Ok(vec![temzdf_texteditor::VirtChunk { text: s.clone(), style: None }]),
+        v => virt_chunks(v, what),
+    }
+}
+
+/// An image read with loadImage: `{ image, alt?, maxCols?, maxRows? }`.
 fn parse_virt_image(
     loaded: &super::images::LoadedImages,
     v: Option<&ScriptValue>,
@@ -267,6 +275,7 @@ fn parse_virt_image(
         height: l.height,
         alt: v.get("alt").and_then(ScriptValue::as_str).unwrap_or("").to_owned(),
         max_cols: v.get("maxCols").and_then(ScriptValue::as_num).map(|n| n.max(1.0) as usize),
+        max_rows: v.get("maxRows").and_then(ScriptValue::as_num).map(|n| n.max(1.0) as usize),
         missing: false,
     }))
 }
@@ -1055,18 +1064,28 @@ impl Session {
                             return Err("conceal: a range within one line".into());
                         }
                         Some(temzdf_texteditor::Conceal {
-                            text: match c.get("text") {
-                                Some(ScriptValue::Str(s)) => virt_chunks(
-                                    Some(&ScriptValue::List(vec![ScriptValue::Str(s.clone())])),
-                                    "conceal.text",
-                                )?,
-                                t => virt_chunks(t, "conceal.text")?,
-                            },
+                            text: virt_text_or_str(c.get("text"), "conceal.text")?,
                             image: parse_virt_image(&self.loaded_images, c.get("image"), "conceal.image")?,
                             cursor_line: matches!(c.get("cursorLine"), Some(ScriptValue::Bool(true))),
                         })
                     }
                     Some(_) => return Err("conceal: { text?, image?, cursorLine? }".into()),
+                };
+                let virt_lines = match get("virtLines") {
+                    None | Some(ScriptValue::Null) => None,
+                    Some(v @ ScriptValue::Map(_)) => Some(temzdf_texteditor::VirtLines {
+                        text: match v.get("text") {
+                            None | Some(ScriptValue::Null) => Vec::new(),
+                            Some(ScriptValue::List(l)) => l
+                                .iter()
+                                .map(|line| virt_text_or_str(Some(line), "virtLines.text"))
+                                .collect::<Result<_, _>>()?,
+                            Some(_) => return Err("virtLines.text: a list of lines".into()),
+                        },
+                        image: parse_virt_image(&self.loaded_images, v.get("image"), "virtLines.image")?,
+                        above: matches!(v.get("above"), Some(ScriptValue::Bool(true))),
+                    }),
+                    Some(_) => return Err("virtLines: { text?, image?, above? }".into()),
                 };
                 let spec = temzdf_texteditor::MarkSpec {
                     namespace: get("namespace").and_then(ScriptValue::as_str).unwrap_or("").to_owned(),
@@ -1082,6 +1101,7 @@ impl Session {
                     virt_pos,
                     virt_image,
                     conceal,
+                    virt_lines,
                 };
                 let id = self.texts.get_mut(&buf).expect("found").buf.marks_mut().add(a, b, spec);
                 Ok((ScriptValue::Num(id as f64), Outcome::Redraw))
@@ -1526,8 +1546,8 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "text.add-decoration",
-        "(range: Range, opts?: { style?: string, namespace?: string, priority?: number, showIn?: number, startGravity?: \"before\" | \"after\", endGravity?: \"before\" | \"after\", ttl?: number, virtText?: (VirtChunk | string)[], virtTextPos?: \"inline\" | \"eol\" | \"overlay\", virtImage?: VirtImage, conceal?: Conceal, pane?: number }): number",
-        "Decorate a range (an empty one without a style is a mark): it follows edits, collapses and is flagged deleted when its text goes (undo restores it). `style` a highlight group, `showIn` a pane only, gravity where each end goes on an insertion exactly there, `ttl` milliseconds until it goes. `virtText` is text shown that is not in the buffer, at the range's start: `inline` between the characters (it takes columns; the cursor never goes in it), `eol` after the line's end, `overlay` over the text. `virtImage` (inline) is an image read with loadImage, one row high and as wide as its aspect asks (at most `maxCols`), `alt` shown where images cannot be. `conceal` shows the range (within one line) as other text, an image or nothing, except on the cursor's line unless `cursorLine`. Returns its id",
+        "(range: Range, opts?: { style?: string, namespace?: string, priority?: number, showIn?: number, startGravity?: \"before\" | \"after\", endGravity?: \"before\" | \"after\", ttl?: number, virtText?: (VirtChunk | string)[], virtTextPos?: \"inline\" | \"eol\" | \"overlay\", virtImage?: VirtImage, conceal?: Conceal, virtLines?: VirtLines, pane?: number }): number",
+        "Decorate a range (an empty one without a style is a mark): it follows edits, collapses and is flagged deleted when its text goes (undo restores it). `style` a highlight group, `showIn` a pane only, gravity where each end goes on an insertion exactly there, `ttl` milliseconds until it goes. `virtText` is text shown that is not in the buffer, at the range's start: `inline` between the characters (it takes columns; the cursor never goes in it), `eol` after the line's end, `overlay` over the text. `virtImage` (inline) is an image read with loadImage, one row high and as wide as its aspect asks (at most `maxCols`), `alt` shown where images cannot be. `conceal` shows the range (within one line) as other text, an image or nothing, except on the cursor's line unless `cursorLine`. `virtLines` are lines below the range's first line (above with `above`), not in the buffer: each of `text` a line (cut at the pane's edge), then `image` as many rows high as its pixels fill (at most `maxRows`, `maxCols`); the cursor skips them. Returns its id",
     ),
     ("text.decoration", "(id: number, opts?: { pane?: number }): Decoration | null", "A decoration or mark by id"),
     (

@@ -133,8 +133,9 @@ server on one `Session`). Next and open:
     asynchronous mappings; the user wants `input()`-driven operations
     such as sandwich.vim's function surround later);
   - function values in buffer, pane and tab variables;
-  - decorations beyond highlights and virtual text (images, conceal and
-    math previews, signs, virtual lines), folding, `listchars`;
+  - signs, folding, `listchars` (decorations have highlights, virtual
+    text, images, conceal and virtual lines, 2026-11-09; math previews
+    are the scripts' to build on them);
   - backups, and swap files of buffers without a file (swap files,
     `o.swapfile`, and undo files, `o.undofile`, are built, 2026-11-08);
   - customising the editor's status line;

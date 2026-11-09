@@ -5,7 +5,7 @@
 use crate::buffer::Buffer;
 use crate::cursor::{Cursor, SelectionKind};
 use crate::edit::{Change, Gravity, map_offset};
-use crate::layout::{Concealed, Inline, Layout, LayoutOptions, Row};
+use crate::layout::{Concealed, Inline, Layout, LayoutOptions, Row, VirtLine};
 use crate::motion::{self, Unit};
 use crate::text::Text;
 
@@ -58,6 +58,9 @@ pub struct View {
     pub cursor: Cursor,
     /// Where the top row starts.
     pub top: usize,
+    /// Display rows of the top row's group (its virtual lines above, the
+    /// row, those below) scrolled past.
+    pub top_skip: usize,
     /// The first display column shown, without wrapping.
     pub left: usize,
     /// The pane's size in cells, gutter included.
@@ -81,6 +84,7 @@ impl Default for View {
         Self {
             cursor: Cursor::default(),
             top: 0,
+            top_skip: 0,
             left: 0,
             width: 80,
             height: 24,
@@ -110,25 +114,40 @@ impl View {
 
     /// Lays out `buf` as this view shows it (its inline virtual text too).
     pub fn layouter<'a>(&'a self, buf: &'a Buffer) -> Layout<'a> {
+        self.layouter_with(buf, &self.layout)
+    }
+
+    /// [`layouter`](Self::layouter) with `opts` (a copy of the view's, so
+    /// the view can change meanwhile).
+    fn layouter_with<'a>(&self, buf: &'a Buffer, opts: &'a LayoutOptions) -> Layout<'a> {
         let text = buf.text();
         let width = self.text_width(text);
         let inline = Inline::of(buf.marks(), self.pane, self.cell, width);
         let concealed = Concealed::of(text, buf.marks(), self.pane, self.cell, width, text.line_of(self.cursor.pos));
-        Layout { text, opts: &self.layout, width, inline, concealed }
+        let virt_lines = VirtLine::of(text, buf.marks(), self.pane, self.cell, width);
+        Layout { text, opts, width, inline, concealed, virt_lines }
     }
 
-    /// The rows shown, top first.
+    /// The rows shown, top first (virtual lines among them).
     pub fn rows(&self, buf: &Buffer) -> Vec<Row> {
         let l = self.layouter(buf);
         let limit = self.left + l.width;
-        let mut rows = Vec::with_capacity(self.height as usize);
+        let height = self.height as usize;
+        let mut rows = Vec::with_capacity(height);
         let mut at = Some(self.top);
+        let mut skip = self.top_skip;
         while let Some(start) = at
-            && rows.len() < self.height as usize
+            && rows.len() < height
         {
             let row = l.row_at(start, limit);
             at = l.next_row(&row);
-            rows.push(row);
+            for r in l.group(row) {
+                if skip > 0 {
+                    skip -= 1;
+                } else if rows.len() < height {
+                    rows.push(r);
+                }
+            }
         }
         rows
     }
@@ -138,15 +157,19 @@ impl View {
     pub fn follow(&mut self, buf: &Buffer, changes: &[Change]) {
         self.cursor.follow(changes);
         let top = map_offset(self.top, changes, Gravity::Before).0;
-        let top = self.layouter(buf).row_start_of(top);
-        self.top = top;
+        let l = self.layouter(buf);
+        let top = l.row_start_of(top);
+        let skip = self.top_skip.min(l.group_len(top) - 1);
+        (self.top, self.top_skip) = (top, skip);
     }
 
     /// The layout changed (width, wrapping): the top must be a row start
     /// again.
     pub fn relayout(&mut self, buf: &Buffer) {
-        let top = self.layouter(buf).row_start_of(self.top.min(buf.text().len_chars()));
-        self.top = top;
+        let l = self.layouter(buf);
+        let top = l.row_start_of(self.top.min(buf.text().len_chars()));
+        let skip = self.top_skip.min(l.group_len(top) - 1);
+        (self.top, self.top_skip) = (top, skip);
         self.reveal(buf, self.cursor.pos, Reveal::Minimal);
     }
 
@@ -222,20 +245,16 @@ impl View {
     /// sight.
     pub fn scroll(&mut self, buf: &Buffer, rows: i64) {
         let opts = self.layout.clone();
-        let text = buf.text();
-        let width = self.text_width(text);
-        let inline = Inline::of(buf.marks(), self.pane, self.cell, width);
-        let concealed = Concealed::of(text, buf.marks(), self.pane, self.cell, width, text.line_of(self.cursor.pos));
-        let l = Layout { text, opts: &opts, width, inline, concealed };
+        let l = self.layouter_with(buf, &opts);
         for _ in 0..rows.unsigned_abs() {
-            let next = if rows < 0 { l.prev_row(self.top) } else { l.next_row(&l.row_at(self.top, usize::MAX)) };
+            let next = if rows < 0 { l.up((self.top, self.top_skip)) } else { l.down((self.top, self.top_skip)) };
             match next {
-                Some(s) => self.top = s,
+                Some(s) => (self.top, self.top_skip) = s,
                 None => break,
             }
         }
-        // The cursor into the rows shown (keeping its column).
-        let shown = self.rows(buf);
+        // The cursor into the text rows shown (keeping its column).
+        let shown: Vec<Row> = self.rows(buf).into_iter().filter(|r| r.virt.is_none()).collect();
         let (Some(first), Some(last)) = (shown.first(), shown.last()) else { return };
         let so = self.scrolloff.min(shown.len().saturating_sub(1) / 2);
         let pos = self.cursor.pos;
@@ -258,49 +277,51 @@ impl View {
     /// Scroll so `offset` is shown, as `how` says.
     pub fn reveal(&mut self, buf: &Buffer, offset: usize, how: Reveal) {
         let opts = self.layout.clone();
+        let l = self.layouter_with(buf, &opts);
         let text = buf.text();
-        let width = self.text_width(text);
-        let inline = Inline::of(buf.marks(), self.pane, self.cell, width);
-        let concealed = Concealed::of(text, buf.marks(), self.pane, self.cell, width, text.line_of(self.cursor.pos));
-        let l = Layout { text, opts: &opts, width, inline, concealed };
-        let target = l.row_start_of(offset.min(text.len_chars()));
+        // Display rows as (row start, rows into its group): the target's
+        // row, and its group's first (the virtual lines above it).
+        let row = l.row_of(offset.min(text.len_chars()));
+        let (target, group) = ((row.start, l.above_len(&row)), (row.start, 0));
         let height = self.height.max(1) as usize;
         let so = self.scrolloff.min((height - 1) / 2);
-        // Rows from `start` back `n` (as far as there are).
-        let back = |mut start: usize, n: usize| {
+        // Rows from `spot` back `n` (as far as there are).
+        let back = |mut spot: (usize, usize), n: usize| {
             for _ in 0..n {
-                match l.prev_row(start) {
-                    Some(s) => start = s,
+                match l.up(spot) {
+                    Some(s) => spot = s,
                     None => break,
                 }
             }
-            start
+            spot
         };
-        match how {
-            Reveal::Top => self.top = back(target, so),
-            Reveal::Center => self.top = back(target, (height - 1) / 2),
+        let top = (self.top, self.top_skip);
+        let new = match how {
+            Reveal::Top => back(target, so),
+            Reveal::Center => back(target, (height - 1) / 2),
+            // Up to it: its virtual lines above shown too.
+            Reveal::Minimal if target < top => back(group, so),
             Reveal::Minimal => {
-                if target < self.top || target < back(self.top, 0) {
-                    self.top = back(target, so);
+                // Rows from the top to the target, if within sight.
+                let mut spot = top;
+                let mut n = 0;
+                while spot < target && n < height {
+                    match l.down(spot) {
+                        Some(s) => spot = s,
+                        None => break,
+                    }
+                    n += 1;
+                }
+                if n < so && top > (0, 0) {
+                    back(target, so)
+                } else if n + so >= height {
+                    back(target, height - 1 - so)
                 } else {
-                    // Rows from the top to the target, if within sight.
-                    let mut start = self.top;
-                    let mut n = 0;
-                    while start < target && n < height {
-                        match l.next_row(&l.row_at(start, usize::MAX)) {
-                            Some(s) => start = s,
-                            None => break,
-                        }
-                        n += 1;
-                    }
-                    if n < so && self.top > 0 {
-                        self.top = back(target, so);
-                    } else if n + so >= height {
-                        self.top = back(target, height - 1 - so);
-                    }
+                    top
                 }
             }
-        }
+        };
+        (self.top, self.top_skip) = new;
         if !opts.wrap {
             let col = l.row_at(l.text.line_start(l.text.line_of(offset)), usize::MAX).col_of(offset);
             let width = l.width;
@@ -425,5 +446,68 @@ xy",
         assert_eq!(v.left, 30);
         v.set_cursor(&buf, 3, false);
         assert_eq!(v.left, 0, "back to the start when it fits there");
+    }
+
+    /// `text` with virtual lines `(line, above, rows of text)`.
+    fn with_lines(text: &str, lines: &[(usize, bool, &[&str])]) -> Buffer {
+        use crate::marks::{MarkSpec, VirtChunk, VirtLines};
+        let mut buf = Buffer::new(Text::from(text), LineEnding::Lf);
+        for &(line, above, rows) in lines {
+            let at = buf.text().line_start(line);
+            let text = rows.iter().map(|r| vec![VirtChunk { text: (*r).into(), style: None }]).collect();
+            let spec = MarkSpec { virt_lines: Some(VirtLines { text, image: None, above }), ..Default::default() };
+            buf.marks_mut().add(at, at, spec);
+        }
+        buf
+    }
+
+    /// The rows shown: text, or virtual lines in capitals.
+    fn shown(v: &View, buf: &Buffer) -> Vec<String> {
+        v.rows(buf)
+            .iter()
+            .map(|r| match &r.virt {
+                Some(crate::layout::VirtRow::Text(g)) => g.iter().map(|g| g.0.as_str()).collect(),
+                Some(crate::layout::VirtRow::Image { index, .. }) => format!("#{index}"),
+                None => buf.text().slice(r.start, r.end).to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn virtual_lines_are_rows_the_cursor_skips() {
+        let buf = with_lines("one\ntwo\nthree", &[(1, false, &["B1", "B2"]), (1, true, &["A"])]);
+        let mut v = view(10, 10);
+        assert_eq!(shown(&v, &buf), ["one", "A", "two", "B1", "B2", "three"]);
+        // Down from one: two, then three (display lines too).
+        v.move_cursor(&buf, ViewUnit::Line, 1, false);
+        assert_eq!(buf.text().line_of(v.cursor.pos), 1);
+        v.move_cursor(&buf, ViewUnit::DisplayLine, 1, false);
+        assert_eq!(buf.text().line_of(v.cursor.pos), 2);
+        // A click on one: its line's end (below) or start (above).
+        assert_eq!(v.offset_at_cell(&buf, 1, 3), 7);
+        assert_eq!(v.offset_at_cell(&buf, 1, 1), 4);
+        // Below a wrapped line: after its last row; above: before its first.
+        let buf = with_lines("abcdef", &[(0, false, &["B"]), (0, true, &["A"])]);
+        assert_eq!(shown(&view(3, 10), &buf), ["A", "abc", "def", "B"]);
+    }
+
+    #[test]
+    fn scrolling_goes_through_virtual_lines_a_row_at_a_time() {
+        let buf = with_lines("one\ntwo\nthree\nfour", &[(0, false, &["B1", "B2"]), (0, true, &["A"])]);
+        let mut v = view(10, 3);
+        assert_eq!(shown(&v, &buf), ["A", "one", "B1"]);
+        v.scroll(&buf, 2);
+        assert_eq!(shown(&v, &buf), ["B1", "B2", "two"]);
+        assert_eq!(buf.text().line_of(v.cursor.pos), 1, "the cursor into the text shown");
+        v.scroll(&buf, -1);
+        assert_eq!(shown(&v, &buf), ["one", "B1", "B2"]);
+        // Up to the first line: the lines above it shown too.
+        v.set_cursor(&buf, buf.text().line_start(3), false);
+        assert_eq!(shown(&v, &buf), ["two", "three", "four"]);
+        v.set_cursor(&buf, 0, false);
+        assert_eq!(shown(&v, &buf), ["A", "one", "B1"]);
+        // Down to a line: its row at the bottom.
+        v.set_cursor(&buf, buf.text().line_start(2), false);
+        assert_eq!(shown(&v, &buf), ["B2", "two", "three"]);
     }
 }
