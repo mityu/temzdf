@@ -1,0 +1,14 @@
+[package]
+name = "temzdf-markdown"
+description = "Markdown for temzdf's viewer: parsing into a document of blocks that keep their source lines, and drawing it as text (the text mode) or HTML (the graphics mode). No terminal code."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Without the default features: no CLI, no syntect through onig.
+comrak = { version = "0.57.0", default-features = false }
+
+[lints]
+workspace = true

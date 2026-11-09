@@ -9,6 +9,7 @@ members = [
     "crates/temzdf-pdfview",
     "crates/temzdf-term",
     "crates/temzdf-texteditor",
+    "crates/temzdf-markdown",
     "crates/temzdf-script",
     "crates/temzdf-script-guest",
     "crates/temzdf-script-runner",
@@ -37,6 +38,7 @@ temzdf-pdfcore = { path = "crates/temzdf-pdfcore" }
 temzdf-pdfview = { path = "crates/temzdf-pdfview" }
 temzdf-term = { path = "crates/temzdf-term" }
 temzdf-texteditor = { path = "crates/temzdf-texteditor" }
+temzdf-markdown = { path = "crates/temzdf-markdown" }
 temzdf-script = { path = "crates/temzdf-script", default-features = false }
 temzdf-script-runner = { path = "crates/temzdf-script-runner" }
 temzdf-tty = { path = "crates/temzdf-tty" }
