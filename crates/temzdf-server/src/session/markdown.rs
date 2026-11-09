@@ -5,6 +5,7 @@
 //! width moves to another (keeping its place by the source line).
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use temzdf_markdown::{Deco, Document, Rendered};
 use temzdf_protocol::script::ScriptValue;
@@ -156,6 +157,7 @@ impl Session {
         name: &str,
         args: &[ScriptValue],
         count: Option<usize>,
+        now: Instant,
     ) -> Option<Result<(ScriptValue, Outcome), String>> {
         let opts = args.iter().find(|v| matches!(v, ScriptValue::Map(_)));
         let pane_opt = |i: usize| -> PaneId {
@@ -230,19 +232,19 @@ impl Session {
                 };
                 let result = match name {
                     "markdown.scroll" => {
-                        p.scroll_by(page, n * row);
+                        p.scroll_by(page, n * row, now);
                         ScriptValue::Null
                     }
                     "markdown.page" => {
-                        p.page_by(page, n);
+                        p.page_by(page, n, now);
                         ScriptValue::Null
                     }
                     "markdown.top" => {
-                        p.scroll_to(page, 0.0);
+                        p.glide_to(page, 0.0, now);
                         ScriptValue::Null
                     }
                     "markdown.bottom" => {
-                        p.scroll_to(page, f64::MAX);
+                        p.glide_to(page, f64::MAX, now);
                         ScriptValue::Null
                     }
                     _ => ScriptValue::Bool(p.search_next(page, if n < 0.0 { -1 } else { 1 })),
@@ -383,7 +385,9 @@ impl Session {
         let line = self.md_top_line(pane).unwrap_or(0);
         if mode == "graphics" {
             let (w, h) = self.pane_pixels(pane).ok_or("no pane")?;
-            let kind = Kind::Markdown { pane: Box::new(temzdf_mdview::MdPane::new(w, h)), doc: md };
+            let mut view = temzdf_mdview::MdPane::new(w, h);
+            view.set_scroll_config(self.options.scroll());
+            let kind = Kind::Markdown { pane: Box::new(view), doc: md };
             let e = self.panes.get_mut(&pane).ok_or("no pane")?;
             let old = std::mem::replace(&mut e.kind, kind);
             if let Some((p, page)) = self.md_graphics(pane) {
@@ -410,7 +414,7 @@ impl Session {
 
     /// Zoom graphics pane `pane` a step (`dir` > 0 in, < 0 out, 0 back to
     /// 100%), at the same place.
-    fn md_zoom(&mut self, pane: PaneId, dir: i32) -> Result<(), String> {
+    pub(super) fn md_zoom(&mut self, pane: PaneId, dir: i32) -> Result<(), String> {
         let line = self.md_top_line(pane);
         let Some(Kind::Markdown { pane: p, doc }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) else {
             return Err("markdown.zoom: not a Markdown viewer in its graphics mode".into());

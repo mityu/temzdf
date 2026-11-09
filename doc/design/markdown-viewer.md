@@ -104,9 +104,18 @@ would fail the link rather than go unnoticed.
   their parley layouts (`Selection::geometry`), placed at the content box.
   Marks are images of their own size (a stretched pixel looked different
   in kitty and WezTerm).
-- Zoom lays the page out again at Blitz's zoom (0.5 to 3, in steps);
-  switching modes, zooming, resizing and reloading keep the source line at
-  the top.
+- Zoom lays the page out again at Blitz's zoom (0.5 to 3, in steps;
+  keys, or Ctrl and the wheel); switching modes, zooming, resizing and
+  reloading keep the source line at the top (the one the pane is
+  scrolling to, if it is).
+- Scrolling goes through `termpix_core::viewport::Viewport`, as the PDF
+  pane's does: wheel steps of `o.scrollstep` ease (`o.scrollsmoothness`)
+  and speed up when flicked, fingers' pixels are followed exactly, keys
+  that scroll and page ease too; jumps (links, headings, search, places
+  kept) do not. The viewport is the part of the views worth sharing:
+  zoom means different things (a PDF scales, a page lays out again) and
+  stays each pane's, and a webview's engine scrolls by itself. Sharing
+  the painting schedule (prefetch, workers) is in `todo.md`.
 - Differences from the plan, decided while building it: layout and
   painting run on the session's thread (a page of `tests/fixtures/sample.md` lays out in
   about 4 ms and paints a screen in 4-5 ms; 50 copies of it 33 ms and

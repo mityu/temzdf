@@ -324,7 +324,7 @@ impl Session {
         if let Some(result) = self.register_command(name, args) {
             return result;
         }
-        if let Some(result) = self.markdown_command(name, args, count) {
+        if let Some(result) = self.markdown_command(name, args, count, now) {
             return result;
         }
         if let "search-for" | "search-preview" | "search-cancel" = name {

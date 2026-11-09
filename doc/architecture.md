@@ -29,7 +29,9 @@
 | `tuitest` (tests only) | `libghostty-vt`, `portable-pty` (none of ours; `temzdf` uses it in `tests/tui.rs`) |
 
 - `termpix-core`: frontend-independent primitives (geometry, raster helpers,
-  kinetic scroll, key/mouse events).
+  kinetic scroll, key/mouse events, and the viewport the PDF and Markdown
+  panes scroll through: both axes, sizes, scrolling input, Ctrl+wheel as
+  a zoom request).
 - `termpix`: the terminal library (below); re-exports `termpix-core`.
 - `termpix-ui`: pixel widgets (below); no dependency on `termpix`.
 - `temzdf-scene`: what a pane shows, independent of the frontend: an image

@@ -1882,10 +1882,16 @@ impl Session {
     fn apply_options(&mut self) {
         let (scroll, preview, anchor, host) =
             (self.options.scroll(), self.options.preview_delay(), self.options.reloadanchor_text, self.options.host());
-        for p in self.panes.values_mut().filter_map(PaneEntry::pdf) {
-            p.viewer.viewport.set_config(scroll);
-            p.preview_delay = preview;
-            p.anchor_by_text = anchor;
+        for e in self.panes.values_mut() {
+            match &mut e.kind {
+                Kind::Pdf { pane: p, .. } => {
+                    p.viewer.viewport.set_config(scroll);
+                    p.preview_delay = preview;
+                    p.anchor_by_text = anchor;
+                }
+                Kind::Markdown { pane, .. } => pane.set_scroll_config(scroll),
+                Kind::Term { .. } | Kind::Text { .. } => {}
+            }
         }
         for h in self.docs.values_mut().filter_map(|d| d.host.as_mut()) {
             h.set_options(host.clone());
@@ -2216,17 +2222,16 @@ impl Session {
                     },
                 };
                 let page = self.md_docs.get(doc).and_then(|d| d.page(pane.page_key()));
-                let changed = page.is_some_and(|page| pane.mouse(page, &px, cell.height));
-                let follow: Vec<String> = pane
-                    .take_requests()
-                    .into_iter()
-                    .map(|r| match r {
-                        temzdf_mdview::Request::Follow(t) => t,
-                    })
-                    .collect();
+                let changed = page.is_some_and(|page| pane.mouse(page, &px, cell.height, now));
                 let mut out = if changed { out.merge(Outcome::Redraw) } else { out };
-                for target in follow {
-                    if let Err(e) = self.md_follow(id, &target) {
+                for r in pane.take_requests() {
+                    let done = match r {
+                        temzdf_mdview::Request::Follow(target) => self.md_follow(id, &target),
+                        temzdf_mdview::Request::Zoom(n) => {
+                            (0..n.unsigned_abs()).try_for_each(|_| self.md_zoom(id, n.signum()))
+                        }
+                    };
+                    if let Err(e) = done {
                         self.message(&e);
                     }
                     out = out.merge(Outcome::Redraw);
@@ -2501,16 +2506,26 @@ impl Session {
     }
 
     pub fn is_animating(&self) -> bool {
-        self.panes.values().any(|e| matches!(&e.kind, Kind::Pdf { pane, .. } if pane.is_animating()))
+        self.panes.values().any(|e| match &e.kind {
+            Kind::Pdf { pane, .. } => pane.is_animating(),
+            Kind::Markdown { pane, .. } => pane.is_animating(),
+            Kind::Term { .. } | Kind::Text { .. } => false,
+        })
     }
 
     /// Advance animations and timers. Returns whether to redraw.
     pub fn tick(&mut self, now: Instant) -> bool {
         let mut changed = false;
-        for p in self.panes.values_mut().filter_map(PaneEntry::pdf) {
-            changed |= p.tick(now);
-            // A highlight expired.
-            changed |= p.next_deadline().is_some_and(|d| now >= d);
+        for e in self.panes.values_mut() {
+            match &mut e.kind {
+                Kind::Pdf { pane: p, .. } => {
+                    changed |= p.tick(now);
+                    // A highlight expired.
+                    changed |= p.next_deadline().is_some_and(|d| now >= d);
+                }
+                Kind::Markdown { pane, .. } => changed |= pane.tick(now),
+                Kind::Term { .. } | Kind::Text { .. } => {}
+            }
         }
         let here = self.here_panes();
         for (&id, d) in self.docs.iter_mut() {
@@ -5092,6 +5107,8 @@ mod tests {
         let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         run(&mut s, "markdown.goto", &[str("section-5")]).unwrap();
+        s.options.scrollstep = 100.0;
+        s.apply_options();
         run(&mut s, "markdown.set-mode", &[str("graphics")]).unwrap();
         assert_eq!(run(&mut s, "markdown.mode", &[]).unwrap().0, str("graphics"));
         assert_eq!(s.pane_mode(s.focus), "markdown");
@@ -5104,19 +5121,52 @@ mod tests {
         assert_eq!(top(&mut s), section(5), "at the same heading");
         // Scrolling moves the strips; the top and bottom are the page's ends.
         let ys = |s: &mut Session| s.frame().layers.iter().map(|l| (l.key, l.dst.y)).collect::<Vec<_>>();
+        let settle = |s: &mut Session| {
+            s.tick(Instant::now() + Duration::from_secs(5));
+            assert!(!s.is_animating());
+        };
         let before = ys(&mut s);
         run(&mut s, "markdown.scroll", &[ScriptValue::Num(2.0)]).unwrap();
+        assert!(s.is_animating(), "it eases there");
+        settle(&mut s);
         let after = ys(&mut s);
         // (The first strip is clipped at the pane's top: the last one.)
         let (key, y) = *before.last().unwrap();
         assert_eq!(after.iter().find(|l| l.0 == key).map(|l| l.1), Some(y - 40), "{before:?} {after:?}");
         run(&mut s, "markdown.top", &[]).unwrap();
+        settle(&mut s);
         assert_eq!(top(&mut s), 0);
+        // The wheel: steps of o.scrollstep (set before the pane was), eased;
+        // Ctrl zooms in place.
+        let wheel = |s: &mut Session, dir, modifiers| {
+            let kind = MouseEventKind::Scroll(dir);
+            s.mouse(&MouseEvent { kind, x: 300, y: 300, unit: CoordUnit::Pixel, modifiers }, Instant::now());
+        };
+        wheel(&mut s, termpix_core::input::ScrollDirection::Down, Modifiers::NONE);
+        assert!(s.is_animating());
+        settle(&mut s);
+        assert_eq!(s.md_graphics(s.focus).unwrap().0.scroll(), 100.0);
+        // And follow the option (back up: a step the same way this soon
+        // would be a flick's, larger).
+        s.options.scrollstep = 40.0;
+        s.apply_options();
+        wheel(&mut s, termpix_core::input::ScrollDirection::Up, Modifiers::NONE);
+        settle(&mut s);
+        assert_eq!(s.md_graphics(s.focus).unwrap().0.scroll(), 60.0);
+        run(&mut s, "markdown.goto", &[str("section-5")]).unwrap();
+        wheel(&mut s, termpix_core::input::ScrollDirection::Up, Modifiers::CTRL);
+        assert!(!s.is_animating(), "a zoom does not scroll");
+        let md = *s.md_docs.keys().next().unwrap();
+        assert!((s.md_docs[&md].pages[0].zoom - 1.1).abs() < 1e-3);
+        assert_eq!(top(&mut s), section(5), "zoomed in place");
+        run(&mut s, "markdown.zoom", &[str("reset")]).unwrap();
+        run(&mut s, "markdown.top", &[]).unwrap();
+        settle(&mut s);
         // A click on the link follows it.
         let (x, y) = {
             let (p, page) = s.md_graphics(s.focus).unwrap();
             let r = page.find("jump")[0];
-            (((r.x0 + r.x1) / 2.0) as i32, ((r.y0 + r.y1) / 2.0 - p.scroll) as i32)
+            (((r.x0 + r.x1) / 2.0) as i32, ((r.y0 + r.y1) / 2.0 - p.scroll()) as i32)
         };
         for kind in [MouseEventKind::Press(MouseButton::Left), MouseEventKind::Release(MouseButton::Left)] {
             s.mouse(&MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE }, Instant::now());
@@ -5125,7 +5175,6 @@ mod tests {
         // Zoom: laid out again at the same place, one page kept.
         run(&mut s, "markdown.zoom", &[str("in")]).unwrap();
         assert_eq!(top(&mut s), section(12));
-        let md = *s.md_docs.keys().next().unwrap();
         assert_eq!(s.md_docs[&md].pages.len(), 1);
         assert!((s.md_docs[&md].pages[0].zoom - 1.1).abs() < 1e-3);
         // Search: the matches marked, n moves on.

@@ -294,8 +294,8 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `modehistory` | `100` | modes the history keeps |
 | `copyhistory` | `30` | entries the copy history keeps (see Copies and registers) |
 | `clipboard` | `"all"` | what goes to the client's clipboard as well: copies and deletes (`"all"`, Vim's `clipboard=unnamedplus`), `"copies"`, or `"none"`; a copy to a named register never does |
-| `scrollstep` | `60` | pixels per wheel step, before flick acceleration |
-| `scrollsmoothness` | `60` | easing time constant in milliseconds (smaller is snappier) |
+| `scrollstep` | `60` | pixels per wheel step, before flick acceleration (PDF panes, the Markdown viewer's graphics mode) |
+| `scrollsmoothness` | `60` | easing time constant in milliseconds (smaller is snappier; the same panes) |
 | `linkopener` | `null` | command opening external links, the URI appended (`["firefox"]`); `null`: `xdg-open` / `open`. Runs in the client; a failure shows as a message. Only `http`, `https`, `mailto` and `ftp` links open, and `file` links to existing documents: regular files, not executable, not of a kind openers launch (`.desktop`, `.command`, scripts, ...): documents and programs are not trusted |
 | `linkpreview` | `true` | preview internal links (references, citations, the outline) when the pointer rests on one |
 | `linkpreviewdelay` | `300` | milliseconds before the preview |

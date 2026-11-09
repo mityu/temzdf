@@ -182,7 +182,11 @@ server on one `Session`). Next and open:
   - a dark style for the graphics mode, and selecting text there;
   - mermaid diagrams;
   - layout and painting of large documents on a worker thread (now on the
-    session's thread, a few milliseconds for usual documents).
+    session's thread, a few milliseconds for usual documents), and strips
+    painted ahead of the pane (a screen above and below, as PDF tiles):
+    the PDF viewer's tile schedule (visible and prefetched tiles, requests
+    to workers, stand-ins, eviction) shared by both, as the viewport
+    already is (`termpix_core::viewport`).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
 - Judged e2e (`expect` in `scripts/e2e.sh`, `doc/dev/testing.md`) covers keys and

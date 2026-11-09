@@ -2,8 +2,12 @@
 //! its search, and the frame it shows. The page it needs (its width and
 //! zoom) is the session's to keep, shared by panes that need the same.
 
+use std::time::Instant;
 use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer, Rect as SceneRect};
-use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind, ScrollDirection, ScrollUnit};
+
+use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
+use termpix_core::scroll::ScrollConfig;
+use termpix_core::viewport::{Input, Viewport};
 
 use crate::page::{Page, Rect};
 
@@ -18,6 +22,8 @@ const CLICK_SLOP: f64 = 4.0;
 pub enum Request {
     /// A link was clicked: its target as written.
     Follow(String),
+    /// Ctrl and the wheel: zoom this many steps (in when positive).
+    Zoom(i32),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -30,8 +36,9 @@ pub struct Search {
 }
 
 pub struct MdPane {
-    /// Device pixels from the page's top.
-    pub scroll: f64,
+    /// Where the pane is on its page (device pixels), scrolled as PDF
+    /// pages are.
+    pub viewport: Viewport,
     pub width: u32,
     pub height: u32,
     pub zoom: f32,
@@ -47,8 +54,10 @@ pub struct MdPane {
 
 impl MdPane {
     pub fn new(width: u32, height: u32) -> Self {
+        let mut viewport = Viewport::default();
+        viewport.set_view(f64::from(width), f64::from(height));
         Self {
-            scroll: 0.0,
+            viewport,
             width,
             height,
             zoom: 1.0,
@@ -69,30 +78,64 @@ impl MdPane {
         (self.width, self.height) = (width, height);
     }
 
+    pub fn set_scroll_config(&mut self, config: ScrollConfig) {
+        self.viewport.set_config(config);
+    }
+
+    /// Where the pane is shown on its page now (device pixels).
+    pub fn scroll(&self) -> f64 {
+        self.viewport.y.offset()
+    }
+
+    /// Where it is going (where it is when not scrolling).
+    fn destination(&self) -> f64 {
+        self.viewport.y.target()
+    }
+
+    /// The scrolling limits for `page` at the pane's size.
     fn clamp(&mut self, page: &Page) {
-        let most = f64::from(page.height().saturating_sub(self.height));
-        self.scroll = self.scroll.clamp(0.0, most.max(0.0));
+        let (w, h) = (f64::from(self.width), f64::from(self.height));
+        self.viewport.set_sizes((w, h), (w, f64::from(page.height())));
     }
 
-    pub fn scroll_by(&mut self, page: &Page, dy: f64) {
-        self.scroll += dy;
+    /// Scroll by `dy` pixels, animated.
+    pub fn scroll_by(&mut self, page: &Page, dy: f64, now: Instant) {
         self.clamp(page);
+        self.viewport.y.scroll_by(dy, now);
     }
 
+    /// Go to `y`, animated (`f64::MAX`: the bottom).
+    pub fn glide_to(&mut self, page: &Page, y: f64, now: Instant) {
+        self.clamp(page);
+        let from = self.destination();
+        self.viewport.y.scroll_by(y - from, now);
+    }
+
+    /// Show `y` at the top at once.
     pub fn scroll_to(&mut self, page: &Page, y: f64) {
-        self.scroll = y;
         self.clamp(page);
+        self.viewport.y.jump_to(y);
     }
 
-    /// A screenful less a little (`n` of them, up when negative).
-    pub fn page_by(&mut self, page: &Page, n: f64) {
+    /// A screenful less a little (`n` of them, up when negative), animated.
+    pub fn page_by(&mut self, page: &Page, n: f64, now: Instant) {
         let step = (f64::from(self.height) * 0.9).max(1.0);
-        self.scroll_by(page, step * n);
+        self.scroll_by(page, step * n, now);
     }
 
-    /// The source line at the top of the pane.
+    pub fn is_animating(&self) -> bool {
+        self.viewport.is_animating()
+    }
+
+    /// Advance the scrolling to `now`. Whether the pane moved.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        self.viewport.tick(now)
+    }
+
+    /// The source line at the top of the pane (where it is going: a
+    /// layout done while it scrolls keeps the place it scrolls to).
     pub fn top_line(&self, page: &Page) -> usize {
-        page.line_at(self.scroll)
+        page.line_at(self.destination())
     }
 
     /// Show source line `line` at the top.
@@ -134,24 +177,23 @@ impl MdPane {
         self.hover.as_deref()
     }
 
-    /// A mouse event in pane pixels: the wheel scrolls, a click on a link
-    /// asks to follow it. Whether the pane changed.
-    pub fn mouse(&mut self, page: &Page, m: &MouseEvent, cell_h: u32) -> bool {
-        let (x, y) = (f64::from(m.x), f64::from(m.y) + self.scroll);
+    /// A mouse event in pane pixels: the wheel scrolls (Ctrl asks to
+    /// zoom), a click on a link asks to follow it. Whether the pane
+    /// changed.
+    pub fn mouse(&mut self, page: &Page, m: &MouseEvent, cell_h: u32, now: Instant) -> bool {
+        let (x, y) = (f64::from(m.x), f64::from(m.y) + self.scroll());
+        if m.kind.is_scroll() {
+            self.clamp(page);
+            return match self.viewport.input(m, 3.0 * f64::from(cell_h.max(1)), now) {
+                Input::Scrolled => true,
+                Input::Zoom(n) => {
+                    self.requests.push(Request::Zoom(n));
+                    true
+                }
+                Input::Ignored => false,
+            };
+        }
         match m.kind {
-            MouseEventKind::Scroll(d @ (ScrollDirection::Up | ScrollDirection::Down)) => {
-                let step = f64::from(cell_h.max(1)) * 3.0;
-                self.scroll_by(page, if d == ScrollDirection::Up { -step } else { step });
-                true
-            }
-            MouseEventKind::ScrollBy { dy, unit, .. } if dy != 0 => {
-                let px = match unit {
-                    ScrollUnit::Line => f64::from(dy) / 100.0 * f64::from(cell_h.max(1)) * 3.0,
-                    ScrollUnit::Pixel => f64::from(dy) / 100.0,
-                };
-                self.scroll_by(page, px);
-                true
-            }
             MouseEventKind::Press(MouseButton::Left) => {
                 self.press = Some((x, y));
                 false
@@ -188,7 +230,7 @@ impl MdPane {
     /// The first hit of `query` shown while it is typed (back to where it
     /// began without one).
     pub fn preview(&mut self, page: &Page, query: &str) -> bool {
-        let from = *self.search.from.get_or_insert(self.scroll);
+        let from = *self.search.from.get_or_insert(self.destination());
         let hits = page.find(query);
         let current = hits.iter().position(|r| r.y0 >= from).or((!hits.is_empty()).then_some(0));
         self.search = Search { query: query.to_owned(), hits, current, from: Some(from) };
@@ -227,16 +269,16 @@ impl MdPane {
     /// Hit `i` in sight (a third from the top when it was not).
     fn reveal(&mut self, page: &Page, i: usize) {
         let r = self.search.hits[i];
-        if r.y0 < self.scroll || r.y1 > self.scroll + f64::from(self.height) {
-            self.scroll_to(page, r.y0 - f64::from(self.height) / 3.0);
-        }
+        self.clamp(page);
+        self.viewport.reveal(r.y0, r.y1, None);
     }
 
     /// The pane's frame (pane pixels): the page's strips in sight, the
     /// search's marks over them.
     pub fn frame(&mut self, page: &mut Page, images: &mut Images) -> Frame {
         self.clamp(page);
-        let top = self.scroll.round() as u32;
+        let scroll = self.scroll();
+        let top = scroll.round() as u32;
         let mut layers = Vec::new();
         for (y, key) in page.strips(top, self.height, images) {
             let rows = crate::page::STRIP.min(page.height() - y);
@@ -249,7 +291,7 @@ impl MdPane {
             });
         }
         for (i, r) in self.search.hits.iter().enumerate() {
-            if r.y1 < self.scroll || r.y0 > self.scroll + f64::from(self.height) {
+            if r.y1 < scroll || r.y0 > scroll + f64::from(self.height) {
                 continue;
             }
             let current = Some(i) == self.search.current;
@@ -262,7 +304,7 @@ impl MdPane {
                 key: 0x8000_0000 | i as u32,
                 image,
                 src: SceneRect::new(0, 0, w, h),
-                dst: SceneRect::new(r.x0.floor() as i32, (r.y0 - self.scroll).floor() as i32, w, h),
+                dst: SceneRect::new(r.x0.floor() as i32, (r.y0 - scroll).floor() as i32, w, h),
                 z: 1,
             });
         }
@@ -272,7 +314,7 @@ impl MdPane {
     /// How far down the page the pane is, in percent.
     pub fn percent(&self, page: &Page) -> u32 {
         let most = f64::from(page.height().saturating_sub(self.height));
-        if most <= 0.0 { 100 } else { (self.scroll / most * 100.0).round() as u32 }
+        if most <= 0.0 { 100 } else { (self.scroll() / most * 100.0).round() as u32 }
     }
 
     /// The pane's own images leave the store.
