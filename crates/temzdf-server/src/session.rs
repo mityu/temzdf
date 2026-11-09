@@ -71,6 +71,9 @@ pub enum SessionEvent {
     TextFile(BufferId),
     /// A Markdown viewer's file changed (or may have).
     Markdown(u32),
+    /// A Markdown viewer's remote image arrived: its URL and bytes, or why
+    /// not.
+    MarkdownImage(u32, String, std::result::Result<Vec<u8>, String>),
 }
 
 /// Where a session's events go (returns false once nobody listens).
@@ -1307,6 +1310,7 @@ impl Session {
                 Outcome::None
             }
             SessionEvent::Markdown(md) => self.md_file_changed(md),
+            SessionEvent::MarkdownImage(md, url, got) => self.md_image_fetched(md, url, got),
             SessionEvent::Doc(id, DocEvent::Opened(result)) => {
                 let Some(entry) = self.docs.get_mut(&id) else { return Outcome::None };
                 let Some(opening) = entry.opening.take() else { return Outcome::None };
@@ -4928,6 +4932,83 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn markdown_images_show_inline_or_below_their_line() {
+        let src = "An ![icon](pic.png) inline.\n\n![figure](pic.png)\n\nAfter.\n";
+        let (mut s, path) = text_session("img.md", src);
+        write_png(&path.parent().unwrap().join("pic.png"), 20, 40);
+        let p = ScriptValue::Str(path.to_str().unwrap().into());
+        let pane = ScriptValue::map([("pane", ScriptValue::Num(f64::from(s.focus)))]);
+        s.run_command("markdown.open", &[p, pane], None, Instant::now()).unwrap();
+        // The cursor elsewhere: line 0 is the cursor's, so move it down.
+        s.run_command("text.set-cursor", &[pos(4, 0)], None, Instant::now()).unwrap();
+        let frame = s.frame();
+        let mut layers: Vec<_> = frame.layers.iter().map(|l| (l.dst.x, l.dst.y, l.dst.w, l.dst.h)).collect();
+        layers.sort();
+        // 10x20 cells: inline, one row high where "[icon]" was (column 3);
+        // below its line, two rows high (40 px).
+        assert_eq!(layers, [(0, 60, 20, 40), (30, 0, 10, 20)], "{layers:?}");
+        let rows = screen_text(&frame, GEOMETRY);
+        assert!(rows[0].starts_with("An   inline."), "{:?}", rows[0]);
+        assert_eq!(rows[2].trim(), "", "the alt text hidden");
+        assert_eq!(rows[6].trim_end(), "After.");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "sockets and threads")]
+    fn markdown_remote_images_come_when_asked_for() {
+        use std::io::{Read, Write};
+        // A one-request HTTP server with a PNG.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let dir = std::env::temp_dir().join(format!("temzdf-md-remote-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("p.png");
+        write_png(&png, 30, 20);
+        let body = std::fs::read(&png).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut c, _) = listener.accept().unwrap();
+            let mut buf = [0; 4096];
+            let _ = c.read(&mut buf).unwrap();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            c.write_all(head.as_bytes()).unwrap();
+            c.write_all(&body).unwrap();
+        });
+        let src = format!("Text.\n\n![remote](http://127.0.0.1:{port}/p.png)\n");
+        let md = dir.join("r.md");
+        std::fs::write(&md, src).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
+        s.start(PaneSpec::File(md.clone()), None).unwrap();
+        let p = ScriptValue::Str(md.to_str().unwrap().into());
+        let pane = ScriptValue::map([("pane", ScriptValue::Num(f64::from(s.focus)))]);
+        s.run_command("markdown.open", &[p, pane], None, Instant::now()).unwrap();
+        assert!(s.frame().layers.is_empty(), "not fetched unasked");
+        let n = s.run_command("markdown.load-remote-images", &[], None, Instant::now()).unwrap().0;
+        assert_eq!(n, ScriptValue::Num(1.0));
+        loop {
+            let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();
+            let image = matches!(ev, SessionEvent::MarkdownImage(..));
+            s.handle(ev, Instant::now());
+            if image {
+                break;
+            }
+        }
+        server.join().unwrap();
+        let layers = s.frame().layers;
+        assert_eq!(layers.len(), 1, "{layers:?}");
+        assert_eq!((layers[0].dst.w, layers[0].dst.h), (30, 20));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn text_of(s: &mut Session) -> String {
         s.run_command("text.get-text", &[], None, Instant::now()).unwrap().0.as_str().unwrap().to_owned()
     }
@@ -5420,7 +5501,7 @@ mod tests {
         let frame = s.frame();
         assert!(frame.layers.is_empty());
         assert!(screen_text(&frame, GEOMETRY)[0].starts_with("apicbc"));
-        assert!(run(&mut s, "load-image", &[str(path.to_str().unwrap())]).unwrap_err().contains("not a PNG"));
+        assert!(run(&mut s, "load-image", &[str(path.to_str().unwrap())]).unwrap_err().contains("not an image"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

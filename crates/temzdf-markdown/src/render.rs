@@ -279,6 +279,13 @@ impl Renderer<'_> {
                 let atoms = self.atoms(inlines, &[]);
                 let wrapped = self.wrap(&atoms, avail(rest));
                 self.emit_lines(wrapped, first, rest, *lines);
+                // A paragraph of one image: shown below its line.
+                if let [Inline::Image { .. }] = inlines.as_slice()
+                    && let Some(Deco::Image { block, .. }) =
+                        self.out.decos.iter_mut().rev().find(|d| matches!(d, Deco::Image { .. }))
+                {
+                    *block = true;
+                }
             }
             Block::List { start, tight, items, lines } => {
                 self.list_depth += 1;
@@ -788,7 +795,16 @@ mod tests {
         let lines: Vec<&str> = r.text.split('\n').collect();
         assert_eq!(lines[3], "See the docs and [pic][1].");
         assert!(r.decos.contains(&Deco::Link { start: 13, end: 21, target: "https://x.org".into() }), "{:?}", r.decos);
-        assert!(r.decos.iter().any(|d| matches!(d, Deco::Image { url, alt, .. } if url == "a.png" && alt == "pic")));
+        assert!(
+            r.decos
+                .iter()
+                .any(|d| matches!(d, Deco::Image { url, alt, block: false, .. } if url == "a.png" && alt == "pic"))
+        );
+        let alone = draw("Text.\n\n![fig](f.svg)\n", 40);
+        assert!(
+            alone.decos.iter().any(|d| matches!(d, Deco::Image { url, block: true, .. } if url == "f.svg")),
+            "a paragraph of its own"
+        );
         assert!(r.decos.iter().any(|d| matches!(d, Deco::Link { target, .. } if target == "#fn-n")));
         assert_eq!(r.anchor_line("top"), Some(0));
         let fn_line = r.anchor_line("fn-n").unwrap();

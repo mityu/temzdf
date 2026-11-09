@@ -27,6 +27,9 @@ pub(super) struct MdDoc {
     pub renders: Vec<MdRender>,
     /// The file's modification time when read.
     mtime: Option<std::time::SystemTime>,
+    /// Its images read so far (by the URL or path written): their ids in
+    /// the session's loaded images.
+    images: std::collections::HashMap<String, u64>,
     _watcher: Option<Box<dyn std::any::Any + Send>>,
 }
 
@@ -57,6 +60,11 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
         "markdown.goto",
         "(anchor: string, opts?: { pane?: number }): void",
         "Show the heading `anchor` names (as `#anchor` links do) at the top of a Markdown viewer",
+    ),
+    (
+        "markdown.load-remote-images",
+        "(pane?: number): number",
+        "Fetch the http(s) images of the Markdown file a viewer shows (only local images are read otherwise), in the background; each shows as it arrives. Returns how many it fetches",
     ),
     (
         "markdown.outline",
@@ -118,6 +126,10 @@ impl Session {
                     self.md_goto(pane, anchor)?;
                     Ok((ScriptValue::Null, Outcome::Redraw))
                 })()
+            }
+            "markdown.load-remote-images" => {
+                let pane = pane_opt(0);
+                self.md_load_remote(pane).map(|n| (ScriptValue::Num(n as f64), Outcome::None))
             }
             "markdown.outline" => {
                 let pane = pane_opt(0);
@@ -191,10 +203,99 @@ impl Session {
                 source,
                 renders: Vec::new(),
                 mtime,
+                images: Default::default(),
                 _watcher: watcher,
             },
         );
+        self.md_load_local(id);
         Ok(id)
+    }
+
+    /// Read the local images of `md` not read yet (those that fail show
+    /// their alt text).
+    fn md_load_local(&mut self, md: MdId) {
+        let Some(d) = self.md_docs.get(&md) else { return };
+        let dir = d.path.parent().unwrap_or(Path::new("/")).to_owned();
+        let urls: Vec<String> =
+            d.doc.image_urls().into_iter().filter(|u| !d.images.contains_key(u) && !is_remote(u)).collect();
+        for url in urls {
+            let path = dir.join(percent_decode(url.strip_prefix("file://").unwrap_or(&url)));
+            if let Ok(id) = self.load_image(&path) {
+                self.md_docs.get_mut(&md).expect("open").images.insert(url, id);
+            }
+        }
+    }
+
+    /// The images of `md` as decorations need them: URL, id and size.
+    fn md_image_sizes(&self, md: MdId) -> std::collections::HashMap<String, (u64, u32, u32)> {
+        self.md_docs[&md]
+            .images
+            .iter()
+            .filter_map(|(url, id)| self.loaded_images.get(id).map(|l| (url.clone(), (*id, l.width, l.height))))
+            .collect()
+    }
+
+    /// Every drawing of `md` decorated again (its images changed).
+    fn md_redecorate(&mut self, md: MdId) {
+        let sizes = self.md_image_sizes(md);
+        let Some(d) = self.md_docs.get(&md) else { return };
+        for r in &d.renders {
+            if let Some(t) = self.texts.get_mut(&r.buf) {
+                t.buf.marks_mut().clear("markdown");
+                decorate(&mut t.buf, &r.drawn, &sizes);
+            }
+        }
+    }
+
+    /// Fetch the remote images of the document `pane` shows, in the
+    /// background (`markdown.loadRemoteImages`): each shows as it arrives.
+    fn md_load_remote(&mut self, pane: PaneId) -> Result<usize, String> {
+        let md = self.md_of_pane(pane).ok_or("not a Markdown viewer")?;
+        let d = &self.md_docs[&md];
+        let urls: Vec<String> =
+            d.doc.image_urls().into_iter().filter(|u| is_remote(u) && !d.images.contains_key(u)).collect();
+        let n = urls.len();
+        if n > 0 {
+            let events = self.events.clone();
+            std::thread::Builder::new()
+                .name("markdown-images".into())
+                .spawn(move || {
+                    for url in urls {
+                        let got = fetch(&url);
+                        if !events(SessionEvent::MarkdownImage(md, url, got)) {
+                            break;
+                        }
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(n)
+    }
+
+    /// A remote image of `md` arrived (or failed to).
+    pub(super) fn md_image_fetched(&mut self, md: MdId, url: String, got: Result<Vec<u8>, String>) -> Outcome {
+        if !self.md_docs.contains_key(&md) {
+            return Outcome::None;
+        }
+        let decoded = got.and_then(|bytes| {
+            super::images::decode(
+                &bytes,
+                url.split(['?', '#']).next().is_some_and(|p| p.to_ascii_lowercase().ends_with(".svg")),
+            )
+            .ok_or_else(|| "not an image".to_owned())
+        });
+        match decoded {
+            Ok((w, h, rgba)) => {
+                let id = self.add_loaded(PathBuf::from(&url), w, h, rgba);
+                self.md_docs.get_mut(&md).expect("open").images.insert(url, id);
+                self.md_redecorate(md);
+                Outcome::Redraw
+            }
+            Err(e) => {
+                self.message(&format!("{url}: {e}"));
+                Outcome::Redraw
+            }
+        }
     }
 
     /// The buffer showing document `md` at `width`: the one drawn, or drawn
@@ -206,12 +307,13 @@ impl Session {
         let d = &self.md_docs[&md];
         let drawn = temzdf_markdown::render(&d.doc, width, &math);
         let name = d.name.clone();
+        let sizes = self.md_image_sizes(md);
         let buf = self.add_text_buffer(Text::from(drawn.text.as_str()), None);
         let t = self.texts.get_mut(&buf).expect("made");
         t.attrs = ["nofile", "unlisted", "nomodifiable"].map(str::to_owned).to_vec();
         t.name = name;
         t.markdown = Some(md);
-        decorate(&mut t.buf, &drawn);
+        decorate(&mut t.buf, &drawn, &sizes);
         self.md_docs.get_mut(&md).expect("open").renders.push(MdRender { width, buf, drawn });
         buf
     }
@@ -283,8 +385,17 @@ impl Session {
         for r in gone {
             self.remove_buffer(r.buf);
         }
-        if self.md_docs.get(&md).is_some_and(|d| d.renders.is_empty()) {
-            self.md_docs.remove(&md);
+        if self.md_docs.get(&md).is_some_and(|d| d.renders.is_empty())
+            && let Some(d) = self.md_docs.remove(&md)
+        {
+            // Its images, unless another document shows them.
+            for id in d.images.into_values() {
+                if !self.md_docs.values().any(|o| o.images.values().any(|i| *i == id))
+                    && let Some(l) = self.loaded_images.remove(&id)
+                {
+                    self.images.remove(l.key);
+                }
+            }
         }
     }
 
@@ -307,6 +418,8 @@ impl Session {
         d.doc = doc;
         let renders: Vec<(usize, BufferId, Vec<usize>)> =
             d.renders.iter().map(|r| (r.width, r.buf, r.drawn.sources.clone())).collect();
+        self.md_load_local(md);
+        let sizes = self.md_image_sizes(md);
         for (width, buf, old_sources) in renders {
             // Where each pane on it is, as source lines.
             let mut places = Vec::new();
@@ -323,7 +436,7 @@ impl Session {
             let drawn = temzdf_markdown::render(&self.md_docs[&md].doc, width, &math);
             let Some(t) = self.texts.get_mut(&buf) else { continue };
             t.buf = temzdf_texteditor::Buffer::new(Text::from(drawn.text.as_str()), temzdf_texteditor::LineEnding::Lf);
-            decorate(&mut t.buf, &drawn);
+            decorate(&mut t.buf, &drawn, &sizes);
             for (pane, cursor_src, top_src) in places {
                 let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) else { continue };
                 place_view(view, &t.buf, &drawn, cursor_src, top_src);
@@ -446,18 +559,55 @@ fn place_view(view: &mut TextView, buf: &temzdf_texteditor::Buffer, drawn: &Rend
     view.view.relayout(buf);
 }
 
-/// The drawing's styles as decorations of `buf`.
-fn decorate(buf: &mut temzdf_texteditor::Buffer, drawn: &Rendered) {
+/// The drawing's styles and images as decorations of `buf`; `images`: the
+/// images read, by URL (id, width, height).
+fn decorate(
+    buf: &mut temzdf_texteditor::Buffer,
+    drawn: &Rendered,
+    images: &std::collections::HashMap<String, (u64, u32, u32)>,
+) {
+    use temzdf_texteditor::{Conceal, VirtImage, VirtLines};
     let marks = buf.marks_mut();
+    let spec = || MarkSpec { namespace: "markdown".into(), ..Default::default() };
     for d in &drawn.decos {
-        if let Deco::Style { start, end, group } = d {
-            marks.add(
-                *start,
-                *end,
-                MarkSpec { style: Some((*group).to_owned()), namespace: "markdown".into(), ..Default::default() },
-            );
+        match d {
+            Deco::Style { start, end, group } => {
+                marks.add(*start, *end, MarkSpec { style: Some((*group).to_owned()), ..spec() });
+            }
+            Deco::Image { start, end, url, alt, block } => {
+                let Some(&(id, width, height)) = images.get(url) else { continue };
+                let image = VirtImage { id, width, height, alt: alt.clone(), ..Default::default() };
+                let s = if *block {
+                    // Below its line, the alt text there hidden (shown on
+                    // the cursor's line).
+                    MarkSpec {
+                        conceal: Some(Conceal::default()),
+                        virt_lines: Some(VirtLines { text: Vec::new(), image: Some(image), above: false }),
+                        ..spec()
+                    }
+                } else {
+                    MarkSpec { conceal: Some(Conceal { image: Some(image), ..Conceal::default() }), ..spec() }
+                };
+                marks.add(*start, *end, s);
+            }
+            Deco::Link { .. } => {}
         }
     }
+}
+
+fn is_remote(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+/// Images fetched over the network are at most this large.
+const MAX_FETCH: u64 = 32 << 20;
+
+/// Fetch `url` (an image), within a time and size limit.
+fn fetch(url: &str) -> Result<Vec<u8>, String> {
+    let agent: ureq::Agent =
+        ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(20))).build().into();
+    let mut response = agent.get(url).call().map_err(|e| e.to_string())?;
+    response.body_mut().with_config().limit(MAX_FETCH).read_to_vec().map_err(|e| e.to_string())
 }
 
 /// `%xx` escapes in a link's path decoded.

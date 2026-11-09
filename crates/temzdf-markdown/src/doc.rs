@@ -200,6 +200,39 @@ impl Document {
         Document { blocks, headings }
     }
 
+    /// The URLs (or paths) of the images, as written, each once.
+    pub fn image_urls(&self) -> Vec<String> {
+        fn inl(v: &[Inline], out: &mut Vec<String>) {
+            for i in v {
+                match i {
+                    Inline::Image { url, .. } if !out.contains(url) => out.push(url.clone()),
+                    Inline::Emph(c) | Inline::Strong(c) | Inline::Strike(c) | Inline::Link { children: c, .. } => {
+                        inl(c, out)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        fn blk(v: &[Block], out: &mut Vec<String>) {
+            for b in v {
+                match b {
+                    Block::Heading { inlines, .. } | Block::Paragraph { inlines, .. } => inl(inlines, out),
+                    Block::List { items, .. } => items.iter().for_each(|i| blk(&i.blocks, out)),
+                    Block::Quote { blocks, .. } | Block::Alert { blocks, .. } | Block::Footnote { blocks, .. } => {
+                        blk(blocks, out)
+                    }
+                    Block::Table { header, rows, .. } => {
+                        header.iter().chain(rows.iter().flatten()).for_each(|c| inl(c, out));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut out = Vec::new();
+        blk(&self.blocks, &mut out);
+        out
+    }
+
     /// The heading `#anchor` names.
     pub fn heading(&self, anchor: &str) -> Option<&Heading> {
         self.headings.iter().find(|h| h.anchor == anchor)
