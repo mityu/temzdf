@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use mupdf::DisplayList;
+use temzdf_scene::tiles::{self, Schedule};
 use temzdf_scene::{ImageKey, Images, Layer};
 use termpix_core::geom::Rect;
 use termpix_core::raster::{RgbaImage, RgbaRef, blit};
@@ -495,18 +496,16 @@ impl Viewer {
 
         let scale_q = quantize(view.scale);
         let scale = dequantize(scale_q);
-        let mut urgent = Vec::new();
-        let mut later = Vec::new();
+        let mut work = Schedule::new();
         let centre = (view.screen_w / 2.0, view.screen_h / 2.0);
 
         let mut complete = true;
         for page in prefetch.clone() {
             let is_visible = visible.contains(&page);
-            let queue = if is_visible { &mut urgent } else { &mut later };
             let Some(list) = self.cache().display_list(page) else {
                 complete &= !is_visible;
                 if !self.cache().is_requested(page) {
-                    queue.push((0.0, Need::LoadPage(page)));
+                    work.push(is_visible, 0.0, Need::LoadPage(page));
                 }
                 continue;
             };
@@ -524,59 +523,44 @@ impl Viewer {
             if thumb_cached.is_none() && !self.cache().is_in_flight(thumb_key) {
                 let (tw, th) = bounds.pixel_size(thumb_scale);
                 let area = PixelRect { x: 0, y: 0, w: tw, h: th };
-                queue.push((
+                work.push(
+                    is_visible,
                     -1.0,
                     Need::Render(RenderJob { key: thumb_key, list: list.clone(), bounds, scale: thumb_scale, area }),
-                ));
+                );
             }
 
             let mut missing_on_screen = false;
-            for ty in 0..ph.div_ceil(TILE) {
-                for tx in 0..pw.div_ceil(TILE) {
-                    let area = PixelRect {
-                        x: tx * TILE,
-                        y: ty * TILE,
-                        w: TILE.min(pw - tx * TILE),
-                        h: TILE.min(ph - ty * TILE),
-                    };
-                    let dst = Rect::new(sx + area.x as i32, sy + area.y as i32, area.w, area.h);
-                    let on_screen = dst.intersect(&screen).is_some();
-                    // Within a screen of the screen, every way (wide pages at a high
-                    // zoom would otherwise fetch whole rows of tiles).
-                    let near = dst.y as f32 <= view.screen_h + view.screen_h
-                        && dst.bottom() as f32 >= -view.screen_h
-                        && (dst.x as f32) <= ox as f32 + view.screen_w * 2.0
-                        && dst.right() as f32 >= ox as f32 - view.screen_w;
-                    if !on_screen && !near {
-                        continue;
-                    }
-                    let key = TileKey {
-                        generation: self.cache().generation(),
-                        page: page as u32,
-                        kind: TileKind::Tile { scale_q, tx, ty },
-                    };
-                    let cached = self.cache().touch(key);
-                    match cached {
-                        Some((image, layer)) => {
-                            if on_screen {
-                                layers.push(Layer {
-                                    key: layer,
-                                    image,
-                                    src: Rect::new(0, 0, area.w, area.h),
-                                    dst,
-                                    z: Z_TILE,
-                                });
-                            }
+            // On the screen, and within a screen of it every way to paint ahead
+            // (wide pages at a high zoom would otherwise fetch whole rows of tiles).
+            for cell in tiles::grid((sx, sy), (pw, ph), (TILE, TILE), screen) {
+                let (x, y, w, h) = cell.area;
+                let (area, dst, on_screen) = (PixelRect { x, y, w, h }, cell.dst, cell.on_screen);
+                let key = TileKey {
+                    generation: self.cache().generation(),
+                    page: page as u32,
+                    kind: TileKind::Tile { scale_q, tx: cell.tx, ty: cell.ty },
+                };
+                let cached = self.cache().touch(key);
+                match cached {
+                    Some((image, layer)) => {
+                        if on_screen {
+                            layers.push(Layer {
+                                key: layer,
+                                image,
+                                src: Rect::new(0, 0, area.w, area.h),
+                                dst,
+                                z: Z_TILE,
+                            });
                         }
-                        None => {
-                            missing_on_screen |= on_screen;
-                            if !self.cache().is_in_flight(key) {
-                                let cx = dst.x as f32 + dst.w as f32 / 2.0 - centre.0;
-                                let cy = dst.y as f32 + dst.h as f32 / 2.0 - centre.1;
-                                let job = RenderJob { key, list: list.clone(), bounds, scale, area };
-                                let q = if on_screen { &mut urgent } else { &mut later };
-                                q.push((cx.hypot(cy), Need::Render(job)));
-                            }
+                    }
+                    None => {
+                        missing_on_screen |= on_screen;
+                        if !self.cache().is_in_flight(key) {
+                            let cx = dst.x as f32 + dst.w as f32 / 2.0 - centre.0;
+                            let cy = dst.y as f32 + dst.h as f32 / 2.0 - centre.1;
+                            let job = RenderJob { key, list: list.clone(), bounds, scale, area };
+                            work.push(on_screen, cx.hypot(cy), Need::Render(job));
                         }
                     }
                 }
@@ -603,12 +587,9 @@ impl Viewer {
                     _ => false,
                 })
             };
-            urgent.retain(|(_, n)| !dup(n));
-            later.retain(|(_, n)| !dup(n));
+            work.retain(|n| !dup(n));
         }
-        urgent.sort_by(|a, b| a.0.total_cmp(&b.0));
-        later.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let needs = peek_needs.into_iter().chain(urgent.into_iter().chain(later).map(|(_, n)| n)).collect();
+        let needs = peek_needs.into_iter().chain(work.into_sorted()).collect();
         // Composed stand-ins not shown this frame are done with.
         let frame = self.frame_no;
         self.composed.retain(|_, c| {

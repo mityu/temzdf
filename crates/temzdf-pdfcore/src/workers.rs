@@ -4,12 +4,12 @@
 //! [`DocEvent`]s through a [`Sink`], so the caller can tag them (e.g. with the
 //! document they belong to) on the way into its own event channel.
 
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 
 use mupdf::DisplayList;
+use temzdf_scene::tiles::{Job, WorkPool};
 
 use crate::doc_cache::{RenderJob, Rendered, TileKey};
 use crate::pdf::{self, DocInfo, Link, PageRect};
@@ -453,71 +453,30 @@ pub fn watch_file(path: &Path, on_change: impl Fn() + Send + 'static) -> notify:
 
 /// Raster worker pool with a replaceable queue: each frame the main loop submits
 /// the full, prioritised list of missing tiles, and jobs no longer wanted are
-/// dropped before they start.
-pub struct RasterPool {
-    shared: Arc<(Mutex<VecDeque<RenderJob>>, Condvar)>,
-    stop: Arc<std::sync::atomic::AtomicBool>,
-}
+/// dropped before they start (see [`WorkPool`]).
+pub type RasterPool = WorkPool<RenderJob>;
 
-impl Drop for RasterPool {
-    /// Let the threads finish once their current job is done.
-    fn drop(&mut self) {
-        // Under the lock: a worker between checking `stop` and waiting would
-        // otherwise miss the notification and wait forever.
-        let _queue = self.shared.0.lock().unwrap_or_else(|e| e.into_inner());
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        self.shared.1.notify_all();
+impl Job for RenderJob {
+    type Key = TileKey;
+    type Output = DocEvent;
+
+    fn key(&self) -> TileKey {
+        self.key
     }
-}
 
-impl RasterPool {
-    pub fn new(threads: usize, events: Sink) -> std::io::Result<Self> {
-        let shared = Arc::new((Mutex::new(VecDeque::<RenderJob>::new()), Condvar::new()));
-        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        for i in 0..threads.max(1) {
-            let shared = shared.clone();
-            let stop = stop.clone();
-            let events = events.clone();
-            std::thread::Builder::new().name(format!("temzdf-raster-{i}")).spawn(move || {
-                loop {
-                    let job = {
-                        let (lock, cv) = &*shared;
-                        let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
-                        loop {
-                            if stop.load(std::sync::atomic::Ordering::Relaxed) {
-                                return;
-                            }
-                            if let Some(job) = q.pop_front() {
-                                break job;
-                            }
-                            q = cv.wait(q).unwrap_or_else(|e| e.into_inner());
-                        }
-                    };
-                    let ev = match pdf::render(&job.list, job.bounds, job.scale, job.area) {
-                        Ok(pixels) => {
-                            DocEvent::Rendered(Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels })
-                        }
-                        Err(e) => DocEvent::RenderFailed(job.key, format!("{e:#}")),
-                    };
-                    if !events(ev) {
-                        break;
-                    }
-                }
-            })?;
+    fn run(self) -> DocEvent {
+        match pdf::render(&self.list, self.bounds, self.scale, self.area) {
+            Ok(pixels) => {
+                DocEvent::Rendered(Rendered { key: self.key, width: self.area.w, height: self.area.h, pixels })
+            }
+            Err(e) => DocEvent::RenderFailed(self.key, format!("{e:#}")),
         }
-        Ok(Self { shared, stop })
     }
+}
 
-    /// Replace queued (not yet started) jobs with `jobs`. Returns the keys of the
-    /// jobs that were dropped.
-    pub fn replace(&self, jobs: Vec<RenderJob>) -> Vec<TileKey> {
-        let (lock, cv) = &*self.shared;
-        let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
-        let dropped = q.drain(..).map(|j| j.key).collect();
-        q.extend(jobs);
-        cv.notify_all();
-        dropped
-    }
+/// `threads` raster threads, results to `events`.
+pub fn raster_pool(threads: usize, events: Sink) -> std::io::Result<RasterPool> {
+    WorkPool::new("temzdf-raster", threads, events)
 }
 
 #[cfg(test)]
@@ -725,7 +684,7 @@ mod tests {
         // a lost wakeup a chance to show.
         for _ in 0..300 {
             let (tx, rx) = mpsc::channel::<DocEvent>();
-            drop(RasterPool::new(4, channel_sink(tx, |e| e)).unwrap());
+            drop(raster_pool(4, channel_sink(tx, |e| e)).unwrap());
             let end = rx.recv_timeout(std::time::Duration::from_secs(5));
             assert!(matches!(end, Err(mpsc::RecvTimeoutError::Disconnected)), "a worker is still waiting");
         }
@@ -773,7 +732,7 @@ mod tests {
         }
         for threads in [1, 2, 4, 6, 8, 12] {
             let (tx, rx) = mpsc::channel::<DocEvent>();
-            let pool = RasterPool::new(threads, channel_sink(tx, |e| e)).unwrap();
+            let pool = raster_pool(threads, channel_sink(tx, |e| e)).unwrap();
             let start = std::time::Instant::now();
             pool.replace(jobs());
             for _ in 0..n {

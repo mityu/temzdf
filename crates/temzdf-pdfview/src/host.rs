@@ -56,7 +56,7 @@ impl Opening {
         let snapshot = workers::Snapshot::default();
         let cmd = workers::spawn_document(path.to_owned(), sink.clone(), snapshot.clone())?;
         let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
-        let pool = RasterPool::new(threads, sink.clone())?;
+        let pool = workers::raster_pool(threads, sink.clone())?;
         let search = workers::spawn_search(snapshot, sink.clone())?;
         // Without a watcher the viewer still works, just without auto-reload.
         let watcher = workers::spawn_watcher(path, sink.clone());
