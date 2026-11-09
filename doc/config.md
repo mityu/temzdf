@@ -17,6 +17,7 @@ removing the hooks), `enabled` says which:
 |---|---|---|
 | `temzdf/pane/pdf` | `builtin-pane-pdf` | PDF panes' keys, `/` to search |
 | `temzdf/pane/terminal` | `builtin-pane-terminal` | terminal panes' keys, their visual mode (`<C-b>[`), no status line on terminal panes |
+| `temzdf/pane/markdown` | `builtin-pane-markdown` | the Markdown viewer's keys: its graphics mode, links and the outline in its text mode |
 | `temzdf/mode/normal` | `builtin-mode-normal` | the normal mode: panes, tab pages, floating panes, `<C-b>]` put, detach, kill |
 | `temzdf/mode/input` | `builtin-mode-input` | prompts' `input` mode (readline's keys, `<CR>`, `<Esc>`) |
 | `temzdf/buffers` | `builtin-buffers` | hooks: unsaved changes kept, files changed elsewhere read again |
@@ -321,6 +322,7 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `updatetime` | `4000` | milliseconds after the last change before a swap file is written |
 | `directory` | `null` | where swap files go (Vim's `'directory'`): a path (`~/` is the home directory, a relative one from where the session started); `null` or `""` is `$XDG_STATE_HOME/temzdf/swap/`. Swap files started before a change stay where they are |
 | `undodir` | `null` | where undo files go (Vim's `'undodir'`), as `directory`; `null` or `""` is `$XDG_STATE_HOME/temzdf/undo/` |
+| `markdownmode` | `"text"` | the mode Markdown viewers open in (`markdown.open`): `"text"` (a text pane) or `"graphics"` (pixels, like a PDF page) |
 | `undofile` | `false` | keep text buffers' undo trees in files (Vim's undofile): written when the buffer is written, read back when the file is opened again if it still holds what was written. In `$XDG_STATE_HOME/temzdf/undo/` (else `~/.local/state/temzdf/undo/`), readable by the user only. Off by default: deleted text stays in them |
 
 ## Buffers
@@ -648,6 +650,58 @@ panes, buffers and tab pages `:sp :vs :new :vnew :enew :close :only :bn
 vim.options.shiftwidth = 2;` changes its settings. Its mappings are in the
 namespace `builtin-edit-vim`; `vim.disable()` takes them away
 (`temzdf/edit/notepad` edits without modes instead).
+
+## The Markdown viewer
+
+`markdown.open(path, { pane? })` shows a Markdown file (GitHub-flavoured:
+tables, task lists, strikethrough, autolinks, footnotes, alerts; `$`,
+`$$` and ```` ```math ```` math) in a new pane, or in `pane`. `.md` files
+still open in the text editor; the viewer is opened with the function. The
+file is read again when it changes, each pane keeping its place. Two
+modes, per pane, switched in place with `markdown.setMode("text" |
+"graphics", { pane? })` (`markdown.mode()` says which; `o.markdownmode`
+the one a viewer opens in):
+
+- **text**: a text pane on a buffer that cannot be changed (the
+  `nomodifiable` attribute): Vim's keys move, select and copy (what is
+  copied is the text shown). Paragraphs wrap at the pane's width, tables
+  get borders, code blocks are highlighted (Vim's groups `Comment`,
+  `String`, `Keyword`, `Function`, `Type`, `Number`, `Constant`,
+  `Special`, `PreProc`, `Operator`), math is drawn as Unicode text
+  (libtexprintf, as `utftex`). Images show where kitty graphics are
+  (one in a paragraph of its own below its line, others in place of
+  their alt text) and their alt text elsewhere. Highlight groups:
+  `MarkdownH1` to `MarkdownH6`, `MarkdownBold`, `MarkdownItalic`,
+  `MarkdownStrike`, `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownLink`,
+  `MarkdownImage`, `MarkdownMath`, `MarkdownQuote`, `MarkdownListMarker`,
+  `MarkdownTask`, `MarkdownTableBorder`, `MarkdownTableHeader`,
+  `MarkdownRule`, `MarkdownFootnote`, `MarkdownHtml` and
+  `MarkdownAlertNote`, `...Tip`, `...Important`, `...Warning`,
+  `...Caution`.
+- **graphics**: the page in pixels, GitHub-like (light), math drawn by
+  RaTeX; the mode `markdown`. Without kitty graphics it says so.
+
+Links: a click (or `markdown.follow()` at the cursor of the text mode)
+opens a URL with the link opener, goes to `#heading` in the document, and
+opens another `.md` or `.pdf` file in the same pane; `markdown.back()`
+returns. `markdown.goto(anchor)` shows a heading (anchors as GitHub makes
+them), `markdown.outline()` lists the headings. Images are read from
+files only; `markdown.loadRemoteImages()` fetches the http(s) ones of the
+document in the background.
+
+In the graphics mode, `markdown.scroll(rows)`, `markdown.page(n)`,
+`markdown.top()`, `markdown.bottom()`, `markdown.zoom("in" | "out" |
+"reset")`, and `searchFor` / `searchPreview` / `searchCancel` (the `/`
+prompt) mark the matches, `markdown.searchNext(dir)` goes through them.
+
+Keys (`temzdf/pane/markdown`): in the graphics mode `j`/`k` (`<C-e>`,
+`<C-y>`), `<Space>`/`f`/`<C-f>` and `b` pages, `d`/`u` half pages, `g`/`G`,
+`+`/`=`, `-`, `0` zoom, `/`, `n`/`N`, `<BS>`/`<C-o>` back, `<Tab>` the
+text mode, `o` the outline, `q` closes; in the text mode, on a viewer
+only, `<CR>` follows the link at the cursor (elsewhere it moves down as
+Vim's), `<BS>` goes back, `<Tab>` the graphics mode and `gO` the outline:
+a floating list of the headings (`j`/`k`, `<CR>` goes there, `q`/`<Esc>`
+closes).
 
 ## Commands
 

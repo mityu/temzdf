@@ -172,8 +172,17 @@ server on one `Session`). Next and open:
   Measure real TikZ/pgfplots documents first; then maybe render such pages
   through a MuPDF-device-to-`vello_cpu` translation.
 - Two-page (spread) layout.
-- Markdown viewer: a web pane (step 5 above) showing the rendered document
-  (`doc/survey/markdown-viewer.md`).
+- Markdown viewer (`doc/design/markdown-viewer.md`): built (2026-11-09:
+  text and graphics modes, links, images, search, zoom, the outline).
+  Later:
+  - math as MathML once Blitz lays it out;
+  - a live preview of an edited buffer, through LSP-like change
+    notifications;
+  - the built-in help and LSP hover drawn by it;
+  - a dark style for the graphics mode, and selecting text there;
+  - mermaid diagrams;
+  - layout and painting of large documents on a worker thread (now on the
+    session's thread, a few milliseconds for usual documents).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
 - Judged e2e (`expect` in `scripts/e2e.sh`, `doc/dev/testing.md`) covers keys and

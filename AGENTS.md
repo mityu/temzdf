@@ -28,6 +28,9 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings; `Document`/`DocumentHost` shared by the panes on one file (workers, reload, SyncTeX routing). No terminal code. |
 | `crates/temzdf-term` | Library. The terminal pane: a program on a pty (`portable-pty`), its output interpreted by `libghostty-vt` (from Nix: `nix/libghostty-vt.nix`), the screen as scene text cells. No `termpix`. |
 | `crates/temzdf-texteditor` | Library. A framework for text editors (`doc/design/text-editor.md`): text (`ropey`, LF inside), positions (`{ line, character }`, UTF-16), edits, cursor and selection, decorations and marks, the undo tree, motions. Editors are scripts on it. No terminal code. |
+| `crates/temzdf-markdown` | Library. Markdown for the viewer: parsing (`comrak`) into blocks that keep their source lines, the text mode's drawing (syntect for code), the graphics mode's HTML. No terminal code. |
+| `crates/temzdf-mdview` | Library. The Markdown viewer's graphics mode: Blitz pages painted in shared strips, panes over them, math by RaTeX. No terminal code. |
+| `crates/texprintf` | Library. TeX math as Unicode text through libtexprintf (C, from `nix/libtexprintf.nix`). |
 | `crates/temzdf-tty` | Library. Terminal frontend (`TtyFrontend`): shows scene frames through `termpix`, frame pacing, effects. |
 | `crates/temzdf-server` | Library. `Session` (panes, layout, focus, modes and key mappings, the command registry, composed frame), the session server process, forward-search sockets. No terminal code. |
 | `crates/temzdf-script` | Library. The script host: runs `config.ts`/`config.js` in QuickJS (`rquickjs`, TypeScript stripped with swc) and talks to the session through a `Link` with `temzdf-protocol`'s messages (feature `host`; without it only the type declarations). |

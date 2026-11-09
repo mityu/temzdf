@@ -19,6 +19,9 @@
 | `temzdf-pdfcore` | `temzdf-scene` |
 | `temzdf-pdfview` | `temzdf-pdfcore`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf-term` | `temzdf-scene`, `termpix-core` (and `libghostty-vt`, `portable-pty`) |
+| `temzdf-markdown` | `temzdf-texteditor` (and `comrak`, `syntect`) |
+| `temzdf-mdview` | `temzdf-scene`, `termpix-core` (and Blitz, RaTeX) |
+| `texprintf` | - (libtexprintf, C) |
 | `temzdf-tty` | `temzdf-scene`, `termpix` |
 | `temzdf-server` | `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf` (bin) | `temzdf-server`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-tty`, `temzdf-scene`, `termpix` |
@@ -47,6 +50,15 @@
   edits, marks, the undo tree, motions; `doc/design/text-editor.md`),
   layout and drawing, files), behind the server's `edit` panes
   (`session/text.rs`); under construction.
+- `temzdf-markdown`: Markdown for the viewer (`doc/design/markdown-viewer.md`):
+  a document of blocks keeping their source lines (comrak), the text
+  mode's drawing (lines and decorations at a width; syntect for code),
+  and the graphics mode's HTML.
+- `temzdf-mdview`: the viewer's graphics mode: pages laid out and painted
+  by Blitz in shared strips, panes scrolled, zoomed and searched over
+  them; math by RaTeX.
+- `texprintf`: TeX math as Unicode text, wrapping libtexprintf (utftex's
+  library, `nix/libtexprintf.nix`).
 - `temzdf-tty`: the terminal frontend (`TtyFrontend`: terminal setup, frame
   pacing, effects; `Presenter`, `Screen`).
 - `temzdf-protocol`: the session protocol (messages, framing, sockets).
