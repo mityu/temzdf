@@ -322,6 +322,9 @@
                     # mupdf-sys runs bindgen, which needs libclang.
                     rustPlatform.bindgenHook
                     esbuild
+                    # Stylo's build script (Blitz, the Markdown viewer's
+                    # graphics mode) generates code with Python.
+                    python3
                   ];
                   # In RUNPATH rather than a wrapper script, so the binary works
                   # alone (copied, or a symlink to it) outside the dev shell;
