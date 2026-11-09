@@ -17,6 +17,7 @@ pub use termpix_core::raster::Pixels;
 
 pub mod notice;
 pub mod theme;
+pub mod tiles;
 
 /// An image in an [`Images`] store.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
