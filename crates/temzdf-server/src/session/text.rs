@@ -435,7 +435,7 @@ impl Session {
     }
 
     /// The focused pane's base mode changed: the history starts from it.
-    fn refocus_mode(&mut self) {
+    pub(super) fn refocus_mode(&mut self) {
         let old = self.history.current().to_owned();
         let mode = self.pane_mode(self.focus);
         self.history.reset(&mode);

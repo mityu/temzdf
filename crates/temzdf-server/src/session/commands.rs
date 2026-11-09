@@ -324,7 +324,7 @@ impl Session {
         if let Some(result) = self.register_command(name, args) {
             return result;
         }
-        if let Some(result) = self.markdown_command(name, args) {
+        if let Some(result) = self.markdown_command(name, args, count) {
             return result;
         }
         if let "search-for" | "search-preview" | "search-cancel" = name {
@@ -335,6 +335,10 @@ impl Session {
             };
             let which = id(if name == "search-cancel" { 0 } else { 1 });
             let target = which.unwrap_or(self.focus);
+            // A Markdown viewer's graphics mode searches its page.
+            if self.md_search(target, name, &query).is_some() {
+                return ok(Outcome::Redraw);
+            }
             let Some(pane) = self.panes.get_mut(&target).and_then(PaneEntry::pdf) else {
                 return Err(match which {
                     Some(p) => format!("{name}: pane {p} is not a PDF"),

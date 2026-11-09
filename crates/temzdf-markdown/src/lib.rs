@@ -4,6 +4,7 @@
 
 pub mod doc;
 pub mod highlight;
+pub mod html;
 pub mod render;
 
 pub use doc::{Block, Document, Heading, Inline, Lines, map_line};

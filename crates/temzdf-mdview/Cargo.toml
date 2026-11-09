@@ -1,0 +1,32 @@
+[package]
+name = "temzdf-mdview"
+description = "The Markdown viewer's graphics mode: a document laid out and painted by Blitz in shared strips, panes scrolled, zoomed and searched over it. No terminal code."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Blitz (doc/survey/markdown-viewer.md, "Blitz spike"): the same parley
+# and vello_cpu as termpix-ui.
+blitz-dom = "=0.3.0-beta.4"
+blitz-html = "=0.3.0-beta.4"
+blitz-paint = "=0.3.0-beta.4"
+blitz-traits = "=0.3.0-beta.4"
+anyrender = "0.14.0"
+anyrender_vello_cpu = "0.18.0"
+parley = "0.12.0"
+url = "2"
+# Math as SVG (glyphs as paths, KaTeX's fonts embedded).
+ratex-svg = { version = "0.1.15", features = ["embed-fonts"] }
+ratex-parser = "0.1.15"
+ratex-layout = "0.1.15"
+ratex-types = "0.1.15"
+temzdf-scene.workspace = true
+termpix-core.workspace = true
+
+[dev-dependencies]
+temzdf-markdown.workspace = true
+
+[lints]
+workspace = true

@@ -30,7 +30,41 @@ pub(super) struct MdDoc {
     /// Its images read so far (by the URL or path written): their ids in
     /// the session's loaded images.
     images: std::collections::HashMap<String, u64>,
+    /// Remote images fetched (`markdown.loadRemoteImages`), for the
+    /// graphics mode's pages.
+    fetched: std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
+    /// The graphics mode's HTML (made when a page first needs it).
+    body: Option<String>,
+    /// The graphics mode laid out for each width and zoom panes have.
+    pub pages: Vec<temzdf_mdview::Page>,
     _watcher: Option<Box<dyn std::any::Any + Send>>,
+}
+
+impl MdDoc {
+    /// The page laid out at `key` (width, zoom), if made.
+    pub fn page(&self, key: (u32, f32)) -> Option<&temzdf_mdview::Page> {
+        self.pages.iter().find(|p| (p.width, p.zoom) == key)
+    }
+
+    /// The page at `key`, laid out now if it was not.
+    pub fn page_mut(&mut self, key: (u32, f32)) -> Option<&mut temzdf_mdview::Page> {
+        if let Some(i) = self.pages.iter().position(|p| (p.width, p.zoom) == key) {
+            return self.pages.get_mut(i);
+        }
+        let body = self.body.get_or_insert_with(|| temzdf_markdown::html::body(&self.doc, &temzdf_mdview::math::svg));
+        let dir = self.path.parent().unwrap_or(Path::new("/"));
+        let fetched: temzdf_mdview::Fetched = std::sync::Arc::new(self.fetched.clone());
+        self.pages.push(temzdf_mdview::Page::new(body, dir, key.0, 1000, key.1, fetched));
+        self.pages.last_mut()
+    }
+
+    /// Pages drawn again from the document (it or its images changed).
+    fn relayout(&mut self, images: &mut temzdf_scene::Images) {
+        for mut p in self.pages.drain(..) {
+            p.release(images);
+        }
+        self.body = None;
+    }
 }
 
 pub(super) struct MdRender {
@@ -62,6 +96,38 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
         "Show the heading `anchor` names (as `#anchor` links do) at the top of a Markdown viewer",
     ),
     (
+        "markdown.set-mode",
+        "(mode: \"text\" | \"graphics\", opts?: { pane?: number }): void",
+        "Show a Markdown viewer (the focused pane) as text (a text pane: Vim's keys, selecting and copying) or in pixels like a PDF page, at the same place",
+    ),
+    (
+        "markdown.mode",
+        "(pane?: number): \"text\" | \"graphics\" | null",
+        "The mode a pane shows its Markdown file in (null: not a Markdown viewer)",
+    ),
+    (
+        "markdown.scroll",
+        "(rows: number, opts?: { pane?: number }): void",
+        "Graphics mode: scroll by rows of text (negative: up; a mapping's count multiplies)",
+    ),
+    (
+        "markdown.page",
+        "(pages: number, opts?: { pane?: number }): void",
+        "Graphics mode: scroll by screenfuls (negative: up; a mapping's count multiplies)",
+    ),
+    ("markdown.top", "(pane?: number): void", "Graphics mode: to the top of the page"),
+    ("markdown.bottom", "(pane?: number): void", "Graphics mode: to the bottom of the page"),
+    (
+        "markdown.zoom",
+        "(how: \"in\" | \"out\" | \"reset\", opts?: { pane?: number }): void",
+        "Graphics mode: zoom a step in or out, or back to 100%, at the same place",
+    ),
+    (
+        "markdown.search-next",
+        "(dir?: number, opts?: { pane?: number }): boolean",
+        "Graphics mode: the next match of the search (dir < 0: the one before), around the ends. Whether there was one",
+    ),
+    (
         "markdown.load-remote-images",
         "(pane?: number): number",
         "Fetch the http(s) images of the Markdown file a viewer shows (only local images are read otherwise), in the background; each shows as it arrives. Returns how many it fetches",
@@ -89,6 +155,7 @@ impl Session {
         &mut self,
         name: &str,
         args: &[ScriptValue],
+        count: Option<usize>,
     ) -> Option<Result<(ScriptValue, Outcome), String>> {
         let opts = args.iter().find(|v| matches!(v, ScriptValue::Map(_)));
         let pane_opt = |i: usize| -> PaneId {
@@ -126,6 +193,61 @@ impl Session {
                     self.md_goto(pane, anchor)?;
                     Ok((ScriptValue::Null, Outcome::Redraw))
                 })()
+            }
+            "markdown.set-mode" => {
+                let pane = pane_opt(1);
+                (|| {
+                    let mode = args.first().and_then(ScriptValue::as_str).ok_or("markdown.setMode: which mode?")?;
+                    self.md_set_mode(pane, mode)?;
+                    Ok((ScriptValue::Null, Outcome::Redraw))
+                })()
+            }
+            "markdown.mode" => {
+                let pane = pane_opt(0);
+                Ok((self.md_mode(pane).map_or(ScriptValue::Null, |m| ScriptValue::Str(m.into())), Outcome::None))
+            }
+            "markdown.scroll"
+            | "markdown.page"
+            | "markdown.top"
+            | "markdown.bottom"
+            | "markdown.zoom"
+            | "markdown.search-next" => {
+                let numeric = matches!(name, "markdown.scroll" | "markdown.page" | "markdown.search-next");
+                let pane = pane_opt(if numeric || name == "markdown.zoom" { 1 } else { 0 });
+                let n = args.first().and_then(ScriptValue::as_num).unwrap_or(1.0) * count.unwrap_or(1) as f64;
+                let row = f64::from(self.geometry.cell.height);
+                if name == "markdown.zoom" {
+                    let dir = match args.first().and_then(ScriptValue::as_str) {
+                        Some("in") => 1,
+                        Some("out") => -1,
+                        Some("reset") => 0,
+                        _ => return Some(Err("markdown.zoom: in, out or reset?".into())),
+                    };
+                    return Some(self.md_zoom(pane, dir).map(|()| (ScriptValue::Null, Outcome::Redraw)));
+                }
+                let Some((p, page)) = self.md_graphics(pane) else {
+                    return Some(Err(format!("{name}: not a Markdown viewer in its graphics mode")));
+                };
+                let result = match name {
+                    "markdown.scroll" => {
+                        p.scroll_by(page, n * row);
+                        ScriptValue::Null
+                    }
+                    "markdown.page" => {
+                        p.page_by(page, n);
+                        ScriptValue::Null
+                    }
+                    "markdown.top" => {
+                        p.scroll_to(page, 0.0);
+                        ScriptValue::Null
+                    }
+                    "markdown.bottom" => {
+                        p.scroll_to(page, f64::MAX);
+                        ScriptValue::Null
+                    }
+                    _ => ScriptValue::Bool(p.search_next(page, if n < 0.0 { -1 } else { 1 })),
+                };
+                Ok((result, Outcome::Redraw))
             }
             "markdown.load-remote-images" => {
                 let pane = pane_opt(0);
@@ -165,16 +287,191 @@ impl Session {
             _ => self.geometry.cols as usize,
         };
         let buf = self.md_buffer(md, width.max(1));
-        if let Spot::Replace(pane) = spot {
+        // A graphics-mode viewer goes on in it; others as the option says.
+        let graphics = match spot {
+            Spot::Replace(p) => self.panes.get(&p).is_some_and(|e| matches!(e.kind, Kind::Markdown { .. })),
+            _ => self.options.markdownmode == "graphics",
+        };
+        let pane = if let Spot::Replace(pane) = spot {
             self.show_in(pane, buf)?;
             self.md_fit(pane);
-            return Ok(pane);
+            pane
+        } else {
+            let id = self.alloc_id();
+            let focus = self.takes_focus(&spot);
+            let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
+            self.text_pane(id, buf, rect, focus);
+            id
+        };
+        if graphics {
+            self.md_set_mode(pane, "graphics")?;
         }
-        let id = self.alloc_id();
-        let focus = self.takes_focus(&spot);
-        let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
-        self.text_pane(id, buf, rect, focus);
-        Ok(id)
+        Ok(pane)
+    }
+
+    /// Lay `md`'s pages out again after `change`, its graphics panes at the
+    /// same source lines.
+    fn md_relayout_keeping_place(&mut self, md: MdId, change: impl FnOnce(&mut MdDoc)) {
+        let tops: Vec<(PaneId, usize)> = self
+            .panes
+            .iter()
+            .filter_map(|(&id, e)| match &e.kind {
+                Kind::Markdown { pane, doc } if *doc == md => {
+                    self.md_docs.get(&md)?.page(pane.page_key()).map(|p| (id, pane.top_line(p)))
+                }
+                _ => None,
+            })
+            .collect();
+        let Some(d) = self.md_docs.get_mut(&md) else { return };
+        change(d);
+        d.relayout(&mut self.images);
+        for (id, line) in tops {
+            if let Some((pane, page)) = self.md_graphics(id) {
+                pane.show_line(page, line);
+            }
+        }
+    }
+
+    /// Graphics pane `id` and its page (laid out if it was not).
+    pub(super) fn md_graphics(&mut self, id: PaneId) -> Option<(&mut temzdf_mdview::MdPane, &mut temzdf_mdview::Page)> {
+        let Kind::Markdown { pane, doc } = &mut self.panes.get_mut(&id)?.kind else { return None };
+        let page = self.md_docs.get_mut(doc)?.page_mut(pane.page_key())?;
+        Some((pane, page))
+    }
+
+    /// Pane `id`'s size in device pixels.
+    fn pane_pixels(&self, id: PaneId) -> Option<(u32, u32)> {
+        let c = self.panes.get(&id)?.content();
+        let cell = self.geometry.cell;
+        Some((c.w * cell.width, c.h * cell.height))
+    }
+
+    /// A graphics pane follows its size: laid out again for a new width,
+    /// at the same source line.
+    pub(super) fn md_fit_graphics(&mut self, id: PaneId) {
+        let Some((w, h)) = self.pane_pixels(id) else { return };
+        let Some(Kind::Markdown { pane, doc }) = self.panes.get(&id).map(|e| &e.kind) else { return };
+        if (pane.width, pane.height) == (w, h) {
+            return;
+        }
+        let doc = *doc;
+        let line = self.md_docs.get(&doc).and_then(|d| d.page(pane.page_key())).map(|p| pane.top_line(p));
+        if let Some(Kind::Markdown { pane, .. }) = self.panes.get_mut(&id).map(|e| &mut e.kind) {
+            pane.resize(w, h);
+        }
+        if let (Some(line), Some((pane, page))) = (line, self.md_graphics(id)) {
+            pane.show_line(page, line);
+        }
+        self.md_collect(doc);
+    }
+
+    /// Show viewer `pane` in `mode` ("text" or "graphics"), at the same
+    /// source line.
+    pub(super) fn md_set_mode(&mut self, pane: PaneId, mode: &str) -> Result<(), String> {
+        let md = match self.panes.get(&pane).map(|e| &e.kind) {
+            Some(Kind::Markdown { doc, .. }) => *doc,
+            Some(Kind::Text { buf, .. }) => {
+                self.texts.get(buf).and_then(|t| t.markdown).ok_or("not a Markdown viewer")?
+            }
+            _ => return Err("not a Markdown viewer".into()),
+        };
+        match (mode, self.md_mode(pane)) {
+            ("text", Some("text")) | ("graphics", Some("graphics")) => return Ok(()),
+            ("text" | "graphics", _) => {}
+            (other, _) => return Err(format!("no mode {other:?} (text, graphics)")),
+        }
+        let line = self.md_top_line(pane).unwrap_or(0);
+        if mode == "graphics" {
+            let (w, h) = self.pane_pixels(pane).ok_or("no pane")?;
+            let kind = Kind::Markdown { pane: Box::new(temzdf_mdview::MdPane::new(w, h)), doc: md };
+            let e = self.panes.get_mut(&pane).ok_or("no pane")?;
+            let old = std::mem::replace(&mut e.kind, kind);
+            if let Some((p, page)) = self.md_graphics(pane) {
+                p.show_line(page, line);
+            }
+            self.hide(old);
+            if pane == self.focus {
+                self.refocus_mode();
+            }
+        } else {
+            let width = self.panes.get(&pane).map_or(80, |e| e.content().w as usize);
+            let buf = self.md_buffer(md, width.max(1));
+            self.show_in(pane, buf)?;
+            self.md_fit(pane);
+            if let Some(Kind::Text { buf, view }) = self.panes.get_mut(&pane).map(|e| &mut e.kind)
+                && let Some(t) = self.texts.get(buf)
+                && let Some(r) = self.md_docs.get(&md).and_then(|d| d.renders.iter().find(|r| r.buf == *buf))
+            {
+                place_view(view, &t.buf, &r.drawn, line, line);
+            }
+        }
+        Ok(())
+    }
+
+    /// Zoom graphics pane `pane` a step (`dir` > 0 in, < 0 out, 0 back to
+    /// 100%), at the same place.
+    fn md_zoom(&mut self, pane: PaneId, dir: i32) -> Result<(), String> {
+        let line = self.md_top_line(pane);
+        let Some(Kind::Markdown { pane: p, doc }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) else {
+            return Err("markdown.zoom: not a Markdown viewer in its graphics mode".into());
+        };
+        p.zoom_step(dir);
+        let doc = *doc;
+        if let (Some(line), Some((p, page))) = (line, self.md_graphics(pane)) {
+            p.show_line(page, line);
+        }
+        self.md_collect(doc);
+        Ok(())
+    }
+
+    /// Search in graphics pane `pane` (`searchFor`, `searchPreview`,
+    /// `searchCancel` there): `None` when it is not one.
+    pub(super) fn md_search(&mut self, pane: PaneId, how: &str, query: &str) -> Option<bool> {
+        let (p, page) = self.md_graphics(pane)?;
+        Some(match how {
+            "search-for" => p.search_for(page, query),
+            "search-preview" => p.preview(page, query),
+            _ => {
+                p.search_cancel(page);
+                true
+            }
+        })
+    }
+
+    /// The mode viewer `pane` is in.
+    pub(super) fn md_mode(&self, pane: PaneId) -> Option<&'static str> {
+        match &self.panes.get(&pane)?.kind {
+            Kind::Markdown { .. } => Some("graphics"),
+            Kind::Text { buf, .. } if self.texts.get(buf)?.markdown.is_some() => Some("text"),
+            _ => None,
+        }
+    }
+
+    /// The source line at the top of viewer `pane`, in either mode.
+    pub(super) fn md_top_line(&self, pane: PaneId) -> Option<usize> {
+        match &self.panes.get(&pane)?.kind {
+            Kind::Markdown { pane: p, doc } => self.md_docs.get(doc)?.page(p.page_key()).map(|page| p.top_line(page)),
+            Kind::Text { .. } => self.md_source_line(pane),
+            _ => None,
+        }
+    }
+
+    /// The status line of a graphics pane: its file (or the link under the
+    /// pointer), how far down it is and its zoom.
+    pub(super) fn md_status(&self, pane: &temzdf_mdview::MdPane, doc: MdId) -> termpix_ui::StatusBar {
+        let Some(d) = self.md_docs.get(&doc) else { return termpix_ui::StatusBar::default() };
+        let percent = d.page(pane.page_key()).map_or(0, |p| pane.percent(p));
+        let zoom = if (pane.zoom - 1.0).abs() > 1e-3 { format!("  {:.0}%z", pane.zoom * 100.0) } else { String::new() };
+        let search = match (&pane.search.current, pane.search.hits.len()) {
+            (Some(i), n) if n > 0 => format!("  [{}/{n}]", i + 1),
+            (_, 0) if !pane.search.query.is_empty() => "  [no match]".to_owned(),
+            _ => String::new(),
+        };
+        termpix_ui::StatusBar {
+            left: pane.hovered().map_or_else(|| format!(" {}", d.name), |l| format!(" {l}")),
+            right: format!("markdown{search}{zoom}  {percent}% "),
+            ..Default::default()
+        }
     }
 
     /// The document of `path`: the one open, or read now.
@@ -204,6 +501,9 @@ impl Session {
                 renders: Vec::new(),
                 mtime,
                 images: Default::default(),
+                fetched: Default::default(),
+                body: None,
+                pages: Vec::new(),
                 _watcher: watcher,
             },
         );
@@ -277,6 +577,7 @@ impl Session {
         if !self.md_docs.contains_key(&md) {
             return Outcome::None;
         }
+        let mut fetched_bytes = got.as_ref().ok().cloned();
         let decoded = got.and_then(|bytes| {
             super::images::decode(
                 &bytes,
@@ -287,8 +588,13 @@ impl Session {
         match decoded {
             Ok((w, h, rgba)) => {
                 let id = self.add_loaded(PathBuf::from(&url), w, h, rgba);
-                self.md_docs.get_mut(&md).expect("open").images.insert(url, id);
+                self.md_docs.get_mut(&md).expect("open").images.insert(url.clone(), id);
                 self.md_redecorate(md);
+                self.md_relayout_keeping_place(md, |d| {
+                    if let Some(bytes) = fetched_bytes.take() {
+                        d.fetched.insert(url, std::sync::Arc::new(bytes));
+                    }
+                });
                 Outcome::Redraw
             }
             Err(e) => {
@@ -300,7 +606,7 @@ impl Session {
 
     /// The buffer showing document `md` at `width`: the one drawn, or drawn
     /// now.
-    fn md_buffer(&mut self, md: MdId, width: usize) -> BufferId {
+    pub(super) fn md_buffer(&mut self, md: MdId, width: usize) -> BufferId {
         if let Some(r) = self.md_docs[&md].renders.iter().find(|r| r.width == width) {
             return r.buf;
         }
@@ -379,13 +685,26 @@ impl Session {
                 _ => None,
             })
             .collect();
+        let keys: Vec<(u32, f32)> = self
+            .panes
+            .values()
+            .filter_map(|e| match &e.kind {
+                Kind::Markdown { pane, doc } if *doc == md => Some(pane.page_key()),
+                _ => None,
+            })
+            .collect();
         let Some(d) = self.md_docs.get_mut(&md) else { return };
         let (keep, gone): (Vec<MdRender>, Vec<MdRender>) = d.renders.drain(..).partition(|r| shown.contains(&r.buf));
         d.renders = keep;
+        let (pages, unused): (Vec<_>, Vec<_>) = d.pages.drain(..).partition(|p| keys.contains(&(p.width, p.zoom)));
+        d.pages = pages;
+        for mut p in unused {
+            p.release(&mut self.images);
+        }
         for r in gone {
             self.remove_buffer(r.buf);
         }
-        if self.md_docs.get(&md).is_some_and(|d| d.renders.is_empty())
+        if self.md_docs.get(&md).is_some_and(|d| d.renders.is_empty() && keys.is_empty())
             && let Some(d) = self.md_docs.remove(&md)
         {
             // Its images, unless another document shows them.
@@ -418,6 +737,23 @@ impl Session {
         d.doc = doc;
         let renders: Vec<(usize, BufferId, Vec<usize>)> =
             d.renders.iter().map(|r| (r.width, r.buf, r.drawn.sources.clone())).collect();
+        // Graphics panes: where they are, then laid out again.
+        let tops: Vec<(PaneId, usize)> = self
+            .panes
+            .iter()
+            .filter_map(|(&id, e)| match &e.kind {
+                Kind::Markdown { pane, doc } if *doc == md => {
+                    self.md_docs[&md].page(pane.page_key()).map(|p| (id, moved(pane.top_line(p))))
+                }
+                _ => None,
+            })
+            .collect();
+        self.md_docs.get_mut(&md).expect("open").relayout(&mut self.images);
+        for (id, line) in tops {
+            if let Some((pane, page)) = self.md_graphics(id) {
+                pane.show_line(page, line);
+            }
+        }
         self.md_load_local(md);
         let sizes = self.md_image_sizes(md);
         for (width, buf, old_sources) in renders {
@@ -471,12 +807,18 @@ impl Session {
     }
 
     /// Follow link `target` from viewer `pane`.
-    fn md_follow(&mut self, pane: PaneId, target: &str) -> Result<(), String> {
+    pub(super) fn md_follow(&mut self, pane: PaneId, target: &str) -> Result<(), String> {
         if let Some(anchor) = target.strip_prefix('#') {
             return self.md_goto(pane, anchor);
         }
         let is_uri = target.contains("://") || target.starts_with("mailto:");
-        let md = self.md_of_pane(pane).ok_or("not a Markdown viewer")?;
+        let md = self
+            .md_of_pane(pane)
+            .or_else(|| match self.panes.get(&pane).map(|e| &e.kind) {
+                Some(Kind::Markdown { doc, .. }) => Some(*doc),
+                _ => None,
+            })
+            .ok_or("not a Markdown viewer")?;
         if is_uri {
             self.effects.push(Effect::OpenUri { uri: target.to_owned(), command: None });
             return Ok(());
@@ -492,7 +834,7 @@ impl Session {
             self.effects.push(Effect::OpenUri { uri, command: None });
             return Ok(());
         }
-        let line = self.md_source_line(pane).unwrap_or(0);
+        let line = self.md_top_line(pane).unwrap_or(0);
         if is_pdf {
             self.open_at(&path, Spot::Replace(pane)).map_err(|e| format!("{e:#}"))?;
         } else {
@@ -506,7 +848,7 @@ impl Session {
         Ok(())
     }
 
-    /// The source line at the top of viewer `pane`.
+    /// The source line at the top of a text-mode viewer `pane`.
     fn md_source_line(&self, pane: PaneId) -> Option<usize> {
         let Kind::Text { buf, view } = &self.panes.get(&pane)?.kind else { return None };
         let r = self.md_render_of(*buf)?;
@@ -517,8 +859,14 @@ impl Session {
     /// Back to the file pane `pane` showed before following a link.
     fn md_back(&mut self, pane: PaneId) -> Result<bool, String> {
         let Some((path, line)) = self.md_history.get_mut(&pane).and_then(Vec::pop) else { return Ok(false) };
-        let before = self.md_of_pane(pane);
+        let before = self.md_of_pane(pane).or_else(|| match self.panes.get(&pane).map(|e| &e.kind) {
+            Some(Kind::Markdown { doc, .. }) => Some(*doc),
+            _ => None,
+        });
         self.md_open(&path, Spot::Replace(pane))?;
+        if let Some((p, page)) = self.md_graphics(pane) {
+            p.show_line(page, line);
+        }
         if let Some(Kind::Text { buf, view }) = self.panes.get_mut(&pane).map(|e| &mut e.kind)
             && let Some(t) = self.texts.get(buf)
         {
@@ -535,6 +883,10 @@ impl Session {
 
     /// Show the heading `anchor` names at the top of viewer `pane`.
     fn md_goto(&mut self, pane: PaneId, anchor: &str) -> Result<(), String> {
+        if matches!(self.panes.get(&pane).map(|e| &e.kind), Some(Kind::Markdown { .. })) {
+            let (p, page) = self.md_graphics(pane).ok_or("not a Markdown viewer")?;
+            return if p.show_anchor(page, anchor) { Ok(()) } else { Err(format!("no heading #{anchor}")) };
+        }
         let Some(Kind::Text { buf, view }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) else {
             return Err("not a Markdown viewer".into());
         };

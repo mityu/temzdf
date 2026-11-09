@@ -564,6 +564,7 @@ impl Session {
                 self.terms.get(buf).and_then(|t| t.term.title()).unwrap_or_else(|| "shell".into())
             }
             super::Kind::Text { buf, .. } => self.texts.get(buf).map(|t| t.name.clone()).unwrap_or_default(),
+            super::Kind::Markdown { doc, .. } => self.md_docs.get(doc).map(|d| d.name.clone()).unwrap_or_default(),
         }
     }
 }

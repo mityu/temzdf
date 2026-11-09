@@ -308,6 +308,8 @@ declare module "temzdf" {{
     undofile: boolean;
     /** Keep text buffers' text in swap files while they are edited (recovering after a crash). */
     swapfile: boolean;
+    /** The mode Markdown viewers open in (markdown.open): as text, or in pixels like a PDF page. */
+    markdownmode: "text" | "graphics";
     /** Milliseconds after the last change before the swap file is written. */
     updatetime: number;
     /** Where undo files go (null or "": $XDG_STATE_HOME/temzdf/undo; "~/" is the home directory). */

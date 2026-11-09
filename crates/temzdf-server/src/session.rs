@@ -146,6 +146,8 @@ pub struct Options {
     pub undofile: bool,
     /// Keep text buffers' text in swap files while they are edited.
     pub swapfile: bool,
+    /// The mode Markdown viewers open in: "text" or "graphics".
+    pub markdownmode: String,
     /// How long after the last change a swap file is written.
     pub updatetime: Duration,
     /// Pixels per wheel step, and the easing's time constant.
@@ -224,6 +226,7 @@ impl Default for Options {
             timeoutlen: Duration::from_millis(1000),
             splitright: true,
             swapfile: true,
+            markdownmode: "text".into(),
             updatetime: Duration::from_millis(4000),
             undofile: false,
             splitbelow: true,
@@ -276,6 +279,8 @@ impl Options {
 const Z_PROGRAMS_MIN: i32 = -1_073_741_698;
 /// What a PDF pane says to frontends without images.
 const NO_GRAPHICS_PDF: &str = "PDF viewer disabled (no kitty graphics protocol support)";
+const NO_GRAPHICS_MARKDOWN: &str =
+    "Markdown graphics mode disabled (no kitty graphics protocol support): markdown.setMode(\"text\")";
 /// The session's own cells: borders, frames, the tab line.
 const BACKGROUND: [u8; 4] = [0x3a, 0x3a, 0x3a, 0xff];
 const BORDER: [u8; 4] = [0x5a, 0x5a, 0x5a, 0xff];
@@ -320,9 +325,23 @@ struct TermEntry {
 }
 
 enum Kind {
-    Pdf { pane: Box<PdfPane>, doc: DocId },
-    Term { buf: BufferId, view: TermView },
-    Text { buf: BufferId, view: Box<text::TextView> },
+    Pdf {
+        pane: Box<PdfPane>,
+        doc: DocId,
+    },
+    Term {
+        buf: BufferId,
+        view: TermView,
+    },
+    Text {
+        buf: BufferId,
+        view: Box<text::TextView>,
+    },
+    /// A Markdown viewer in its graphics mode (its text mode is `Text`).
+    Markdown {
+        pane: Box<temzdf_mdview::MdPane>,
+        doc: markdown::MdId,
+    },
 }
 
 struct PaneEntry {
@@ -361,27 +380,27 @@ impl PaneEntry {
     fn pdf(&mut self) -> Option<&mut PdfPane> {
         match &mut self.kind {
             Kind::Pdf { pane, .. } => Some(pane),
-            Kind::Term { .. } | Kind::Text { .. } => None,
+            Kind::Term { .. } | Kind::Text { .. } | Kind::Markdown { .. } => None,
         }
     }
 
     fn doc(&self) -> Option<DocId> {
         match &self.kind {
             Kind::Pdf { doc, .. } => Some(*doc),
-            Kind::Term { .. } | Kind::Text { .. } => None,
+            Kind::Term { .. } | Kind::Text { .. } | Kind::Markdown { .. } => None,
         }
     }
 
     fn term(&self) -> Option<BufferId> {
         match &self.kind {
             Kind::Term { buf, .. } => Some(*buf),
-            Kind::Pdf { .. } | Kind::Text { .. } => None,
+            Kind::Pdf { .. } | Kind::Text { .. } | Kind::Markdown { .. } => None,
         }
     }
 
     fn buffer(&self) -> BufferId {
         match &self.kind {
-            Kind::Pdf { doc, .. } => *doc,
+            Kind::Pdf { doc, .. } | Kind::Markdown { doc, .. } => *doc,
             Kind::Term { buf, .. } | Kind::Text { buf, .. } => *buf,
         }
     }
@@ -392,6 +411,7 @@ impl PaneEntry {
             Kind::Pdf { .. } => "pdf",
             Kind::Term { .. } => "terminal",
             Kind::Text { .. } => "edit",
+            Kind::Markdown { .. } => "markdown",
         }
     }
 }
@@ -955,13 +975,14 @@ impl Session {
     /// drops its tiles), a terminal keeps running; an ended terminal goes.
     fn hide(&mut self, kind: Kind) {
         let buf = match &kind {
-            Kind::Pdf { doc, .. } => *doc,
+            Kind::Pdf { doc, .. } | Kind::Markdown { doc, .. } => *doc,
             Kind::Term { buf, .. } | Kind::Text { buf, .. } => *buf,
         };
         let name = match &kind {
             Kind::Pdf { .. } => "pdf",
             Kind::Term { .. } => "terminal",
             Kind::Text { .. } => "edit",
+            Kind::Markdown { .. } => "markdown",
         };
         if !self.shown(buf) {
             self.event("BufferHidden", vec![ScriptValue::Num(buf as f64), ScriptValue::Str(name.into())]);
@@ -994,6 +1015,10 @@ impl Session {
                 if let Some(md) = self.texts.get(&buf).and_then(|t| t.markdown) {
                     self.md_collect(md);
                 }
+            }
+            Kind::Markdown { mut pane, doc } => {
+                pane.release(&mut self.images);
+                self.md_collect(doc);
             }
         }
     }
@@ -1220,10 +1245,11 @@ impl Session {
                     }
                 }
                 Kind::Term { view, .. } => view.geometry = content_geometry(content, cell, Some(view.geometry)),
-                Kind::Text { .. } => {}
+                Kind::Text { .. } | Kind::Markdown { .. } => {}
             }
         }
         self.fit_text_view(id);
+        self.md_fit_graphics(id);
     }
 
     /// Show or hide pane `id`'s status line (`None`: the other way round);
@@ -1497,7 +1523,7 @@ impl Session {
         }
         let focus = self.focus;
         match self.panes.get_mut(&focus).map(|e| &mut e.kind) {
-            Some(Kind::Term { .. } | Kind::Text { .. }) => Outcome::None,
+            Some(Kind::Term { .. } | Kind::Text { .. } | Kind::Markdown { .. }) => Outcome::None,
             // The pane's own page-view keys still work.
             Some(Kind::Pdf { pane, .. }) => match pane.key(k, now) {
                 pane::Action::Quit => self.close(focus),
@@ -1981,10 +2007,18 @@ impl Session {
         let from = target.unwrap_or(self.focus);
         let spot =
             if self.is_float(from) { Spot::Float(self.cascade()) } else { Spot::Split { target, split, before, size } };
-        let what = match (buf, self.panes.get(&from).map(|e| &e.kind)) {
+        // A graphics-mode viewer floats as its text mode.
+        let md_text = match self.panes.get(&from).map(|e| &e.kind) {
+            Some(Kind::Markdown { doc, .. }) => Some(*doc),
+            _ => None,
+        }
+        .map(|doc| self.md_buffer(doc, 80));
+        let what = match (buf.or(md_text), self.panes.get(&from).map(|e| &e.kind)) {
             (Some(b), _) => floats::FloatWhat::Buffer(b),
             // The same document or input again.
-            (None, Some(Kind::Pdf { doc: b, .. } | Kind::Text { buf: b, .. })) => floats::FloatWhat::Buffer(*b),
+            (None, Some(Kind::Pdf { doc: b, .. } | Kind::Text { buf: b, .. } | Kind::Markdown { doc: b, .. })) => {
+                floats::FloatWhat::Buffer(*b)
+            }
             // A new shell where the focused one is.
             (None, Some(Kind::Term { buf, .. })) => {
                 let cwd = self.terms.get(buf).and_then(|t| t.term.pwd()).filter(|d| d.is_dir());
@@ -2173,6 +2207,34 @@ impl Session {
         };
         let local = MouseEvent { x: m.x - dx, y: m.y - dy, ..*m };
         match &mut e.kind {
+            Kind::Markdown { pane, doc } => {
+                let px = match local.unit {
+                    CoordUnit::Pixel => local,
+                    CoordUnit::Cell => MouseEvent {
+                        x: local.x * cell.width as i32,
+                        y: local.y * cell.height as i32,
+                        unit: CoordUnit::Pixel,
+                        ..local
+                    },
+                };
+                let page = self.md_docs.get(doc).and_then(|d| d.page(pane.page_key()));
+                let changed = page.is_some_and(|page| pane.mouse(page, &px, cell.height));
+                let follow: Vec<String> = pane
+                    .take_requests()
+                    .into_iter()
+                    .map(|r| match r {
+                        temzdf_mdview::Request::Follow(t) => t,
+                    })
+                    .collect();
+                let mut out = if changed { out.merge(Outcome::Redraw) } else { out };
+                for target in follow {
+                    if let Err(e) = self.md_follow(id, &target) {
+                        self.message(&e);
+                    }
+                    out = out.merge(Outcome::Redraw);
+                }
+                out
+            }
             Kind::Pdf { pane, .. } => out.or(pane.mouse(&local, now)),
             Kind::Term { buf, view } => match self.terms.get_mut(buf) {
                 Some(t) if visual && t.term.visual_on() => out.or(view.visual_mouse(&mut t.term, &local)),
@@ -2269,6 +2331,7 @@ impl Session {
         }
         match self.hovered.and_then(|p| self.panes.get(&p)).map(|e| &e.kind) {
             Some(Kind::Pdf { pane, .. }) => pane.pointer(),
+            Some(Kind::Markdown { pane, .. }) => pane.pointer(),
             Some(Kind::Term { buf, .. }) if self.terms.get(buf).is_some_and(|t| t.term.hovering_link()) => {
                 Pointer::Link
             }
@@ -2311,6 +2374,12 @@ impl Session {
                     &self.loaded_images,
                     cell,
                 ),
+                Kind::Markdown { pane, doc } => {
+                    match self.md_docs.get_mut(doc).and_then(|d| d.page_mut(pane.page_key())) {
+                        Some(page) => pane.frame(page, &mut self.images),
+                        None => Frame::default(),
+                    }
+                }
                 Kind::Pdf { pane, doc } => {
                     let (frame, pane_needs) = pane.frame(&mut self.images);
                     needs.entry(*doc).or_default().extend(pane_needs);
@@ -2337,14 +2406,16 @@ impl Session {
             // line saying it cannot show.
             if content.h > 0 {
                 let kind = match &e.kind {
-                    Kind::Pdf { .. } => RegionKind::Pdf,
+                    Kind::Pdf { .. } | Kind::Markdown { .. } => RegionKind::Pdf,
                     Kind::Term { .. } => RegionKind::Terminal,
                     Kind::Text { .. } => RegionKind::Input,
                 };
                 let images = kind == RegionKind::Pdf || !frame.layers.is_empty();
                 regions.push(Region { pane: id, rect: content, kind, images });
                 if kind == RegionKind::Pdf {
-                    let line = statusline::centred(NO_GRAPHICS_PDF, content);
+                    let what =
+                        if matches!(e.kind, Kind::Markdown { .. }) { NO_GRAPHICS_MARKDOWN } else { NO_GRAPHICS_PDF };
+                    let line = statusline::centred(what, content);
                     fallback_text.extend(clip::text_pieces(line, &covers));
                 }
             }
@@ -2378,6 +2449,7 @@ impl Session {
             let Some(e) = self.panes.get(id).filter(|e| e.status_line && e.rect.h > 0) else { continue };
             let bar = match &e.kind {
                 Kind::Pdf { pane, .. } => pane.status(),
+                Kind::Markdown { pane, doc } => self.md_status(pane, *doc),
                 Kind::Text { buf, view } => Self::text_status(self.texts.get(buf), view, self.history.current()),
                 Kind::Term { .. } => termpix_ui::StatusBar::default(),
             };
@@ -2426,7 +2498,7 @@ impl Session {
             && self.docs.values().all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle()))
             && self.panes.values().all(|e| match &e.kind {
                 Kind::Pdf { pane, .. } => !pane.search.is_active() || pane.search.is_complete(),
-                Kind::Term { .. } | Kind::Text { .. } => true,
+                Kind::Term { .. } | Kind::Text { .. } | Kind::Markdown { .. } => true,
             })
     }
 
@@ -2479,7 +2551,7 @@ impl Session {
     pub fn next_deadline(&self) -> Option<Instant> {
         let panes = self.panes.values().filter_map(|e| match &e.kind {
             Kind::Pdf { pane, .. } => pane.next_deadline(),
-            Kind::Term { .. } | Kind::Text { .. } => None,
+            Kind::Term { .. } | Kind::Text { .. } | Kind::Markdown { .. } => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
         let terms = self.terms.values().filter_map(|t| t.term.autoscroll_deadline());
@@ -2584,6 +2656,7 @@ fn builtin_modes() -> Modes<Target> {
         ("normal", Fallback::Drop, true),
         ("terminal", Fallback::Passthrough, false),
         ("pdf", Fallback::Drop, true),
+        ("markdown", Fallback::Drop, true),
         ("input", Fallback::Passthrough, false),
         ("edit", Fallback::Passthrough, false),
         ("visual", Fallback::Drop, true),
@@ -5007,6 +5080,72 @@ mod tests {
         assert_eq!(layers.len(), 1, "{layers:?}");
         assert_eq!((layers[0].dst.w, layers[0].dst.h), (30, 20));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, Blitz")]
+    fn the_markdown_graphics_mode_scrolls_zooms_searches_and_switches_back_in_place() {
+        let words = "word ".repeat(30);
+        let mut src = String::from("[jump](#section-12)\n\n");
+        for i in 0..20 {
+            src.push_str(&format!("## Section {i}\n\n{words}\n\n"));
+        }
+        let (mut s, path) = markdown_session("g.md", &src, &[]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        run(&mut s, "markdown.goto", &[str("section-5")]).unwrap();
+        run(&mut s, "markdown.set-mode", &[str("graphics")]).unwrap();
+        assert_eq!(run(&mut s, "markdown.mode", &[]).unwrap().0, str("graphics"));
+        assert_eq!(s.pane_mode(s.focus), "markdown");
+        // Strips cover the pane (90x29 cells of 10x20 pixels).
+        let frame = s.frame();
+        let covered: u32 = frame.layers.iter().map(|l| l.dst.h).sum();
+        assert!(covered >= 29 * 20 && frame.layers.iter().all(|l| l.dst.w == 900), "{:?}", frame.layers);
+        let top = |s: &mut Session| s.md_top_line(s.focus).unwrap();
+        let section = |n: usize| 2 + 4 * n;
+        assert_eq!(top(&mut s), section(5), "at the same heading");
+        // Scrolling moves the strips; the top and bottom are the page's ends.
+        let ys = |s: &mut Session| s.frame().layers.iter().map(|l| (l.key, l.dst.y)).collect::<Vec<_>>();
+        let before = ys(&mut s);
+        run(&mut s, "markdown.scroll", &[ScriptValue::Num(2.0)]).unwrap();
+        let after = ys(&mut s);
+        // (The first strip is clipped at the pane's top: the last one.)
+        let (key, y) = *before.last().unwrap();
+        assert_eq!(after.iter().find(|l| l.0 == key).map(|l| l.1), Some(y - 40), "{before:?} {after:?}");
+        run(&mut s, "markdown.top", &[]).unwrap();
+        assert_eq!(top(&mut s), 0);
+        // A click on the link follows it.
+        let (x, y) = {
+            let (p, page) = s.md_graphics(s.focus).unwrap();
+            let r = page.find("jump")[0];
+            (((r.x0 + r.x1) / 2.0) as i32, ((r.y0 + r.y1) / 2.0 - p.scroll) as i32)
+        };
+        for kind in [MouseEventKind::Press(MouseButton::Left), MouseEventKind::Release(MouseButton::Left)] {
+            s.mouse(&MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE }, Instant::now());
+        }
+        assert_eq!(top(&mut s), section(12), "followed");
+        // Zoom: laid out again at the same place, one page kept.
+        run(&mut s, "markdown.zoom", &[str("in")]).unwrap();
+        assert_eq!(top(&mut s), section(12));
+        let md = *s.md_docs.keys().next().unwrap();
+        assert_eq!(s.md_docs[&md].pages.len(), 1);
+        assert!((s.md_docs[&md].pages[0].zoom - 1.1).abs() < 1e-3);
+        // Search: the matches marked, n moves on.
+        run(&mut s, "search-for", &[str("Section 1")]).unwrap();
+        let marks = s.frame().layers.iter().filter(|l| l.z == 1).count();
+        assert!(marks >= 1, "marked");
+        assert!(top(&mut s) >= section(12), "from where it was");
+        assert_eq!(run(&mut s, "markdown.search-next", &[]).unwrap().0, ScriptValue::Bool(true));
+        run(&mut s, "search-cancel", &[]).unwrap();
+        assert_eq!(s.frame().layers.iter().filter(|l| l.z == 1).count(), 0);
+        // Back to text, at the same place.
+        let line = top(&mut s);
+        run(&mut s, "markdown.set-mode", &[str("text")]).unwrap();
+        assert_eq!(run(&mut s, "markdown.mode", &[]).unwrap().0, str("text"));
+        assert_eq!(top(&mut s), line);
+        assert!(s.md_docs[&md].pages.is_empty(), "the page went with the mode");
+        assert!(run(&mut s, "markdown.set-mode", &[str("other")]).is_err());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     fn text_of(s: &mut Session) -> String {

@@ -1185,6 +1185,12 @@ impl Session {
             "scrolloff" => o.text.scrolloff = num()? as usize,
             "undofile" => o.undofile = flag()?,
             "swapfile" => o.swapfile = flag()?,
+            "markdownmode" => {
+                o.markdownmode = match text()?.as_deref() {
+                    Some(m @ ("text" | "graphics")) => m.to_owned(),
+                    other => return Err(format!("markdownmode: text or graphics, not {other:?}")),
+                }
+            }
             "updatetime" => o.updatetime = Duration::from_millis(num()?.max(0.0) as u64),
             // Where undo and swap files go (Vim's undodir and directory);
             // null or "" the state directory's.
@@ -1252,6 +1258,7 @@ impl Session {
             "scrolloff" => ScriptValue::Num(o.text.scrolloff as f64),
             "undofile" => ScriptValue::Bool(o.undofile),
             "swapfile" => ScriptValue::Bool(o.swapfile),
+            "markdownmode" => ScriptValue::Str(o.markdownmode.clone()),
             "updatetime" => ScriptValue::Num(o.updatetime.as_millis() as f64),
             "undodir" => {
                 self.undo_dir.as_ref().map_or(ScriptValue::Null, |d| ScriptValue::Str(d.display().to_string()))
