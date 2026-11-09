@@ -21,6 +21,7 @@ const MODULES: &[(&str, &str)] = &[
     ("edit/notepad", "edit/notepad.ts"),
     ("pane/pdf", "pane/pdf.ts"),
     ("pane/terminal", "pane/terminal.ts"),
+    ("pane/markdown", "pane/markdown.ts"),
     ("mode/normal", "mode/normal.ts"),
     ("mode/input", "mode/input.ts"),
     ("buffers", "buffers.ts"),

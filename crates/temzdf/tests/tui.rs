@@ -1930,6 +1930,69 @@ fn virtual_lines_show_text_and_an_image_between_the_lines() {
     }
 }
 
+/// A configuration where <F5> shows the focused text pane's file in the
+/// Markdown viewer.
+fn markdown_config(file: &std::path::Path) -> String {
+    format!(
+        "import {{ cmd, keymap }} from \"temzdf\";\n\
+         keymap.add(\"vim/normal\", \"<F5>\", () => {{ cmd.markdown.open({file:?}, {{ pane: cmd.focusedPane() ?? undefined }}); }});\n"
+    )
+}
+
+#[test]
+fn the_markdown_viewer_copies_follows_links_and_lists_its_headings() {
+    let env = Env::new("markdown-text");
+    let file = env.path("doc.md");
+    std::fs::write(&file, "# Title\n\nSome *text* and $\\alpha^2$.\n\nSee [far](#far).\n\n## Far\n\nThe end.\n")
+        .unwrap();
+    env.config("config.ts", &markdown_config(&file));
+    let mut t = Term::spawn(&[BIN, "-s", "mt", file.to_str().unwrap()], &env.options());
+    t.wait_text("# Title");
+    t.key("F5");
+    let s = t.wait_for("the viewer", |s| s.lines()[1].starts_with("═════"));
+    assert!(s.lines()[2].trim().is_empty() && s.lines()[3].starts_with("Some text and α²."), "{:?}", s.lines());
+    // Vim's keys select and copy what is shown.
+    t.type_text("jjjVy");
+    assert_eq!(copies(&mut t, 1)[0], "Some text and α².\n");
+    // <CR> on the link goes to its heading; elsewhere it moves down.
+    t.type_text("jjw");
+    t.key("Enter");
+    t.wait_for("the heading", |s| s.cursor.is_some_and(|c| s.lines()[c.1 as usize].starts_with("Far")));
+    // gO lists the headings; <CR> goes to the one chosen.
+    t.type_text("gO");
+    t.wait_text("Outline");
+    t.key("Enter");
+    t.wait_for("the first heading", |s| s.cursor.is_some_and(|c| c.1 == 0) && !s.text().contains("Outline"));
+}
+
+#[test]
+fn the_markdown_viewers_graphics_mode_is_pixels_or_says_why_not() {
+    for graphics in [true, false] {
+        let env = Env::new(if graphics { "markdown-graphics" } else { "markdown-graphics-off" });
+        let file = env.path("doc.md");
+        std::fs::write(&file, "# Title\n\nText.\n").unwrap();
+        env.config("config.ts", &markdown_config(&file));
+        let mut opts = env.options();
+        if !graphics {
+            opts.env.push(("TERMPIX_GRAPHICS".into(), "off".into()));
+        }
+        let mut t = Term::spawn(&[BIN, "-s", "mg", file.to_str().unwrap()], &opts);
+        t.wait_text("# Title");
+        t.key("F5");
+        t.wait_text("═════");
+        // <Tab>: the graphics mode, and back.
+        t.key("Tab");
+        if graphics {
+            let s = t.wait_for("the page", |s| !s.images.is_empty() && s.text().contains("markdown"));
+            assert!(s.images.iter().all(|p| p.col == 0), "{:?}", s.images);
+        } else {
+            t.wait_text("Markdown graphics mode disabled");
+        }
+        t.key("Tab");
+        t.wait_for("the text mode", |s| s.lines()[1].starts_with("═════") && s.images.is_empty());
+    }
+}
+
 #[test]
 fn a_text_file_is_edited_without_modes_and_written() {
     let env = Env::new("text-edit");

@@ -94,6 +94,7 @@ pub(crate) fn command_names() -> Vec<String> {
         include_str!("../../runtime/defaults.ts"),
         include_str!("../../runtime/pane/pdf.ts"),
         include_str!("../../runtime/pane/terminal.ts"),
+        include_str!("../../runtime/pane/markdown.ts"),
         include_str!("../../runtime/mode/normal.ts"),
         include_str!("../../runtime/mode/input.ts"),
         include_str!("../../runtime/edit/notepad.ts"),
@@ -174,8 +175,9 @@ fn describe(token: Token, op: &HostOp) -> String {
         }
         // The shipped defaults map actions; leave them out.
         HostOp::Map { rhs: MapRhs::Actions(_), .. } => String::new(),
-        // And they enable the Vim mode: its modes and base mode.
-        HostOp::DefineMode { name, .. } if name.starts_with("vim/") => String::new(),
+        // And they enable the Vim mode (its modes and base mode) and the
+        // Markdown viewer's keys (its outline's mode).
+        HostOp::DefineMode { name, .. } if name.starts_with("vim/") || name.starts_with("markdown/") => String::new(),
         // Modes the defaults define with their own functions (swap-choice).
         HostOp::DefineMode { fallback: Some(temzdf_protocol::script::Fallback::Func(f)), .. } if *f < base() => {
             String::new()

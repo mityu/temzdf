@@ -349,9 +349,9 @@ declare module "temzdf" {{
   /** Run `fn` at the safe point: after the current invocation and its hooks, before the next key, in the order scheduled. Hooks change things this way (only InvokePost and SessionReady hooks may act themselves). */
   export function schedule(fn: () => void): void;
   /** The kinds of panes and buffers. */
-  export type PaneKind = "pdf" | "terminal" | "edit";
+  export type PaneKind = "pdf" | "terminal" | "edit" | "markdown";
   /** A text buffer's attributes (Vim's buftype, several at once): `nofile` never modified, written only to a path given; `unlisted` left out of buffers(). */
-  export type BufferAttr = "nofile" | "unlisted" | "readonly";
+  export type BufferAttr = "nofile" | "unlisted" | "readonly" | "nomodifiable";
   /** A swap file found when a file was opened, of a session that is gone (SwapExists, swapInfo). `time` is milliseconds since the epoch; `newer`: the file is newer than the swap file. */
   export interface SwapInfo {{
     swap: string;
@@ -435,6 +435,11 @@ declare module "temzdf/edit/notepad" {{
 declare module "temzdf/pane/pdf" {{
   const pdf: import("temzdf").Keyset;
   export default pdf;
+}}
+/** Markdown viewers' keys (namespace builtin-pane-markdown): the graphics mode (the mode `markdown`), links and the outline in the text mode. */
+declare module "temzdf/pane/markdown" {{
+  const markdown: import("temzdf").Keyset;
+  export default markdown;
 }}
 /** Terminal panes' keys and their visual mode (namespace builtin-pane-terminal). */
 declare module "temzdf/pane/terminal" {{

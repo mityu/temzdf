@@ -1388,13 +1388,14 @@ const QUERIES: &[&str] = &[
     "text.find-pair",
     "text.wordchars",
     "get-var",
+    "markdown.outline",
 ];
 
 fn read_only(op: &HostOp) -> bool {
     match op {
         HostOp::GetOption { .. } | HostOp::GetMappings { .. } => true,
         HostOp::Command { name, .. } => {
-            matches!(name.as_str(), "current-mode" | "panes" | "focused-pane" | "session-name")
+            matches!(name.as_str(), "current-mode" | "panes" | "focused-pane" | "session-name" | "markdown.mode")
         }
         _ => false,
     }
