@@ -6,5 +6,5 @@ pub mod doc;
 pub mod highlight;
 pub mod render;
 
-pub use doc::{Block, Document, Heading, Inline, Lines};
+pub use doc::{Block, Document, Heading, Inline, Lines, map_line};
 pub use render::{Deco, Rendered, render};

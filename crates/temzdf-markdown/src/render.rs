@@ -208,8 +208,10 @@ impl Out {
         self.sources.push(source);
     }
 
-    /// An empty line (quote bars go on through it).
+    /// An empty line (quote bars go on through it), of the block before
+    /// it (so a source line finds its block's first line, not the gap).
     fn blank(&mut self, source: usize, prefix: &Prefix) {
+        let source = self.sources.last().copied().unwrap_or(source);
         self.emit(Line::default(), prefix, source);
     }
 
@@ -810,9 +812,10 @@ mod tests {
     #[test]
     fn every_line_knows_its_source_line() {
         let r = draw("# A\n\npara\n\n```\nx\ny\n```\n", 20);
-        // Blank lines belong to the block after them.
-        assert_eq!(r.sources, [0, 0, 2, 2, 4, 5, 6]);
+        // Blank lines belong to the block before them.
+        assert_eq!(r.sources, [0, 0, 0, 2, 2, 5, 6]);
+        assert_eq!(r.line_of_source(2), 3);
         assert_eq!(r.line_of_source(5), 5);
-        assert_eq!(r.line_of_source(3), 4, "the next line drawn");
+        assert_eq!(r.line_of_source(3), 5, "the next line drawn");
     }
 }

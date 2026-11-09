@@ -231,6 +231,7 @@ pub fn command_specs() -> Vec<CommandSpec> {
         .chain(super::registers::COMMANDS)
         .chain(super::swap::COMMANDS)
         .chain(super::images::COMMANDS)
+        .chain(super::markdown::COMMANDS)
         .map(|(name, ts, doc)| CommandSpec { name: (*name).into(), doc: (*doc).into(), ts: (*ts).into() });
     session.chain(text).chain(visual).chain(pdf).collect()
 }
@@ -321,6 +322,9 @@ impl Session {
             return result;
         }
         if let Some(result) = self.register_command(name, args) {
+            return result;
+        }
+        if let Some(result) = self.markdown_command(name, args) {
             return result;
         }
         if let "search-for" | "search-preview" | "search-cancel" = name {

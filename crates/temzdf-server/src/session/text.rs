@@ -38,6 +38,8 @@ pub(super) struct TextEntry {
     /// file was opened (waiting for SwapExists to be answered).
     pub swap: Option<super::swap::Swap>,
     pub found: Option<super::swap::Found>,
+    /// A Markdown viewer's drawing of this document.
+    pub markdown: Option<super::markdown::MdId>,
 }
 
 /// The attributes a text buffer may have, and what each does.
@@ -45,7 +47,14 @@ pub(super) const BUFFER_ATTRS: &[(&str, &str)] = &[
     ("nofile", "tied to no file: never modified (nothing to lose), written only to a path given"),
     ("unlisted", "for a script's own use: buffers() leaves it out (buffers({ all: true }) lists it)"),
     ("readonly", "written only with force (Vim's 'readonly')"),
+    (
+        "nomodifiable",
+        "its text cannot be changed: edits, undo and reload fail (Vim's 'nomodifiable'; the Markdown viewer's text)",
+    ),
 ];
+
+/// The error an edit of a `nomodifiable` buffer gets (Vim's E21).
+pub(super) const NOT_MODIFIABLE: &str = "the buffer is not modifiable";
 
 /// Attributes from a script's list, each known.
 pub(super) fn parse_attrs(v: Option<&ScriptValue>) -> Result<Vec<String>, String> {
@@ -86,6 +95,8 @@ pub(super) struct TextView {
     pub view: View,
     pub shape: CursorShape,
     pub local: LocalOptions,
+    /// Where the left button went down (a Markdown viewer's link click).
+    pub press: Option<usize>,
 }
 
 /// Options a pane sets for itself over the session's (Vim's window-local
@@ -326,7 +337,7 @@ impl Session {
     fn text_view(&self, pane: PaneId) -> TextView {
         // Decorations shown only in it count there (inline virtual text).
         let view = View { pane: Some(pane), ..View::default() };
-        let mut tv = TextView { view, shape: CursorShape::Default, local: LocalOptions::default() };
+        let mut tv = TextView { view, shape: CursorShape::Default, local: LocalOptions::default(), press: None };
         tv.apply(&self.options.text);
         tv
     }
@@ -403,6 +414,7 @@ impl Session {
                 attrs: Vec::new(),
                 swap: None,
                 found: None,
+                markdown: None,
             },
         );
         self.watch_text(id);
@@ -444,6 +456,8 @@ impl Session {
                 view.view.relayout(&t.buf);
             }
         }
+        // A Markdown viewer is drawn for its width.
+        self.md_fit(id);
     }
 
     /// The text pane `pane` (the focused one for `None`) and its buffer.
@@ -475,6 +489,9 @@ impl Session {
         let cursor = self.view_mut(pane).map(|v| v.view.cursor).unwrap_or_default();
         let invocation = self.invocation;
         let t = self.texts.get_mut(&buf).ok_or("its buffer is gone")?;
+        if t.has("nomodifiable") {
+            return Err(NOT_MODIFIABLE.into());
+        }
         if t.invocation != invocation {
             t.invocation = invocation;
             t.buf.undo_tree_mut().invocation();
@@ -560,6 +577,10 @@ impl Session {
         let (pane, buf) = self.text_target(None)?;
         if s.is_empty() {
             return Ok(Outcome::None);
+        }
+        // Before the selection collapses.
+        if self.texts.get(&buf).is_some_and(|t| t.has("nomodifiable")) {
+            return Err(NOT_MODIFIABLE.into());
         }
         let c = self.view_mut(pane).map(|v| v.view.cursor).unwrap_or_default();
         let (a, b) = match c.selection() {
@@ -654,6 +675,9 @@ impl Session {
     /// and cursors outside it stay), then it is the saved state.
     fn text_reload(&mut self, buf: BufferId) -> Result<(), String> {
         let t = self.texts.get(&buf).ok_or_else(|| format!("no text buffer {buf}"))?;
+        if t.has("nomodifiable") {
+            return Err(NOT_MODIFIABLE.into());
+        }
         let path = t.file.as_ref().map(|f| f.path.clone()).ok_or("the buffer has no file")?;
         let encoding = t.file.as_ref().map(|f| f.encoding.clone()).filter(|e| e != "utf-8");
         let (text, info) = file::read_as(&path, encoding.as_deref())?;
@@ -1363,6 +1387,9 @@ impl Session {
             }
             // Undo.
             "undo" | "redo" => {
+                if self.texts.get(&buf).is_some_and(|t| t.has("nomodifiable")) {
+                    return Err(NOT_MODIFIABLE.into());
+                }
                 let mut changed = Vec::new();
                 for _ in 0..count.unwrap_or(1).max(1) {
                     let t = self.texts.get_mut(&buf).expect("found");
@@ -1435,6 +1462,34 @@ pub(super) fn mouse(
             Outcome::Redraw
         }
         _ => Outcome::None,
+    }
+}
+
+/// A left click on one character: its offset (on the release), for a
+/// Markdown viewer's links.
+pub(super) fn click(
+    t: &TextEntry,
+    tv: &mut TextView,
+    m: &termpix_core::input::MouseEvent,
+    cell: termpix_core::geom::CellSize,
+) -> Option<usize> {
+    use termpix_core::input::{CoordUnit, MouseButton, MouseEventKind};
+    let (col, row) = match m.unit {
+        CoordUnit::Pixel => (m.x.div_euclid(cell.width.max(1) as i32), m.y.div_euclid(cell.height.max(1) as i32)),
+        CoordUnit::Cell => (m.x, m.y),
+    };
+    let at = tv.view.offset_at_cell(&t.buf, col.max(0) as usize, row.max(0) as usize);
+    match m.kind {
+        MouseEventKind::Press(MouseButton::Left) => {
+            tv.press = Some(at);
+            None
+        }
+        MouseEventKind::Drag(_) => {
+            tv.press = tv.press.filter(|p| *p == at);
+            None
+        }
+        MouseEventKind::Release(MouseButton::Left) => tv.press.take().filter(|p| *p == at),
+        _ => None,
     }
 }
 

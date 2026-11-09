@@ -13,7 +13,8 @@ use crate::search::{Pattern, SearchOptions, find_all};
 use crate::view::{NumberMode, View};
 
 /// A style: what it sets of the colours and attributes. Later styles drawn
-/// over earlier ones replace what they set.
+/// over earlier ones replace the colours they set and add the attributes
+/// they turn on (bold inside italic is both).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Style {
     pub fg: Option<Color>,
@@ -30,7 +31,18 @@ impl Style {
             cell.bg = bg;
         }
         if let Some(a) = self.attrs {
-            cell.attrs = a;
+            let c = &mut cell.attrs;
+            c.bold |= a.bold;
+            c.faint |= a.faint;
+            c.italic |= a.italic;
+            c.blink |= a.blink;
+            c.inverse |= a.inverse;
+            c.invisible |= a.invisible;
+            c.strikethrough |= a.strikethrough;
+            c.overline |= a.overline;
+            if a.underline != Underline::None {
+                c.underline = a.underline;
+            }
         }
     }
 }
@@ -64,6 +76,52 @@ impl Default for Highlights {
             // The cursor of a pane without the focus (terminals draw only
             // one cursor).
             ("CursorUnfocused", Style { attrs: attrs(|a| a.underline = Underline::Single), ..Style::default() }),
+            // The Markdown viewer's text mode (doc/design/markdown-viewer.md).
+            ("MarkdownH1", Style { fg: Some(Color::Indexed(5)), attrs: attrs(|a| a.bold = true), ..Style::default() }),
+            ("MarkdownH2", Style { fg: Some(Color::Indexed(4)), attrs: attrs(|a| a.bold = true), ..Style::default() }),
+            ("MarkdownH3", Style { fg: Some(Color::Indexed(6)), attrs: attrs(|a| a.bold = true), ..Style::default() }),
+            ("MarkdownH4", Style { attrs: attrs(|a| a.bold = true), ..Style::default() }),
+            ("MarkdownH5", Style { attrs: attrs(|a| a.bold = true), ..Style::default() }),
+            ("MarkdownH6", Style { attrs: attrs(|a| a.bold = true), ..Style::default() }),
+            ("MarkdownBold", Style { attrs: attrs(|a| a.bold = true), ..Style::default() }),
+            ("MarkdownItalic", Style { attrs: attrs(|a| a.italic = true), ..Style::default() }),
+            ("MarkdownStrike", Style { attrs: attrs(|a| a.strikethrough = true), ..Style::default() }),
+            ("MarkdownCode", Style { fg: Some(Color::Indexed(3)), ..Style::default() }),
+            ("MarkdownCodeBlock", Style::default()),
+            (
+                "MarkdownLink",
+                Style {
+                    fg: Some(Color::Indexed(4)),
+                    attrs: attrs(|a| a.underline = Underline::Single),
+                    ..Style::default()
+                },
+            ),
+            ("MarkdownImage", Style { fg: Some(Color::Indexed(6)), ..Style::default() }),
+            ("MarkdownMath", Style { fg: Some(Color::Indexed(2)), ..Style::default() }),
+            ("MarkdownQuote", dim),
+            ("MarkdownListMarker", Style { fg: Some(Color::Indexed(4)), ..Style::default() }),
+            ("MarkdownTask", Style { fg: Some(Color::Indexed(2)), ..Style::default() }),
+            ("MarkdownTableBorder", dim),
+            ("MarkdownTableHeader", Style { attrs: attrs(|a| a.bold = true), ..Style::default() }),
+            ("MarkdownRule", dim),
+            ("MarkdownFootnote", Style { fg: Some(Color::Indexed(4)), ..Style::default() }),
+            ("MarkdownHtml", dim),
+            ("MarkdownAlertNote", Style { fg: Some(Color::Indexed(4)), ..Style::default() }),
+            ("MarkdownAlertTip", Style { fg: Some(Color::Indexed(2)), ..Style::default() }),
+            ("MarkdownAlertImportant", Style { fg: Some(Color::Indexed(5)), ..Style::default() }),
+            ("MarkdownAlertWarning", Style { fg: Some(Color::Indexed(3)), ..Style::default() }),
+            ("MarkdownAlertCaution", Style { fg: Some(Color::Indexed(1)), ..Style::default() }),
+            // Code (Vim's standard groups; the Markdown viewer's code blocks).
+            ("Comment", dim),
+            ("String", Style { fg: Some(Color::Indexed(2)), ..Style::default() }),
+            ("Number", Style { fg: Some(Color::Indexed(3)), ..Style::default() }),
+            ("Constant", Style { fg: Some(Color::Indexed(3)), ..Style::default() }),
+            ("Special", Style { fg: Some(Color::Indexed(5)), ..Style::default() }),
+            ("Keyword", Style { fg: Some(Color::Indexed(5)), ..Style::default() }),
+            ("Operator", Style::default()),
+            ("Function", Style { fg: Some(Color::Indexed(4)), ..Style::default() }),
+            ("Type", Style { fg: Some(Color::Indexed(6)), ..Style::default() }),
+            ("PreProc", Style { fg: Some(Color::Indexed(5)), ..Style::default() }),
         ];
         Self { groups: groups.into_iter().map(|(k, v)| (k.to_owned(), v)).collect() }
     }

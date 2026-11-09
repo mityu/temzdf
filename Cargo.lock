@@ -4504,6 +4504,7 @@ name = "temzdf-markdown"
 version = "0.1.0"
 dependencies = [
  "comrak",
+ "similar",
  "syntect",
  "temzdf-texteditor",
  "unicode-segmentation",
@@ -4598,6 +4599,7 @@ dependencies = [
  "png",
  "serde",
  "serde_json",
+ "temzdf-markdown",
  "temzdf-pdfcore",
  "temzdf-pdfview",
  "temzdf-protocol",
@@ -4609,6 +4611,7 @@ dependencies = [
  "termpix",
  "termpix-core",
  "termpix-ui",
+ "texprintf",
 ]
 
 [[package]]

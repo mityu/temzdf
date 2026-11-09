@@ -420,6 +420,42 @@ impl Anchors {
     }
 }
 
+/// Where line `line` of `old` went in `new` (a line that changed: where
+/// its unchanged neighbour above went, plus the distance from it).
+pub fn map_line(old: &str, new: &str, line: usize) -> usize {
+    use similar::{ChangeTag, TextDiff};
+    let diff = TextDiff::from_lines(old, new);
+    let (mut o, mut n) = (0usize, 0usize);
+    let mut last_equal: Option<(usize, usize)> = None;
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Equal => {
+                if o == line {
+                    return n;
+                }
+                last_equal = Some((o, n));
+                o += 1;
+                n += 1;
+            }
+            ChangeTag::Delete => {
+                if o == line {
+                    break;
+                }
+                o += 1;
+            }
+            ChangeTag::Insert => n += 1,
+        }
+        if o > line {
+            break;
+        }
+    }
+    match last_equal {
+        Some((lo, ln)) => ln + (line - lo),
+        None => line,
+    }
+    .min(new.lines().count().saturating_sub(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,6 +509,15 @@ mod tests {
         assert!(inlines.contains(&Inline::FootnoteRef { label: "n".into(), number: 1 }));
         assert!(inlines.iter().any(|i| matches!(i, Inline::Link { url, .. } if url == "https://example.com")));
         assert!(matches!(d.blocks.last(), Some(Block::Footnote { number: 1, .. })), "footnotes last");
+    }
+
+    #[test]
+    fn lines_follow_a_changed_file() {
+        let old = "a\nb\nc\nd\n";
+        assert_eq!(map_line(old, "new\nnew\na\nb\nc\nd\n", 2), 4, "moved down");
+        assert_eq!(map_line(old, "b\nc\nd\n", 3), 2, "moved up");
+        assert_eq!(map_line(old, "a\nB\nc\nd\n", 1), 1, "changed: where it was");
+        assert_eq!(map_line(old, "x\n", 3), 0, "within the new text");
     }
 
     #[test]

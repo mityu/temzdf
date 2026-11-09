@@ -34,6 +34,7 @@ mod borders;
 mod commands;
 mod floats;
 mod images;
+mod markdown;
 mod notices;
 mod registers;
 mod script;
@@ -68,6 +69,8 @@ pub enum SessionEvent {
     ScriptExited(u32),
     /// A text buffer's file changed (or may have: a watcher's event).
     TextFile(BufferId),
+    /// A Markdown viewer's file changed (or may have).
+    Markdown(u32),
 }
 
 /// Where a session's events go (returns false once nobody listens).
@@ -440,6 +443,11 @@ pub struct Session {
     undo_dir: Option<PathBuf>,
     /// Images read for text panes' decorations (loadImage), by id.
     loaded_images: images::LoadedImages,
+    /// Markdown files shown in viewers, by id.
+    md_docs: HashMap<markdown::MdId, markdown::MdDoc>,
+    /// Where each viewer pane was before it followed a link to another
+    /// file (`markdown.back`): the file and the source line at the top.
+    md_history: HashMap<PaneId, Vec<(PathBuf, usize)>>,
     /// Where swap files go (o.swapfile; tests set their own).
     swap_dir: Option<PathBuf>,
     /// Highlight groups for text panes (scripts define them).
@@ -532,6 +540,8 @@ impl Session {
             texts: HashMap::new(),
             undo_dir: text::undo_dir(),
             loaded_images: HashMap::new(),
+            md_docs: HashMap::new(),
+            md_history: HashMap::new(),
             // (Unit tests set theirs: none in the user's state directory.)
             swap_dir: if cfg!(test) { None } else { swap::swap_dir() },
             highlights: temzdf_texteditor::Highlights::default(),
@@ -976,7 +986,12 @@ impl Session {
                     }
                 }
             }
-            Kind::Text { .. } => {}
+            Kind::Text { buf, .. } => {
+                // A viewer's drawing no pane shows any more goes.
+                if let Some(md) = self.texts.get(&buf).and_then(|t| t.markdown) {
+                    self.md_collect(md);
+                }
+            }
         }
     }
 
@@ -1291,6 +1306,7 @@ impl Session {
                 self.text_file_changed(buf);
                 Outcome::None
             }
+            SessionEvent::Markdown(md) => self.md_file_changed(md),
             SessionEvent::Doc(id, DocEvent::Opened(result)) => {
                 let Some(entry) = self.docs.get_mut(&id) else { return Outcome::None };
                 let Some(opening) = entry.opening.take() else { return Outcome::None };
@@ -2160,7 +2176,22 @@ impl Session {
                 None => out,
             },
             Kind::Text { buf, view } => match self.texts.get_mut(buf) {
-                Some(t) => out.merge(text::mouse(t, view, &local, cell)),
+                Some(t) => {
+                    // A click (press and release on one character) on a
+                    // viewer's link follows it.
+                    let click = t.markdown.is_some().then(|| text::click(t, view, &local, cell)).flatten();
+                    let out = out.merge(text::mouse(t, view, &local, cell));
+                    match click {
+                        Some(at) => match self.md_follow_at(id, at) {
+                            Ok(_) => out.merge(Outcome::Redraw),
+                            Err(e) => {
+                                self.message(&e);
+                                out.merge(Outcome::Redraw)
+                            }
+                        },
+                        None => out,
+                    }
+                }
                 None => out,
             },
         }
@@ -4788,6 +4819,113 @@ mod tests {
         default_mappings(&mut s.modes);
         s.start(PaneSpec::File(path.clone()), None).unwrap();
         (s, path)
+    }
+
+    /// A session whose pane shows `name` (Markdown, in a fresh directory
+    /// with `others` beside it) in the viewer.
+    fn markdown_session(name: &str, content: &str, others: &[(&str, &str)]) -> (Session, PathBuf) {
+        let (mut s, path) = text_session(name, content);
+        for (n, c) in others {
+            std::fs::write(path.parent().unwrap().join(n), c).unwrap();
+        }
+        let p = ScriptValue::Str(path.to_str().unwrap().into());
+        let pane = ScriptValue::map([("pane", ScriptValue::Num(f64::from(s.focus)))]);
+        s.run_command("markdown.open", &[p, pane], None, Instant::now()).unwrap();
+        (s, path)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, libtexprintf")]
+    fn the_markdown_viewer_draws_text_that_cannot_be_edited() {
+        let src = "# Title\n\nSome *text* and $\\alpha^2$.\n";
+        let (mut s, path) = markdown_session("view.md", src, &[]);
+        let rows = screen_text(&s.frame(), GEOMETRY);
+        assert_eq!(rows[0].trim_end(), "Title");
+        assert_eq!(rows[1].trim_end(), "═════");
+        assert_eq!(rows[3].trim_end(), "Some text and α².", "math by libtexprintf");
+        // The buffer is not modifiable, by edits, typing or undo.
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let err = run(&mut s, "text.insert", &[ScriptValue::Str("x".into()), pos(0, 0)]).unwrap_err();
+        assert!(err.contains("not modifiable"), "{err}");
+        assert!(run(&mut s, "text.undo", &[]).unwrap_err().contains("not modifiable"));
+        assert!(s.text_type("x").unwrap_err().contains("not modifiable"));
+        assert_eq!(rows[0].trim_end(), screen_text(&s.frame(), GEOMETRY)[0].trim_end());
+        // Its styles are decorations.
+        let decos = run(&mut s, "text.decorations", &[]).unwrap().0;
+        let ScriptValue::List(decos) = decos else { panic!() };
+        assert!(decos.iter().any(|d| d.get("style") == Some(&ScriptValue::Str("MarkdownItalic".into()))));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn markdown_links_go_to_anchors_urls_and_files_with_a_way_back() {
+        let src = "[down](#far) [web](https://example.com) [other](other.md#end)\n\n# Far\n";
+        let (mut s, path) = markdown_session("links.md", src, &[("other.md", "# Other\n\n# End\n")]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let follow = |s: &mut Session, col: usize| {
+            run(s, "text.set-cursor", &[pos(0, col)]).unwrap();
+            run(s, "markdown.follow", &[]).unwrap().0
+        };
+        assert_eq!(follow(&mut s, 1), ScriptValue::Bool(true));
+        assert_eq!(cursor_of(&mut s), (2, 0), "at the heading");
+        assert_eq!(follow(&mut s, 7), ScriptValue::Bool(true));
+        assert!(
+            s.take_effects().iter().any(|e| matches!(e, Effect::OpenUri { uri, .. } if uri == "https://example.com"))
+        );
+        assert_eq!(follow(&mut s, 4), ScriptValue::Bool(false), "a space: no link");
+        let pane = s.focus;
+        assert_eq!(follow(&mut s, 11), ScriptValue::Bool(true));
+        assert_eq!(s.focus, pane, "the same pane");
+        let rows = screen_text(&s.frame(), GEOMETRY);
+        assert_eq!(rows[0].trim_end(), "End", "the other file, at its anchor");
+        assert_eq!(run(&mut s, "markdown.back", &[]).unwrap().0, ScriptValue::Bool(true));
+        assert!(screen_text(&s.frame(), GEOMETRY)[0].starts_with("down web other"));
+        assert_eq!(run(&mut s, "markdown.back", &[]).unwrap().0, ScriptValue::Bool(false));
+        // Only one document stays open: the other went with its pane.
+        assert_eq!(s.md_docs.len(), 1);
+        let outline = run(&mut s, "markdown.outline", &[]).unwrap().0;
+        assert_eq!(
+            outline,
+            ScriptValue::List(vec![ScriptValue::map([
+                ("level", ScriptValue::Num(1.0)),
+                ("text", ScriptValue::Str("Far".into())),
+                ("anchor", ScriptValue::Str("far".into())),
+                ("line", ScriptValue::Num(2.0)),
+            ])])
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn markdown_is_drawn_again_for_a_new_width_and_a_changed_file_at_the_same_place() {
+        let words = "word ".repeat(40);
+        let src: String = (0..30).map(|i| format!("## Section {i}\n\n{words}\n\n")).collect();
+        let (mut s, path) = markdown_session("long.md", &src, &[]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        run(&mut s, "markdown.goto", &[ScriptValue::Str("section-10".into())]).unwrap();
+        assert_eq!(screen_text(&s.frame(), GEOMETRY)[0].trim_end(), "Section 10");
+        let widths =
+            |s: &Session| s.md_docs.values().next().unwrap().renders.iter().map(|r| r.width).collect::<Vec<_>>();
+        assert_eq!(widths(&s), [90]);
+        // Narrower: drawn again (paragraphs wrap at the new width), the old
+        // drawing gone, the same heading on top.
+        s.resize(Geometry { cols: 50, ..GEOMETRY });
+        let rows = screen_text(&s.frame(), Geometry { cols: 50, ..GEOMETRY });
+        assert_eq!(rows[0].trim_end(), "Section 10");
+        assert!(rows[3].trim_end().len() <= 50 && rows[4].starts_with("word"), "{rows:?}");
+        assert_eq!(widths(&s), [50], "drawn for the new width, the old drawing gone");
+        // The file changes above: still at Section 10.
+        let src2 = format!("# New top\n\nMore.\n\n{src}");
+        std::fs::write(&path, &src2).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+        let md = *s.md_docs.keys().next().unwrap();
+        assert_eq!(s.md_file_changed(md), Outcome::Redraw);
+        assert_eq!(screen_text(&s.frame(), Geometry { cols: 50, ..GEOMETRY })[0].trim_end(), "Section 10");
+        assert_eq!(s.md_file_changed(md), Outcome::None, "unchanged since");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     fn text_of(s: &mut Session) -> String {
