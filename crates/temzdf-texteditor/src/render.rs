@@ -278,7 +278,7 @@ pub fn render(
                     cells[x + 1] = Cell { text: shown.to_string(), width: 1, ..cell };
                 }
                 // Drawn above.
-                GlyphKind::Virtual { .. } | GlyphKind::Image { .. } => {}
+                GlyphKind::Virtual { .. } | GlyphKind::Image { .. } | GlyphKind::Concealed => {}
             }
         }
         // Virtual text at the end of the line (its last row) and over the

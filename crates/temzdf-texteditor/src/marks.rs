@@ -43,6 +43,16 @@ pub struct VirtImage {
     pub missing: bool,
 }
 
+/// What a range is shown as instead of its text (Neovim's conceal): text,
+/// an image (one row high), or nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Conceal {
+    pub text: Vec<VirtChunk>,
+    pub image: Option<VirtImage>,
+    /// Hidden on the cursor's line too (else that line shows the text).
+    pub cursor_line: bool,
+}
+
 /// What a decoration is made of, apart from where it is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MarkSpec {
@@ -64,6 +74,8 @@ pub struct MarkSpec {
     pub virt_pos: VirtPos,
     /// An image at `virt_pos` (inline: one row high, after `virt_text`).
     pub virt_image: Option<VirtImage>,
+    /// The range (within one line) shown as something else.
+    pub conceal: Option<Conceal>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,7 +180,8 @@ impl Marks {
     /// Image `id` now has this size (read again), or is gone.
     pub fn set_image(&mut self, id: u64, size: Option<(u32, u32)>) {
         for m in &mut self.marks {
-            if let Some(img) = m.spec.virt_image.as_mut().filter(|i| i.id == id) {
+            let images = m.spec.virt_image.iter_mut().chain(m.spec.conceal.iter_mut().filter_map(|c| c.image.as_mut()));
+            for img in images.filter(|i| i.id == id) {
                 match size {
                     Some((w, h)) => (img.width, img.height, img.missing) = (w, h, false),
                     None => img.missing = true,

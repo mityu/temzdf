@@ -5288,6 +5288,48 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "the file system")]
+    fn concealed_ranges_show_text_or_an_image_off_the_cursor_line() {
+        let (mut s, path) = text_session("conceal.txt", "a\\alpha b\n\\pic.\nx\n");
+        let dir = path.parent().unwrap().to_owned();
+        let png = dir.join("pic.png");
+        write_png(&png, 20, 20);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        let range = |l0, c0, l1, c1| ScriptValue::map([("start", pos(l0, c0)), ("end", pos(l1, c1))]);
+        let rows = |s: &mut Session| screen_text(&s.frame(), GEOMETRY);
+        let id = run(&mut s, "load-image", &[str(png.to_str().unwrap())]).unwrap().0;
+        let alpha = ScriptValue::map([("conceal", ScriptValue::map([("text", str("α"))]))]);
+        run(&mut s, "text.add-decoration", &[range(0, 1, 0, 7), alpha]).unwrap();
+        let image = ScriptValue::map([(
+            "conceal",
+            ScriptValue::map([
+                ("image", ScriptValue::map([("image", id.clone()), ("alt", str("P"))])),
+                ("cursorLine", ScriptValue::Bool(true)),
+            ]),
+        )]);
+        run(&mut s, "text.add-decoration", &[range(1, 0, 1, 4), image]).unwrap();
+        // The cursor's line as it is; the image hidden there too.
+        let r = rows(&mut s);
+        assert!(r[0].starts_with("a\\alpha b") && r[1].starts_with("  ."), "{r:?}");
+        let l = s.frame().layers[0];
+        assert_eq!((l.dst.x, l.dst.y, l.dst.w, l.dst.h), (0, 20, 20, 20));
+        // Elsewhere, concealed; the cursor in a range at its replacement.
+        run(&mut s, "text.set-cursor", &[pos(2, 0)]).unwrap();
+        assert!(rows(&mut s)[0].starts_with("aα b"), "{:?}", rows(&mut s));
+        run(&mut s, "text.set-cursor", &[pos(1, 2)]).unwrap();
+        assert_eq!(s.frame().cursor, Some((0, 1)));
+        // Its image unloaded: the alt text.
+        run(&mut s, "unload-image", &[id]).unwrap();
+        assert!(s.frame().layers.is_empty());
+        assert!(rows(&mut s)[1].starts_with("P."), "{:?}", rows(&mut s));
+        // Within one line only.
+        let bad = ScriptValue::map([("conceal", ScriptValue::map([("text", str("x"))]))]);
+        assert!(run(&mut s, "text.add-decoration", &[range(0, 1, 1, 1), bad]).unwrap_err().contains("one line"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
     fn virtual_text_shows_in_the_pane_and_the_cursor_skips_it() {
         let (mut s, path) = text_session("virt.txt", "abc\n");
         let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());

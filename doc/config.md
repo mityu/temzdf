@@ -595,7 +595,11 @@ JavaScript strings index; out of range is clamped), ranges
   "inline"` shows it between the characters, one row high and as wide as
   its aspect asks in the client's cells (at most `maxCols` and the pane),
   after any `virtText`; frontends that draw no images (and a dropped
-  image) show `alt` there.
+  image) show `alt` there. `conceal: { text?, image?, cursorLine? }`
+  shows a range within one line as other text (`[{ text, style? }]` or a
+  string, `\alpha` as `α`), an image (one row high, as `virtImage`) or
+  nothing (as Vim's `conceal`); the cursor's line shows its text unless
+  `cursorLine: true`. Searching, selecting and editing see the text.
   `text.decoration(id)`, `text.decorations({ namespace?, range? })`,
   `text.moveDecoration(id, range)`, `text.deleteDecoration(id)`,
   `text.clearNamespace(ns)`. Styles are highlight groups:

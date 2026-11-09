@@ -153,7 +153,14 @@ Following VS Code **(user)**:
   aspect asks, never cut. Drawn, it leaves blank cells and a placement
   (`Drawn.images`); the server makes it an image layer over a hole cut in
   the text grid, and puts its alt text in the frame's `fallback_text`,
-  which only frontends without images draw. Later: signs.
+  which only frontends without images draw. A concealed range (`conceal`,
+  within one line) is laid out as a piece of inline virtual text in place
+  of its text: the replacement's first glyph carries the range's
+  characters (so offsets in it are where the replacement is), and a range
+  shown as nothing leaves a glyph of no columns. Off the cursor's line
+  only, unless the decoration says so (Vim's `concealcursor`, per
+  decoration): the view hands layout the cursor's line. Of overlapping
+  ranges the first is shown. Later: signs.
 
 ## 8. Undo
 

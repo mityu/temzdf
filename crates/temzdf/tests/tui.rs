@@ -1867,6 +1867,34 @@ fn an_inline_image_is_placed_in_its_cells_or_its_alt_text_shown() {
 }
 
 #[test]
+fn a_concealed_range_shows_its_image_off_the_cursor_line() {
+    let env = Env::new("text-conceal");
+    let png = env.path("pic.png");
+    write_png(&png, 20, 20);
+    let deco = "cmd.text.addDecoration({ start: { line: 1, character: 1 }, end: { line: 1, character: 5 } }, \
+                { conceal: { image: { image: id, alt: \"P\" } } });\
+                cmd.text.addDecoration({ start: { line: 0, character: 0 }, end: { line: 0, character: 2 } }, \
+                { conceal: { text: \"=\" } });";
+    env.config("config.ts", &image_config(&png, deco));
+    let file = env.path("c.txt");
+    std::fs::write(&file, "<-a\nx\\picy\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "tc", file.to_str().unwrap()], &env.options());
+    t.wait_text("picy");
+    t.key("F5");
+    // The cursor on the first line: that one as it is, the second
+    // concealed by the image (two columns).
+    let s = t.wait_for("the image", |s| s.images.iter().any(|p| p.width == 20));
+    let p = s.images.iter().find(|p| p.width == 20).unwrap();
+    assert_eq!((p.col, p.row, p.cols, p.rows), (1, 1, 2, 1), "{p:?}");
+    assert!(s.lines()[0].starts_with("<-a") && s.lines()[1].starts_with("x  y"), "{:?}", s.lines());
+    // Down: the first concealed, the second as it is.
+    t.key("Down");
+    t.wait_for("the other line", |s| {
+        s.lines()[0].starts_with("=a") && s.lines()[1].starts_with("x\\picy") && s.images.is_empty()
+    });
+}
+
+#[test]
 fn a_text_file_is_edited_without_modes_and_written() {
     let env = Env::new("text-edit");
     env.config("config.ts", NOTEPAD);

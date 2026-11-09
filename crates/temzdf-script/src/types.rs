@@ -205,6 +205,12 @@ declare module "temzdf" {{
     alt?: string;
     maxCols?: number;
   }}
+  /** A range (within one line) shown as text, an image or nothing instead of its text; on the cursor's line shown as it is unless `cursorLine`. */
+  export interface Conceal {{
+    text?: (VirtChunk | string)[] | string;
+    image?: VirtImage;
+    cursorLine?: boolean;
+  }}
   /** A piece of virtual text and its style (a highlight group). */
   export interface VirtChunk {{
     text: string;

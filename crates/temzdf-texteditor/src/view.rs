@@ -5,7 +5,7 @@
 use crate::buffer::Buffer;
 use crate::cursor::{Cursor, SelectionKind};
 use crate::edit::{Change, Gravity, map_offset};
-use crate::layout::{Inline, Layout, LayoutOptions, Row};
+use crate::layout::{Concealed, Inline, Layout, LayoutOptions, Row};
 use crate::motion::{self, Unit};
 use crate::text::Text;
 
@@ -112,7 +112,9 @@ impl View {
     pub fn layouter<'a>(&'a self, buf: &'a Buffer) -> Layout<'a> {
         let text = buf.text();
         let width = self.text_width(text);
-        Layout { text, opts: &self.layout, width, inline: Inline::of(buf.marks(), self.pane, self.cell, width) }
+        let inline = Inline::of(buf.marks(), self.pane, self.cell, width);
+        let concealed = Concealed::of(text, buf.marks(), self.pane, self.cell, width, text.line_of(self.cursor.pos));
+        Layout { text, opts: &self.layout, width, inline, concealed }
     }
 
     /// The rows shown, top first.
@@ -222,7 +224,9 @@ impl View {
         let opts = self.layout.clone();
         let text = buf.text();
         let width = self.text_width(text);
-        let l = Layout { text, opts: &opts, width, inline: Inline::of(buf.marks(), self.pane, self.cell, width) };
+        let inline = Inline::of(buf.marks(), self.pane, self.cell, width);
+        let concealed = Concealed::of(text, buf.marks(), self.pane, self.cell, width, text.line_of(self.cursor.pos));
+        let l = Layout { text, opts: &opts, width, inline, concealed };
         for _ in 0..rows.unsigned_abs() {
             let next = if rows < 0 { l.prev_row(self.top) } else { l.next_row(&l.row_at(self.top, usize::MAX)) };
             match next {
@@ -256,7 +260,9 @@ impl View {
         let opts = self.layout.clone();
         let text = buf.text();
         let width = self.text_width(text);
-        let l = Layout { text, opts: &opts, width, inline: Inline::of(buf.marks(), self.pane, self.cell, width) };
+        let inline = Inline::of(buf.marks(), self.pane, self.cell, width);
+        let concealed = Concealed::of(text, buf.marks(), self.pane, self.cell, width, text.line_of(self.cursor.pos));
+        let l = Layout { text, opts: &opts, width, inline, concealed };
         let target = l.row_start_of(offset.min(text.len_chars()));
         let height = self.height.max(1) as usize;
         let so = self.scrolloff.min((height - 1) / 2);

@@ -8,7 +8,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::marks::{Marks, VirtPos};
+use crate::marks::{Marks, VirtChunk, VirtImage, VirtPos};
 use crate::text::Text;
 
 /// How a pane lays text out.
@@ -62,6 +62,8 @@ pub enum GlyphKind {
         id: u64,
         alt: String,
     },
+    /// A concealed range shown as nothing: no columns, its characters.
+    Concealed,
 }
 
 /// Inline virtual text at `offset`, as layout places it: its graphemes, each
@@ -103,28 +105,78 @@ impl Inline {
             })
             .collect();
         v.sort_by_key(|m| (m.start, m.spec.priority, m.id));
+        v.into_iter()
+            .map(|m| Inline::pieces(m.start, &m.spec.virt_text, m.spec.virt_image.as_ref(), cell, width))
+            .filter(|i| !i.graphemes.is_empty() || i.image.is_some())
+            .collect()
+    }
+
+    /// Text and an image at `offset`, as layout places them.
+    fn pieces(offset: usize, chunks: &[VirtChunk], img: Option<&VirtImage>, cell: (u32, u32), width: usize) -> Inline {
         let text = |t: &str, style: &Option<String>| -> Vec<(String, usize, Option<String>)> {
             t.graphemes(true)
                 .filter(|g| !g.chars().any(control))
                 .map(|g| (g.to_owned(), grapheme_width(g), style.clone()))
                 .collect()
         };
-        v.into_iter()
-            .map(|m| {
-                let mut graphemes: Vec<_> = m.spec.virt_text.iter().flat_map(|c| text(&c.text, &c.style)).collect();
-                let mut image = None;
-                if let Some(img) = &m.spec.virt_image {
-                    if img.missing {
-                        // Gone: its text instead.
-                        graphemes.extend(text(&img.alt, &None));
-                    } else {
-                        let max = img.max_cols.unwrap_or(usize::MAX).min(width);
-                        image = Some((img.id, image_cols(img.width, img.height, cell, max), img.alt.clone()));
-                    }
-                }
-                Inline { offset: m.start, graphemes, image }
+        let mut graphemes: Vec<_> = chunks.iter().flat_map(|c| text(&c.text, &c.style)).collect();
+        let mut image = None;
+        if let Some(img) = img {
+            if img.missing {
+                // Gone: its text instead.
+                graphemes.extend(text(&img.alt, &None));
+            } else {
+                let max = img.max_cols.unwrap_or(usize::MAX).min(width);
+                image = Some((img.id, image_cols(img.width, img.height, cell, max), img.alt.clone()));
+            }
+        }
+        Inline { offset, graphemes, image }
+    }
+}
+
+/// A range shown as something else (conceal): its text is skipped, `with`
+/// shown at its start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Concealed {
+    pub start: usize,
+    pub end: usize,
+    pub with: Inline,
+}
+
+impl Concealed {
+    /// The ranges of `marks` concealed in `pane` (within one line, not on
+    /// `cursor_line` unless they say so), by start.
+    pub fn of(
+        text: &Text,
+        marks: &Marks,
+        pane: Option<u32>,
+        cell: (u32, u32),
+        width: usize,
+        cursor_line: usize,
+    ) -> Vec<Concealed> {
+        let mut v: Vec<_> = marks
+            .iter()
+            .filter(|m| {
+                m.start < m.end
+                    && !m.deleted
+                    && m.spec.pane.is_none_or(|p| Some(p) == pane)
+                    && text.line_of(m.start) == text.line_of(m.end.saturating_sub(1))
+                    && m.end <= text.line_end(text.line_of(m.start))
             })
-            .filter(|i| !i.graphemes.is_empty() || i.image.is_some())
+            .filter_map(|m| {
+                let c = m.spec.conceal.as_ref()?;
+                (c.cursor_line || text.line_of(m.start) != cursor_line).then_some((m, c))
+            })
+            .collect();
+        // Of overlapping ones layout shows the first (one inside another
+        // is never reached).
+        v.sort_by_key(|(m, _)| (m.start, -m.spec.priority, m.id));
+        v.into_iter()
+            .map(|(m, c)| Concealed {
+                start: m.start,
+                end: m.end,
+                with: Inline::pieces(m.start, &c.text, c.image.as_ref(), cell, width),
+            })
             .collect()
     }
 }
@@ -187,6 +239,8 @@ pub struct Layout<'a> {
     pub width: usize,
     /// Inline virtual text, by offset ([`Inline::of`]).
     pub inline: Vec<Inline>,
+    /// Concealed ranges, by start ([`Concealed::of`]).
+    pub concealed: Vec<Concealed>,
 }
 
 /// How far ahead a row is read at once (more if it needs it).
@@ -219,6 +273,38 @@ impl Layout<'_> {
             let mut graphemes = chunk.graphemes(true).peekable();
             let mut consumed = 0;
             while let Some(g) = graphemes.next() {
+                // A concealed range here: what it is shown as (after the
+                // virtual text before it, one unit with it), its text
+                // skipped; read on after it.
+                let ci = self.concealed.partition_point(|c| c.start < at);
+                if let Some(c) = self.concealed.get(ci).filter(|c| c.start == at) {
+                    let vj = vi + self.inline[vi..].iter().take_while(|v| v.offset == at).count();
+                    let vw: usize = self.inline[vi..vj].iter().map(Inline::width).sum();
+                    if self.opts.wrap && col + vw + c.with.width() > width && col > prefix {
+                        row.wrapped = true;
+                        row.end = at;
+                        return row;
+                    }
+                    if !self.opts.wrap && col >= limit {
+                        return row;
+                    }
+                    let room = |col: usize| if self.opts.wrap { width.saturating_sub(col) } else { usize::MAX };
+                    let left = room(col);
+                    self.place_inline(&mut row, &mut col, &self.inline[vi..vj], at, left);
+                    let first = row.glyphs.len();
+                    let left = room(col);
+                    self.place_inline(&mut row, &mut col, std::slice::from_ref(&c.with), at, left);
+                    // Offsets in the range show where it is.
+                    let chars = c.end - c.start;
+                    match row.glyphs.get_mut(first) {
+                        Some(g) => g.chars = chars,
+                        None => row.glyphs.push(Glyph { offset: at, chars, col, width: 0, kind: GlyphKind::Concealed }),
+                    }
+                    at = c.end;
+                    consumed += chars;
+                    vi += self.inline[vi..].iter().take_while(|v| v.offset < at).count();
+                    break;
+                }
                 // A cluster cut by the chunk's end: read on from its start.
                 if graphemes.peek().is_none() && to < line_end && consumed > 0 {
                     break;
@@ -436,7 +522,30 @@ mod tests {
 
     fn rows_with(text: &str, width: usize, opts: LayoutOptions, virt: &[(usize, &str)]) -> Vec<String> {
         let t = Text::from(text);
-        let l = Layout { text: &t, opts: &opts, width, inline: inline(virt) };
+        let l = Layout { text: &t, opts: &opts, width, inline: inline(virt), concealed: Vec::new() };
+        show(&l)
+    }
+
+    /// Ranges `(start, end, shown as, cursor_line)` concealed, the cursor
+    /// on line `cursor`.
+    fn concealed(t: &Text, v: &[(usize, usize, &str, bool)], cursor: usize) -> Vec<Concealed> {
+        let mut marks = Marks::default();
+        for &(start, end, with, cursor_line) in v {
+            let text = if with.is_empty() { Vec::new() } else { vec![VirtChunk { text: with.into(), style: None }] };
+            let conceal = Some(crate::marks::Conceal { text, image: None, cursor_line });
+            marks.add(start, end, crate::marks::MarkSpec { conceal, ..Default::default() });
+        }
+        Concealed::of(t, &marks, None, (10, 20), 80, cursor)
+    }
+
+    fn rows_concealed(text: &str, width: usize, v: &[(usize, usize, &str, bool)], cursor: usize) -> Vec<String> {
+        let t = Text::from(text);
+        let opts = LayoutOptions::default();
+        let l = Layout { text: &t, opts: &opts, width, inline: Vec::new(), concealed: concealed(&t, v, cursor) };
+        show(&l)
+    }
+
+    fn show(l: &Layout) -> Vec<String> {
         let mut out = Vec::new();
         let mut at = Some(0);
         while let Some(start) = at {
@@ -451,6 +560,7 @@ mod tests {
                     GlyphKind::Virtual { text, .. } => s.push_str(text),
                     // Images are written as # per column in these tests.
                     GlyphKind::Image { .. } => s.push_str(&"#".repeat(g.width)),
+                    GlyphKind::Concealed => {}
                 }
             }
             out.push(s);
@@ -479,7 +589,7 @@ mod tests {
     fn rows_are_found_from_offsets_and_columns_kept_across_them() {
         let t = Text::from("abcdefgh\nxy");
         let opts = LayoutOptions::default();
-        let l = Layout { text: &t, opts: &opts, width: 3, inline: Vec::new() };
+        let l = Layout { text: &t, opts: &opts, width: 3, inline: Vec::new(), concealed: Vec::new() };
         assert_eq!(l.row_start_of(4), 3);
         assert_eq!(l.prev_row(6), Some(3));
         assert_eq!(l.prev_row(9), Some(6), "the last row of the line before");
@@ -494,7 +604,7 @@ mod tests {
         let long = "x".repeat(1 << 20);
         let t = Text::from(long.as_str());
         let opts = LayoutOptions { wrap: false, ..Default::default() };
-        let l = Layout { text: &t, opts: &opts, width: 80, inline: Vec::new() };
+        let l = Layout { text: &t, opts: &opts, width: 80, inline: Vec::new(), concealed: Vec::new() };
         let r = l.row_at(0, 80);
         assert_eq!(r.glyphs.len(), 80);
     }
@@ -509,7 +619,8 @@ mod tests {
         // The cursor goes after it: columns of offsets skip it.
         let t = Text::from("abc");
         let opts = nowrap();
-        let l = Layout { text: &t, opts: &opts, width: 80, inline: inline(&[(0, "> "), (1, "XY")]) };
+        let l =
+            Layout { text: &t, opts: &opts, width: 80, inline: inline(&[(0, "> "), (1, "XY")]), concealed: Vec::new() };
         let r = l.row_at(0, usize::MAX);
         assert_eq!((r.col_of(0), r.col_of(1), r.col_of(3)), (2, 5, 7));
         assert_eq!(r.offset_at(0), 0, "a click on it: where it is");
@@ -536,7 +647,7 @@ mod tests {
     fn rows_with_inline_virtual_text_are_found_from_offsets() {
         let t = Text::from("abcdef");
         let opts = LayoutOptions::default();
-        let l = Layout { text: &t, opts: &opts, width: 4, inline: inline(&[(2, "XY")]) };
+        let l = Layout { text: &t, opts: &opts, width: 4, inline: inline(&[(2, "XY")]), concealed: Vec::new() };
         // "abXY", "cdef".
         assert_eq!(l.row_start_of(1), 0);
         assert_eq!(l.row_start_of(2), 2, "it went down with its character");
@@ -560,11 +671,53 @@ mod tests {
         let t = Text::from("ab");
         let opts = LayoutOptions::default();
         let img = Inline { offset: 1, graphemes: Vec::new(), image: Some((7, 3, "x".into())) };
-        let l = Layout { text: &t, opts: &opts, width: 5, inline: vec![img.clone()] };
+        let l = Layout { text: &t, opts: &opts, width: 5, inline: vec![img.clone()], concealed: Vec::new() };
         let r = l.row_at(0, usize::MAX);
         assert_eq!(r.glyphs.iter().map(|g| g.width).collect::<Vec<_>>(), [1, 3, 1]);
         assert_eq!(r.col_of(1), 4, "the cursor after it");
-        let l = Layout { text: &t, opts: &opts, width: 4, inline: vec![img] };
+        let l = Layout { text: &t, opts: &opts, width: 4, inline: vec![img], concealed: Vec::new() };
         assert_eq!(l.row_at(0, usize::MAX).end, 1, "wrapped before it, with the b");
+    }
+
+    #[test]
+    fn concealed_ranges_show_what_replaces_them() {
+        // \alpha as α, or as nothing; the cursor on another line.
+        assert_eq!(rows_concealed("a\\alpha b\nx", 80, &[(1, 7, "A", false)], 1), ["aA b", "x"]);
+        assert_eq!(rows_concealed("abcd", 80, &[(1, 3, "", false)], 1), ["ad"]);
+        // On the cursor's line shown as it is, unless it says so.
+        assert_eq!(rows_concealed("abcd", 80, &[(1, 3, "X", false)], 0), ["abcd"]);
+        assert_eq!(rows_concealed("abcd", 80, &[(1, 3, "X", true)], 0), ["aXd"]);
+        // Overlapping: the first one; across lines: none.
+        assert_eq!(rows_concealed("abcd", 80, &[(0, 2, "X", true), (1, 3, "Y", true)], 0), ["Xcd"]);
+        assert_eq!(rows_concealed("abcd", 80, &[(1, 2, "Y", true), (0, 3, "X", true)], 0), ["Xd"]);
+        assert_eq!(rows_concealed("ab\ncd", 80, &[(1, 4, "X", true)], 0), ["ab", "cd"]);
+        // Wrapped as one unit: "abcd" with bc as XYZ at width 4.
+        assert_eq!(rows_concealed("abcde", 4, &[(1, 3, "XYZ", true)], 0), ["aXYZ", "de"]);
+        assert_eq!(rows_concealed("abcde", 4, &[(2, 4, "XYZ", true)], 0), ["ab", "XYZe"]);
+        // Offsets in the range are where its replacement is.
+        let t = Text::from("abcde");
+        let opts = LayoutOptions::default();
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width: 80,
+            inline: Vec::new(),
+            concealed: concealed(&t, &[(1, 4, "X", true)], 0),
+        };
+        let r = l.row_at(0, usize::MAX);
+        assert_eq!((r.col_of(1), r.col_of(2), r.col_of(4)), (1, 1, 2));
+        assert_eq!(r.offset_at(1), 1);
+        assert_eq!(r.offset_at(2), 4);
+        // Shown as nothing: the cursor in it is where it was.
+        let l = Layout {
+            text: &t,
+            opts: &opts,
+            width: 80,
+            inline: Vec::new(),
+            concealed: concealed(&t, &[(1, 4, "", true)], 0),
+        };
+        let r = l.row_at(0, usize::MAX);
+        assert_eq!((r.col_of(2), r.col_of(4)), (1, 1));
+        assert_eq!(r.offset_at(1), 4);
     }
 }
