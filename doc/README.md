@@ -111,3 +111,7 @@ branch. The decisions taken from it are in the design documents.
   and under a CPU quota (`experiments/script-host-bench/`).
 - [survey/gpu.md](survey/gpu.md): the GPU rasterisation experiment
   (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.
+- [survey/concurrency-checking.md](survey/concurrency-checking.md):
+  tools for concurrency bugs (loom, shuttle, Miri and its GenMC mode,
+  Kani, static analysers, trace validation) and deterministic simulation
+  for the tile schedule's worker pool.
