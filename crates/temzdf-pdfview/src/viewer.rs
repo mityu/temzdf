@@ -520,14 +520,15 @@ impl Viewer {
             let thumb_key = TileKey { generation: self.cache().generation(), page: page as u32, kind: TileKind::Thumb };
             let thumb_scale = thumb_scale(bounds);
             let thumb_cached = self.cache().touch(thumb_key);
-            if thumb_cached.is_none() && !self.cache().is_in_flight(thumb_key) {
-                let (tw, th) = bounds.pixel_size(thumb_scale);
-                let area = PixelRect { x: 0, y: 0, w: tw, h: th };
-                work.push(
-                    is_visible,
-                    -1.0,
-                    Need::Render(RenderJob { key: thumb_key, list: list.clone(), bounds, scale: thumb_scale, area }),
-                );
+            if thumb_cached.is_none() {
+                let need = if self.cache().is_in_flight(thumb_key) {
+                    Need::Queued(thumb_key)
+                } else {
+                    let (tw, th) = bounds.pixel_size(thumb_scale);
+                    let area = PixelRect { x: 0, y: 0, w: tw, h: th };
+                    Need::Render(RenderJob { key: thumb_key, list: list.clone(), bounds, scale: thumb_scale, area })
+                };
+                work.push(is_visible, -1.0, need);
             }
 
             let mut missing_on_screen = false;
@@ -556,12 +557,14 @@ impl Viewer {
                     }
                     None => {
                         missing_on_screen |= on_screen;
-                        if !self.cache().is_in_flight(key) {
-                            let cx = dst.x as f32 + dst.w as f32 / 2.0 - centre.0;
-                            let cy = dst.y as f32 + dst.h as f32 / 2.0 - centre.1;
-                            let job = RenderJob { key, list: list.clone(), bounds, scale, area };
-                            work.push(on_screen, cx.hypot(cy), Need::Render(job));
-                        }
+                        let cx = dst.x as f32 + dst.w as f32 / 2.0 - centre.0;
+                        let cy = dst.y as f32 + dst.h as f32 / 2.0 - centre.1;
+                        let need = if self.cache().is_in_flight(key) {
+                            Need::Queued(key)
+                        } else {
+                            Need::Render(RenderJob { key, list: list.clone(), bounds, scale, area })
+                        };
+                        work.push(on_screen, cx.hypot(cy), need);
                     }
                 }
             }
@@ -584,6 +587,7 @@ impl Viewer {
                 peek_needs.iter().any(|p| match (p, n) {
                     (Need::LoadPage(a), Need::LoadPage(b)) => a == b,
                     (Need::Render(a), Need::Render(b)) => a.key == b.key,
+                    (Need::Queued(a), Need::Queued(b)) => a == b,
                     _ => false,
                 })
             };
@@ -679,10 +683,10 @@ impl Viewer {
                             layers.push(Layer { key, image, src, dst: vis, z: p.z + 1 });
                             key += 1;
                         }
-                        None if !self.cache().is_in_flight(tile) => {
+                        None if self.cache().is_in_flight(tile) => needs.push(Need::Queued(tile)),
+                        None => {
                             needs.push(Need::Render(RenderJob { key: tile, list: list.clone(), bounds, scale, area }));
                         }
-                        None => {}
                     }
                 }
             }
@@ -821,6 +825,7 @@ mod tests {
                         let pixels = pdf::render(&job.list, job.bounds, job.scale, job.area).unwrap();
                         v.rendered(images, Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels });
                     }
+                    Need::Queued(_) => {}
                 }
             }
         }

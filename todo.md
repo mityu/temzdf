@@ -184,11 +184,6 @@ server on one `Session`). Next and open:
   - layout of large documents on a worker thread (now on the session's
     thread, a few milliseconds for usual documents; strips are painted on
     workers, ahead of the pane, through the tile schedule PDF tiles use).
-- PDF tiles could keep their queued work through `WorkPool::replace_wanted`
-  as Markdown strips do: replacing the queue with new work alone drops
-  queued tiles that no frame asks for again until a redraw (rare: it
-  needs the threads idle while work is queued, as just after they
-  start).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
 - Judged e2e (`expect` in `scripts/e2e.sh`, `doc/dev/testing.md`) covers keys and

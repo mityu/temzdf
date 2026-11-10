@@ -63,6 +63,9 @@ pub struct Rendered {
 pub enum Need {
     LoadPage(usize),
     Render(RenderJob),
+    /// A render asked for earlier, still in flight, that this frame still
+    /// wants: kept queued if it has not started.
+    Queued(TileKey),
 }
 
 pub fn quantize(scale: f32) -> u32 {
@@ -178,6 +181,7 @@ impl DocCache {
                 self.lists_requested.insert(*p);
             }
             Need::Render(job) => self.tiles.mark_in_flight(job.key),
+            Need::Queued(_) => {}
         }
     }
 

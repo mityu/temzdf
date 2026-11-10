@@ -107,10 +107,10 @@ would fail the link rather than go unnoticed.
   first, then those within a screen above and below; until one arrives
   the page's background stands in. Strips are keyed by their page, which
   is new at every layout, so ones painted for a page gone are dropped.
-  A frame keeps the strips it still wants queued (`WorkPool::replace_wanted`):
-  replacing the queue with new work alone dropped work an earlier frame
-  had asked for and nothing asked for again while it counted as in
-  flight.
+  A frame keeps the strips it still wants queued (`WorkPool::replace_wanted`,
+  as PDF tiles do, `Need::Queued`): replacing the queue with new work
+  alone dropped work an earlier frame had asked for and nothing asked
+  for again while it counted as in flight.
 - Positions: `data-line` elements give (y, source line) pairs, both ways;
   `#anchor` is the element with that id; a point's link is the `href` up
   from Blitz's hit test; search hits come from inline roots' text and

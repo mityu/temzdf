@@ -2318,6 +2318,7 @@ mod tests {
                             crate::doc_cache::Rendered { key: job.key, width: job.area.w, height: job.area.h, pixels };
                         s.viewer.rendered(images, r);
                     }
+                    Need::Queued(_) => {}
                 }
             }
         }

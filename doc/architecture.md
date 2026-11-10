@@ -40,7 +40,7 @@
   threads, shared by the PDF and Markdown panes (a tile cache with the
   work in flight and LRU eviction, the grid of tiles on and near the
   screen, a frame's work in order, a worker pool whose queue each frame
-  replaces).
+  replaces, keeping the queued work it still wants).
 - `temzdf-pdfcore`: the PDF backend: MuPDF wrapper, `DocCache` (display lists
   and tiles), page text and selection, SyncTeX, background workers.
 - `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys)

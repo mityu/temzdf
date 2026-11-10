@@ -4,10 +4,12 @@
 //! [`DocEvent`]s in, collects the panes' work with [`DocumentHost::dispatch`]
 //! and performs the returned [`Effect`]s. See doc/design/reload.md and doc/design/synctex.md.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
+use temzdf_scene::tiles::Want;
 use temzdf_scene::{Effect, Images};
 
 use crate::doc_cache::{DocCache, Need, RenderJob};
@@ -268,14 +270,15 @@ impl DocumentHost {
     }
 
     /// Hand this frame's work (from every pane showing the file, most urgent
-    /// first) to the threads. Work asked for twice is done once.
+    /// first) to the threads. Work asked for twice is done once; queued work
+    /// this frame still wants stays queued, in its new place.
     pub fn dispatch(&mut self, needs: Vec<Need>) {
         let mut d = self.doc.borrow_mut();
-        let (loads, jobs) = claim(&mut d.cache, needs);
+        let (loads, wants) = claim(&mut d.cache, needs);
         for p in loads {
             let _ = self.cmd.send(DocCmd::LoadPage(p));
         }
-        for key in self.pool.replace(jobs) {
+        for key in self.pool.replace_wanted(wants) {
             d.cache.render_cancelled(key);
         }
     }
@@ -298,23 +301,31 @@ impl DocumentHost {
 }
 
 /// Mark the work as requested in the cache and split it into pages to load
-/// and tiles to render, dropping what is already requested (several panes on
-/// one document ask for the same tiles).
-fn claim(cache: &mut DocCache, needs: Vec<Need>) -> (Vec<usize>, Vec<RenderJob>) {
-    let (mut loads, mut jobs) = (Vec::new(), Vec::new());
+/// and the tiles wanted, in order: new renders, and renders already in flight
+/// (kept queued if they have not started). Pages already requested are
+/// dropped, and a tile asked for twice (several panes on one document ask for
+/// the same tiles) counts once.
+fn claim(cache: &mut DocCache, needs: Vec<Need>) -> (Vec<usize>, Vec<Want<RenderJob>>) {
+    let (mut loads, mut wants) = (Vec::new(), Vec::new());
+    let mut seen = HashSet::new();
     for need in needs {
-        match &need {
-            Need::LoadPage(p) if cache.is_requested(*p) => continue,
-            Need::Render(job) if cache.is_in_flight(job.key) => continue,
-            _ => {}
-        }
-        cache.mark_requested(&need);
         match need {
-            Need::LoadPage(p) => loads.push(p),
-            Need::Render(job) => jobs.push(job),
+            Need::LoadPage(p) if cache.is_requested(p) => {}
+            Need::LoadPage(p) => {
+                cache.mark_requested(&need);
+                loads.push(p);
+            }
+            Need::Render(job) if !seen.insert(job.key) => {}
+            Need::Render(job) if cache.is_in_flight(job.key) => wants.push(Want::Queued(job.key)),
+            Need::Render(job) => {
+                cache.tiles.mark_in_flight(job.key);
+                wants.push(Want::New(job));
+            }
+            Need::Queued(key) if seen.insert(key) => wants.push(Want::Queued(key)),
+            Need::Queued(_) => {}
         }
     }
-    (loads, jobs)
+    (loads, wants)
 }
 
 /// The inverse-search shell command for a source location: `template` with
@@ -392,13 +403,60 @@ mod tests {
             let area = PixelRect { x: 0, y: 0, w: 8, h: 8 };
             Need::Render(RenderJob { key, list: list.clone(), bounds: bounds[0], scale: 1.0, area })
         };
+        let key = |w: &Want<RenderJob>| match w {
+            Want::New(j) => (true, j.key),
+            Want::Queued(k) => (false, *k),
+        };
         let needs = vec![Need::LoadPage(1), job(0), job(1), Need::LoadPage(1), job(0)];
-        let (loads, jobs) = claim(&mut cache, needs);
+        let (loads, wants) = claim(&mut cache, needs);
         assert_eq!(loads, vec![1]);
-        assert_eq!(jobs.len(), 2);
-        // The next frame asks again while they are in flight: nothing new.
-        let (loads, jobs) = claim(&mut cache, vec![job(0), Need::LoadPage(1)]);
-        assert!(loads.is_empty() && jobs.is_empty());
+        let tile = |tx| TileKey { generation: 0, page: 0, kind: TileKind::Tile { scale_q: 1024, tx, ty: 0 } };
+        assert_eq!(wants.iter().map(key).collect::<Vec<_>>(), [(true, tile(0)), (true, tile(1))]);
+        // The next frame asks again while they are in flight, in another
+        // order: nothing new, both kept in that order.
+        let needs = vec![Need::Queued(tile(1)), job(0), Need::LoadPage(1), Need::Queued(tile(1))];
+        let (loads, wants) = claim(&mut cache, needs);
+        assert!(loads.is_empty());
+        assert_eq!(wants.iter().map(key).collect::<Vec<_>>(), [(false, tile(1)), (false, tile(0))]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn work_still_queued_survives_the_next_frame() {
+        use std::sync::mpsc;
+        use termpix_core::geom::{CellSize, Geometry};
+        let path = pdf::fixture("sample.pdf");
+        let doc = pdf::open(&path).unwrap();
+        let info = pdf::doc_info(&doc).unwrap();
+        let geometry = Geometry { cols: 160, rows: 50, cell: CellSize { width: 10, height: 20 } };
+        let mut pane = PdfPane::new("sample.pdf".into(), info.clone(), geometry);
+        for p in 0..pane.viewer.page_count() {
+            pane.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
+        }
+        let (tx, rx) = mpsc::channel();
+        let sink = workers::channel_sink(tx, |e| e);
+        let mut host =
+            Opening::start(&path, sink).unwrap().finish(info, pane.viewer.doc.clone(), HostOptions::default());
+        let mut images = Images::new();
+        // Two frames before any tile arrives, as when the threads have just
+        // started: the second must keep the work the first queued.
+        for _ in 0..2 {
+            let (_, needs) = pane.frame(&mut images);
+            host.dispatch(needs);
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !host.doc.borrow().cache.is_idle() {
+            let wait = deadline.saturating_duration_since(Instant::now());
+            let ev = rx.recv_timeout(wait).expect("tiles stopped arriving");
+            if let ev @ (DocEvent::Rendered(_) | DocEvent::RenderFailed(..)) = ev {
+                host.handle(ev, &mut [&mut pane], &mut images, Instant::now());
+            }
+        }
+        // Nothing was dropped on the way: the next frame has every tile.
+        let (_, needs) = pane.frame(&mut images);
+        let renders = needs.iter().filter(|n| !matches!(n, Need::LoadPage(_))).count();
+        assert_eq!(renders, 0, "tiles queued by the first frame were dropped");
+        assert!(pane.viewer.is_complete());
     }
 
     #[test]
