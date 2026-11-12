@@ -211,7 +211,3 @@ server on one `Session`). Next and open:
 - The page thumbnail is misplaced by up to half a cell with the Layered
   backend (terminals scale images to whole cells). It only shows briefly; the
   `StandIn::Composed` path could compose it too.
-- Long text input through `$EDITOR` (do this last): run it in a floating
-  terminal pane and read the file when it exits (terminal panes and floats
-  exist now). Short inputs (search, page number, commands) use the built-in
-  one-line input.
