@@ -136,6 +136,10 @@ struct Selecting {
     link: Option<String>,
 }
 
+/// How long a program's synchronized update (mode 2026) may hold its
+/// screen back: one never ended shows after this, as other terminals do.
+pub const SYNC_TIMEOUT: Duration = Duration::from_secs(1);
+
 pub struct TermBuffer {
     terminal: Terminal<'static, 'static>,
     render: RenderState<'static>,
@@ -161,6 +165,12 @@ pub struct TermBuffer {
     born: Instant,
     /// The visual mode's cursor and selection (see [`visual`]).
     visual: Option<visual::Visual>,
+    /// When the program began the synchronized update (mode 2026) it is
+    /// in: until it ends it (or [`SYNC_TIMEOUT`]), frames show the screen
+    /// as it was before.
+    sync_since: Option<Instant>,
+    /// The cursor last shown, and its shape (shown again while held).
+    shown_cursor: (Option<(u16, u16)>, CursorShape),
 }
 
 impl TermBuffer {
@@ -253,6 +263,8 @@ impl TermBuffer {
             graphics: graphics::Graphics::new().map_err(ghostty_err)?,
             born: Instant::now(),
             visual: None,
+            sync_since: None,
+            shown_cursor: (None, CursorShape::Default),
         })
     }
 
@@ -260,6 +272,31 @@ impl TermBuffer {
     pub fn feed(&mut self, bytes: &[u8]) {
         self.terminal.vt_write(bytes);
         self.pty.consumed(bytes.len());
+        // A synchronized update: from when it began (one ended and another
+        // begun in these bytes begins now).
+        if !self.terminal.mode(Mode::SYNC_OUTPUT).unwrap_or(false) {
+            self.sync_since = None;
+        } else if self.sync_since.is_none() || contains(bytes, b"\x1b[?2026h") {
+            self.sync_since = Some(Instant::now());
+        }
+    }
+
+    /// When the synchronized update the program is in stops holding its
+    /// screen back ([`SYNC_TIMEOUT`] after it began).
+    pub fn sync_deadline(&self) -> Option<Instant> {
+        self.sync_since.map(|t| t + SYNC_TIMEOUT)
+    }
+
+    /// End a synchronized update the program left on for
+    /// [`SYNC_TIMEOUT`] (the mode reset, as other terminals do: its screen
+    /// shows from now on). Whether one ended (the screen may have changed).
+    pub fn sync_timeout(&mut self, now: Instant) -> bool {
+        if self.sync_deadline().is_none_or(|d| now < d) {
+            return false;
+        }
+        self.sync_since = None;
+        let _ = self.terminal.set_mode(Mode::SYNC_OUTPUT, false);
+        true
     }
 
     /// The program exited.
@@ -709,11 +746,12 @@ impl TermBuffer {
         self.graphics.release(images);
     }
 
-    /// The whole screen now.
+    /// The whole screen now; during a synchronized update of the
+    /// program's, as it was before the update began.
     pub fn frame(&mut self) -> Frame {
-        let mut cursor = None;
-        let mut cursor_shape = CursorShape::Default;
-        if let Ok(snapshot) = self.render.update(&self.terminal) {
+        let held = self.sync_since.is_some() && !self.grid.is_empty();
+        let (mut cursor, mut cursor_shape) = if held { self.shown_cursor } else { (None, CursorShape::Default) };
+        if !held && let Ok(snapshot) = self.render.update(&self.terminal) {
             let full = matches!(snapshot.dirty(), Ok(Dirty::Full)) || self.grid.is_empty();
             let cols = self.geometry.cols as usize;
             let rows = self.geometry.rows as usize;
@@ -757,6 +795,7 @@ impl TermBuffer {
                     _ => CursorShape::Default,
                 };
             }
+            self.shown_cursor = (cursor, cursor_shape);
         }
         // In the visual mode (or typing its search) the cursor is its own.
         if self.visual_shown().is_some() {
@@ -931,6 +970,11 @@ fn convert(c: &libghostty_vt::render::CellIteration<'_, '_>) -> Cell {
     Cell { text, width, fg: color(style.fg_color), bg: color(style.bg_color), attrs }
 }
 
+/// Whether `needle` occurs in `hay`.
+fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -987,6 +1031,42 @@ mod tests {
         input(&mut pane);
         let rows = wait(&mut pane, &rx, done);
         (pane, rows)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open ptys")]
+    fn a_synchronized_update_shows_when_it_ends() {
+        let (mut pane, _rx) = start(&["sleep", "10"]);
+        pane.feed(b"old");
+        assert_eq!(text(&mut pane)[0], "old");
+        let cursor = pane.frame().cursor;
+        // Inside an update, the screen (and its cursor) stays as it was.
+        pane.feed(b"\x1b[?2026h\x1b[H\x1b[2Jnew\r\n");
+        assert_eq!(text(&mut pane)[0], "old");
+        assert_eq!(pane.frame().cursor, cursor);
+        assert!(pane.sync_deadline().is_some());
+        // Its end shows it all at once.
+        pane.feed(b"line 2\x1b[?2026l");
+        assert_eq!(text(&mut pane)[..2], ["new", "line 2"]);
+        assert_eq!(pane.sync_deadline(), None);
+        // One ended and another begun in the same output: the new one holds,
+        // from now (not from when the first began).
+        pane.feed(b"\x1b[?2026h");
+        pane.sync_since = Some(Instant::now() - SYNC_TIMEOUT * 2);
+        let before = Instant::now();
+        pane.feed(b"\x1b[?2026l\x1b[?2026h\x1b[Hnext");
+        assert!(pane.sync_deadline().is_some_and(|d| d >= before + SYNC_TIMEOUT));
+        assert_eq!(text(&mut pane)[0], "new");
+        // One never ended shows after its time: the mode goes, and later
+        // output shows at once.
+        let now = Instant::now();
+        assert!(!pane.sync_timeout(now));
+        assert_eq!(text(&mut pane)[0], "new");
+        assert!(pane.sync_timeout(now + SYNC_TIMEOUT * 2));
+        assert_eq!(text(&mut pane)[0], "next");
+        assert_eq!(pane.sync_deadline(), None);
+        pane.feed(b"\x1b[Hlast");
+        assert_eq!(text(&mut pane)[0], "last");
     }
 
     fn text(pane: &mut TermBuffer) -> Vec<String> {

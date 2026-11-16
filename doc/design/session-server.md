@@ -316,7 +316,12 @@ git log), and why:
   libghostty-vt, not forwarded to a client's terminal. Programs get
   `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=temzdf` and
   `TEMZDF_SESSION_NAME`. On the alternate screen (less, man) the wheel
-  sends arrow keys (alternate scroll, DECSET 1007).
+  sends arrow keys (alternate scroll, DECSET 1007). A program's
+  synchronized update (mode 2026, `CSI ?2026h` to `CSI ?2026l`) holds its
+  pane's text and cursor as they were until it ends, so a redraw never
+  shows half done (2026-11-16); one left on shows after a second
+  (`SYNC_TIMEOUT` in `crates/temzdf-term`, the mode reset), as other
+  terminals do. Programs' images are not held.
 - **Terminals without graphics** (2026-11-02): a client whose terminal
   cannot show images still attaches and draws the text; the frame carries
   where each pane is and whether it has images (`regions`) and text only

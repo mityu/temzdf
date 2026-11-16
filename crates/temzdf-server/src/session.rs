@@ -2622,6 +2622,8 @@ impl Session {
         }
         for t in self.terms.values_mut() {
             changed |= t.term.autoscroll(now);
+            // A program's synchronized update left on: its screen shows.
+            changed |= t.term.sync_timeout(now);
         }
         changed
     }
@@ -2653,7 +2655,7 @@ impl Session {
             Kind::Term { .. } | Kind::Text { .. } | Kind::Markdown { .. } => None,
         });
         let docs = self.docs.values().filter_map(|d| d.host.as_ref()?.next_deadline());
-        let terms = self.terms.values().filter_map(|t| t.term.autoscroll_deadline());
+        let terms = self.terms.values().flat_map(|t| [t.term.autoscroll_deadline(), t.term.sync_deadline()]).flatten();
         panes
             .chain(docs)
             .chain(terms)
@@ -3414,6 +3416,30 @@ mod tests {
             }
         }
         screen.into_iter().map(|r| r.into_iter().collect::<String>().trim_end().to_owned()).collect()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    fn a_synchronized_update_left_on_shows_after_its_time() {
+        let script = r"printf 'before\n'; sleep 0.3; printf '\033[?2026hduring'; sleep 100";
+        let (mut s, rx) = terminal_session(&["sh", "-c", script]);
+        wait_text(&mut s, &rx, |rows| rows.iter().any(|r| r.contains("before")));
+        // The update began: the session wakes when it stops holding.
+        let until = Instant::now() + Duration::from_secs(10);
+        while s.next_deadline().is_none() && Instant::now() < until {
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
+                s.handle(ev, Instant::now());
+            }
+        }
+        let due = s.next_deadline().expect("a deadline");
+        assert!(due <= Instant::now() + temzdf_term::SYNC_TIMEOUT);
+        let rows = screen_text(&s.frame(), GEOMETRY);
+        assert!(!rows.iter().any(|r| r.contains("during")), "held: {rows:?}");
+        assert_eq!(s.poll(due - Duration::from_millis(1)), Outcome::None);
+        assert_eq!(s.poll(due), Outcome::Redraw);
+        let rows = screen_text(&s.frame(), GEOMETRY);
+        assert!(rows.iter().any(|r| r.contains("during")), "shown: {rows:?}");
+        assert_eq!(s.next_deadline(), None);
     }
 
     #[test]
