@@ -172,8 +172,8 @@ dev shell leaves out large tools that are usually installed globally: TeX
 (`latexmk`, `pdflatex`, `synctex`, needed for the fixtures) and the extra
 terminals/multiplexers for e2e (Ghostty, WezTerm, zellij). On this machine they
 come from the host profile. `nix develop .#alldeps` provides all of them.
-`nix develop .#ci` is the minimal shell CI uses (toolchain, TeX, DejaVu fonts,
-no end-to-end tools), `.#ci-miri` the same with the nightly toolchain and
+`nix develop .#ci` is the minimal shell CI uses (toolchain, TeX, no
+end-to-end tools), `.#ci-miri` the same with the nightly toolchain and
 Miri; `nix build` builds the `temzdf` package (`nix run . -- FILE` runs it).
 CI (`.github/workflows/ci.yml`) runs `scripts/check.sh --no-miri` in the
 first, `scripts/miri.sh` in the second as a job of its own (both keep built

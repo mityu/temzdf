@@ -19,6 +19,23 @@ Action files live in `tests/e2e/`; each starts with a comment saying how to run 
 and what the screenshots should show. To look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 
+## Fonts
+
+Tests that draw text (the Markdown viewer's pages, `termpix-ui`'s widgets,
+the session's frames) get their fonts from fontconfig on Linux, so a host's
+fonts would change what they draw. `scripts/check.sh` points
+`FONTCONFIG_FILE` at `TEMZDF_TEST_FONTCONFIG`, a configuration the dev
+shells provide (`testFontConfig` in `flake.nix`): the fonts `temzdf-gui`
+embeds alone (JetBrains Mono, Noto Color Emoji, Symbols Nerd Font Mono),
+every generic family (`sans-serif`, `monospace`, ...) JetBrains Mono first,
+and nothing of the host's (no font directories of its, no `/etc/fonts`).
+CI and every machine therefore draw the same text; `cargo test` run by hand
+uses the host's fonts unless `FONTCONFIG_FILE` is set the same way. nixpkgs'
+`makeFontsConf`, which CI used with DejaVu before (2026-11-16), adds the
+host's directories and settings: on the CI runner Ubuntu's fonts came in,
+here Noto Sans CJK, and a test passed here and failed there. macOS finds
+fonts through Core Text, not fontconfig: tests there see the system's.
+
 ## Mutation checks
 
 A test written for a fix should fail without the fix. `scripts/mutate.sh

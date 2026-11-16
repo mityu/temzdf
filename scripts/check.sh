@@ -19,6 +19,9 @@
 # target/miri-logs/; a failed simulated-terminal wait leaves its screen in
 # target/tuitest/).
 #
+# The tests see only the fonts the dev shell names in TEMZDF_TEST_FONTCONFIG
+# (JetBrains Mono first; see flake.nix), as in CI.
+#
 # It does not run end-to-end terminal tests or regenerate fixtures.
 set -euo pipefail
 # Absolute: it re-executes itself after the cd.
@@ -87,6 +90,11 @@ if ! cargo clippy --workspace --all-targets --color never -- -D warnings >target
 fi
 
 if ((tests)); then
+  # Text is drawn with the fonts the dev shell fixes for tests (flake.nix,
+  # testFontConfig), not the host's, so that it is drawn as in CI.
+  if [[ -n "${TEMZDF_TEST_FONTCONFIG:-}" ]]; then
+    export FONTCONFIG_FILE=$TEMZDF_TEST_FONTCONFIG
+  fi
   if ! cargo test --workspace --color never "$@" >target/check/test.log 2>&1; then
     failed tests target/check/test.log "^error|-->|FAILED|panicked|left:|right:" 60
     status=1

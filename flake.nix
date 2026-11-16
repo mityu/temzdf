@@ -34,22 +34,62 @@
           # The fonts temzdf-gui embeds (crates/temzdf-gui/build.rs), as WezTerm
           # bundles them: JetBrains Mono, the default and first fallback, then
           # Noto Color Emoji and the Nerd Font symbols.
-          bundleFontPath =
+          bundleFontFiles =
             let
               jb = style: "${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-${style}.ttf";
             in
-            pkgs.lib.concatStringsSep ":" (
-              map jb [
-                "Regular"
-                "Bold"
-                "Italic"
-                "BoldItalic"
-              ]
-              ++ [
-                "${pkgs.noto-fonts-color-emoji}/share/fonts/noto/NotoColorEmoji.ttf"
-                "${pkgs.nerd-fonts.symbols-only}/share/fonts/truetype/NerdFonts/Symbols/SymbolsNerdFontMono-Regular.ttf"
-              ]
-            );
+            map jb [
+              "Regular"
+              "Bold"
+              "Italic"
+              "BoldItalic"
+            ]
+            ++ [
+              "${pkgs.noto-fonts-color-emoji}/share/fonts/noto/NotoColorEmoji.ttf"
+              "${pkgs.nerd-fonts.symbols-only}/share/fonts/truetype/NerdFonts/Symbols/SymbolsNerdFontMono-Regular.ttf"
+            ];
+          bundleFontPath = pkgs.lib.concatStringsSep ":" bundleFontFiles;
+          # The fonts tests see through fontconfig (scripts/check.sh sets
+          # FONTCONFIG_FILE to it): those fonts alone, every generic family
+          # JetBrains Mono first, nothing from the host (its font directories,
+          # /etc/fonts), so that text is drawn the same on every machine and
+          # in CI. nixpkgs' makeFontsConf adds the host's directories and
+          # settings, which made CI and this machine draw differently.
+          testFontConfig =
+            let
+              dir = pkgs.linkFarm "temzdf-test-fonts" (
+                map (f: {
+                  name = builtins.unsafeDiscardStringContext (baseNameOf f);
+                  path = f;
+                }) bundleFontFiles
+              );
+              alias = family: ''
+                <alias binding="same">
+                  <family>${family}</family>
+                  <prefer>
+                    <family>JetBrains Mono</family>
+                    <family>Noto Color Emoji</family>
+                    <family>Symbols Nerd Font Mono</family>
+                  </prefer>
+                </alias>
+              '';
+            in
+            pkgs.writeText "temzdf-test-fonts.conf" ''
+              <?xml version="1.0"?>
+              <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+              <fontconfig>
+                <dir>${dir}</dir>
+                <cachedir prefix="xdg">temzdf-test-fontconfig</cachedir>
+                ${pkgs.lib.concatMapStrings alias [
+                  "sans-serif"
+                  "serif"
+                  "monospace"
+                  "system-ui"
+                  "cursive"
+                  "fantasy"
+                ]}
+              </fontconfig>
+            '';
           # What temzdf-gui's winit and wgpu load with dlopen on Linux (the
           # real GPU's Vulkan driver comes from the system: /run/opengl-driver
           # on NixOS).
@@ -123,7 +163,6 @@
                   withTeX ? false,
                   withTerminals ? false,
                   enableMiri ? false,
-                  enableFixedFontSet ? false,
                   skipTart ? false,
                   # Only what CI runs (scripts/check.sh, scripts/miri.sh): no
                   # editor tools, toolchain docs or end-to-end tools, so that
@@ -236,15 +275,11 @@
 
                     # Fonts temzdf-gui embeds (see bundledFontsFor).
                     TEMZDF_BUNDLED_FONTS = bundleFontPath;
+                    # The fonts of tests (see testFontConfig).
+                    TEMZDF_TEST_FONTCONFIG = testFontConfig;
                   }
                   // wasmEnv
                   // scriptEnv
-                  // lib.optionalAttrs enableFixedFontSet {
-                    # `nix develop .#ci`: what scripts/check.sh needs on a bare machine
-                    # (.github/workflows/ci.yml): the toolchain, TeX for the fixtures, and
-                    # a fixed font set instead of whatever the host has installed.
-                    FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
-                  }
                   // lib.optionalAttrs isLinux {
                     # winit and wgpu open these with dlopen. The real GPU's Vulkan
                     # driver comes from the system (/run/opengl-driver on NixOS).
@@ -267,13 +302,11 @@
               # toolchain of the default shell, and Miri in a job of its own.
               ci = buildDevShell {
                 withTeX = true;
-                enableFixedFontSet = true;
                 forCi = true;
               };
               ci-miri = buildDevShell {
                 withTeX = true;
                 enableMiri = true;
-                enableFixedFontSet = true;
                 forCi = true;
               };
               alldeps = buildDevShell {
@@ -353,6 +386,10 @@
                     // scriptEnv
                     // lib.optionalAttrs withGui {
                       TEMZDF_BUNDLED_FONTS = bundleFontPath;
+                    }
+                    // lib.optionalAttrs enableCheck {
+                      # Tests draw text with the fixed fonts, as scripts/check.sh's.
+                      FONTCONFIG_FILE = testFontConfig;
                     };
                 };
             in

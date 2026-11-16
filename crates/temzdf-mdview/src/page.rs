@@ -400,7 +400,7 @@ mod tests {
         // Two by two: of the dark pixels (text), few have only light
         // pixels around theirs in the strip (edges are painted, not
         // copied: anti-aliasing moves them a pixel, more so with thick
-        // strokes, as DejaVu's in CI).
+        // strokes, as DejaVu's were when CI used the runner's fonts).
         let (mut ink, mut off) = (0u32, 0u32);
         for y in 0..TILE {
             for x in 0..TILE {
