@@ -24,6 +24,9 @@ use crate::action::PaneSpec;
 use crate::session::{EventSink, Outcome, Session, SessionEvent, Settings};
 
 const FRAME: Duration = Duration::from_millis(16);
+/// How long a due frame may wait while events already queued are handled
+/// first (`drain_first`).
+const DRAIN_LIMIT: Duration = Duration::from_millis(4);
 /// Until a client says otherwise.
 const DEFAULT_GEOMETRY: Geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
 
@@ -109,6 +112,10 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     let mut answering: Option<ClientId> = None;
     // When the last frame was made: busy terminals get at most one per FRAME.
     let mut made = Instant::now() - FRAME;
+    // An event taken off the queue before a frame, handled before it; and
+    // since when the due frame has waited for the queue.
+    let mut stash: Option<Event> = None;
+    let mut deferred_since: Option<Instant> = None;
     let mut socket_checked = Instant::now();
 
     loop {
@@ -147,8 +154,24 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 && made.elapsed() >= FRAME
                 && !session.holds_frames()
                 && clients.values().any(|c| c.attached && c.awaiting.is_none())
+                && !{
+                    // Output a program wrote at once arrives in several
+                    // reads: what is queued is handled first, so the frame
+                    // does not show the screen half drawn.
+                    if stash.is_none() {
+                        // Gone senders: the wait below ends the loop.
+                        stash = rx.try_recv().ok();
+                    }
+                    let now = Instant::now();
+                    let defer = drain_first(stash.is_some(), deferred_since, now);
+                    if defer {
+                        deferred_since.get_or_insert(now);
+                    }
+                    defer
+                }
             {
                 made = Instant::now();
+                deferred_since = None;
                 let frame = session.frame();
                 let updates = session.images().take_updates();
                 for c in clients.values_mut().filter(|c| c.attached) {
@@ -202,7 +225,15 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         let can_send = can_send(&session, &clients);
         let timeout = wait_for(dirty, session.is_animating(), can_send, made, session.next_deadline(), Instant::now())
             .min(SOCKET_CHECK);
-        let event = match rx.recv_timeout(timeout) {
+        let event = match stash.take() {
+            Some(e) => Ok(e),
+            // The queue was empty: the next frame waits for a new run of events.
+            None => {
+                deferred_since = None;
+                rx.recv_timeout(timeout)
+            }
+        };
+        let event = match event {
             Ok(e) => Some(e),
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => break,
@@ -427,6 +458,13 @@ fn can_send(session: &Session, clients: &HashMap<ClientId, Client>) -> bool {
         && session.error().is_none()
         && clients.values().any(|c| c.attached && c.awaiting.is_none())
         && !session.holds_frames()
+}
+
+/// Whether a due frame waits for an event already queued (`pending`) to be
+/// handled first: yes, until it has waited `DRAIN_LIMIT` (`deferred_since`),
+/// so a program writing all the time still gets frames.
+fn drain_first(pending: bool, deferred_since: Option<Instant>, now: Instant) -> bool {
+    pending && deferred_since.is_none_or(|t| now.saturating_duration_since(t) < DRAIN_LIMIT)
 }
 
 fn wait_for(
@@ -980,6 +1018,19 @@ mod tests {
         ] {
             assert!(!hovers_elsewhere(kind, Some(1), 2), "{kind:?}");
         }
+    }
+
+    #[test]
+    fn a_due_frame_waits_for_queued_events_but_not_for_long() {
+        let now = Instant::now();
+        // Nothing queued: the frame goes now.
+        assert!(!drain_first(false, None, now));
+        assert!(!drain_first(false, Some(now), now));
+        // Queued events go first, while the frame has not waited long.
+        assert!(drain_first(true, None, now));
+        assert!(drain_first(true, Some(now - DRAIN_LIMIT / 2), now));
+        // A program writing all the time still gets frames.
+        assert!(!drain_first(true, Some(now - DRAIN_LIMIT), now));
     }
 
     #[test]

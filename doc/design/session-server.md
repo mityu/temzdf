@@ -112,6 +112,10 @@ pixels:
   quads.
 - Pacing: one frame in flight per client, coalescing until the ack; on attach,
   resize or overload the client gets a full resync from state.
+  A due frame first lets the server handle the events already queued (a
+  program's write arrives in several pty reads), for at most 4 ms
+  (`DRAIN_LIMIT` in `crates/temzdf-server/src/daemon.rs`), as Alacritty and
+  Ghostty parse what is readable before drawing; it never waits for more.
 
 Where termpix runs: in the TTY client. It already probes the terminal, picks
 backend and medium, and controls congestion; keeping it next to the terminal
