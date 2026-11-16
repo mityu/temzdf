@@ -100,7 +100,10 @@ pixels:
   outline, prompts): styled cell runs. The TTY client writes real text (crisp,
   copyable, cheap over SSH, works without graphics); the GUI client draws it
   with its fonts (glyph atlas). This also moves today's pixel-drawn UI chrome
-  to text, an improvement for the terminal case.
+  to text, an improvement for the terminal case. Cells never hold control
+  characters: whoever makes them leaves them out (file names, alt text and
+  documents can carry escape sequences), and the TTY client writes a cell
+  with one as a blank (`crates/temzdf-tty/src/text.rs`).
 - **Image layers** for pixel-centric surfaces (PDF tiles, web frames, images
   from programs in terminal panes): image id, source rectangle, destination in
   the client's pixels, z. This is today's `termpix::compositor::Layer`, lifted

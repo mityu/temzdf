@@ -26,7 +26,10 @@ pub fn wrap(text: &str, max: usize) -> Vec<String> {
     let mut out = Vec::new();
     for para in text.lines() {
         let mut line = String::new();
-        for c in para.chars() {
+        // Control characters would reach a terminal client as such: tabs
+        // become spaces, the rest go.
+        let chars = para.chars().map(|c| if c == '\t' { ' ' } else { c }).filter(|c| !c.is_control());
+        for c in chars {
             if w(&line) + width(c) > max && !line.is_empty() {
                 match line.rfind(' ').filter(|&i| i > 0) {
                     // The word typed so far goes on.
@@ -124,6 +127,11 @@ mod tests {
         assert_eq!(wrap("one two three", 8), ["one two", "three"]);
         assert_eq!(wrap("one two three", 7), ["one two", "three"]);
         assert_eq!(wrap("aaaaaa bb", 4), ["aaaa", "aa", "bb"]);
+    }
+
+    #[test]
+    fn wrapped_text_carries_no_control_characters() {
+        assert_eq!(wrap("a\x1b[2Jb\tc\u{9b}\x07", 20), ["a[2Jb c"]);
     }
 
     #[test]

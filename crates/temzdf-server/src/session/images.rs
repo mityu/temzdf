@@ -167,8 +167,11 @@ pub(super) fn image_layers(
         ));
         let mut rows = Vec::new();
         for r in 0..d.rows {
-            let text: String =
-                if r == 0 && d.skip == 0 { d.alt.chars().take(usize::from(d.cols)).collect() } else { String::new() };
+            let text: String = if r == 0 && d.skip == 0 {
+                d.alt.chars().filter(|c| !c.is_control()).take(usize::from(d.cols)).collect()
+            } else {
+                String::new()
+            };
             let mut row: Vec<temzdf_scene::Cell> = text
                 .chars()
                 .map(|c| temzdf_scene::Cell { text: c.to_string(), ..temzdf_scene::Cell::blank() })
@@ -184,6 +187,17 @@ pub(super) fn image_layers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alt_text_carries_no_control_characters() {
+        let key = temzdf_scene::Images::new().add(1, 1, vec![0u8; 4]);
+        let loaded = LoadedImages::from([(7, Loaded { key, path: PathBuf::new(), width: 10, height: 10 })]);
+        let drawn =
+            DrawnImage { id: 7, col: 0, row: 0, cols: 8, rows: 1, skip: 0, total: 1, alt: "a\x1b[2J\u{9b}b".into() };
+        let (_, _, alt) = image_layers(&[drawn], &loaded, CellSize { width: 8, height: 16 });
+        let text: String = alt[0].rows[0].iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(text, "a[2Jb");
+    }
 
     #[test]
     #[cfg_attr(miri, ignore = "slow under Miri (SVG rendering)")]

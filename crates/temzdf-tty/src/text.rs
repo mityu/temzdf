@@ -171,9 +171,13 @@ impl TextScreen {
                     Some(c) if c.width == 0 => (c.fg, c.bg, c.attrs, " ", 1),
                     // In the last column it would wrap, or scroll the screen.
                     Some(c) if c.width == 2 && x + 1 >= cols => (c.fg, c.bg, c.attrs, " ", 1),
-                    Some(c) => {
-                        (c.fg, c.bg, c.attrs, if c.text.is_empty() { " " } else { c.text.as_str() }, c.width.max(1))
+                    // A control character would reach the terminal as one
+                    // (an escape sequence from a file name or a document):
+                    // whoever made the cell should have left it out.
+                    Some(c) if c.text.is_empty() || c.text.chars().any(char::is_control) => {
+                        (c.fg, c.bg, c.attrs, " ", c.width.max(1))
                     }
+                    Some(c) => (c.fg, c.bg, c.attrs, c.text.as_str(), c.width.max(1)),
                 };
                 let p = Pen { fg, bg, attrs };
                 if pen != Some(p) {
@@ -286,6 +290,21 @@ mod tests {
         assert!(t.would_clear(&[grid(2, 0, &["help!"])]));
         term.feed(&t.render(&[grid(2, 0, &["help!"])]));
         assert_eq!(term.text_rows(), vec!["  help!", "", ""]);
+    }
+
+    #[test]
+    fn control_characters_never_reach_the_terminal() {
+        let mut t = TextScreen::new(12, 3);
+        let mut term = mock();
+        let out = t.render(&[TextGrid {
+            col: 0,
+            row: 0,
+            rows: vec![vec![cell("a"), cell("\x1b]52;c;eA==\x07"), cell("\u{9b}2J"), cell("\x7f"), cell("b")]],
+        }]);
+        let s = String::from_utf8_lossy(&out);
+        assert!(!s.contains(['\x07', '\u{9b}', '\x7f']) && !s.contains("\x1b]"), "{s:?}");
+        term.feed(&out);
+        assert_eq!(term.text_rows(), vec!["a   b", "", ""]);
     }
 
     #[test]
