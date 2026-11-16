@@ -252,6 +252,15 @@ terminal); where the program uses the mouse, hold Shift, or select from the
 `normal` mode. A click on a link a program printed (OSC 8) opens it with
 `linkopener`.
 
+In `temzdf-gui`, where the window system reports trackpad pinches (macOS
+and Wayland; not X11 or Windows), a pinch zooms a PDF pane about the
+pointer, as Ctrl and the wheel do but by the fingers' amount. In the
+Markdown viewer's graphics mode it magnifies the page as browsers do,
+without laying it out again (1 to 5 times; separate from the zoom, which
+lays it out again): two fingers then move it every way, the text is
+painted sharp at the magnification when the fingers leave, and it stays
+until pinched back.
+
 ### The visual mode
 
 Keys select and copy a terminal's output, its scrollback included (Vim's

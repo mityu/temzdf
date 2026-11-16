@@ -1,16 +1,17 @@
 //! A graphics-mode pane: where it is scrolled to on its page, its zoom,
-//! its search, and the frame it shows. The page it needs (its width and
+//! its magnification (a pinch's: the page shown larger, laid out as it
+//! is), its search, and the frame it shows. The page it needs (its width and
 //! zoom) is the session's to keep, shared by panes that need the same.
 
 use std::time::Instant;
 use temzdf_scene::tiles::{self, Schedule, TileCache, Want};
 use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer, Rect as SceneRect};
 
-use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
+use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind, PinchPhase};
 use termpix_core::scroll::ScrollConfig;
 use termpix_core::viewport::{Input, Viewport};
 
-use crate::page::{BACKGROUND, Page, Rect, STRIP, StripJob, StripKey};
+use crate::page::{BACKGROUND, Page, Rect, STRIP, StripJob, StripKey, TILE};
 
 /// Placement keys of painted strips (the strip cache hands them out).
 pub const STRIP_LAYERS: std::ops::Range<u32> = 1..0x7000_0000;
@@ -21,6 +22,9 @@ const MARK_LAYERS: u32 = 0x8000_0000;
 
 /// Zoom steps (`zoom-in`, `zoom-out`).
 pub const ZOOMS: &[f32] = &[0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+
+/// The most a pinch magnifies.
+pub const MAX_MAGNIFY: f64 = 5.0;
 
 /// A click: press and release this close (device pixels).
 const CLICK_SLOP: f64 = 4.0;
@@ -44,12 +48,19 @@ pub struct Search {
 }
 
 pub struct MdPane {
-    /// Where the pane is on its page (device pixels), scrolled as PDF
-    /// pages are.
+    /// Where the pane is on its page magnified (device pixels), scrolled
+    /// as PDF pages are.
     pub viewport: Viewport,
     pub width: u32,
     pub height: u32,
     pub zoom: f32,
+    /// How much a pinch magnified the page (1 to [`MAX_MAGNIFY`]): shown
+    /// larger without laying it out again, as browsers do. Separate from
+    /// `zoom`, which lays it out again; it stays until pinched back.
+    magnify: f64,
+    /// Fingers are pinching: the strips are shown stretched, nothing is
+    /// painted at the magnification until they stop.
+    pinching: bool,
     pub search: Search,
     hover: Option<String>,
     press: Option<(f64, f64)>,
@@ -74,6 +85,8 @@ impl MdPane {
             width,
             height,
             zoom: 1.0,
+            magnify: 1.0,
+            pinching: false,
             search: Search::default(),
             hover: None,
             press: None,
@@ -97,20 +110,33 @@ impl MdPane {
         self.viewport.set_config(config);
     }
 
-    /// Where the pane is shown on its page now (device pixels).
+    /// How much a pinch magnified the page.
+    pub fn magnify(&self) -> f64 {
+        self.magnify
+    }
+
+    /// Where the top of the pane is on its page now (device pixels of the
+    /// page as laid out).
     pub fn scroll(&self) -> f64 {
-        self.viewport.y.offset()
+        self.viewport.y.offset() / self.magnify
     }
 
     /// Where it is going (where it is when not scrolling).
     fn destination(&self) -> f64 {
-        self.viewport.y.target()
+        self.viewport.y.target() / self.magnify
+    }
+
+    /// A height on the page as laid out, on the page magnified (the
+    /// bottom, `f64::MAX`, stays the bottom).
+    fn magnified(&self, y: f64) -> f64 {
+        (y * self.magnify).min(f64::MAX)
     }
 
     /// The scrolling limits for `page` at the pane's size.
     fn clamp(&mut self, page: &Page) {
         let (w, h) = (f64::from(self.width), f64::from(self.height));
-        self.viewport.set_sizes((w, h), (w, f64::from(page.height())));
+        let m = self.magnify;
+        self.viewport.set_sizes((w, h), (w * m, f64::from(page.height()) * m));
     }
 
     /// Scroll by `dy` pixels, animated.
@@ -122,14 +148,14 @@ impl MdPane {
     /// Go to `y`, animated (`f64::MAX`: the bottom).
     pub fn glide_to(&mut self, page: &Page, y: f64, now: Instant) {
         self.clamp(page);
-        let from = self.destination();
-        self.viewport.y.scroll_by(y - from, now);
+        let from = self.viewport.y.target();
+        self.viewport.y.scroll_by(self.magnified(y) - from, now);
     }
 
     /// Show `y` at the top at once.
     pub fn scroll_to(&mut self, page: &Page, y: f64) {
         self.clamp(page);
-        self.viewport.y.jump_to(y);
+        self.viewport.y.jump_to(self.magnified(y));
     }
 
     /// A screenful less a little (`n` of them, up when negative), animated.
@@ -193,10 +219,14 @@ impl MdPane {
     }
 
     /// A mouse event in pane pixels: the wheel scrolls (Ctrl asks to
-    /// zoom), a click on a link asks to follow it. Whether the pane
-    /// changed.
+    /// zoom), a pinch magnifies, a click on a link asks to follow it.
+    /// Whether the pane changed.
     pub fn mouse(&mut self, page: &Page, m: &MouseEvent, cell_h: u32, now: Instant) -> bool {
-        let (x, y) = (f64::from(m.x), f64::from(m.y) + self.scroll());
+        let (ox, oy) = self.viewport.offset();
+        let (x, y) = ((f64::from(m.x) + ox) / self.magnify, (f64::from(m.y) + oy) / self.magnify);
+        if let MouseEventKind::Pinch { delta, phase } = m.kind {
+            return self.pinch(page, delta, phase, (f64::from(m.x), f64::from(m.y)));
+        }
         if m.kind.is_scroll() {
             self.clamp(page);
             return match self.viewport.input(m, 3.0 * f64::from(cell_h.max(1)), now) {
@@ -232,6 +262,30 @@ impl MdPane {
             }
             _ => false,
         }
+    }
+
+    /// A pinch: the magnification times `1 + delta / 10000` (kept between
+    /// 1 and [`MAX_MAGNIFY`]), the page's point under `at` (pane pixels)
+    /// staying there. When the fingers leave, it is rounded to hundredths
+    /// (what tiles are painted at), and to 1 near it. Whether the pane
+    /// changed.
+    fn pinch(&mut self, page: &Page, delta: i32, phase: PinchPhase, at: (f64, f64)) -> bool {
+        let was = self.pinching;
+        self.pinching = phase != PinchPhase::End;
+        let old = self.magnify;
+        let mut new = (old * (1.0 + f64::from(delta) / 10_000.0)).clamp(1.0, MAX_MAGNIFY);
+        if !self.pinching {
+            new = (new * 100.0).round() / 100.0;
+        }
+        if new != old {
+            let (ox, oy) = self.viewport.offset();
+            self.magnify = new;
+            self.clamp(page);
+            let f = new / old;
+            self.viewport.jump_to((at.0 + ox) * f - at.0, (at.1 + oy) * f - at.1);
+        }
+        // (The end of a pinch paints the page at its magnification.)
+        new != old || (was && !self.pinching && new != 1.0)
     }
 
     /// Search for `query`: its hits marked, the first from the top of the
@@ -285,7 +339,7 @@ impl MdPane {
     fn reveal(&mut self, page: &Page, i: usize) {
         let r = self.search.hits[i];
         self.clamp(page);
-        self.viewport.reveal(r.y0, r.y1, None);
+        self.viewport.reveal(self.magnified(r.y0), self.magnified(r.y1), None);
     }
 
     /// The pane's frame (pane pixels): the page's strips in sight (from
@@ -303,6 +357,9 @@ impl MdPane {
         tag: u32,
         images: &mut Images,
     ) -> (Frame, Vec<Want<StripJob>>) {
+        if self.magnify != 1.0 {
+            return self.frame_magnified(view, page, strips, tag, images);
+        }
         self.clamp(page);
         strips.begin_frame(view);
         let scroll = self.scroll();
@@ -314,7 +371,7 @@ impl MdPane {
         self.complete = true;
         let size = (page.width, page.height());
         for cell in tiles::grid((0, -(top as i32)), size, (page.width.max(1), STRIP), screen) {
-            let key = StripKey { page: page.id, strip: cell.ty };
+            let key = StripKey::strip(page.id, cell.ty);
             let src = SceneRect::new(0, 0, cell.area.2, cell.area.3);
             if let Some((image, layer)) = strips.touch(key) {
                 if cell.on_screen {
@@ -324,18 +381,7 @@ impl MdPane {
             }
             if cell.on_screen {
                 self.complete = false;
-                let image = match self.background {
-                    Some((image, w)) if w == page.width => image,
-                    old => {
-                        if let Some((image, _)) = old {
-                            images.remove(image);
-                        }
-                        let w = page.width.max(1);
-                        let image = images.add(w, STRIP, BACKGROUND.repeat((w * STRIP) as usize));
-                        self.background = Some((image, w));
-                        image
-                    }
-                };
+                let image = self.background(page, images);
                 layers.push(Layer { key: PLACEHOLDER_LAYERS + cell.ty, image, src, dst: cell.dst, z: 0 });
             }
             let want = if strips.is_in_flight(key) {
@@ -350,23 +396,137 @@ impl MdPane {
                 work.push(cell.on_screen, dx.hypot(dy), want);
             }
         }
-        for (i, r) in self.search.hits.iter().enumerate() {
+        for i in 0..self.search.hits.len() {
+            let r = self.search.hits[i];
             if r.y1 < scroll || r.y0 > scroll + f64::from(self.height) {
                 continue;
             }
-            let current = Some(i) == self.search.current;
             let (w, h) = ((r.x1 - r.x0).ceil().max(1.0) as u32, (r.y1 - r.y0).ceil().max(1.0) as u32);
-            let image = *self.marks.entry((w, h, current)).or_insert_with(|| {
-                let px: [u8; 4] = if current { [255, 140, 0, 160] } else { [255, 214, 0, 110] };
-                images.add(w, h, px.repeat((w * h) as usize))
-            });
-            layers.push(Layer {
-                key: MARK_LAYERS | i as u32,
-                image,
-                src: SceneRect::new(0, 0, w, h),
-                dst: SceneRect::new(r.x0.floor() as i32, (r.y0 - scroll).floor() as i32, w, h),
-                z: 1,
-            });
+            let dst = SceneRect::new(r.x0.floor() as i32, (r.y0 - scroll).floor() as i32, w, h);
+            layers.push(self.mark(i, dst, images));
+        }
+        (Frame { layers, pointer: self.pointer(), ..Frame::default() }, work.into_sorted().collect())
+    }
+
+    /// Search hit `i`'s mark at `dst` (pane pixels).
+    fn mark(&mut self, i: usize, dst: SceneRect, images: &mut Images) -> Layer {
+        let current = Some(i) == self.search.current;
+        let (w, h) = (dst.w, dst.h);
+        let image = *self.marks.entry((w, h, current)).or_insert_with(|| {
+            let px: [u8; 4] = if current { [255, 140, 0, 160] } else { [255, 214, 0, 110] };
+            images.add(w, h, px.repeat((w * h) as usize))
+        });
+        Layer { key: MARK_LAYERS | i as u32, image, src: SceneRect::new(0, 0, w, h), dst, z: 1 }
+    }
+
+    /// The background under strips not painted yet, as wide as the page.
+    fn background(&mut self, page: &Page, images: &mut Images) -> ImageKey {
+        match self.background {
+            Some((image, w)) if w == page.width => image,
+            old => {
+                if let Some((image, _)) = old {
+                    images.remove(image);
+                }
+                let w = page.width.max(1);
+                let image = images.add(w, STRIP, BACKGROUND.repeat((w * STRIP) as usize));
+                self.background = Some((image, w));
+                image
+            }
+        }
+    }
+
+    /// [`MdPane::frame`] magnified: the page's tiles painted at the
+    /// magnification in sight; where one is not painted yet (and while
+    /// fingers pinch, everywhere), the strips stretched under them (the
+    /// background where a strip is not painted either). Tiles are painted
+    /// only for what is in sight (a screen of them around would not fit
+    /// the strips' memory at the largest magnifications).
+    fn frame_magnified(
+        &mut self,
+        view: u64,
+        page: &mut Page,
+        strips: &mut TileCache<StripKey>,
+        tag: u32,
+        images: &mut Images,
+    ) -> (Frame, Vec<Want<StripJob>>) {
+        self.clamp(page);
+        strips.begin_frame(view);
+        let m = self.magnify;
+        let (ox, oy) = self.viewport.offset();
+        let (ox, oy) = (ox.round(), oy.round());
+        let screen = SceneRect::new(0, 0, self.width.max(1), self.height.max(1));
+        let centre = (f64::from(screen.w) / 2.0, f64::from(screen.h) / 2.0);
+        let mut layers = Vec::new();
+        let mut work = Schedule::new();
+        let mut covered = !self.pinching;
+        if !self.pinching {
+            let magnify = (m * 100.0).round() as u32;
+            let size = page.magnified_size(magnify);
+            for cell in tiles::grid((-ox as i32, -oy as i32), size, (TILE, TILE), screen).filter(|c| c.on_screen) {
+                let key = StripKey { page: page.id, strip: cell.ty, magnify, col: cell.tx };
+                if let Some((image, layer)) = strips.touch(key) {
+                    let src = SceneRect::new(0, 0, cell.area.2, cell.area.3);
+                    layers.push(Layer { key: layer, image, src, dst: cell.dst, z: 0 });
+                    continue;
+                }
+                covered = false;
+                let want = if strips.is_in_flight(key) {
+                    Some(Want::Queued((tag, key)))
+                } else {
+                    page.record_magnified(magnify, cell.tx, cell.ty, tag).map(Want::New)
+                };
+                if let Some(want) = want {
+                    let d = cell.dst;
+                    let dx = f64::from(d.x) + f64::from(d.w) / 2.0 - centre.0;
+                    let dy = f64::from(d.y) + f64::from(d.h) / 2.0 - centre.1;
+                    work.push(true, dx.hypot(dy) as f32, want);
+                }
+            }
+        }
+        self.complete = covered;
+        if !covered {
+            // The strips in sight, stretched, under the tiles.
+            let x0 = -ox as i32;
+            let x1 = (f64::from(page.width) * m - ox).round() as i32;
+            let first = (oy / m / f64::from(STRIP)).floor().max(0.0) as u32;
+            let last = ((oy + f64::from(screen.h)) / m / f64::from(STRIP)).ceil() as u32;
+            let mut under = Vec::new();
+            for strip in first..last.min(page.strips()) {
+                let top = strip * STRIP;
+                let rows = STRIP.min(page.height() - top);
+                let y0 = (f64::from(top) * m - oy).round() as i32;
+                let y1 = (f64::from(top + rows) * m - oy).round() as i32;
+                let dst = SceneRect::new(x0, y0, (x1 - x0).max(1) as u32, (y1 - y0).max(1) as u32);
+                let src = SceneRect::new(0, 0, page.width.max(1), rows);
+                let key = StripKey::strip(page.id, strip);
+                if let Some((image, layer)) = strips.touch(key) {
+                    under.push(Layer { key: layer, image, src, dst, z: 0 });
+                    continue;
+                }
+                let image = self.background(page, images);
+                under.push(Layer { key: PLACEHOLDER_LAYERS + strip, image, src, dst, z: 0 });
+                let want = if strips.is_in_flight(key) {
+                    Some(Want::Queued((tag, key)))
+                } else {
+                    page.record(strip, tag).map(Want::New)
+                };
+                if let Some(want) = want {
+                    let dy = f64::from(y0) + f64::from(y1 - y0) / 2.0 - centre.1;
+                    work.push(true, dy.abs() as f32, want);
+                }
+            }
+            under.append(&mut layers);
+            layers = under;
+        }
+        for i in 0..self.search.hits.len() {
+            let r = self.search.hits[i];
+            let (y0, y1) = ((r.y0 * m - oy).floor(), (r.y1 * m - oy).ceil());
+            if y1 < 0.0 || y0 > f64::from(self.height) {
+                continue;
+            }
+            let (x0, x1) = ((r.x0 * m - ox).floor(), (r.x1 * m - ox).ceil());
+            let dst = SceneRect::new(x0 as i32, y0 as i32, (x1 - x0).max(1.0) as u32, (y1 - y0).max(1.0) as u32);
+            layers.push(self.mark(i, dst, images));
         }
         (Frame { layers, pointer: self.pointer(), ..Frame::default() }, work.into_sorted().collect())
     }
@@ -378,8 +538,8 @@ impl MdPane {
 
     /// How far down the page the pane is, in percent.
     pub fn percent(&self, page: &Page) -> u32 {
-        let most = f64::from(page.height().saturating_sub(self.height));
-        if most <= 0.0 { 100 } else { (self.scroll() / most * 100.0).round() as u32 }
+        let most = f64::from(page.height()) * self.magnify - f64::from(self.height);
+        if most <= 0.0 { 100 } else { (self.viewport.y.offset() / most * 100.0).round() as u32 }
     }
 
     /// The pane's own images leave the store.

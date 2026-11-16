@@ -49,7 +49,10 @@ configuration script, as `temzdf --clean`. Closing the window detaches. `--rende
   Ghostty.
 - **Input** (G2): keys as the kitty protocol reports them (`input.rs`,
   `translate`, tested), pointer events in pixels, wheel and trackpad as
-  `ScrollBy`, focus, IME (preedit drawn at the cursor, the candidate window
+  `ScrollBy`, trackpad pinches as `Pinch` (winit 0.31 reports them on
+  macOS and Wayland only: X11 and Windows send none; no headless
+  compositor or virtual pointer here can make one, so they are tested
+  from the event on), focus, IME (preedit drawn at the cursor, the candidate window
   placed there with `request_ime_update`, commits as `Text`), the clipboard
   through arboard (primary selection on Linux), links and inverse search
   through `temzdf-client`. `<C-S-v>` and `<D-v>` paste in terminal panes.

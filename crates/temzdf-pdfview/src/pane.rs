@@ -1343,6 +1343,17 @@ impl PdfPane {
         if let MouseEventKind::ScrollBy { dx, dy, unit, phase } = m.kind {
             return self.scroll_by(m, (dx, dy), unit, phase, now);
         }
+        // A pinch zooms about the pointer, as Ctrl and the wheel do, but by
+        // its own amount.
+        if let MouseEventKind::Pinch { delta, .. } = m.kind {
+            if delta == 0 {
+                return false;
+            }
+            let v = &mut self.viewer;
+            let pointer = (self.pointer.0 - v.origin_x() as f32, self.pointer.1);
+            v.zoom(1.0 + delta as f32 / 10_000.0, pointer);
+            return true;
+        }
         let had_preview = self.preview.is_some();
         if let Some(redraw) = self.preview_mouse(m, now) {
             return redraw;
@@ -1979,6 +1990,42 @@ mod tests {
                 "{dir:?} at {at:?}: {before:?} -> {after:?}"
             );
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_pinch_zooms_by_its_amount_around_the_pointer() {
+        use termpix_core::input::PinchPhase;
+        let mut s = session();
+        let pinch = |s: &mut PdfPane, delta, phase, at: (f32, f32)| {
+            let ev = MouseEvent {
+                kind: MouseEventKind::Pinch { delta, phase },
+                x: at.0 as i32,
+                y: at.1 as i32,
+                unit: CoordUnit::Pixel,
+                modifiers: Modifiers::NONE,
+            };
+            s.mouse(&ev, Instant::now())
+        };
+        let at = (700.0, 400.0);
+        let scale = s.viewer.view.scale;
+        let before = s.viewer.screen_to_page(at.0, at.1).unwrap();
+        assert!(!pinch(&mut s, 0, PinchPhase::Begin, at));
+        for _ in 0..3 {
+            assert!(pinch(&mut s, 1000, PinchPhase::Change, at));
+        }
+        assert!(!pinch(&mut s, 0, PinchPhase::End, at));
+        assert!((s.viewer.view.scale / scale - 1.1f32.powi(3)).abs() < 1e-3, "{} -> {}", scale, s.viewer.view.scale);
+        let after = s.viewer.screen_to_page(at.0, at.1).unwrap();
+        assert_eq!(before.0, after.0);
+        assert!((before.1 - after.1).abs() < 0.5 && (before.2 - after.2).abs() < 0.5, "{before:?} -> {after:?}");
+        // Out again, about another point (one the scrolling limits let
+        // stay where it is).
+        let at = (600.0, 300.0);
+        let before = s.viewer.screen_to_page(at.0, at.1).unwrap();
+        assert!(pinch(&mut s, -500, PinchPhase::Change, at));
+        let after = s.viewer.screen_to_page(at.0, at.1).unwrap();
+        assert!((before.1 - after.1).abs() < 0.5 && (before.2 - after.2).abs() < 0.5, "{before:?} -> {after:?}");
     }
 
     /// The generation of the one search `s` asked for since the last call.

@@ -11,10 +11,10 @@ use temzdf_protocol::ClientMsg;
 use termpix_core::geom::Geometry;
 use termpix_core::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, ModifierKey, Modifiers, MouseButton, MouseEvent, MouseEventKind,
-    ScrollPhase, ScrollUnit,
+    PinchPhase, ScrollPhase, ScrollUnit,
 };
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ButtonSource, ElementState, Ime, MouseScrollDelta, ScrollSource, WindowEvent};
+use winit::event::{ButtonSource, ElementState, Ime, MouseScrollDelta, ScrollSource, TouchPhase, WindowEvent};
 use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 use winit::window::{ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, Window};
 
@@ -195,6 +195,20 @@ fn modifiers(s: ModifiersState) -> Modifiers {
         }
     }
     m
+}
+
+/// A trackpad pinch (macOS and Wayland; winit reports none on X11 and
+/// Windows) as `Pinch`: winit's delta is the change of the magnification,
+/// in ten-thousandths. A cancelled gesture ends as one that ended.
+pub fn pinch(delta: f64, phase: TouchPhase) -> MouseEventKind {
+    let phase = match phase {
+        TouchPhase::Started => PinchPhase::Begin,
+        TouchPhase::Moved => PinchPhase::Change,
+        TouchPhase::Ended | TouchPhase::Cancelled => PinchPhase::End,
+    };
+    // (winit says the delta may be NaN.)
+    let delta = if delta.is_finite() { (delta.clamp(-0.9, 10.0) * 10_000.0).round() as i32 } else { 0 };
+    MouseEventKind::Pinch { delta, phase }
 }
 
 /// A wheel or trackpad amount as `ScrollBy`: positive is down and right.
@@ -428,6 +442,7 @@ impl Input {
                 vec![self.mouse(kind)]
             }
             WindowEvent::MouseWheel { delta, source, .. } => vec![self.mouse(scroll(*delta, *source))],
+            WindowEvent::PinchGesture { delta, phase, .. } => vec![self.mouse(pinch(*delta, *phase))],
             _ => Vec::new(),
         }
     }
@@ -574,6 +589,14 @@ mod tests {
             left_side: true,
             base: None,
         }
+    }
+
+    #[test]
+    fn pinches_count_ten_thousandths_and_end_when_cancelled() {
+        assert_eq!(pinch(0.0125, TouchPhase::Started), MouseEventKind::Pinch { delta: 125, phase: PinchPhase::Begin });
+        assert_eq!(pinch(-0.5, TouchPhase::Moved), MouseEventKind::Pinch { delta: -5000, phase: PinchPhase::Change });
+        assert_eq!(pinch(f64::NAN, TouchPhase::Cancelled), MouseEventKind::Pinch { delta: 0, phase: PinchPhase::End });
+        assert_eq!(pinch(-3.0, TouchPhase::Ended), MouseEventKind::Pinch { delta: -9000, phase: PinchPhase::End });
     }
 
     #[test]

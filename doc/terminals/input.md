@@ -42,5 +42,6 @@ Drag-to-pan with 1016 coordinates gives the truly pixel-precise path.
 
 ## Zoom
 
-Pinch gestures are never forwarded. Zoom with Ctrl+wheel (anchored at the
-pointer) and keys.
+Terminals never forward pinch gestures. Zoom with Ctrl+wheel (anchored at the
+pointer) and keys. `temzdf-gui` sends pinches where winit reports them
+(macOS, Wayland) as `MouseEventKind::Pinch`.

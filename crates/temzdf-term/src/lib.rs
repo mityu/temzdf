@@ -428,7 +428,9 @@ impl TermBuffer {
                         ScrollDirection::Right => mouse::Button::Seven,
                     }),
                 ),
-                MouseEventKind::Leave | MouseEventKind::ScrollBy { .. } => return redraw,
+                MouseEventKind::Leave | MouseEventKind::ScrollBy { .. } | MouseEventKind::Pinch { .. } => {
+                    return redraw;
+                }
             };
             let Ok(mut event) = mouse::Event::new() else { return false };
             let mods = keys::mods(m.modifiers);

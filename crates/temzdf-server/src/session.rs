@@ -5270,6 +5270,113 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "the file system, Blitz")]
+    fn a_pinch_magnifies_the_markdown_page_without_laying_it_out_again() {
+        use termpix_core::input::{PinchPhase, ScrollPhase, ScrollUnit};
+        let words = "word ".repeat(30);
+        let mut src = String::from("[jump](#section-12)\n\n");
+        for i in 0..20 {
+            src.push_str(&format!("## Section {i}\n\n{words}\n\n"));
+        }
+        let (mut s, _path) = markdown_session("g.md", &src, &[]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        s.events = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let painted = move |s: &mut Session| {
+            let mut frame = s.frame();
+            while !s.is_complete() || !s.is_idle() {
+                let ev = rx.recv_timeout(Duration::from_secs(20)).expect("a strip");
+                s.handle(ev, Instant::now());
+                frame = s.frame();
+            }
+            frame
+        };
+        run(&mut s, "markdown.set-mode", &[str("graphics")]).unwrap();
+        painted(&mut s);
+        let md = *s.md_docs.keys().next().unwrap();
+        let page = s.md_docs[&md].pages[0].id;
+        let ev = |kind, (x, y)| MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
+        let pinch = |s: &mut Session, delta, phase, at| {
+            s.mouse(&ev(MouseEventKind::Pinch { delta, phase }, at), Instant::now());
+        };
+        // Where a pane pixel is on the page as laid out, and the magnification.
+        let on_page = |s: &mut Session, (x, y): (i32, i32)| {
+            let (p, _) = s.md_graphics(s.focus).unwrap();
+            let (ox, oy) = p.viewport.offset();
+            let m = p.magnify();
+            ((f64::from(x) + ox) / m, (f64::from(y) + oy) / m)
+        };
+        let magnify = |s: &mut Session| s.md_graphics(s.focus).unwrap().0.magnify();
+        // Pinched on the link, it stays under the fingers.
+        let at = {
+            let (p, page) = s.md_graphics(s.focus).unwrap();
+            let r = page.find("jump")[0];
+            (((r.x0 + r.x1) / 2.0) as i32, ((r.y0 + r.y1) / 2.0 - p.scroll()) as i32)
+        };
+        let before = on_page(&mut s, at);
+        pinch(&mut s, 0, PinchPhase::Begin, at);
+        for _ in 0..5 {
+            pinch(&mut s, 1000, PinchPhase::Change, at);
+        }
+        assert!((magnify(&mut s) - 1.1f64.powi(5)).abs() < 1e-9);
+        let after = on_page(&mut s, at);
+        assert!((before.0 - after.0).abs() < 1e-6 && (before.1 - after.1).abs() < 1e-6, "{before:?} {after:?}");
+        // Not laid out again; while pinching, the strips stretched, and
+        // nothing painted at the magnification.
+        // (Layers come clipped to the pane.)
+        let scaled = |l: &Layer| f64::from(l.dst.w) / f64::from(l.src.w);
+        let stretched = |f: &Frame| f.layers.iter().all(|l| (scaled(l) - 1.1f64.powi(5)).abs() < 0.01);
+        let frame = s.frame();
+        assert!(stretched(&frame), "{:?}", frame.layers);
+        assert_eq!((s.md_docs[&md].pages.len(), s.md_docs[&md].pages[0].id), (1, page));
+        assert!((s.md_docs[&md].pages[0].zoom - 1.0).abs() < 1e-6, "the zoom is another thing");
+        assert!(s.md_docs[&md].strips.iter_used().all(|(k, _)| k.magnify == 0));
+        assert!(s.is_idle(), "nothing painted while pinching");
+        // When the fingers leave: rounded to hundredths, painted at it,
+        // tiles alone (not stretched) covering the pane.
+        pinch(&mut s, 0, PinchPhase::End, at);
+        assert_eq!(magnify(&mut s), 1.61);
+        let frame = painted(&mut s);
+        let tiles: Vec<_> = frame.layers.iter().filter(|l| l.z == 0).collect();
+        assert!(tiles.iter().all(|l| l.src.w <= 512 && (l.src.w, l.src.h) == (l.dst.w, l.dst.h)), "{tiles:?}");
+        assert!(tiles.len() > 2, "{tiles:?}");
+        let area: i64 = tiles
+            .iter()
+            .filter_map(|l| l.dst.intersect(&Rect::new(0, 0, 900, 580)))
+            .map(|r| i64::from(r.w * r.h))
+            .sum();
+        assert_eq!(area, 900 * 580);
+        assert!(s.md_docs[&md].strips.iter_used().any(|(k, _)| k.magnify == 161));
+        // A click on the link (where it is magnified) follows it.
+        for kind in [MouseEventKind::Press(MouseButton::Left), MouseEventKind::Release(MouseButton::Left)] {
+            s.mouse(&ev(kind, at), Instant::now());
+        }
+        assert_eq!(s.md_top_line(s.focus), Some(2 + 4 * 12), "followed");
+        assert_eq!(magnify(&mut s), 1.61, "still magnified");
+        // Fingers move it sideways too.
+        let x0 = s.md_graphics(s.focus).unwrap().0.viewport.offset().0;
+        let kind = MouseEventKind::ScrollBy { dx: 5000, dy: 0, unit: ScrollUnit::Pixel, phase: ScrollPhase::Touch };
+        s.mouse(&ev(kind, (300, 300)), Instant::now());
+        assert_eq!(s.md_graphics(s.focus).unwrap().0.viewport.offset().0, x0 + 50.0);
+        // The zoom lays the page out again; the magnification stays.
+        let line = s.md_top_line(s.focus);
+        run(&mut s, "markdown.zoom", &[str("in")]).unwrap();
+        assert!((s.md_docs[&md].pages[0].zoom - 1.1).abs() < 1e-3);
+        assert_eq!((magnify(&mut s), s.md_top_line(s.focus)), (1.61, line));
+        // Pinched back (past 1, which is as small as it gets): the page as
+        // it was shown before.
+        pinch(&mut s, 0, PinchPhase::Begin, at);
+        pinch(&mut s, -5000, PinchPhase::Change, at);
+        pinch(&mut s, 0, PinchPhase::End, at);
+        assert_eq!(magnify(&mut s), 1.0);
+        let frame = painted(&mut s);
+        assert!(frame.layers.iter().all(|l| (l.src.w, l.dst.w) == (900, 900)), "{:?}", frame.layers);
+        assert_eq!(s.md_graphics(s.focus).unwrap().0.viewport.offset().0, 0.0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, Blitz")]
     fn the_markdown_graphics_mode_scrolls_zooms_searches_and_switches_back_in_place() {
         let words = "word ".repeat(30);
         let mut src = String::from("[jump](#section-12)\n\n");
@@ -5308,7 +5415,7 @@ mod tests {
         let md = *s.md_docs.keys().next().unwrap();
         let in_flight = |s: &Session, strip| {
             let page = s.md_docs[&md].pages[0].id;
-            s.md_docs[&md].strips.is_in_flight(temzdf_mdview::StripKey { page, strip })
+            s.md_docs[&md].strips.is_in_flight(temzdf_mdview::StripKey::strip(page, strip))
         };
         let top_strip = s.md_graphics(s.focus).unwrap().0.scroll() as u32 / 256;
         assert!(in_flight(&s, top_strip) && in_flight(&s, top_strip + 3), "in sight and below");
@@ -5384,7 +5491,7 @@ mod tests {
         painted(&mut s);
         assert!(s.md_docs[&md].strips.iter_used().all(|(k, _)| k.page != old), "the old page's strips went");
         let n = s.md_docs[&md].strips.len();
-        let key = temzdf_mdview::StripKey { page: old, strip: 0 };
+        let key = temzdf_mdview::StripKey::strip(old, 0);
         let late = temzdf_mdview::Strip { key, tag: md, width: 900, rows: 1, pixels: vec![0; 900 * 4] };
         assert_eq!(s.handle(SessionEvent::MarkdownStrip(late), Instant::now()), Outcome::None);
         assert_eq!(s.md_docs[&md].strips.len(), n);

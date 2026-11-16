@@ -194,6 +194,13 @@ pub enum MouseEventKind {
     },
     /// The pointer left the window (kitty extension to mode 1016).
     Leave,
+    /// Two fingers pinching on a trackpad (GUI clients, where the window
+    /// system reports it): the magnification times `1 + delta / 10000`
+    /// (in when positive), about the pointer.
+    Pinch {
+        delta: i32,
+        phase: PinchPhase,
+    },
 }
 
 /// What a [`MouseEventKind::ScrollBy`] amount counts.
@@ -217,6 +224,18 @@ pub enum ScrollPhase {
     /// The system's inertia after the fingers left: followed exactly, with
     /// no inertia of the view's own on top.
     Momentum,
+}
+
+/// Where a [`MouseEventKind::Pinch`] is in its gesture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PinchPhase {
+    /// The fingers started pinching.
+    Begin,
+    /// They moved.
+    Change,
+    /// They left (or the system cancelled the gesture).
+    End,
 }
 
 impl MouseEventKind {

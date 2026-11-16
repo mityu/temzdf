@@ -121,6 +121,22 @@ would fail the link rather than go unnoticed.
   keys, or Ctrl and the wheel); switching modes, zooming, resizing and
   reloading keep the source line at the top (the one the pane is
   scrolling to, if it is).
+- A pinch (`MouseEventKind::Pinch`, from `temzdf-gui`) magnifies the page
+  without laying it out again, as browsers on macOS do (decided with the
+  user on 2026-11-16): separate from the zoom, 1 to 5 times, about the
+  pointer, kept until pinched back (zooming, resizing, reloading and
+  following links keep it). The viewport counts magnified pixels, so
+  fingers and the wheel move the page every way at the same speed; places
+  (the source line at the top, links under the pointer, search marks)
+  convert. While the fingers pinch, the strips are shown stretched; when
+  they leave, the magnification is rounded to hundredths and tiles of
+  512 pixels are painted in sight at it (`Page::record_magnified`: the
+  page's recording painted larger, so text is sharp and the layout the
+  same), the stretched strips under them until they arrive. `blitz_paint`'s
+  `scale` argument does not draw larger (the layout's scale does), so the
+  magnification is a transform applied when painting. Tiles are not
+  painted ahead (a screen of them around would not fit the strips' memory
+  at 5 times); a split's new pane starts unmagnified.
 - Scrolling goes through `termpix_core::viewport::Viewport`, as the PDF
   pane's does: wheel steps of `o.scrollstep` ease (`o.scrollsmoothness`)
   and speed up when flicked, fingers' pixels are followed exactly, keys
