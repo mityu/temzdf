@@ -22,7 +22,7 @@ const SESSION: &[(&str, &str, &str)] = &[
     (
         "split",
         "(side?: \"right\" | \"left\" | \"bottom\" | \"top\" | { side?: \"right\" | \"left\" | \"bottom\" | \"top\"; scope?: \"pane\" | \"screen\"; buffer?: number; width?: number | string; height?: number | string; pane?: number }, scope?: \"pane\" | \"screen\"): number | null",
-        "Another pane like the focused one (the same document, or a new shell), or showing `buffer`; `screen` puts it at that edge of the whole screen; `pane` splits that pane; `width`/`height` (cells or \"N%\" of the screen) make it that size, fixed (as Vim's winfixwidth/winfixheight); returns the new pane (null for a document still opening)",
+        "Another pane like the focused one (the same document at the same place, or a new shell), or showing `buffer`; `screen` puts it at that edge of the whole screen; `pane` splits that pane; `width`/`height` (cells or \"N%\" of the screen) make it that size, fixed (as Vim's winfixwidth/winfixheight); returns the new pane (null for a document still opening)",
     ),
     ("new-pane", "(...words: string[]): void", "As `temzdf action new-pane`: a file, or \"--\" and a command"),
     ("move-focus", "(dir: \"left\" | \"right\" | \"up\" | \"down\"): void", "Focus the pane in that direction"),

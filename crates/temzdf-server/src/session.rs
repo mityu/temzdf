@@ -289,6 +289,22 @@ const BORDER: [u8; 4] = [0x5a, 0x5a, 0x5a, 0xff];
 /// The most mappings one typed key may run (Vim's `maxmapdepth`).
 const MAX_MAP_DEPTH: usize = 1000;
 
+/// What a pane shows and where, for a split of it to show the same.
+enum SplitPlace {
+    Pdf(ViewState),
+    /// The source line at the top.
+    Markdown {
+        line: usize,
+        graphics: bool,
+    },
+    Text {
+        cursor: temzdf_texteditor::Cursor,
+        top: usize,
+        top_skip: usize,
+        left: usize,
+    },
+}
+
 /// Where a pane goes.
 #[derive(Clone, Debug)]
 enum Spot {
@@ -2002,10 +2018,12 @@ impl Session {
     }
 
     /// Split `target` (the whole layout for `None`): the new pane shows
-    /// `buf`, or what `target` shows (the same document again, a new shell
-    /// where it is); `size` cells wide (or high) and fixed when given. From
-    /// a float: a new float instead. Returns the new pane (`None` for a
-    /// document still opening).
+    /// `buf`, or what `target` shows where it shows it (the same document
+    /// again, a Markdown viewer in the same mode, a text buffer with the
+    /// same cursor and scroll, as Vim's `:split`; a new shell where it is);
+    /// `size` cells wide (or high) and fixed when given. From a float: a new
+    /// float instead. Returns the new pane (`None` for a document still
+    /// opening).
     pub(super) fn split_pane(
         &mut self,
         target: Option<PaneId>,
@@ -2015,9 +2033,12 @@ impl Session {
         buf: Option<BufferId>,
     ) -> Result<Option<PaneId>, String> {
         let from = target.unwrap_or(self.focus);
-        let spot =
-            if self.is_float(from) { Spot::Float(self.cascade()) } else { Spot::Split { target, split, before, size } };
-        // A graphics-mode viewer floats as its text mode.
+        let float = self.is_float(from);
+        let spot = if float { Spot::Float(self.cascade()) } else { Spot::Split { target, split, before, size } };
+        // Where `from` is, taken before the split resizes it.
+        let place = if buf.is_some() { None } else { self.split_place(from) };
+        // A graphics-mode viewer opens as its text mode (and goes on in
+        // graphics below, but in a float).
         let md_text = match self.panes.get(&from).map(|e| &e.kind) {
             Some(Kind::Markdown { doc, .. }) => Some(*doc),
             _ => None,
@@ -2036,7 +2057,58 @@ impl Session {
             }
             (None, None) => return Err(format!("no pane {from}")),
         };
-        self.open_what(what, spot)
+        let new = self.open_what(what, spot)?;
+        if let (Some(new), Some(place)) = (new, place) {
+            self.split_show(new, place, float)?;
+        }
+        Ok(new)
+    }
+
+    /// What pane `from` shows and where, for a split of it to show the same.
+    fn split_place(&self, from: PaneId) -> Option<SplitPlace> {
+        Some(match &self.panes.get(&from)?.kind {
+            Kind::Pdf { pane, .. } => SplitPlace::Pdf(pane.viewer.view_state()),
+            Kind::Markdown { .. } => SplitPlace::Markdown { line: self.md_top_line(from)?, graphics: true },
+            Kind::Text { buf, .. } if self.texts.get(buf)?.markdown.is_some() => {
+                SplitPlace::Markdown { line: self.md_top_line(from)?, graphics: false }
+            }
+            Kind::Text { view, .. } => SplitPlace::Text {
+                cursor: temzdf_texteditor::Cursor { anchor: None, ..view.view.cursor },
+                top: view.view.top,
+                top_skip: view.view.top_skip,
+                left: view.view.left,
+            },
+            Kind::Term { .. } => return None,
+        })
+    }
+
+    /// Show `place` in pane `new`, just split (a graphics viewer goes on in
+    /// text mode in a float).
+    fn split_show(&mut self, new: PaneId, place: SplitPlace, float: bool) -> Result<(), String> {
+        match place {
+            SplitPlace::Pdf(state) => {
+                if let Some(Kind::Pdf { pane, .. }) = self.panes.get_mut(&new).map(|e| &mut e.kind) {
+                    pane.viewer.restore(&state);
+                }
+            }
+            SplitPlace::Markdown { line, graphics } if graphics && !float => {
+                self.md_set_mode(new, "graphics")?;
+                if let Some((p, page)) = self.md_graphics(new) {
+                    p.show_line(page, line);
+                }
+            }
+            SplitPlace::Markdown { line, .. } => self.md_place_text(new, line),
+            SplitPlace::Text { cursor, top, top_skip, left } => {
+                if let Some(Kind::Text { buf, view }) = self.panes.get_mut(&new).map(|e| &mut e.kind)
+                    && let Some(t) = self.texts.get(buf)
+                {
+                    let v = &mut view.view;
+                    (v.cursor, v.top, v.top_skip, v.left) = (cursor, top, top_skip, left);
+                    v.relayout(&t.buf);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn action_inner(&mut self, action: Action, _now: Instant) -> Result<Outcome> {
@@ -4626,6 +4698,93 @@ mod tests {
         assert!(split(&mut s, opts(&[("side", side("bottom")), ("width", n(3.0))])).is_err());
         assert!(split(&mut s, opts(&[("buffer", n(9999.0))])).is_err());
         assert!(cmd(&mut s, "focus-pane", &["9999"], None).is_err());
+    }
+
+    /// Split the focused pane `side` ("right", "bottom"); the new pane.
+    fn split_focused(s: &mut Session, side: &str) -> PaneId {
+        let (pane, _) = s.run_command("split", &[ScriptValue::Str(side.into())], None, Instant::now()).unwrap();
+        pane.as_num().expect("the new pane") as PaneId
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_split_pdf_shows_the_same_place_at_the_same_zoom() {
+        let (mut s, rx) = session();
+        settle(&mut s, &rx);
+        let from = s.focus;
+        let viewer = |s: &mut Session, p: PaneId| s.panes.get_mut(&p).unwrap().pdf().unwrap().viewer.view_state();
+        {
+            let v = &mut s.panes.get_mut(&from).unwrap().pdf().unwrap().viewer;
+            v.zoom(1.5, (0.0, 0.0));
+            v.jump_to(40.0, 4000.0);
+        }
+        let before = viewer(&mut s, from);
+        assert!(before.top.page > 0 && before.zoom.is_some(), "{before:?}");
+        let new = split_focused(&mut s, "right");
+        let after = viewer(&mut s, new);
+        assert_eq!(after.top.page, before.top.page);
+        assert!((after.top.y.unwrap() - before.top.y.unwrap()).abs() < 1.0, "{after:?} {before:?}");
+        assert!((after.zoom.unwrap() - before.zoom.unwrap()).abs() < 1e-3, "{after:?} {before:?}");
+        assert!((after.left - before.left).abs() < 1.0, "{after:?} {before:?}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, libtexprintf")]
+    fn a_split_markdown_viewer_shows_the_same_line_in_the_same_mode() {
+        let words = "word ".repeat(30);
+        let mut src = String::new();
+        for i in 0..30 {
+            src.push_str(&format!("## Section {i}\n\n{words}\n\n"));
+        }
+        let (mut s, _path) = markdown_session("split.md", &src, &[]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        // Text mode.
+        run(&mut s, "markdown.goto", &[str("section-12")]).unwrap();
+        let text = s.focus;
+        let line = s.md_top_line(text).unwrap();
+        assert!(line > 0);
+        let new = split_focused(&mut s, "right");
+        assert_eq!((s.md_mode(new), s.md_top_line(new)), (Some("text"), Some(line)));
+        // Graphics mode.
+        run(&mut s, "markdown.set-mode", &[str("graphics")]).unwrap();
+        run(&mut s, "markdown.goto", &[str("section-20")]).unwrap();
+        let graphics = s.focus;
+        let line = s.md_top_line(graphics).unwrap();
+        let new = split_focused(&mut s, "bottom");
+        assert_eq!((s.md_mode(new), s.md_top_line(new)), (Some("graphics"), Some(line)));
+        // A float split from it opens in text mode, at the same line.
+        s.toggle_floating(graphics).unwrap();
+        s.set_focus(graphics);
+        let float = split_focused(&mut s, "right");
+        assert!(s.is_float(float));
+        assert_eq!((s.md_mode(float), s.md_top_line(float)), (Some("text"), Some(line)));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn a_split_text_pane_has_the_cursor_and_scroll_of_the_pane_it_splits() {
+        let content: String = (0..300).map(|i| format!("line {i}\n")).collect();
+        let (mut s, _path) = text_session("split.txt", &content);
+        let first = s.focus;
+        let other = split_focused(&mut s, "right");
+        let place = |s: &mut Session, p: PaneId, line: Option<usize>| {
+            let Some(Kind::Text { buf, view }) = s.panes.get_mut(&p).map(|e| &mut e.kind) else { panic!("text") };
+            let t = &s.texts[buf];
+            if let Some(line) = line {
+                view.view.cursor.pos = t.buf.text().line_start(line);
+                view.view.top = t.buf.text().line_start(line - 5);
+                view.view.relayout(&t.buf);
+            }
+            (view.view.cursor.pos, view.view.top)
+        };
+        // The panes on the buffer show different places; the split copies
+        // the focused one's.
+        place(&mut s, other, Some(40));
+        let want = place(&mut s, first, Some(200));
+        s.set_focus(first);
+        let new = split_focused(&mut s, "bottom");
+        assert_eq!(place(&mut s, new, None), want);
     }
 
     #[test]

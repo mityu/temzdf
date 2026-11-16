@@ -329,7 +329,11 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 
 What a pane shows is a buffer, as in Vim: a document or a terminal. Several
 panes can show one buffer (a split PDF pane shows the same document; a split
-terminal pane starts a new shell, `showBuffer` shows the same terminal).
+terminal pane starts a new shell, `showBuffer` shows the same terminal). As
+Vim's `:split`, the new pane shows the same place: a PDF at the same point
+and zoom, a Markdown viewer at the same line in the same mode (a float split
+from a graphics viewer is in its text mode), a text buffer with the same
+cursor and scroll.
 
 - Closing a pane hides its buffer: a terminal keeps running, a document
   stays open (reloading as it changes) and keeps its position for the next

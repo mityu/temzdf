@@ -484,14 +484,21 @@ impl Session {
             let buf = self.md_buffer(md, width.max(1));
             self.show_in(pane, buf)?;
             self.md_fit(pane);
-            if let Some(Kind::Text { buf, view }) = self.panes.get_mut(&pane).map(|e| &mut e.kind)
-                && let Some(t) = self.texts.get(buf)
-                && let Some(r) = self.md_docs.get(&md).and_then(|d| d.renders.iter().find(|r| r.buf == *buf))
-            {
-                place_view(view, &t.buf, &r.drawn, line, line);
-            }
+            self.md_place_text(pane, line);
         }
         Ok(())
+    }
+
+    /// Show source line `line` at the top of text-mode viewer `pane`, the
+    /// cursor on it.
+    pub(super) fn md_place_text(&mut self, pane: PaneId, line: usize) {
+        if let Some(Kind::Text { buf, view }) = self.panes.get_mut(&pane).map(|e| &mut e.kind)
+            && let Some(t) = self.texts.get(buf)
+            && let Some(md) = t.markdown
+            && let Some(r) = self.md_docs.get(&md).and_then(|d| d.renders.iter().find(|r| r.buf == *buf))
+        {
+            place_view(view, &t.buf, &r.drawn, line, line);
+        }
     }
 
     /// Zoom graphics pane `pane` a step (`dir` > 0 in, < 0 out, 0 back to
