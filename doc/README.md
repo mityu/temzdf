@@ -115,3 +115,7 @@ branch. The decisions taken from it are in the design documents.
   tools for concurrency bugs (loom, shuttle, Miri and its GenMC mode,
   Kani, static analysers, trace validation) and deterministic simulation
   for the tile schedule's worker pool.
+- [survey/lsp-client.md](survey/lsp-client.md): an LSP client on VS
+  Code's npm libraries (`vscode-jsonrpc`,
+  `vscode-languageserver-protocol`), where its parts would live (Rust or
+  scripts), checked against the script host and the editor framework.
