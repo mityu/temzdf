@@ -85,6 +85,16 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- Terminal panes: wait for a program's output to pause before a frame.
+  htop writes one screen update as about 150 small writes over 1.5 ms
+  (measured with `strace` at 160x50, 6-8 KB, at most 0.05 ms apart), so the
+  server, which handles the queued events first (`DRAIN_LIMIT` in
+  `crates/temzdf-server/src/daemon.rs`), finds the queue empty after a few
+  lines and shows a half-updated screen for one frame: a little more
+  flicker than in zellij. The fix: after output, make the frame once no
+  output came for about 1 ms, for at most about 4 ms (as Ghostty gathers a
+  saturated pty for up to 3 ms); input alone never waits. Not urgent (the
+  user, 2026-11-16).
 - Terminal panes' scrollback limit in lines, as a setting (like Neovim's
   `'scrollback'`). Now it is a byte limit, `SCROLLBACK_BYTES` in
   `crates/temzdf-term/src/lib.rs` (10 MB: about 13,600 rows at 80 columns,
