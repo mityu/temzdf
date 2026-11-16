@@ -1,0 +1,16 @@
+% A document whose ToUnicode maps letters to control characters, as a
+% crafted PDF could: A to A and ESC, B to the C1 CSI (U+009B) and B, C to BEL
+% and C. Its text must not carry them (crates/temzdf-pdfcore/src/selection.rs).
+% pdfTeX maps glyphs by name, so the font needs an encoding with names (T1
+% Latin Modern), and it leaves out a map to one control character alone.
+% Rebuild with scripts/build-fixtures.sh.
+\pdfgentounicode=1
+\pdfglyphtounicode{A}{0041 001B}
+\pdfglyphtounicode{B}{009B 0042}
+\pdfglyphtounicode{C}{0007 0043}
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+xAxBxCx
+\end{document}

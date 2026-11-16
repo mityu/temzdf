@@ -41,6 +41,10 @@ impl PageText {
                 let start = text.chars.len();
                 for ch in line.chars() {
                     let Some(c) = ch.char() else { continue };
+                    // A document maps its glyphs to any characters it likes:
+                    // control characters (escape sequences in a terminal it
+                    // is pasted into) show as unknown, as unmapped glyphs do.
+                    let c = if c.is_control() { char::REPLACEMENT_CHARACTER } else { c };
                     let q = ch.quad();
                     let xs = [q.ul.x, q.ur.x, q.ll.x, q.lr.x];
                     let ys = [q.ul.y, q.ur.y, q.ll.y, q.lr.y];
@@ -185,6 +189,16 @@ mod tests {
         assert_eq!(sel.text(&texts), "needle");
         assert_eq!(sel.rects(0, &text).len(), 1);
         assert!(!sel.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn text_carries_no_control_characters_a_document_maps_glyphs_to() {
+        let doc = pdf::open(&pdf::fixture("tounicode-controls.pdf")).unwrap();
+        let bounds = pdf::page_bounds(&doc).unwrap()[0];
+        let text = PageText::extract(&pdf::display_list(&doc, 0).unwrap(), bounds).unwrap();
+        let all: String = text.chars.iter().map(|c| c.c).collect();
+        assert!(all.starts_with("xA\u{fffd}x\u{fffd}Bx\u{fffd}Cx"), "{all:?}");
     }
 
     #[test]

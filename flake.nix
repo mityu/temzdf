@@ -215,6 +215,8 @@
                             amsfonts
                             hyperref
                             geometry
+                            # tests/fixtures/tounicode-controls.tex
+                            lm
                           ]
                         ))
                       ]
