@@ -95,6 +95,18 @@ server on one `Session`). Next and open:
   output came for about 1 ms, for at most about 4 ms (as Ghostty gathers a
   saturated pty for up to 3 ms); input alone never waits. Not urgent (the
   user, 2026-11-16).
+- SyncTeX: what to do with a result, in scripts. With the script host in
+  the server process a call costs about 10 µs, so the old reason to keep it
+  all in Rust (the cost of talking to a separate JS process) is gone. The
+  parser and queries stay in Rust: a large `.synctex.gz` has hundreds of
+  thousands of records (estimated), slow to parse in QuickJS inside wasm and
+  too big for the script host's memory cap. Expose the queries as
+  primitives (`document.synctex.forward(file, line)` returning positions,
+  `document.synctex.inverse(page, x, y)` returning file and line) and let
+  scripts decide which pane shows a result, how it is marked, and how the
+  editor is called (a function instead of `o.synctexeditor`).
+  `temzdf --forward` keeps working without scripts (decision 27 in
+  `doc/design/scripting.md`). Not urgent (the user, 2026-11-17).
 - Terminal panes' scrollback limit in lines, as a setting (like Neovim's
   `'scrollback'`). Now it is a byte limit, `SCROLLBACK_BYTES` in
   `crates/temzdf-term/src/lib.rs` (10 MB: about 13,600 rows at 80 columns,
