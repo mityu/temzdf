@@ -133,6 +133,27 @@ stream frames; Firefox over BiDi is the runner-up.
   a window, doubtful over SSH, and a second backend.
 - **Ladybird/LibWeb**: no stable embedding API (alpha targeted for 2026).
 - **Lightpanda**: headless browser without a rendering engine (no pixels).
+  Still so on 2026-11-17 (its `--dump png` draws only the text), and
+  AGPL-3.0.
+- **Kitesurf** (cloudflare/kitesurf, Apache-2.0) **and litesurf**
+  (tani/litesurf; npm `litesurf` 0.0.1), added 2026-11-17, read from the
+  repositories, not run. Kitesurf is a CDP browser engine for Cloudflare
+  Workers on Blitz 0.3.0-beta.4 (the version `temzdf-mdview` uses), a self-declared proof of
+  concept. Only its Rust part (DOM, layout, paint, Boa) is WebAssembly,
+  built with wasm-bindgen for a JS host; page JS runs in a workerd (V8)
+  isolate per page (Worker Loader), Boa only for code generated at run time.
+  So it cannot run in our wasmtime or QuickJS. Locally it runs through
+  `wrangler dev` (Node, Miniflare, workerd; the build needs Bazel, nightly
+  Rust, pnpm); litesurf ships the prebuilt engine (about 63 MB) with a Node
+  22+ launcher for Miniflare/workerd. Without Node only by starting workerd
+  ourselves (unverified: Worker Loader without Miniflare, configuration
+  stability, workerd in nixpkgs). Worth keeping in mind: its terminal client
+  draws from a scene stream with damage rectangles (a `Kitesurf.*` CDP
+  extension), rasterized by an engine-supplied `scene_host.wasm` with a
+  plain byte ABI in wasmtime, which our server could host. Rejected for
+  now: web compatibility at Blitz's level, an external Node/workerd
+  process, and interfaces that change fast; revisit as a second engine
+  behind the engine trait once it settles.
 - **Blitz**: no JS; only a no-JS fast path. Note: the two research passes
   disagreed on its state (0.3.0-beta vs 0.2.4 "pre-alpha"); check before use.
 
