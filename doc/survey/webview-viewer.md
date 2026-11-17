@@ -89,6 +89,21 @@ break the API). In-process Rust with JS (SpiderMonkey) and raw RGBA through
 web compatibility has gaps, the build is huge and no macOS software path is
 confirmed. Re-evaluate at the next LTS.
 
+Update (2026-11-17, `servo` 0.8.0, released 2026-11-07; read from the
+release notes and sources, not built): the rendering path is unchanged.
+`SoftwareRenderingContext` is still WebRender on OpenGL through surfman's
+software adapter (`Connection::create_software_adapter`), read back with
+`read_to_image(rect)`; no damage rectangles, no GL-free renderer (vello is
+used for canvas only). Since 0.7.0: SpiderMonkey ESR 153 (from 0.6.0),
+surfman 0.14, embedder API additions (`WebView::clear_session_history`,
+running JS in CSP-restricted documents, online/offline reports), and a C
+API (`ffi/capi`) meant to become a stable ABI later; the rest is web
+compatibility. LTS: 0.6.0 (2026-09) is the current one, best effort,
+security fixes only, nine months of support, a new one every six months,
+so the next is due around 2027-03. nixpkgs has 0.7.0. Nothing here changes
+the conclusion; still unconfirmed: the speed of software GL and a macOS
+software path.
+
 ### Other installed browsers (added 2026-11-02)
 
 Which browsers a user may already have can serve the same way:
