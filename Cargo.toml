@@ -51,6 +51,7 @@ temzdf-protocol = { path = "crates/temzdf-protocol", default-features = false }
 temzdf-client = { path = "crates/temzdf-client" }
 tuitest = { path = "crates/tuitest" }
 anyhow = "1.0.104"
+pdf-writer = "0.15.0"
 mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "system-fonts"] }
 
 [workspace.lints.rust]

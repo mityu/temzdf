@@ -21,5 +21,8 @@ cc = "1.10.0"
 # `testing::fixture` for tests in other crates.
 test-support = []
 
+[dev-dependencies]
+pdf-writer.workspace = true
+
 [lints]
 workspace = true

@@ -362,6 +362,7 @@ pub fn fixture(name: &str) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 
     #[test]
     fn destinations_outside_the_document_lead_nowhere() {
@@ -439,33 +440,22 @@ mod tests {
         assert!(search_page(&doc, 0, bounds[0], "  ").unwrap().is_empty());
     }
 
-    /// A one-page PDF showing `content` (a content stream; font /F1 is
-    /// Helvetica), with a correct cross-reference table.
-    fn pdf_with_content(content: &str) -> Vec<u8> {
-        let objects = [
-            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R \
-             /Resources << /Font << /F1 5 0 R >> >> >>"
-                .to_string(),
-            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
-        ];
-        let mut out = b"%PDF-1.7\n".to_vec();
-        let mut offsets = Vec::new();
-        for (i, o) in objects.iter().enumerate() {
-            offsets.push(out.len());
-            out.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).bytes());
-        }
-        let xref = out.len();
-        out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).bytes());
-        for o in offsets {
-            out.extend(format!("{o:010} 00000 n \n").bytes());
-        }
-        out.extend(
-            format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).bytes(),
-        );
-        out
+    /// A one-page PDF, 300x200 points, drawn by `draw`; font `/F1` is
+    /// Helvetica.
+    fn one_page(draw: impl FnOnce(&mut Content)) -> Vec<u8> {
+        let (catalog, tree, page, font, content) = (Ref::new(1), Ref::new(2), Ref::new(3), Ref::new(4), Ref::new(5));
+        let mut pdf = Pdf::new();
+        pdf.catalog(catalog).pages(tree);
+        pdf.pages(tree).kids([page]).count(1);
+        let mut p = pdf.page(page);
+        p.parent(tree).media_box(Rect::new(0.0, 0.0, 300.0, 200.0)).contents(content);
+        p.resources().fonts().pair(Name(b"F1"), font);
+        p.finish();
+        pdf.type1_font(font).base_font(Name(b"Helvetica"));
+        let mut c = Content::new();
+        draw(&mut c);
+        pdf.stream(content, &c.finish());
+        pdf.finish()
     }
 
     #[test]
@@ -474,9 +464,12 @@ mod tests {
         // An ActualText that is all of the start of its glyphs ("Ab" over
         // "Abc"): a debug build of MuPDF failed an assertion extracting the
         // text (stext-device.c, `z != 0`) and aborted the session.
-        let doc =
-            open_bytes(&pdf_with_content("/Span << /ActualText (Ab) >> BDC BT /F1 24 Tf 20 100 Td (Abc) Tj ET EMC"))
-                .unwrap();
+        let doc = open_bytes(&one_page(|c| {
+            c.begin_marked_content_with_properties(Name(b"Span")).properties().actual_text(TextStr("Ab"));
+            c.begin_text().set_font(Name(b"F1"), 24.0).next_line(20.0, 100.0).show(Str(b"Abc")).end_text();
+            c.end_marked_content();
+        }))
+        .unwrap();
         let bounds = page_bounds(&doc).unwrap();
         assert_eq!(search_page(&doc, 0, bounds[0], "Ab").unwrap().len(), 1);
     }
@@ -484,11 +477,15 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "MuPDF is foreign code")]
     fn a_match_whose_letters_move_up_and_down_is_one_hit() {
-        // As in the LaTeX logo: every letter on a baseline of its own, so
-        // MuPDF puts each on a line of its own.
-        let doc = open_bytes(&pdf_with_content(
-            "BT /F1 24 Tf 20 100 Td (L) Tj 0 6 Td (A) Tj 0 -6 Td (T) Tj 0 -6 Td (E) Tj 0 6 Td (X) Tj ET",
-        ))
+        // As in the LaTeX logo: letters raised and lowered, so MuPDF's
+        // search makes a quad of each.
+        let doc = open_bytes(&one_page(|c| {
+            c.begin_text().set_font(Name(b"F1"), 24.0).next_line(20.0, 100.0);
+            for (letter, rise) in [(b"L", 0.0), (b"A", 6.0), (b"T", 0.0), (b"E", -6.0), (b"X", 0.0)] {
+                c.set_rise(rise).show(Str(letter));
+            }
+            c.end_text();
+        }))
         .unwrap();
         let bounds = page_bounds(&doc).unwrap();
         let hits = search_page(&doc, 0, bounds[0], "latex").unwrap();
@@ -507,7 +504,13 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "MuPDF is foreign code")]
     fn a_match_over_a_line_break_keeps_a_rectangle_per_line() {
-        let doc = open_bytes(&pdf_with_content("BT /F1 24 Tf 20 150 Td (foo) Tj 0 -40 Td (bar) Tj ET")).unwrap();
+        let doc = open_bytes(&one_page(|c| {
+            c.begin_text().set_font(Name(b"F1"), 24.0);
+            c.next_line(20.0, 150.0).show(Str(b"foo"));
+            c.next_line(0.0, -40.0).show(Str(b"bar"));
+            c.end_text();
+        }))
+        .unwrap();
         let bounds = page_bounds(&doc).unwrap();
         let hits = search_page(&doc, 0, bounds[0], "foo bar").unwrap();
         let [hit] = &hits[..] else { panic!("one hit: {hits:?}") };
