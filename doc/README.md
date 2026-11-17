@@ -109,6 +109,9 @@ branch. The decisions taken from it are in the design documents.
   round trips between scripts and the server, measured for the script host
   over pipes, rquickjs in process and QuickJS in wasmtime, also on one core
   and under a CPU quota (`experiments/script-host-bench/`).
+- [survey/terminal-queries.md](survey/terminal-queries.md): the queries
+  Vim's `term.c` sends to learn about the terminal (ambiguous width,
+  colours, DA2, garbage detection) and which would help temzdf.
 - [survey/gpu.md](survey/gpu.md): the GPU rasterisation experiment
   (`experiments/gpu-raster/`): why not, and the `vello_cpu` lead.
 - [survey/concurrency-checking.md](survey/concurrency-checking.md):
