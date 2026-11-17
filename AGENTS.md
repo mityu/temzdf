@@ -4,11 +4,12 @@ Notes for coding agents (and humans) maintaining this repository.
 
 ## What this is
 
-`temzdf` is a terminal PDF viewer aimed at previewing LaTeX documents. It draws
+`temzdf` is a terminal PDF viewer for live preview while writing a document in a
+typesetting system that outputs PDF (LaTeX, Typst, SATySFi, ...). It draws
 everything as pixels with the kitty graphics protocol (pages *and* UI chrome) and
 aims for GUI-grade mouse interaction (pixel-smooth scrolling, drag, selection).
 Key features: outline sidebar, in-document search, links, SyncTeX forward/inverse
-search, and auto-reload that keeps the reading position.
+search (LaTeX), and auto-reload that keeps the reading position.
 
 The terminal plumbing is a separate, reusable library so that other viewers
 (e.g. a future markdown viewer rendering a webview offscreen) can share it.

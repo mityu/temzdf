@@ -2,7 +2,9 @@
 
 ## Goals
 
-- Terminal PDF viewer for LaTeX previews, with GUI-grade mouse interaction.
+- Terminal PDF viewer for live preview of documents written in typesetting
+  systems that output PDF (LaTeX, Typst, SATySFi, ...), with GUI-grade mouse
+  interaction.
 - Everything on screen is pixels sent with the kitty graphics protocol. Math-heavy
   pages and UI chrome are drawn by us, not by the terminal's text renderer.
 - The terminal layer is a reusable library (`termpix`), independent of PDF.
