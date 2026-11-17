@@ -335,6 +335,9 @@
                       ./Cargo.toml
                       ./Cargo.lock
                       ./crates
+                      # A workspace member: Cargo reads its manifest even
+                      # though the package does not build it.
+                      ./xtask
                     ];
                   };
                   cargoLock.lockFile = ./Cargo.lock;
