@@ -23,6 +23,7 @@ members = [
     "crates/temzdf",
     "crates/tuitest",
     "crates/wlinput",
+    "xtask",
 ]
 
 [workspace.package]

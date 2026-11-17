@@ -5625,11 +5625,13 @@ dependencies = [
  "clap",
  "glyphon",
  "pollster",
+ "serde",
  "sys-locale",
  "temzdf-client",
  "temzdf-protocol",
  "temzdf-scene",
  "termpix-core",
+ "toml",
  "unicode-script",
  "unicode-segmentation",
  "unicode-width",
@@ -6063,6 +6065,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 
@@ -7908,6 +7911,19 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "toml",
+ "toml_edit",
+ "ureq",
+]
 
 [[package]]
 name = "yazi"

@@ -29,6 +29,10 @@ unicode-script = "0.5.8"
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 x11rb = "0.14.0"
 
+[build-dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.1"
+
 [lints]
 workspace = true
 

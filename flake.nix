@@ -31,23 +31,18 @@
         let
           inherit (pkgs.stdenv.hostPlatform) isLinux isDarwin;
 
-          # The fonts temzdf-gui embeds (crates/temzdf-gui/build.rs), as WezTerm
-          # bundles them: JetBrains Mono, the default and first fallback, then
-          # Noto Color Emoji and the Nerd Font symbols.
-          bundleFontFiles =
-            let
-              jb = style: "${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-${style}.ttf";
-            in
-            map jb [
-              "Regular"
-              "Bold"
-              "Italic"
-              "BoldItalic"
-            ]
-            ++ [
-              "${pkgs.noto-fonts-color-emoji}/share/fonts/noto/NotoColorEmoji.ttf"
-              "${pkgs.nerd-fonts.symbols-only}/share/fonts/truetype/NerdFonts/Symbols/SymbolsNerdFontMono-Regular.ttf"
-            ];
+          # The fonts temzdf-gui embeds (crates/temzdf-gui/build.rs), from the
+          # list in crates/temzdf-gui/fonts.toml (upstream files by URL and
+          # sha256, the same ones `cargo xtask fetch-fonts` gets without Nix).
+          bundleFonts = map (f: {
+            inherit (f) file;
+            path = pkgs.fetchurl {
+              name = f.file;
+              url = pkgs.lib.replaceStrings [ "{tag}" ] [ f.tag ] f.url;
+              inherit (f) sha256;
+            };
+          }) (builtins.fromTOML (builtins.readFile ./crates/temzdf-gui/fonts.toml)).font;
+          bundleFontFiles = map (f: "${f.path}") bundleFonts;
           bundleFontPath = pkgs.lib.concatStringsSep ":" bundleFontFiles;
           # The fonts tests see through fontconfig (scripts/check.sh sets
           # FONTCONFIG_FILE to it): those fonts alone, every generic family
@@ -59,9 +54,9 @@
             let
               dir = pkgs.linkFarm "temzdf-test-fonts" (
                 map (f: {
-                  name = builtins.unsafeDiscardStringContext (baseNameOf f);
-                  path = f;
-                }) bundleFontFiles
+                  name = f.file;
+                  inherit (f) path;
+                }) bundleFonts
               );
               alias = family: ''
                 <alias binding="same">
@@ -275,7 +270,7 @@
                     # mupdf-sys runs bindgen, which needs libclang.
                     LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
 
-                    # Fonts temzdf-gui embeds (see bundledFontsFor).
+                    # Fonts temzdf-gui embeds (see bundleFonts).
                     TEMZDF_BUNDLED_FONTS = bundleFontPath;
                     # The fonts of tests (see testFontConfig).
                     TEMZDF_TEST_FONTCONFIG = testFontConfig;

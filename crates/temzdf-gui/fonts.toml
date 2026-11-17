@@ -1,0 +1,59 @@
+# The fonts temzdf-gui embeds (build.rs), in fallback order: JetBrains Mono,
+# the default and first fallback, then Noto Color Emoji and the Nerd Font
+# symbols, as WezTerm bundles them.
+#
+# Nix fetches them from here (`bundleFontFiles` in flake.nix); without Nix,
+# `cargo xtask fetch-fonts` puts them in target/fonts/, where build.rs finds
+# them. `cargo xtask update-fonts` moves them to the latest releases.
+#
+# `url` holds `{tag}`, replaced by `tag`, a release tag of `repo` on GitHub.
+# The upstream files, not nixpkgs' builds from source (which differ byte for
+# byte), so that every build embeds the same fonts.
+
+[[font]]
+file = "JetBrainsMono-Regular.ttf"
+repo = "JetBrains/JetBrainsMono"
+tag = "v2.304"
+url = "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/{tag}/fonts/ttf/JetBrainsMono-Regular.ttf"
+sha256 = "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f"
+license = "OFL-1.1"
+
+[[font]]
+file = "JetBrainsMono-Bold.ttf"
+repo = "JetBrains/JetBrainsMono"
+tag = "v2.304"
+url = "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/{tag}/fonts/ttf/JetBrainsMono-Bold.ttf"
+sha256 = "5590990c82e097397517f275f430af4546e1c45cff408bde4255dad142479dcb"
+license = "OFL-1.1"
+
+[[font]]
+file = "JetBrainsMono-Italic.ttf"
+repo = "JetBrains/JetBrainsMono"
+tag = "v2.304"
+url = "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/{tag}/fonts/ttf/JetBrainsMono-Italic.ttf"
+sha256 = "9d0a1f7a708e6af183f1193b7e81d40da294f5c67682c085d8401c60aac8ded4"
+license = "OFL-1.1"
+
+[[font]]
+file = "JetBrainsMono-BoldItalic.ttf"
+repo = "JetBrains/JetBrainsMono"
+tag = "v2.304"
+url = "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/{tag}/fonts/ttf/JetBrainsMono-BoldItalic.ttf"
+sha256 = "4039d5ce0ed225bf9c8b2c8c6436290ae2f356b7e90d70fa666227238324aa3b"
+license = "OFL-1.1"
+
+[[font]]
+file = "NotoColorEmoji.ttf"
+repo = "googlefonts/noto-emoji"
+tag = "v2.051"
+url = "https://raw.githubusercontent.com/googlefonts/noto-emoji/{tag}/fonts/NotoColorEmoji.ttf"
+sha256 = "72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b"
+license = "OFL-1.1"
+
+[[font]]
+file = "SymbolsNerdFontMono-Regular.ttf"
+repo = "ryanoasis/nerd-fonts"
+tag = "v3.5.0"
+url = "https://raw.githubusercontent.com/ryanoasis/nerd-fonts/{tag}/patched-fonts/NerdFontsSymbolsOnly/SymbolsNerdFontMono-Regular.ttf"
+sha256 = "2dc316f2505a0cbfbcf6060a1b4ba85b0a2974189e30c0037cdedc436a25a4ff"
+license = "OFL-1.1 AND MIT"

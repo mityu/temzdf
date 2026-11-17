@@ -40,10 +40,14 @@ configuration script, as `temzdf --clean`. Closing the window detaches. `--rende
   cosmic-text's lists for the script and locale and every installed font.
   The first installed font sets the cell, so a missing one does not break
   the grid; each glyph takes the first font of the list that has all its
-  characters, at that font's size. The bundled fonts come from nixpkgs
-  (`bundledFontsFor` in `flake.nix`, `TEMZDF_BUNDLED_FONTS`) and are
-  embedded by `build.rs` (about 14 MB, most of it the emoji font); a build
-  without the variable has none and uses the system's. `temzdf ls-fonts`
+  characters, at that font's size. The bundled fonts are the upstream
+  files listed with their URLs and sha256 in `crates/temzdf-gui/fonts.toml`
+  (not nixpkgs' builds from source, which differ byte for byte), embedded
+  by `build.rs` (about 14 MB, most of it the emoji font): Nix fetches them
+  (`bundleFonts` in `flake.nix`, passed in `TEMZDF_BUNDLED_FONTS`); without
+  Nix `cargo xtask fetch-fonts` puts them in `target/fonts/`; a build with
+  neither has none and uses the system's. `cargo xtask update-fonts` moves
+  the list to newer releases. `temzdf ls-fonts`
   (`temzdf-gui ls-fonts` behind it) shows what the lists resolve to.
   Sizes are points: logical pixels on macOS, 96 dpi elsewhere, as in
   Ghostty.

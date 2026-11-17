@@ -4,3 +4,7 @@
 # same platform under Apple's name, when it compiles the vendored SyncTeX
 # parser, so the warning is noise.
 NIX_CC_WRAPPER_SUPPRESS_TARGET_WARNING = "1"
+
+[alias]
+# Repository tasks (xtask/): `cargo xtask help`.
+xtask = "run --quiet --package xtask --"

@@ -39,6 +39,7 @@ The terminal plumbing is a separate, reusable library so that other viewers
 | `crates/temzdf-script-runner` | Library. Runs the guest in wasmtime inside the server (`ScriptHost`: a thread, memory cap, stop). Its `build.rs` builds the guest with a nested cargo (`target/script-guest`, profile `script-guest`) and precompiles it with Cranelift; see `doc/design/script-host.md`. |
 | `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
 | `crates/wlinput` | Test-only tool: one virtual keyboard and pointer on a wlroots compositor, driven by commands on stdin. `scripts/e2e.sh -d wayland` drives headless sway with it. |
+| `xtask` | Repository tasks as `cargo xtask TASK` (alias in `.cargo/config.toml`; `cargo xtask help`): `fetch-fonts` downloads the fonts `temzdf-gui` embeds (`crates/temzdf-gui/fonts.toml`) into `target/fonts/` for builds without Nix, `update-fonts` moves that list to newer releases. |
 | `crates/temzdf` | The binary: `temzdf [FILE]` starts a session (named alfa, bravo, ... unless `-s NAME`), session commands and client (zellij names: `attach`, `ls`, `kill-session`, `action`), the standalone viewer (`temzdf standalone pdf`), `ls-fonts`, config, headless `--render-frame`. |
 | `doc/` | Design notes and research, indexed in `doc/README.md`. Start with `doc/architecture.md`. |
 | `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
@@ -89,6 +90,14 @@ scripts/check.sh` (or `-c scripts/miri.sh`) is the one allowed use of
 themselves when started outside it. A unit test Miri cannot run (foreign
 code, ptys, processes, sockets) gets `#[cfg_attr(miri, ignore = "why")]`;
 see "Miri" in `doc/dev/testing.md`.
+
+The fonts `temzdf-gui` embeds are listed with their URLs and sha256 in
+`crates/temzdf-gui/fonts.toml`. Nix fetches them from there and the dev
+shell passes them in `TEMZDF_BUNDLED_FONTS`; a build without Nix runs
+`cargo xtask fetch-fonts` first (into `target/fonts/`, where
+`crates/temzdf-gui/build.rs` finds them). `cargo xtask update-fonts --check`
+shows newer releases, `cargo xtask update-fonts` rewrites the list (then run
+the tests and restart the dev shell).
 
 Design notes and research live in `doc/` with the code (they used to be on a
 separate `research/notes` branch, merged in on 2026-10-27; that research is
