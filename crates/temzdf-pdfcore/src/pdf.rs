@@ -174,9 +174,9 @@ pub struct PageRect {
     pub y1: f32,
 }
 
-/// One search match: its rectangles in reading order, one per line of text it
-/// covers (never empty). Text whose baseline moves, as in the LaTeX logo, is
-/// on several lines although it reads as one word.
+/// One search match: its rectangles in reading order, one per line of text
+/// (MuPDF's structured text lines, as a selection has) it covers; never
+/// empty.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchHit {
     pub rects: Vec<PageRect>,
@@ -199,14 +199,21 @@ impl From<PageRect> for SearchHit {
 const MAX_HITS_PER_PAGE: usize = 500;
 
 /// Find `needle` on one page (MuPDF matching: case-insensitive, whitespace
-/// normalised), in reading order. MuPDF reports a match as one quad per line;
-/// they stay together in one `SearchHit`.
+/// normalised), in reading order. MuPDF reports a match as quads, starting a
+/// new one where the next character moves up or down (the LaTeX logo is five,
+/// overlapping each other) or onto another line; a `SearchHit` keeps one
+/// rectangle per line.
 pub fn search_page(doc: &Doc, page: usize, bounds: PageBounds, needle: &str) -> Result<Vec<SearchHit>> {
     if needle.trim().is_empty() {
         return Ok(Vec::new());
     }
     // The options `fz_search_page` uses.
     let text = doc.load_page(page as i32)?.to_text_page(TextPageFlags::DEHYPHENATE)?;
+    let lines: Vec<PageRect> = text
+        .blocks()
+        .flat_map(|b| b.lines().map(|l| l.bounds()).collect::<Vec<_>>())
+        .map(|r| PageRect { x0: r.x0 - bounds.x0, y0: r.y0 - bounds.y0, x1: r.x1 - bounds.x0, y1: r.y1 - bounds.y0 })
+        .collect();
     let mut hits: Vec<SearchHit> = Vec::new();
     text.search_cb(needle, &mut hits, |hits, quads| {
         let rects: Vec<PageRect> = quads
@@ -222,12 +229,34 @@ pub fn search_page(doc: &Doc, page: usize, bounds: PageBounds, needle: &str) -> 
                 }
             })
             .collect();
+        let rects = merge_by_line(rects, &lines);
         if !rects.is_empty() {
             hits.push(SearchHit { rects });
         }
         if hits.len() < MAX_HITS_PER_PAGE { SearchHitResponse::ContinueSearch } else { SearchHitResponse::AbortSearch }
     })?;
     Ok(hits)
+}
+
+/// Rectangles whose centres are on the same line (the first of `lines` that
+/// holds the centre) become one, their union, where the first of them was;
+/// those on no line stay as they are.
+fn merge_by_line(rects: Vec<PageRect>, lines: &[PageRect]) -> Vec<PageRect> {
+    let line_of = |r: &PageRect| {
+        let (x, y) = ((r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0);
+        lines.iter().position(|l| x >= l.x0 && x <= l.x1 && y >= l.y0 && y <= l.y1)
+    };
+    let mut out: Vec<(Option<usize>, PageRect)> = Vec::new();
+    for r in rects {
+        let line = line_of(&r);
+        match out.iter_mut().find(|(l, _)| line.is_some() && *l == line) {
+            Some((_, u)) => {
+                *u = PageRect { x0: u.x0.min(r.x0), y0: u.y0.min(r.y0), x1: u.x1.max(r.x1), y1: u.y1.max(r.y1) }
+            }
+            None => out.push((line, r)),
+        }
+    }
+    out.into_iter().map(|(_, r)| r).collect()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -464,7 +493,39 @@ mod tests {
         let bounds = page_bounds(&doc).unwrap();
         let hits = search_page(&doc, 0, bounds[0], "latex").unwrap();
         let [hit] = &hits[..] else { panic!("one hit: {hits:?}") };
-        assert!(hit.rects.len() > 1, "on several lines: {hit:?}");
+        // One rectangle, around every letter: no overlapping ones that
+        // would tint where they overlap twice.
+        let [r] = hit.rects[..] else { panic!("one rectangle: {hit:?}") };
+        let l = &search_page(&doc, 0, bounds[0], "l").unwrap()[0].rects[0];
+        let x = &search_page(&doc, 0, bounds[0], "x").unwrap()[0].rects[0];
+        let a = &search_page(&doc, 0, bounds[0], "a").unwrap()[0].rects[0];
+        let e = &search_page(&doc, 0, bounds[0], "e").unwrap()[0].rects[0];
+        assert_eq!((r.x0, r.x1), (l.x0, x.x1), "{hit:?}");
+        assert_eq!((r.y0, r.y1), (a.y0, e.y1), "from the raised A to the lowered E: {hit:?}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "MuPDF is foreign code")]
+    fn a_match_over_a_line_break_keeps_a_rectangle_per_line() {
+        let doc = open_bytes(&pdf_with_content("BT /F1 24 Tf 20 150 Td (foo) Tj 0 -40 Td (bar) Tj ET")).unwrap();
+        let bounds = page_bounds(&doc).unwrap();
+        let hits = search_page(&doc, 0, bounds[0], "foo bar").unwrap();
+        let [hit] = &hits[..] else { panic!("one hit: {hits:?}") };
+        let [a, b] = hit.rects[..] else { panic!("two rectangles: {hit:?}") };
+        assert!(a.y1 <= b.y0, "foo above bar: {hit:?}");
+    }
+
+    #[test]
+    fn rectangles_merge_by_the_line_their_centre_is_on() {
+        let r = |x0, y0, x1, y1| PageRect { x0, y0, x1, y1 };
+        let lines = [r(0.0, 0.0, 100.0, 10.0), r(0.0, 20.0, 100.0, 30.0)];
+        let rects =
+            vec![r(0.0, 1.0, 10.0, 8.0), r(8.0, 3.0, 20.0, 12.0), r(0.0, 20.0, 5.0, 30.0), r(200.0, 0.0, 210.0, 5.0)];
+        assert_eq!(
+            merge_by_line(rects, &lines),
+            [r(0.0, 1.0, 20.0, 12.0), r(0.0, 20.0, 5.0, 30.0), r(200.0, 0.0, 210.0, 5.0)],
+            "one per line, the one on no line as it was"
+        );
     }
 
     #[test]
