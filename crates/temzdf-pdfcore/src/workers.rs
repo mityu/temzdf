@@ -12,7 +12,7 @@ use mupdf::DisplayList;
 use temzdf_scene::tiles::{Job, WorkPool};
 
 use crate::doc_cache::{RenderJob, Rendered, TileKey};
-use crate::pdf::{self, DocInfo, Link, PageRect};
+use crate::pdf::{self, DocInfo, Link, SearchHit};
 use crate::synctex::{PdfBox, Scanner, SourceLocation};
 
 /// Where worker threads send their results. Returns false once nobody listens
@@ -35,7 +35,7 @@ pub enum DocEvent {
     SearchHits {
         generation: u64,
         page: usize,
-        rects: Vec<PageRect>,
+        hits: Vec<SearchHit>,
     },
     SearchFailed(String),
     /// The watched file (or its directory entry) changed.
@@ -298,7 +298,7 @@ pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<
             let page = (cmd.start_page + *done) % n;
             *done += 1;
             let ev = match pdf::search_page(doc, page, bounds[page], &cmd.query) {
-                Ok(rects) => DocEvent::SearchHits { generation: cmd.generation, page, rects },
+                Ok(hits) => DocEvent::SearchHits { generation: cmd.generation, page, hits },
                 Err(e) => DocEvent::SearchFailed(format!("{e:#}")),
             };
             if !events(ev) {

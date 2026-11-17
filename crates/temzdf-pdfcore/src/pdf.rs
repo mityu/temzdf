@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use mupdf::pdf::PdfDocument;
-use mupdf::{Colorspace, DestinationKind, Device, DisplayList, IRect, Matrix, Pixmap};
+use mupdf::text_page::SearchHitResponse;
+use mupdf::{Colorspace, DestinationKind, Device, DisplayList, IRect, Matrix, Pixmap, TextPageFlags};
 
 /// Page bounds in PDF points (MuPDF page space, y down).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -173,30 +174,60 @@ pub struct PageRect {
     pub y1: f32,
 }
 
+/// One search match: its rectangles in reading order, one per line of text it
+/// covers (never empty). Text whose baseline moves, as in the LaTeX logo, is
+/// on several lines although it reads as one word.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SearchHit {
+    pub rects: Vec<PageRect>,
+}
+
+impl SearchHit {
+    /// The top of the highest rectangle: where the match is on the page.
+    pub fn top(&self) -> f32 {
+        self.rects.iter().map(|r| r.y0).fold(f32::INFINITY, f32::min)
+    }
+}
+
+impl From<PageRect> for SearchHit {
+    fn from(r: PageRect) -> Self {
+        Self { rects: vec![r] }
+    }
+}
+
 /// Upper bound on hits reported per page.
-const MAX_HITS_PER_PAGE: u32 = 500;
+const MAX_HITS_PER_PAGE: usize = 500;
 
 /// Find `needle` on one page (MuPDF matching: case-insensitive, whitespace
-/// normalised). Each hit may span several rectangles (one per line); they are
-/// returned as separate rectangles, in reading order.
-pub fn search_page(doc: &Doc, page: usize, bounds: PageBounds, needle: &str) -> Result<Vec<PageRect>> {
+/// normalised), in reading order. MuPDF reports a match as one quad per line;
+/// they stay together in one `SearchHit`.
+pub fn search_page(doc: &Doc, page: usize, bounds: PageBounds, needle: &str) -> Result<Vec<SearchHit>> {
     if needle.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let quads = doc.load_page(page as i32)?.search(needle, MAX_HITS_PER_PAGE)?;
-    Ok(quads
-        .iter()
-        .map(|q| {
-            let xs = [q.ul.x, q.ur.x, q.ll.x, q.lr.x];
-            let ys = [q.ul.y, q.ur.y, q.ll.y, q.lr.y];
-            PageRect {
-                x0: xs.iter().copied().fold(f32::INFINITY, f32::min) - bounds.x0,
-                y0: ys.iter().copied().fold(f32::INFINITY, f32::min) - bounds.y0,
-                x1: xs.iter().copied().fold(f32::NEG_INFINITY, f32::max) - bounds.x0,
-                y1: ys.iter().copied().fold(f32::NEG_INFINITY, f32::max) - bounds.y0,
-            }
-        })
-        .collect())
+    // The options `fz_search_page` uses.
+    let text = doc.load_page(page as i32)?.to_text_page(TextPageFlags::DEHYPHENATE)?;
+    let mut hits: Vec<SearchHit> = Vec::new();
+    text.search_cb(needle, &mut hits, |hits, quads| {
+        let rects: Vec<PageRect> = quads
+            .iter()
+            .map(|q| {
+                let xs = [q.ul.x, q.ur.x, q.ll.x, q.lr.x];
+                let ys = [q.ul.y, q.ur.y, q.ll.y, q.lr.y];
+                PageRect {
+                    x0: xs.iter().copied().fold(f32::INFINITY, f32::min) - bounds.x0,
+                    y0: ys.iter().copied().fold(f32::INFINITY, f32::min) - bounds.y0,
+                    x1: xs.iter().copied().fold(f32::NEG_INFINITY, f32::max) - bounds.x0,
+                    y1: ys.iter().copied().fold(f32::NEG_INFINITY, f32::max) - bounds.y0,
+                }
+            })
+            .collect();
+        if !rects.is_empty() {
+            hits.push(SearchHit { rects });
+        }
+        if hits.len() < MAX_HITS_PER_PAGE { SearchHitResponse::ContinueSearch } else { SearchHitResponse::AbortSearch }
+    })?;
+    Ok(hits)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -373,8 +404,9 @@ mod tests {
         let counts: Vec<usize> =
             (0..bounds.len()).map(|p| search_page(&doc, p, bounds[p], "needle").unwrap().len()).collect();
         assert_eq!(counts, [2, 1, 1], "per-page hits");
-        let hit = search_page(&doc, 0, bounds[0], "NEEDLE").unwrap()[0];
-        assert!(hit.x1 > hit.x0 && hit.y1 > hit.y0 && hit.y1 < bounds[0].height(), "{hit:?}");
+        let hit = &search_page(&doc, 0, bounds[0], "NEEDLE").unwrap()[0];
+        let [r] = hit.rects[..] else { panic!("one line: {hit:?}") };
+        assert!(r.x1 > r.x0 && r.y1 > r.y0 && r.y1 < bounds[0].height(), "{hit:?}");
         assert!(search_page(&doc, 0, bounds[0], "  ").unwrap().is_empty());
     }
 
@@ -418,6 +450,21 @@ mod tests {
                 .unwrap();
         let bounds = page_bounds(&doc).unwrap();
         assert_eq!(search_page(&doc, 0, bounds[0], "Ab").unwrap().len(), 1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "MuPDF is foreign code")]
+    fn a_match_whose_letters_move_up_and_down_is_one_hit() {
+        // As in the LaTeX logo: every letter on a baseline of its own, so
+        // MuPDF puts each on a line of its own.
+        let doc = open_bytes(&pdf_with_content(
+            "BT /F1 24 Tf 20 100 Td (L) Tj 0 6 Td (A) Tj 0 -6 Td (T) Tj 0 -6 Td (E) Tj 0 6 Td (X) Tj ET",
+        ))
+        .unwrap();
+        let bounds = page_bounds(&doc).unwrap();
+        let hits = search_page(&doc, 0, bounds[0], "latex").unwrap();
+        let [hit] = &hits[..] else { panic!("one hit: {hits:?}") };
+        assert!(hit.rects.len() > 1, "on several lines: {hit:?}");
     }
 
     #[test]

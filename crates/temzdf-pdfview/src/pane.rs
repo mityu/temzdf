@@ -19,7 +19,7 @@ use termpix_ui::{Canvas, Color, ListView, StatusBar, Text, Theme};
 use crate::document::{self, Document, SharedDocument};
 use crate::keys::{Command, Key, Keymap};
 use crate::outline::{self, OutlinePanel};
-use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, Target};
+use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, SearchHit, Target};
 use crate::search::SearchState;
 use crate::selection::{Caret, PageText, Selection};
 use crate::synctex::PdfBox;
@@ -802,8 +802,8 @@ impl PdfPane {
     }
 
     /// Results for one page. Returns true when the screen should be redrawn.
-    pub fn search_hits(&mut self, generation: u64, page: usize, rects: Vec<PageRect>, now: Instant) -> bool {
-        if !self.search.add(generation, page, rects) {
+    pub fn search_hits(&mut self, generation: u64, page: usize, hits: Vec<SearchHit>, now: Instant) -> bool {
+        if !self.search.add(generation, page, hits) {
             return false;
         }
         // After a reload, re-select the hit that was current if it still exists.
@@ -854,7 +854,7 @@ impl PdfPane {
     /// before `from` going `forward`): only right when every page is
     /// searched, else later pages may have one still.
     fn wrapped(&self, from: Target, hit: (usize, usize), forward: bool) -> bool {
-        let y = self.search.hits[hit.0].get(hit.1).map_or(0.0, |r| r.y0);
+        let y = self.search.hits[hit.0].get(hit.1).map_or(0.0, SearchHit::top);
         let (hit, from) = ((hit.0, y), (from.page, from.y.unwrap_or(0.0)));
         if forward { hit < from } else { hit > from }
     }
@@ -1150,9 +1150,9 @@ impl PdfPane {
         let mut rects: Vec<(usize, PageRect, Color)> = Vec::new();
         for page in self.viewer.visible_pages() {
             if self.search.is_active() {
-                for (i, r) in self.search.hits[page].iter().enumerate() {
-                    let current = self.search.current == Some((page, i));
-                    rects.push((page, *r, if current { CURRENT_HIT_COLOR } else { HIT_COLOR }));
+                for (i, hit) in self.search.hits[page].iter().enumerate() {
+                    let color = if self.search.current == Some((page, i)) { CURRENT_HIT_COLOR } else { HIT_COLOR };
+                    rects.extend(hit.rects.iter().map(|r| (page, *r, color)));
                 }
             }
             if let Some(sel) = self.selection
@@ -1626,7 +1626,7 @@ mod tests {
         s.key(&KeyEvent::new(KeyCode::Char('n'), Modifiers::NONE), now);
         assert!(s.message.as_deref().is_some_and(|m| m.starts_with("Searching")), "{:?}", s.message);
         let rect = PageRect { x0: 10.0, y0: 100.0, x1: 50.0, y1: 110.0 };
-        s.search_hits(generation, 0, vec![rect], now);
+        s.search_hits(generation, 0, vec![rect.into()], now);
         assert_eq!(s.search.current, Some((0, 0)), "the hit it waited for");
         assert_eq!(s.message, None, "found: no longer searching");
     }
@@ -1645,7 +1645,7 @@ mod tests {
         s.pending_first_hit = None;
         // Page 0 has a hit and is done; the pages after the view are not.
         let rect = PageRect { x0: 10.0, y0: 100.0, x1: 50.0, y1: 110.0 };
-        s.search_hits(generation, 0, vec![rect], now);
+        s.search_hits(generation, 0, vec![rect.into()], now);
         s.viewer.goto(Target { page: 1, y: None }, false, now);
         s.key(&KeyEvent::new(KeyCode::Char('n'), Modifiers::NONE), now);
         assert_eq!(s.search.current, None, "no jump back to page 0");
@@ -2053,9 +2053,9 @@ mod tests {
         };
         // The page the search started on comes first: its only hit is above
         // where the search began.
-        s.search_hits(generation, 1, vec![rect(10.0)], now);
+        s.search_hits(generation, 1, vec![rect(10.0).into()], now);
         assert_eq!(s.search.current, None, "a later page may have one");
-        s.search_hits(generation, 2, vec![rect(100.0)], now);
+        s.search_hits(generation, 2, vec![rect(100.0).into()], now);
         assert_eq!(s.search.current, Some((2, 0)));
     }
 
@@ -2068,7 +2068,7 @@ mod tests {
         s.viewer.goto(Target { page: 1, y: Some(400.0) }, false, now);
         let origin = s.viewer.top_position();
         let page = |s: &PdfPane| s.viewer.top_position().page;
-        let preview = |s: &mut PdfPane, query: &str, hits: Vec<PageRect>| {
+        let preview = |s: &mut PdfPane, query: &str, hits: Vec<SearchHit>| {
             s.search_preview(query);
             let generation = search_generation(s);
             for p in 0..s.viewer.page_count() {
@@ -2079,7 +2079,7 @@ mod tests {
         // Each query shows its first hit after where the preview began (low
         // on page 3: off screen from there).
         for cancel in ["cancel", "empty", "nothing found"] {
-            preview(&mut s, "ab", vec![rect(700.0)]);
+            preview(&mut s, "ab", vec![rect(700.0).into()]);
             assert_eq!(page(&s), 2, "at the hit");
             match cancel {
                 "cancel" => {
@@ -2116,7 +2116,12 @@ mod tests {
         s.search_preview("ab");
         let generation = search_generation(&mut s);
         for p in 0..s.viewer.page_count() {
-            s.search_hits(generation, p, if p == 2 { vec![rect(100.0), rect(300.0)] } else { vec![] }, now);
+            s.search_hits(
+                generation,
+                p,
+                if p == 2 { vec![rect(100.0).into(), rect(300.0).into()] } else { vec![] },
+                now,
+            );
         }
         s.tick(later);
         s.search_for("ab");

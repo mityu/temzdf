@@ -168,11 +168,11 @@ impl DocumentHost {
                 self.doc.borrow_mut().cache.render_cancelled(key);
                 message(panes, format!("render: {e}"));
             }
-            DocEvent::SearchHits { generation, page, rects } => {
+            DocEvent::SearchHits { generation, page, hits } => {
                 // Search generations are unique per pane; the others ignore it.
                 let mut changed = false;
                 for pane in panes.iter_mut() {
-                    changed |= pane.search_hits(generation, page, rects.clone(), now);
+                    changed |= pane.search_hits(generation, page, hits.clone(), now);
                 }
                 return (changed, None);
             }
