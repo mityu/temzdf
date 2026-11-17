@@ -46,6 +46,8 @@ pub struct ViewState {
     pub left: f32,
     /// The zoom relative to fitting the width; `None` fits the width.
     pub zoom: Option<f32>,
+    /// The zoom itself (pixels per point) when the state was taken.
+    pub scale: f32,
 }
 pub const MAX_SCALE: f32 = 8.0;
 
@@ -317,6 +319,7 @@ impl Viewer {
             top: self.top_position(),
             left: self.view.scroll_x / self.view.scale,
             zoom: (!self.fit_mode).then_some(self.view.scale / fit),
+            scale: self.view.scale,
         }
     }
 
@@ -330,6 +333,24 @@ impl Viewer {
             None => self.fit_width(),
             Some(z) => self.set_scale(z * View::fit_width_scale(&self.layout, self.view.screen_w), (0.0, 0.0)),
         }
+        self.show_place(state);
+    }
+
+    /// Show `state` at the same zoom itself, not relative to the width (a
+    /// split beside the pane it came from); fit-width mode fits this width.
+    pub fn restore_same_scale(&mut self, state: &ViewState) {
+        if self.layout.pages.is_empty() {
+            return;
+        }
+        match state.zoom {
+            None => self.fit_width(),
+            Some(_) => self.set_scale(state.scale, (0.0, 0.0)),
+        }
+        self.show_place(state);
+    }
+
+    /// Put `state`'s point at the top left.
+    fn show_place(&mut self, state: &ViewState) {
         let b = self.layout.pages[state.top.page.min(self.page_count() - 1)];
         let y = b.y + state.top.y.unwrap_or(0.0);
         self.jump_to(state.left * self.view.scale, y * self.view.scale);

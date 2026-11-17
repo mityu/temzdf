@@ -292,10 +292,11 @@ const MAX_MAP_DEPTH: usize = 1000;
 /// What a pane shows and where, for a split of it to show the same.
 enum SplitPlace {
     Pdf(ViewState),
-    /// The source line at the top.
+    /// The source line at the top, and the graphics mode's zoom.
     Markdown {
         line: usize,
         graphics: bool,
+        zoom: f32,
     },
     Text {
         cursor: temzdf_texteditor::Cursor,
@@ -2068,9 +2069,11 @@ impl Session {
     fn split_place(&self, from: PaneId) -> Option<SplitPlace> {
         Some(match &self.panes.get(&from)?.kind {
             Kind::Pdf { pane, .. } => SplitPlace::Pdf(pane.viewer.view_state()),
-            Kind::Markdown { .. } => SplitPlace::Markdown { line: self.md_top_line(from)?, graphics: true },
+            Kind::Markdown { pane, .. } => {
+                SplitPlace::Markdown { line: self.md_top_line(from)?, graphics: true, zoom: pane.zoom }
+            }
             Kind::Text { buf, .. } if self.texts.get(buf)?.markdown.is_some() => {
-                SplitPlace::Markdown { line: self.md_top_line(from)?, graphics: false }
+                SplitPlace::Markdown { line: self.md_top_line(from)?, graphics: false, zoom: 1.0 }
             }
             Kind::Text { view, .. } => SplitPlace::Text {
                 cursor: temzdf_texteditor::Cursor { anchor: None, ..view.view.cursor },
@@ -2088,13 +2091,19 @@ impl Session {
         match place {
             SplitPlace::Pdf(state) => {
                 if let Some(Kind::Pdf { pane, .. }) = self.panes.get_mut(&new).map(|e| &mut e.kind) {
-                    pane.viewer.restore(&state);
+                    pane.viewer.restore_same_scale(&state);
                 }
             }
-            SplitPlace::Markdown { line, graphics } if graphics && !float => {
+            SplitPlace::Markdown { line, graphics, zoom } if graphics && !float => {
                 self.md_set_mode(new, "graphics")?;
-                if let Some((p, page)) = self.md_graphics(new) {
-                    p.show_line(page, line);
+                // The same zoom: a page laid out for it, then the line on it.
+                if let Some(Kind::Markdown { pane, doc }) = self.panes.get_mut(&new).map(|e| &mut e.kind) {
+                    pane.zoom = zoom;
+                    let doc = *doc;
+                    if let Some((p, page)) = self.md_graphics(new) {
+                        p.show_line(page, line);
+                    }
+                    self.md_collect(doc);
                 }
             }
             SplitPlace::Markdown { line, .. } => self.md_place_text(new, line),
@@ -4750,8 +4759,28 @@ mod tests {
         let after = viewer(&mut s, new);
         assert_eq!(after.top.page, before.top.page);
         assert!((after.top.y.unwrap() - before.top.y.unwrap()).abs() < 1.0, "{after:?} {before:?}");
-        assert!((after.zoom.unwrap() - before.zoom.unwrap()).abs() < 1e-3, "{after:?} {before:?}");
+        // The zoom itself, as the pane it came from keeps it, though half
+        // as wide: not the zoom relative to the width (half as large).
+        let from_after = viewer(&mut s, from);
+        assert!((from_after.scale - before.scale).abs() < 1e-4, "{from_after:?} {before:?}");
+        assert!((after.scale - before.scale).abs() < 1e-4, "{after:?} {before:?}");
         assert!((after.left - before.left).abs() < 1.0, "{after:?} {before:?}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_split_pdf_fitting_the_width_fits_the_new_width_in_both() {
+        let (mut s, rx) = session();
+        settle(&mut s, &rx);
+        let from = s.focus;
+        let viewer = |s: &mut Session, p: PaneId| s.panes.get_mut(&p).unwrap().pdf().unwrap().viewer.view_state();
+        let before = viewer(&mut s, from);
+        assert_eq!(before.zoom, None, "fits the width");
+        let new = split_focused(&mut s, "right");
+        let (a, b) = (viewer(&mut s, from), viewer(&mut s, new));
+        assert_eq!((a.zoom, b.zoom), (None, None), "both still fit the width");
+        assert!(a.scale < before.scale * 0.6, "the narrower width: {a:?} {before:?}");
+        assert!((a.scale - b.scale).abs() < 0.05 * a.scale, "{a:?} {b:?}");
     }
 
     #[test]
@@ -4775,10 +4804,15 @@ mod tests {
         // Graphics mode.
         run(&mut s, "markdown.set-mode", &[str("graphics")]).unwrap();
         run(&mut s, "markdown.goto", &[str("section-20")]).unwrap();
+        run(&mut s, "markdown.zoom", &[str("in")]).unwrap();
         let graphics = s.focus;
         let line = s.md_top_line(graphics).unwrap();
-        let new = split_focused(&mut s, "bottom");
+        let zoom = |s: &mut Session, p: PaneId| s.md_graphics(p).map(|(pane, _)| pane.zoom);
+        let zoomed = zoom(&mut s, graphics).unwrap();
+        assert!(zoomed > 1.0);
+        let new = split_focused(&mut s, "right");
         assert_eq!((s.md_mode(new), s.md_top_line(new)), (Some("graphics"), Some(line)));
+        assert_eq!(zoom(&mut s, new), Some(zoomed), "the same zoom");
         // A float split from it opens in text mode, at the same line.
         s.toggle_floating(graphics).unwrap();
         s.set_focus(graphics);
