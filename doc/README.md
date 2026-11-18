@@ -110,6 +110,10 @@ branch. The decisions taken from it are in the design documents.
   over pipes, rquickjs in process, QuickJS in wasmtime and boa, also on one
   core and under a CPU quota (`experiments/script-host-bench/`); boa
   compared with QuickJS in wasmtime for size and containment.
+- [survey/script-runtime-apis.md](survey/script-runtime-apis.md): Web
+  and Node APIs for the script host: rquickjs crates (`llrt_modules`,
+  `wasm-rquickjs`, ...), JavaScript polyfills, what the WASI sandbox
+  rules out.
 - [survey/terminal-queries.md](survey/terminal-queries.md): the queries
   Vim's `term.c` sends to learn about the terminal (ambiguous width,
   colours, DA2, garbage detection) and which would help temzdf.
