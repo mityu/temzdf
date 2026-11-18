@@ -5707,6 +5707,29 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "the file system")]
+    fn text_edit_takes_lsp_text_edits() {
+        let (mut s, path) = text_session("lsp.txt", "let a = 1;\n");
+        let range = |a: ScriptValue, b: ScriptValue| ScriptValue::map([("start", a), ("end", b)]);
+        let edit = |r: ScriptValue, t: &str| ScriptValue::map([("range", r), ("newText", ScriptValue::Str(t.into()))]);
+        // As a formatter's: two insertions at one point, in the array's order.
+        let edits = ScriptValue::List(vec![
+            edit(range(pos(0, 4), pos(0, 5)), "b"),
+            edit(range(pos(0, 0), pos(0, 0)), "// x\n"),
+            edit(range(pos(0, 0), pos(0, 0)), "// y\n"),
+        ]);
+        s.run_command("text.edit", &[edits], None, Instant::now()).unwrap();
+        assert_eq!(text_of(&mut s), "// x\n// y\nlet b = 1;\n");
+        let old = ScriptValue::List(vec![ScriptValue::map([
+            ("range", range(pos(0, 0), pos(0, 1))),
+            ("text", ScriptValue::Str("z".into())),
+        ])]);
+        let err = s.run_command("text.edit", &[old], None, Instant::now()).unwrap_err();
+        assert!(err.contains("newText"), "{err}");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
     fn a_text_pane_draws_its_text_cursor_and_status_line() {
         let (mut s, path) = text_session("draw.txt", "hello\nあい\n");
         s.run_command("text.set-cursor", &[pos(1, 1)], None, Instant::now()).unwrap();

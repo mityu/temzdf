@@ -243,10 +243,10 @@ function blockOperator(op: Operator, register: string | null): void {
     pieces.push(piece);
     if (piece === "") continue;
     const range = { start: pos(l, b.c0), end: pos(l, end) };
-    if (op === "d" || op === "c") edits.push({ range, text: "" });
-    else if (op === "gu") edits.push({ range, text: piece.toLowerCase() });
-    else if (op === "gU") edits.push({ range, text: piece.toUpperCase() });
-    else if (op === "g~") edits.push({ range, text: [...piece].map((c) => (c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase())).join("") });
+    if (op === "d" || op === "c") edits.push({ range, newText: "" });
+    else if (op === "gu") edits.push({ range, newText: piece.toLowerCase() });
+    else if (op === "gU") edits.push({ range, newText: piece.toUpperCase() });
+    else if (op === "g~") edits.push({ range, newText: [...piece].map((c) => (c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase())).join("") });
   }
   if (op === "y" || op === "d" || op === "c") registers.store(register, { text: pieces.join("\n"), kind: "block" }, op === "y" ? "yank" : "delete");
   if (op === "c") t.undoBegin();
@@ -323,14 +323,14 @@ export function visualReplace(key: KeyInfo): void {
       if (b.c0 >= line.length) continue;
       const end = Math.min(line.length, b.c1 + 1);
       const piece = line.slice(b.c0, end);
-      edits.push({ range: { start: pos(l, b.c0), end: pos(l, end) }, text: ch.repeat([...piece].length) });
+      edits.push({ range: { start: pos(l, b.c0), end: pos(l, end) }, newText: ch.repeat([...piece].length) });
     }
   } else {
     const s = selection();
     const r = s.kind === "char" ? { start: s.start, end: s.end } : { start: pos(s.first, 0), end: lineEnd(s.last) };
     start = r.start;
     const old = t.getText(r);
-    edits.push({ range: r, text: [...old].map((c) => (c === "\n" ? c : ch)).join("") });
+    edits.push({ range: r, newText: [...old].map((c) => (c === "\n" ? c : ch)).join("") });
   }
   exitVisual();
   if (edits.length > 0) t.edit(edits);

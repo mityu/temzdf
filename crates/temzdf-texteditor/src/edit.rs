@@ -46,18 +46,19 @@ pub enum Gravity {
     After,
 }
 
-/// Apply a batch: the edits must not overlap (two insertions at one point
-/// do, as their order would be a guess). Returns the changes, ordered by
-/// position.
+/// Apply a batch, as LSP's `TextEdit[]`: the edits must not overlap;
+/// insertions at one point go in the batch's order, before a replacement
+/// starting there. Returns the changes, ordered by position.
 pub(crate) fn apply(text: &mut Text, mut edits: Vec<TextEdit>) -> Result<Vec<Change>, String> {
     let len = text.len_chars();
     for e in &mut edits {
         e.end = e.end.min(len);
         e.start = e.start.min(e.end);
     }
+    // Stable: insertions at one point keep the batch's order.
     edits.sort_by_key(|e| (e.start, e.end));
     for w in edits.windows(2) {
-        if w[1].start < w[0].end || (w[1].start == w[0].start && w[0].start == w[0].end) {
+        if w[1].start < w[0].end {
             return Err(format!("overlapping edits at {} and {}", w[0].start, w[1].start));
         }
     }
@@ -105,14 +106,15 @@ pub fn map_offset(offset: usize, changes: &[Change], gravity: Gravity) -> (usize
             return (at(c.start), false);
         }
         if offset == c.start {
-            return (at(c.start) + inserted, false);
+            // After this insertion, and any others at the same point.
+            delta += inserted as isize;
+            continue;
         }
         if offset < end {
             return (at(c.start), true);
         }
-        if offset == end {
-            return (at(c.start) + inserted, false);
-        }
+        // At its end (or past it): after the replacement, and on to an
+        // insertion there.
         delta += inserted as isize - removed as isize;
     }
     ((offset as isize + delta) as usize, false)
@@ -137,12 +139,30 @@ mod tests {
     fn overlapping_edits_are_refused() {
         let mut t = Text::from("abcdef");
         assert!(apply(&mut t, vec![TextEdit::new(0, 3, "x"), TextEdit::new(2, 4, "y")]).is_err());
-        assert!(apply(&mut t, vec![TextEdit::new(1, 1, "x"), TextEdit::new(1, 1, "y")]).is_err());
-        assert!(apply(&mut t, vec![TextEdit::new(1, 1, "x"), TextEdit::new(1, 3, "y")]).is_err());
+        assert!(apply(&mut t, vec![TextEdit::new(1, 3, "x"), TextEdit::new(2, 2, "y")]).is_err());
         assert_eq!(t.to_string(), "abcdef", "nothing applied");
         // Adjacent is fine.
         apply(&mut t, vec![TextEdit::new(0, 1, "A"), TextEdit::new(1, 2, "B")]).unwrap();
         assert_eq!(t.to_string(), "ABcdef");
+    }
+
+    #[test]
+    fn insertions_at_one_point_go_in_the_batch_order_and_undo() {
+        let mut t = Text::from("abcdef");
+        let edits = vec![
+            TextEdit::new(1, 3, "R"),
+            TextEdit::new(1, 1, "x"),
+            TextEdit::new(1, 1, "y"),
+            TextEdit::new(3, 3, "z"),
+        ];
+        let changes = apply(&mut t, edits).unwrap();
+        assert_eq!(t.to_string(), "axyRzdef", "insertions first, in order; one at a replacement's end after it");
+        let m = |o, g| map_offset(o, &changes, g);
+        assert_eq!(m(1, Gravity::Before), (1, false), "before all the insertions");
+        assert_eq!(m(1, Gravity::After), (3, false), "after all of them, before the replacement");
+        assert_eq!(m(3, Gravity::After), (5, false), "after the replacement and the insertion at its end");
+        apply(&mut t, inverse(&changes)).unwrap();
+        assert_eq!(t.to_string(), "abcdef");
     }
 
     #[test]

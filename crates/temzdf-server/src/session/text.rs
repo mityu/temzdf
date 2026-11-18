@@ -1234,11 +1234,13 @@ impl Session {
                             .iter()
                             .map(|e| {
                                 let r = e.get("range").and_then(range).ok_or("an edit needs a range")?;
+                                let new =
+                                    e.get("newText").and_then(ScriptValue::as_str).ok_or("an edit needs newText")?;
                                 let (a, b) = text.offsets(r);
-                                Ok(TextEdit::new(a, b, e.get("text").and_then(ScriptValue::as_str).unwrap_or("")))
+                                Ok(TextEdit::new(a, b, new))
                             })
                             .collect::<Result<_, String>>()?,
-                        _ => return Err("edits: [{ range, text }, ...]".into()),
+                        _ => return Err("edits: [{ range, newText }, ...]".into()),
                     },
                     "insert" => {
                         let s = args.first().and_then(ScriptValue::as_str).ok_or("what text?")?;
@@ -1634,8 +1636,8 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "text.edit",
-        "(edits: { range: Range, text: string }[], opts?: { pane?: number }): void",
-        "Replace ranges (given in the text before the edit, not overlapping) at once",
+        "(edits: { range: Range, newText: string }[], opts?: { pane?: number }): void",
+        "Replace ranges at once, as LSP's TextEdit[]: ranges in the text before the edit, not overlapping; insertions at one point go in the array's order",
     ),
     (
         "text.insert",

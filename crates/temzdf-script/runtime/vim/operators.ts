@@ -139,7 +139,7 @@ function operate1(op: Operator, s: Span, register: string | null): boolean {
       for (let l = first; l <= last; l++) {
         const old = t.line(l);
         const now = indent(old, op === ">");
-        if (now !== old) edits.push({ range: { start: pos(l, 0), end: lineEnd(l) }, text: now });
+        if (now !== old) edits.push({ range: { start: pos(l, 0), end: lineEnd(l) }, newText: now });
       }
       if (edits.length > 0) t.edit(edits);
       setCursor(firstNonBlank(first));

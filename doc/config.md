@@ -571,8 +571,9 @@ JavaScript strings index; out of range is clamped), ranges
 - queries: `text.lineCount()`, `text.line(n)`, `text.getText(range?)`,
   `text.cursor()`, `text.selection()`, `text.offsetAt(pos)`,
   `text.positionAt(offset)`, `text.info()`, `text.visibleRange()`;
-- edits: `text.edit([{ range, text }, ...])` (ranges in the text before
-  the edit, not overlapping), `text.insert(text, at?)`,
+- edits: `text.edit([{ range, newText }, ...])` takes LSP's `TextEdit[]`
+  as they come (ranges in the text before the edit, not overlapping;
+  insertions at one point go in the array's order), `text.insert(text, at?)`,
   `text.delete(range)`, `text.replace(range, text)`, `text.type(text)`
   (as typed: replaces the selection, consecutive typing is one undo
   step), `text.erase(unit?, count?)` (the selection, else from the

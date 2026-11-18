@@ -72,7 +72,7 @@ export function endInsert(): void {
 
 /** Put what a block's I, A or c typed on its first line into the other
  * lines (not when it broke the line), as one step with it. */
-function blockEdits(b: BlockInsert, typed: string): { range: { start: Position; end: Position }; text: string }[] {
+function blockEdits(b: BlockInsert, typed: string): { range: { start: Position; end: Position }; newText: string }[] {
   const edits = [];
   if (typed === "" || typed.includes("\n")) return [];
   for (const l of b.lines) {
@@ -89,7 +89,7 @@ function blockEdits(b: BlockInsert, typed: string): { range: { start: Position; 
     } else {
       at = pos(l, b.col);
     }
-    edits.push({ range: { start: at, end: at }, text });
+    edits.push({ range: { start: at, end: at }, newText: text });
   }
   return edits;
 }

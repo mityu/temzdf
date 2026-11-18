@@ -80,11 +80,16 @@ Following VS Code **(user)**:
 
 ## 5. Primitives
 
-- **Edits**, as VS Code **(user)**: `edit([{ range, text }, ...])` applies
-  non-overlapping replacements given in the original document's positions,
-  at once. `insert`, `delete` and `replace` are shorthands. Cursors and
-  selection ends shift with edits; an insertion exactly at a cursor leaves
-  that cursor after the inserted text.
+- **Edits**, as VS Code **(user)**: `edit([{ range, newText }, ...])`
+  applies non-overlapping replacements given in the original document's
+  positions, at once. It takes LSP's `TextEdit[]` unchanged (2026-11-19,
+  **(user)**: the field renamed from `text`): insertions at one point go
+  in the array's order, before a replacement starting there (they used
+  to be refused). `insert`, `delete` and `replace` are shorthands, kept
+  in the server so `temzdf action` and data mappings have them. Cursors
+  and selection ends shift with edits; an insertion exactly at a cursor
+  leaves that cursor after the inserted text (after all of them, when
+  several go there).
 - **Queries**: `lineCount`, `line(n)`, `text(range?)`, `cursor`,
   `selection`, `offsetAt`/`positionAt` (UTF-16 offsets), `info` (path,
   modified, encoding, line ending).

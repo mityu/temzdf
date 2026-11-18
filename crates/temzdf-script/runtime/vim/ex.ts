@@ -387,7 +387,7 @@ function substitute(range: Range, args: string): void {
     if (!global && seen.has(line)) continue;
     seen.add(line);
     const text_ = replacement(rep, groupsOf(m, conv.group));
-    edits.push({ range: m.range, text: text_ });
+    edits.push({ range: m.range, newText: text_ });
     const breaks = (text_.match(/\n/g) ?? []).length;
     lastLineChanged = line + shift + breaks;
     shift += breaks - (m.range.end.line - m.range.start.line);
