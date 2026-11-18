@@ -185,9 +185,26 @@ might delay keys typed into another.
   and with it running `yes` (the server at about 150% CPU, `yes` at 100%,
   so the pane kept up). Median 16.1 ms (p90 17.0, max 17.8) idle against
   15.6-16.4 ms (p90 16.7-16.8, max 16.9-17.6) beside `yes`, over two runs:
-  no difference. Every echo takes about one frame interval (`FRAME`,
-  16 ms, in `crates/temzdf-server/src/daemon.rs`) even idle; where that
-  wait comes from is not looked into.
+  `yes` made no difference, but every echo took about one frame interval.
+  The cause: the server made at most one frame per `FRAME` (16 ms, in
+  `crates/temzdf-server/src/daemon.rs`), and the test types the next key
+  right after seeing the last echo, so every echo (back from the shell
+  0.4 ms after the key) waited for the interval; with 50 ms between keys
+  it took 5.2 ms idle and still 14.3 ms beside `yes`, whose frames keep the
+  interval running. Since `Pacing` (two frames right after typing go out at
+  once, as kitty does):
+
+  | Between keys | Other pane | Median | p90 | Max |
+  |---|---|---:|---:|---:|
+  | none | idle | 2.2 ms | 5.1 ms | 5.3 ms |
+  | none | `yes` | 1.6 ms | 1.7 ms | 1.7 ms |
+  | 50 ms | idle | 5.2 ms | 5.3 ms | 5.4 ms |
+  | 50 ms | `yes` | 1.7 ms | 1.7 ms | 4.4 ms |
+
+  (50 ms between keys: a temporary change to the test.) Idle is slower
+  than beside `yes` probably because of the CPU's power saving: with four
+  other cores kept busy by shell loops, the idle median at 50 ms went from
+  5.2 to 2.8 ms.
 - `measure_output_throughput`: 100 MB of `yes` through a pane took 12.1 s
   (8 MB/s), and 12.5 s written straight to the simulated terminal (also
   libghostty-vt) without temzdf: the parser's line feeds (two bytes a

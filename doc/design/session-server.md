@@ -288,7 +288,13 @@ git log), and why:
   changes are queued per client (latest wins); a late attacher gets a
   snapshot. The server makes at most one frame per 16 ms, so floods of
   output cost little (`seq 1 500000` takes 0.14 s in a pane,
-  `tests/e2e/terminal.actions`).
+  `tests/e2e/terminal.actions`); but up to 200 ms after a key, a paste
+  or committed text, two frames go out without waiting (the echo, and a
+  redraw right after it, as fish colouring the line), as kitty ignores its
+  `repaint_delay` while input is pending (`Pacing` in
+  `crates/temzdf-server/src/daemon.rs`). Before, an echo waited up to
+  16 ms whenever a frame had gone out just before (fast typing, a pane
+  writing beside it).
 - **Pixels.** Clients that say so in their `Hello` (`TEMZDF_PIXELS`,
   default `shared`) take images of 64 KiB and more in shared memory: one
   anonymous object per image (a sealed memfd on Linux, an unlinked POSIX

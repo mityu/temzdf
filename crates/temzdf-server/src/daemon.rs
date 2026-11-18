@@ -110,8 +110,9 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     // An action that started scripts ("before" hooks): answered when they
     // are done, with why one cancelled it if one did.
     let mut answering: Option<ClientId> = None;
-    // When the last frame was made: busy terminals get at most one per FRAME.
-    let mut made = Instant::now() - FRAME;
+    // When frames may be made: busy terminals get at most one per FRAME,
+    // but what typing shows does not wait.
+    let mut pacing = Pacing::new(Instant::now());
     // An event taken off the queue before a frame, handled before it; and
     // since when the due frame has waited for the queue.
     let mut stash: Option<Event> = None;
@@ -151,7 +152,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         // still busy with an earlier one get the latest when they acknowledge.
         if !session.is_starting() && session.error().is_none() {
             if dirty
-                && made.elapsed() >= FRAME
+                && pacing.gap(Instant::now()).is_zero()
                 && !session.holds_frames()
                 && clients.values().any(|c| c.attached && c.awaiting.is_none())
                 && !{
@@ -170,7 +171,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     defer
                 }
             {
-                made = Instant::now();
+                pacing.made_frame(Instant::now());
                 deferred_since = None;
                 let frame = session.frame();
                 let updates = session.images().take_updates();
@@ -223,7 +224,8 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
             looks = now_looks;
         }
         let can_send = can_send(&session, &clients);
-        let timeout = wait_for(dirty, session.is_animating(), can_send, made, session.next_deadline(), Instant::now())
+        let now = Instant::now();
+        let timeout = wait_for(dirty, session.is_animating(), can_send, pacing.gap(now), session.next_deadline(), now)
             .min(SOCKET_CHECK);
         let event = match stash.take() {
             Some(e) => Ok(e),
@@ -288,6 +290,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     dirty = true;
                 }
                 ClientMsg::Key(k) => {
+                    pacing.typed(now);
                     dirty |= become_latest(&mut session, &mut latest, &clients, id);
                     outcome = session.key(&k, now);
                     if outcome == Outcome::Detach {
@@ -301,10 +304,12 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     dirty |= session.pointer() != shown_pointer;
                 }
                 ClientMsg::Paste(text) => {
+                    pacing.typed(now);
                     dirty |= become_latest(&mut session, &mut latest, &clients, id);
                     outcome = session.paste(&text);
                 }
                 ClientMsg::Text(text) => {
+                    pacing.typed(now);
                     dirty |= become_latest(&mut session, &mut latest, &clients, id);
                     outcome = session.text(&text, Instant::now());
                 }
@@ -467,17 +472,64 @@ fn drain_first(pending: bool, deferred_since: Option<Instant>, now: Instant) -> 
     pending && deferred_since.is_none_or(|t| now.saturating_duration_since(t) < DRAIN_LIMIT)
 }
 
+/// Frames typing calls for that may go out without waiting for `FRAME`
+/// since the last one: the echo, and a redraw right after it (fish colours
+/// the line it echoed).
+const QUICK_FRAMES: u8 = 2;
+/// How long after a key such frames may come (an echo over SSH comes a
+/// round trip later).
+const TYPED_WINDOW: Duration = Duration::from_millis(200);
+
+/// When the next frame may be made. At most one per `FRAME`, so a program
+/// writing all the time costs little; but right after typing (keys, pastes,
+/// committed text) `QUICK_FRAMES` go out at once, as kitty ignores its
+/// `repaint_delay` while there is input to handle. Mouse events do not
+/// count: they come too often (drags, pixel motion).
+struct Pacing {
+    made: Instant,
+    typed: Option<Instant>,
+    quick_left: u8,
+}
+
+impl Pacing {
+    fn new(now: Instant) -> Self {
+        Self { made: now - FRAME, typed: None, quick_left: 0 }
+    }
+
+    /// The user typed.
+    fn typed(&mut self, now: Instant) {
+        self.typed = Some(now);
+        self.quick_left = QUICK_FRAMES;
+    }
+
+    /// How long until a frame may be made (zero: now).
+    fn gap(&self, now: Instant) -> Duration {
+        let quick = self.quick_left > 0 && self.typed.is_some_and(|t| now.saturating_duration_since(t) < TYPED_WINDOW);
+        if quick { Duration::ZERO } else { FRAME.saturating_sub(now.saturating_duration_since(self.made)) }
+    }
+
+    /// A frame was made; one made before `FRAME` was up used a quick one.
+    fn made_frame(&mut self, now: Instant) {
+        if now.saturating_duration_since(self.made) < FRAME {
+            self.quick_left = self.quick_left.saturating_sub(1);
+        }
+        self.made = now;
+    }
+}
+
+/// How long the main loop waits; `gap` is how long until a frame may be
+/// made (`Pacing::gap`).
 fn wait_for(
     dirty: bool,
     animating: bool,
     can_send: bool,
-    made: Instant,
+    gap: Duration,
     deadline: Option<Instant>,
     now: Instant,
 ) -> Duration {
     let mut timeout = if animating && can_send { FRAME } else { Duration::from_secs(3600) };
     if dirty && can_send {
-        timeout = timeout.min(FRAME.saturating_sub(now.saturating_duration_since(made)));
+        timeout = timeout.min(gap);
     }
     if let Some(due) = deadline {
         timeout = timeout.min(due.saturating_duration_since(now));
@@ -848,7 +900,7 @@ mod tests {
         };
         let clients = HashMap::from([(1, client)]);
         let now = Instant::now();
-        let t = wait_for(true, false, can_send(&session, &clients), now - FRAME * 2, session.next_deadline(), now);
+        let t = wait_for(true, false, can_send(&session, &clients), Duration::ZERO, session.next_deadline(), now);
         assert!(t > Duration::from_millis(100), "{t:?}");
     }
 
@@ -1036,16 +1088,45 @@ mod tests {
     #[test]
     fn nothing_to_send_means_no_short_waits() {
         let now = Instant::now();
-        let made = now - FRAME * 2;
+        let gap = Duration::ZERO;
         let long = Duration::from_secs(3600);
         // A frame is due and a client can take it: right away.
-        assert_eq!(wait_for(true, false, true, made, None, now), Duration::ZERO);
+        assert_eq!(wait_for(true, false, true, gap, None, now), Duration::ZERO);
+        // Not yet: until it may be made.
+        assert_eq!(wait_for(true, false, true, FRAME / 2, None, now), FRAME / 2);
         // Nobody can take it (detached, or all awaiting acknowledgements):
         // no busy loop.
-        assert_eq!(wait_for(true, false, false, made, None, now), long);
-        assert_eq!(wait_for(false, true, false, made, None, now), long);
-        assert_eq!(wait_for(false, true, true, made, None, now), FRAME);
+        assert_eq!(wait_for(true, false, false, gap, None, now), long);
+        assert_eq!(wait_for(false, true, false, gap, None, now), long);
+        assert_eq!(wait_for(false, true, true, gap, None, now), FRAME);
         // Deadlines (timers, debounces) still count.
-        assert_eq!(wait_for(true, true, false, made, Some(now + FRAME), now), FRAME);
+        assert_eq!(wait_for(true, true, false, gap, Some(now + FRAME), now), FRAME);
+    }
+
+    #[test]
+    fn frames_wait_for_the_interval_unless_the_user_just_typed() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut p = Pacing::new(t0);
+        // Nothing for a while: at once; then one per FRAME.
+        assert_eq!(p.gap(t0), Duration::ZERO);
+        p.made_frame(t0);
+        assert_eq!(p.gap(t0 + ms(1)), FRAME - ms(1));
+        // A key: its echo and one redraw after it go out at once.
+        p.typed(t0 + ms(2));
+        assert_eq!(p.gap(t0 + ms(3)), Duration::ZERO);
+        p.made_frame(t0 + ms(3));
+        assert_eq!(p.gap(t0 + ms(5)), Duration::ZERO);
+        p.made_frame(t0 + ms(5));
+        // A third waits for the interval.
+        assert_eq!(p.gap(t0 + ms(6)), FRAME - ms(1));
+        // A frame after the interval leaves the quick ones alone.
+        p.typed(t0 + ms(30));
+        p.made_frame(t0 + ms(30));
+        assert_eq!(p.gap(t0 + ms(31)), Duration::ZERO);
+        // Long after the key, the interval holds again.
+        p.typed(t0 + ms(40));
+        p.made_frame(t0 + ms(40) + TYPED_WINDOW - ms(5));
+        assert_eq!(p.gap(t0 + ms(40) + TYPED_WINDOW), FRAME - ms(5));
     }
 }
