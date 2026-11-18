@@ -166,3 +166,29 @@ The socket now costs about what shared memory does on heavy frames (the
 benchmark's 30 tiles: 7.8 ms against 8.2), as the copies left are the same
 size; shared memory still saves the kernel's buffers and the client's
 allocation.
+
+## Terminal panes under load
+
+Measured 2026-11-18 (i7-14700, release, the simulated terminal of
+`crates/tuitest`), with the ignored tests in `crates/temzdf/tests/tui.rs`:
+
+```sh
+cargo test --release -p temzdf --test tui measure_ -- --ignored --nocapture
+```
+
+The session parses every pane's output (libghostty-vt's `vt_write`) on its
+main loop, the loop that handles keys too, so a pane writing all the time
+might delay keys typed into another.
+
+- `measure_echo_while_another_pane_floods`: 60 keys typed into a shell on
+  the right half, from sending a key to seeing it, with the left pane idle
+  and with it running `yes` (the server at about 150% CPU, `yes` at 100%,
+  so the pane kept up). Median 16.1 ms (p90 17.0, max 17.8) idle against
+  15.6-16.4 ms (p90 16.7-16.8, max 16.9-17.6) beside `yes`, over two runs:
+  no difference. Every echo takes about one frame interval (`FRAME`,
+  16 ms, in `crates/temzdf-server/src/daemon.rs`) even idle; where that
+  wait comes from is not looked into.
+- `measure_output_throughput`: 100 MB of `yes` through a pane took 12.1 s
+  (8 MB/s), and 12.5 s written straight to the simulated terminal (also
+  libghostty-vt) without temzdf: the parser's line feeds (two bytes a
+  line, a scroll each) set the rate, not the session.

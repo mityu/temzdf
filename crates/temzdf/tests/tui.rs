@@ -345,6 +345,100 @@ fn typed_keys_echo_at_once_with_composited_frames() {
     assert!(times[times.len() / 2] < std::time::Duration::from_millis(100), "echo times: {times:?}");
 }
 
+/// Echo times of `n` keys typed into the right pane (a shell, fresh and
+/// cleared), from sending a key to seeing it on the screen, sorted.
+/// Every 40 keys `C-u` erases the line, untimed.
+fn right_pane_echo_times(t: &mut Term, n: usize) -> Vec<std::time::Duration> {
+    let mut typed = String::from("$ ");
+    let mut times = Vec::new();
+    for c in "abcdefghijklmnopqrstuvwxyz".chars().cycle().take(n) {
+        // Before the line wraps (50 columns), erase it.
+        if typed.len() == 42 {
+            t.key("C-u");
+            t.wait_for("an empty prompt", |s| s.row_from(0, 50).trim_end() == "$");
+            typed.truncate(2);
+        }
+        typed.push(c);
+        let start = std::time::Instant::now();
+        t.key(&c.to_string());
+        while !t.screen().row_from(0, 50).starts_with(&typed) {
+            if start.elapsed() > tuitest::TIMEOUT {
+                let s = t.screen();
+                t.fail(&format!("{c:?} never echoed (expected {typed:?})"), &s);
+            }
+            t.pump(std::time::Duration::from_millis(1));
+        }
+        times.push(start.elapsed());
+    }
+    times.sort();
+    times
+}
+
+/// A measurement, not a check (run with `--ignored --nocapture`, release
+/// for real numbers): how long a key typed into one shell takes to show
+/// while another pane's program writes all the time (`yes`), against the
+/// same with the other pane idle. The session parses every pane's output on
+/// its main loop, which also handles keys (doc/dev/performance.md).
+#[test]
+#[ignore = "a measurement: prints echo times"]
+fn measure_echo_while_another_pane_floods() {
+    for flood in [false, true] {
+        let env = Env::new(if flood { "flood" } else { "idle" });
+        let mut t = Term::spawn(&[BIN, "-s", "f"], &env.options());
+        t.wait_for("the prompt", prompt);
+        if flood {
+            t.type_text("yes\n");
+            t.wait_for("yes writing", |s| s.lines().iter().filter(|l| l.trim_end() == "y").count() > 10);
+        }
+        // A new shell on the right half (100 columns: 49 + border + 50).
+        t.keys(&["C-b", "%"]);
+        t.wait_for("a prompt in the right pane", |s| is_prompt(&s.row_from(0, 50)));
+        t.type_text("clear\n");
+        t.wait_for("a clear right pane", |s| s.row_from(0, 50).trim_end() == "$" && s.row_from(1, 50).is_empty());
+        t.settle(std::time::Duration::from_millis(300));
+        let times = right_pane_echo_times(&mut t, 60);
+        let q = |p: f64| times[((times.len() - 1) as f64 * p).round() as usize];
+        println!(
+            "echo, other pane {}: p50 {:?}, p90 {:?}, max {:?}",
+            if flood { "running yes" } else { "idle" },
+            q(0.5),
+            q(0.9),
+            times[times.len() - 1]
+        );
+        env.run(&["kill-session", "f"]);
+        t.wait_exit();
+    }
+}
+
+/// A measurement, not a check (run with `--ignored --nocapture`, release):
+/// how fast a program's output goes through a terminal pane, 100 MB of
+/// `yes` written to the pane, against the same written straight to the
+/// simulated terminal.
+#[test]
+#[ignore = "a measurement: prints output rates"]
+fn measure_output_throughput() {
+    const BYTES: u64 = 100_000_000;
+    let command = format!("time -p sh -c 'yes | head -c {BYTES}'");
+    let seconds = |s: &Screen| {
+        s.lines().iter().find_map(|l| l.trim().strip_prefix("real ").and_then(|v| v.trim().parse::<f64>().ok()))
+    };
+    let env = Env::new("throughput");
+    let mut t = Term::spawn(&[BIN, "-s", "o"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.type_text(&format!("{command}\n"));
+    let in_pane = seconds(&t.wait_for("the time", |s| seconds(s).is_some())).unwrap();
+    env.run(&["kill-session", "o"]);
+    t.wait_exit();
+    let mut t = Term::spawn(&["sh", "-c", &format!("{command}; sleep 30")], &env.options());
+    let direct = seconds(&t.wait_for("the time", |s| seconds(s).is_some())).unwrap();
+    let rate = |s: f64| BYTES as f64 / s / 1e6;
+    println!(
+        "in a pane: {in_pane:.2} s ({:.0} MB/s); straight: {direct:.2} s ({:.0} MB/s)",
+        rate(in_pane),
+        rate(direct)
+    );
+}
+
 fn typed_keys_echo_at_once_while_a_pdf_scrolls(pixels: PixelPath) {
     // Composited frames sent inline over SSH, as above, and a PDF beside the
     // shell scrolled by the wheel: its frames send pixels and are capped; the
