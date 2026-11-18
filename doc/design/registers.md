@@ -20,8 +20,8 @@ terminal pane pipes into it (`temzdf copy`). Decided with the user on
     as lines; a terminal is sent the text (a bracketed paste).
   - `how`: `"copy"` (a yank) or `"delete"` (taken out of the text).
   - `register`: the name it was copied to, or null.
-  - `source`: `{ kind, name }`, the pane kind (`terminal`, `pdf`, `edit`)
-    or `cli`, and the buffer's name.
+  - `source`: `{ kind, name }`, the pane kind (`terminal`, `pdf`, `edit`,
+    `markdown`) or `cli`, and the buffer's name.
 - **Named registers** map a name (any string) to an entry. The server
   attaches no meaning to names; Vim's rules are the Vim mode's.
 - Vim's numbered registers are queries of the history, not stores of their

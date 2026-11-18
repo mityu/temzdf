@@ -201,7 +201,7 @@ server on one `Session`). Next and open:
   - a live preview of an edited buffer, through LSP-like change
     notifications;
   - the built-in help and LSP hover drawn by it;
-  - a dark style for the graphics mode, and selecting text there;
+  - a dark style for the graphics mode;
   - mermaid diagrams;
   - layout of large documents on a worker thread (now on the session's
     thread, a few milliseconds for usual documents; strips are painted on

@@ -1,6 +1,7 @@
 //! A page: a Markdown document laid out by Blitz at one width and zoom,
 //! with what panes ask of it: where source lines and anchors are, the
-//! link at a point, search hits, and its strips' drawing recorded for
+//! link at a point, search hits, places in its text and what a selection
+//! between two covers, and its strips' drawing recorded for
 //! worker threads to paint ([`StripJob`]); also tiles of it magnified (a
 //! pinch shows the page larger without laying it out again, as browsers
 //! do), painted from the same layout.
@@ -130,6 +131,15 @@ pub struct Rect {
     pub y1: f64,
 }
 
+/// A place in a page's text: its inline root (blocks of text: a
+/// paragraph, a heading, a cell), by reading order, and a byte offset in
+/// the root's text. Carets order as the text reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Caret {
+    pub root: usize,
+    pub offset: usize,
+}
+
 pub struct Page {
     pub id: PageId,
     doc: BaseDocument,
@@ -139,6 +149,8 @@ pub struct Page {
     /// Blocks' first source lines and where they start (device pixels),
     /// by position.
     lines: Vec<(f64, usize)>,
+    /// The inline roots (nodes with a text layout), in reading order.
+    roots: Vec<blitz_dom::NodeId>,
 }
 
 /// The page's style: GitHub-like, light.
@@ -167,7 +179,7 @@ impl Page {
         let doc = HtmlDocument::from_html(&html, config).into_inner();
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let id = PageId(NEXT.fetch_add(1, Ordering::Relaxed));
-        let mut page = Page { id, doc, width, zoom, height: 0, lines: Vec::new() };
+        let mut page = Page { id, doc, width, zoom, height: 0, lines: Vec::new(), roots: Vec::new() };
         page.resolve();
         page
     }
@@ -200,6 +212,20 @@ impl Page {
             .collect();
         lines.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         self.lines = lines;
+        // Depth first through the layout tree (anonymous blocks of text
+        // are only there): reading order.
+        let mut roots = Vec::new();
+        let mut stack = vec![self.doc.root_element().id];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.doc.get_node(id) else { continue };
+            if node.element_data().is_some_and(|el| el.inline_layout_data.is_some()) {
+                roots.push(id);
+            }
+            let children = node.layout_children.borrow();
+            let children = children.as_deref().unwrap_or(&node.children);
+            stack.extend(children.iter().rev());
+        }
+        self.roots = roots;
     }
 
     /// The page's height in device pixels.
@@ -306,28 +332,118 @@ impl Page {
             return out;
         }
         let q = query.to_ascii_lowercase();
-        let scale = self.scale();
-        for (_, node) in self.doc.tree().iter() {
-            let Some(el) = node.element_data() else { continue };
-            let Some(text) = el.inline_layout_data.as_ref() else { continue };
-            let hay = text.text.to_ascii_lowercase();
-            let lay = node.final_layout();
-            let pos = node.absolute_position(0.0, 0.0);
-            let ox = f64::from(pos.x + lay.padding.left + lay.border.left) * scale;
-            let oy = (f64::from(pos.y + lay.padding.top + lay.border.top) + f64::from(text.block_offset)) * scale;
-            for (start, _) in hay.match_indices(&q) {
-                use parley::layout::Affinity;
-                let sel = parley::Selection::new(
-                    parley::Cursor::from_byte_index(&text.layout, start, Affinity::Downstream),
-                    parley::Cursor::from_byte_index(&text.layout, start + q.len(), Affinity::Upstream),
-                );
-                for (b, _) in sel.geometry(&text.layout) {
-                    out.push(Rect { x0: ox + b.x0, y0: oy + b.y0, x1: ox + b.x1, y1: oy + b.y1 });
-                }
+        for root in 0..self.roots.len() {
+            let Some((_, text)) = self.root(root) else { continue };
+            for (start, _) in text.text.to_ascii_lowercase().match_indices(&q) {
+                out.extend(self.range_rects(root, start, start + q.len()));
             }
         }
         out.sort_by(|a, b| a.y0.total_cmp(&b.y0).then(a.x0.total_cmp(&b.x0)));
         out
+    }
+
+    /// Inline root `root`'s node and text layout.
+    fn root(&self, root: usize) -> Option<(&blitz_dom::Node, &blitz_dom::node::TextLayout)> {
+        let node = self.doc.get_node(*self.roots.get(root)?)?;
+        Some((node, node.element_data()?.inline_layout_data.as_deref()?))
+    }
+
+    /// Where a root's text layout starts (device pixels of the page).
+    fn origin(&self, node: &blitz_dom::Node, text: &blitz_dom::node::TextLayout) -> (f64, f64) {
+        let scale = self.scale();
+        let lay = node.final_layout();
+        let pos = node.absolute_position(0.0, 0.0);
+        let ox = f64::from(pos.x + lay.padding.left + lay.border.left) * scale;
+        let oy = (f64::from(pos.y + lay.padding.top + lay.border.top) + f64::from(text.block_offset)) * scale;
+        (ox, oy)
+    }
+
+    /// The boxes of bytes `start..end` of root `root`'s text, a box a line.
+    fn range_rects(&self, root: usize, start: usize, end: usize) -> Vec<Rect> {
+        use parley::layout::Affinity;
+        let Some((node, text)) = self.root(root) else { return Vec::new() };
+        if start >= end {
+            return Vec::new();
+        }
+        let (ox, oy) = self.origin(node, text);
+        let sel = parley::Selection::new(
+            parley::Cursor::from_byte_index(&text.layout, start, Affinity::Downstream),
+            parley::Cursor::from_byte_index(&text.layout, end, Affinity::Upstream),
+        );
+        sel.geometry(&text.layout)
+            .into_iter()
+            .map(|(b, _)| Rect { x0: ox + b.x0, y0: oy + b.y0, x1: ox + b.x1, y1: oy + b.y1 })
+            .collect()
+    }
+
+    /// Whether there is text at device pixel (`x`, `y`) (a press there
+    /// starts a selection).
+    pub fn has_text_at(&self, x: f64, y: f64) -> bool {
+        let scale = self.scale();
+        self.doc.find_text_position((x / scale) as f32, (y / scale) as f32).is_some()
+    }
+
+    /// The place in the text nearest device pixel (`x`, `y`): in the text
+    /// there, else in the root nearest above or below (a drag past the
+    /// text, over a margin, keeps going). None without text.
+    pub fn caret_at(&self, x: f64, y: f64) -> Option<Caret> {
+        let scale = self.scale();
+        if let Some((id, offset)) = self.doc.find_text_position((x / scale) as f32, (y / scale) as f32)
+            && let Some(root) = self.roots.iter().position(|r| *r == id)
+        {
+            return Some(Caret { root, offset });
+        }
+        let mut best: Option<(f64, usize, f64)> = None;
+        for root in 0..self.roots.len() {
+            let Some((node, text)) = self.root(root) else { continue };
+            let (_, oy) = self.origin(node, text);
+            let h = f64::from(text.layout.height());
+            let d = if y < oy {
+                oy - y
+            } else if y > oy + h {
+                y - (oy + h)
+            } else {
+                0.0
+            };
+            if best.is_none_or(|(b, _, _)| d < b) {
+                best = Some((d, root, (y - oy).clamp(0.0, (h - 0.5).max(0.0))));
+            }
+        }
+        let (_, root, dy) = best?;
+        let (node, text) = self.root(root)?;
+        let (ox, _) = self.origin(node, text);
+        // In the root's content box, CSS pixels, its text's offset included.
+        let lx = ((x - ox) / scale).max(0.0) as f32;
+        let ly = (dy / scale) as f32 + text.block_offset;
+        let offset = node.text_offset_at_point(lx, ly).unwrap_or(if dy <= 0.0 { 0 } else { text.text.len() });
+        Some(Caret { root, offset })
+    }
+
+    /// The text between carets `a` and `b` (either first): a line a block.
+    pub fn selection_text(&self, a: Caret, b: Caret) -> String {
+        let mut out = Vec::new();
+        for (root, start, end) in self.spans(a, b) {
+            if let Some((_, text)) = self.root(root) {
+                out.push(text.text.get(start..end).unwrap_or_default());
+            }
+        }
+        out.join("\n")
+    }
+
+    /// The boxes the text between carets `a` and `b` covers.
+    pub fn selection_rects(&self, a: Caret, b: Caret) -> Vec<Rect> {
+        self.spans(a, b).flat_map(|(root, start, end)| self.range_rects(root, start, end)).collect()
+    }
+
+    /// Byte ranges of each root between carets `a` and `b`.
+    fn spans(&self, a: Caret, b: Caret) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+        let (from, to) = if a <= b { (a, b) } else { (b, a) };
+        (from.root..=to.root.min(self.roots.len().saturating_sub(1))).filter_map(move |root| {
+            let len = self.root(root)?.1.text.len();
+            let start = if root == from.root { from.offset.min(len) } else { 0 };
+            let end = if root == to.root { to.offset.min(len) } else { len };
+            (start < end).then_some((root, start, end))
+        })
     }
 }
 
@@ -453,5 +569,61 @@ mod tests {
         let (a, b) = (page(900, 1.0), page(900, 2.0));
         assert!(b.height() > a.height() * 3 / 2, "{} {}", a.height(), b.height());
         assert!(b.anchor_y("tables").unwrap() > a.anchor_y("tables").unwrap() * 1.5);
+    }
+
+    /// The middle of the first box of `word` on `p`.
+    fn middle(p: &Page, word: &str) -> (f64, f64) {
+        let r = p.find(word)[0];
+        ((r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Blitz under Miri is far too slow")]
+    fn a_selection_covers_the_text_between_two_places_across_blocks() {
+        let p = page(900, 1.0);
+        // From the start of "paragraph" to the end of "Lists" (the next
+        // heading, two blocks on): the blocks' text a line each.
+        let r = p.find("paragraph")[0];
+        let a = p.caret_at(r.x0 + 0.5, (r.y0 + r.y1) / 2.0).unwrap();
+        let r = p.find("Lists")[0];
+        let b = p.caret_at(r.x1 - 0.5, (r.y0 + r.y1) / 2.0).unwrap();
+        let text = p.selection_text(a, b);
+        assert!(text.starts_with("paragraph with emphasis"), "{text:?}");
+        assert!(text.ends_with("\nLists"), "{text:?}");
+        assert!(text.contains("docs.\n日本語") || text.contains("docs. 日本語"), "{text:?}");
+        assert_eq!(text.matches('\n').count(), 1, "a line a block: {text:?}");
+        // Either way round, the same text; boxes on each line it covers.
+        assert_eq!(p.selection_text(b, a), text);
+        let boxes = p.selection_rects(a, b);
+        assert!(boxes.len() >= 3, "{boxes:?}");
+        assert!(boxes.iter().any(|r| r.y0 < p.find("Lists")[0].y1 && r.y1 > p.find("Lists")[0].y0));
+        // Nothing between a place and itself.
+        assert_eq!(p.selection_text(a, a), "");
+        assert!(p.selection_rects(a, a).is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Blitz under Miri is far too slow")]
+    fn places_in_the_text_snap_from_margins_and_match_the_search_when_zoomed() {
+        for zoom in [1.0, 1.5] {
+            let p = page(900, zoom);
+            // A word selected by its own box covers what the search marks.
+            let r = p.find("Tables")[0];
+            let y = (r.y0 + r.y1) / 2.0;
+            let (a, b) = (p.caret_at(r.x0 + 0.5, y).unwrap(), p.caret_at(r.x1 - 0.5, y).unwrap());
+            assert_eq!(p.selection_text(a, b), "Tables", "zoom {zoom}");
+            assert_eq!(p.selection_rects(a, b), vec![r], "zoom {zoom}");
+            assert!(p.has_text_at(middle(&p, "Tables").0, y));
+        }
+        let p = page(900, 1.0);
+        // Left of the text (the page's margin): no text there to start a
+        // selection, but a drag over it snaps to the line's start.
+        let (_, y) = middle(&p, "Lists");
+        assert!(!p.has_text_at(1.0, y));
+        let c = p.caret_at(1.0, y).unwrap();
+        assert_eq!(c.offset, 0);
+        // Past the bottom of the page: the end of the last block.
+        let end = p.caret_at(10.0, f64::from(p.height()) + 100.0).unwrap();
+        assert_eq!(end.root, p.roots.len() - 1);
     }
 }

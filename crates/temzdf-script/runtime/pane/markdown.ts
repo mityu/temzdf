@@ -72,6 +72,9 @@ export default keyset("builtin-pane-markdown", (d) => {
   d.map(M, ["/"], () => openSearch());
   d.map(M, ["n"], () => cmd.markdown.searchNext(1));
   d.map(M, ["N"], () => cmd.markdown.searchNext(-1));
+  // Text selected with the mouse (a drag copies it when released).
+  d.map(M, ["y"], () => cmd.markdown.copy());
+  d.map(M, ["<Esc>"], () => cmd.markdown.clearSelection());
   // Backspace too: multiplexers (zellij) take Ctrl-o and Alt+arrows.
   d.map(M, ["<C-o>", "<BS>", "<M-Left>"], () => cmd.markdown.back());
   d.map(M, ["<Tab>"], () => cmd.markdown.setMode("text"));

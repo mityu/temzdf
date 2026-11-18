@@ -374,7 +374,8 @@ keymap.add("normal", "n", () => {
 
 The session keeps what is copied (`doc/design/registers.md`): a terminal's
 selection (the mouse's, the visual mode's `y`, OSC 52 from its program), a
-PDF's selection (released with the mouse, or `y`; as characters), the Vim mode's yanks and deletes, scripts' `copyText` and
+PDF's selection (released with the mouse, or `y`; as characters), the
+Markdown graphics mode's selection (the same), the Vim mode's yanks and deletes, scripts' `copyText` and
 `temzdf copy`. `history({ limit? })` lists the entries, newest first (at
 most `o.copyhistory`): `{ id, text, kind, how, register, source, time }`,
 `kind` `"char"`, `"line"` (ending with a line break) or `"block"`, `how`
@@ -706,11 +707,15 @@ In the graphics mode, `markdown.scroll(rows)`, `markdown.page(n)`,
 `markdown.top()`, `markdown.bottom()`, `markdown.zoom("in" | "out" |
 "reset")`, and `searchFor` / `searchPreview` / `searchCancel` (the `/`
 prompt) mark the matches, `markdown.searchNext(dir)` goes through them.
+A drag from text selects it (past the top or bottom the page scrolls on)
+and its release copies it, as a PDF's selection; `markdown.copy()` copies
+it again, `markdown.clearSelection()` forgets it.
 
 Keys (`temzdf/pane/markdown`): in the graphics mode `j`/`k` (`<C-e>`,
 `<C-y>`), `<Space>`/`f`/`<C-f>` and `b` pages, `d`/`u` half pages, `g`/`G`,
 `+`/`=`, `-`, `0` zoom, `/`, `n`/`N`, `<BS>`/`<C-o>` back, `<Tab>` the
-text mode, `o` the outline, `q` closes; in the text mode, on a viewer
+text mode, `o` the outline, `q` closes, `y` copies the selection again and
+`<Esc>` forgets it; in the text mode, on a viewer
 only, `<CR>` follows the link at the cursor (elsewhere it moves down as
 Vim's), `<BS>` goes back, `<Tab>` the graphics mode and `gO` the outline:
 a floating list of the headings (`j`/`k`, `<CR>` goes there, `q`/`<Esc>`

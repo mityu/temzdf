@@ -2310,20 +2310,8 @@ impl Session {
                 };
                 let page = self.md_docs.get(doc).and_then(|d| d.page(pane.page_key()));
                 let changed = page.is_some_and(|page| pane.mouse(page, &px, cell.height, now));
-                let mut out = if changed { out.merge(Outcome::Redraw) } else { out };
-                for r in pane.take_requests() {
-                    let done = match r {
-                        temzdf_mdview::Request::Follow(target) => self.md_follow(id, &target),
-                        temzdf_mdview::Request::Zoom(n) => {
-                            (0..n.unsigned_abs()).try_for_each(|_| self.md_zoom(id, n.signum()))
-                        }
-                    };
-                    if let Err(e) = done {
-                        self.message(&e);
-                    }
-                    out = out.merge(Outcome::Redraw);
-                }
-                out
+                let out = if changed { out.merge(Outcome::Redraw) } else { out };
+                out.merge(self.md_requests(id))
             }
             Kind::Pdf { pane, .. } => out.or(pane.mouse(&local, now)),
             Kind::Term { buf, view } => match self.terms.get_mut(buf) {
@@ -2618,7 +2606,10 @@ impl Session {
                     // A highlight expired.
                     changed |= p.next_deadline().is_some_and(|d| now >= d);
                 }
-                Kind::Markdown { pane, .. } => changed |= pane.tick(now),
+                Kind::Markdown { pane, doc } => {
+                    let page = self.md_docs.get(doc).and_then(|d| d.page(pane.page_key()));
+                    changed |= pane.tick(page, now);
+                }
                 Kind::Term { .. } | Kind::Text { .. } => {}
             }
         }
@@ -5571,6 +5562,83 @@ mod tests {
         assert_eq!(top(&mut s), line);
         assert!(s.md_docs[&md].pages.is_empty(), "the page went with the mode");
         assert!(run(&mut s, "markdown.set-mode", &[str("other")]).is_err());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, Blitz")]
+    fn the_markdown_graphics_mode_selects_and_copies_with_the_mouse() {
+        let mut src = String::from("First paragraph alpha.\n\nSecond paragraph beta.\n\n[jump](#section-3)\n\n");
+        for i in 0..20 {
+            src.push_str(&format!("## Section {i}\n\n{}\n\n", "word ".repeat(30)));
+        }
+        let (mut s, path) = markdown_session("sel.md", &src, &[]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        run(&mut s, "markdown.set-mode", &[ScriptValue::Str("graphics".into())]).unwrap();
+        let left = MouseButton::Left;
+        let at =
+            |kind, (x, y): (i32, i32)| MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
+        // Where a word's box starts or ends, in the pane.
+        let spot = |s: &mut Session, word: &str, end: bool| {
+            let (p, page) = s.md_graphics(s.focus).unwrap();
+            let r = page.find(word)[0];
+            let x = if end { r.x1 - 1.0 } else { r.x0 + 1.0 };
+            (x as i32, ((r.y0 + r.y1) / 2.0 - p.scroll()) as i32)
+        };
+        let boxes = |s: &mut Session| s.frame().layers.iter().filter(|l| l.z == 1).count();
+        // A drag from "alpha" to the end of "beta": selected, and copied
+        // when released, a line a block.
+        let (a, b) = (spot(&mut s, "alpha", false), spot(&mut s, "beta", true));
+        s.mouse(&at(MouseEventKind::Press(left), a), Instant::now());
+        s.mouse(&at(MouseEventKind::Drag(left), b), Instant::now());
+        assert!(boxes(&mut s) >= 2, "the selection is shown");
+        assert!(copied(&mut s).is_empty(), "not copied before the release");
+        s.mouse(&at(MouseEventKind::Release(left), b), Instant::now());
+        assert_eq!(copied(&mut s), ["alpha.\nSecond paragraph beta"]);
+        let newest = match run(&mut s, "history", &[]).unwrap().0 {
+            ScriptValue::List(l) => l[0].clone(),
+            v => panic!("{v:?}"),
+        };
+        assert_eq!(newest.get("source").and_then(|x| x.get("kind")), Some(&ScriptValue::Str("markdown".into())));
+        assert_eq!(newest.get("kind"), Some(&ScriptValue::Str("char".into())));
+        assert!(s.notices.iter().any(|n| n.text == "Copied 28 characters"), "said so");
+        // `y` copies it again; `<Esc>` forgets it.
+        assert_eq!(run(&mut s, "markdown.copy", &[]).unwrap().0, ScriptValue::Bool(true));
+        assert_eq!(copied(&mut s), ["alpha.\nSecond paragraph beta"]);
+        assert_eq!(run(&mut s, "markdown.clear-selection", &[]).unwrap().0, ScriptValue::Bool(true));
+        assert_eq!(boxes(&mut s), 0);
+        assert_eq!(run(&mut s, "markdown.copy", &[]).unwrap().0, ScriptValue::Bool(false));
+        assert_eq!(run(&mut s, "markdown.clear-selection", &[]).unwrap().0, ScriptValue::Bool(false));
+        // A click on text selects nothing, copies nothing.
+        s.mouse(&at(MouseEventKind::Press(left), a), Instant::now());
+        s.mouse(&at(MouseEventKind::Release(left), a), Instant::now());
+        assert!(copied(&mut s).is_empty());
+        assert_eq!(boxes(&mut s), 0);
+        // A drag past the bottom edge scrolls on by itself, selecting on.
+        let t0 = Instant::now();
+        s.mouse(&at(MouseEventKind::Press(left), a), t0);
+        let bottom = (300, s.md_graphics(s.focus).unwrap().0.height as i32 - 2);
+        s.mouse(&at(MouseEventKind::Drag(left), bottom), t0);
+        assert!(s.is_animating());
+        let before = s.md_graphics(s.focus).unwrap().0.scroll();
+        for i in 1..=30 {
+            s.tick(t0 + Duration::from_millis(16 * i));
+        }
+        assert!(s.md_graphics(s.focus).unwrap().0.scroll() > before + 50.0, "scrolled");
+        s.mouse(&at(MouseEventKind::Release(left), bottom), t0 + Duration::from_millis(500));
+        assert!(!s.is_animating(), "it stops with the release");
+        let long = copied(&mut s);
+        assert!(long.len() == 1 && long[0].starts_with("alpha.\n") && long[0].contains("Section 0"), "{long:?}");
+        // A click on a link still follows it, selecting nothing.
+        {
+            let (p, page) = s.md_graphics(s.focus).unwrap();
+            p.scroll_to(page, 0.0);
+        }
+        let link = spot(&mut s, "jump", false);
+        s.mouse(&at(MouseEventKind::Press(left), link), Instant::now());
+        s.mouse(&at(MouseEventKind::Release(left), link), Instant::now());
+        assert!(copied(&mut s).is_empty());
+        assert!(s.md_graphics(s.focus).unwrap().0.scroll() > 0.0, "followed");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

@@ -184,6 +184,9 @@ impl Session {
             if let Some(t) = self.texts.get(&b) {
                 return Some(("edit", t.name.clone()));
             }
+            if let Some(d) = self.md_docs.get(&b) {
+                return Some(("markdown", d.name.clone()));
+            }
             self.docs.get(&b).map(|d| ("pdf", d.name.clone()))
         });
         match found {

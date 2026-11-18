@@ -1,6 +1,6 @@
 //! A graphics-mode pane: where it is scrolled to on its page, its zoom,
 //! its magnification (a pinch's: the page shown larger, laid out as it
-//! is), its search, and the frame it shows. The page it needs (its width and
+//! is), its search, its selection, and the frame it shows. The page it needs (its width and
 //! zoom) is the session's to keep, shared by panes that need the same.
 
 use std::time::Instant;
@@ -11,7 +11,7 @@ use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind, PinchPhase};
 use termpix_core::scroll::ScrollConfig;
 use termpix_core::viewport::{Input, Viewport};
 
-use crate::page::{BACKGROUND, Page, Rect, STRIP, StripJob, StripKey, TILE};
+use crate::page::{BACKGROUND, Caret, Page, PageId, Rect, STRIP, StripJob, StripKey, TILE};
 
 /// Placement keys of painted strips (the strip cache hands them out).
 pub const STRIP_LAYERS: std::ops::Range<u32> = 1..0x7000_0000;
@@ -19,6 +19,13 @@ pub const STRIP_LAYERS: std::ops::Range<u32> = 1..0x7000_0000;
 const PLACEHOLDER_LAYERS: u32 = 0x7000_0000;
 /// Placement keys of search marks (by hit).
 const MARK_LAYERS: u32 = 0x8000_0000;
+/// Placement keys of the selection's boxes (by box).
+const SELECTION_LAYERS: u32 = 0xC000_0000;
+/// The selection's colour over the page (as the PDF pane's).
+const SELECTION_COLOR: [u8; 4] = [70, 130, 255, 90];
+/// Pixels a second a drag past the pane's edge scrolls, per pixel past
+/// where the edge's zone begins (as the PDF pane's).
+const AUTOSCROLL_GAIN: f64 = 25.0;
 
 /// Zoom steps (`zoom-in`, `zoom-out`).
 pub const ZOOMS: &[f32] = &[0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
@@ -36,6 +43,17 @@ pub enum Request {
     Follow(String),
     /// Ctrl and the wheel: zoom this many steps (in when positive).
     Zoom(i32),
+    /// Text was selected (released, or copied again): its text.
+    Copy(String),
+}
+
+/// Text selected on a page, from `anchor` (where the drag began) to
+/// `head`; on a page laid out again it is gone (carets are the page's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Selection {
+    page: PageId,
+    anchor: Caret,
+    head: Caret,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -65,6 +83,20 @@ pub struct MdPane {
     hover: Option<String>,
     press: Option<(f64, f64)>,
     requests: Vec<Request>,
+    selection: Option<Selection>,
+    /// A drag is selecting.
+    selecting: bool,
+    /// The pointer during a selecting drag (pane pixels), for scrolling
+    /// past the edge.
+    pointer: (f64, f64),
+    /// Pixels a second the selecting drag scrolls (pointer past an edge),
+    /// and when it last did.
+    autoscroll: f64,
+    autoscroll_at: Option<Instant>,
+    /// The selection's boxes for the selection they are of.
+    selection_rects: Option<(Selection, Vec<Rect>)>,
+    /// Images of the selection's boxes by size.
+    selection_images: std::collections::HashMap<(u32, u32), ImageKey>,
     /// Images of the search's marks by size and whether current: as
     /// large as they are shown (terminals scale a stretched pixel each
     /// their own way).
@@ -91,6 +123,13 @@ impl MdPane {
             hover: None,
             press: None,
             requests: Vec::new(),
+            selection: None,
+            selecting: false,
+            pointer: (0.0, 0.0),
+            autoscroll: 0.0,
+            autoscroll_at: None,
+            selection_rects: None,
+            selection_images: Default::default(),
             marks: Default::default(),
             background: None,
             complete: false,
@@ -165,12 +204,62 @@ impl MdPane {
     }
 
     pub fn is_animating(&self) -> bool {
-        self.viewport.is_animating()
+        self.viewport.is_animating() || self.autoscroll != 0.0
     }
 
-    /// Advance the scrolling to `now`. Whether the pane moved.
-    pub fn tick(&mut self, now: Instant) -> bool {
-        self.viewport.tick(now)
+    /// Advance the scrolling to `now` (a selecting drag past the edge
+    /// scrolls `page` and selects on). Whether the pane moved.
+    pub fn tick(&mut self, page: Option<&Page>, now: Instant) -> bool {
+        let mut moved = self.viewport.tick(now);
+        if self.autoscroll != 0.0
+            && let Some(page) = page
+        {
+            let dt = self.autoscroll_at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f64());
+            self.autoscroll_at = Some(now);
+            self.clamp(page);
+            let before = self.viewport.y.offset();
+            self.viewport.y.jump_to(before + self.autoscroll * dt);
+            if self.viewport.y.offset() != before {
+                self.extend_selection(page);
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// The selection's head to the pointer.
+    fn extend_selection(&mut self, page: &Page) {
+        let (ox, oy) = self.viewport.offset();
+        let (x, y) = ((self.pointer.0 + ox) / self.magnify, (self.pointer.1 + oy) / self.magnify);
+        if let Some(sel) = self.selection.as_mut()
+            && sel.page == page.id
+            && let Some(head) = page.caret_at(x, y)
+        {
+            sel.head = head;
+        }
+    }
+
+    /// Whether some text is selected.
+    pub fn has_selection(&self) -> bool {
+        self.selection.is_some_and(|s| s.anchor != s.head)
+    }
+
+    /// Copy the selection again (`y`); whether there was one.
+    pub fn copy_selection(&mut self, page: &Page) -> bool {
+        match self.selection {
+            Some(s) if s.page == page.id && s.anchor != s.head => {
+                self.requests.push(Request::Copy(page.selection_text(s.anchor, s.head)));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Forget the selection (`<Esc>`); whether there was one.
+    pub fn clear_selection(&mut self) -> bool {
+        self.selecting = false;
+        self.autoscroll = 0.0;
+        self.selection.take().is_some()
     }
 
     /// The source line at the top of the pane (where it is going: a
@@ -219,8 +308,9 @@ impl MdPane {
     }
 
     /// A mouse event in pane pixels: the wheel scrolls (Ctrl asks to
-    /// zoom), a pinch magnifies, a click on a link asks to follow it.
-    /// Whether the pane changed.
+    /// zoom), a pinch magnifies, a click on a link asks to follow it, a
+    /// drag from text selects (past the top or bottom it scrolls) and its
+    /// release asks to copy. Whether the pane changed.
     pub fn mouse(&mut self, page: &Page, m: &MouseEvent, cell_h: u32, now: Instant) -> bool {
         let (ox, oy) = self.viewport.offset();
         let (x, y) = ((f64::from(m.x) + ox) / self.magnify, (f64::from(m.y) + oy) / self.magnify);
@@ -241,9 +331,28 @@ impl MdPane {
         match m.kind {
             MouseEventKind::Press(MouseButton::Left) => {
                 self.press = Some((x, y));
-                false
+                let had = self.clear_selection();
+                if page.link_at(x, y).is_none()
+                    && page.has_text_at(x, y)
+                    && let Some(at) = page.caret_at(x, y)
+                {
+                    self.selection = Some(Selection { page: page.id, anchor: at, head: at });
+                    self.selecting = true;
+                    self.pointer = (f64::from(m.x), f64::from(m.y));
+                }
+                had
             }
             MouseEventKind::Release(MouseButton::Left) => {
+                if std::mem::take(&mut self.selecting) {
+                    self.autoscroll = 0.0;
+                    self.press = None;
+                    if self.has_selection() {
+                        self.copy_selection(page);
+                    } else {
+                        self.selection = None;
+                    }
+                    return true;
+                }
                 if let Some((px, py)) = self.press.take()
                     && (px - x).abs() <= CLICK_SLOP
                     && (py - y).abs() <= CLICK_SLOP
@@ -253,6 +362,29 @@ impl MdPane {
                     return true;
                 }
                 false
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.selecting => {
+                self.pointer = (f64::from(m.x), f64::from(m.y));
+                // Past the zone along the top or bottom edge, it scrolls on
+                // by itself, the faster the further.
+                let zone = f64::from(cell_h.max(1)) * 1.5;
+                let py = f64::from(m.y);
+                let h = f64::from(self.height);
+                self.autoscroll = if py < zone {
+                    -(zone - py) * AUTOSCROLL_GAIN
+                } else if py > h - zone {
+                    (py - (h - zone)) * AUTOSCROLL_GAIN
+                } else {
+                    0.0
+                };
+                if self.autoscroll == 0.0 {
+                    self.autoscroll_at = None;
+                } else if self.autoscroll_at.is_none() {
+                    self.autoscroll_at = Some(now);
+                }
+                let before = self.selection;
+                self.extend_selection(page);
+                self.selection != before
             }
             MouseEventKind::Move | MouseEventKind::Drag(_) => {
                 let hover = page.link_at(x, y);
@@ -405,7 +537,48 @@ impl MdPane {
             let dst = SceneRect::new(r.x0.floor() as i32, (r.y0 - scroll).floor() as i32, w, h);
             layers.push(self.mark(i, dst, images));
         }
+        for (i, r) in self.selection_boxes(page).into_iter().enumerate() {
+            if r.y1 < scroll || r.y0 > scroll + f64::from(self.height) {
+                continue;
+            }
+            let (w, h) = ((r.x1 - r.x0).ceil().max(1.0) as u32, (r.y1 - r.y0).ceil().max(1.0) as u32);
+            let dst = SceneRect::new(r.x0.floor() as i32, (r.y0 - scroll).floor() as i32, w, h);
+            layers.push(self.selection_layer(i, dst, images));
+        }
         (Frame { layers, pointer: self.pointer(), ..Frame::default() }, work.into_sorted().collect())
+    }
+
+    /// The boxes (page pixels) of the selection, if it is of `page` (one
+    /// of a page laid out since is dropped).
+    fn selection_boxes(&mut self, page: &Page) -> Vec<Rect> {
+        let Some(sel) = self.selection else { return Vec::new() };
+        if sel.page != page.id {
+            self.clear_selection();
+            return Vec::new();
+        }
+        match &self.selection_rects {
+            Some((of, rects)) if *of == sel => rects.clone(),
+            _ => {
+                let rects = page.selection_rects(sel.anchor, sel.head);
+                self.selection_rects = Some((sel, rects.clone()));
+                rects
+            }
+        }
+    }
+
+    /// The selection's box `i` at `dst` (pane pixels).
+    fn selection_layer(&mut self, i: usize, dst: SceneRect, images: &mut Images) -> Layer {
+        let (w, h) = (dst.w, dst.h);
+        if self.selection_images.len() > 256 {
+            for (_, k) in self.selection_images.drain() {
+                images.remove(k);
+            }
+        }
+        let image = *self
+            .selection_images
+            .entry((w, h))
+            .or_insert_with(|| images.add(w, h, SELECTION_COLOR.repeat((w * h) as usize)));
+        Layer { key: SELECTION_LAYERS | i as u32, image, src: SceneRect::new(0, 0, w, h), dst, z: 1 }
     }
 
     /// Search hit `i`'s mark at `dst` (pane pixels).
@@ -528,6 +701,15 @@ impl MdPane {
             let dst = SceneRect::new(x0 as i32, y0 as i32, (x1 - x0).max(1.0) as u32, (y1 - y0).max(1.0) as u32);
             layers.push(self.mark(i, dst, images));
         }
+        for (i, r) in self.selection_boxes(page).into_iter().enumerate() {
+            let (y0, y1) = ((r.y0 * m - oy).floor(), (r.y1 * m - oy).ceil());
+            if y1 < 0.0 || y0 > f64::from(self.height) {
+                continue;
+            }
+            let (x0, x1) = ((r.x0 * m - ox).floor(), (r.x1 * m - ox).ceil());
+            let dst = SceneRect::new(x0 as i32, y0 as i32, (x1 - x0).max(1.0) as u32, (y1 - y0).max(1.0) as u32);
+            layers.push(self.selection_layer(i, dst, images));
+        }
         (Frame { layers, pointer: self.pointer(), ..Frame::default() }, work.into_sorted().collect())
     }
 
@@ -544,7 +726,7 @@ impl MdPane {
 
     /// The pane's own images leave the store.
     pub fn release(&mut self, images: &mut Images) {
-        for (_, k) in self.marks.drain() {
+        for k in self.marks.drain().map(|(_, k)| k).chain(self.selection_images.drain().map(|(_, k)| k)) {
             images.remove(k);
         }
         if let Some((k, _)) = self.background.take() {

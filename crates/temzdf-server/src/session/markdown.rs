@@ -151,6 +151,16 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
         "Graphics mode: the next match of the search (dir < 0: the one before), around the ends. Whether there was one",
     ),
     (
+        "markdown.copy",
+        "(pane?: number): boolean",
+        "Graphics mode: copy the selected text again (into the copy history and, as `o.clipboard` says, the clipboard; releasing a drag copies it). Whether some was selected",
+    ),
+    (
+        "markdown.clear-selection",
+        "(pane?: number): boolean",
+        "Graphics mode: forget the selected text. Whether some was selected",
+    ),
+    (
         "markdown.load-remote-images",
         "(pane?: number): number",
         "Fetch the http(s) images of the Markdown file a viewer shows (only local images are read otherwise), in the background; each shows as it arrives. Returns how many it fetches",
@@ -229,6 +239,15 @@ impl Session {
             "markdown.mode" => {
                 let pane = pane_opt(0);
                 Ok((self.md_mode(pane).map_or(ScriptValue::Null, |m| ScriptValue::Str(m.into())), Outcome::None))
+            }
+            "markdown.copy" | "markdown.clear-selection" => {
+                let pane = pane_opt(0);
+                let Some((p, page)) = self.md_graphics(pane) else {
+                    return Some(Err(format!("{name}: not a Markdown viewer in its graphics mode")));
+                };
+                let had = if name == "markdown.copy" { p.copy_selection(page) } else { p.clear_selection() };
+                let out = self.md_requests(pane);
+                Ok((ScriptValue::Bool(had), out.merge(Outcome::Redraw)))
             }
             "markdown.scroll"
             | "markdown.page"
@@ -414,6 +433,44 @@ impl Session {
                 pane.show_line(page, line);
             }
         }
+    }
+
+    /// Carry out what graphics-mode pane `pane` asked for: follow a link,
+    /// zoom, copy its selection.
+    pub(super) fn md_requests(&mut self, pane: PaneId) -> Outcome {
+        let (requests, doc) = match self.panes.get_mut(&pane).map(|e| &mut e.kind) {
+            Some(Kind::Markdown { pane: p, doc }) => (p.take_requests(), *doc),
+            _ => return Outcome::None,
+        };
+        let mut out = Outcome::None;
+        for r in requests {
+            let done = match r {
+                temzdf_mdview::Request::Follow(target) => self.md_follow(pane, &target),
+                temzdf_mdview::Request::Zoom(n) => {
+                    (0..n.unsigned_abs()).try_for_each(|_| self.md_zoom(pane, n.signum()))
+                }
+                temzdf_mdview::Request::Copy(text) => {
+                    let n = text.chars().count();
+                    let source = self.copy_source(Some(doc));
+                    self.record_copy(super::registers::NewCopy {
+                        text,
+                        kind: temzdf_scene::CopyKind::Char,
+                        how: super::registers::How::Copy,
+                        register: None,
+                        append: false,
+                        clipboard: None,
+                        source,
+                    });
+                    self.notify(super::notices::Kind::Info, &format!("Copied {n} characters"));
+                    Ok(())
+                }
+            };
+            if let Err(e) = done {
+                self.notify(super::notices::Kind::Error, &e);
+            }
+            out = Outcome::Redraw;
+        }
+        out
     }
 
     /// Graphics pane `id` and its page (laid out if it was not).

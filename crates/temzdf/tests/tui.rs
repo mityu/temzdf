@@ -2088,6 +2088,28 @@ fn the_markdown_viewers_graphics_mode_is_pixels_or_says_why_not() {
 }
 
 #[test]
+fn a_drag_in_the_markdown_graphics_mode_copies_its_text() {
+    let env = Env::new("markdown-select");
+    let file = env.path("doc.md");
+    // Paragraphs of words all down the page: a press anywhere left lands
+    // on text.
+    let para: Vec<String> = (0..40).map(|i| format!("word{i}")).collect();
+    std::fs::write(&file, format!("{}\n\n", para.join(" ")).repeat(8)).unwrap();
+    env.config("config.ts", &markdown_config(&file));
+    let mut t = Term::spawn(&[BIN, "-s", "ms", file.to_str().unwrap()], &env.options());
+    t.wait_text("word0 word1");
+    t.key("F5");
+    t.wait_text("word0 word1");
+    t.key("Tab");
+    t.wait_for("the page", |s| !s.images.is_empty() && s.text().contains("markdown"));
+    t.drag((10, 4), (60, 7));
+    assert_eq!(copies(&mut t, 1).len(), 1, "to the clipboard");
+    let copied = t.copied()[0].clone();
+    assert!(copied.contains("word") && copied.len() > 20, "{copied:?}");
+    assert_eq!(env.run(&["paste", "-s", "ms"]), copied);
+}
+
+#[test]
 fn a_text_file_is_edited_without_modes_and_written() {
     let env = Env::new("text-edit");
     env.config("config.ts", NOTEPAD);

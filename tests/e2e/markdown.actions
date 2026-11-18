@@ -1,7 +1,8 @@
 # The Markdown viewer (doc/design/markdown-viewer.md): the text mode (a
 # text pane: wrapped paragraphs, the table's borders, math as text by
 # libtexprintf, the SVG image below its line), the graphics mode (Blitz:
-# strips of the page as images), a search marked there, zoom, and back.
+# strips of the page as images), text selected there with the mouse, a
+# search marked there, zoom, and back.
 # Used with:
 #   mkdir -p target/e2e-markdown && cp tests/fixtures/sample.md tests/fixtures/sample-figure.svg target/e2e-markdown/
 #   scripts/e2e.sh -o target/e2e-markdown tests/e2e/markdown.actions -- sh -c \
@@ -13,6 +14,8 @@
 #                 double rule, the paragraph wrapped, the list's bullets
 #   graphics.png  the same document as a GitHub-like page in pixels,
 #                 "markdown" in the status line
+#   selected.png  the paragraph's first line, from "paragraph" into
+#                 "strikethrough", selected in blue; "Copied N characters"
 #   search.png    "Tables" searched: the page scrolled to it, the match
 #                 marked in orange, "[1/2]" in the status line
 #   zoom.png      the page larger (zoomed in twice)
@@ -25,6 +28,13 @@ expect text
 keys Tab
 pause 1.5
 expect graphics
+dragto 50 93 530 93 5
+pause 0.5
+expect selected
+keys Escape
+# Until the "Copied" notice is gone (3 s): a notice fading between the
+# screen and the session's frame would fail the next judgement.
+pause 3
 type "/Tables"
 keys Return
 pause 1

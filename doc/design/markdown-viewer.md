@@ -34,8 +34,8 @@ place of a Markdown preview on a webview: `doc/survey/markdown-viewer.md`,
 - Links: URLs go to the link opener, `#anchor` to the heading in the
   document, other `.md` and `.pdf` files open in the same pane with a
   history to go back.
-- The graphics mode's first version has search, an outline and zoom; no
-  dark style yet, and no text selection.
+- The graphics mode's first version has search, an outline and zoom,
+  and since 2026-11-18 text selected with the mouse; no dark style yet.
 
 ## The document (`crates/temzdf-markdown`)
 
@@ -117,6 +117,21 @@ would fail the link rather than go unnoticed.
   their parley layouts (`Selection::geometry`), placed at the content box.
   Marks are images of their own size (a stretched pixel looked different
   in kitty and WezTerm).
+- Selection, as the PDF pane's: a drag from text selects (a press on a
+  link still follows it), past the pane's top or bottom it scrolls on,
+  the release copies (into the copy history as characters, source
+  `markdown`; `y` copies again, `<Esc>` forgets it). Its ends are carets
+  of the page: an inline root, by reading order (the layout tree walked
+  depth first, anonymous blocks of text included), and a byte offset in
+  its text, from Blitz's `find_text_position`; over a margin, the
+  nearest root above or below, the point moved into it. Its boxes come
+  from each root's part, as search hits do, drawn as images over the
+  strips. Blitz's own selection (`set_text_selection`) is not used:
+  `blitz_paint` paints it into the page, so the cached strips would be
+  painted again at every change. The text joins blocks with a line feed
+  (Blitz's `get_selected_text` joins them with a space). A page laid out
+  again (zoom, resize, reload) drops the selection, as a PDF's reload
+  does.
 - Zoom lays the page out again at Blitz's zoom (0.5 to 3, in steps;
   keys, or Ctrl and the wheel); switching modes, zooming, resizing and
   reloading keep the source line at the top (the one the pane is
