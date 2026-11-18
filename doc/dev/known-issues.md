@@ -68,8 +68,32 @@ planned work stays in `todo.md`.
   (wasmtime's `max_wasm_stack`, 512 KiB by default: probably the limit hit,
   not checked). A larger `Config::max_wasm_stack`
   (`crates/temzdf-script-runner/src/engine_config.rs`, with a thread stack
-  to match) only moves the depth; a catchable error needs a check of our
-  own, e.g. a patched QuickJS, or a depth count in the host's call path.
+  to match) only moves the depth.
+
+  Why QuickJS turned the check off for WASI: no reason is recorded. It came
+  with quickjs-ng's "Add WASI support" (`fb03ca2`, PR #264, 2024-02),
+  neither its message nor the PR mentioning the stack. Probably the limit
+  underflowed: the default WASI linker stack (64 KiB in wasm-ld, from
+  memory) is smaller than the 1 MiB limit, so "stack top minus limit" goes
+  below address 0 (inferred). quickjs-ng PR #1700 (`a2563ad`, merged
+  2026-09-16, in v0.17.0) turned it back on: the 1 MiB default on WASI,
+  `JS_SetMaxStackSize` effective, the check off only where the limit would
+  underflow the stack top, a 2 MiB stack in its own CMake build, and a test
+  that an overflow is caught and the runtime goes on. `rquickjs-sys` 0.14.0
+  (the newest) still bundles 0.16.2.
+
+  Even with it, the two stacks are independent, which the PR's test says
+  itself ("Use a large interpreter frame so QuickJS's linear-memory stack
+  guard trips before Wasmtime's independent WebAssembly call stack is
+  exhausted": a function of 1024 arguments). How much of each stack a call
+  takes depends on the code (interpreted functions, native code recursing
+  as in `JSON.stringify`, proxies and getters between them), so no limit
+  makes QuickJS's check always come first; our guest also has Rust's 1 MiB
+  wasm stack, equal to the default limit, so the check would probably stay
+  off unless the limit is set lower (inferred). Tuning the limits is only
+  a best effort. The more robust direction: tell a `call stack exhausted`
+  trap apart, restart the host on its own and say which call recursed too
+  deep, instead of leaving the mappings off until `<C-b>r`.
 - **An interrupted task may not report that it ended (part of SCR-4).** When
   the host interrupts a script (past `UNATTENDED_LIMIT`, or on the session's
   interrupt), QuickJS's interrupt is uncatchable: `finally` blocks and promise
