@@ -3,9 +3,10 @@
 Panes whose content a script builds: lists, trees, forms, dashboards, a
 help or picker UI. Discussed with the user on 2026-11-06. **Nothing is
 built yet**; this records the direction agreed so far and the questions
-left open. The research behind it is in `doc/survey/text-editor.md`
-(section 4, "The editor buffer as a base for script-made panes"), and the
-scripting model it plugs into is `doc/design/scripting.md`.
+left open. The research behind it is in `doc/survey/tui-renderers.md`
+(renderers and prior art) and `doc/survey/text-editor.md` (section 4,
+"The editor buffer as a base for script-made panes"), and the scripting
+model it plugs into is `doc/design/scripting.md`.
 
 ## The idea
 
@@ -97,53 +98,20 @@ Common rules:
 
 ## Existing libraries
 
-**For the API shape** (borrowed, not linked):
+The comparison is in `doc/survey/tui-renderers.md`. Decided:
 
-| Library | What is taken |
-|---|---|
-| ratatui | `Text` / `Line` / `Span` with a `Style` for the content layer |
-| Emacs text properties | properties over ranges: face, keymap, read-only, field |
-| FTXUI | the small layout vocabulary: `text`, `hbox`, `vbox`, `border`, `flex`, `frame` |
-| Neovim | text and decorations kept apart (lines and extmarks), for the editor-like case |
-| Lip Gloss | a warning: joining styled strings loses keys and hit testing |
-| Ink, Textual | not taken: flexbox or CSS is more than one pane needs |
-
-**As the rendering engine**: not reused. ratatui (`ratatui-core`'s
-`Buffer` and widgets) could draw the cells, but:
-
-- wrapping and widgets lose which span went to which cell, and the server
-  needs that reverse map for clicks, actions, the cursor on a key and
-  editable regions;
-- it measures width with `unicode-width`, while terminal panes measure
-  with libghostty; two rules for wide characters and emoji would show as
-  misaligned cells;
-- it is immediate mode, so scroll, focus and edit state are ours anyway.
-
-What remains would be a few widgets' drawing, not worth the dependency.
-The renderer is our own, with the reverse map and the same width rule as
-terminal panes from the start.
-
-**For updates**:
-
-- The server-side diff of keyed blocks is a map lookup plus comparing
-  matched blocks: small, our own. For unkeyed lines, `similar` (Myers)
-  could be used.
-- On the script side, a framework could sit on top and produce the
-  patches, if plain `render(state)` with `ui.*` builders becomes painful:
-  Preact with a minimal fake DOM (small; DOM operations become patches),
-  Vue's `createRenderer`, or Solid's universal renderer (fine-grained,
-  maps directly onto patches, but normally needs its JSX compiler; check
-  whether it is usable without). React with `react-reconciler` (Ink's
-  way) is too heavy and Node-bound. Any of them needs:
-  - JSX support, or `h()` calls, since the TypeScript stripping
-    (`swc_ts_fast_strip`) does not transform JSX;
-  - bundling into the script host, as config files cannot import npm
-    packages; fetched and pinned through Nix and embedded at build time,
-    never committed as built JavaScript;
-  - keeping it working on QuickJS across versions.
-  All of these are MIT. The protocol stays independent of any framework.
-- Ideas, not libraries: Phoenix LiveView (state on the server side,
-  re-render and send diffs), the Elm architecture (state, update, view).
+- **API shape** borrowed, not linked: ratatui's `Text` / `Line` / `Span`
+  for content, Emacs text properties for ranges, FTXUI's small layout
+  vocabulary, Neovim's split of text and decorations. Not flexbox or CSS
+  (Ink, Textual): more than one pane needs.
+- **Rendering engine**: our own, not ratatui's `Buffer` and widgets. They
+  lose which span went to which cell (the reverse map clicks, actions,
+  the cursor on a key and editable regions need), measure width with
+  another rule than terminal panes, and leave scroll, focus and edit
+  state to us anyway.
+- **Updates**: the keyed-block diff is ours. A script-side framework
+  (Preact, Vue's `createRenderer`, Solid's universal renderer) may sit on
+  top later; the protocol stays independent of any.
 
 ## First version (proposed)
 
@@ -167,3 +135,8 @@ terminal panes from the start.
    converges later.
 4. Whether to prototype Preact and Solid on QuickJS without a compiler
    before committing to the `ui.*` builders' shape.
+5. **Images beside text** (2026-11-19): decorations show images inline
+   (one row), in place of a concealed range, or as rows of their own; an
+   image several rows high next to text needs an overlay image spanning
+   rows (cost in `doc/survey/tui-renderers.md`, "Images"). Not built until
+   a pane needs it; the first panes show images in rows of their own.

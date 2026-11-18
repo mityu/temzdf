@@ -114,6 +114,10 @@ branch. The decisions taken from it are in the design documents.
   and Node APIs for the script host: rquickjs crates (`llrt_modules`,
   `wasm-rquickjs`, ...), JavaScript polyfills, what the WASI sandbox
   rules out.
+- [survey/tui-renderers.md](survey/tui-renderers.md): renderers for
+  script-made TUI panes (Ink, OpenTUI, Silvery, ratatui, termwiz,
+  iocraft, ...): getting cells and colours out, images, why temzdf draws
+  them itself.
 - [survey/terminal-queries.md](survey/terminal-queries.md): the queries
   Vim's `term.c` sends to learn about the terminal (ambiguous width,
   colours, DA2, garbage detection) and which would help temzdf.
