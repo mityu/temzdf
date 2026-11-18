@@ -5,10 +5,12 @@ edition = "2024"
 
 # A: the real script host over pipes (this binary re-executed as `host`);
 # B: rquickjs in this process; C: QuickJS in wasmtime (guest/), compiled
-# by Cranelift; D: the same on wasmtime's Pulley interpreter.
+# by Cranelift; D: the same on wasmtime's Pulley interpreter; E: boa
+# (a JavaScript engine in Rust) in this process.
 [dependencies]
 temzdf-protocol = { path = "../../crates/temzdf-protocol" }
 temzdf-script = { path = "../../crates/temzdf-script" }
+boa_engine = { version = "0.22.0", default-features = false }
 rquickjs = "0.14.0"
 serde_json = "1.0.149"
 wasmtime = { version = "50.0.0", default-features = false, features = ["cranelift", "pulley", "runtime", "std"] }

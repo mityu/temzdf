@@ -107,8 +107,9 @@ branch. The decisions taken from it are in the design documents.
   grammars, the editor buffer as a base for script-made panes.
 - [survey/script-host-transport.md](survey/script-host-transport.md):
   round trips between scripts and the server, measured for the script host
-  over pipes, rquickjs in process and QuickJS in wasmtime, also on one core
-  and under a CPU quota (`experiments/script-host-bench/`).
+  over pipes, rquickjs in process, QuickJS in wasmtime and boa, also on one
+  core and under a CPU quota (`experiments/script-host-bench/`); boa
+  compared with QuickJS in wasmtime for size and containment.
 - [survey/terminal-queries.md](survey/terminal-queries.md): the queries
   Vim's `term.c` sends to learn about the terminal (ambiguous width,
   colours, DA2, garbage detection) and which would help temzdf.

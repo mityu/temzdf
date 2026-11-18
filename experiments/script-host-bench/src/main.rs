@@ -11,12 +11,14 @@
 //!   process, `__host.request` a host import doing the same work, epoch
 //!   interruption on;
 //! - D: as C, but on wasmtime's Pulley interpreter instead of Cranelift's
-//!   machine code (the guest compiled to Pulley bytecode, then interpreted).
+//!   machine code (the guest compiled to Pulley bytecode, then interpreted);
+//! - E: boa (a JavaScript engine written in Rust) in this process,
+//!   `__host.request` a native function as in B.
 //!
 //! One "key" is a call of the mapped function issuing `k` commands, timed
 //! from the call to its end.
 //!
-//!   script-host-bench run --guest GUEST.wasm --label LABEL [--keys N] [--forms abcd]
+//!   script-host-bench run --guest GUEST.wasm --label LABEL [--keys N] [--forms abcde]
 //!   script-host-bench host          (form A's child: the script host)
 //!
 //! Output: CSV lines `label,form,what,k,n,p50_us,p90_us,p99_us,max_us,mean_us`.
@@ -41,7 +43,7 @@ fn main() {
             let guest = opt("--guest").expect("--guest GUEST.wasm");
             let label = opt("--label").unwrap_or_else(|| "none".into());
             let keys: usize = opt("--keys").map_or(2000, |s| s.parse().unwrap());
-            let forms = opt("--forms").unwrap_or_else(|| "abcd".into());
+            let forms = opt("--forms").unwrap_or_else(|| "abcde".into());
             if forms.contains('a') {
                 form_a(&label, keys);
             }
@@ -54,9 +56,12 @@ fn main() {
             if forms.contains('d') {
                 form_c(&label, keys, &guest, true);
             }
+            if forms.contains('e') {
+                form_e(&label, keys);
+            }
         }
         _ => {
-            eprintln!("usage: script-host-bench run --guest GUEST.wasm --label LABEL [--keys N] [--forms abcd]");
+            eprintln!("usage: script-host-bench run --guest GUEST.wasm --label LABEL [--keys N] [--forms abcde]");
             std::process::exit(2);
         }
     }
@@ -127,7 +132,10 @@ fn command_specs() -> Vec<CommandSpec> {
             names.push(kebab);
         }
     }
-    names.into_iter().map(|name| CommandSpec { name, doc: String::new(), ts: "(...args: unknown[]): unknown".into() }).collect()
+    names
+        .into_iter()
+        .map(|name| CommandSpec { name, doc: String::new(), ts: "(...args: unknown[]): unknown".into() })
+        .collect()
 }
 
 fn form_a(label: &str, keys: usize) {
@@ -360,4 +368,53 @@ fn form_c(label: &str, keys: usize, guest: &str, pulley: bool) {
         .collect();
     report(label, form, "compute1e6", 0, &mut samples);
     stop.store(true, Ordering::Relaxed);
+}
+
+// --- E: boa in process ---------------------------------------------------
+
+fn form_e(label: &str, keys: usize) {
+    use boa_engine::object::ObjectInitializer;
+    use boa_engine::property::Attribute;
+    use boa_engine::{Context, JsResult, JsString, JsValue, NativeFunction, Source, js_string};
+
+    fn arg(args: &[JsValue], i: usize, ctx: &mut Context) -> JsResult<String> {
+        Ok(args.get(i).cloned().unwrap_or_default().to_string(ctx)?.to_std_string_escaped())
+    }
+    fn current(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+        Ok(js_string!(r#"{"Call":1}"#).into())
+    }
+    fn request(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+        let (t, o, p) = (arg(args, 0, ctx)?, arg(args, 1, ctx)?, arg(args, 2, ctx)?);
+        SERVED.fetch_add(1, Ordering::Relaxed);
+        Ok(JsString::from(serve_json(&t, &o, &p).as_str()).into())
+    }
+
+    let start = Instant::now();
+    let mut ctx = Context::default();
+    let host = ObjectInitializer::new(&mut ctx)
+        .function(NativeFunction::from_fn_ptr(current), js_string!("current"), 0)
+        .function(NativeFunction::from_fn_ptr(request), js_string!("request"), 3)
+        .build();
+    ctx.register_global_property(js_string!("__host"), host, Attribute::all()).unwrap();
+    ctx.eval(Source::from_bytes(include_str!("../bench.js"))).unwrap();
+    let global = ctx.global_object();
+    let mapped = global.get(js_string!("mapped"), &mut ctx).unwrap().as_callable().unwrap();
+    let compute = global.get(js_string!("compute"), &mut ctx).unwrap().as_callable().unwrap();
+    report(label, "E", "startup", 0, &mut [micros(start.elapsed())]);
+
+    keys_loop(label, "E", keys, |k| {
+        let before = SERVED.load(Ordering::Relaxed);
+        let a: JsValue = JsString::from(format!("[{{\"k\":{k}}}]").as_str()).into();
+        mapped.call(&JsValue::undefined(), &[a], &mut ctx).unwrap();
+        assert_eq!(SERVED.load(Ordering::Relaxed) - before, k as u64);
+    });
+
+    let mut samples: Vec<f64> = (0..5)
+        .map(|_| {
+            let t = Instant::now();
+            compute.call(&JsValue::undefined(), &[JsValue::from(1_000_000)], &mut ctx).unwrap();
+            micros(t.elapsed())
+        })
+        .collect();
+    report(label, "E", "compute1e6", 0, &mut samples);
 }

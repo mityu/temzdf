@@ -54,6 +54,22 @@ planned work stays in `todo.md`.
 
 ## Script host
 
+- **A recursion a few hundred calls deep ends the host.** Found on
+  2026-11-18 (`doc/survey/script-host-transport.md`, "boa instead of
+  QuickJS"): `function g(n){return n?g(n-1)+1:0}` ran at depth 400 and
+  trapped at 700 (`wasm trap: call stack exhausted`), even inside
+  `try`/`catch`. The host ends and the session's mappings are off until
+  `<C-b>r`. QuickJS (quickjs-ng 0.16.2, from `rquickjs-sys` 0.14.0)
+  checks its stack against a limit (1 MiB by default, which throws a
+  catchable `RangeError`), but not when built for WASI: `JS_NewRuntime2`
+  sets the size to 0 and `update_stack_limit` ignores it under `__wasi__`,
+  so `JS_SetMaxStackSize` does nothing there. Its check measures the C
+  stack in linear memory, not the wasm call stack that runs out here
+  (wasmtime's `max_wasm_stack`, 512 KiB by default: probably the limit hit,
+  not checked). A larger `Config::max_wasm_stack`
+  (`crates/temzdf-script-runner/src/engine_config.rs`, with a thread stack
+  to match) only moves the depth; a catchable error needs a check of our
+  own, e.g. a patched QuickJS, or a depth count in the host's call path.
 - **An interrupted task may not report that it ended (part of SCR-4).** When
   the host interrupts a script (past `UNATTENDED_LIMIT`, or on the session's
   interrupt), QuickJS's interrupt is uncatchable: `finally` blocks and promise

@@ -1,4 +1,4 @@
-# Script host round trips: three forms measured
+# Script host round trips: the forms measured
 
 Measured 2026-11-07 for the text editor framework
 (`doc/design/text-editor.md`), where editors are scripts and one key can
@@ -170,6 +170,106 @@ Sizes (stripped release builds): the guest is 4.6 MB of WebAssembly
 13.7 MB precompiled, most of it swc; swc native was about 7.7 MB. The user
 kept swc inside the guest (everything sandboxed) over moving it to the
 server (about 2.5 MB smaller).
+
+## boa instead of QuickJS (added 2026-11-18)
+
+Question: how does [boa](https://github.com/boa-dev/boa) (a JavaScript
+engine written in Rust, 0.22.0, without its default features) compare with
+the host as built (C, QuickJS in wasmtime)? Speed, binary size, what each
+contains, and what would be lost or gained.
+
+### Speed
+
+Form **E**: boa in the bench's process, `__host` as native functions, the
+same `bench.js` (`--forms bcde`; form A no longer starts, as its command
+list misses commands the shipped modules now use). Median per key in µs
+(p99), no limit; one P-core gave the same within a few percent:
+
+| Form | k = 1 | k = 10 | k = 50 | 10⁶-loop JS |
+|---|---|---|---|---|
+| B (QuickJS native) | 3.7 (4.7) | 20.7 (23.9) | 101 (105) | 24 ms |
+| C (QuickJS in wasmtime) | 5.5 (6.3) | 46 (49) | 228 (244) | 54 ms |
+| E (boa native) | 12.9 (16.7) | 94 (636) | 452 (1015) | 44-48 ms |
+
+- A command costs about **9 µs in boa against 4.5 µs in C**: still under
+  half a millisecond for a key issuing 50 commands. Part of it may be the
+  JSON both ways (as `prelude.js` does), which boa could avoid by passing
+  values.
+- boa pauses for about 0.6 ms now and then (the p99), probably its garbage
+  collector.
+- The one plain-JavaScript loop ran slightly faster in boa than in C; one
+  loop says little about JavaScript at large.
+- Startup (creating the context, evaluating `bench.js`): 0.57 ms, as C.
+
+### Size
+
+Stripped release binaries, each engine alone (scratch probes, not kept):
+
+| | Adds |
+|---|---|
+| C: wasmtime's runtime and WASI (2.9 MB) and the precompiled guest (13.9 MB, QuickJS, swc, the host) | about 17 MB |
+| boa (11.3 MB; 12.6 MB with its default features, Temporal among them) and swc native (7.9 MB) | about 20 MB |
+| for reference, QuickJS and swc native | about 9 MB |
+
+### Containment
+
+Hostile scripts, boa in a process of its own under a 1 GiB cgroup memory
+limit, and C through scratch tests in
+`crates/temzdf-script-runner/tests/guest.rs` (removed afterwards):
+
+| Script | boa, in process | C |
+|---|---|---|
+| `function f(){return f()+1} f()` | an error for the embedder (`RuntimeLimitError`, recursion limit 512), which `try`/`catch` cannot catch (an engine error); the context goes on | trap, the host ends (see below) |
+| `JSON.stringify` or `String()` of an array nested 200 000 deep | **Rust stack overflow: the process aborts** | trap, the host ends, the server goes on |
+| `eval("(".repeat(100000) + …)` (parser recursion) | **the process aborts** | trap |
+| memory growing without end | no heap limit: **the process is killed** (OOM) | trap at the 1 GiB cap (existing test) |
+| `for (;;) {}` | see below | stopped by `ScriptHost::stop` or an interrupt (existing tests) |
+| catastrophic regular expression backtracking | never stops (cut at 20 s) | `stop` should end it (an epoch check in any loop of the guest; not tried) |
+
+- boa is Rust but not all safe Rust: `unsafe` appears 409 times in
+  `boa_engine` and 183 in `boa_gc`; a bug there corrupts the server's
+  memory. A panic can be caught (`catch_unwind`), but nothing promises the
+  `Context` is sound afterwards.
+- **Stopping running code.** boa has no interrupt handler (QuickJS's
+  `set_interrupt_handler`) and no memory limit; its `RuntimeLimits` count
+  loop iterations, recursion and stack length. `JobExecutor` decides when
+  promise jobs run, between jobs only. What can stop code from outside is
+  `Script::evaluate_async_with_budget`: it yields every so many instruction
+  "cycles", and dropping the future ends the run. Tried with a hand-driven
+  future given up after 300 ms: a loop at the top level and one in a
+  JavaScript function stopped, and the context evaluated further code
+  normally afterwards; a loop in a callback native code calls
+  (`[1].forEach(() => { for (;;) {} })`) never yielded. Only script
+  evaluation has the budget: calling a function (`JsObject::call`), as the
+  session does for every mapping and hook, runs to the end. Long native
+  work (regular expressions, `JSON.stringify`) does not yield either, and
+  what dropping the future mid-run leaves behind is not documented.
+
+### What would change
+
+Lost with boa in the server's process: containment (a stack overflow,
+running out of memory or an engine bug takes the session, with its
+terminals, down), the memory cap, stopping mapped functions and hooks
+(`<C-c>`, `ScriptHost::stop`), and about half the command throughput.
+
+Gained: no C and no WebAssembly toolchain (the `wasm32-wasip1` target, the
+WASI clang, the nested cargo build in `build.rs`, precompiling with
+Cranelift, keeping wasmtime's versions in step), plain recursion ending
+only the call that recursed (C's host ends, see below; boa's error is not
+catchable from JavaScript either), values passed without
+JSON, Temporal, and Intl behind a feature (test262: 95.6% for 0.22.0, by
+its release notes).
+
+Not tried: boa compiled to `wasm32-wasip1` and run in wasmtime as the guest
+is now. Being Rust only, it needs no WASI C compiler; it would keep
+containment and lose more speed.
+
+### A finding on C: shallow recursion ends the host
+
+In the same scratch tests, a JavaScript recursion 400 deep ran and one 700
+deep trapped (`wasm trap: call stack exhausted`), inside `try`/`catch` too:
+the host ends and the session's mappings are off until `<C-b>r`. Recorded
+in `doc/dev/known-issues.md`.
 
 ## Reading
 
