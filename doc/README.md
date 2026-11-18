@@ -118,6 +118,10 @@ branch. The decisions taken from it are in the design documents.
   script-made TUI panes (Ink, OpenTUI, Silvery, ratatui, termwiz,
   iocraft, ...): getting cells and colours out, images, why temzdf draws
   them itself.
+- [survey/plugin-rpc.md](survey/plugin-rpc.md): RPC for plugins in
+  other runtimes (Neovim's msgpack-rpc, denops, LSP, Cap'n Proto and
+  Cap'n Web, VS Code's extension host, Erlang): closures by id or
+  reference, a peer that dies or hangs.
 - [survey/terminal-queries.md](survey/terminal-queries.md): the queries
   Vim's `term.c` sends to learn about the terminal (ambiguous width,
   colours, DA2, garbage detection) and which would help temzdf.
