@@ -5375,6 +5375,35 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "the file system, Blitz, RaTeX")]
+    fn fetched_images_lay_the_markdown_page_out_again_from_the_same_html() {
+        let mut src = String::from("Some $x^2 + y^2$ math.\n\n");
+        for i in 0..3 {
+            src.push_str(&format!("![image {i}](http://127.0.0.1:9/{i}.png)\n\n"));
+        }
+        let (mut s, path) = markdown_session("f.md", &src, &[]);
+        let png = path.parent().unwrap().join("p.png");
+        write_png(&png, 30, 20);
+        let bytes = std::fs::read(&png).unwrap();
+        s.run_command("markdown.set-mode", &[ScriptValue::Str("graphics".into())], Instant::now()).unwrap();
+        let md = *s.md_docs.keys().next().unwrap();
+        assert_eq!((s.md_docs[&md].bodies, s.md_docs[&md].layouts), (1, 1));
+        for i in 0..3 {
+            s.md_image_fetched(md, format!("http://127.0.0.1:9/{i}.png"), Ok(bytes.clone()));
+        }
+        // Laid out again for each, the HTML (and its math) made once.
+        assert_eq!((s.md_docs[&md].bodies, s.md_docs[&md].layouts), (1, 4));
+        assert_eq!(s.md_docs[&md].pages.len(), 1, "the old pages went");
+        // A changed file makes it again.
+        std::fs::write(&path, format!("{src}More.\n")).unwrap();
+        let later = std::time::SystemTime::now() + Duration::from_secs(5);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+        s.md_file_changed(md);
+        assert_eq!(s.md_docs[&md].bodies, 2);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore = "the file system, Blitz")]
     fn a_pinch_magnifies_the_markdown_page_without_laying_it_out_again() {
         use termpix_core::input::{PinchPhase, ScrollPhase, ScrollUnit};

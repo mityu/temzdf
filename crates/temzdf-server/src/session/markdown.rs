@@ -41,8 +41,12 @@ pub(super) struct MdDoc {
     /// Remote images fetched (`markdown.loadRemoteImages`), for the
     /// graphics mode's pages.
     fetched: std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
-    /// The graphics mode's HTML (made when a page first needs it).
+    /// The graphics mode's HTML (made when a page first needs it, again
+    /// only when the source changed: fetched images reach pages apart).
     body: Option<String>,
+    /// HTML bodies made so far (for tests).
+    #[cfg(test)]
+    pub bodies: usize,
     /// The graphics mode laid out for each width and zoom panes have.
     pub pages: Vec<temzdf_mdview::Page>,
     /// Pages laid out so far (for tests).
@@ -65,7 +69,13 @@ impl MdDoc {
         if let Some(i) = self.pages.iter().position(|p| (p.width, p.zoom) == key) {
             return self.pages.get_mut(i);
         }
-        let body = self.body.get_or_insert_with(|| temzdf_markdown::html::body(&self.doc, &temzdf_mdview::math::svg));
+        let body = self.body.get_or_insert_with(|| {
+            #[cfg(test)]
+            {
+                self.bodies += 1;
+            }
+            temzdf_markdown::html::body(&self.doc, &temzdf_mdview::math::svg)
+        });
         let dir = self.path.parent().unwrap_or(Path::new("/"));
         let fetched: temzdf_mdview::Fetched = std::sync::Arc::new(self.fetched.clone());
         self.pages.push(temzdf_mdview::Page::new(body, dir, key.0, 1000, key.1, fetched));
@@ -89,11 +99,10 @@ impl MdDoc {
         self.strips.drop_tiles(images, |k| ids.contains(&k.page));
     }
 
-    /// Pages drawn again from the document (it or its images changed).
+    /// Pages laid out again (its images changed), from the same HTML.
     fn relayout(&mut self, images: &mut temzdf_scene::Images) {
         let gone = std::mem::take(&mut self.pages);
         self.drop_pages(gone, images);
-        self.body = None;
     }
 }
 
@@ -663,6 +672,8 @@ impl Session {
                 images: Default::default(),
                 fetched: Default::default(),
                 body: None,
+                #[cfg(test)]
+                bodies: 0,
                 pages: Vec::new(),
                 #[cfg(test)]
                 layouts: 0,
@@ -911,7 +922,9 @@ impl Session {
                 _ => None,
             })
             .collect();
-        self.md_docs.get_mut(&md).expect("open").relayout(&mut self.images);
+        let d = self.md_docs.get_mut(&md).expect("open");
+        d.body = None;
+        d.relayout(&mut self.images);
         for (id, line) in tops {
             if let Some((pane, page)) = self.md_graphics(id) {
                 pane.show_line(page, line);
