@@ -450,6 +450,91 @@ declare module "temzdf/buffers" {{
   const buffers: import("temzdf").Keyset;
   export default buffers;
 }}
+/** Ex commands (doc/design/ex-commands.md): the registry, running a command line, helpers parsing one. */
+declare module "temzdf/command" {{
+  /** What modifier commands (`:vertical`, say) pass on to the rest. */
+  export type Mods = {{ [key: string]: unknown }};
+  /** One address of a Vim range, as typed (not yet a line). */
+  export type VimLineAddress = {{
+    base:
+      | {{ kind: "number"; number: number }}
+      | {{ kind: "current" }}
+      | {{ kind: "last" }}
+      | {{ kind: "mark"; name: string }}
+      | {{ kind: "pattern"; pattern: string; backward: boolean }}
+      | {{ kind: "lastPattern"; backward: boolean }}
+      | {{ kind: "lastSubstitute" }};
+    /** The sum of the `+N` and `-N` after it. */
+    offset: number;
+  }};
+  /** A Vim range as typed: `%` is `1,$`. */
+  export type VimRangeSpec = {{ start: VimLineAddress; end?: VimLineAddress; separator?: "," | ";" }};
+  /** What a command's function gets. */
+  export type CmdCtx = {{
+    /** The full name, even when abbreviated. */
+    name: string;
+    /** Everything after the name, untrimmed (with `bar: "auto"`, up to the `|`). */
+    args: string;
+    /** The range typed (a command with `prefix: "vim-range"`; else undefined). */
+    range: VimRangeSpec | undefined;
+    /** What the caller of `command.execute` passed, else {{}}. */
+    mods: Mods;
+    /** This command's part of the line: its range, name and arguments. */
+    line: string;
+  }};
+  export type CmdOpts = {{
+    /** The shortest abbreviation accepted (a prefix of the name); without it, only the full name. */
+    shortName?: string;
+    /** The command exists only while this holds (the context a mapping's `when` gets). */
+    when?: (ctx: import("temzdf").KeyContext) => boolean;
+    /** Accepts a prefix: "vim-range", a Vim range. Without it a range is an error (E481). */
+    prefix?: "vim-range";
+    /** `|` after it: "auto" (default) splits there and runs the rest after it; "handle" passes the rest, `|` included, to the function. */
+    bar?: "auto" | "handle";
+    desc?: string;
+    /** Adding the same name with the same namespace again replaces it; `clear` removes a namespace's commands. */
+    namespace?: string;
+  }};
+  /** A registered command, as `command.list` shows it. */
+  export type CmdInfo = {{
+    name: string;
+    shortName?: string;
+    prefix?: "vim-range";
+    bar: "auto" | "handle";
+    desc?: string;
+    namespace?: string;
+  }};
+  export const command: {{
+    /** Define an Ex command (`:name`; letters only). */
+    add(name: string, fn: (ctx: CmdCtx) => void, opts?: CmdOpts): void;
+    /** Remove the commands called `name`: those of a namespace, or all. */
+    remove(name: string, filter?: {{ namespace?: string }}): void;
+    /** Remove the commands of a namespace, or every one. */
+    clear(filter?: {{ namespace?: string }}): void;
+    /** The commands, in the order defined (a snapshot). */
+    list(): CmdInfo[];
+    /** Run a command line (`|` separating commands as they say). Errors reach the caller. */
+    execute(line: string, opts?: {{ mods?: Mods }}): void;
+  }};
+  /** `!` at the start, and what follows it. */
+  export function parseBang(s: string): [boolean, string];
+  /** Split at spaces; a backslash takes the next character as it is (`\ `, `\\`). */
+  export function splitArgs(s: string): string[];
+  /** The text before the first `|` not after a backslash, and the rest after it (undefined: none). */
+  export function splitBar(s: string): [string, string | undefined];
+  /** The range at the start of `s` (spaces and `:` before it skipped), as typed, and what follows it. */
+  export function parsePrefix(s: string): [VimRangeSpec | undefined, string];
+  /** Where `resolveRange` finds lines (zero based), for the pane the range is for. */
+  export type VimRangeEnv = {{
+    current(): number;
+    last(): number;
+    mark(name: string): number;
+    /** The line of the next match of `pattern` after `from` (before it: backward); undefined: patterns are refused. */
+    search?(pattern: string | undefined, backward: boolean, from: number): number;
+  }};
+  /** The lines (zero based, first ≤ last) of a range typed, read with `env`. */
+  export function resolveRange(spec: VimRangeSpec, env: VimRangeEnv): {{ first: number; last: number }};
+}}
 "#
     )
 }

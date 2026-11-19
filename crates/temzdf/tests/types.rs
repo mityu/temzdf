@@ -66,7 +66,7 @@ fn the_shipped_scripts_type_check() {
     // configuration using them.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../temzdf-script/runtime");
     let mut files: Vec<(String, String)> = Vec::new();
-    for dir in ["", "lib", "edit", "pane", "mode", "vim"] {
+    for dir in ["", "lib", "edit", "pane", "mode", "vim", "test"] {
         for e in std::fs::read_dir(root.join(dir)).unwrap().flatten() {
             let p = e.path();
             let name = p.file_name().unwrap().to_string_lossy().into_owned();

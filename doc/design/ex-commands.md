@@ -2,11 +2,14 @@
 
 Commands typed on a `:` command line, as Vim's Ex commands, that scripts
 (and the user's configuration) define. Agreed with the user on 2026-11-19.
-**Nothing is built yet**: today the Vim mode's commands are one function
-in `crates/temzdf-script/runtime/vim/ex.ts` (`ex()`) that parses a range
-and then picks the command with a long chain of `if`s, and only text panes
-have a command line. This records the shape that replaces it; the plan is
-in `todo.md`.
+
+Status: the registry and `command.execute` are built, in TypeScript only:
+the module `temzdf/command` (`crates/temzdf-script/runtime/command.ts`;
+cases in `crates/temzdf-script/runtime/test/command.ts`). Nothing uses it
+yet: the Vim mode's commands are still one function in
+`crates/temzdf-script/runtime/vim/ex.ts` (`ex()`) that parses a range and
+then picks the command with a long chain of `if`s, and only text panes
+have a command line. The steps left are in `todo.md`.
 
 "Command" in this document means an Ex command. The session's registry
 commands are **actions** (`action.*` in scripts, `temzdf action` on the
@@ -19,7 +22,7 @@ usually runs some of them.
 command.add(name: string, fn: (ctx: CmdCtx) => void, opts?: {
   shortName?: string;  // the shortest abbreviation accepted
   when?: (ctx) => boolean;
-  range?: "vim";       // accepts a range; absent: none
+  prefix?: "vim-range"; // accepts a range; absent: none
   bar?: "auto" | "handle"; // how `|` after it is treated (default "auto")
   desc?: string;
   namespace?: string;
@@ -35,7 +38,10 @@ command.add(name: string, fn: (ctx: CmdCtx) => void, opts?: {
   function call: commands are matched in the script host, not in the
   server, so no round trip.
 - `namespace` lets a keyset enable and disable a group of commands, as it
-  does mappings.
+  does mappings (`d.command(...)` in `crates/temzdf-script/runtime/lib/keyset.ts`).
+  Adding the same name in the same namespace again replaces the command.
+- Wrong arguments (a name with other characters, a `shortName` that is
+  not a prefix of the name, ...) are a `TypeError`.
 - There is no `priority`; see "Matching".
 
 ## Matching
@@ -59,9 +65,9 @@ No match is an error (Vim's `E492: Not an editor command`).
 type CmdCtx = {
   name: string;   // the full name, even when abbreviated
   args: string;   // everything after the name, untrimmed
-  range: { first: number; last: number } | undefined;
+  range: VimRangeSpec | undefined; // as typed; see "Ranges"
   mods: Mods;     // what the caller of `command.execute` passed, else {}
-  line: string;   // the whole line typed
+  line: string;   // this command's part: its range, name and arguments
 };
 ```
 
@@ -75,33 +81,56 @@ type CmdCtx = {
   - `splitArgs(s): string[]`: split at spaces, with backslash escapes;
   - `splitBar(s): [string, string | undefined]`: the text before the first
     unescaped `|`, and the rest after it;
-  - `parsePrefix(s): [Range | undefined, string]`: the range and what
-    follows it.
-- **No count**: `:3b` and `:b 3` are told apart by `range` (`first ===
-  last`) when a command cares.
+  - `parsePrefix(s): [VimRangeSpec | undefined, string]`: the range as
+    typed and what follows it;
+  - `resolveRange(spec, env)`: its lines (see "Ranges").
+- **No count**: `:3b` and `:b 3` are told apart by `range` (one address)
+  when a command cares.
+- `line` is this command's part of the line, not the whole: after an
+  `"auto"` `|` the next command gets its own.
 - Values that may be absent are `undefined`, not `null` (the direction
   for all of temzdf's script API).
 
 ## Ranges
 
 Whether a command takes a range is declared, as in Vim (`-range`,
-`-count` and `EX_RANGE`). `range: "vim"` accepts Vim's line ranges;
-the option is a string so other kinds can be added beside it.
+`-count` and `EX_RANGE`). `prefix: "vim-range"` accepts a Vim range; the
+option is a string so other kinds can be added beside it.
 
-- A range on a command without `range` (left `undefined`) is an error,
+- A range on a command without `prefix` (left `undefined`) is an error,
   raised before the callback runs, as Vim's `E481: No range allowed`. The
   callback only ever sees `range: undefined`. Checked in Vim 9.2 and
   Neovim on 2026-11-19: a user command without `-range` and a built-in
   without a range (`:2pwd`) both give `E481`, and the error stops the
   commands after a `|` too.
-- How a range is read depends on the pane: lines for text panes (the
-  `%`, `.`, `$`, numbers, `'<,'>`, `+N` `-N` the Vim mode reads today). A
-  pane kind without a range reader (every other kind, for now) refuses a
-  range with an error, even for a command with `range: "vim"`; without a
-  range such a command gets `range: undefined`. Readers for other kinds
-  (PDF pages, say) come when something needs them.
-- Count ranges (Vim's `-count`) are left out; another value of `range`
+- **The grammar is built in and fixed**: Vim's addresses (a number, `.`,
+  `$`, `'x`, `/pat/`, `?pat?`, `\/`, `\?`, `\&`, each followed by any
+  `+N` and `-N`; an offset alone counts from `.`), joined by `,` or `;`,
+  and `%` for `1,$`. The core reads only that much, to find where the name
+  starts.
+- **The range is passed as typed** (`VimRangeSpec`: a start, an end and
+  the separator, each address a base and an offset), not as lines: what
+  `.`, `'a` or `'<` mean belongs to the pane and to whoever keeps the marks
+  (the Vim mode keeps its marks itself). A command turns it into lines
+  with `resolveRange(spec, env)`, `env` giving the current line, the last
+  one, marks and, optionally, searches; a text pane's `env` comes from the
+  Vim mode when `ex.ts` moves onto this. A pane that has no lines refuses
+  the range there, with an error of its own.
+- `resolveRange` gives zero-based lines, first ≤ last (Vim asks before
+  swapping a backward range; here it is swapped), and after `;` counts the
+  second address from the first.
+- Count ranges (Vim's `-count`) are left out; another value of `prefix`
   (`"count"`, say) can be added later.
+
+Undecided (2026-11-19):
+
+- **A range alone** (`:5`, which goes to line 5 in Vim): for now an error
+  (`E492`), as a line without a name. One proposal was to allow
+  `command.add("", fn, { prefix: "vim-range" })` for it.
+- Whether to state as a rule that **prefixes never start with a letter**,
+  so that a word before a command (`:vert edit`) is always a command of
+  its own taking the rest. Vim's range grammar starts with no letter, so
+  it already holds.
 
 ## Running a line, and `|`
 
@@ -141,8 +170,10 @@ Rules:
   `|` starts with `{}`. In Vim `:vertical split | new` makes only `split`
   vertical.
 - **Depth**: nested `command.execute` calls are counted and refused past
-  a limit (Vim's `E169: Command too recursive`, at 200), so a command
-  that runs itself does not run away.
+  100 (Vim's `E169: Command too recursive`, at 200 there), so a command
+  that runs itself does not run away. 200 levels of a command running
+  itself exhaust the script host's WebAssembly stack first (150 still
+  fit, 2026-11-19), which ends the host.
 
 ## Prefixes
 
@@ -173,6 +204,17 @@ open panes read the ones they understand.
   commands marked `{ modifier: true }` that return changed `mods`:
   replaced by commands calling `command.execute`, which needs no extra
   mechanism.
+- **Prefix parsers chosen per command** (`prefixParser` in the
+  registration): the core cannot pick a command's parser before it knows
+  the name, and cannot find the name before it has read the prefix. Then
+  **registered parsers, all tried**, each command naming (or holding a
+  handle to) the one it takes: the value's type changes with the parser,
+  and a word that is both a prefix and a command (`:vert edit`) is
+  ambiguous. Rejected for a built-in grammar: variations belong in the
+  arguments rather than in more kinds of prefix.
+- **Ranges resolved by the core**, with a reader registered per pane kind
+  or marks put in from outside: resolving needs the Vim mode's marks, so
+  the range is passed as typed instead.
 - **Three kinds of `bar`** (`"split"`, `"self"` returning the rest it did
   not use, `"none"`), as Vim's command flags: the continuation covers
   `"self"` and `"none"` with one kind and also expresses `:g` and the

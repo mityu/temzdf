@@ -508,6 +508,44 @@ preview). Either way the pane and the buffer go and the focus goes back.
 mode maps readline's keys (`<C-a>`, `<C-e>`, `<C-w>`, `<C-u>`, `<C-k>`,
 `<M-b>`, `<M-f>`, arrows) to `text.*`.
 
+## Ex commands
+
+`temzdf/command` keeps the Ex commands scripts define and runs command
+lines (`doc/design/ex-commands.md`). No `:` command line runs it yet; the
+Vim mode's `:` still has its own commands.
+
+```ts
+import { command, parseBang, resolveRange } from "temzdf/command";
+command.add("write", (c) => {
+  const [force, file] = parseBang(c.args);
+  // ...
+}, { shortName: "w" });
+command.execute("w! | quit");
+```
+
+- `command.add(name, fn, { shortName?, when?, prefix?, bar?, desc?,
+  namespace? })`: names are letters only; `:wri` runs `write` when
+  `shortName` is at most that long (without one, only the full name).
+  Among the commands whose `when` holds (the context a mapping's `when`
+  gets), an exact name wins over an abbreviation, then the one defined
+  last. `command.remove(name, { namespace? })`, `command.clear({
+  namespace? })` and `command.list()` as `keymap`'s.
+- `fn` gets `{ name, args, range, mods, line }`: `args` everything after
+  the name, untrimmed (`:w!` and `:w !sort` differ); no `!` or arguments
+  parsed for it (`parseBang`, `splitArgs`).
+- `prefix: "vim-range"` accepts a Vim range (`%`, `.`, `$`, numbers,
+  `'x`, `/pat/`, `+N`, `,` and `;`), passed as typed; `resolveRange(c.range,
+  env)` turns it into lines with `env`'s current line, last line and
+  marks. Without it a range is `E481`.
+- `bar: "auto"` (the default) runs the command up to `|` (`\|` is a `|`)
+  and then the rest; `bar: "handle"` passes the rest, `|` included, and
+  the command runs what it wants of it with `command.execute(rest, {
+  mods? })` (`:normal`, `:g`, modifiers such as `:vertical` passing
+  `mods`).
+- Errors reach the caller of `command.execute` and stop the rest; an
+  unknown name is `E492`; more than 100 nested `command.execute` calls are
+  `E169`.
+
 ## Text panes
 
 A file opens as text unless its extension is `.pdf` (`temzdf FILE`,

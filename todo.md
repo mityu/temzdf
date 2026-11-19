@@ -27,9 +27,15 @@ server on one `Session`). Next and open:
   pixels through the encoder either). Left: why the GUI's
   uploads at scale 2 got slower on lavapipe (`doc/dev/performance.md`, "With
   shared memory"); measure on a real GPU and on macOS.
-- [ ] Ex commands scripts define (`doc/design/ex-commands.md`):
-  `command.add` and `command.execute`, then the Vim mode's `ex()` moved
-  onto them, then `:` in panes other than text panes.
+- [ ] Ex commands scripts define (`doc/design/ex-commands.md`): the
+  registry and `command.execute` are done (`temzdf/command`); next the
+  Vim mode's `ex()` moved onto them (its `resolveRange` env with the
+  marks; decide what a range alone, `:5`, runs), then `:` in panes other
+  than text panes.
+- [ ] Deep recursion in a script exhausts the guest's WebAssembly stack
+  and ends the script host (a trap, not a JavaScript error): QuickJS has
+  no stack limit set below it. Found with `temzdf/command`'s depth limit
+  (200 nested commands trap, 150 fit; 2026-11-19).
 - [ ] What pane status lines say, from the configuration (a string or a
   function, as Vim's `statusline`; `doc/design/floating-panes.md`); today a PDF
   pane's says what its old status bar said and a terminal's is blank. To

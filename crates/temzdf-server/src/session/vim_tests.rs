@@ -199,13 +199,23 @@ fn vim_session(dir: &Path, text: &str) -> Result<(Session, Receiver<SessionEvent
 
 /// A session editing `text`, with `config` (none: the defaults alone).
 fn config_session(dir: &Path, text: &str, config: Option<&str>) -> Result<(Session, Receiver<SessionEvent>), String> {
-    let file = dir.join("case.txt");
-    std::fs::write(&file, text).unwrap();
     let config = config.map(|c| {
         let path = dir.join("config.ts");
         std::fs::write(&path, c).unwrap();
         path
     });
+    config_file_session(dir, text, config)
+}
+
+/// A session editing `text`, with the configuration file `config` (where
+/// it is: its relative imports resolve from there).
+fn config_file_session(
+    dir: &Path,
+    text: &str,
+    config: Option<PathBuf>,
+) -> Result<(Session, Receiver<SessionEvent>), String> {
+    let file = dir.join("case.txt");
+    std::fs::write(&file, text).unwrap();
     let (tx, rx) = mpsc::channel();
     let tx = std::sync::Mutex::new(tx);
     let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
@@ -393,6 +403,23 @@ fn ex_commands_split_switch_and_close_panes_buffers_and_tabs() {
     ex(&mut s, "tabo");
     assert_eq!(s.tabs.len(), 1);
     assert!(ex(&mut s, "tabc").iter().any(|e| e.contains("E784")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn command_cases() {
+    // runtime/test/command.ts: <F5> runs temzdf/command's cases.
+    let dir = std::env::temp_dir().join(format!("temzdf-command-cases-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = Path::new(env!("CARGO_MANIFEST_DIR")).join("../temzdf-script/runtime/test/command.ts");
+    let (mut s, rx) = config_file_session(&dir, "x\n", Some(config)).unwrap();
+    assert_eq!(s.history.current(), "vim/normal", "{:?}", errors(&s));
+    let seen = type_keys(&mut s, &rx, "<F5>", None).unwrap();
+    assert!(seen.is_empty(), "{}", seen.join("\n"));
+    let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("commandTests".into())];
+    let ran = s.run_command("get-var", &args, Instant::now()).unwrap().0;
+    assert!(ran.as_str().is_some_and(|r| r.starts_with("ok ")), "the cases did not run: {ran:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
