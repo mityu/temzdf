@@ -320,7 +320,6 @@
               buildPackage =
                 {
                   withGui ? false,
-                  enableCheck ? false,
                 }:
                 (pkgs.makeRustPlatform {
                   cargo = stableToolchain;
@@ -372,7 +371,9 @@
                     # libtexprintf: TeX math as text for the Markdown viewer (texprintf).
                     pkgs.libtexprintf
                   ];
-                  doCheck = enableCheck;
+                  # Tests are scripts/check.sh's: they need TeX, the
+                  # fixtures, tmux and more than the build's sources.
+                  doCheck = false;
                   meta = {
                     description = "Terminal PDF viewer drawn with the kitty graphics protocol";
                     homepage = "https://github.com/mityu/temzdf-cli";
@@ -386,19 +387,11 @@
                     // scriptEnv
                     // lib.optionalAttrs withGui {
                       TEMZDF_BUNDLED_FONTS = bundleFontPath;
-                    }
-                    // lib.optionalAttrs enableCheck {
-                      # Tests draw text with the fixed fonts, as scripts/check.sh's.
-                      FONTCONFIG_FILE = testFontConfig;
                     };
                 };
             in
             {
               default = buildPackage { withGui = true; };
-              with-check = buildPackage {
-                withGui = true;
-                enableCheck = true;
-              };
             };
         };
     };
