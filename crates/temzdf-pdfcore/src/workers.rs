@@ -262,6 +262,15 @@ pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<
             for c in rx.try_iter() {
                 take(&mut jobs, c);
             }
+            // A job made on an older version is stale (a reload sent the
+            // live ones again): it goes before it can close the version the
+            // others search, whose bytes cannot be had again.
+            if let Some(current) = snapshot.generation() {
+                jobs.retain(|(j, _)| j.doc_generation == current);
+                if jobs.is_empty() {
+                    continue;
+                }
+            }
             turn %= jobs.len();
             let generation = jobs[turn].0.doc_generation;
             if doc.as_ref().is_none_or(|d| d.generation != generation) {
@@ -583,6 +592,40 @@ mod tests {
         search_all(1);
         assert!(snapshot.bytes(1).is_none());
         assert_eq!(snapshot.lock().search_docs, 1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_stale_search_does_not_stop_a_live_one_after_a_reload() {
+        use std::time::Duration;
+        let (tx, rx) = mpsc::channel::<DocEvent>();
+        let sink = channel_sink(tx, |e| e);
+        let snapshot = Snapshot::default();
+        let doc = spawn_document(pdf::fixture("sample.pdf"), sink.clone(), snapshot.clone()).unwrap();
+        let next = || rx.recv_timeout(Duration::from_secs(10)).expect("an event");
+        let pages = loop {
+            if let DocEvent::Opened(r) = next() {
+                break r.unwrap().bounds.len();
+            }
+        };
+        doc.send(DocCmd::Reload).unwrap();
+        while !matches!(next(), DocEvent::Reloaded(_)) {}
+        // Pane 2 searches the new version; pane 1's search of the old one
+        // (cleared, never cancelled) comes after it.
+        let search = spawn_search(snapshot.clone(), sink).unwrap();
+        let live = (2 << 32) + 1;
+        search.send(SearchCmd { generation: live, query: "the".into(), start_page: 0, doc_generation: 1 }).unwrap();
+        search
+            .send(SearchCmd { generation: (1 << 32) + 1, query: "the".into(), start_page: 0, doc_generation: 0 })
+            .unwrap();
+        let mut seen = 0;
+        while seen < pages {
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(DocEvent::SearchHits { generation, .. }) if generation == live => seen += 1,
+                Ok(_) => {}
+                Err(_) => panic!("the live search stopped after {seen} of {pages} pages"),
+            }
+        }
     }
 
     #[test]
