@@ -105,7 +105,17 @@ pub fn write(text: &Text, info: &FileInfo, force: bool) -> Result<Option<SystemT
     let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let tmp = dir.join(format!(".{name}.temzdf-{}.tmp", std::process::id()));
     let renamed = (|| -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
+        // A new file of our own (never one planted there, nor a symlink's
+        // target), unreadable to others from the start when the file is.
+        let _ = std::fs::remove_file(&tmp);
+        let mut open = std::fs::OpenOptions::new();
+        open.write(true).create_new(true);
+        #[cfg(unix)]
+        if let Some(meta) = &existing {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            open.mode(meta.permissions().mode() & 0o777);
+        }
+        let mut f = open.open(&tmp)?;
         f.write_all(&bytes)?;
         f.sync_all()?;
         if let Some(meta) = &existing {
@@ -197,6 +207,23 @@ mod tests {
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "the link stays");
         assert_eq!(std::fs::read_to_string(&real).unwrap(), "y\n");
         assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o750);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn saving_never_writes_through_a_link_planted_at_the_temporary_name() {
+        let d = dir("planted");
+        let file = d.join("secret");
+        std::fs::write(&file, "x\n").unwrap();
+        let elsewhere = d.join("elsewhere");
+        std::fs::write(&elsewhere, "keep\n").unwrap();
+        let tmp = d.join(format!(".secret.temzdf-{}.tmp", std::process::id()));
+        std::os::unix::fs::symlink(&elsewhere, &tmp).unwrap();
+        let (_, info) = read(&file).unwrap();
+        write(&Text::from("y\n"), &info, false).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "y\n");
+        assert_eq!(std::fs::read_to_string(&elsewhere).unwrap(), "keep\n", "the link was not followed");
         let _ = std::fs::remove_dir_all(d);
     }
 }
