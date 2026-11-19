@@ -17,6 +17,8 @@ Also asked:
 - How to manage Tree-sitter grammars (Zed as an example).
 - The cost of Vim-style regex syntax highlighting.
 - Other highlighting mechanisms.
+- Whether a parser can run isolated, and what a separate process costs
+  (added 2026-11-19).
 - Whether an editor buffer with non-modifiable parts could be the base on
   which users build arbitrary TUI panes, or the reverse.
 
@@ -681,6 +683,81 @@ safety.
      notarisation on macOS), unsandboxed, and can crash the process.
    - WebAssembly is portable and sandboxed, but needs wasi-sdk to build and
      runs somewhat slower.
+
+#### Isolating parsers, and the cost of a separate process (added 2026-11-19)
+
+Question: a crashing parser should not take the session server with it.
+Can parsers be loaded and run in some sandbox, and if they run in another
+process, is the communication cheap enough for edits and highlights that
+come often?
+
+Ways to isolate them:
+
+- **Grammars built from source to `.wasm`**: load them in the server
+  through `WasmStore`. temzdf already runs wasmtime for the script host
+  (`crates/temzdf-script-runner`), but tree-sitter 0.27.2's `wasm` feature
+  pulls `wasmtime-c-api-impl` 48.0.8 while temzdf uses wasmtime 50.0.1, so
+  the versions would have to meet [C: the crates' `Cargo.toml`]. Whether
+  epoch or fuel limits can be set on the store tree-sitter creates was not
+  checked; without them a looping scanner still hangs its thread.
+- **Only a native `.so` available**: a separate process that loads it,
+  optionally confined with seccomp or Landlock on Linux and the sandbox
+  profile on macOS. A crash ends that process only; the server restarts it
+  or runs without highlighting.
+- **Not recommended**: catching `SIGSEGV` in the server (the process state
+  after it is unknown), and running the `.so` under an emulator or a small
+  kernel compiled to WebAssembly (far slower, and a process gives the same
+  isolation for free).
+
+The cost of a separate process [E] (general figures, not measured in
+temzdf):
+
+| Step | Rough time |
+|---|---|
+| One round trip of a small message over a Unix socket | 10–30 µs |
+| Bulk transfer over a socket | GB/s; 1 MB in under 1 ms |
+| Re-parsing after a one-character edit | 0.1 ms to a few ms |
+| First parse of a 1 MB file | tens to a hundred-odd ms |
+| Highlight query for one screen | about 0.1–1 ms |
+
+The communication is small next to the parsing, provided it is shaped as
+follows:
+
+1. **Send edits, not the buffer.** The child keeps a copy of the text: the
+   whole text once when a file is opened, then only edits, as LSP's
+   incremental sync. temzdf's edits already come out as a list of
+   `Change`s (range and new text), which map onto `InputEdit` plus the
+   replaced text. Messages carry the buffer's version so the copy cannot
+   drift.
+2. **Keep the tree in the child.** Serializing it would be expensive and
+   useless. The child returns only the highlight spans of the visible range
+   and a margin, encoded compactly as LSP's semantic tokens (a few integers
+   per span: line delta, column, length, kind; about 20 bytes). A thousand
+   spans on a screen are about 20 KB.
+3. **Do not wait.** After sending an edit the server draws at once, with
+   the old highlights shifted by the edit (decorations already follow edits
+   by gravity) until new ones arrive. Replies for an older version are
+   dropped. A slow or hung child then never holds key input; a dead one
+   leaves the buffer unhighlighted until it is restarted.
+
+What must wait for an answer: textobjects (`af`, `if`), Tree-sitter
+indentation, expanding a selection by syntax node. One round trip is tens
+of µs, about the cost of the query itself and far below the time between
+key presses; these calls get a deadline (`doc/survey/plugin-rpc.md`, "A
+peer that dies or hangs").
+
+Prior art: every LSP server is a separate process exchanging incremental
+sync and semantic tokens as JSON, and that is usable in practice;
+msgpack or a binary format is lighter still. Helix, Zed and Neovim run
+Tree-sitter in their own process, more for simplicity than for speed [E].
+
+What does cost: the first parse of a file (the parse, not sending the text,
+and the same in either design); injections (kept inside the child, they add
+no communication); and the text held twice in memory (negligible for files
+of a few MB).
+
+If this needs confirming, a small experiment in `experiments/` could time
+the round trip and the incremental re-parse of a 1 MB file held in ropey.
 
 ### Vim-style regex syntax highlighting: cost
 
