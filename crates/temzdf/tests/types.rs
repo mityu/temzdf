@@ -56,6 +56,28 @@ fn the_sample_configuration_type_checks() {
 }
 
 #[test]
+fn the_end_to_end_configurations_type_check() {
+    if !have_tsc() {
+        eprintln!("SKIPPED: tsc not found");
+        return;
+    }
+    // tests/e2e/configs/: the scenarios' configurations, which no other
+    // test loads.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/e2e/configs");
+    let mut files: Vec<(String, String)> = std::fs::read_dir(&root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "ts"))
+        .map(|p| (p.file_name().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&p).unwrap()))
+        .collect();
+    files.sort();
+    assert!(!files.is_empty());
+    let refs: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    check(&refs).unwrap();
+}
+
+#[test]
 fn the_shipped_scripts_type_check() {
     if !have_tsc() {
         eprintln!("SKIPPED: tsc not found");
