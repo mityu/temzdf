@@ -193,7 +193,7 @@ impl DocumentHost {
                     Some(cmd) => effect = Some(Effect::RunShell(cmd)),
                     None => {
                         let m = format!(
-                            "{}:{} (set [synctex] editor in the config to open it)",
+                            "{}:{} (set o.synctexeditor in the config to open it)",
                             loc.file.display(),
                             loc.line
                         );
