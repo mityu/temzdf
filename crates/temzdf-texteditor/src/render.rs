@@ -199,13 +199,15 @@ pub fn render(
                 && m.spec.pane.is_none_or(|p| Some(p) == pane)
         })
         .collect();
-    // Matches of the patterns in the rows shown.
+    // Matches of the patterns in the rows shown, searched in whole lines
+    // (a wrapped row's edges are not a line's for `^`, `$` and `\b`).
+    let (from, to) = (text.line_start(text.line_of(vis_start)), text.line_end(text.line_of(vis_end)));
     let painted: Vec<(usize, usize, &str)> = patterns
         .iter()
         .flat_map(|(p, style)| {
-            find_all(text, p, vis_start, vis_end, &SearchOptions::default(), &buf.wordchars)
+            find_all(text, p, from, to, &SearchOptions::default(), &buf.wordchars)
                 .into_iter()
-                .filter(|m| m.start < m.end)
+                .filter(|m| m.start < m.end && m.end > vis_start && m.start < vis_end.max(vis_start + 1))
                 .map(move |m| (m.start, m.end, *style))
         })
         .collect();
@@ -534,6 +536,25 @@ mod tests {
         assert_eq!(&bg[..4], [Color::Indexed(3), Color::Indexed(3), Color::Indexed(3), Color::Default]);
         assert_eq!(bg[8], Color::Indexed(5), "a decoration over the match");
         assert_eq!(bg[9], Color::Indexed(3));
+    }
+
+    #[test]
+    fn patterns_see_whole_lines_on_wrapped_rows() {
+        let mut hl = Highlights::default();
+        hl.set("Search", Style { bg: Some(Color::Indexed(3)), ..Style::default() });
+        // From the second row of a wrapped line ("xxxx", then the rest).
+        let v = View { width: 4, height: 2, top: 4, ..View::default() };
+        let painted = |text: &str, pat: &str| {
+            let buf = Buffer::new(Text::from(text), LineEnding::Lf);
+            let p = Pattern::new(pat).unwrap();
+            let d = render(&buf, &v, &hl, None, false, &[(&p, "Search")]);
+            let row = |r: &Vec<Cell>| r.iter().map(|c| if c.bg == Color::Indexed(3) { '#' } else { '.' }).collect();
+            d.rows.iter().map(row).collect::<Vec<String>>()
+        };
+        assert_eq!(painted("xxxxfoo\nz", "^foo"), ["....", "...."], "a row's start is not a line's");
+        assert_eq!(painted("xxxxbar\nz", r"\bba"), ["....", "...."], "nor a word's start");
+        assert_eq!(painted("xxxxbar\nz", "bar"), ["###.", "...."]);
+        assert_eq!(painted("xxxxbar\nz", "xbar"), ["###.", "...."], "a match begun on a row above");
     }
 
     #[test]
