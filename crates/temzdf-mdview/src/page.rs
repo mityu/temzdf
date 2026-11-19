@@ -111,7 +111,7 @@ struct Net {
 impl NetProvider for Net {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url.to_string();
-        if let Some(bytes) = self.fetched.get(&url) {
+        if let Some(bytes) = fetched_for(&self.fetched, &request.url) {
             handler.bytes(url, Bytes::from(bytes.as_ref().clone()));
         } else if request.url.scheme() == "file"
             && let Ok(path) = request.url.to_file_path()
@@ -120,6 +120,15 @@ impl NetProvider for Net {
             handler.bytes(url, Bytes::from(bytes));
         }
     }
+}
+
+/// The bytes fetched for `url`: they are kept under the URL as the
+/// Markdown wrote it, the page asks with it normalised (`画像.png` as
+/// `%E7%94%BB%E5%83%8F.png`, the host in lower case, ...).
+fn fetched_for<'a>(fetched: &'a HashMap<String, Arc<Vec<u8>>>, url: &url::Url) -> Option<&'a Arc<Vec<u8>>> {
+    fetched
+        .get(url.as_str())
+        .or_else(|| fetched.iter().find(|(k, _)| url::Url::parse(k).is_ok_and(|u| u == *url)).map(|(_, v)| v))
 }
 
 /// A rectangle in device pixels of the page.
@@ -451,6 +460,19 @@ impl Page {
 mod tests {
     use super::*;
     use temzdf_markdown::{Document, html};
+
+    #[test]
+    fn fetched_images_are_found_by_the_url_the_page_asks_with() {
+        let bytes = Arc::new(vec![1u8]);
+        let fetched = HashMap::from([
+            ("https://Example.com:443/画像.png".to_owned(), bytes.clone()),
+            ("https://example.com/a b.png".to_owned(), bytes.clone()),
+        ]);
+        let asked = |u: &str| fetched_for(&fetched, &url::Url::parse(u).unwrap()).is_some();
+        assert!(asked("https://example.com/%E7%94%BB%E5%83%8F.png"));
+        assert!(asked("https://example.com/a%20b.png"));
+        assert!(!asked("https://example.com/other.png"));
+    }
 
     fn fixture() -> (Document, std::path::PathBuf) {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures").canonicalize().unwrap();
