@@ -517,7 +517,7 @@ export function repeatLast(count: number | null): void {
   clampKeep();
 }
 
-/** <C-d> <C-u> <C-f> <C-b> <C-e> <C-y>: scroll, the cursor along. */
+/** <C-d> <C-u> <C-f> <PageUp> <C-e> <C-y>: scroll, the cursor along. */
 export function scroll(how: "half" | "page" | "line", down: boolean, count: number | null): void {
   const r = t.visibleRange();
   const rows = Math.max(1, r.end.line - r.start.line);

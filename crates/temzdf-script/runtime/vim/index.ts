@@ -240,7 +240,8 @@ function define(hook: Define["hook"]): void {
   map([N, V], ["<C-d>"], (ctx) => scroll("half", true, ctx.count ?? null));
   map([N, V], ["<C-u>"], (ctx) => scroll("half", false, ctx.count ?? null));
   map([N, V], ["<C-f>", "<PageDown>"], (ctx) => scroll("page", true, ctx.count ?? null));
-  map([N, V], ["<C-b>", "<PageUp>"], (ctx) => scroll("page", false, ctx.count ?? null));
+  // (<C-b> is the prefix here: doc/design/text-editor.md.)
+  map([N, V], ["<PageUp>"], (ctx) => scroll("page", false, ctx.count ?? null));
   map([N, V], ["<C-e>"], (ctx) => scroll("line", true, ctx.count ?? null));
   map([N, V], ["<C-y>"], (ctx) => scroll("line", false, ctx.count ?? null));
   map([N], ["<C-o>"], (ctx) => jump(-(ctx.count ?? 1)));
