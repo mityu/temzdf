@@ -42,6 +42,8 @@ the way, with the reasons.
 - [design/vim-mode.md](design/vim-mode.md): the Vim mode for text panes,
   a script on the text editor framework (`temzdf/edit/vim`): how it is
   built, its differences from Vim, its tests.
+- [design/ex-commands.md](design/ex-commands.md): Ex commands scripts
+  define (`command.add`, `command.execute`): matching, ranges, `|`.
 - [design/markdown-viewer.md](design/markdown-viewer.md): the Markdown
   viewer: its text and graphics modes, the shared document, math as text.
 - [design/registers.md](design/registers.md): registers and the copy

@@ -27,7 +27,9 @@ server on one `Session`). Next and open:
   pixels through the encoder either). Left: why the GUI's
   uploads at scale 2 got slower on lavapipe (`doc/dev/performance.md`, "With
   shared memory"); measure on a real GPU and on macOS.
-- [ ] A Vim-like command line on the `Action` text form (tab pages are done).
+- [ ] Ex commands scripts define (`doc/design/ex-commands.md`):
+  `command.add` and `command.execute`, then the Vim mode's `ex()` moved
+  onto them, then `:` in panes other than text panes.
 - [ ] What pane status lines say, from the configuration (a string or a
   function, as Vim's `statusline`; `doc/design/floating-panes.md`); today a PDF
   pane's says what its old status bar said and a terminal's is blank. To

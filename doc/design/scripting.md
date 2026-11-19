@@ -30,7 +30,7 @@ The Vim vocabulary maps onto temzdf as follows:
 | mode | mode (see "Modes") |
 | option scopes (global, window, buffer) | the same three scopes |
 | autocmd | hooks |
-| Ex commands | the future command line and `temzdf action` |
+| Ex commands | Ex commands (`doc/design/ex-commands.md`) |
 
 What Vim cannot answer is everything about several clients on one session;
 that part follows tmux and zellij (see "Prior art").
