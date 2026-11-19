@@ -2707,8 +2707,11 @@ impl Session {
             .chain(self.decorations_deadline())
             .chain(self.copies_deadline())
             .chain(self.swap_deadline())
-            .chain(self.matcher.deadline(self.options.timeoutlen))
-            .chain(self.submode_deadline())
+            // While a script runs, these wait for it (after_scripts and the
+            // next poll see to them): a deadline past meanwhile would spin
+            // the event loop.
+            .chain(self.matcher.deadline(self.options.timeoutlen).filter(|_| !self.script.busy()))
+            .chain(self.submode_deadline().filter(|_| !self.script.busy()))
             .chain(self.notice_deadline())
             .min()
     }

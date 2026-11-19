@@ -1451,6 +1451,35 @@ mod tests {
     }
 
     #[test]
+    fn deadlines_that_wait_for_a_script_do_not_spin_the_event_loop() {
+        let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
+        let settings = super::super::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let geometry = termpix_core::geom::Geometry {
+            cols: 80,
+            rows: 24,
+            cell: termpix_core::geom::CellSize { width: 10, height: 20 },
+        };
+        let mut s = Session::new("t".into(), geometry, Default::default(), settings, sink);
+        let mode = s.history.current().to_owned();
+        let act = crate::keymap::Target::Actions(vec![crate::keymap::Act::new("current-mode", vec![])]);
+        let keys = crate::keymap::notation::parse("zq").unwrap();
+        s.modes.map(&mode, keys, crate::keymap::Mapping::new(act));
+        let now = Instant::now();
+        s.key(&KeyEvent::new(KeyCode::Char('z'), Modifiers::NONE), now);
+        let due = s.next_deadline().expect("the sequence times out");
+        // A script runs (a task's atomic section) past the timeout: the
+        // pending key waits for it, and so does the deadline.
+        s.script.tasks.insert(1);
+        s.script.atomic = Some(Token::Task(1));
+        let later = due + std::time::Duration::from_secs(1);
+        let _ = s.poll(later);
+        assert!(!s.matcher.pending().is_empty(), "it waits for the script");
+        assert!(s.next_deadline().is_none_or(|d| d > later), "a deadline in the past while it runs");
+        s.script.atomic = None;
+        assert!(s.next_deadline().is_some_and(|d| d <= later), "due again once it is done");
+    }
+
+    #[test]
     fn tab_entered_numbers_the_tab_as_it_is_after_a_close() {
         let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
         let settings = super::super::Settings { serve_forward: false, script: None, overrides: Vec::new() };
