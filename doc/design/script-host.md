@@ -57,7 +57,11 @@ loading the module takes about 0.3 ms. The profile `script-guest`
 (`Cargo.toml`) optimises for size (swc is most of the guest) but for
 QuickJS, its bindings and the host. Both sides configure the engine with
 `src/engine_config.rs` (a precompiled module only loads into an engine
-configured the same way). Under Miri the build script embeds nothing.
+configured the same way). Under Miri the build script embeds nothing. A
+guest built already can be handed to it in `TEMZDF_SCRIPT_GUEST_WASM` (a
+`.wasm` file): then it is only precompiled. `nix build` builds the guest
+as a derivation of its own and passes it so, so that the guest and its
+dependencies are cached apart from the server.
 
 ## Execution model
 

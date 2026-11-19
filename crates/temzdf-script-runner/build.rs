@@ -4,6 +4,9 @@
 //! nested build has a target directory of its own (`target/script-guest`), so
 //! it does not wait on the outer build's lock, and keeps its build between
 //! runs. QuickJS's C code needs `CC_wasm32_wasip1` (the dev shell sets it).
+//! A guest built already comes in `TEMZDF_SCRIPT_GUEST_WASM` (a `.wasm`
+//! file; `nix build` builds it apart, so it is cached on its own): then it
+//! is only precompiled.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,6 +26,27 @@ fn main() {
         std::fs::write(&dest, []).unwrap();
         return;
     }
+    println!("cargo::rerun-if-env-changed=TEMZDF_SCRIPT_GUEST_WASM");
+    let wasm = match std::env::var_os("TEMZDF_SCRIPT_GUEST_WASM").map(PathBuf::from) {
+        Some(prebuilt) => {
+            println!("cargo::rerun-if-changed={}", prebuilt.display());
+            prebuilt
+        }
+        None => build_guest(),
+    };
+    let wasm = std::fs::read(&wasm).unwrap_or_else(|e| panic!("{}: {e}", wasm.display()));
+    let mut config = wasmtime::Config::new();
+    // The target's baseline, not this machine's CPU: the binary may run
+    // elsewhere.
+    config.target(&env("TARGET")).expect("a target wasmtime can compile for");
+    engine_config::configure(&mut config);
+    let engine = wasmtime::Engine::new(&config).expect("wasmtime's engine");
+    let compiled = engine.precompile_module(&wasm).expect("precompiling the script host's guest");
+    std::fs::write(&dest, compiled).unwrap();
+}
+
+/// Build the guest with a nested cargo; its `.wasm` file.
+fn build_guest() -> PathBuf {
     let manifest = PathBuf::from(env("CARGO_MANIFEST_DIR"));
     let root = manifest.parent().and_then(Path::parent).expect("crates/temzdf-script-runner");
     for path in [
@@ -96,16 +120,7 @@ fn main() {
     let status = cargo.status().expect("cannot run cargo for the script host's guest");
     assert!(status.success(), "building the script host's guest failed (CC_wasm32_wasip1 must name a WASI C compiler)");
 
-    let wasm = target_dir.join("wasm32-wasip1").join(PROFILE).join("temzdf_script_guest.wasm");
-    let wasm = std::fs::read(&wasm).unwrap_or_else(|e| panic!("{}: {e}", wasm.display()));
-    let mut config = wasmtime::Config::new();
-    // The target's baseline, not this machine's CPU: the binary may run
-    // elsewhere.
-    config.target(&env("TARGET")).expect("a target wasmtime can compile for");
-    engine_config::configure(&mut config);
-    let engine = wasmtime::Engine::new(&config).expect("wasmtime's engine");
-    let compiled = engine.precompile_module(&wasm).expect("precompiling the script host's guest");
-    std::fs::write(&dest, compiled).unwrap();
+    target_dir.join("wasm32-wasip1").join(PROFILE).join("temzdf_script_guest.wasm")
 }
 
 /// The cargo profile the guest is built with (Cargo.toml).
