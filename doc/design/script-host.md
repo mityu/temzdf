@@ -17,7 +17,7 @@ configuration); how to write a configuration is in `doc/config.md`.
 | `crates/temzdf-script` | The host: QuickJS through `rquickjs`, TypeScript type stripping (`swc_ts_fast_strip`), module loading, the event loop, the native half of the API (`src/host.rs`) and its JavaScript half (`src/prelude.js`), all behind its feature `host`. It talks through a `Link` (`src/link.rs`); `StreamLink` runs it natively over a byte stream (its tests). |
 | `crates/temzdf-script-guest` | The host built for `wasm32-wasip1`: a `Link` made of imports, and the export `run`. Empty when built for anything else. |
 | `crates/temzdf-script-runner` | Runs the guest in the server: `build.rs` builds it (nested cargo, profile `script-guest`) and precompiles it with Cranelift; at run time wasmtime's runtime alone loads it (`ScriptHost`). |
-| `crates/temzdf-script/runtime/` | The shipped scripts, an npm package bundled by `crates/temzdf-script/build.rs` with esbuild (npm packages from `package-lock.json`, built by Nix into `$TEMZDF_NODE_MODULES`): `defaults.ts`, the default configuration (loaded before the user's); `polyfills.ts`, globals QuickJS lacks (`AbortController` from `abortcontroller-polyfill`), evaluated first; modules scripts import as `temzdf/NAME` (`MODULES` in `build.rs`: `edit/vim`, `edit/notepad`, `pane/pdf`, `pane/terminal`, `mode/normal`, `mode/input`, `buffers`; each a keyset, `runtime/lib/keyset.ts`: nothing on import, `enable()`/`disable()`), kept as imports in every bundle so that one instance of each is shared; `defaults.ts` only enables them. The user's configuration is not bundled. |
+| `crates/temzdf-script/runtime/` | The shipped scripts, an npm package bundled by `crates/temzdf-script/build.rs` with esbuild (npm packages from `package-lock.json`, built by Nix into `$TEMZDF_NODE_MODULES`): `defaults.ts`, the default configuration (loaded before the user's); `polyfills.ts`, globals QuickJS lacks (`AbortController` from `abortcontroller-polyfill`), evaluated first; modules scripts import as `temzdf/NAME` (`MODULES` in `build.rs`: `edit/vim`, `edit/notepad`, `pane/pdf`, `pane/terminal`, `pane/markdown`, `mode/normal`, `mode/input`, `buffers`, each a keyset, `runtime/lib/keyset.ts`: nothing on import, `enable()`/`disable()`; and `command`, the Ex command registry every script shares), kept as imports in every bundle so that one instance of each is shared; `defaults.ts` only enables them. The user's configuration is not bundled. |
 | `crates/temzdf-script/src/types.rs` | `temzdf.d.ts` for `temzdf print-types`, from the command registry. |
 | `crates/temzdf-server/src/session/script.rs` | The session's side: starting the host, holding input while scripts run, the frame stack that runs hooks nested, options, mapping and mode operations. |
 | `crates/temzdf-server/src/session/commands.rs` | The command registry (`action.*`, `temzdf action`). |
@@ -80,7 +80,10 @@ configured the same way). Under Miri the build script embeds nothing.
   raises an uncatchable error; it sees the interrupt as soon as the session
   sends it, through the import `interrupts`, a count of those sent) and drops the held typeahead, as Vim's CTRL-C.
   A function blocked in a command is interrupted as well. Commands it already
-  ran keep their effect. There is no timeout.
+  ran keep their effect. What the session waits for has no timeout; a
+  timer or promise job nobody waits for (so nobody can interrupt it) is
+  interrupted after 10 s (`UNATTENDED_LIMIT` in
+  `crates/temzdf-script/src/lib.rs`).
 - **Hooks run as Vim's autocmds**: synchronously, at the moment the event
   happens, nested inside the command that caused it (the host runs the hook
   while it waits for that command's answer). Events caused inside a hook only
@@ -156,8 +159,8 @@ declarations. In short, `import { ... } from "temzdf"`:
   `temzdf action` request. `InvokePre` hooks hear it first (and may
   cancel it, as "before" hooks); `InvokePost` comes at the safe point
   after it and its hooks, with the cursor and selection. Their `info`:
-  `seq`, `target` (actions as `{ name, args }`, a function's id, or `{
-  textInput }`), `keys`, `count`, `mode`, `pane`, `source` (`"key"`,
+  `seq`, `target` (a mapped or fallback function's id, a `temzdf action`
+  request as `[{ name, args }]`, or `{ textInput }`), `keys`, `count`, `mode`, `pane`, `source` (`"key"`,
   `"cli"`). `invoke(target, { count })` runs a target again, as part of
   what runs now (no events of its own). Commands from hooks, timers and
   tasks are no invocation.
@@ -201,9 +204,10 @@ declarations. In short, `import { ... } from "temzdf"`:
   `atomic(fn)`.
 - Globals: `setTimeout`, `clearTimeout`, `console`.
 
-Mapped functions get `{ count, pane }`. A mapping whose actions are data runs
-entirely in the session (no RPC); only function mappings and hooks call the
-host.
+Mapped functions get `{ pane, paneKind, floating, mode, keys, count }`
+(`keys`: the keys that ran it). Every mapping is a function, so every
+mapped key calls the host (a round trip costs 10-15 µs); keys no mapping
+could take call nothing.
 
 ## Tests
 

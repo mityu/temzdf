@@ -478,7 +478,8 @@ with the plan.
     shells and editors do not redraw at every step.
   - The command is `resize-pane`, in two forms:
     - `resizePane(dir, cells?)` moves one of the focused pane's borders
-      `cells` cells (default 1; a mapping passes its count) in that direction,
+      `cells` cells (default 1; the shipped mappings pass their count,
+      `(c) => action.resizePane("taller", c.count ?? 1)`) in that direction,
       as tmux's `resize-pane -L/-R/-U/-D` does. The border is the
       right (bottom) one if the pane has one, else the left (top) one.
     - `resizePane({ width?, height? })` sets the size of the focused pane.

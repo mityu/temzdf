@@ -1,5 +1,5 @@
-//! The command registry: every command mappings, scripts (`temzdf.cmd.*`,
-//! `temzdf.action.*`) and `temzdf action` can run, by name.
+//! The command registry: every command scripts (`temzdf.action.*`, mapped
+//! functions among them) and `temzdf action` can run, by name.
 
 use std::time::Instant;
 
@@ -80,7 +80,11 @@ const SESSION: &[(&str, &str, &str)] = &[
         "(buffer: number, pane?: number): void",
         "Show a buffer in a pane (the focused one), as Vim's :buffer",
     ),
-    ("edit", "(path: string): void", "Open a PDF in the focused pane, as Vim's :edit"),
+    (
+        "edit",
+        "(path: string): void",
+        "Open a file in the focused pane, as Vim's :edit: a PDF by its extension, anything else as text",
+    ),
     (
         "delete-buffer",
         "(buffer?: number): void",
@@ -218,7 +222,12 @@ pub fn command_specs() -> Vec<CommandSpec> {
     });
     let pdf = Command::NAMES.iter().map(|(_, name)| CommandSpec {
         name: (*name).into(),
-        doc: format!("Page view: {name} in the focused PDF pane (`count` times, where that means something)"),
+        doc: match *name {
+            "first-page" | "last-page" => {
+                format!("Page view: {name} in the focused PDF pane (page `count` instead, given one)")
+            }
+            _ => format!("Page view: {name} in the focused PDF pane (`count` times, where that means something)"),
+        },
         ts: "(count?: number | null): void".into(),
     });
     let visual = VisualOp::NAMES.iter().map(|(_, name, doc)| CommandSpec {

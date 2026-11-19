@@ -38,9 +38,12 @@ configurations are written with the same system.
 
 - **Built-in modes stay**: `normal` (operating: keys act on temzdf, unmapped
   keys are dropped, counts), `terminal` (pass-through: unmapped keys go to
-  the pane, no counts), `pdf` (PDF panes: unmapped keys dropped, counts)
-  and `input` (prompts, `openPrompt`: text panes whose buffer's base mode
-  it is; pass-through: unmapped keys that type a character with no
+  the pane, no counts), `pdf` (PDF panes: unmapped keys dropped, counts),
+  `markdown` (Markdown viewers: unmapped keys dropped, counts), `edit`
+  (text panes: pass-through, no counts; the shipped Vim editor makes
+  `vim/normal` their base mode instead, `o.basemode`) and `input`
+  (prompts, `openPrompt`: text panes whose buffer's base mode it is;
+  pass-through: unmapped keys that type a character with no
   modifier but Shift go in, the rest are dropped; editing is `text.*`
   commands mapped there).
   The pane kinds decide them, so switching panes changes the mode without
@@ -75,9 +78,9 @@ configurations are written with the same system.
   or tab page, the first pane, CLI actions) rebuild the history from the new
   pane's built-in mode, in the server, synchronously. This is why the
   built-in modes stay: done by a hook calling `switchMode`, it would need the
-  script host, could run in the middle of a mapping (`[moveFocus(),
-  exitMode()]` would pop what the hook pushed), and would have to fire once
-  on every path that moves the focus.
+  script host, could run in the middle of a mapping (`() => {
+  action.moveFocus("left"); action.exitMode(); }` would pop what the hook
+  pushed), and would have to fire once on every path that moves the focus.
 - `inherit` is gone: sharing another mode's keys is what transient modes
   with `keepalive` do, with the parent being whatever mode they were entered
   from rather than one fixed in the definition. Whether a static parent is
@@ -87,9 +90,10 @@ configurations are written with the same system.
 
 ## Mappings
 
-- `keymap.add(mode, lhs, rhs, { when, nowait, desc })`; `rhs` is an action, an
-  array of actions run in order by the server, or a synchronous function, as
-  now.
+- `keymap.add(mode, lhs, rhs, { when, nowait, desc })`; `rhs` is a
+  synchronous function, which runs commands with `action.*`. (Until
+  2026-11-19 it could also be an action or an array of actions, run by the
+  server without the script host; commit 8e463ff dropped them.)
 - **`when`**: the mapping exists only while it returns true. When it is
   false the key is looked up as if the mapping were not there: another
   mapping, else the mode's `fallback`.
@@ -121,8 +125,8 @@ configurations are written with the same system.
     handled again in the mode below (kana/vim-submode, Emacs' default).
   - `"always"`: it stays; keys it does not map are looked up in the mode
     below and, failing that, handled by that mode's `fallback`.
-  - a function: asked before each key; when false the submode is left and
-    the key handled again below.
+  - a function: asked at the first key of each sequence; when false the
+    submode is left and the key handled again below.
 - `timeout`: leave after that many milliseconds without keys (each key
   restarts it).
 - `fallback` and `count` not given: the mode below's. (`fallback` was
@@ -159,7 +163,9 @@ configurations are written with the same system.
    decision: several conditional mappings of a key need no namespace, and
    reloading the configuration starts from the built-in modes, so nothing
    doubles). `unmap` removes a namespace's mappings of the keys, or all of
-   them. The defaults are in the namespace `default`. (Later, 2026-10-28:
+   them. The defaults are in the namespace `default` (now each shipped
+   module has its own, `builtin-pane-pdf`, `builtin-mode-normal`, ...;
+   `doc/config.md`). (Later, 2026-10-28:
    `map` and `unmap` became `keymap.add` and `keymap.remove`, and
    `keymap.clear({ mode, namespace })` removes every mapping of a mode, a
    namespace or both, as Vim's `:mapclear`.)
@@ -185,6 +191,10 @@ configurations are written with the same system.
    (unmapped keys going to the prompt), or a declarative condition form
    the server evaluates itself (decision 1). Until then the pane takes
    those keys before the mappings, as before.
+   (2026-11-19: since mappings became functions only, every mapped key
+   goes to the script host anyway, a round trip of 10-15 µs, so the cost
+   argument is weaker now; the "prompt is closed" condition on every
+   mapping still stands.)
 9. **The mouse** keeps today's behaviour: in the `normal` mode the left
    button selects in terminal panes even where the program uses the mouse.
 10. **`ModeChanged`** fires when a submode is entered or left too, so a

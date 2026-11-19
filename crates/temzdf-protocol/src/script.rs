@@ -73,7 +73,7 @@ pub enum Token {
     Load,
 }
 
-/// A command the server offers to scripts (`temzdf.cmd.<name>(...)`).
+/// A command the server offers to scripts (`temzdf.action.<name>(...)`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandSpec {
     pub name: String,

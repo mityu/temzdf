@@ -1758,7 +1758,8 @@ impl Session {
         self.clock
     }
 
-    /// What a mapping runs: commands right here, or a script function.
+    /// What a mapping runs: a script function, or (tests' mappings only)
+    /// commands right here.
     fn run_target(&mut self, target: Target, count: Option<usize>, now: Instant) -> Outcome {
         match target {
             Target::Actions(acts) => {
@@ -2779,8 +2780,9 @@ pub(super) enum Invoked {
 }
 
 impl Invoked {
-    /// What `InvokePre`/`InvokePost` call the target: actions as
-    /// `{ name, args }` (what `invoke` takes back), a function's id, or
+    /// What `InvokePre`/`InvokePost` call the target: a function's id, a
+    /// `temzdf action` command as `[{ name, args }]` (what `invoke` takes
+    /// back; tests' mappings of commands give theirs so too), or
     /// `{ textInput }`.
     fn value(&self) -> ScriptValue {
         let act = |name: &str, args: &[ScriptValue]| {
@@ -3149,7 +3151,7 @@ mod tests {
         let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
         let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
         s.shell = Some(vec!["/bin/sh".into()]);
-        // config.ts: cmd.newTab({ command: [...] }) at the top level.
+        // config.ts: action.newTab({ command: [...] }) at the top level.
         new_tab(&mut s, &["sleep", "30"]);
         // Then the session's first pane, once the configuration loaded.
         s.script.first = Some((PaneSpec::Shell, None));

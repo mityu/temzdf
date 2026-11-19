@@ -83,6 +83,8 @@ built in for now. Built in:
 | `normal` | dropped | yes | operating mode: panes and the session |
 | `terminal` | to the pane | no | terminal panes (pass-through, like Neovim's Terminal mode) |
 | `pdf` | dropped | yes | PDF panes |
+| `markdown` | dropped | yes | Markdown viewers in the graphics mode (see "The Markdown viewer") |
+| `edit` | typed text goes in | no | text panes, unless `o.basemode` says otherwise (the shipped Vim editor makes it `vim/normal`; see "Text panes") |
 | `input` | typed characters go in | no | prompts (`openPrompt`: the search's line) |
 | `visual` | dropped | yes | a terminal's output selected and copied by keys (see "The visual mode") |
 
@@ -107,7 +109,7 @@ mode keys that time out go to the pane.
 - **`when`**: a condition, `(ctx) => boolean`: the mapping exists only
   while it holds; otherwise the key is looked up as if it were not there
   (another mapping, else the mode's `fallback`). `ctx` is the context of
-  the sequence's first key: `pane`, `paneKind` (`"terminal"`, `"pdf"`),
+  the sequence's first key: `pane`, `paneKind` (`"terminal"`, `"pdf"`, `"edit"`, `"markdown"`),
   `floating`, `mode`, `keys` (typed before). Conditions run in the script
   host, synchronously, and may only read (`action.panes()`, `o.x`, ...); one
   that throws counts as false. Only keys some conditional mapping could
@@ -185,7 +187,7 @@ hook holds every key until it ran, so hook it only while needed.
 
 | Mode | Keys | Action |
 |---|---|---|
-| `terminal`, `pdf` | `<C-b>` | enter the `normal` mode (the prefix) |
+| `terminal`, `pdf`, `markdown` | `<C-b>` | enter the `normal` mode (the prefix) |
 | `terminal` | `<C-S-v>`, `<D-v>` | paste the clipboard (GUI clients; a terminal client's terminal pastes with its own keys) |
 | `normal` | `%` / `"` | split right / below (the same document, or a new shell) |
 | `normal` | `h` `j` `k` `l`, arrows | move the focus (back to that pane's mode) |
@@ -223,21 +225,23 @@ hook holds every key until it ran, so hook it only while needed.
 | `input` | `<BS>` `<C-h>` / `<Del>` `<C-d>` | delete the character before / after the caret |
 | `input` | `<Left>` / `<Right>` / `<Home>` `<C-a>` / `<End>` `<C-e>` | caret: a character left / right, the start / end |
 | `input` | `<M-b>` `<C-Left>` / `<M-f>` `<C-Right>` | caret: a word left / right |
+| `input` | `<Up>` / `<Down>` | caret: a line up / down |
 | `input` | `<C-w>` / `<C-u>` / `<C-k>` | delete the word before the caret / to the start / to the end |
-| `input` | `<CR>` / `<Esc>` | a search: search / cancel (the input closes) |
+| `input` | `<CR>` / `<Esc>` | accept / cancel the prompt (a search: search / cancel; the input closes) |
+| `input` | `<C-S-v>`, `<D-v>` | paste the clipboard (GUI clients) |
 | `input` | `<C-b>` | the normal mode |
 | `visual` | `h` `j` `k` `l`, arrows | a character / row (counts) |
-| `visual` | `0` `<Home>` / `^` / `$` `<End>` | the first column / the first character / the last character of the row |
+| `visual` | `0` `<Home>` / `^` / `$` `<End>` | the first column / the first character / the last character of the row (counts) |
 | `visual` | `w` `b` `e` / `W` `B` `E` | words / blank-separated words (counts) |
 | `visual` | `gg` / `G` | the first row of the scrollback / the last row with text (row N with a count) |
 | `visual` | `H` `M` `L` | the top / middle / bottom row shown (`H` / `L`: the Nth from the top / bottom with a count) |
-| `visual` | `<C-u>` `<C-d>` / `<PageUp>` / `<C-f>` `<PageDown>` | half a screen up / down, a screen up / down (the view with it) |
-| `visual` | `<C-y>` / `<C-e>` | the view a row up / down |
-| `visual` | `[[` / `]]` | the shell prompt above / below (shells that mark prompts, OSC 133) |
+| `visual` | `<C-u>` `<C-d>` / `<PageUp>` / `<C-f>` `<PageDown>` | half a screen up / down, a screen up / down (the view with it; counts) |
+| `visual` | `<C-y>` / `<C-e>` | the view a row up / down (counts) |
+| `visual` | `[[` / `]]` | the shell prompt above / below (shells that mark prompts, OSC 133; counts) |
 | `visual` | `v` / `V` / `<C-v>` | select characters / rows / a block from the cursor; the same key again stops selecting |
 | `visual` | `o` | the cursor to the other end of the selection |
 | `visual` | `y` / `Y` | copy the selection / the selected rows (else the cursor's, counts) and leave |
-| `visual` | `/` / `?` / `n` `N` | search the scrollback forwards / backwards (a prompt, as the PDF search) / next, previous match |
+| `visual` | `/` / `?` / `n` `N` | search the scrollback forwards / backwards (a prompt, as the PDF search) / next, previous match (counts) |
 | `visual` | `<Esc>` / `q` | drop the selection, else leave / leave |
 | `visual` | `<C-b>` | the normal mode (`<Esc>` there comes back) |
 
@@ -364,7 +368,8 @@ cursor and scroll.
 - `buffers()` lists them (`id`, `kind`, `name`, the `panes` showing it,
   `exited`, `modified`, `attrs`), but `unlisted` ones (`buffers({ all:
   true })` lists those too); `showBuffer(id, pane?)` shows one in a pane (Vim's `:buffer`);
-  `edit(path)` opens a PDF in the focused pane (`:edit`); `deleteBuffer(id?)`
+  `edit(path)` opens a file in the focused pane (`:edit`; a PDF by its
+  extension, anything else as text); `deleteBuffer(id?)`
   ends a terminal's program or closes a document and closes its panes.
 - A terminal shown in several panes is as large as the largest (as in
   Neovim); smaller panes show its bottom left part.
@@ -571,7 +576,10 @@ since it was read needs `force`.
 Focused, a text pane puts the session in its base mode, `edit` unless
 `o.basemode` or the buffer says otherwise (see Options): pass-through,
 so typed text, input-method text and pastes go in at the cursor,
-replacing the selection. The shipped mappings edit without modes: arrows,
+replacing the selection. The shipped Vim editor (`temzdf/edit/vim`,
+enabled by default) makes text panes start in its `vim/normal` mode
+instead (see "The Vim mode" below). `temzdf/edit/notepad`'s mappings
+(enabled in its place) edit without modes: arrows,
 `<Home>`, `<End>`, `<C-Left>`/`<C-Right>` (words), `<C-Home>`/`<C-End>`,
 `<PageUp>`/`<PageDown>` move, with Shift they select; `<CR>`, `<Tab>`,
 `<BS>`, `<Del>`, `<C-BS>`/`<C-Del>` (words), `<Esc>` drops the selection,
@@ -678,7 +686,7 @@ JavaScript strings index; out of range is clamped), ranges
   `CursorUnfocused`;
 - smaller ones: `text.findPair(at?, { open?, close?, direction? })` (Vim's
   `%`, nesting counted), `text.wordchars()` and
-  `text.setWordChars(class)` (a buffer's word characters, a regex class:
+  `text.setWordchars(class)` (a buffer's word characters, a regex class:
   Vim's `iskeyword`), `getVar(scope, name, id?)` and
   `setVar(scope, name, value, id?)` (`"buffer"`, `"pane"`, `"tab"`: Vim's
   `b:`, `w:`, `t:`; JSON values, kept by the server, gone with their
@@ -778,6 +786,8 @@ them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `prevTab`, `gotoTab`, `moveTab`, `renameTab`, `breakPane`, `tabs`,
 `currentTab`, `buffers`, `showBuffer`, `edit`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
+`beep` (fail quietly, as Vim's beep: queued `feedkeys` keys dropped),
+`invoke(target, { count })` (run an `InvokePre`/`InvokePost` target again),
 the visual mode's (`visual.left`, `visual.wordForward`, `visual.top`,
 `visual.charwise`, `visual.yank`, `visual.escape`, ...: one for each key of
 the table above, taking a count, `visual.down(3)`, where it says so; `visual.searchFor(query, pane?,

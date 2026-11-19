@@ -14,10 +14,11 @@ use temzdf_protocol::script::{FuncId, ScriptValue};
 /// What a mapping runs.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
-    /// Commands of the registry, run in order by the session itself (no
-    /// script involved, so they cannot race the next key).
+    /// Commands of the registry, run in order by the session itself. Only
+    /// Rust tests map these (sessions without a script host); scripts map
+    /// functions only, and `temzdf action` runs its command directly.
     Actions(Vec<Act>),
-    /// A function of the script host.
+    /// A function of the script host (what every script mapping runs).
     Func(FuncId),
 }
 

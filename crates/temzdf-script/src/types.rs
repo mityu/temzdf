@@ -277,7 +277,7 @@ declare module "temzdf" {{
     guifont: FontEntry[];
     /** Fonts tried first for wide (CJK) characters; []: none. */
     guifontwide: FontEntry[];
-    /** The base mode (the bottom of the mode history) in panes of each kind, e.g. {{ edit: "vim/normal" }}; set while the configuration loads only. */
+    /** The base mode (the bottom of the mode history) in panes of each kind, e.g. {{ edit: "vim/normal" }}; set any time: the focused pane takes its new base at once, the others when focused. */
     basemode: {{ [kind: string]: string }};
     /** Text panes wrap long lines (else they scroll sideways). */
     wrap: boolean;
@@ -312,7 +312,6 @@ declare module "temzdf" {{
 
   export interface Events {{
 {events}  }}
-  /** Run `fn` when `event` happens (synchronously, as Vim's autocmds). */
   /** What a "before" hook (PaneClosePre, BufferDeletePre, SessionEndPre) may answer: cancel the operation, saying why (to whoever asked). */
   export interface HookAnswer {{
     cancel?: boolean;
@@ -353,6 +352,7 @@ declare module "temzdf" {{
     modified: boolean;
     newer: boolean;
   }}
+  /** Run `fn` when `event` happens (synchronously, as Vim's autocmds). */
   export function on<E extends keyof Events>(
     event: E,
     fn: (...args: Events[E]) => void | HookAnswer,
