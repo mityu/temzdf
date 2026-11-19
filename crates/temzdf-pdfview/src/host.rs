@@ -283,6 +283,15 @@ impl DocumentHost {
         }
     }
 
+    /// No pane shows the document (it stays open, hidden): its tiles and
+    /// lists go ([`Document::forget`](crate::document::Document::forget)),
+    /// and so does the work queued for them; what is being rendered still
+    /// arrives, and is dropped then.
+    pub fn forget(&mut self, images: &mut Images) {
+        self.doc.borrow_mut().forget(images);
+        self.dispatch(Vec::new());
+    }
+
     /// Carry out a pane's request; what only the frontend can do is returned.
     pub fn request(&mut self, req: Request) -> Option<Effect> {
         match req {
@@ -457,6 +466,49 @@ mod tests {
         let renders = needs.iter().filter(|n| !matches!(n, Need::LoadPage(_))).count();
         assert_eq!(renders, 0, "tiles queued by the first frame were dropped");
         assert!(pane.viewer.is_complete());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_forgotten_document_drops_its_queued_work() {
+        use std::sync::mpsc;
+        use termpix_core::geom::{CellSize, Geometry};
+        let path = pdf::fixture("sample.pdf");
+        let doc = pdf::open(&path).unwrap();
+        let info = pdf::doc_info(&doc).unwrap();
+        let geometry = Geometry { cols: 160, rows: 50, cell: CellSize { width: 10, height: 20 } };
+        let mut pane = PdfPane::new("sample.pdf".into(), info.clone(), geometry);
+        for p in 0..pane.viewer.page_count() {
+            pane.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
+        }
+        let (tx, rx) = mpsc::channel();
+        let sink = workers::channel_sink(tx, |e| e);
+        let mut host =
+            Opening::start(&path, sink).unwrap().finish(info, pane.viewer.doc.clone(), HostOptions::default());
+        let mut images = Images::new();
+        let (_, needs) = pane.frame(&mut images);
+        let keys: Vec<_> = needs
+            .iter()
+            .filter_map(|n| match n {
+                Need::Render(j) => Some(j.key),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.len() > 8, "too few tiles to tell: {}", keys.len());
+        host.dispatch(needs);
+        host.forget(&mut images);
+        // Only what the (at most four) threads had started is still coming.
+        let in_flight = |host: &DocumentHost| keys.iter().filter(|k| host.doc.borrow().cache.is_in_flight(**k)).count();
+        assert!(in_flight(&host) <= 4, "{} of {} tiles still to be rendered", in_flight(&host), keys.len());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !host.doc.borrow().cache.is_idle() {
+            let wait = deadline.saturating_duration_since(Instant::now());
+            let ev = rx.recv_timeout(wait).expect("tiles stopped arriving");
+            if let ev @ (DocEvent::Rendered(_) | DocEvent::RenderFailed(..)) = ev {
+                host.handle(ev, &mut [&mut pane], &mut images, Instant::now());
+            }
+        }
+        assert!(host.doc.borrow().cache.tiles.is_empty(), "a tile of the forgotten document was kept");
     }
 
     #[test]

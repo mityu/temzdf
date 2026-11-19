@@ -1025,8 +1025,8 @@ impl Session {
                     && let Some(d) = self.docs.get_mut(&doc)
                 {
                     d.view = Some(state);
-                    if let Some(h) = &d.host {
-                        h.doc.borrow_mut().forget(&mut self.images);
+                    if let Some(h) = &mut d.host {
+                        h.forget(&mut self.images);
                     }
                 }
             }
