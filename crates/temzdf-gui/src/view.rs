@@ -2,6 +2,8 @@
 //! images as textures, the appearance; shared by the window and
 //! `--render-frame`.
 
+use std::sync::Arc;
+
 use temzdf_protocol::{ExitReason, ServerMsg};
 use temzdf_scene::{Appearance, Effect, Frame, ImageUpdate};
 use termpix_core::geom::{CellSize, Geometry};
@@ -27,7 +29,7 @@ pub struct View {
     pub renderer: Renderer,
     pub colors: Colors,
     appearance: Appearance,
-    pub frame: Option<(u64, Frame)>,
+    pub frame: Option<(u64, Arc<Frame>)>,
     scale: f64,
 }
 

@@ -8,6 +8,7 @@
 use std::fmt::Write as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
@@ -65,7 +66,7 @@ pub fn render_session(name: &str, out: &Path, opts: &SnapshotOptions) -> Result<
     let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, opts.geometry);
     let mut presenter = Presenter::new();
     let deadline = Instant::now() + TIMEOUT;
-    let mut latest: Option<Frame> = None;
+    let mut latest: Option<Arc<Frame>> = None;
     let mut complete_at: Option<Instant> = None;
     loop {
         let wait = match complete_at {

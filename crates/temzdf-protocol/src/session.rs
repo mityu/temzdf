@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -81,7 +81,9 @@ pub enum ServerMsg {
     Frame {
         seq: u64,
         updates: Vec<ImageUpdate>,
-        frame: Frame,
+        /// Shared, read only: the server sends the same frame to every
+        /// client without copying it. On the wire exactly a `Frame`.
+        frame: Arc<Frame>,
         complete: bool,
         /// Images set through shared memory, one descriptor each, in this
         /// order, with the message. Only on the wire: [`recv_server`] turns
@@ -497,18 +499,8 @@ mod tests {
         assert_eq!(recv::<T>(&mut r).unwrap(), None, "clean end");
     }
 
-    #[test]
-    fn messages_round_trip() {
-        let geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
-        round_trip(&ClientMsg::Hello {
-            version: VERSION,
-            geometry,
-            hints: Hints::default(),
-            inside: Some("a".into()),
-            shared_memory: true,
-        });
-        round_trip(&ClientMsg::Key(KeyEvent::new(KeyCode::Char('s'), Modifiers::CTRL)));
-        round_trip(&ClientMsg::Action(vec!["new-pane".into(), "a b.pdf".into()]));
+    /// Images with one set and a frame using every part of it.
+    fn sample_frame() -> (Images, Frame) {
         let mut images = Images::new();
         let key: ImageKey = images.add(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         let layer = Layer { key: 7, image: key, src: Rect::new(0, 0, 2, 1), dst: Rect::new(-3, 4, 20, 10), z: -5 };
@@ -534,10 +526,66 @@ mod tests {
             }],
             fallback_text: vec![TextGrid { col: 0, row: 9, rows: vec![vec![Cell::default()]] }],
         };
+        (images, frame)
+    }
+
+    /// A frame travels as the frame itself: sharing it (`Arc`) changes no
+    /// byte on the wire from when it was sent by value.
+    #[test]
+    fn shared_frames_keep_their_wire_bytes() {
+        // `ServerMsg` as it was, the frame by value (`Frame` is variant 0).
+        #[derive(Serialize)]
+        enum ByValue {
+            Frame {
+                seq: u64,
+                updates: Vec<ImageUpdate>,
+                frame: Frame,
+                complete: bool,
+                shared: Vec<ImageHead>,
+                trailing: Vec<ImageHead>,
+            },
+        }
+        let (mut images, frame) = sample_frame();
+        let updates = images.take_updates();
+        let head = ImageHead { key: frame.layers[0].image, width: 4, height: 5 };
+        let by_value = ByValue::Frame {
+            seq: 42,
+            updates: updates.clone(),
+            frame: frame.clone(),
+            complete: true,
+            shared: vec![head],
+            trailing: vec![head, head],
+        };
+        let msg = ServerMsg::Frame {
+            seq: 42,
+            updates,
+            frame: Arc::new(frame),
+            complete: true,
+            shared: vec![head],
+            trailing: vec![head, head],
+        };
+        let bytes = postcard::to_stdvec(&msg).unwrap();
+        assert_eq!(bytes, postcard::to_stdvec(&by_value).unwrap());
+        assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), msg);
+    }
+
+    #[test]
+    fn messages_round_trip() {
+        let geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
+        round_trip(&ClientMsg::Hello {
+            version: VERSION,
+            geometry,
+            hints: Hints::default(),
+            inside: Some("a".into()),
+            shared_memory: true,
+        });
+        round_trip(&ClientMsg::Key(KeyEvent::new(KeyCode::Char('s'), Modifiers::CTRL)));
+        round_trip(&ClientMsg::Action(vec!["new-pane".into(), "a b.pdf".into()]));
+        let (mut images, frame) = sample_frame();
         round_trip(&ServerMsg::Frame {
             seq: 9,
             updates: images.take_updates(),
-            frame,
+            frame: Arc::new(frame),
             complete: true,
             shared: vec![],
             trailing: vec![],
@@ -555,7 +603,7 @@ mod tests {
         let msg = ServerMsg::Frame {
             seq: 0,
             updates: images.take_updates(),
-            frame: Frame::default(),
+            frame: Arc::default(),
             complete: false,
             shared: vec![],
             trailing: vec![],
@@ -584,7 +632,7 @@ mod tests {
             ServerMsg::Frame {
                 seq: 3,
                 updates,
-                frame: Frame::default(),
+                frame: Arc::default(),
                 complete: true,
                 shared: vec![],
                 trailing: vec![],
@@ -666,7 +714,7 @@ mod tests {
         let msg = ServerMsg::Frame {
             seq: 1,
             updates: vec![],
-            frame: Frame::default(),
+            frame: Arc::default(),
             complete: true,
             shared: vec![],
             trailing: vec![head],
@@ -759,7 +807,7 @@ mod tests {
             let msg = ServerMsg::Frame {
                 seq: 1,
                 updates,
-                frame: Frame::default(),
+                frame: Arc::default(),
                 complete: true,
                 shared: vec![],
                 trailing: vec![],

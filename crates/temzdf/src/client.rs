@@ -120,8 +120,8 @@ pub fn attach(name: &str) -> Result<String> {
     // The latest frame received and not shown yet (its sequence number is
     // acknowledged once it is), and the last one shown (shown again when the
     // terminal lost images).
-    let mut pending: Option<(u64, Frame, bool)> = None;
-    let mut last: Option<Frame> = None;
+    let mut pending: Option<(u64, Arc<Frame>, bool)> = None;
+    let mut last: Option<Arc<Frame>> = None;
     let reason = loop {
         if let Some((seq, frame, complete)) = &mut pending
             && front.ready()

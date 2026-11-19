@@ -99,7 +99,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     let mut latest: Option<ClientId> = None;
     // What the programs were told last about the clients' focus.
     let mut told_focus: Option<bool> = None;
-    let mut last_frame: Option<(u64, Frame, bool)> = None;
+    let mut last_frame: Option<(u64, Arc<Frame>, bool)> = None;
     // How GUI clients look, as last sent.
     let mut looks = session.appearance();
     let mut seq = 0u64;
@@ -181,7 +181,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 }
                 seq += 1;
                 shown_pointer = frame.pointer;
-                last_frame = Some((seq, frame, session.is_complete()));
+                last_frame = Some((seq, Arc::new(frame), session.is_complete()));
                 dirty = false;
             } else if !clients.values().any(|c| c.attached) {
                 // Nobody to send them to; attaching clients get a snapshot.
@@ -193,7 +193,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     let msg = ServerMsg::Frame {
                         seq: *seq,
                         updates,
-                        frame: frame.clone(),
+                        frame: Arc::clone(frame),
                         complete: *complete,
                         shared: Vec::new(),
                         trailing: Vec::new(),
