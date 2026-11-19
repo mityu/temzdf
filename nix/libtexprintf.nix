@@ -19,6 +19,8 @@ final: prev: {
       "--enable-static"
       "--disable-shared"
     ];
+    # scripts/deps-without-nix.sh writes the same pkg-config file for builds
+    # without Nix; change both together.
     postInstall = ''
       mkdir -p $out/lib/pkgconfig
       cat > $out/lib/pkgconfig/texprintf.pc <<PC

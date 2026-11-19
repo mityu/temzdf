@@ -95,7 +95,13 @@ The fonts `temzdf-gui` embeds are listed with their URLs and sha256 in
 `crates/temzdf-gui/fonts.toml`. Nix fetches them from there and the dev
 shell passes them in `TEMZDF_BUNDLED_FONTS`; a build without Nix runs
 `cargo xtask fetch-fonts` first (into `target/fonts/`, where
-`crates/temzdf-gui/build.rs` finds them). `cargo xtask update-fonts --check`
+`crates/temzdf-gui/build.rs` finds them). Such a build also needs Zig
+0.15.2 (libghostty-vt is then built from source), esbuild and npm,
+libclang, fontconfig and pkg-config (on Ubuntu: `libclang-dev
+libfontconfig-dev pkg-config`, and `autoconf automake libtool` for the
+next step), and libtexprintf and the shipped scripts' npm packages, which
+`scripts/deps-without-nix.sh PREFIX` installs (it prints the environment
+variables to set). `cargo xtask update-fonts --check`
 shows newer releases, `cargo xtask update-fonts` rewrites the list (then run
 the tests and restart the dev shell).
 
@@ -190,6 +196,9 @@ first, `scripts/miri.sh` in the second as a job of its own (both keep built
 dependencies with `Swatinem/rust-cache`), and `nix build` on Linux and macOS.
 The documents' check (`scripts/check-docs.sh`) runs on every push,
 documentation-only ones included (`.github/workflows/docs.yml`).
+`.github/workflows/without-nix.yml` builds `temzdf` and `temzdf-gui` on
+Ubuntu without Nix and starts them (`scripts/smoke-session.sh`: a session
+splits its pane on `<C-b>%`).
 `nix build` uses crane: the Rust dependencies, the script host's guest
 and the guest's dependencies are derivations of their own (`.#deps`,
 `.#guest`, `.#guest-deps`), and every job keeps the Nix store between

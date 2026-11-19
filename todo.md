@@ -93,6 +93,9 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- libtexprintf as a crate of its own (like a `libtexprintf-sys`) compiling
+  its C with `cc`: builds without Nix would need neither autotools nor a
+  pkg-config file of ours (`scripts/deps-without-nix.sh`). Not now.
 - Terminal panes: wait for a program's output to pause before a frame.
   htop writes one screen update as about 150 small writes over 1.5 ms
   (measured with `strace` at 160x50, 6-8 KB, at most 0.05 ms apart), so the
