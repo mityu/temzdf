@@ -42,14 +42,13 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
       # The shell's cargo and rustc on PATH: rust-cache runs outside the shell.
       - run: nix develop .#ci --command bash -c 'dirname "$(command -v cargo)"; dirname "$(command -v rustc)"' >>"$GITHUB_PATH"
+      # rust-cache keys by every toolchain rustup lists, and the runner
+      # image's own stable differs between images; without rustup it keys
+      # by the shell's rustc alone.
+      - run: rustup self uninstall -y
       # Built dependencies and the crates downloaded, not our own crates.
-      # Keyed by flake.lock, which pins the toolchain, instead of rust-cache's
-      # hash of every installed toolchain: that one also hashes the runner
-      # image's own stable, which differs between images.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: check-${{ hashFiles('flake.lock') }}
-          add-rust-environment-hash-key: false
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
       - run: nix develop .#ci --command scripts/check.sh --verbose --no-miri
       # What a failure leaves: the whole outputs, and the screens of failed
@@ -73,12 +72,11 @@ jobs:
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
       - run: nix develop .#ci-miri --command bash -c 'dirname "$(command -v cargo)"' >>"$GITHUB_PATH"
-      # Also Miri's standard library, built by `cargo miri setup`. Keyed
-      # by flake.lock as in `check`.
+      # As in `check`.
+      - run: rustup self uninstall -y
+      # Also Miri's standard library, built by `cargo miri setup`.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: miri-${{ hashFiles('flake.lock') }}
-          add-rust-environment-hash-key: false
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
           cache-directories: ~/.cache/miri
       - run: nix develop .#ci-miri --command scripts/miri.sh
