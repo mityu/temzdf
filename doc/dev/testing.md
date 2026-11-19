@@ -94,7 +94,11 @@ process (building fixtures counts), or use Unix sockets, shared memory,
 Mark a new test the same way when Miri stops on an "unsupported operation".
 Tests with deadlines get much longer ones under Miri (`cfg!(miri)`), which
 runs code tens to hundreds of times slower; where that would not keep the
-test meaningful it is ignored instead.
+test meaningful it is ignored instead. Likewise tests on large inputs or
+many random cases run smaller under Miri, or are ignored there: one such
+test took hours and held CI's Miri job past two hours. `scripts/miri.sh`
+stops a test still running after 15 minutes (`MIRI_TEST_TIMEOUT`, in
+seconds) and reports it as failed.
 
 What Miri found so far: the output writer thread of `termpix` lived on when
 every `Output` was dropped without `close` (fixed), and zlib-rs violates

@@ -27,6 +27,7 @@ jobs:
   # Miri runs in a job of its own, beside this one.
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # Line tables are all a failing test's backtrace needs: the build and
     # rust-cache's saved dependencies are much smaller without full debug
     # information.
@@ -66,6 +67,7 @@ jobs:
   # the `ci-miri` dev shell.
   miri:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
@@ -97,6 +99,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3

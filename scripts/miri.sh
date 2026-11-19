@@ -11,7 +11,9 @@
 # processes), and tuitest (pty only). Tests Miri cannot run are marked
 # `#[cfg_attr(miri, ignore = "why")]` where they are defined; isolation is
 # off so tests may read files and the clock. Logs of failed tests go to
-# target/miri-logs/. Exits 2 when `cargo miri` is not available.
+# target/miri-logs/. A test still running after $MIRI_TEST_TIMEOUT seconds
+# (default 900) is stopped and fails. Exits 2 when `cargo miri` is not
+# available.
 set -euo pipefail
 # Absolute: it re-executes itself after the cd.
 self=$(realpath "${BASH_SOURCE[0]}")
@@ -39,6 +41,7 @@ args=()
 for p in "${packages[@]}"; do args+=(-p "$p"); done
 
 export logs=target/miri-logs
+export MIRI_TEST_TIMEOUT=${MIRI_TEST_TIMEOUT:-900}
 rm -rf "$logs"
 mkdir -p "$logs"
 if ! out=$(cargo miri test --color never "${args[@]}" --lib --bins --no-run 2>&1); then
@@ -63,9 +66,14 @@ done)
 # shellcheck disable=SC2016
 results=$(xargs -r -P "$(nproc)" -L 1 bash -c '
   log=$logs/$0.${1//::/-}.log
-  if cargo miri test -q --color never -p "$0" $(targets "$0") -- --exact "$1" >"$log" 2>&1; then
+  # timeout signals its whole process group: cargo and the interpreter.
+  timeout -k 10 "$MIRI_TEST_TIMEOUT" cargo miri test -q --color never -p "$0" $(targets "$0") -- --exact "$1" >"$log" 2>&1
+  status=$?
+  if ((status == 0)); then
     if grep -q "1 ignored" "$log"; then echo IGNORED; else echo PASS; fi
     rm -f "$log"
+  elif ((status == 124 || status == 137)); then
+    echo "FAIL $0 $1: timed out after ${MIRI_TEST_TIMEOUT}s (see $log)"
   else
     echo "FAIL $0 $1: $(grep -m1 -oE "Undefined Behavior: .{0,100}|unsupported operation: .{0,100}|panicked at .{0,100}|memory leaked.{0,60}|terminated without waiting.{0,40}|error: .{0,100}" "$log") (see $log)"
   fi' <<<"$tests")
