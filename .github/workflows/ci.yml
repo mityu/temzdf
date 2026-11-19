@@ -6,10 +6,10 @@ on:
     branches:
       - main
       - dev
+    # (Markdown elsewhere may be a test's input: tests/fixtures/sample.md.)
     paths-ignore:
       - 'doc/**'
       - 'experiments/**'
-      - '**.md'
   pull_request:
 
 permissions:
