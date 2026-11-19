@@ -6,14 +6,24 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Cargo builds in derivations: dependencies apart from our crates.
+    crane.url = "github:ipetkov/crane";
   };
 
   # `nix build` / `nix run`: the viewer, and the GUI client (temzdf-gui,
   # which finds temzdf next to it). MuPDF and SyncTeX are vendored C
   # sources compiled by the crates' build scripts; tests are left to
-  # scripts/check.sh because they need TeX to build the fixtures.
+  # scripts/check.sh because they need TeX to build the fixtures. Built
+  # with crane: the dependencies, the script host's guest and its
+  # dependencies are derivations of their own, so a change to our crates
+  # alone takes them from a cache (CI keeps the store between runs).
   outputs =
-    inputs@{ flake-parts, rust-overlay, ... }:
+    inputs@{
+      flake-parts,
+      rust-overlay,
+      crane,
+      ...
+    }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
@@ -318,81 +328,146 @@
             };
           packages =
             let
-              buildPackage =
-                {
-                  withGui ? false,
-                }:
-                (pkgs.makeRustPlatform {
-                  cargo = stableToolchain;
-                  rustc = stableToolchain;
-                }).buildRustPackage
-                {
-                  pname = "temzdf";
-                  version = (lib.importTOML ./Cargo.toml).workspace.package.version;
-                  src = lib.fileset.toSource {
-                    root = ./.;
-                    fileset = lib.fileset.unions [
-                      ./Cargo.toml
-                      ./Cargo.lock
-                      ./crates
-                      # A workspace member: Cargo reads its manifest even
-                      # though the package does not build it.
-                      ./xtask
-                    ];
+              craneLib = (crane.mkLib pkgs).overrideToolchain stableToolchain;
+              cargoSrc = lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [
+                  ./Cargo.toml
+                  ./Cargo.lock
+                  ./crates
+                  # A workspace member: Cargo reads its manifest even
+                  # though the package does not build it.
+                  ./xtask
+                ];
+              };
+              # The crates as Cargo.lock names them. crane leaves them in the
+              # store, read-only (buildRustPackage copied them first):
+              # mupdf-sys copies MuPDF's sources into its OUT_DIR keeping
+              # that mode, then patches font.c there, so its copies are made
+              # writable.
+              cargoVendorDir = craneLib.vendorCargoDeps {
+                src = cargoSrc;
+                overrideVendorCargoPackage =
+                  p: drv:
+                  if p.name == "mupdf-sys" then
+                    drv.overrideAttrs (_: {
+                      postPatch = ''
+                        substituteInPlace build.rs --replace-fail \
+                          '.map_err(|e| format!("Couldn'"'"'t copy {src_path:?} to {dst_path:?}: {e}"))?;' \
+                          '.map_err(|e| format!("Couldn'"'"'t copy {src_path:?} to {dst_path:?}: {e}"))?;
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                let mode = fs::metadata(&dst_path)?.permissions().mode();
+                                fs::set_permissions(&dst_path, fs::Permissions::from_mode(mode | 0o200))?;
+                            }'
+                      '';
+                    })
+                  else
+                    drv;
+              };
+              # What every derivation below shares.
+              common = {
+                pname = "temzdf";
+                version = (lib.importTOML ./Cargo.toml).workspace.package.version;
+                src = cargoSrc;
+                inherit cargoVendorDir;
+                strictDeps = true;
+                nativeBuildInputs = with pkgs.buildPackages; [
+                  pkg-config
+                  clang
+                  # mupdf-sys runs bindgen, which needs libclang.
+                  rustPlatform.bindgenHook
+                  esbuild
+                  # Stylo's build script (Blitz, the Markdown viewer's
+                  # graphics mode) generates code with Python.
+                  python3
+                ];
+                # libghostty-vt: terminal emulation for terminal panes (temzdf-term).
+                buildInputs = [
+                  pkgs.fontconfig
+                  pkgs.libghostty-vt.dev
+                  # libtexprintf: TeX math as text for the Markdown viewer (texprintf).
+                  pkgs.libtexprintf
+                ];
+                # Tests are scripts/check.sh's: they need TeX, the
+                # fixtures, tmux and more than the build's sources.
+                doCheck = false;
+                # The dependencies only built, not also checked first (a
+                # build is all the package needs).
+                cargoCheckCommand = "true";
+                # bindgenHook copies NIX_CFLAGS_COMPILE, with its
+                # -frandom-seed of each derivation, into
+                # BINDGEN_EXTRA_CLANG_ARGS, which bindgen's build script
+                # watches: without it the package would build bindgen,
+                # mupdf-sys and libghostty-vt-sys again.
+                preBuild = ''
+                  BINDGEN_EXTRA_CLANG_ARGS=$(printf '%s' "$BINDGEN_EXTRA_CLANG_ARGS" | sed 's/-frandom-seed=[^ ]*//g')
+                  export BINDGEN_EXTRA_CLANG_ARGS
+                '';
+                # Environment variables of the build (plain attributes are
+                # not exported).
+                env =
+                  wasmEnv
+                  // scriptEnv
+                  // {
+                    TEMZDF_BUNDLED_FONTS = bundleFontPath;
                   };
-                  cargoLock.lockFile = ./Cargo.lock;
-                  cargoBuildFlags = [
-                    "--package"
-                    "temzdf"
-                  ]
-                  ++ lib.optionals withGui [
-                    "--package"
-                    "temzdf-gui"
-                  ];
-                  nativeBuildInputs = with pkgs.buildPackages; [
-                    pkg-config
-                    clang
-                    # mupdf-sys runs bindgen, which needs libclang.
-                    rustPlatform.bindgenHook
-                    esbuild
-                    # Stylo's build script (Blitz, the Markdown viewer's
-                    # graphics mode) generates code with Python.
-                    python3
-                  ];
+              };
+
+              # The script host's guest (crates/temzdf-script-guest), as
+              # crates/temzdf-script-runner/build.rs would build it.
+              guestArgs = "--package temzdf-script-guest --target wasm32-wasip1";
+              guestCommon = common // {
+                pname = "temzdf-script-guest";
+                CARGO_PROFILE = "script-guest";
+                cargoExtraArgs = guestArgs;
+              };
+              guestDeps = craneLib.buildDepsOnly guestCommon;
+              guest = craneLib.mkCargoDerivation (
+                guestCommon
+                // {
+                  cargoArtifacts = guestDeps;
+                  # The .wasm alone, not the build's target directory too.
+                  doInstallCargoArtifacts = false;
+                  buildPhaseCargoCommand = "cargoWithProfile build ${guestArgs}";
+                  installPhaseCommand = ''
+                    install -Dm644 target/wasm32-wasip1/script-guest/temzdf_script_guest.wasm \
+                      $out/temzdf_script_guest.wasm
+                  '';
+                }
+              );
+
+              packageArgs = "--package temzdf --package temzdf-gui";
+              deps = craneLib.buildDepsOnly (common // { cargoExtraArgs = packageArgs; });
+              temzdf = craneLib.buildPackage (
+                common
+                // {
+                  cargoArtifacts = deps;
+                  cargoExtraArgs = packageArgs;
+                  env = common.env // {
+                    # Only precompiled by build.rs (no nested cargo).
+                    TEMZDF_SCRIPT_GUEST_WASM = "${guest}/temzdf_script_guest.wasm";
+                  };
                   # In RUNPATH rather than a wrapper script, so the binary works
                   # alone (copied, or a symlink to it) outside the dev shell;
                   # dlopen searches the RUNPATH of the executable that calls it.
-                  postFixup = lib.optionalString (withGui && isLinux) ''
+                  postFixup = lib.optionalString isLinux ''
                     patchelf --add-rpath ${lib.makeLibraryPath guiLibs} $out/bin/temzdf-gui
                   '';
-                  # libghostty-vt: terminal emulation for terminal panes (temzdf-term).
-                  buildInputs = [
-                    pkgs.fontconfig
-                    pkgs.libghostty-vt.dev
-                    # libtexprintf: TeX math as text for the Markdown viewer (texprintf).
-                    pkgs.libtexprintf
-                  ];
-                  # Tests are scripts/check.sh's: they need TeX, the
-                  # fixtures, tmux and more than the build's sources.
-                  doCheck = false;
                   meta = {
                     description = "Terminal PDF viewer drawn with the kitty graphics protocol";
                     homepage = "https://github.com/mityu/temzdf-cli";
                     license = lib.licenses.agpl3Only;
                     mainProgram = "temzdf";
                   };
-                  # Environment variables of the build (plain attributes are
-                  # not exported).
-                  env =
-                    wasmEnv
-                    // scriptEnv
-                    // lib.optionalAttrs withGui {
-                      TEMZDF_BUNDLED_FONTS = bundleFontPath;
-                    };
-                };
+                }
+              );
             in
             {
-              default = buildPackage { withGui = true; };
+              default = temzdf;
+              # The parts, to build or inspect on their own.
+              inherit deps guest;
+              guest-deps = guestDeps;
             };
         };
     };
