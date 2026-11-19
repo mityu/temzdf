@@ -182,9 +182,13 @@ fn linker(engine: &Engine) -> wasmtime::Result<Linker<Data>> {
         "temzdf",
         "send",
         |mut caller: Caller<'_, Data>, ptr: u32, len: u32| -> wasmtime::Result<i32> {
-            let mut frame = vec![0u8; len as usize];
-            memory(&mut caller)?.read(&caller, ptr as usize, &mut frame)?;
-            Ok(match temzdf_protocol::recv::<FromHost>(&mut frame.as_slice()) {
+            // Read in place: a bogus length is a trap, not an allocation of
+            // whatever size the guest names.
+            let mem = memory(&mut caller)?;
+            let frame = frame_at(mem.data(&caller), ptr, len)
+                .ok_or_else(|| wasmtime::Error::msg("send: a frame outside the guest's memory"))?;
+            let msg = temzdf_protocol::recv::<FromHost>(&mut &frame[..]);
+            Ok(match msg {
                 Ok(Some(msg)) => {
                     (caller.data_mut().events)(Event::Msg(msg));
                     0
@@ -229,9 +233,31 @@ fn linker(engine: &Engine) -> wasmtime::Result<Linker<Data>> {
     Ok(linker)
 }
 
+/// The `len` bytes at `ptr` of the guest's memory, if they are inside it.
+fn frame_at(mem: &[u8], ptr: u32, len: u32) -> Option<&[u8]> {
+    let start = ptr as usize;
+    mem.get(start..start.checked_add(len as usize)?)
+}
+
 fn memory(caller: &mut Caller<'_, Data>) -> wasmtime::Result<wasmtime::Memory> {
     caller
         .get_export("memory")
         .and_then(|e| e.into_memory())
         .ok_or_else(|| wasmtime::Error::msg("the guest has no memory"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frame_at;
+
+    #[test]
+    fn frames_outside_the_guests_memory_are_refused() {
+        let mem = [1u8, 2, 3, 4];
+        assert_eq!(frame_at(&mem, 1, 2), Some(&[2u8, 3][..]));
+        assert_eq!(frame_at(&mem, 0, 4), Some(&mem[..]));
+        assert_eq!(frame_at(&mem, 4, 0), Some(&[][..]));
+        assert_eq!(frame_at(&mem, 3, 2), None);
+        assert_eq!(frame_at(&mem, 0, u32::MAX), None, "nothing allocated for a bogus length");
+        assert_eq!(frame_at(&mem, u32::MAX, u32::MAX), None);
+    }
 }
