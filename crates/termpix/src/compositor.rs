@@ -242,7 +242,12 @@ impl Compositor {
 
     /// Replace the pixels of an existing image (it may change size).
     pub fn replace_image(&mut self, id: ImageId, width: u32, height: u32, data: impl Into<raster::Pixels>) {
-        // Re-transmitting an id makes the terminal drop that image's placements.
+        // The terminal's version goes now, placements and all: waiting for
+        // the new one's transmission (which would drop them too) leaves it
+        // showing if the image is removed first, or not shown next.
+        if self.images.get(&id.0).is_some_and(|i| i.uploaded) {
+            self.encoder.delete(&mut self.pending, Delete::Image { id: id.0, free: true });
+        }
         self.placed.retain(|_, p| p.image != id.0);
         self.insert_image(id.0, width, height, data.into());
     }
@@ -732,6 +737,25 @@ mod tests {
         assert_eq!(screen.pixel(13, 25), [255, 0, 0, 255]);
         assert_eq!(screen.pixel(13 + 15, 30), [0, 0, 255, 255]);
         assert_eq!(screen.pixel(13 + 30, 30), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn a_replaced_image_leaves_nothing_behind_when_removed_or_not_shown() {
+        for remove in [true, false] {
+            let mut c = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, geometry());
+            let img = c.add_image(30, 30, test_image());
+            let mut out = Vec::new();
+            c.present(&[layer(img, 0, 0)], &mut out).unwrap();
+            c.replace_image(img, 30, 30, [0, 255, 0, 255].repeat(900));
+            if remove {
+                c.remove_image(img);
+            }
+            c.present(&[], &mut out).unwrap();
+            let mut term = MockTerminal::new(geometry(), [0, 0, 0, 255]);
+            term.feed(&out);
+            assert_eq!(term.placement_count(), 0, "remove: {remove}");
+            assert_eq!(term.render().pixel(5, 5), [0, 0, 0, 255], "remove: {remove}");
+        }
     }
 
     #[test]
