@@ -72,12 +72,9 @@ type Entry = CmdInfo & { fn: (ctx: CmdCtx) => void; when?: (ctx: KeyContext) => 
 /** In the order defined: the last one wins. */
 const registry: Entry[] = [];
 
-/** Nested `command.execute` calls, refused past `MAX_DEPTH` (Vim's E169).
- * Vim allows 200; here 200 levels of a command running itself exhaust the
- * guest's WebAssembly stack first (150 still fit, 2026-11-19), which ends
- * the script host, so half that leaves room for commands doing more. */
-let depth = 0;
-const MAX_DEPTH = 100;
+function now<T>(fn: () => T): T {
+  return fn();
+}
 
 function check(name: string, fn: unknown, opts: CmdOpts): void {
   if (!/^[A-Za-z]+$/.test(name)) throw new TypeError(`command.add(${name}): a name is letters only`);
@@ -188,15 +185,23 @@ export const command = {
     }));
   },
   /** Run a command line (`|` separating commands as they say). Errors reach the caller. */
-  execute(line: string, opts: { mods?: Mods } = {}): void {
-    if (depth >= MAX_DEPTH) throw new Error("E169: Command too recursive");
-    depth++;
-    try {
-      run(line, opts.mods ?? {});
-    } finally {
-      depth--;
-    }
-  },
+  execute: now(() => {
+    /** Nested `command.execute` calls, refused past `MAX_DEPTH` (Vim's E169).
+     * Vim allows 200; here 200 levels of a command running itself exhaust the
+     * guest's WebAssembly stack first (150 still fit, 2026-11-19), which ends
+     * the script host, so half that leaves room for commands doing more. */
+    let depth = 0;
+    const MAX_DEPTH = 100;
+    return (line: string, opts: { mods?: Mods } = {}): void => {
+      if (depth >= MAX_DEPTH) throw new Error("E169: Command too recursive");
+      depth++;
+      try {
+        run(line, opts.mods ?? {});
+      } finally {
+        depth--;
+      }
+    };
+  }),
 };
 
 /** `!` at the start, and what follows it. */
