@@ -127,6 +127,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         // listening again where it can.
         if socket_checked.elapsed() >= SOCKET_CHECK {
             socket_checked = Instant::now();
+            session.serve_free_forward_sockets();
             let attached = clients.values().filter(|c| c.attached).count();
             let answered = || UnixStream::connect(&socket).is_ok();
             match socket_check(cleanup.still_ours(), attached, answered) {

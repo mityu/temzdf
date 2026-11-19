@@ -329,7 +329,7 @@ struct DocEntry {
     opening: Option<Opening>,
     /// Panes to create once it opened, and the tabs they were asked for.
     waiting: Vec<(Spot, tabs::TabId)>,
-    _forward: Option<forward::Server>,
+    forward: Option<forward::Server>,
     /// A forward search that came while it opened (its socket listens from
     /// the start: `temzdf --forward` sends one to the session it started).
     forward_waiting: Option<ForwardRequest>,
@@ -716,7 +716,8 @@ impl Session {
         let opening = Opening::start(path, sink)?;
         let forward_server = if self.settings.serve_forward {
             let events = self.events.clone();
-            // A second viewer of the same file just goes without.
+            // A second viewer of the same file goes without, until the
+            // first closes it (serve_free_forward_sockets).
             forward::serve(path, move |req| events(SessionEvent::Forward(id, req))).ok()
         } else {
             None
@@ -731,7 +732,7 @@ impl Session {
                 host: None,
                 opening: Some(opening),
                 waiting: vec![spot],
-                _forward: forward_server,
+                forward: forward_server,
                 forward_waiting: None,
                 view: None,
             },
@@ -2655,6 +2656,20 @@ impl Session {
             changed |= t.term.sync_timeout(now);
         }
         changed
+    }
+
+    /// Listen for forward searches about documents another viewer had the
+    /// socket of, once it is free (that viewer closed the file or ended):
+    /// else `temzdf --forward` would find nobody and start a new session.
+    /// The server asks every few seconds.
+    pub fn serve_free_forward_sockets(&mut self) {
+        if !self.settings.serve_forward {
+            return;
+        }
+        for (&id, d) in self.docs.iter_mut().filter(|(_, d)| d.forward.is_none()) {
+            let events = self.events.clone();
+            d.forward = forward::serve_if_free(&d.path, move |req| events(SessionEvent::Forward(id, req)));
+        }
     }
 
     /// [`Session::tick`], plus scripting's timers (the configuration's load

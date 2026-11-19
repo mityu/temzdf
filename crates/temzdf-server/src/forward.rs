@@ -102,6 +102,21 @@ pub fn serve(pdf: &Path, deliver: impl Fn(ForwardRequest) -> bool + Send + 'stat
     serve_at(socket_path(pdf), deliver)
 }
 
+/// [`serve`] once no socket is there any more (the viewer that had it
+/// closed the file): `None` while one is. Cheap enough to ask every few
+/// seconds; never connects to a live viewer (that would hold its listener
+/// up for a request timeout).
+pub fn serve_if_free(pdf: &Path, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> Option<Server> {
+    serve_if_free_at(socket_path(pdf), deliver)
+}
+
+fn serve_if_free_at(path: PathBuf, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> Option<Server> {
+    if path.symlink_metadata().is_ok() {
+        return None;
+    }
+    serve_at(path, deliver).ok()
+}
+
 fn serve_at(path: PathBuf, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> std::io::Result<Server> {
     if let Some(dir) = path.parent() {
         temzdf_protocol::private_dir(dir)?;
@@ -179,6 +194,29 @@ mod tests {
         assert!(!send_to(&socket, &req).unwrap(), "socket removed");
         // Its thread ended: the delivery function (and its sender) is gone.
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Err(std::sync::mpsc::RecvTimeoutError::Disconnected));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri has no Unix sockets")]
+    fn a_second_viewer_takes_the_socket_over_once_the_first_closes() {
+        let dir = std::env::temp_dir().join(format!("temzdf-ipc-takeover-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("temzdf").join("doc.sock");
+        let first = serve_at(socket.clone(), |_| true).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let second = move || {
+            let tx = tx.lock().unwrap().clone();
+            serve_if_free_at(socket.clone(), move |r| tx.send(r).is_ok())
+        };
+        assert!(second().is_none(), "the first has it");
+        drop(first);
+        let server = second().expect("free now");
+        let req = ForwardRequest { file: "main.tex".into(), line: 7, column: 0 };
+        assert!(send_to(&dir.join("temzdf").join("doc.sock"), &req).unwrap());
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);
+        drop(server);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
