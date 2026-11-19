@@ -5563,6 +5563,13 @@ mod tests {
         assert!(s.is_animating());
         settle(&mut s);
         assert_eq!(s.md_graphics(s.focus).unwrap().0.scroll(), 100.0);
+        // A new height keeps the place (not the top of the block there).
+        s.resize(Geometry { rows: GEOMETRY.rows - 3, ..GEOMETRY });
+        let _ = painted(&mut s);
+        assert_eq!(s.md_graphics(s.focus).unwrap().0.scroll(), 100.0);
+        s.resize(GEOMETRY);
+        let _ = painted(&mut s);
+        assert_eq!(s.md_graphics(s.focus).unwrap().0.scroll(), 100.0);
         // And follow the option (back up: a step the same way this soon
         // would be a flick's, larger).
         s.options.scrollstep = 40.0;

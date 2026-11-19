@@ -487,19 +487,23 @@ impl Session {
     }
 
     /// A graphics pane follows its size: laid out again for a new width,
-    /// at the same source line.
+    /// at the same source line; a new height keeps the page and its place.
     pub(super) fn md_fit_graphics(&mut self, id: PaneId) {
         let Some((w, h)) = self.pane_pixels(id) else { return };
         let Some(Kind::Markdown { pane, doc }) = self.panes.get(&id).map(|e| &e.kind) else { return };
         if (pane.width, pane.height) == (w, h) {
             return;
         }
-        let doc = *doc;
-        let line = self.md_docs.get(&doc).and_then(|d| d.page(pane.page_key())).map(|p| pane.top_line(p));
+        let (doc, key) = (*doc, pane.page_key());
+        let line = self.md_docs.get(&doc).and_then(|d| d.page(key)).map(|p| pane.top_line(p));
+        let mut same_page = false;
         if let Some(Kind::Markdown { pane, .. }) = self.panes.get_mut(&id).map(|e| &mut e.kind) {
             pane.resize(w, h);
+            same_page = pane.page_key() == key;
         }
-        if let (Some(line), Some((pane, page))) = (line, self.md_graphics(id)) {
+        // (A source line's place is its block's top: going there would jump
+        // back to the start of a long block.)
+        if !same_page && let (Some(line), Some((pane, page))) = (line, self.md_graphics(id)) {
             pane.show_line(page, line);
         }
         self.md_collect(doc);
