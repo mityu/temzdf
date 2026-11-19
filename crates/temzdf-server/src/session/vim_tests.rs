@@ -482,6 +482,24 @@ keymap.add("vim/normal", "<F6>", () => {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn mapped_functions_hear_the_keys_that_ran_them() {
+    let config = r#"import { action, keymap } from "temzdf";
+import vim from "temzdf/edit/vim";
+vim.enable();
+keymap.add("vim/normal", "gZ", (c) => action.setVar("pane", "keys", `${c.count} ${c.keys}`));
+"#;
+    let dir = std::env::temp_dir().join(format!("temzdf-ctx-keys-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (mut s, rx) = config_session(&dir, "x\n", Some(config)).unwrap();
+    type_keys(&mut s, &rx, "3gZ", None).unwrap();
+    let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("keys".into())];
+    let got = s.run_command("get-var", &args, Instant::now()).unwrap().0;
+    assert_eq!(got, ScriptValue::Str("3 gZ".into()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn command_cases() {
     // runtime/test/command.ts: <F5> runs temzdf/command's cases.
     let dir = std::env::temp_dir().join(format!("temzdf-command-cases-{}", std::process::id()));

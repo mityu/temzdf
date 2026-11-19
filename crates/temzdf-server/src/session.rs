@@ -509,6 +509,9 @@ pub struct Session {
     /// number, and the one under way (its edits name it in `TextChanged`).
     inv_seq: u64,
     pub(super) current_invocation: Option<u64>,
+    /// The keys of the last invocation started (mapped and fallback
+    /// functions get them as `ctx.keys`).
+    invocation_keys: String,
     /// Counts invocations (keys, text, pastes, CLI requests): a text
     /// buffer's undo step ends when a new one edits it.
     invocation: u64,
@@ -600,6 +603,7 @@ impl Session {
             killed: false,
             inv_seq: 0,
             current_invocation: None,
+            invocation_keys: String::new(),
             shell: None,
             panes: HashMap::new(),
             layout: None,
@@ -1578,7 +1582,8 @@ impl Session {
                     break;
                 }
                 Step::NeedConditions(funcs) => {
-                    let ctx = self.key_context(None);
+                    let keys = self.matcher.pending().iter().map(|k| k.notation()).collect();
+                    let ctx = self.key_context(None, keys);
                     self.eval(funcs, vec![ctx]);
                 }
                 Step::Leave => {
@@ -1650,6 +1655,7 @@ impl Session {
     /// CLI request): `InvokePre` hooks first (they may cancel it), then it
     /// runs; `InvokePost` comes at the safe point after it and its hooks.
     pub(super) fn invoke(&mut self, what: Invoked, source: &str, keys: String) -> Outcome {
+        self.invocation_keys.clone_from(&keys);
         self.inv_seq += 1;
         let count = match &what {
             Invoked::Target { count: Some(c), .. } => ScriptValue::Num(*c as f64),
@@ -1677,7 +1683,7 @@ impl Session {
             Invoked::Target { target, count, at } => self.run_target(target, count, at),
             Invoked::Text(t) => self.text_type(&t).unwrap_or(Outcome::None),
             Invoked::Fallback { func, key } => {
-                let ctx = self.key_context(None);
+                let ctx = self.key_context(None, self.invocation_keys.clone());
                 self.call(func, vec![ctx, key], false);
                 Outcome::None
             }
@@ -1770,7 +1776,7 @@ impl Session {
                 out
             }
             Target::Func(func) => {
-                let ctx = self.key_context(Some(count));
+                let ctx = self.key_context(Some(count), self.invocation_keys.clone());
                 self.call(func, vec![ctx], false);
                 Outcome::None
             }
@@ -1778,14 +1784,14 @@ impl Session {
     }
 
     /// What mapped functions and conditions get: the focused pane, its
-    /// kind, whether it floats, the mode, the keys pending, and (mapped
-    /// functions) the count.
-    fn key_context(&self, count: Option<Option<usize>>) -> ScriptValue {
+    /// kind, whether it floats, the mode, `keys` (conditions: those of the
+    /// sequence before the key asked about; functions: those that ran
+    /// them), and (mapped functions) the count.
+    fn key_context(&self, count: Option<Option<usize>>, keys: String) -> ScriptValue {
         let kind = match self.panes.get(&self.focus) {
             Some(e) => ScriptValue::Str(e.kind_name().into()),
             None => ScriptValue::Null,
         };
-        let keys: String = self.matcher.pending().iter().map(|k| k.notation()).collect();
         let mut fields = vec![
             ("pane", ScriptValue::Num(self.focus as f64)),
             ("paneKind", kind),

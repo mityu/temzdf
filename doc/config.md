@@ -92,9 +92,10 @@ to the previous one, and below the history there is always `normal`. The
 design is in doc/design/keymaps.md.
 
 Mappings go from a key sequence to a synchronous function, which gets the
-key's context (`ctx.count`: the count typed before the keys, or null).
+key's context (`ctx.count`: the count typed before the keys, or null;
+`ctx.keys`: the keys that ran it).
 `action.<command>(...)` runs a command now; commands that repeat take the
-count as an argument (`(ctx) => action.nextTab(ctx.count)`). Keys typed
+count as an argument (`(ctx) => action.scrollDown(ctx.count)`). Keys typed
 while a mapped function runs wait for it, so a mode it switches to is in
 place for the next key. Sequences
 work as in Vim: a key that starts a longer mapping waits `timeoutlen`

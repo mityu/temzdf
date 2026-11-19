@@ -98,7 +98,7 @@ declare module "temzdf" {{
     floating: boolean;
     /** The current mode. */
     mode: string;
-    /** The keys of the sequence typed so far, before this one. */
+    /** Conditions: the keys of the sequence typed before the key asked about; mapped and fallback functions: the keys that ran them. */
     keys: string;
   }}
   /** What a mapped function gets. */
