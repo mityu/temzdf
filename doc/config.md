@@ -229,7 +229,7 @@ hook holds every key until it ran, so hook it only while needed.
 | `visual` | `0` `<Home>` / `^` / `$` `<End>` | the first column / the first character / the last character of the row |
 | `visual` | `w` `b` `e` / `W` `B` `E` | words / blank-separated words (counts) |
 | `visual` | `gg` / `G` | the first row of the scrollback / the last row with text (row N with a count) |
-| `visual` | `H` `M` `L` | the top / middle / bottom row shown |
+| `visual` | `H` `M` `L` | the top / middle / bottom row shown (`H` / `L`: the Nth from the top / bottom with a count) |
 | `visual` | `<C-u>` `<C-d>` / `<PageUp>` / `<C-f>` `<PageDown>` | half a screen up / down, a screen up / down (the view with it) |
 | `visual` | `<C-y>` / `<C-e>` | the view a row up / down |
 | `visual` | `[[` / `]]` | the shell prompt above / below (shells that mark prompts, OSC 133) |

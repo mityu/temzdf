@@ -905,6 +905,18 @@ fn the_visual_mode_copies_a_shells_output_by_keys() {
     assert_eq!(t.copied().len(), 3, "a drag copies nothing in the visual mode");
     t.type_text("y");
     assert_eq!(copies(&mut t, 4)[3], "beta");
+    // Counts on H and L: the third row shown, the second from the bottom.
+    t.wait_for("back in the shell", |s| mode_shown(s) == "TERMINAL");
+    t.keys(&["C-b", "["]);
+    let s = t.wait_for("the visual mode", |s| mode_shown(s) == "VISUAL");
+    let third = format!("{}\n", s.lines()[2].trim_end());
+    t.type_text("3HY");
+    assert_eq!(copies(&mut t, 5)[4], third);
+    t.wait_for("back in the shell", |s| mode_shown(s) == "TERMINAL");
+    t.keys(&["C-b", "["]);
+    t.wait_for("the visual mode", |s| mode_shown(s) == "VISUAL");
+    t.type_text("2LY");
+    assert_eq!(copies(&mut t, 6)[5], "alpha beta\n");
 }
 
 #[test]
