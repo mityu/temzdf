@@ -428,6 +428,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "5 MiB of text: over ten minutes under Miri")]
     fn a_large_buffer_is_searched_in_place() {
         let mut s = "x".repeat(5 << 20);
         s.push_str("needle");
@@ -508,6 +509,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "tens of thousands of searches: hours under Miri")]
     fn stopping_early_finds_what_enumerating_every_match_did() {
         // Sparse matches far apart, so the backward windows widen many times.
         let mut far = String::from("foo ab x\n");
@@ -628,12 +630,14 @@ mod tests {
 
     #[test]
     fn fancy_offsets_are_counted_once() {
-        let s = "aa ".repeat(200_000);
+        // Fewer under Miri, where the long text takes hours.
+        let n = if cfg!(miri) { 500 } else { 200_000 };
+        let s = "aa ".repeat(n);
         let t = Text::from(s.as_str());
         let p = Pattern::new(r"(\w)\1").unwrap();
         let (all, (_, bytes)) =
             visited(|| find_all(&t, &p, 0, t.len_chars(), &SearchOptions::default(), &WordChars::default()));
-        assert_eq!(all.len(), 200_000);
+        assert_eq!(all.len(), n);
         assert_eq!(all.last().map(|m| (m.start, m.groups[1])), Some((s.len() - 3, Some((s.len() - 3, s.len() - 2)))));
         // Going back from each match's end to its group's start costs little.
         assert!(bytes <= 3 * s.len(), "{bytes} bytes counted for a copy of {}", s.len());

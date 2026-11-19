@@ -661,7 +661,9 @@ mod tests {
         // A full screen (a shell), sometimes with a status line over it.
         let mut screen = TextGrid { col: 0, row: 0, rows: (0..rows).map(|_| random_row(&mut rng, 20)).collect() };
         let mut written = 0;
-        for frame in 0..2000 {
+        // Fewer frames under Miri, where the whole run takes hours.
+        let frames = if cfg!(miri) { 40 } else { 2000 };
+        for frame in 0..frames {
             match rng.below(8) {
                 // Typing: one cell changes.
                 0..=2 => {
@@ -729,6 +731,6 @@ mod tests {
             assert_eq!(new.redraw, old.redraw, "frame {frame}");
             written += a.len();
         }
-        assert!(written > 10_000, "the frames wrote something: {written}");
+        assert!(written > frames * 5, "the frames wrote something: {written}");
     }
 }
