@@ -160,6 +160,13 @@ const NAMES: &[(&str, KeyCode)] = &[
     ("lt", KeyCode::Char('<')),
     ("Bslash", KeyCode::Char('\\')),
     ("Bar", KeyCode::Char('|')),
+    ("Begin", KeyCode::Begin),
+    ("CapsLock", KeyCode::CapsLock),
+    ("ScrollLock", KeyCode::ScrollLock),
+    ("NumLock", KeyCode::NumLock),
+    ("PrintScreen", KeyCode::PrintScreen),
+    ("Pause", KeyCode::Pause),
+    ("Menu", KeyCode::Menu),
 ];
 
 /// Parse a key sequence (`gg`, `<C-b>%`, `/needle<CR>`).
@@ -169,11 +176,21 @@ pub fn parse(s: &str) -> Result<Vec<Stroke>> {
     while let Some(c) = rest.chars().next() {
         if c == '<'
             && let Some(end) = rest.find('>')
-            && let Ok(stroke) = parse_special(&rest[1..end])
         {
-            out.push(stroke);
-            rest = &rest[end + 1..];
-            continue;
+            // `<M->>`: modifiers and `>`, when the first `>` ends no name
+            // (`<C-->` is Ctrl and `-`).
+            let found = match parse_special(&rest[1..end]) {
+                Ok(stroke) => Some((stroke, end)),
+                Err(_) if rest[1..end].ends_with('-') && rest[end + 1..].starts_with('>') => {
+                    parse_special(&rest[1..=end]).ok().map(|s| (s, end + 1))
+                }
+                Err(_) => None,
+            };
+            if let Some((stroke, end)) = found {
+                out.push(stroke);
+                rest = &rest[end + 1..];
+                continue;
+            }
         }
         // A `<` that does not start a key name is itself (as in Vim).
         out.push(Stroke::normal(KeyCode::Char(c), Modifiers::NONE, true));
@@ -207,6 +224,9 @@ fn parse_special(inner: &str) -> Result<Stroke> {
         && (1..=35).contains(&n)
     {
         KeyCode::F(n)
+    } else if let Some(n) = rest.strip_prefix('K').and_then(|n| n.parse::<u32>().ok()) {
+        // A key without a name, by its code (as notation writes it).
+        KeyCode::Other(n)
     } else {
         let mut chars = rest.chars();
         match (chars.next(), chars.next()) {
@@ -270,6 +290,27 @@ mod tests {
         assert_eq!(typed(KeyCode::Tab, Modifiers::SHIFT), one("<S-Tab>"));
         assert_eq!(one("<C-S-a>").notation(), "<C-S-a>");
         assert_eq!(one("<").notation(), "<lt>");
+    }
+
+    #[test]
+    fn typed_keys_round_trip_through_notation() {
+        let keys = [
+            typed(KeyCode::Char('>'), Modifiers::ALT),
+            typed(KeyCode::Char('>'), Modifiers::CTRL),
+            typed(KeyCode::Char('<'), Modifiers::ALT),
+            typed(KeyCode::Char('-'), Modifiers::CTRL),
+            typed(KeyCode::Char('>'), Modifiers::NONE),
+            typed(KeyCode::Char('<'), Modifiers::NONE),
+            typed(KeyCode::Other(57_399), Modifiers::NONE),
+            typed(KeyCode::Menu, Modifiers::SHIFT),
+            typed(KeyCode::PrintScreen, Modifiers::NONE),
+            typed(KeyCode::F(12), Modifiers::CTRL),
+        ];
+        for k in keys {
+            let n = k.notation();
+            assert_eq!(parse(&n).unwrap(), [k], "{n}");
+        }
+        assert_eq!(parse(&notation(&keys)).unwrap(), keys, "as a sequence");
     }
 
     #[test]
