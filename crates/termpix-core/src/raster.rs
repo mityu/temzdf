@@ -70,11 +70,18 @@ pub struct RgbaImage {
 
 impl RgbaImage {
     pub fn new(width: u32, height: u32, fill: [u8; 4]) -> Self {
-        let mut data = Vec::with_capacity(width as usize * height as usize * 4);
-        for _ in 0..width as usize * height as usize {
-            data.extend_from_slice(&fill);
-        }
-        Self { width, height, data }
+        Self { width, height, data: fill.repeat(width as usize * height as usize) }
+    }
+
+    /// Make this a `width` x `height` image filled with `fill`, keeping the
+    /// allocation when it is large enough (a frame built again each present).
+    pub fn reset(&mut self, width: u32, height: u32, fill: [u8; 4]) {
+        let len = width as usize * height as usize * 4;
+        self.width = width;
+        self.height = height;
+        self.data.clear();
+        self.data.resize(len, 0);
+        self.fill(fill);
     }
 
     pub fn from_raw(width: u32, height: u32, data: Vec<u8>) -> Option<Self> {
@@ -87,8 +94,17 @@ impl RgbaImage {
     }
 
     pub fn fill(&mut self, color: [u8; 4]) {
-        for px in self.data.as_chunks_mut::<4>().0 {
-            px.copy_from_slice(&color);
+        let data = &mut self.data;
+        if data.len() < 4 {
+            return;
+        }
+        data[..4].copy_from_slice(&color);
+        // Double the filled prefix with whole copies.
+        let mut done = 4;
+        while done < data.len() {
+            let n = done.min(data.len() - done);
+            data.copy_within(..n, done);
+            done += n;
         }
     }
 
@@ -136,6 +152,17 @@ pub fn blit_blended(dst: &mut RgbaImage, dst_rect: Rect, src: RgbaRef<'_>, src_r
         return;
     }
     let Some(clip) = dst_rect.intersect(&Rect::new(0, 0, dst.width, dst.height)) else { return };
+    if src_rect.w == dst_rect.w && src_rect.h == dst_rect.h {
+        blit_unscaled(
+            dst,
+            clip,
+            src,
+            src_rect.x as i64 - dst_rect.x as i64,
+            src_rect.y as i64 - dst_rect.y as i64,
+            blending,
+        );
+        return;
+    }
     let sx = src_rect.w as f64 / dst_rect.w as f64;
     let sy = src_rect.h as f64 / dst_rect.h as f64;
     for y in clip.y..clip.bottom() as i32 {
@@ -158,6 +185,57 @@ pub fn blit_blended(dst: &mut RgbaImage, dst_rect: Rect, src: RgbaRef<'_>, src_r
                 Blending::Srgb => blend(&mut dst.data[di..di + 4], &src.data[si..si + 4]),
                 Blending::Linear => blend_linear(&mut dst.data[di..di + 4], &src.data[si..si + 4]),
             }
+        }
+    }
+}
+
+/// [`blit_blended`] without scaling: destination pixel (x, y) takes source
+/// pixel (x + `dx`, y + `dy`), for the destination pixels in `clip` (inside
+/// `dst`) whose source pixel is inside `src`. The same pixels and the same
+/// blending as the scaling path, with the bounds worked out once per blit:
+/// with equal sizes its `floor(src.x + (x - dst.x) + 0.5)` is exactly
+/// `x + dx`.
+fn blit_unscaled(dst: &mut RgbaImage, clip: Rect, src: RgbaRef<'_>, dx: i64, dy: i64, blending: Blending) {
+    let x0 = (clip.x as i64).max(-dx);
+    let x1 = clip.right().min(src.width as i64 - dx);
+    let y0 = (clip.y as i64).max(-dy);
+    let y1 = clip.bottom().min(src.height as i64 - dy);
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let n = (x1 - x0) as usize * 4;
+    let dst_w = dst.width as usize * 4;
+    let src_w = src.width as usize * 4;
+    for y in y0..y1 {
+        let di = y as usize * dst_w + x0 as usize * 4;
+        let si = (y + dy) as usize * src_w + (x0 + dx) as usize * 4;
+        let drow = &mut dst.data[di..di + n];
+        let srow = &src.data[si..si + n];
+        match blending {
+            Blending::Srgb => blend_row(drow, srow),
+            Blending::Linear => {
+                for (d, s) in drow.as_chunks_mut::<4>().0.iter_mut().zip(srow.as_chunks::<4>().0) {
+                    blend_linear(d, s);
+                }
+            }
+        }
+    }
+}
+
+/// [`blend`] over a row: runs of opaque source pixels are copied whole.
+fn blend_row(dst: &mut [u8], src: &[u8]) {
+    let (spx, _) = src.as_chunks::<4>();
+    let mut i = 0;
+    while i < spx.len() {
+        if spx[i][3] == 255 {
+            let start = i;
+            while i < spx.len() && spx[i][3] == 255 {
+                i += 1;
+            }
+            dst[start * 4..i * 4].copy_from_slice(&src[start * 4..i * 4]);
+        } else {
+            blend(&mut dst[i * 4..i * 4 + 4], &spx[i]);
+            i += 1;
         }
     }
 }
@@ -277,5 +355,144 @@ mod tests {
         let mut d = [0, 0, 0, 255];
         blend(&mut d, &[255, 255, 255, 128]);
         assert_eq!(d, [128, 128, 128, 255]);
+    }
+
+    /// The scaling path of [`blit_blended`], for any sizes: what the
+    /// unscaled path must equal.
+    fn blit_scaling(dst: &mut RgbaImage, dst_rect: Rect, src: RgbaRef<'_>, src_rect: Rect, blending: Blending) {
+        let Some(clip) = dst_rect.intersect(&Rect::new(0, 0, dst.width, dst.height)) else { return };
+        let sx = src_rect.w as f64 / dst_rect.w as f64;
+        let sy = src_rect.h as f64 / dst_rect.h as f64;
+        for y in clip.y..clip.bottom() as i32 {
+            let v = (src_rect.y as f64 + ((y - dst_rect.y) as f64 + 0.5) * sy).floor() as i64;
+            if v < 0 || v >= src.height as i64 {
+                continue;
+            }
+            for x in clip.x..clip.right() as i32 {
+                let u = (src_rect.x as f64 + ((x - dst_rect.x) as f64 + 0.5) * sx).floor() as i64;
+                if u < 0 || u >= src.width as i64 {
+                    continue;
+                }
+                let si = (v as usize * src.width as usize + u as usize) * 4;
+                let di = (y as usize * dst.width as usize + x as usize) * 4;
+                match blending {
+                    Blending::Srgb => blend(&mut dst.data[di..di + 4], &src.data[si..si + 4]),
+                    Blending::Linear => blend_linear(&mut dst.data[di..di + 4], &src.data[si..si + 4]),
+                }
+            }
+        }
+    }
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+
+        /// An image with alpha 0, 255 and in between, in runs.
+        fn image(&mut self, w: u32, h: u32) -> RgbaImage {
+            let mut data = Vec::with_capacity(w as usize * h as usize * 4);
+            let mut alpha = 255;
+            for _ in 0..w * h {
+                if self.below(4) == 0 {
+                    alpha = match self.below(3) {
+                        0 => 0,
+                        1 => 255,
+                        _ => self.below(256) as u8,
+                    };
+                }
+                let c = self.next().to_le_bytes();
+                data.extend_from_slice(&[c[0], c[1], c[2], alpha]);
+            }
+            RgbaImage { width: w, height: h, data }
+        }
+    }
+
+    #[test]
+    fn unscaled_blit_equals_the_scaling_path() {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let cases = if cfg!(miri) { 30 } else { 3000 };
+        for case in 0..cases {
+            let (dw, dh) = (1 + rng.below(23) as u32, 1 + rng.below(19) as u32);
+            let (sw, sh) = (1 + rng.below(21) as u32, 1 + rng.below(17) as u32);
+            let base = rng.image(dw, dh);
+            let src = rng.image(sw, sh);
+            // Rectangles reaching past every edge of both images.
+            let (w, h) = (1 + rng.below(30) as u32, 1 + rng.below(30) as u32);
+            let dst_rect = Rect::new(rng.below(40) as i32 - 15, rng.below(40) as i32 - 15, w, h);
+            let src_rect = Rect::new(rng.below(40) as i32 - 15, rng.below(40) as i32 - 15, w, h);
+            let r = RgbaRef { width: sw, height: sh, data: &src.data };
+            for blending in [Blending::Srgb, Blending::Linear] {
+                let mut fast = base.clone();
+                blit_blended(&mut fast, dst_rect, r, src_rect, blending);
+                let mut slow = base.clone();
+                blit_scaling(&mut slow, dst_rect, r, src_rect, blending);
+                assert!(
+                    fast == slow,
+                    "case {case}: {dst_rect:?} <- {src_rect:?} of {sw}x{sh} on {dw}x{dh}, {blending:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reset_reuses_and_fills() {
+        let mut img = RgbaImage::new(3, 5, [1, 2, 3, 4]);
+        assert_eq!(img, RgbaImage { width: 3, height: 5, data: [1, 2, 3, 4].repeat(15) });
+        let ptr = img.data.as_ptr();
+        img.reset(4, 2, [9, 8, 7, 6]);
+        assert_eq!(img, RgbaImage::new(4, 2, [9, 8, 7, 6]));
+        assert_eq!(img.data.as_ptr(), ptr, "a smaller image keeps the allocation");
+        img.reset(7, 3, [5, 5, 5, 5]);
+        assert_eq!(img, RgbaImage::new(7, 3, [5, 5, 5, 5]));
+        img.reset(0, 0, [0; 4]);
+        assert!(img.data.is_empty());
+    }
+
+    /// Composing a 1920x1080 frame of a few unscaled layers:
+    /// `cargo test --release -p termpix-core -- --ignored --nocapture compose_timing`.
+    #[test]
+    #[ignore = "timing, not a check"]
+    fn compose_timing() {
+        let mut rng = Rng(1);
+        let page = RgbaImage::new(1600, 1080, [255, 255, 255, 255]);
+        let bar = rng.image(1920, 40);
+        let sidebar = RgbaImage::new(320, 1080, [30, 30, 30, 230]);
+        let layers = [
+            (&page, Rect::new(160, 0, 1600, 1080)),
+            (&sidebar, Rect::new(0, 0, 320, 1080)),
+            (&bar, Rect::new(0, 1040, 1920, 40)),
+        ];
+        let runs = 50;
+        let t = std::time::Instant::now();
+        for _ in 0..runs {
+            let mut frame = RgbaImage::new(1920, 1080, [0, 0, 0, 255]);
+            for (img, rect) in layers {
+                let r = RgbaRef { width: img.width, height: img.height, data: &img.data };
+                blit_scaling(&mut frame, rect, r, Rect::new(0, 0, rect.w, rect.h), Blending::Srgb);
+            }
+            std::hint::black_box(&frame);
+        }
+        let before = t.elapsed() / runs;
+        let mut frame = RgbaImage::new(0, 0, [0; 4]);
+        let t = std::time::Instant::now();
+        for _ in 0..runs {
+            frame.reset(1920, 1080, [0, 0, 0, 255]);
+            for (img, rect) in layers {
+                let r = RgbaRef { width: img.width, height: img.height, data: &img.data };
+                blit(&mut frame, rect, r, Rect::new(0, 0, rect.w, rect.h));
+            }
+            std::hint::black_box(&frame);
+        }
+        let after = t.elapsed() / runs;
+        eprintln!("compose 1920x1080: new buffer + scaling path {before:?}, reused buffer + unscaled path {after:?}");
     }
 }

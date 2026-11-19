@@ -120,6 +120,10 @@ pub struct Compositor {
     /// Commands that must be emitted with the next frame (deletions).
     pending: Vec<u8>,
     last_frame: Option<RgbaImage>,
+    /// The buffer the next frame is composed into: the frame before
+    /// `last_frame`, or a forgotten one, kept so that a present does not
+    /// allocate (and fault in) a screen of pixels.
+    spare_frame: RgbaImage,
     /// The layers `last_frame` was composited from, and the images added,
     /// replaced or removed since: with neither changed, the frame is the same.
     last_layers: Vec<Layer>,
@@ -172,6 +176,7 @@ impl Compositor {
             placed: HashMap::new(),
             pending: Vec::new(),
             last_frame: None,
+            spare_frame: RgbaImage::new(0, 0, [0; 4]),
             last_layers: Vec::new(),
             changed_images: HashSet::new(),
             strips: 0,
@@ -211,7 +216,6 @@ impl Compositor {
         }
         self.geometry = geometry;
         self.forget_placements();
-        self.last_frame = None;
     }
 
     /// Add an RGBA image (straight alpha). It is uploaded lazily, the first time a
@@ -369,9 +373,16 @@ impl Compositor {
             self.encoder.delete(&mut self.pending, Delete::All { free: false });
         }
         self.placed.clear();
-        self.last_frame = None;
+        self.forget_last_frame();
         // The screen may have been cleared or resized: write placeholder text again.
         self.placeholder_text = false;
+    }
+
+    /// The next composited frame is sent whole; its buffer is kept for reuse.
+    fn forget_last_frame(&mut self) {
+        if let Some(frame) = self.last_frame.take() {
+            self.spare_frame = frame;
+        }
     }
 
     /// True while the terminal has not yet processed recent inline frames. Do not
@@ -599,7 +610,10 @@ impl Compositor {
             return Ok(());
         }
         let (w, h) = (self.geometry.width_px(), self.geometry.height_px());
-        let mut frame = RgbaImage::new(w, h, background);
+        // The last frame stays for the comparison below; the one before it
+        // is the buffer for this one.
+        let mut frame = std::mem::replace(&mut self.spare_frame, RgbaImage::new(0, 0, [0; 4]));
+        frame.reset(w, h, background);
         let mut order: Vec<&Layer> = layers.iter().collect();
         order.sort_by_key(|l| l.z);
         for layer in order {
@@ -661,7 +675,9 @@ impl Compositor {
             self.encoder.delete(out, Delete::Image { id: STRIP_IDS + i, free: true });
         }
         self.strips = count;
-        self.last_frame = Some(frame);
+        if let Some(old) = self.last_frame.replace(frame) {
+            self.spare_frame = old;
+        }
         self.last_layers = layers.to_vec();
         self.changed_images.clear();
         Ok(())
@@ -1031,6 +1047,29 @@ mod tests {
         term.feed(&out2);
         assert_eq!(term.render().pixel(5, 0), [255, 0, 0, 255]);
         assert_eq!(term.render().pixel(4, 0), [0, 0, 0, 255], "uncovered: terminal background");
+    }
+
+    #[test]
+    fn composited_frames_reuse_two_buffers() {
+        let g = geometry();
+        let mut c = Compositor::new(Backend::composited_strips(2), Medium::Direct { compress: false }, g);
+        let img = c.add_image(30, 30, test_image());
+        let mut term = MockTerminal::new(g, [0, 0, 0, 255]);
+        let mut buffers = HashSet::new();
+        for x in 0..6 {
+            let mut out = Vec::new();
+            c.present(&[layer(img, x, 0)], &mut out).unwrap();
+            term.feed(&out);
+            buffers.insert(c.last_frame.as_ref().unwrap().data.as_ptr());
+            assert_eq!(term.render().pixel(x as u32, 0), [255, 0, 0, 255], "frame {x}");
+            assert_eq!(term.render().pixel(x as u32 + 30, 0), [0, 0, 0, 255], "frame {x}: nothing left over");
+        }
+        assert_eq!(buffers.len(), 2, "the last frame and the one being built");
+        // A forgotten frame's buffer is reused too.
+        c.forget_placements();
+        let mut out = Vec::new();
+        c.present(&[layer(img, 0, 0)], &mut out).unwrap();
+        assert!(buffers.contains(&c.last_frame.as_ref().unwrap().data.as_ptr()));
     }
 
     #[test]
