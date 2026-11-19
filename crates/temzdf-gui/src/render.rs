@@ -90,6 +90,20 @@ enum Step {
 /// The glyph cache key: what a shaped buffer depends on.
 type GlyphKey = (String, bool, bool, u8);
 
+/// Shaped glyphs kept at most between frames: a program printing endless
+/// distinct text (random Unicode, a binary file) would grow the cache for
+/// as long as the window lives. Past it the cache starts again from what
+/// the next frame shows.
+const MAX_GLYPHS: usize = 8192;
+
+/// Empty `cache` when it holds more than `max` entries (before a frame, so
+/// nothing the frame holds a key to goes).
+fn bound<K, V>(cache: &mut HashMap<K, V>, max: usize) {
+    if cache.len() > max {
+        cache.clear();
+    }
+}
+
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -353,6 +367,7 @@ impl Renderer {
         size: (u32, u32),
         target: &wgpu::TextureView,
     ) {
+        bound(&mut self.glyphs, MAX_GLYPHS);
         let mut quads: Vec<Quad> = Vec::new();
         let mut steps: Vec<Step> = Vec::new();
         let (ox, oy) = (origin.0 as f32, origin.1 as f32);
@@ -620,4 +635,19 @@ fn fit_within(w: u32, h: u32, pixels: &[u8], limit: u32) -> (u32, u32, std::borr
         }
     }
     (nw, nh, std::borrow::Cow::Owned(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_glyph_cache_starts_again_past_its_bound() {
+        let mut cache: HashMap<u32, ()> = (0..10).map(|i| (i, ())).collect();
+        bound(&mut cache, 10);
+        assert_eq!(cache.len(), 10, "at the bound: kept");
+        cache.insert(10, ());
+        bound(&mut cache, 10);
+        assert!(cache.is_empty());
+    }
 }
