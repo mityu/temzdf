@@ -35,7 +35,7 @@ export function leaveTransient(): void {
 }
 
 /** Two counts given around an operator multiply; none given: null. */
-function combine(a: number | null, b: number | null): number | null {
+export function combine(a: number | null, b: number | null): number | null {
   return a === null && b === null ? null : (a ?? 1) * (b ?? 1);
 }
 

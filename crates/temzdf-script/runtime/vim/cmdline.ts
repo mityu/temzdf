@@ -6,7 +6,7 @@ import type { Position } from "temzdf";
 import { ex } from "./ex";
 import { rememberEx } from "./macros";
 import { recordJump } from "./marks";
-import { leaveTransient, operator } from "./normal";
+import { combine, leaveTransient, operator } from "./normal";
 import { convert } from "./pattern";
 import { again, find, restoreHighlight, wordUnder } from "./search";
 import { options, state } from "./state";
@@ -103,7 +103,8 @@ function finish(o: Open, line: string, run: boolean): void {
     ex(line);
     return;
   }
-  goTo(find(line, o.kind === "?", o.count ?? 1), o.count);
+  const backward = o.kind === "?";
+  searchMotion(o.count, (n) => find(line, backward, n));
 }
 
 export function cancelCmdline(): void {
@@ -122,18 +123,29 @@ export function runCmdline(): void {
   acceptPrompt();
 }
 
-/** A search's result as a motion: the cursor moves there, or a pending
- * operator acts up to it (exclusive), or the visual selection's end goes. */
-export function goTo(to: ReturnType<typeof find>, count: number | null): void {
+/** A search as a motion: `search` finds where (with the count), and the
+ * cursor moves there, or a pending operator acts up to it (exclusive, its
+ * count times the search's; `.` searches the same way again), or the
+ * visual selection's end goes. A pending operator is used up before the
+ * search, so one that fails (an error) cancels it, as in Vim. */
+function searchMotion(count: number | null, search: (count: number) => Position | null): void {
   const p = state.pending;
   state.pending = null;
-  if (to === null) return;
-  const m: Motion = { to, kind: "exclusive" };
   if (p !== null) {
-    const last = state.lastSearch;
-    operator(p.op, m, p.register, () => (last === null ? null : { to: find(last.pattern, last.backward, count ?? 1)!, kind: "exclusive" }), count);
+    leaveTransient();
+    const total = combine(p.count, count);
+    const to = search(total ?? 1);
+    if (to === null) return;
+    const again = (c: number | null): Motion | null => {
+      const r = search(c ?? total ?? 1);
+      return r === null ? null : { to: r, kind: "exclusive" };
+    };
+    operator(p.op, { to, kind: "exclusive" }, p.register, again, total);
     return;
   }
+  const to = search(count ?? 1);
+  if (to === null) return;
+  const m: Motion = { to, kind: "exclusive" };
   const at = cursor();
   if (to.line !== at.line || to.character !== at.character) recordJump(at);
   if (state.visual !== null) {
@@ -143,10 +155,18 @@ export function goTo(to: ReturnType<typeof find>, count: number | null): void {
   setCursor(clampNormal(to));
 }
 
+/** n and N: the last search again, the same way or the other; `.` after
+ * an operator searches the way this one did. */
 export function searchAgain(reverse: boolean, count: number | null): void {
-  goTo(again(reverse, count ?? 1), count);
+  const last = state.lastSearch;
+  searchMotion(count, (n) => {
+    if (last === null) return again(reverse, n);
+    const r = find(last.pattern, reverse ? !last.backward : last.backward, n);
+    state.lastSearch = last;
+    return r;
+  });
 }
 
 export function searchWord(backward: boolean, count: number | null): void {
-  goTo(wordUnder(backward, count ?? 1), count);
+  searchMotion(count, (n) => wordUnder(backward, n));
 }

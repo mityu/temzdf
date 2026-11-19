@@ -8,14 +8,14 @@ import { cursor, lastLine, lineLength, nextChar, pos, t, wordRegExp } from "./ut
 
 /** Where the `count`th match of `pattern` is from the cursor (null: none,
  * said in an error). It becomes the last search. */
-export function find(pattern: string, backward: boolean, count: number): Position | null {
+export function find(pattern: string, backward: boolean, count: number, start?: Position): Position | null {
   if (pattern === "") {
     if (state.lastSearch === null) throw new Error("E35: No previous regular expression");
     pattern = state.lastSearch.pattern;
   }
   state.lastSearch = { pattern, backward };
   const conv = convert(pattern, options.ignorecase, options.smartcase);
-  let at = cursor();
+  let at = start ?? cursor();
   for (let i = 0; i < count; i++) {
     // Forward: from after the cursor (the next line when it is at a
     // line's end).
@@ -84,7 +84,7 @@ export function wordUnder(backward: boolean, count: number): Position | null {
   let end = i;
   while (end < line.length && w.test(line[end])) end++;
   const word = line.slice(start, end);
-  // From the word's start, so the match under the cursor is not the first.
-  t.setCursor(pos(cursor().line, start));
-  return find(`\\<${escape(word)}\\>`, backward, count);
+  // From the word's start, so the match under the cursor is not the first
+  // (the cursor stays: an operator acts from it).
+  return find(`\\<${escape(word)}\\>`, backward, count, pos(cursor().line, start));
 }

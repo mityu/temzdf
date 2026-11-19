@@ -114,3 +114,71 @@ text:
 keys: v/gh<CR>d
 want:
 |hi
+
+=== an operator with n leaves the pending mode
+text:
+|a x b x c
+keys: /x<CR>0dnx
+want:
+| b x c
+mode: vim/normal
+
+=== c with n, then escape, leaves the pending mode
+text:
+|a x b
+keys: /x<CR>0cnY<Esc>x
+want:
+|x b
+mode: vim/normal
+
+=== a failed search cancels the operator
+text:
+|a b c
+keys: d/zzz<CR>w
+want:
+a |b c
+mode: vim/normal
+error: yes
+
+=== an operator's count multiplies n's
+text:
+|y a x b x c
+keys: /x<CR>02dn
+want:
+|x c
+
+=== a count after the operator counts too
+text:
+|y a x b x c
+keys: /x<CR>0d2n
+want:
+|x c
+
+=== dot after dN searches the way N did
+text:
+x a x b x c |d
+keys: /x<CR>$dN.
+want:
+x a |d
+
+=== dot after dN takes a new count
+text:
+x a x b x c |d
+keys: /x<CR>$dN2.
+want:
+|d
+
+=== d star deletes from the cursor, not the word's start
+text:
+fo|o bar foo
+keys: d*
+want:
+fo|foo
+
+=== a failed star does not move the cursor
+text:
+bar b|ar
+keys: :set nows<CR>*
+want:
+bar b|ar
+error: yes
