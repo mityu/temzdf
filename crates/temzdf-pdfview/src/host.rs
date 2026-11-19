@@ -165,7 +165,7 @@ impl DocumentHost {
             }
             DocEvent::Rendered(r) => self.doc.borrow_mut().cache.rendered(images, r),
             DocEvent::RenderFailed(key, e) => {
-                self.doc.borrow_mut().cache.render_cancelled(key);
+                self.doc.borrow_mut().cache.render_failed(key);
                 message(panes, format!("render: {e}"));
             }
             DocEvent::SearchHits { generation, page, hits } => {

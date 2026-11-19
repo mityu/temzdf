@@ -431,7 +431,8 @@ impl Viewer {
         (self.current_page(), self.peek.map_or(0..0, |p| self.peek_pages(&p)))
     }
 
-    /// A page failed to load; forget the request so it is retried later.
+    /// A page failed to load: not asked for again until the document
+    /// changes.
     pub fn page_failed(&mut self, generation: u32, page: usize) {
         self.cache().page_failed(generation, page);
     }
@@ -524,8 +525,10 @@ impl Viewer {
         for page in prefetch.clone() {
             let is_visible = visible.contains(&page);
             let Some(list) = self.cache().display_list(page) else {
-                complete &= !is_visible;
-                if !self.cache().is_requested(page) {
+                // (One that failed is not waited for, nor asked for again.)
+                let failed = self.cache().page_has_failed(page);
+                complete &= !is_visible || failed;
+                if !self.cache().is_requested(page) && !failed {
                     work.push(is_visible, 0.0, Need::LoadPage(page));
                 }
                 continue;
@@ -541,7 +544,7 @@ impl Viewer {
             let thumb_key = TileKey { generation: self.cache().generation(), page: page as u32, kind: TileKind::Thumb };
             let thumb_scale = thumb_scale(bounds);
             let thumb_cached = self.cache().touch(thumb_key);
-            if thumb_cached.is_none() {
+            if thumb_cached.is_none() && !self.cache().tile_has_failed(thumb_key) {
                 let need = if self.cache().is_in_flight(thumb_key) {
                     Need::Queued(thumb_key)
                 } else {
@@ -576,6 +579,7 @@ impl Viewer {
                             });
                         }
                     }
+                    None if self.cache().tile_has_failed(key) => {}
                     None => {
                         missing_on_screen |= on_screen;
                         let cx = dst.x as f32 + dst.w as f32 / 2.0 - centre.0;
@@ -986,6 +990,46 @@ mod tests {
         assert!(needs.iter().any(|n| matches!(n, Need::LoadPage(2))));
         v.page_loaded(0, 2, pdf::display_list(&doc, 2).unwrap());
         assert!(v.display_list(2).is_some() && v.display_list(0).is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn what_failed_is_not_asked_for_again_until_the_document_changes() {
+        let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
+        let bounds = pdf::doc_info(&doc).unwrap().bounds;
+        let mut v = Viewer::new(bounds.clone(), GEOMETRY.width_px(), GEOMETRY.height_px());
+        let ask = |v: &mut Viewer| {
+            let (_, needs) = v.frame(&mut Images::new());
+            for n in &needs {
+                v.doc.borrow_mut().cache.mark_requested(n);
+            }
+            needs
+        };
+        assert!(ask(&mut v).iter().any(|n| matches!(n, Need::LoadPage(0))));
+        v.page_failed(0, 0);
+        assert!(!ask(&mut v).iter().any(|n| matches!(n, Need::LoadPage(0))), "asked again at once");
+        // A tile of a page that loaded fails to render.
+        v.page_loaded(0, 1, pdf::display_list(&doc, 1).unwrap());
+        v.goto_page(1, false, Instant::now());
+        let jobs: Vec<TileKey> = ask(&mut v)
+            .into_iter()
+            .filter_map(|n| match n {
+                Need::Render(j) if j.key.page == 1 => Some(j.key),
+                _ => None,
+            })
+            .collect();
+        let thumb = *jobs.iter().find(|k| k.kind == TileKind::Thumb).expect("its thumbnail");
+        let tile = *jobs.iter().find(|k| k.kind != TileKind::Thumb).expect("a tile");
+        for key in [thumb, tile] {
+            v.doc.borrow_mut().cache.render_failed(key);
+            assert!(
+                !ask(&mut v).iter().any(|n| matches!(n, Need::Render(j) if j.key == key)),
+                "rendered again at once"
+            );
+        }
+        // A new version: asked for again.
+        v.doc.borrow_mut().cache.replace(&mut Images::new(), bounds);
+        assert!(!v.doc.borrow().cache.page_has_failed(0));
     }
 
     #[test]

@@ -80,6 +80,11 @@ pub struct DocCache {
     pub bounds: Vec<PageBounds>,
     lists: Vec<Option<Arc<DisplayList>>>,
     lists_requested: HashSet<usize>,
+    /// Pages and tiles that failed in this generation: not asked for again
+    /// until the document changes (else each failure, redrawing, asks
+    /// again at once, in a busy loop).
+    failed_pages: HashSet<usize>,
+    failed_tiles: HashSet<TileKey>,
     /// Rendered tiles (within [`TILE_BUDGET`]) and renders in flight.
     pub tiles: TileCache<TileKey>,
     generation: u32,
@@ -94,6 +99,8 @@ impl DocCache {
             bounds,
             lists: vec![None; n],
             lists_requested: HashSet::new(),
+            failed_pages: HashSet::new(),
+            failed_tiles: HashSet::new(),
             tiles: TileCache::new(TILE_BUDGET, LAYER_BACKGROUND + 1..LAYER_KEYS_END),
             generation: 0,
             max_lists: MAX_LISTS,
@@ -152,11 +159,30 @@ impl DocCache {
         }
     }
 
-    /// A page failed to load; forget the request so it is retried later.
+    /// A page failed to load: not asked for again in this generation.
     pub fn page_failed(&mut self, generation: u32, page: usize) {
         if generation == self.generation {
             self.lists_requested.remove(&page);
+            self.failed_pages.insert(page);
         }
+    }
+
+    /// Whether loading the page failed in this generation.
+    pub fn page_has_failed(&self, page: usize) -> bool {
+        self.failed_pages.contains(&page)
+    }
+
+    /// A render job failed: not asked for again in this generation.
+    pub fn render_failed(&mut self, key: TileKey) {
+        self.tiles.cancelled(key);
+        if key.generation == self.generation {
+            self.failed_tiles.insert(key);
+        }
+    }
+
+    /// Whether rendering the tile failed in this generation.
+    pub fn tile_has_failed(&self, key: TileKey) -> bool {
+        self.failed_tiles.contains(&key)
     }
 
     /// Nothing shows the document for now: drop its tiles and display lists
@@ -172,6 +198,8 @@ impl DocCache {
         self.tiles.clear(images);
         self.lists = vec![None; bounds.len()];
         self.lists_requested.clear();
+        self.failed_pages.clear();
+        self.failed_tiles.clear();
         self.bounds = bounds;
     }
 
