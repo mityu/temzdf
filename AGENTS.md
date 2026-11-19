@@ -204,7 +204,7 @@ dependencies with `Swatinem/rust-cache`), and `nix build` on Linux and macOS.
   directories, `/nix/store/...`).
 - Commit at natural checkpoints (a coherent, self-contained change), only when
   `cargo test` and `cargo clippy` pass. Use Conventional Commits:
-  `type(scope): summary`, types `feat|fix|refactor|test|docs|build|chore`,
+  `type(scope): summary`, types `feat|fix|perf|refactor|test|docs|build|chore`,
   scope = crate or area (`termpix`, `termpix-ui`, `temzdf`, `synctex`, `nix`, ...).
   Do not push unless asked. Never put session URLs (e.g. `Claude-Session:`
   trailers) in commit messages; a `Co-Authored-By` trailer is fine.
