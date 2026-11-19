@@ -35,6 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
+      # The Nix store between runs, in GitHub's cache: libghostty-vt and
+      # the other derivations built here, and nix build's dependencies
+      # and script guest (flake.nix, crane).
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
       # The shell's cargo and rustc on PATH: rust-cache runs outside the shell.
       - run: nix develop .#ci --command bash -c 'dirname "$(command -v cargo)"; dirname "$(command -v rustc)"' >>"$GITHUB_PATH"
       # Built dependencies and the crates downloaded, not our own crates.
@@ -58,6 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
       - run: nix develop .#ci-miri --command bash -c 'dirname "$(command -v cargo)"' >>"$GITHUB_PATH"
       # Also Miri's standard library, built by `cargo miri setup`.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -84,5 +89,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
       - run: nix build --print-build-logs
       - run: ./result/bin/temzdf --help

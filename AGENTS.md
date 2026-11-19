@@ -188,6 +188,10 @@ Miri and without TeX (Miri runs no test that needs the fixtures); `nix build` bu
 CI (`.github/workflows/ci.yml`) runs `scripts/check.sh --no-miri` in the
 first, `scripts/miri.sh` in the second as a job of its own (both keep built
 dependencies with `Swatinem/rust-cache`), and `nix build` on Linux and macOS.
+`nix build` uses crane: the Rust dependencies, the script host's guest
+and the guest's dependencies are derivations of their own (`.#deps`,
+`.#guest`, `.#guest-deps`), and every job keeps the Nix store between
+runs with Magic Nix Cache, so only what changed is built.
 
 ## Conventions
 
