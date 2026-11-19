@@ -2,7 +2,8 @@
 # Run the judged e2e scenarios (scripts/e2e.sh with each action file's
 # "Used with:" command) in one or more terminals, and sum up.
 #
-# Usage: scripts/e2e-all.sh [-t TERM]... [-d DISP] [-P PATH] [-o DIR] [SCENARIO...]
+# Usage: scripts/e2e-all.sh [-t TERM]... [-d DISP] [-P PATH] [-o DIR] [-j N] [-R]
+#                           [SCENARIO...]
 #   -t TERM   kitty, ghostty, wezterm or gui (repeatable; default: every one
 #             that can run here: in a macOS VM not kitty, which needs OpenGL)
 #   -d DISP   display server, passed on to e2e.sh (x11, wayland; macos)
@@ -50,6 +51,11 @@ while getopts "t:d:P:o:j:Rh" opt; do
 done
 shift $((OPTIND - 1))
 outdir=${outdir:-target/e2e-all${display:+-$display}}
+# Sway's runs drive it with wlinput: built once here, not by each run.
+if [[ $display == wayland ]]; then
+  cargo build -q -p wlinput || exit 2
+  export E2E_WLINPUT=$PWD/target/debug/wlinput
+fi
 in_vm=
 [[ $(uname) == Darwin && $(sysctl -n kern.hv_vmm_present 2>/dev/null) == 1 ]] && in_vm=1
 [[ $(uname) == Darwin ]] && jobs=1

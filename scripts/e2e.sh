@@ -1181,8 +1181,10 @@ EOF
   SWAYSOCK=${socks[0]}
   export WAYLAND_DISPLAY SWAYSOCK
   unset DISPLAY
-  cargo build -q -p wlinput
-  coproc WL { target/debug/wlinput --size "${width}x${height}" 2>>"$outdir/wlinput.log"; }
+  # E2E_WLINPUT: one built already (e2e-all.sh builds it once for its runs).
+  wlinput=${E2E_WLINPUT:-}
+  [[ -n $wlinput ]] || { cargo build -q -p wlinput && wlinput=target/debug/wlinput; }
+  coproc WL { "$wlinput" --size "${width}x${height}" 2>>"$outdir/wlinput.log"; }
 fi
 # macOS: a virtual display at scale 1 (screenshot pixels are points and
 # match the terminal's), with room above the window for the menu bar every
