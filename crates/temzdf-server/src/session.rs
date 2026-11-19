@@ -5501,6 +5501,46 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "the file system, Blitz")]
+    fn a_zoom_of_several_steps_lays_the_markdown_page_out_once() {
+        let words = "word ".repeat(30);
+        let mut src = String::new();
+        for i in 0..20 {
+            src.push_str(&format!("## Section {i}\n\n{words}\n\n"));
+        }
+        let (mut s, _path) = markdown_session("z.md", &src, &[]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        run(&mut s, "markdown.goto", &[str("section-7")]).unwrap();
+        run(&mut s, "markdown.set-mode", &[str("graphics")]).unwrap();
+        let md = *s.md_docs.keys().next().unwrap();
+        let pane = s.focus;
+        let line = s.md_top_line(pane);
+        // Three steps one by one, then back, then three at once.
+        for _ in 0..3 {
+            s.md_zoom(pane, 1, 1).unwrap();
+        }
+        let (zoom, top) = (s.md_docs[&md].pages[0].zoom, s.md_top_line(pane));
+        assert_eq!(top, line, "zoomed in place");
+        s.md_zoom(pane, 0, 1).unwrap();
+        let before = s.md_docs[&md].layouts;
+        // Ctrl and a high-resolution wheel three notches up at once.
+        let kind = MouseEventKind::ScrollBy {
+            dx: 0,
+            dy: -300,
+            unit: termpix_core::input::ScrollUnit::Line,
+            phase: termpix_core::input::ScrollPhase::Wheel,
+        };
+        s.mouse(
+            &MouseEvent { kind, x: 100, y: 100, unit: CoordUnit::Pixel, modifiers: Modifiers::CTRL },
+            Instant::now(),
+        );
+        assert_eq!(s.md_docs[&md].layouts - before, 1, "laid out once");
+        assert_eq!((s.md_docs[&md].pages.len(), s.md_docs[&md].pages[0].zoom), (1, zoom));
+        assert_eq!(s.md_top_line(pane), top);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, Blitz")]
     fn the_markdown_graphics_mode_scrolls_zooms_searches_and_switches_back_in_place() {
         let words = "word ".repeat(30);
         let mut src = String::from("[jump](#section-12)\n\n");

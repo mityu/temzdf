@@ -45,6 +45,9 @@ pub(super) struct MdDoc {
     body: Option<String>,
     /// The graphics mode laid out for each width and zoom panes have.
     pub pages: Vec<temzdf_mdview::Page>,
+    /// Pages laid out so far (for tests).
+    #[cfg(test)]
+    pub layouts: usize,
     /// The pages' painted strips (and those being painted), shared by the
     /// panes on them.
     pub strips: TileCache<StripKey>,
@@ -66,6 +69,10 @@ impl MdDoc {
         let dir = self.path.parent().unwrap_or(Path::new("/"));
         let fetched: temzdf_mdview::Fetched = std::sync::Arc::new(self.fetched.clone());
         self.pages.push(temzdf_mdview::Page::new(body, dir, key.0, 1000, key.1, fetched));
+        #[cfg(test)]
+        {
+            self.layouts += 1;
+        }
         self.pages.last_mut()
     }
 
@@ -265,7 +272,7 @@ impl Session {
                         Some("reset") => 0,
                         _ => return Some(Err("markdown.zoom: in, out or reset?".into())),
                     };
-                    return Some(self.md_zoom(pane, dir).map(|()| (ScriptValue::Null, Outcome::Redraw)));
+                    return Some(self.md_zoom(pane, dir, 1).map(|()| (ScriptValue::Null, Outcome::Redraw)));
                 }
                 let Some((p, page)) = self.md_graphics(pane) else {
                     return Some(Err(format!("{name}: not a Markdown viewer in its graphics mode")));
@@ -445,9 +452,7 @@ impl Session {
         for r in requests {
             let done = match r {
                 temzdf_mdview::Request::Follow(target) => self.md_follow(pane, &target),
-                temzdf_mdview::Request::Zoom(n) => {
-                    (0..n.unsigned_abs()).try_for_each(|_| self.md_zoom(pane, n.signum()))
-                }
+                temzdf_mdview::Request::Zoom(n) => self.md_zoom(pane, n.signum(), n.unsigned_abs()),
                 temzdf_mdview::Request::Copy(text) => {
                     let n = text.chars().count();
                     let source = self.copy_source(Some(doc));
@@ -561,14 +566,16 @@ impl Session {
         }
     }
 
-    /// Zoom graphics pane `pane` a step (`dir` > 0 in, < 0 out, 0 back to
-    /// 100%), at the same place.
-    pub(super) fn md_zoom(&mut self, pane: PaneId, dir: i32) -> Result<(), String> {
+    /// Zoom graphics pane `pane` `steps` steps (`dir` > 0 in, < 0 out, 0
+    /// back to 100%), at the same place: laid out once, at the last zoom.
+    pub(super) fn md_zoom(&mut self, pane: PaneId, dir: i32, steps: u32) -> Result<(), String> {
         let line = self.md_top_line(pane);
         let Some(Kind::Markdown { pane: p, doc }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) else {
             return Err("markdown.zoom: not a Markdown viewer in its graphics mode".into());
         };
-        p.zoom_step(dir);
+        for _ in 0..steps {
+            p.zoom_step(dir);
+        }
         let doc = *doc;
         if let (Some(line), Some((p, page))) = (line, self.md_graphics(pane)) {
             p.show_line(page, line);
@@ -657,6 +664,8 @@ impl Session {
                 fetched: Default::default(),
                 body: None,
                 pages: Vec::new(),
+                #[cfg(test)]
+                layouts: 0,
                 strips: TileCache::new(STRIP_BUDGET, temzdf_mdview::pane::STRIP_LAYERS),
                 _watcher: watcher,
             },
