@@ -287,7 +287,12 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                     c.shared_memory.store(shared_memory, Ordering::Relaxed);
                     c.pending = session.images().snapshot().into_iter().map(|u| (key_of(&u), u)).collect();
                     (c.geometry, c.hints) = (usable(geometry), Some(hints));
+                    // Its first frame is the next one, made for its size
+                    // (the last one was for the size before, and its images
+                    // may be gone from the snapshot): made at once.
+                    c.shown = seq;
                     become_latest(&mut session, &mut latest, &clients, id);
+                    pacing.typed(now);
                     dirty = true;
                 }
                 ClientMsg::Key(k) => {
