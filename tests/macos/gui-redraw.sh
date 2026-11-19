@@ -28,7 +28,7 @@ export PATH="$PWD/target/debug:$PATH"
 # A virtual display started here is stopped at the end.
 own_display=yes
 [[ -f target/macos-gui/vdisp.pid ]] && kill -0 "$(<target/macos-gui/vdisp.pid)" 2>/dev/null && own_display=
-gpid= kpid=
+gpid='' kpid=''
 cleanup() {
   if [[ -n $gpid ]]; then kill "$gpid" 2>/dev/null || true; fi
   if [[ -n $kpid ]]; then $g close "$kpid" || true; fi
@@ -41,6 +41,7 @@ read -r _ dx dy _ _ < <($g display start) || true
 
 # The GUI starts the session (a shell); a second pane counts.
 read -r gpid _ < <($g launch app -- "$gui" --clean -s "$session")
+# shellcheck disable=SC2016 # expanded by the pane's shell
 target/debug/temzdf action -s "$session" new-pane -- \
   sh -c 'i=0; while :; do i=$((i+1)); echo "tick $i"; sleep 0.3; done'
 read -r kpid _ < <($g launch kitty -- target/debug/temzdf attach "$session")

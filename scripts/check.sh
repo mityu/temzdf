@@ -74,7 +74,7 @@ failed() {
   if ((verbose)); then cat "$log"; else grep -E "$pattern" "$log" | head -"$n"; fi
 }
 
-if ! shellcheck --color=never --format=gcc ./scripts/{*.sh,**/*.sh} >target/check/shellcheck.log 2>&1; then
+if ! shellcheck --color=never --format=gcc ./scripts/{*.sh,*/*.sh} ./tests/*/*.sh >target/check/shellcheck.log 2>&1; then
   failed shellcheck target/check/shellcheck.log "^" 100
   status=1
 fi
