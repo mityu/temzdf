@@ -58,7 +58,7 @@ export type CmdOpts = {
 };
 
 /** A registered command, as `command.list` shows it. */
-export type CmdInfo = {
+export type CmdSpec = {
   name: string;
   shortName?: string;
   prefix?: "vim-range";
@@ -67,7 +67,7 @@ export type CmdInfo = {
   namespace?: string;
 };
 
-type Entry = CmdInfo & { fn: (ctx: CmdCtx) => void; when?: (ctx: KeyContext) => boolean };
+type Entry = CmdSpec & { fn: (ctx: CmdCtx) => void; when?: (ctx: KeyContext) => boolean };
 
 /** In the order defined: the last one wins. */
 const registry: Entry[] = [];
@@ -174,7 +174,7 @@ export const command = {
     removeWhere((e) => filter.namespace !== undefined && e.namespace !== filter.namespace);
   },
   /** The commands, in the order defined (a snapshot). */
-  list(): CmdInfo[] {
+  list(): CmdSpec[] {
     return registry.map(({ name, shortName, prefix, bar, desc, namespace }) => ({
       name,
       shortName,

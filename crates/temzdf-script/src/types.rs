@@ -496,7 +496,7 @@ declare module "temzdf/command" {{
     namespace?: string;
   }};
   /** A registered command, as `command.list` shows it. */
-  export type CmdInfo = {{
+  export type CmdSpec = {{
     name: string;
     shortName?: string;
     prefix?: "vim-range";
@@ -512,7 +512,7 @@ declare module "temzdf/command" {{
     /** Remove the commands of a namespace, or every one. */
     clear(filter?: {{ namespace?: string }}): void;
     /** The commands, in the order defined (a snapshot). */
-    list(): CmdInfo[];
+    list(): CmdSpec[];
     /** Run a command line (`|` separating commands as they say). Errors reach the caller. */
     execute(line: string, opts?: {{ mods?: Mods }}): void;
   }};
