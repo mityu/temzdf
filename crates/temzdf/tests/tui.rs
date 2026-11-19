@@ -709,6 +709,17 @@ fn a_click_on_another_pane_only_focuses_it() {
 }
 
 #[test]
+fn keys_fed_from_the_command_line_run_at_once() {
+    // `temzdf action feedkeys` (tmux's send-keys): the keys are matched
+    // and reach the program without waiting for a key typed after them.
+    let env = Env::new("cli-feedkeys");
+    let mut t = Term::spawn(&[BIN, "-s", "fk"], &env.options());
+    t.wait_for("the prompt", prompt);
+    env.run(&["action", "-s", "fk", "feedkeys", "echo fed-$((40+2))<CR>"]);
+    t.wait_text("fed-42");
+}
+
+#[test]
 fn modes_mappings_and_options_from_the_configuration() {
     let env = Env::new("script-modes");
     env.config(

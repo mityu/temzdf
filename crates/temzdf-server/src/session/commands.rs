@@ -1002,7 +1002,12 @@ impl Session {
         let args: Vec<ScriptValue> = rest.iter().map(|w| ScriptValue::Str(w.clone())).collect();
         self.map_depth = 0;
         let out = self.invoke(super::Invoked::Cli { name: name.clone(), args }, "cli", String::new());
-        let out = out.merge(self.flush_events());
+        let mut out = out.merge(self.flush_events());
+        // Keys it fed (feedkeys) are matched now, not when the next key is
+        // typed; with scripts running, when they are done.
+        if !self.holds_input() {
+            out = out.merge(self.drive(self.now()));
+        }
         // Done already and it failed: say so now (else the answer waits).
         if !self.holds_input()
             && let Some(Some(_)) = &self.cli_cancel
