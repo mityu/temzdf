@@ -778,6 +778,7 @@ impl Session {
     pub(super) fn md_of_pane(&self, pane: PaneId) -> Option<MdId> {
         match &self.panes.get(&pane)?.kind {
             Kind::Text { buf, .. } => self.texts.get(buf)?.markdown,
+            Kind::Markdown { doc, .. } => Some(*doc),
             _ => None,
         }
     }
@@ -961,13 +962,7 @@ impl Session {
             return self.md_goto(pane, anchor);
         }
         let is_uri = target.contains("://") || target.starts_with("mailto:");
-        let md = self
-            .md_of_pane(pane)
-            .or_else(|| match self.panes.get(&pane).map(|e| &e.kind) {
-                Some(Kind::Markdown { doc, .. }) => Some(*doc),
-                _ => None,
-            })
-            .ok_or("not a Markdown viewer")?;
+        let md = self.md_of_pane(pane).ok_or("not a Markdown viewer")?;
         if is_uri {
             self.effects.push(Effect::OpenUri { uri: target.to_owned(), command: None });
             return Ok(());
@@ -1008,10 +1003,7 @@ impl Session {
     /// Back to the file pane `pane` showed before following a link.
     fn md_back(&mut self, pane: PaneId) -> Result<bool, String> {
         let Some((path, line)) = self.md_history.get_mut(&pane).and_then(Vec::pop) else { return Ok(false) };
-        let before = self.md_of_pane(pane).or_else(|| match self.panes.get(&pane).map(|e| &e.kind) {
-            Some(Kind::Markdown { doc, .. }) => Some(*doc),
-            _ => None,
-        });
+        let before = self.md_of_pane(pane);
         self.md_open(&path, Spot::Replace(pane))?;
         if let Some((p, page)) = self.md_graphics(pane) {
             p.show_line(page, line);

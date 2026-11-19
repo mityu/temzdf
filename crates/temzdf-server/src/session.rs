@@ -5469,6 +5469,9 @@ mod tests {
         run(&mut s, "markdown.set-mode", &[str("graphics")]).unwrap();
         assert_eq!(run(&mut s, "markdown.mode", &[]).unwrap().0, str("graphics"));
         assert_eq!(s.pane_mode(s.focus), "markdown");
+        // The outline (`o`, `gO`) in this mode too.
+        let ScriptValue::List(outline) = run(&mut s, "markdown.outline", &[]).unwrap().0 else { panic!("a list") };
+        assert_eq!(outline.len(), 20);
         // Before they arrive, the page's background stands in; the strips
         // in sight are asked for first, then those a screen above and below.
         let first = s.frame();
