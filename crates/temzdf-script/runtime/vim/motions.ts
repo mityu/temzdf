@@ -128,7 +128,13 @@ function screen(which: "H" | "M" | "L", n: number | null): Motion {
 
 /** Motions by key. */
 export const motions: Record<string, MotionFn> = {
-  h: (from, n) => (from.character === 0 ? null : { to: t.positionOf(from, "grapheme", -Math.min(n1(n), from.character)), kind: "exclusive" }),
+  h: (from, n) => {
+    if (from.character === 0) return null;
+    // Graphemes back, never past the line's start (a grapheme of several
+    // UTF-16 units leaves fewer than `character` of them before it).
+    const to = t.positionOf(from, "grapheme", -Math.min(n1(n), from.character));
+    return { to: to.line === from.line ? to : pos(from.line, 0), kind: "exclusive" };
+  },
   l: (from, n) => {
     const len = lineLength(from.line);
     if (from.character >= len) return null;

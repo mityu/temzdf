@@ -169,3 +169,12 @@ text:
 keys: ww
 want:
 日本語の|テキスト
+
+=== h stops at the line's start after a grapheme of several units
+text:
+ab
+😀|x
+keys: 5h
+want:
+ab
+|😀x
