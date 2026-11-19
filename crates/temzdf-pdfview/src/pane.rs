@@ -886,13 +886,18 @@ impl PdfPane {
         }
     }
 
+    /// Start a search for `query`: a blank one stops the pane's search in
+    /// the search thread.
     fn run_search(&mut self, query: String) {
         let generation = self.search.start(&query);
-        if !query.trim().is_empty() {
-            let start_page = self.search_origin.map_or_else(|| self.viewer.top_position().page, |o| o.0.page);
-            let doc_generation = self.viewer.generation();
-            self.requests.push(Request::Search { generation, query, start_page, doc_generation });
-        }
+        let start_page = self.search_origin.map_or_else(|| self.viewer.top_position().page, |o| o.0.page);
+        let doc_generation = self.viewer.generation();
+        self.requests.push(Request::Search { generation, query, start_page, doc_generation });
+    }
+
+    /// Drop the search, here and in the search thread.
+    fn clear_search(&mut self) {
+        self.run_search(String::new());
     }
 
     /// Show a forward-search result: jump to the first box (unless it is already
@@ -1087,7 +1092,7 @@ impl PdfPane {
         }
         self.search_origin = None;
         self.pending_first_hit = None;
-        self.search.clear();
+        self.clear_search();
         self.clear_searching();
         Action::Redraw
     }
@@ -1295,7 +1300,7 @@ impl PdfPane {
         match cmd {
             Command::Quit => return Action::Quit,
             Command::Cancel if self.selection.is_some() => self.selection = None,
-            Command::Cancel if self.search.is_active() => self.search.clear(),
+            Command::Cancel if self.search.is_active() => self.clear_search(),
             Command::Cancel => return Action::Quit,
             Command::Copy => self.copy_selection(),
             Command::ToggleSidebar => self.toggle_sidebar(),
@@ -2038,6 +2043,28 @@ mod tests {
 
     fn rect(y: f32) -> PageRect {
         PageRect { x0: 10.0, y0: y, x1: 50.0, y1: y + 10.0 }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_cleared_search_stops_in_the_search_thread() {
+        let mut s = session();
+        let now = Instant::now();
+        let blank = |s: &mut PdfPane| match s.take_requests().as_slice() {
+            [Request::Search { generation, query, .. }] if query.is_empty() => *generation,
+            other => panic!("{other:?}"),
+        };
+        // Cancelled, by the command or Escape, or emptied: a blank query
+        // goes to the thread, a newer generation than the search.
+        let clears: [fn(&mut PdfPane, Instant) -> Action; 3] =
+            [|s, _| s.search_cancel(), |s, now| s.command(Command::Cancel, None, now), |s, _| s.search_for("")];
+        for clear in clears {
+            s.search_for("x");
+            let searched = search_generation(&mut s);
+            clear(&mut s, now);
+            assert!(blank(&mut s) > searched);
+            assert!(!s.search.is_active());
+        }
     }
 
     #[test]

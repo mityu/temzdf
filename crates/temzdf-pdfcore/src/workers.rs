@@ -212,7 +212,8 @@ impl Drop for SearchDoc {
 /// date (a reload made a new version).
 const STALE_CHECK: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// A search request: find `query` on every page, starting at `start_page`.
+/// A search request: find `query` on every page, starting at `start_page`
+/// (a blank `query` stops the pane's search).
 pub struct SearchCmd {
     pub generation: u64,
     pub query: String,
@@ -236,9 +237,12 @@ pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<
         let pane = |c: &SearchCmd| c.generation >> 32;
         let mut turn = 0;
         loop {
+            // A blank query only stops the pane's search.
             let take = |jobs: &mut Vec<(SearchCmd, usize)>, cmd: SearchCmd| {
                 jobs.retain(|(j, _)| pane(j) != pane(&cmd));
-                jobs.push((cmd, 0));
+                if !cmd.query.trim().is_empty() {
+                    jobs.push((cmd, 0));
+                }
             };
             // Idle with a document open: let go of it once a reload made it
             // out of date (it would be opened again for a search anyway).
@@ -267,9 +271,10 @@ pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<
             // others search, whose bytes cannot be had again.
             if let Some(current) = snapshot.generation() {
                 jobs.retain(|(j, _)| j.doc_generation == current);
-                if jobs.is_empty() {
-                    continue;
-                }
+            }
+            // (A blank query took its pane's job away: maybe none is left.)
+            if jobs.is_empty() {
+                continue;
             }
             turn %= jobs.len();
             let generation = jobs[turn].0.doc_generation;
@@ -545,6 +550,50 @@ mod tests {
             }
         }
         assert!(done.get(&gens[0]).copied().unwrap_or(0) < pages, "replaced by its newer query");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_blank_query_stops_the_panes_search() {
+        use std::time::Duration;
+        let (tx, rx) = mpsc::channel::<DocEvent>();
+        let snapshot = Snapshot::default();
+        let _doc = spawn_document(pdf::fixture("sample.pdf"), channel_sink(tx, |e| e), snapshot.clone()).unwrap();
+        let pages = match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
+            DocEvent::Opened(Ok(info)) => info.bounds.len(),
+            _ => panic!("not opened"),
+        };
+        assert!(pages >= 3, "too few pages to tell: {pages}");
+        // Each page's hits wait until taken: the thread cannot run ahead.
+        let (stx, srx) = mpsc::sync_channel::<DocEvent>(0);
+        let stx = std::sync::Mutex::new(stx);
+        let search = spawn_search(snapshot, Arc::new(move |e| stx.lock().unwrap().send(e).is_ok())).unwrap();
+        let cmd = |generation: u64, query: &str| SearchCmd {
+            generation,
+            query: query.into(),
+            start_page: 0,
+            doc_generation: 0,
+        };
+        let (first, blank, other) = ((1u64 << 32) + 1, (1u64 << 32) + 2, (2u64 << 32) + 1);
+        search.send(cmd(first, "the")).unwrap();
+        assert!(
+            matches!(srx.recv_timeout(Duration::from_secs(10)), Ok(DocEvent::SearchHits { generation, .. }) if generation == first)
+        );
+        // Cleared, then another pane searches: from then on only its pages
+        // (and the page the first was on when the blank one came).
+        search.send(cmd(blank, " ")).unwrap();
+        search.send(cmd(other, "the")).unwrap();
+        let mut done = std::collections::HashMap::<u64, usize>::new();
+        while done.get(&other).copied().unwrap_or(0) < pages {
+            match srx.recv_timeout(Duration::from_secs(10)) {
+                Ok(DocEvent::SearchHits { generation, .. }) => *done.entry(generation).or_default() += 1,
+                Ok(_) => {}
+                Err(_) => panic!("pages searched: {done:?} of {pages}"),
+            }
+        }
+        assert!(done.get(&first).copied().unwrap_or(0) <= 1, "the cleared search went on: {done:?}");
+        assert_eq!(done.get(&blank), None, "the blank query was searched for: {done:?}");
+        assert!(srx.recv_timeout(Duration::from_millis(200)).is_err(), "still searching");
     }
 
     #[test]
