@@ -30,6 +30,7 @@ fn main() {
         "Cargo.lock",
         "crates/temzdf-script-guest",
         "crates/temzdf-script/Cargo.toml",
+        "crates/temzdf-script/build.rs",
         "crates/temzdf-script/src",
         "crates/temzdf-script/runtime",
         "crates/temzdf-protocol/Cargo.toml",
@@ -37,7 +38,16 @@ fn main() {
     ] {
         println!("cargo::rerun-if-changed={}", root.join(path).display());
     }
-    for var in ["CC_wasm32_wasip1", "AR_wasm32_wasip1", "RQUICKJS_SYS_NO_WASI_SDK", "CARGO_TARGET_DIR"] {
+    // The guest bundles the shipped scripts (crates/temzdf-script/build.rs)
+    // with these too.
+    for var in [
+        "CC_wasm32_wasip1",
+        "AR_wasm32_wasip1",
+        "RQUICKJS_SYS_NO_WASI_SDK",
+        "CARGO_TARGET_DIR",
+        "TEMZDF_NODE_MODULES",
+        "ESBUILD",
+    ] {
         println!("cargo::rerun-if-env-changed={var}");
     }
     let target_dir = match std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from) {
