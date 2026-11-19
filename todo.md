@@ -161,7 +161,11 @@ server on one `Session`). Next and open:
   - backups, and swap files of buffers without a file (swap files,
     `o.swapfile`, and undo files, `o.undofile`, are built, 2026-11-08);
   - customising the editor's status line;
-  - not discussed yet: SyncTeX with editor panes, syntax highlighting.
+  - not discussed yet: SyncTeX with editor panes, syntax highlighting;
+  - editable marks: ranges of a `nomodifiable` buffer the user may edit,
+    and `text.edit(..., { force })` (specified 2026-11-19,
+    `doc/design/text-editor.md`, section 7, "Editable marks"; for a JS
+    REPL and TUI panes' input boxes).
 - zellij delays keyboard input (even its own prefix commands) while it
   processes a frame, so `q` waits there; sending less data per frame is the
   only lever we have (user agreed to defer, 2026-10-25).

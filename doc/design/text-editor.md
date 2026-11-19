@@ -178,6 +178,74 @@ Following VS Code **(user)**:
   above), and revealing a line from below shows the lines above it too.
   Later: signs.
 
+### Editable marks (2026-11-19, specified, not built)
+
+A `nomodifiable` buffer with ranges the user may still edit: a REPL's
+input line below its output (as a browser's console), the input boxes of
+script-made TUI panes, the fields of a form, a snippet's placeholders.
+
+- **Allow, not deny (user).** A decoration gets `editable: true`. In a
+  `nomodifiable` buffer an edit is allowed when it lies inside editable
+  marks; everything else stays refused. The opposite, read-only marks in
+  a modifiable buffer (Emacs' `read-only` property), is **not built
+  (user)**: text a script adds later (a REPL's output) would be editable
+  until marked, an empty field would need the gravities of the marks on
+  both sides to agree, and having both raises which one wins where they
+  nest. Protecting part of an ordinary file, the one use read-only marks
+  fit better, has no user yet.
+- **Inside**: every change of the batch lies within one editable mark. A
+  deletion or replacement lies within its range; an insertion is at a
+  point from its start to its end, both included. Changes of one batch may
+  lie in different marks (a snippet's mirrored fields); one change spanning
+  two marks, or touching text outside them, refuses the whole batch, and
+  nothing is applied partly (the error says the text there is not
+  editable).
+- **Gravity**: an editable mark's start stays before and its end moves
+  after an insertion exactly there, so typing at either edge, or into an
+  empty field (a zero-width mark), lands inside it and grows it. These are
+  the defaults for editable marks; a script may still set others.
+- **Emptied fields stay**: a mark whose text is all deleted collapses and
+  is flagged `deleted` (section 7); for this check the flag is ignored,
+  so an emptied field can be typed into again.
+- **Scripts write outside with `force`**: `text.edit(edits, { force: true
+  })` passes over `nomodifiable` and editable marks (a REPL's output, a
+  re-rendered pane). Without it a script's edit is checked like typing:
+  the Vim mode's keys are scripts calling `text.edit`, so the server cannot
+  tell the user's edits from a program's, and the caller says which by
+  `force`.
+- **Undo and redo** are checked as edits are, without `force`: undoing a
+  forced write (outside the fields) is refused, so undo stops there; a
+  REPL's submitted line, outside any field once submitted, cannot be
+  undone either. `reload` stays refused in a `nomodifiable` buffer.
+- **The cursor** moves anywhere, so output can be selected and copied;
+  where typing is refused the edit fails with its message, as in a
+  `nomodifiable` buffer now. Moving the cursor into the field when Insert
+  mode starts, or remapping `dd` on a prompt line, is the editor script's
+  choice.
+- **A buffer without editable marks** behaves as `nomodifiable` does now
+  (the Markdown viewer's text, its outline).
+
+A REPL with it: a `nomodifiable` buffer; after the prompt a zero-width
+editable mark. On `<CR>` the script reads the field, deletes the mark (the
+line is now read-only), and with `force` appends the result and the next
+prompt, then adds a new mark there.
+
+Snippets can lock typing to their placeholders by making them editable
+marks in a `nomodifiable` buffer, but that is not the default: VS Code,
+UltiSnips and LuaSnip do not lock, and locking stops common fixes (a typo
+in the expanded body, `ciw` reaching past a field). At most an option per
+snippet.
+
+For TUI panes (`doc/design/tui-panes.md`), editable marks are what makes
+building their content on a text buffer realistic: the content is the
+buffer, read-only except the "Editable" ranges, re-renders are forced
+edits, and the input boxes get the editor's keys, undo, input methods,
+search and copy. Whether to do that is that document's open question 3.
+
+Estimated size: the check in `Buffer` (edit, undo, redo) with tests,
+150–300 lines; `editable` and `force` in the server, the registry and its
+types, about 100.
+
 ## 8. Undo
 
 - Per buffer, a **tree** from the start **(user)**; `undo` and `redo`

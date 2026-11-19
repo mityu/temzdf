@@ -132,7 +132,12 @@ The comparison is in `doc/survey/tui-renderers.md`. Decided:
    a buffer list, a picker) decides which parts come first.
 3. Whether the content layer becomes the read-only mode of a future editor
    buffer (`doc/survey/text-editor.md`, section 4) or stays separate and
-   converges later.
+   converges later. Editable marks (`doc/design/text-editor.md`, section
+   7, 2026-11-19) make the first realistic: the content is a
+   `nomodifiable` buffer, the "Editable" ranges its editable marks,
+   re-renders forced edits, and input boxes get the editor's keys, undo
+   and input methods. Without it, editable regions need a small line
+   editor of their own.
 4. Whether to prototype Preact and Solid on QuickJS without a compiler
    before committing to the `ui.*` builders' shape.
 5. **Images beside text** (2026-11-19): decorations show images inline
