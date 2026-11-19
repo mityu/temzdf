@@ -301,8 +301,9 @@
                 withTeX = true;
                 forCi = true;
               };
+              # No TeX: Miri runs no test that needs the fixtures (they
+              # are ignored under Miri).
               ci-miri = buildDevShell {
-                withTeX = true;
                 enableMiri = true;
                 forCi = true;
               };
