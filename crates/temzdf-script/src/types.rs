@@ -93,7 +93,7 @@ declare module "temzdf" {{
     /** The focused pane. */
     pane: number;
     /** Its kind; null without a pane. */
-    paneKind: "terminal" | "pdf" | "edit" | null;
+    paneKind: PaneKind | null;
     /** Whether it is a floating pane. */
     floating: boolean;
     /** The current mode. */
@@ -265,6 +265,8 @@ declare module "temzdf" {{
     remainonexit: boolean;
     /** When the tab line shows: "auto" with two tab pages or more. */
     showtabline: "never" | "auto" | "always";
+    /** Whether the window's status line shows (its bottom row: the mode, the session, the tab page). */
+    showstatusline: "never" | "always";
     /** Default text colour (#rrggbb) for GUI clients and terminal panes; null: the client's. */
     foreground: string | null;
     /** Default background colour (#rrggbb); null: the client's. */

@@ -103,7 +103,7 @@ function keyContext(): KeyContext {
   const info = pane === null ? undefined : action.panes().find((p) => p.id === pane);
   return {
     pane: pane ?? -1,
-    paneKind: (info?.kind ?? null) as KeyContext["paneKind"],
+    paneKind: info?.kind ?? null,
     floating: info?.floating ?? false,
     mode: action.currentMode(),
     keys: "",

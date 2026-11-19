@@ -16,7 +16,7 @@ o.timeoutlen = 500;
 o.splitright = false;
 
 defineMode("window", { fallback: "drop", count: true, transient: true, keepalive: "always", timeout: 2000 });
-defineMode("resize", { transient: true, keepalive: (ctx) => ctx.paneKind !== null });
+defineMode("resize", { transient: true, keepalive: (ctx) => ctx.paneKind !== null && ctx.paneKind !== "markdown" });
 keymap.add("normal", "w", () => action.switchMode("window"));
 keymap.add("window", "v", () => {
   action.split("right");
@@ -54,6 +54,7 @@ keymap.add("normal", "gx", () => {
 o.remainonexit = true;
 o.reloadanchor = "text";
 o.linkopener = ["firefox"];
+o.showstatusline = "never";
 keymap.add("normal", "n", () => {
   const hidden = action.buffers().filter((b) => b.panes.length === 0 && !b.exited);
   if (hidden.length > 0) action.showBuffer(hidden[0].id);
