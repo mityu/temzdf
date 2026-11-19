@@ -11,7 +11,7 @@ mod frontend;
 mod notices;
 mod text;
 pub use frontend::{Input, Presented, TtyFrontend};
-pub use text::TextScreen;
+pub use text::{TextScreen, Wanted};
 
 use temzdf_scene::{CursorShape, Frame, ImageKey, ImageUpdate, Images, Layer, Pointer, TextGrid};
 use termpix::compositor::{self, Compositor, ImageId};
@@ -98,19 +98,20 @@ impl Screen {
         }
         // Text leaving cells that tmux placeholder text covered before: write
         // the placeholders again, and the text over them.
-        if comp.placeholder_text_pending() || (is_placeholders(comp) && self.text.would_clear(&frame.text)) {
+        let want = self.text.wanted(&frame.text);
+        if comp.placeholder_text_pending() || (is_placeholders(comp) && self.text.would_clear(&want)) {
             comp.rewrite_placeholder_text();
             self.text.invalidate();
         }
-        let before = self.text.clear_gone(&frame.text);
-        let (text, grids) = (&mut self.text, &frame.text);
+        let before = self.text.clear_gone(&want);
+        let text = &mut self.text;
         let (shape, shown) = (&mut self.shape, &mut self.cursor);
         comp.present_with(
             &presenter.layers(&frame.layers),
             &before,
             |placed| {
                 text.redraw_wide(placed);
-                let mut out = text.render(grids);
+                let mut out = text.render(&want);
                 // Placing images and writing text move the cursor.
                 let moved = !out.is_empty() || !placed.is_empty() || !before.is_empty();
                 out.extend(cursor(shape, shown, frame, moved));
@@ -128,15 +129,16 @@ impl Screen {
     /// again.
     pub fn render_text(&mut self, frame: &Frame, comp: &mut Compositor) -> Option<&[u8]> {
         let g = comp.geometry();
-        if (g.cols, g.rows) != self.size
-            || comp.placeholder_text_pending()
-            || (is_placeholders(comp) && self.text.would_clear(&frame.text))
-        {
+        if (g.cols, g.rows) != self.size || comp.placeholder_text_pending() {
+            return None;
+        }
+        let want = self.text.wanted(&frame.text);
+        if is_placeholders(comp) && self.text.would_clear(&want) {
             return None;
         }
         self.out.clear();
         self.title(frame);
-        let mut text = self.text.render(&frame.text);
+        let mut text = self.text.render(&want);
         let moved = !text.is_empty();
         text.extend(cursor(&mut self.shape, &mut self.cursor, frame, moved));
         comp.present_text(&text, &mut self.out);
@@ -162,9 +164,9 @@ impl Screen {
             self.text.resize(g.cols, g.rows);
             text.extend_from_slice(b"\x1b[2J");
         }
-        let grids: Vec<TextGrid> = under.iter().chain(&frame.text).chain(over).cloned().collect();
-        text.extend(self.text.clear_gone(&grids));
-        text.extend(self.text.render(&grids));
+        let want = self.text.wanted(under.iter().chain(&frame.text).chain(over));
+        text.extend(self.text.clear_gone(&want));
+        text.extend(self.text.render(&want));
         let moved = !text.is_empty();
         text.extend(cursor(&mut self.shape, &mut self.cursor, frame, moved));
         comp.present_text(&text, &mut self.out);
