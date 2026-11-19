@@ -3,7 +3,7 @@
 // register's keys back (feedkeys, through the mappings), @@ the last
 // again, @: the last Ex command. An error stops a macro (the server drops
 // what feedkeys queued).
-import { cmd, dispatch, feedkeys, on } from "temzdf";
+import { action, dispatch, feedkeys, on } from "temzdf";
 import * as registers from "./registers";
 
 let recording: null | { name: string; keys: string[]; stop: () => void } = null;
@@ -23,7 +23,7 @@ export function startRecording(name: string): void {
     if (key.source === "typed") keys.push(key.keys);
   });
   recording = { name, keys, stop };
-  cmd.message(`recording @${name}`);
+  action.message(`recording @${name}`);
 }
 
 /** q while recording: the keys typed until it (not that q) go into the
@@ -36,12 +36,12 @@ export function stopRecording(): void {
   const keys = r.keys.slice(0, -1).join("");
   const name = r.name;
   if (/^[A-Z]$/.test(name)) {
-    const old = cmd.register(name.toLowerCase())?.text ?? "";
-    cmd.setRegister(name.toLowerCase(), { text: old + keys, kind: "char" });
+    const old = action.register(name.toLowerCase())?.text ?? "";
+    action.setRegister(name.toLowerCase(), { text: old + keys, kind: "char" });
   } else if (/^[0-9]$/.test(name)) {
-    cmd.copyText(keys, { kind: "char", clipboard: false });
+    action.copyText(keys, { kind: "char", clipboard: false });
   } else {
-    cmd.setRegister(name, { text: keys, kind: "char" });
+    action.setRegister(name, { text: keys, kind: "char" });
   }
 }
 
@@ -66,7 +66,7 @@ export function runMacro(name: string, count: number | null, ex: (line: string) 
   if (registers.isClipboard(reg)) {
     const primary = reg === "*";
     dispatch(async (ctx) => {
-      const text = await ctx.cmd.readClipboard({ primary });
+      const text = await ctx.action.readClipboard({ primary });
       ctx.atomic(() => feedkeys(text.repeat(n), { remap: true }));
     });
     return;

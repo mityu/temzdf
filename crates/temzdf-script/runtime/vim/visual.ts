@@ -1,7 +1,7 @@
 // The visual mode: a selection from an anchor to the cursor, both on
 // characters (inclusive), by characters, lines or a block; drawn as a
 // decoration so the cursor stays where Vim shows it.
-import { cmd } from "temzdf";
+import { action } from "temzdf";
 import type { Position } from "temzdf";
 import type { Span } from "./operators";
 import { state } from "./state";
@@ -19,7 +19,7 @@ export function enterVisual(kind: VisualKind): void {
     return;
   }
   state.visual = { anchor: cursor(), kind };
-  cmd.switchMode("vim/visual");
+  action.switchMode("vim/visual");
   draw();
 }
 
@@ -29,7 +29,7 @@ export function reselect(): void {
   if (v === null) return;
   state.visual = { anchor: v.anchor, kind: v.kind };
   t.setCursor(v.cursor);
-  if (cmd.currentMode() !== "vim/visual") cmd.switchMode("vim/visual");
+  if (action.currentMode() !== "vim/visual") action.switchMode("vim/visual");
   draw();
 }
 
@@ -39,7 +39,7 @@ export function exitVisual(): void {
   state.lastVisual = { anchor: v.anchor, cursor: cursor(), kind: v.kind };
   state.visual = null;
   t.clearNamespace("vim-visual");
-  if (cmd.currentMode() === "vim/visual") cmd.exitMode();
+  if (action.currentMode() === "vim/visual") action.exitMode();
 }
 
 /** The selection's columns for a block (start, end inclusive). */

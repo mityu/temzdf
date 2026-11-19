@@ -86,18 +86,7 @@ declare module "temzdf" {{
   /** The session's commands (synchronous; inside a mapped or hook function). */
   export interface Commands {{
 {cmd}  }}
-  export const cmd: Commands;
-
-  /** A command described as data, for mappings run without a script. */
-  export interface Action {{
-    readonly name: string;
-    readonly args: readonly unknown[];
-  }}
-  /** `cmd`'s commands (and namespaces of them) as actions. */
-  export type Actions<T> = {{
-    [K in keyof T]: T[K] extends (...args: infer A) => unknown ? (...args: A) => Action : Actions<T[K]>;
-  }};
-  export const action: Actions<Commands>;
+  export const action: Commands;
 
   /** What conditions (`when`, `keepalive`) get: the context of the first key of the sequence. */
   export interface KeyContext {{
@@ -117,8 +106,8 @@ declare module "temzdf" {{
     /** The count typed before the keys (`3j`), if any. */
     count: number | null;
   }}
-  /** A mapping runs a synchronous function, an action or actions in order. */
-  export type Rhs = ((ctx: MapContext) => void) | Action | readonly Action[];
+  /** A mapping runs a synchronous function (counts go to commands as arguments: `(ctx) => action.scrollDown(ctx.count)`). */
+  export type Rhs = (ctx: MapContext) => void;
   /** A condition: synchronous, without side effects (commands may only read). */
   export type Condition = (ctx: KeyContext) => boolean;
   export interface MapOptions {{
@@ -147,7 +136,7 @@ declare module "temzdf" {{
     text: string | null;
   }}
   export interface ModeProperties {{
-    /** What keys no mapping takes do (default: the mode below's, else drop): drop them, pass them to the pane (typed into a terminal, an input or a text pane), or call a function with the key (reading one key; leaving the mode: `() => cmd.exitMode()`). */
+    /** What keys no mapping takes do (default: the mode below's, else drop): drop them, pass them to the pane (typed into a terminal, an input or a text pane), or call a function with the key (reading one key; leaving the mode: `() => action.exitMode()`). */
     fallback?: "drop" | "passthrough" | ((ctx: KeyContext, key: KeyInfo) => void);
     /** Whether digits are counts (default: the mode below's, else no). */
     count?: boolean;
@@ -370,7 +359,7 @@ declare module "temzdf" {{
 
   /** What a dispatched task gets: commands under its own context. */
   export interface TaskContext {{
-    cmd: Commands;
+    action: Commands;
     /** Run `fn` with everything else held; `fn` must be synchronous. */
     atomic<T>(fn: () => T): T;
   }}

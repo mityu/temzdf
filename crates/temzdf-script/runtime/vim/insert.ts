@@ -1,7 +1,7 @@
 // The insert mode: one undo step for the whole session, and what was typed
 // remembered for `.` (between a mark where it began and the cursor where it
 // ends).
-import { cmd, dispatch } from "temzdf";
+import { action, dispatch } from "temzdf";
 import type { KeyInfo } from "temzdf";
 import * as registers from "./registers";
 import { setChanged, setMark } from "./marks";
@@ -24,8 +24,8 @@ export function startInsert(replay: Replay | null, count: number | null, groupSt
   state.insert = { mark, replay: null, count, block };
   insertReplay = replay;
   insertPrefix = prefix;
-  insertPane = cmd.focusedPane();
-  cmd.switchMode("vim/insert");
+  insertPane = action.focusedPane();
+  action.switchMode("vim/insert");
 }
 
 let insertReplay: Replay | null = null;
@@ -66,7 +66,7 @@ export function endInsert(): void {
     }
   }
   t.undoEnd();
-  cmd.exitMode();
+  action.exitMode();
   leaveCursor();
 }
 
@@ -98,7 +98,7 @@ function endBlockInsert(b: BlockInsert, typed: string, start: Position): void {
   const edits = blockEdits(b, typed);
   if (edits.length > 0) t.edit(edits);
   t.undoEnd();
-  cmd.exitMode();
+  action.exitMode();
   // On the block's first line, where the text went in.
   setCursor(clampNormal(start));
   const n = b.last - b.first;
@@ -119,12 +119,12 @@ function endBlockInsert(b: BlockInsert, typed: string, start: Position): void {
 /** <C-r>{reg} (read in vim/insreg): the register's text goes in as typed,
  * so `.` and a count repeat it too; lines with their line break. */
 export function insertRegister(key: KeyInfo): void {
-  cmd.exitMode();
+  action.exitMode();
   const name = key.text;
   if (name === null || !registers.isName(name)) return;
   if (registers.isClipboard(name)) {
     dispatch(async (ctx) => {
-      const text = await ctx.cmd.readClipboard({ primary: name === "*" });
+      const text = await ctx.action.readClipboard({ primary: name === "*" });
       ctx.atomic(() => {
         if (state.insert !== null) t.type(text);
       });

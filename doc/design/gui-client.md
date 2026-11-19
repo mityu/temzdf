@@ -188,7 +188,7 @@ in "As built" above.
    Cmd-V) and the client sees bracketed paste. A GUI must pick the key and
    read the clipboard itself. The server cannot read a client's clipboard.
    Recommended: the key is a mapping like any other (`keymap.add("terminal",
-   "<D-v>", action.paste())`, `<C-S-v>` on Linux), and `paste` is an effect
+   "<D-v>", () => action.paste())`, `<C-S-v>` on Linux), and `paste` is an effect
    the client answers with `ClientMsg::Paste` (the primary selection too,
    on X11 and Wayland, for middle click).
 7. **Focus.** The TTY client parses focus reports (`termpix::input::Event::

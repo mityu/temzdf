@@ -533,6 +533,9 @@ pub struct Session {
     history: History,
     /// The last key, or entering a mode: a submode's `timeout` counts from it.
     last_key: Instant,
+    /// The latest time input or events came with: what commands from the
+    /// script host run at (a headless render's clock is simulated).
+    clock: Instant,
     options: Options,
     /// `guifont` and `guifontwide` as configured, while `font-size` has
     /// changed them (what `font-size` with no size goes back to).
@@ -612,6 +615,7 @@ impl Session {
             matcher: Matcher::default(),
             history: History::new("normal", Options::default().modehistory),
             last_key: Instant::now(),
+            clock: Instant::now(),
             options: Options::default(),
             configured_fonts: None,
             notices: Vec::new(),
@@ -1337,6 +1341,7 @@ impl Session {
     }
 
     pub fn handle(&mut self, ev: SessionEvent, now: Instant) -> Outcome {
+        self.clock = self.clock.max(now);
         let out = match ev {
             SessionEvent::Script(generation, msg) => {
                 return if generation == self.script.generation { self.handle_script(msg) } else { Outcome::None };
@@ -1446,6 +1451,7 @@ impl Session {
     }
 
     pub fn key(&mut self, k: &KeyEvent, now: Instant) -> Outcome {
+        self.clock = self.clock.max(now);
         if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
             return Outcome::None;
         }
@@ -1660,7 +1666,7 @@ impl Session {
                 self.call(func, vec![ctx, key], false);
                 Outcome::None
             }
-            Invoked::Cli { name, args } => match self.run_command(&name, &args, None, Instant::now()) {
+            Invoked::Cli { name, args } => match self.run_command(&name, &args, self.now()) {
                 Ok((_, o)) => o,
                 Err(e) => {
                     match &mut self.cli_cancel {
@@ -1725,13 +1731,19 @@ impl Session {
         ScriptValue::Map(fields)
     }
 
+    /// Now, as the latest input or event said (every one comes with the
+    /// time; a headless render's is simulated).
+    pub(super) fn now(&self) -> Instant {
+        self.clock
+    }
+
     /// What a mapping runs: commands right here, or a script function.
     fn run_target(&mut self, target: Target, count: Option<usize>, now: Instant) -> Outcome {
         match target {
             Target::Actions(acts) => {
                 let mut out = Outcome::None;
                 for a in acts {
-                    match self.run_command(&a.name, &a.args, count, now) {
+                    match self.run_command(&a.name, &a.args, now) {
                         Ok((_, o)) => out = out.merge(o),
                         Err(e) => {
                             self.message(&e);
@@ -1959,6 +1971,7 @@ impl Session {
     /// mappings stay reachable with an input method on (as Vim takes IME
     /// input in Normal mode).
     pub fn text(&mut self, text: &str, now: Instant) -> Outcome {
+        self.clock = self.clock.max(now);
         self.invocation += 1;
         if self.hold_text(text) {
             return Outcome::None;
@@ -2215,6 +2228,7 @@ impl Session {
     }
 
     pub fn mouse(&mut self, m: &MouseEvent, now: Instant) -> Outcome {
+        self.clock = self.clock.max(now);
         if self.hold_mouse(m) {
             return Outcome::None;
         }
@@ -2598,6 +2612,7 @@ impl Session {
 
     /// Advance animations and timers. Returns whether to redraw.
     pub fn tick(&mut self, now: Instant) -> bool {
+        self.clock = self.clock.max(now);
         let mut changed = false;
         for e in self.panes.values_mut() {
             match &mut e.kind {
@@ -2883,9 +2898,9 @@ mod tests {
             let of = |l: &[temzdf_scene::FontEntry]| l.iter().map(|f| f.size).collect::<Vec<_>>();
             (of(&a.font), of(&a.font_wide))
         };
-        let run = |s: &mut Session, arg: Option<&str>, count| {
+        let run = |s: &mut Session, arg: Option<&str>| {
             let args: Vec<ScriptValue> = arg.map(|a| ScriptValue::Str(a.into())).into_iter().collect();
-            s.run_command("font-size", &args, count, Instant::now()).map(|_| ())
+            s.run_command("font-size", &args, Instant::now()).map(|_| ())
         };
         let fonts = |list: &[(&str, Option<f64>)]| {
             ScriptValue::List(
@@ -2904,30 +2919,30 @@ mod tests {
             s.get_option("guifont").unwrap(),
             fonts(&[("Mono", Some(11.0)), ("Cjk", Some(12.0)), ("Emoji", None)])
         );
-        run(&mut s, Some("+1"), None).unwrap();
+        run(&mut s, Some("+1")).unwrap();
         assert_eq!(
             sizes(&s),
             (vec![Some(12.0), Some(13.0), None], vec![None]),
             "each named size; the rest follow the first"
         );
-        run(&mut s, Some("-2"), Some(3)).unwrap();
-        assert_eq!(sizes(&s).0, [Some(6.0), Some(7.0), None], "times the count");
-        run(&mut s, Some("-100"), None).unwrap();
+        run(&mut s, Some("-6")).unwrap();
+        assert_eq!(sizes(&s).0, [Some(6.0), Some(7.0), None], "minus six");
+        run(&mut s, Some("-100")).unwrap();
         assert_eq!(sizes(&s).0, [Some(4.0), Some(5.0), None], "kept readable, by what the first could take");
-        s.run_command("font-size", &[ScriptValue::Num(8.0)], None, Instant::now()).unwrap();
+        s.run_command("font-size", &[ScriptValue::Num(8.0)], Instant::now()).unwrap();
         assert_eq!(sizes(&s).0, [Some(8.0), Some(10.0), None], "a size scales them");
-        assert!(run(&mut s, Some("big"), None).is_err());
-        run(&mut s, None, None).unwrap();
+        assert!(run(&mut s, Some("big")).is_err());
+        run(&mut s, None).unwrap();
         assert_eq!(sizes(&s), (vec![Some(11.0), Some(12.0), None], vec![None]), "back to the configuration");
-        s.run_command("font-size", &[ScriptValue::Num(22.0)], None, Instant::now()).unwrap();
+        s.run_command("font-size", &[ScriptValue::Num(22.0)], Instant::now()).unwrap();
         assert_eq!(sizes(&s).0, [Some(22.0), Some(24.0), None], "in proportion");
         // A first font without a size starts from 14; setting the option
         // again makes that the configured font.
         s.set_option("guifont", &fonts(&[("Plain", None)])).unwrap();
-        run(&mut s, Some("+2"), None).unwrap();
+        run(&mut s, Some("+2")).unwrap();
         assert_eq!(sizes(&s).0, [Some(16.0)], "from the default of 14");
         s.set_option("guifont", &fonts(&[("Other", Some(8.0))])).unwrap();
-        run(&mut s, None, None).unwrap();
+        run(&mut s, None).unwrap();
         assert_eq!(sizes(&s).0, [Some(8.0)]);
         // What is not a font list.
         for bad in [ScriptValue::Str("Mono:h11".into()), fonts(&[]), ScriptValue::List(vec![ScriptValue::Num(1.0)])] {
@@ -3000,15 +3015,15 @@ mod tests {
         let pdf = s.focus;
         // Typed into an input pane below it: the PDF pane is not focused.
         let prompt = ScriptValue::map([("basemode", ScriptValue::Str("input".into()))]);
-        let (buf, _) = s.run_command("new-buffer", &[prompt], None, Instant::now()).unwrap();
+        let (buf, _) = s.run_command("new-buffer", &[prompt], Instant::now()).unwrap();
         let o = ScriptValue::map([
             ("side", ScriptValue::Str("bottom".into())),
             ("buffer", buf),
             ("height", ScriptValue::Num(1.0)),
         ]);
-        let (input, _) = s.run_command("split", &[o], None, Instant::now()).unwrap();
+        let (input, _) = s.run_command("split", &[o], Instant::now()).unwrap();
         assert_eq!(s.focus, input.as_num().unwrap() as PaneId);
-        let search = |s: &mut Session, name: &str, args: &[&str]| cmd(s, name, args, None);
+        let search = |s: &mut Session, name: &str, args: &[&str]| cmd(s, name, args);
         search(&mut s, "search-preview", &["needle", &pdf.to_string()]).unwrap();
         settle(&mut s, &rx);
         assert!(s.panes.get_mut(&pdf).and_then(PaneEntry::pdf).unwrap().search.is_active());
@@ -3078,12 +3093,12 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[0] == "one");
         let one = s.focus;
         new_tab(&mut s, &["sleep", "30"]);
-        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["1"]).unwrap();
         let f = float(&mut s, &["sleep", "30"], &[("tabpage", ScriptValue::Num(2.0))]);
         assert_eq!(s.focus, one, "keys must not go to a pane nobody sees");
         assert!(s.here_panes().contains(&s.focus));
         assert!(s.shown_floats().is_empty());
-        cmd(&mut s, "goto-tab", &["2"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["2"]).unwrap();
         assert!(s.shown_floats().iter().any(|x| x.pane == f), "it shows on its tab page");
     }
 
@@ -3104,7 +3119,7 @@ mod tests {
         assert_eq!(s.layouts().count(), s.tabs.len(), "every tab page has a pane");
         assert_eq!(s.tab, 1, "the configuration's tab page stays current");
         for n in 1..=s.tabs.len() {
-            cmd(&mut s, "goto-tab", &[&n.to_string()], None).unwrap();
+            cmd(&mut s, "goto-tab", &[&n.to_string()]).unwrap();
             assert!(!s.is_starting(), "tab page {n} shows something");
             assert!(s.panes.contains_key(&s.focus), "tab page {n} has a focus");
         }
@@ -3204,10 +3219,10 @@ mod tests {
         assert_eq!(s.current_mode(), "normal", "the keys repeat, as resizing does");
         assert_eq!(key(&mut s, "<Bar>"), Outcome::Redraw);
         assert_eq!(widths(&s), [10, 10, 68], "the focused, last pane takes all it can");
-        key(&mut s, "30<Bar>");
-        assert_eq!(widths(&s)[2], 30, "a count is the width");
+        cmd(&mut s, "maximize-pane", &["width", "30"]).unwrap();
+        assert_eq!(widths(&s)[2], 30, "cells are the width");
         assert_eq!(key(&mut s, "_"), Outcome::None, "nothing stacked with it");
-        assert!(s.run_command("maximize-pane", &[], None, Instant::now()).is_err());
+        assert!(s.run_command("maximize-pane", &[], Instant::now()).is_err());
     }
 
     #[test]
@@ -3286,9 +3301,9 @@ mod tests {
         // Deleting the hidden buffer leaves the pane alone; deleting the last
         // pane's ends the session.
         let hidden = [ScriptValue::Num(first as f64)];
-        assert_eq!(s.run_command("delete-buffer", &hidden, None, Instant::now()).map(|r| r.1), Ok(Outcome::Redraw));
+        assert_eq!(s.run_command("delete-buffer", &hidden, Instant::now()).map(|r| r.1), Ok(Outcome::Redraw));
         assert_eq!((s.buffer_count(), s.panes[&focus].buffer()), (1, doc));
-        assert_eq!(s.run_command("delete-buffer", &[], None, Instant::now()).map(|r| r.1), Ok(Outcome::Quit));
+        assert_eq!(s.run_command("delete-buffer", &[], Instant::now()).map(|r| r.1), Ok(Outcome::Quit));
     }
 
     #[test]
@@ -3610,8 +3625,10 @@ mod tests {
         s.mouse(&at(MouseEventKind::Release(MouseButton::Left), 70), now);
         assert_eq!((width(&s, left), cols(&s)), (70, 70), "and gets the new size on release");
         assert_eq!(s.focus, right, "the border took the press");
-        // The keys size the focused pane (as Vim's <C-w>> and <C-w><).
-        assert_eq!(key(&mut s, "<C-b>3>"), Outcome::Redraw);
+        // The keys size the focused pane (as Vim's <C-w>> and <C-w><);
+        // the shipped ones pass a count as the cells.
+        key(&mut s, "<C-b>");
+        assert_eq!(cmd(&mut s, "resize-pane", &["wider", "3"]), Ok(Outcome::Redraw));
         assert_eq!((width(&s, left), cols(&s)), (67, 67));
         key(&mut s, "<lt>");
         assert_eq!(width(&s, left), 68, "the normal mode stays");
@@ -3645,7 +3662,7 @@ mod tests {
         assert_eq!(s.focus, one, "the focus stays with its pane");
         // Sizes: + and - (one pane in a column: its border moves).
         let h = s.panes[&one].rect.h;
-        key(&mut s, "2-");
+        cmd(&mut s, "resize-pane", &["shorter", "2"]).unwrap();
         assert_eq!(s.panes[&one].rect.h, h - 2);
         key(&mut s, "+");
         assert_eq!(s.panes[&one].rect.h, h - 1);
@@ -3658,7 +3675,7 @@ mod tests {
             ScriptValue::List(argv.iter().map(|a| ScriptValue::Str((*a).into())).collect()),
         )]);
         let opts = ScriptValue::map(opts.iter().cloned());
-        let (pane, _) = s.run_command("open-float", &[what, opts], None, Instant::now()).unwrap();
+        let (pane, _) = s.run_command("open-float", &[what, opts], Instant::now()).unwrap();
         pane.as_num().expect("a pane") as PaneId
     }
 
@@ -3750,11 +3767,11 @@ mod tests {
         assert_eq!(s.covers(Some(tiled)).len(), 2);
         // Hidden: the focus goes to the tiled pane, nothing covers it.
         s.action(Action::FocusNextPane, Instant::now()).unwrap();
-        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        s.run_command("toggle-floats", &[], Instant::now()).unwrap();
         assert_eq!((s.focus, s.covers(Some(tiled)).len()), (tiled, 0));
         assert!(s.pane_at(10.0, 10.0) == Some(tiled), "hidden floats take no clicks");
         // Shown again: the top float has the focus.
-        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        s.run_command("toggle-floats", &[], Instant::now()).unwrap();
         assert_eq!(s.focus, s.floats.last().unwrap().pane);
         // Moving and resizing by commands.
         s.run_command(
@@ -3763,17 +3780,16 @@ mod tests {
                 ScriptValue::Num(a as f64),
                 ScriptValue::map([("width", ScriptValue::Num(30.0)), ("col", ScriptValue::Num(0.0))]),
             ],
-            None,
             Instant::now(),
         )
         .unwrap();
         let fa = s.floats.iter().find(|f| f.pane == a).unwrap().frame;
         assert_eq!((fa.x, fa.w), (0, 32));
         s.set_focus(a);
-        s.run_command("resize-pane", &[ScriptValue::Str("left".into()), ScriptValue::Num(5.0)], None, Instant::now())
+        s.run_command("resize-pane", &[ScriptValue::Str("left".into()), ScriptValue::Num(5.0)], Instant::now())
             .unwrap();
         assert_eq!(s.panes[&a].rect.w, 25, "the right edge moved left");
-        let ScriptValue::List(panes) = s.run_command("panes", &[], None, Instant::now()).unwrap().0 else { panic!() };
+        let ScriptValue::List(panes) = s.run_command("panes", &[], Instant::now()).unwrap().0 else { panic!() };
         let floating: Vec<bool> = panes.iter().map(|p| p.get("floating") == Some(&ScriptValue::Bool(true))).collect();
         assert_eq!(floating.iter().filter(|f| **f).count(), 2);
     }
@@ -3785,24 +3801,24 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[0] == "tiled");
         let tiled = s.focus;
         // The last tiled pane does not float.
-        let err = s.run_command("toggle-floating", &[], None, Instant::now()).unwrap_err();
+        let err = s.run_command("toggle-floating", &[], Instant::now()).unwrap_err();
         assert!(err.contains("last tiled pane"), "{err}");
         let f = float(&mut s, &["sh", "-c", "echo floating; sleep 30"], &[]);
         // Hidden floats do not keep the session.
-        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        s.run_command("toggle-floats", &[], Instant::now()).unwrap();
         assert_eq!(s.close(tiled), Outcome::Quit);
         // Shown, the top float takes the tiled pane's place.
-        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        s.run_command("toggle-floats", &[], Instant::now()).unwrap();
         assert_eq!(s.close(tiled), Outcome::Redraw);
         assert_eq!((s.layout.as_ref().unwrap().panes(), s.floats.len(), s.focus), (vec![f], 0, f));
         assert_eq!(s.panes[&f].rect, s.area(), "the whole screen");
         // A tiled pane floats and comes back beside the focused tiled pane.
         key(&mut s, "<C-b>%");
         let right = s.focus;
-        s.run_command("toggle-floating", &[], None, Instant::now()).unwrap();
+        s.run_command("toggle-floating", &[], Instant::now()).unwrap();
         assert!(s.is_float(right));
         assert_eq!(s.layout.as_ref().unwrap().panes(), [f]);
-        s.run_command("toggle-floating", &[], None, Instant::now()).unwrap();
+        s.run_command("toggle-floating", &[], Instant::now()).unwrap();
         assert!(!s.is_float(right));
         assert_eq!(s.layout.as_ref().unwrap().panes(), [f, right]);
     }
@@ -3822,15 +3838,15 @@ mod tests {
         let right = s.focus;
         float(&mut s, &["sleep", "30"], &[]);
         assert_eq!(s.close(right), Outcome::Redraw);
-        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        s.run_command("toggle-floats", &[], Instant::now()).unwrap();
         assert_eq!(s.focus, tiled, "hiding the floats focuses a tiled pane that is there");
-        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        s.run_command("toggle-floats", &[], Instant::now()).unwrap();
         assert_eq!(s.floats.len(), 1);
         assert_eq!(s.focus, s.floats[0].pane);
         // With no float, toggling floats opens a floating shell.
         let only = s.focus;
         s.close(only);
-        s.run_command("toggle-floats", &[], None, Instant::now()).unwrap();
+        s.run_command("toggle-floats", &[], Instant::now()).unwrap();
         assert_eq!(s.floats.len(), 1);
         assert_eq!(s.focus, s.floats[0].pane);
     }
@@ -3982,7 +3998,7 @@ mod tests {
         // As a hook or a timer feeds keys, for hours, with nothing typed.
         for _ in 0..=MAX_MAP_DEPTH {
             let fed = ScriptValue::Str("<F5>".into());
-            s.run_command("feedkeys", &[fed], None, Instant::now()).unwrap();
+            s.run_command("feedkeys", &[fed], Instant::now()).unwrap();
             let _ = s.drive(Instant::now());
         }
         assert!(!s.notices.iter().any(|n| n.text.contains("recursive mapping")));
@@ -4009,7 +4025,7 @@ mod tests {
         let pid = s.terms[&buf].term.pid().unwrap();
         key(&mut s, "<C-b>%");
         let start = Instant::now();
-        s.run_command("delete-buffer", &[ScriptValue::Num(buf as f64)], None, Instant::now()).unwrap();
+        s.run_command("delete-buffer", &[ScriptValue::Num(buf as f64)], Instant::now()).unwrap();
         assert!(start.elapsed() < Duration::from_millis(100), "the session waited {:?}", start.elapsed());
         // Hung up, then killed a second later, and reaped (no zombie).
         let proc = std::path::PathBuf::from(format!("/proc/{pid}"));
@@ -4051,8 +4067,7 @@ mod tests {
             s.resize(g);
             s.frame();
         }
-        s.run_command("resize-pane", &[ScriptValue::map([("width", ScriptValue::Num(-5.0))])], None, Instant::now())
-            .unwrap();
+        s.run_command("resize-pane", &[ScriptValue::map([("width", ScriptValue::Num(-5.0))])], Instant::now()).unwrap();
         s.frame();
     }
 
@@ -4067,7 +4082,7 @@ mod tests {
             ScriptValue::Str(temzdf_pdfcore::pdf::fixture("sample.pdf").display().to_string()),
         )]);
         let opts = ScriptValue::map([("title", ScriptValue::Str("paper".into())), ("focus", ScriptValue::Bool(false))]);
-        let (pane, _) = s.run_command("open-float", &[what, opts], None, Instant::now()).unwrap();
+        let (pane, _) = s.run_command("open-float", &[what, opts], Instant::now()).unwrap();
         assert_eq!(pane, ScriptValue::Null, "opening: no pane yet");
         pump(&mut s, &rx, |s| !s.floats.is_empty());
         assert_eq!(s.floats[0].title.as_deref(), Some("paper"));
@@ -4093,10 +4108,10 @@ mod tests {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "tiled");
         let file = ScriptValue::map([("file", ScriptValue::Str(sample.display().to_string()))]);
-        s.run_command("open-float", &[file], None, Instant::now()).unwrap();
+        s.run_command("open-float", &[file], Instant::now()).unwrap();
         let doc = *s.docs.keys().next().unwrap();
         let buffer = ScriptValue::map([("buffer", ScriptValue::Num(doc as f64))]);
-        s.run_command("open-float", &[buffer], None, Instant::now()).unwrap();
+        s.run_command("open-float", &[buffer], Instant::now()).unwrap();
         let first_tab = s.tab_id();
         let other = new_tab(&mut s, &["sleep", "30"]);
         pump(&mut s, &rx, |s| opened(s) && s.floats.len() == 2);
@@ -4114,7 +4129,7 @@ mod tests {
         let huge = (1u64 << 32) + 1;
         assert!(s.float_tab(&ScriptValue::Num(huge as f64)).is_err());
         assert!(s.float_tab(&ScriptValue::Str(huge.to_string())).is_err());
-        assert!(s.run_command("next-tab", &[], Some(huge as usize), Instant::now()).is_err());
+        assert!(s.run_command("next-tab", &[ScriptValue::Num(huge as f64)], Instant::now()).is_err());
         assert_eq!(s.tab, 1);
     }
 
@@ -4124,18 +4139,18 @@ mod tests {
             "command",
             ScriptValue::List(argv.iter().map(|a| ScriptValue::Str((*a).into())).collect()),
         )]);
-        let (pane, _) = s.run_command("new-tab", &[what], None, Instant::now()).unwrap();
+        let (pane, _) = s.run_command("new-tab", &[what], Instant::now()).unwrap();
         pane.as_num().expect("a pane") as PaneId
     }
 
-    fn cmd(s: &mut Session, name: &str, args: &[&str], count: Option<usize>) -> Result<Outcome, String> {
+    fn cmd(s: &mut Session, name: &str, args: &[&str]) -> Result<Outcome, String> {
         let args: Vec<ScriptValue> = args.iter().map(|a| ScriptValue::Str((*a).into())).collect();
-        s.run_command(name, &args, count, Instant::now()).map(|(_, o)| o)
+        s.run_command(name, &args, Instant::now()).map(|(_, o)| o)
     }
 
     /// The tab line's labels, in order (`tabs()`).
     fn labels(s: &mut Session) -> Vec<String> {
-        let (list, _) = s.run_command("tabs", &[], None, Instant::now()).unwrap();
+        let (list, _) = s.run_command("tabs", &[], Instant::now()).unwrap();
         let ScriptValue::List(list) = list else { panic!() };
         list.iter().map(|t| t.get("label").and_then(ScriptValue::as_str).unwrap_or_default().to_owned()).collect()
     }
@@ -4151,49 +4166,49 @@ mod tests {
         let (_, rows) = wait_text(&mut s, &rx, |r| r[0] == "two");
         assert!(!rows.iter().any(|r| r.contains("one")), "only the current tab shows");
         // After the last, the first; the focus is the tab's own.
-        cmd(&mut s, "next-tab", &[], None).unwrap();
+        cmd(&mut s, "next-tab", &[]).unwrap();
         assert_eq!((s.tab, s.focus), (0, one));
         wait_text(&mut s, &rx, |r| r[0] == "one");
         // A count goes to that tab (Vim's {N}gt), back as many (gT).
-        cmd(&mut s, "next-tab", &[], Some(2)).unwrap();
+        cmd(&mut s, "next-tab", &["2"]).unwrap();
         assert_eq!((s.tab, s.focus), (1, two));
-        cmd(&mut s, "prev-tab", &[], Some(3)).unwrap();
+        cmd(&mut s, "prev-tab", &["3"]).unwrap();
         assert_eq!(s.tab, 0);
-        assert!(cmd(&mut s, "goto-tab", &["3"], None).unwrap_err().contains("no tab page 3"));
+        assert!(cmd(&mut s, "goto-tab", &["3"]).unwrap_err().contains("no tab page 3"));
         // A new tab goes after the current one.
         let three = new_tab(&mut s, &["sh", "-c", "echo three; sleep 30"]);
         assert_eq!(s.tab, 1);
         for (i, name) in ["a", "c", "b"].iter().enumerate() {
-            cmd(&mut s, "goto-tab", &[&(i + 1).to_string()], None).unwrap();
-            cmd(&mut s, "rename-tab", &[name], None).unwrap();
+            cmd(&mut s, "goto-tab", &[&(i + 1).to_string()]).unwrap();
+            cmd(&mut s, "rename-tab", &[name]).unwrap();
         }
         assert_eq!(labels(&mut s), ["a", "c", "b"]);
         // :tabmove: after tab N (0: first), last, or by places.
-        cmd(&mut s, "goto-tab", &["2"], None).unwrap();
-        cmd(&mut s, "move-tab", &[], None).unwrap();
+        cmd(&mut s, "goto-tab", &["2"]).unwrap();
+        cmd(&mut s, "move-tab", &[]).unwrap();
         assert_eq!((labels(&mut s), s.tab), (vec!["a".into(), "b".into(), "c".into()], 2));
-        cmd(&mut s, "move-tab", &["0"], None).unwrap();
+        cmd(&mut s, "move-tab", &["0"]).unwrap();
         assert_eq!((labels(&mut s), s.tab), (vec!["c".into(), "a".into(), "b".into()], 0));
-        cmd(&mut s, "move-tab", &["+1"], None).unwrap();
+        cmd(&mut s, "move-tab", &["+1"]).unwrap();
         assert_eq!(labels(&mut s), ["a", "c", "b"]);
         // After itself (Vim: no effect), then after the last.
-        cmd(&mut s, "move-tab", &["2"], None).unwrap();
+        cmd(&mut s, "move-tab", &["2"]).unwrap();
         assert_eq!(labels(&mut s), ["a", "c", "b"]);
-        cmd(&mut s, "move-tab", &["3"], None).unwrap();
+        cmd(&mut s, "move-tab", &["3"]).unwrap();
         assert_eq!(labels(&mut s), ["a", "b", "c"]);
         // An empty name shows the focused buffer again.
-        cmd(&mut s, "rename-tab", &[], None).unwrap();
+        cmd(&mut s, "rename-tab", &[]).unwrap();
         assert_eq!(labels(&mut s)[2], "shell");
         // Closing the current tab goes to the one after it, else before; the
         // buffers stay.
         assert_eq!(s.focus, three);
         let buffers = s.buffer_count();
-        assert_eq!(cmd(&mut s, "close-tab", &[], None), Ok(Outcome::Redraw));
+        assert_eq!(cmd(&mut s, "close-tab", &[]), Ok(Outcome::Redraw));
         assert_eq!((s.tabs.len(), s.tab, s.focus, s.buffer_count()), (2, 1, two, buffers));
         assert!(!s.panes.contains_key(&three));
-        cmd(&mut s, "close-tab", &["1"], None).unwrap();
+        cmd(&mut s, "close-tab", &["1"]).unwrap();
         assert_eq!((s.tabs.len(), s.tab, s.focus), (1, 0, two));
-        assert!(cmd(&mut s, "close-tab", &[], None).unwrap_err().contains("last tab page"));
+        assert!(cmd(&mut s, "close-tab", &[]).unwrap_err().contains("last tab page"));
     }
 
     #[test]
@@ -4226,7 +4241,7 @@ mod tests {
         let one = s.focus;
         // A tab whose only program ends while another tab is current goes.
         new_tab(&mut s, &["sh", "-c", "sleep 0.3"]);
-        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["1"]).unwrap();
         let out = pump(&mut s, &rx, |s| s.tabs.len() == 1);
         assert_ne!(out, Outcome::Quit);
         assert_eq!((s.tabs.len(), s.tab, s.focus), (1, 0, one));
@@ -4236,10 +4251,10 @@ mod tests {
         let b = s.focus;
         assert_ne!(a, b);
         let buf = s.panes[&b].buffer();
-        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["1"]).unwrap();
         s.delete_buffer(buf).unwrap();
         assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 0, one));
-        cmd(&mut s, "goto-tab", &["2"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["2"]).unwrap();
         assert_eq!((s.layout.as_ref().unwrap().panes(), s.focus), (vec![a], a));
         assert_eq!(s.panes[&a].rect, s.area(), "the whole screen again");
     }
@@ -4253,7 +4268,7 @@ mod tests {
         key(&mut s, "<C-b>%");
         new_tab(&mut s, &["sleep", "30"]);
         key(&mut s, "<C-b>%");
-        let e = cmd(&mut s, "toggle-floating", &[&left.to_string()], None).unwrap_err();
+        let e = cmd(&mut s, "toggle-floating", &[&left.to_string()]).unwrap_err();
         assert!(e.contains("in this tab"), "{e}");
         let places = s.layouts().filter(|(_, l)| l.panes().contains(&left)).count()
             + s.floats.iter().filter(|f| f.pane == left).count();
@@ -4267,9 +4282,9 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[0] == "one");
         let one = s.focus;
         new_tab(&mut s, &["sleep", "30"]);
-        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["1"]).unwrap();
         let what = ScriptValue::map([("command", ScriptValue::List(vec![ScriptValue::Str("/nonexistent/x".into())]))]);
-        assert!(s.run_command("new-tab", &[what], None, Instant::now()).is_err());
+        assert!(s.run_command("new-tab", &[what], Instant::now()).is_err());
         assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 0, one));
     }
 
@@ -4279,19 +4294,19 @@ mod tests {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "one");
         let left = s.focus;
-        assert!(cmd(&mut s, "break-pane", &[], None).unwrap_err().contains("only tiled pane"));
+        assert!(cmd(&mut s, "break-pane", &[]).unwrap_err().contains("only tiled pane"));
         key(&mut s, "<C-b>%");
         let right = s.focus;
-        cmd(&mut s, "break-pane", &[], None).unwrap();
+        cmd(&mut s, "break-pane", &[]).unwrap();
         assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 1, right));
         assert_eq!(s.layout.as_ref().unwrap().panes(), [right]);
         assert_eq!(s.panes[&right].rect, s.area());
-        cmd(&mut s, "prev-tab", &[], None).unwrap();
+        cmd(&mut s, "prev-tab", &[]).unwrap();
         assert_eq!((s.layout.as_ref().unwrap().panes(), s.focus), (vec![left], left));
         assert_eq!(s.panes[&left].rect, s.area());
         // A float becomes the new tab's tiled pane.
         let f = float(&mut s, &["sleep", "30"], &[]);
-        cmd(&mut s, "break-pane", &[], None).unwrap();
+        cmd(&mut s, "break-pane", &[]).unwrap();
         assert!(!s.is_float(f));
         assert_eq!((s.tab, s.layout.as_ref().unwrap().panes()), (1, vec![f]));
         assert_eq!(s.tabs.len(), 3);
@@ -4308,9 +4323,9 @@ mod tests {
         let half = s.panes[&one].rect.w as u16;
         assert_eq!(s.terms[&buf].term.geometry().cols, half);
         let what = ScriptValue::map([("buffer", ScriptValue::Num(buf as f64))]);
-        s.run_command("new-tab", &[what], None, Instant::now()).unwrap();
+        s.run_command("new-tab", &[what], Instant::now()).unwrap();
         assert_eq!(s.terms[&buf].term.geometry().cols, GEOMETRY.cols, "the whole screen in the new tab");
-        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["1"]).unwrap();
         assert_eq!(s.terms[&buf].term.geometry().cols, GEOMETRY.cols, "the other tab still counts");
     }
 
@@ -4322,7 +4337,7 @@ mod tests {
         assert!(!s.frame().layers.is_empty());
         new_tab(&mut s, &["sleep", "30"]);
         assert!(s.frame().layers.is_empty(), "the PDF is in the other tab");
-        cmd(&mut s, "prev-tab", &[], None).unwrap();
+        cmd(&mut s, "prev-tab", &[]).unwrap();
         assert!(!s.frame().layers.is_empty());
     }
 
@@ -4432,9 +4447,8 @@ mod tests {
         });
         assert!(copied.as_deref().is_some_and(|t| t.starts_with("temzdf sample document")), "{copied:?}");
         // It is the copy history's newest entry, from the PDF, as characters.
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
-            s.run_command(name, args, None, Instant::now()).unwrap().0
-        };
+        let run =
+            |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap().0;
         let newest = match run(&mut s, "history", &[]) {
             ScriptValue::List(l) => l[0].clone(),
             v => panic!("{v:?}"),
@@ -4482,7 +4496,7 @@ mod tests {
         key(&mut s, "<C-b>v");
         key(&mut s, "ggVjy");
         assert_eq!(copied(&mut s), ["hello world\nsecond line\n"], "lines, with their line break");
-        let (history, _) = s.run_command("history", &[], None, Instant::now()).unwrap();
+        let (history, _) = s.run_command("history", &[], Instant::now()).unwrap();
         let ScriptValue::List(history) = history else { panic!() };
         let newest = &history[0];
         assert_eq!(newest.get("kind").and_then(ScriptValue::as_str), Some("line"));
@@ -4492,7 +4506,7 @@ mod tests {
         assert_eq!(s.current_mode(), "visual", "the first <Esc> drops the selection");
         key(&mut s, "<Esc>");
         assert_eq!(s.current_mode(), "terminal");
-        assert!(cmd(&mut s, "visual.left", &[], None).is_err(), "no visual mode now");
+        assert!(cmd(&mut s, "visual.left", &[]).is_err(), "no visual mode now");
     }
 
     #[test]
@@ -4544,7 +4558,7 @@ mod tests {
     fn the_visual_mode_is_for_terminals_and_waits_while_another_pane_has_the_focus() {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
-        assert!(cmd(&mut s, "switch-mode", &["visual"], None).is_err(), "not on a PDF pane");
+        assert!(cmd(&mut s, "switch-mode", &["visual"]).is_err(), "not on a PDF pane");
         assert_eq!(s.current_mode(), "pdf");
 
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo first; sleep 30"]);
@@ -4554,23 +4568,23 @@ mod tests {
         key(&mut s, "ggv");
         // The search's input line takes the focus: the visual mode waits.
         let prompt = ScriptValue::map([("basemode", ScriptValue::Str("input".into()))]);
-        let (buf, _) = s.run_command("new-buffer", &[prompt], None, Instant::now()).unwrap();
+        let (buf, _) = s.run_command("new-buffer", &[prompt], Instant::now()).unwrap();
         let spec = ScriptValue::map([
             ("side", ScriptValue::Str("bottom".into())),
             ("buffer", buf.clone()),
             ("height", ScriptValue::Num(1.0)),
         ]);
-        s.run_command("split", &[spec], None, Instant::now()).unwrap();
+        s.run_command("split", &[spec], Instant::now()).unwrap();
         assert_eq!(s.current_mode(), "input");
         let t = s.terms.values().next().unwrap();
         assert!(t.term.visual_kept() && !t.term.visual_on(), "suspended");
         // Searching from there, then back.
-        cmd(&mut s, "visual.search-preview", &["fir", &term.to_string()], None).unwrap();
-        cmd(&mut s, "focus-pane", &[&term.to_string()], None).unwrap();
+        cmd(&mut s, "visual.search-preview", &["fir", &term.to_string()]).unwrap();
+        cmd(&mut s, "focus-pane", &[&term.to_string()]).unwrap();
         assert_eq!(s.current_mode(), "terminal");
-        cmd(&mut s, "switch-mode", &["visual"], None).unwrap();
+        cmd(&mut s, "switch-mode", &["visual"]).unwrap();
         assert_eq!(s.focused_term().unwrap().visual_label(), Some("VISUAL CHAR"), "it goes on");
-        assert_eq!(cmd(&mut s, "switch-mode", &["visual"], None), Ok(Outcome::None), "once only");
+        assert_eq!(cmd(&mut s, "switch-mode", &["visual"]), Ok(Outcome::None), "once only");
         // The prefix's normal mode over it, and back.
         key(&mut s, "<C-b>");
         assert!(!s.focused_term().unwrap().visual_on());
@@ -4593,19 +4607,19 @@ mod tests {
             ("basemode", str("input")),
             ("attrs", ScriptValue::List(vec![str("nofile"), str("unlisted")])),
         ]);
-        let (buf, _) = s.run_command("new-buffer", &[o], None, Instant::now()).unwrap();
+        let (buf, _) = s.run_command("new-buffer", &[o], Instant::now()).unwrap();
         let o = ScriptValue::map([("side", str("bottom")), ("buffer", buf.clone()), ("height", ScriptValue::Num(1.0))]);
-        let (pane, _) = s.run_command("split", &[o], None, Instant::now()).unwrap();
+        let (pane, _) = s.run_command("split", &[o], Instant::now()).unwrap();
         let pane = pane.as_num().unwrap() as PaneId;
-        cmd(&mut s, "status-line", &["off"], None).unwrap();
+        cmd(&mut s, "status-line", &["off"]).unwrap();
         let o = ScriptValue::map([("wrap", ScriptValue::Bool(false)), ("number", str("off"))]);
-        s.run_command("text.set-options", &[o], None, Instant::now()).unwrap();
+        s.run_command("text.set-options", &[o], Instant::now()).unwrap();
         let at = ScriptValue::map([("start", pos(0, 0)), ("end", pos(0, 0))]);
         let virt = ScriptValue::map([
             ("virtText", ScriptValue::List(vec![ScriptValue::map([("text", str("/"))])])),
             ("style", ScriptValue::Null),
         ]);
-        s.run_command("text.add-decoration", &[at, virt], None, Instant::now()).unwrap();
+        s.run_command("text.add-decoration", &[at, virt], Instant::now()).unwrap();
         (s, rx, buf.as_num().unwrap() as BufferId, pane)
     }
 
@@ -4632,10 +4646,10 @@ mod tests {
         s.paste("x\ny");
         assert_eq!(text_of(&mut s), "abC数式x\ny");
         // A script's own buffer: unlisted, never modified.
-        let (list, _) = s.run_command("buffers", &[], None, Instant::now()).unwrap();
+        let (list, _) = s.run_command("buffers", &[], Instant::now()).unwrap();
         let ScriptValue::List(list) = list else { panic!() };
         assert!(list.iter().all(|b| b.get("id") != Some(&ScriptValue::Num(buf as f64))));
-        let info = s.run_command("text.info", &[], None, Instant::now()).unwrap().0;
+        let info = s.run_command("text.info", &[], Instant::now()).unwrap().0;
         assert_eq!(info.get("modified"), Some(&ScriptValue::Bool(false)));
     }
 
@@ -4644,13 +4658,13 @@ mod tests {
     fn a_long_prompt_scrolls_sideways_to_keep_the_cursor_in_sight() {
         let (mut s, _rx, _buf, _pane) = prompt_session();
         let long: String = ('a'..='z').cycle().take(120).collect();
-        s.run_command("text.insert", &[ScriptValue::Str(long.clone())], None, Instant::now()).unwrap();
+        s.run_command("text.insert", &[ScriptValue::Str(long.clone())], Instant::now()).unwrap();
         let end = ScriptValue::map([("line", ScriptValue::Num(0.0)), ("character", ScriptValue::Num(120.0))]);
-        s.run_command("text.set-cursor", &[end], None, Instant::now()).unwrap();
+        s.run_command("text.set-cursor", &[end], Instant::now()).unwrap();
         let (row, cursor) = prompt_row(&mut s);
         // 121 columns and the cursor's: the last 89 characters and the cursor.
         assert_eq!((row.as_str(), cursor), (&long[31..], Some((89, 29))));
-        s.run_command("text.set-cursor", &[pos(0, 0)], None, Instant::now()).unwrap();
+        s.run_command("text.set-cursor", &[pos(0, 0)], Instant::now()).unwrap();
         let (row, cursor) = prompt_row(&mut s);
         assert_eq!((row.as_str(), cursor), (format!("/{}", &long[..89]).as_str(), Some((1, 29))), "the prompt again");
     }
@@ -4664,13 +4678,13 @@ mod tests {
         // Shown in a second pane: closing one does not hide it.
         let term_pane = *s.panes.iter().find(|(_, e)| e.kind_name() == "terminal").unwrap().0;
         let o = ScriptValue::map([("buffer", b.clone()), ("pane", ScriptValue::Num(term_pane as f64))]);
-        let (second, _) = s.run_command("split", &[o], None, Instant::now()).unwrap();
+        let (second, _) = s.run_command("split", &[o], Instant::now()).unwrap();
         s.script_events.clear();
         s.close(second.as_num().unwrap() as PaneId);
         assert!(s.script_events.iter().all(|(e, _)| e != "BufferHidden"), "{:?}", s.script_events);
         // Deleting it: hidden first, then deleted.
         s.script_events.clear();
-        cmd(&mut s, "delete-buffer", &[&buf.to_string()], None).unwrap();
+        cmd(&mut s, "delete-buffer", &[&buf.to_string()]).unwrap();
         let names: Vec<&str> = s.script_events.iter().map(|(e, _)| e.as_str()).collect();
         assert_eq!(names, ["BufferHidden", "BufferDeleted"]);
         assert_eq!(s.script_events[0].1, [b, ScriptValue::Str("edit".into())]);
@@ -4697,7 +4711,7 @@ mod tests {
         let opts = |kv: &[(&str, ScriptValue)]| ScriptValue::map(kv.iter().cloned());
         let n = |v: f64| ScriptValue::Num(v);
         let side = |v: &str| ScriptValue::Str(v.into());
-        let split = |s: &mut Session, o: ScriptValue| s.run_command("split", &[o], None, Instant::now());
+        let split = |s: &mut Session, o: ScriptValue| s.run_command("split", &[o], Instant::now());
         // The first terminal again, one row high, below it.
         let (pane, _) =
             split(&mut s, opts(&[("side", side("bottom")), ("buffer", n(buf as f64)), ("height", n(1.0))])).unwrap();
@@ -4708,10 +4722,10 @@ mod tests {
         // Fixed: a taller screen and equalizing leave it one row.
         s.resize(Geometry { rows: 40, ..GEOMETRY });
         assert_eq!(s.panes[&pane].rect, Rect::new(0, 39, 90, 1));
-        cmd(&mut s, "equalize-panes", &[], None).unwrap();
+        cmd(&mut s, "equalize-panes", &[]).unwrap();
         assert_eq!(s.panes[&pane].rect.h, 1);
         // Back to the first pane by its id; a pane of another one to split.
-        cmd(&mut s, "focus-pane", &[&first.to_string()], None).unwrap();
+        cmd(&mut s, "focus-pane", &[&first.to_string()]).unwrap();
         assert_eq!(s.focus, first);
         let (right, _) =
             split(&mut s, opts(&[("side", side("right")), ("pane", n(first as f64)), ("width", side("50%"))])).unwrap();
@@ -4723,12 +4737,12 @@ mod tests {
         // Wrong combinations are refused.
         assert!(split(&mut s, opts(&[("side", side("bottom")), ("width", n(3.0))])).is_err());
         assert!(split(&mut s, opts(&[("buffer", n(9999.0))])).is_err());
-        assert!(cmd(&mut s, "focus-pane", &["9999"], None).is_err());
+        assert!(cmd(&mut s, "focus-pane", &["9999"]).is_err());
     }
 
     /// Split the focused pane `side` ("right", "bottom"); the new pane.
     fn split_focused(s: &mut Session, side: &str) -> PaneId {
-        let (pane, _) = s.run_command("split", &[ScriptValue::Str(side.into())], None, Instant::now()).unwrap();
+        let (pane, _) = s.run_command("split", &[ScriptValue::Str(side.into())], Instant::now()).unwrap();
         pane.as_num().expect("the new pane") as PaneId
     }
 
@@ -4783,7 +4797,7 @@ mod tests {
             src.push_str(&format!("## Section {i}\n\n{words}\n\n"));
         }
         let (mut s, _path) = markdown_session("split.md", &src, &[]);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         // Text mode.
         run(&mut s, "markdown.goto", &[str("section-12")]).unwrap();
@@ -4899,17 +4913,17 @@ mod tests {
         let bar = cell_at(&s.frame(), 0, last).unwrap();
         assert_eq!((bar.text.as_str(), bar.bg), (" ", theme_rgb(theme.bar_bg)));
         assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1);
-        cmd(&mut s, "status-line", &["off"], None).unwrap();
+        cmd(&mut s, "status-line", &["off"]).unwrap();
         assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows, "the row back");
         assert!(cell_at(&s.frame(), 0, last).is_none_or(|c| c.bg != theme_rgb(theme.bar_bg)), "no status line");
         key(&mut s, "<CR>");
         wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "30 90"));
         // No argument: the other way round; a pane by its id.
         let id = ScriptValue::Num(pane as f64);
-        s.run_command("status-line", &[ScriptValue::Null, id], None, Instant::now()).unwrap();
+        s.run_command("status-line", &[ScriptValue::Null, id], Instant::now()).unwrap();
         assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1);
         assert_eq!(cell_at(&s.frame(), 0, last).unwrap().bg, theme_rgb(theme.bar_bg));
-        assert!(cmd(&mut s, "status-line", &["maybe"], None).is_err());
+        assert!(cmd(&mut s, "status-line", &["maybe"]).is_err());
     }
 
     #[test]
@@ -4935,7 +4949,7 @@ mod tests {
         assert_eq!(cell_at(&frame, 0, 0).unwrap().bg, theme_rgb(termpix_ui::Theme::dark().bar_bg));
         assert_eq!(frame.cursor, None, "no cursor in hidden content");
         // Hidden, the content gets its row back.
-        cmd(&mut s, "status-line", &["off"], None).unwrap();
+        cmd(&mut s, "status-line", &["off"]).unwrap();
         assert_eq!(s.terms[&buf].term.geometry().rows, 1);
         // (No newline after it: one row would scroll it away.)
         let (_, rows) = wait_text(&mut s, &rx, |r| r[0] == "SAID");
@@ -4944,7 +4958,7 @@ mod tests {
 
     /// The panes() entry of `pane`.
     fn pane_info(s: &mut Session, pane: PaneId) -> ScriptValue {
-        let (list, _) = s.run_command("panes", &[], None, Instant::now()).unwrap();
+        let (list, _) = s.run_command("panes", &[], Instant::now()).unwrap();
         let ScriptValue::List(list) = list else { panic!() };
         list.into_iter().find(|p| p.get("id").and_then(ScriptValue::as_num) == Some(pane as f64)).unwrap()
     }
@@ -4965,12 +4979,12 @@ mod tests {
         assert_eq!(shown(&s), [all, second]);
         s.set_focus(all);
         assert_eq!(shown(&s), [second, all]);
-        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["1"]).unwrap();
         assert_eq!(shown(&s), [own, all]);
         // Hiding is per tab; the float on all tabs follows the current one.
-        cmd(&mut s, "toggle-floats", &[], None).unwrap();
+        cmd(&mut s, "toggle-floats", &[]).unwrap();
         assert!(shown(&s).is_empty());
-        cmd(&mut s, "goto-tab", &["2"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["2"]).unwrap();
         assert_eq!(shown(&s), [second, all]);
         // panes() says where each pane is.
         assert_eq!(pane_info(&mut s, own).get("tab"), Some(&ScriptValue::Num(1.0)));
@@ -4978,21 +4992,20 @@ mod tests {
         assert_eq!(pane_info(&mut s, all).get("tab"), Some(&ScriptValue::Null));
         // tabpage moves a float to another tab.
         let opts = ScriptValue::map([("tabpage", ScriptValue::Num(1.0))]);
-        s.run_command("float-config", &[ScriptValue::Num(second as f64), opts], None, Instant::now()).unwrap();
+        s.run_command("float-config", &[ScriptValue::Num(second as f64), opts], Instant::now()).unwrap();
         assert_eq!(shown(&s), [all]);
         assert_ne!(s.focus, second, "the focus stays on this tab");
         // A float on all tabs becomes a tiled pane of the current tab.
         s.set_focus(all);
-        cmd(&mut s, "toggle-floating", &[], None).unwrap();
+        cmd(&mut s, "toggle-floating", &[]).unwrap();
         assert!(!s.is_float(all));
         assert_eq!(s.tab_of(all), Some(1));
-        cmd(&mut s, "goto-tab", &["1"], None).unwrap();
+        cmd(&mut s, "goto-tab", &["1"]).unwrap();
         assert!(!s.layout.as_ref().unwrap().panes().contains(&all));
         assert!(
             s.run_command(
                 "open-float",
                 &[ScriptValue::Null, ScriptValue::map([("tabpage", ScriptValue::Num(5.0))])],
-                None,
                 Instant::now()
             )
             .is_err()
@@ -5013,9 +5026,9 @@ mod tests {
         assert_eq!((s.tab, s.current_mode()), (0, "terminal"));
         key(&mut s, "<C-b>gT");
         assert_eq!(s.tab, 2);
-        key(&mut s, "<C-b>2gt");
+        cmd(&mut s, "next-tab", &["2"]).unwrap();
         assert_eq!((s.tab, s.focus), (1, right));
-        key(&mut s, "<C-b>2gT");
+        cmd(&mut s, "prev-tab", &["2"]).unwrap();
         assert_eq!(s.tab, 2);
     }
 
@@ -5035,8 +5048,8 @@ mod tests {
         assert_eq!(s.layout.as_ref().unwrap().panes().len(), 2, "split by the % mapping");
         // paste asks the client for its clipboard.
         s.take_effects();
-        s.run_command("paste", &[], None, Instant::now()).unwrap();
-        s.run_command("paste", &[ScriptValue::Str("primary".into())], None, Instant::now()).unwrap();
+        s.run_command("paste", &[], Instant::now()).unwrap();
+        s.run_command("paste", &[ScriptValue::Str("primary".into())], Instant::now()).unwrap();
         assert_eq!(
             s.take_effects(),
             [temzdf_scene::Effect::Paste { primary: false }, temzdf_scene::Effect::Paste { primary: true }]
@@ -5087,7 +5100,6 @@ mod tests {
                 ScriptValue::Str("-c".into()),
                 ScriptValue::Str(script.into()),
             ],
-            None,
             Instant::now(),
         )
         .unwrap();
@@ -5144,7 +5156,7 @@ mod tests {
         }
         let p = ScriptValue::Str(path.to_str().unwrap().into());
         let pane = ScriptValue::map([("pane", ScriptValue::Num(f64::from(s.focus)))]);
-        s.run_command("markdown.open", &[p, pane], None, Instant::now()).unwrap();
+        s.run_command("markdown.open", &[p, pane], Instant::now()).unwrap();
         (s, path)
     }
 
@@ -5158,7 +5170,7 @@ mod tests {
         assert_eq!(rows[1].trim_end(), "═════");
         assert_eq!(rows[3].trim_end(), "Some text and α².", "math by libtexprintf");
         // The buffer is not modifiable, by edits, typing or undo.
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let err = run(&mut s, "text.insert", &[ScriptValue::Str("x".into()), pos(0, 0)]).unwrap_err();
         assert!(err.contains("not modifiable"), "{err}");
         assert!(run(&mut s, "text.undo", &[]).unwrap_err().contains("not modifiable"));
@@ -5176,7 +5188,7 @@ mod tests {
     fn markdown_links_go_to_anchors_urls_and_files_with_a_way_back() {
         let src = "[down](#far) [web](https://example.com) [other](other.md#end)\n\n# Far\n";
         let (mut s, path) = markdown_session("links.md", src, &[("other.md", "# Other\n\n# End\n")]);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let follow = |s: &mut Session, col: usize| {
             run(s, "text.set-cursor", &[pos(0, col)]).unwrap();
             run(s, "markdown.follow", &[]).unwrap().0
@@ -5217,7 +5229,7 @@ mod tests {
         let words = "word ".repeat(40);
         let src: String = (0..30).map(|i| format!("## Section {i}\n\n{words}\n\n")).collect();
         let (mut s, path) = markdown_session("long.md", &src, &[]);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         run(&mut s, "markdown.goto", &[ScriptValue::Str("section-10".into())]).unwrap();
         assert_eq!(screen_text(&s.frame(), GEOMETRY)[0].trim_end(), "Section 10");
         let widths =
@@ -5250,9 +5262,9 @@ mod tests {
         write_png(&path.parent().unwrap().join("pic.png"), 20, 40);
         let p = ScriptValue::Str(path.to_str().unwrap().into());
         let pane = ScriptValue::map([("pane", ScriptValue::Num(f64::from(s.focus)))]);
-        s.run_command("markdown.open", &[p, pane], None, Instant::now()).unwrap();
+        s.run_command("markdown.open", &[p, pane], Instant::now()).unwrap();
         // The cursor elsewhere: line 0 is the cursor's, so move it down.
-        s.run_command("text.set-cursor", &[pos(4, 0)], None, Instant::now()).unwrap();
+        s.run_command("text.set-cursor", &[pos(4, 0)], Instant::now()).unwrap();
         let frame = s.frame();
         let mut layers: Vec<_> = frame.layers.iter().map(|l| (l.dst.x, l.dst.y, l.dst.w, l.dst.h)).collect();
         layers.sort();
@@ -5300,9 +5312,9 @@ mod tests {
         s.start(PaneSpec::File(md.clone()), None).unwrap();
         let p = ScriptValue::Str(md.to_str().unwrap().into());
         let pane = ScriptValue::map([("pane", ScriptValue::Num(f64::from(s.focus)))]);
-        s.run_command("markdown.open", &[p, pane], None, Instant::now()).unwrap();
+        s.run_command("markdown.open", &[p, pane], Instant::now()).unwrap();
         assert!(s.frame().layers.is_empty(), "not fetched unasked");
-        let n = s.run_command("markdown.load-remote-images", &[], None, Instant::now()).unwrap().0;
+        let n = s.run_command("markdown.load-remote-images", &[], Instant::now()).unwrap().0;
         assert_eq!(n, ScriptValue::Num(1.0));
         loop {
             let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();
@@ -5329,7 +5341,7 @@ mod tests {
             src.push_str(&format!("## Section {i}\n\n{words}\n\n"));
         }
         let (mut s, _path) = markdown_session("g.md", &src, &[]);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         let (tx, rx) = std::sync::mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
@@ -5435,7 +5447,7 @@ mod tests {
             src.push_str(&format!("## Section {i}\n\n{words}\n\n"));
         }
         let (mut s, path) = markdown_session("g.md", &src, &[]);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         run(&mut s, "markdown.goto", &[str("section-5")]).unwrap();
         s.options.scrollstep = 100.0;
@@ -5573,7 +5585,7 @@ mod tests {
             src.push_str(&format!("## Section {i}\n\n{}\n\n", "word ".repeat(30)));
         }
         let (mut s, path) = markdown_session("sel.md", &src, &[]);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         run(&mut s, "markdown.set-mode", &[ScriptValue::Str("graphics".into())]).unwrap();
         let left = MouseButton::Left;
         let at =
@@ -5643,11 +5655,11 @@ mod tests {
     }
 
     fn text_of(s: &mut Session) -> String {
-        s.run_command("text.get-text", &[], None, Instant::now()).unwrap().0.as_str().unwrap().to_owned()
+        s.run_command("text.get-text", &[], Instant::now()).unwrap().0.as_str().unwrap().to_owned()
     }
 
     fn cursor_of(s: &mut Session) -> (usize, usize) {
-        let (c, _) = s.run_command("text.cursor", &[], None, Instant::now()).unwrap();
+        let (c, _) = s.run_command("text.cursor", &[], Instant::now()).unwrap();
         let n = |k| c.get(k).unwrap().as_num().unwrap() as usize;
         (n("line"), n("character"))
     }
@@ -5666,20 +5678,20 @@ mod tests {
         key(&mut s, "hi");
         assert_eq!(text_of(&mut s), "hione\ntwo\n");
         assert_eq!(cursor_of(&mut s), (0, 2));
-        // Moves by the mapping's count; typing goes on from there.
-        s.run_command("text.move", &[ScriptValue::Str("line".into())], Some(1), Instant::now()).unwrap();
+        // Moves; typing goes on from there.
+        s.run_command("text.move", &[ScriptValue::Str("line".into())], Instant::now()).unwrap();
         assert_eq!(cursor_of(&mut s), (1, 2));
         key(&mut s, "!");
         assert_eq!(text_of(&mut s), "hione\ntw!o\n");
         // Each typing run is one step; undo puts the cursor back.
-        cmd(&mut s, "text.undo", &[], None).unwrap();
+        cmd(&mut s, "text.undo", &[]).unwrap();
         assert_eq!((text_of(&mut s).as_str(), cursor_of(&mut s)), ("hione\ntwo\n", (1, 2)));
-        cmd(&mut s, "text.undo", &[], None).unwrap();
+        cmd(&mut s, "text.undo", &[]).unwrap();
         assert_eq!(text_of(&mut s), "one\ntwo\n");
-        cmd(&mut s, "text.redo", &[], None).unwrap();
-        cmd(&mut s, "write", &[], None).unwrap();
+        cmd(&mut s, "text.redo", &[]).unwrap();
+        cmd(&mut s, "write", &[]).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "hione\r\ntwo\r\n", "CRLF as it was read");
-        let (info, _) = s.run_command("text.info", &[], None, Instant::now()).unwrap();
+        let (info, _) = s.run_command("text.info", &[], Instant::now()).unwrap();
         assert_eq!(info.get("modified"), Some(&ScriptValue::Bool(false)));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -5689,16 +5701,16 @@ mod tests {
     fn panes_on_one_text_buffer_follow_each_others_edits() {
         let (mut s, path) = text_session("shared.txt", "abc\n");
         let first = s.focus;
-        s.run_command("text.set-cursor", &[pos(0, 3)], None, Instant::now()).unwrap();
-        let (second, _) = s.run_command("split", &[], None, Instant::now()).unwrap();
+        s.run_command("text.set-cursor", &[pos(0, 3)], Instant::now()).unwrap();
+        let (second, _) = s.run_command("split", &[], Instant::now()).unwrap();
         let second = second.as_num().unwrap() as PaneId;
         assert_eq!(s.focus, second);
         assert_eq!(cursor_of(&mut s), (0, 3), "the split starts where the other pane was");
         let at0 = ScriptValue::map([("pane", ScriptValue::Num(first as f64))]);
-        s.run_command("text.insert", &[ScriptValue::Str(">> ".into()), pos(0, 0), at0], None, Instant::now()).unwrap();
+        s.run_command("text.insert", &[ScriptValue::Str(">> ".into()), pos(0, 0), at0], Instant::now()).unwrap();
         assert_eq!(cursor_of(&mut s), (0, 6), "moved along by the other pane's edit");
         // The selection is replaced by typing.
-        s.run_command("text.set-selection", &[pos(0, 3), pos(0, 6)], None, Instant::now()).unwrap();
+        s.run_command("text.set-selection", &[pos(0, 3), pos(0, 6)], Instant::now()).unwrap();
         key(&mut s, "X");
         assert_eq!(text_of(&mut s), ">> X\n");
         assert_eq!(cursor_of(&mut s), (0, 4), "after the replacement");
@@ -5717,13 +5729,13 @@ mod tests {
             edit(range(pos(0, 0), pos(0, 0)), "// x\n"),
             edit(range(pos(0, 0), pos(0, 0)), "// y\n"),
         ]);
-        s.run_command("text.edit", &[edits], None, Instant::now()).unwrap();
+        s.run_command("text.edit", &[edits], Instant::now()).unwrap();
         assert_eq!(text_of(&mut s), "// x\n// y\nlet b = 1;\n");
         let old = ScriptValue::List(vec![ScriptValue::map([
             ("range", range(pos(0, 0), pos(0, 1))),
             ("text", ScriptValue::Str("z".into())),
         ])]);
-        let err = s.run_command("text.edit", &[old], None, Instant::now()).unwrap_err();
+        let err = s.run_command("text.edit", &[old], Instant::now()).unwrap_err();
         assert!(err.contains("newText"), "{err}");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -5732,7 +5744,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "the file system")]
     fn a_text_pane_draws_its_text_cursor_and_status_line() {
         let (mut s, path) = text_session("draw.txt", "hello\nあい\n");
-        s.run_command("text.set-cursor", &[pos(1, 1)], None, Instant::now()).unwrap();
+        s.run_command("text.set-cursor", &[pos(1, 1)], Instant::now()).unwrap();
         let frame = s.frame();
         let row = |y: usize| -> String {
             let g = frame.text.iter().find(|g| g.row as usize <= y && y < g.row as usize + g.rows.len()).unwrap();
@@ -5767,17 +5779,13 @@ mod tests {
         let (mut s, path) = text_session("a.txt", "x");
         let dir = path.parent().unwrap().to_owned();
         std::fs::write(dir.join("bin.dat"), b"\0\0").unwrap();
-        let e = s.run_command(
-            "open-file",
-            &[ScriptValue::Str(dir.join("bin.dat").display().to_string())],
-            None,
-            Instant::now(),
-        );
+        let e =
+            s.run_command("open-file", &[ScriptValue::Str(dir.join("bin.dat").display().to_string())], Instant::now());
         assert!(e.unwrap_err().contains("binary"));
         // A file that does not exist yet opens empty (new-pane FILE).
         s.new_pane(&PaneSpec::File(dir.join("new.txt")), None).unwrap();
         key(&mut s, "made");
-        cmd(&mut s, "write", &[], None).unwrap();
+        cmd(&mut s, "write", &[]).unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("new.txt")).unwrap(), "made");
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -5792,15 +5800,15 @@ mod tests {
         let first = s.focus;
         // A buffer made with its own base mode, in a split.
         let o = ScriptValue::map([("basemode", ScriptValue::Str("bufmode".into()))]);
-        let (buf, _) = s.run_command("new-buffer", &[o], None, Instant::now()).unwrap();
+        let (buf, _) = s.run_command("new-buffer", &[o], Instant::now()).unwrap();
         let o = ScriptValue::map([("buffer", buf)]);
-        s.run_command("split", &[o], None, Instant::now()).unwrap();
+        s.run_command("split", &[o], Instant::now()).unwrap();
         assert_eq!(s.history.current(), "bufmode");
         s.set_focus(first);
         assert_eq!(s.history.current(), "kindmode");
         // A mode nobody defined: the kind's own.
         s.options.basemode.insert("edit".into(), "nowhere".into());
-        let (second, _) = s.run_command("split", &[], None, Instant::now()).unwrap();
+        let (second, _) = s.run_command("split", &[], Instant::now()).unwrap();
         assert_eq!(s.focus, second.as_num().unwrap() as PaneId);
         assert_eq!(s.history.current(), "edit");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -5811,9 +5819,8 @@ mod tests {
     fn text_panes_search_and_paint_patterns() {
         let (mut s, path) = text_session("search.txt", "one two\ntwo three two\n");
         let o = |pairs: Vec<(&str, ScriptValue)>| ScriptValue::map(pairs);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
-            s.run_command(name, args, None, Instant::now()).unwrap().0
-        };
+        let run =
+            |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap().0;
         let start = |v: &ScriptValue| {
             let p = v.get("range").unwrap().get("start").unwrap();
             (p.get("line").unwrap().as_num().unwrap() as usize, p.get("character").unwrap().as_num().unwrap() as usize)
@@ -5827,7 +5834,7 @@ mod tests {
         let ScriptValue::List(all) = run(&mut s, "text.search-all", std::slice::from_ref(&two)) else { panic!() };
         assert_eq!(all.len(), 3);
         assert_eq!(run(&mut s, "text.search", &[ScriptValue::Str("nothing".into())]), ScriptValue::Null);
-        assert!(s.run_command("text.search", &[ScriptValue::Str("(".into())], None, Instant::now()).is_err());
+        assert!(s.run_command("text.search", &[ScriptValue::Str("(".into())], Instant::now()).is_err());
         // hlsearch: the matches painted in Search's colours.
         let hl = temzdf_texteditor::Style { bg: Some(temzdf_scene::Color::Indexed(3)), ..Default::default() };
         s.highlights.set("Search", hl);
@@ -5847,9 +5854,8 @@ mod tests {
     #[cfg_attr(miri, ignore = "the file system")]
     fn scripts_decorate_text_and_define_highlight_groups() {
         let (mut s, path) = text_session("deco.txt", "keep gone keep\n");
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
-            s.run_command(name, args, None, Instant::now()).unwrap().0
-        };
+        let run =
+            |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap().0;
         let range = |a: usize, b: usize| ScriptValue::map([("start", pos(0, a)), ("end", pos(0, b))]);
         let o = |pairs: Vec<(&str, ScriptValue)>| ScriptValue::map(pairs);
         let red = o(vec![("bg", ScriptValue::Str("#ff0000".into())), ("bold", ScriptValue::Bool(true))]);
@@ -5902,7 +5908,7 @@ mod tests {
             s.start(PaneSpec::File(path.clone()), None).unwrap();
             s
         };
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         let canonical = std::fs::canonicalize(&path).unwrap();
         let names = swap::candidates(&swaps, &canonical);
@@ -5986,8 +5992,8 @@ mod tests {
         s.start(PaneSpec::File(path.clone()), None).unwrap();
         let canonical = std::fs::canonicalize(&path).unwrap();
         assert!(swap::candidates(&swaps, &canonical)[0].exists(), "the swap file there");
-        s.run_command("text.insert", &[str("x"), pos(0, 0)], None, Instant::now()).unwrap();
-        s.run_command("write", &[], None, Instant::now()).unwrap();
+        s.run_command("text.insert", &[str("x"), pos(0, 0)], Instant::now()).unwrap();
+        s.run_command("write", &[], Instant::now()).unwrap();
         assert!(text::undo_file_of(&undo, &canonical).exists(), "the undo file there");
         s.end_swaps();
         // "~/" is the home directory; null or "" the default.
@@ -6031,7 +6037,7 @@ mod tests {
             s.start(PaneSpec::File(path.clone()), None).unwrap();
             s
         };
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         // Off (the default): nothing written.
         run(&mut s, "text.insert", &[str("zero "), pos(0, 0)]).unwrap();
@@ -6079,7 +6085,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "the file system")]
     fn buffer_attributes_nofile_and_unlisted() {
         let (mut s, path) = text_session("attrs.txt", "x\n");
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         let names = |s: &mut Session, all: bool| -> Vec<String> {
             let o = ScriptValue::map([("all", ScriptValue::Bool(all))]);
@@ -6129,7 +6135,7 @@ mod tests {
         let png = dir.join("pic.png");
         // 10x20-pixel cells (GEOMETRY): 40x20 is four columns one row high.
         write_png(&png, 40, 20);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         let id = run(&mut s, "load-image", &[str(png.to_str().unwrap())]).unwrap().0;
         let at = ScriptValue::map([("start", pos(0, 1)), ("end", pos(0, 1))]);
@@ -6168,7 +6174,7 @@ mod tests {
         let dir = path.parent().unwrap().to_owned();
         let png = dir.join("pic.png");
         write_png(&png, 20, 20);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         let range = |l0, c0, l1, c1| ScriptValue::map([("start", pos(l0, c0)), ("end", pos(l1, c1))]);
         let rows = |s: &mut Session| screen_text(&s.frame(), GEOMETRY);
@@ -6211,7 +6217,7 @@ mod tests {
         let png = dir.join("pic.png");
         // 10x20-pixel cells: 30x60 pixels are three columns, three rows.
         write_png(&png, 30, 60);
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let str = |v: &str| ScriptValue::Str(v.into());
         let at = |l| ScriptValue::map([("start", pos(l, 0)), ("end", pos(l, 0))]);
         let id = run(&mut s, "load-image", &[str(png.to_str().unwrap())]).unwrap().0;
@@ -6249,7 +6255,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "the file system")]
     fn virtual_text_shows_in_the_pane_and_the_cursor_skips_it() {
         let (mut s, path) = text_session("virt.txt", "abc\n");
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, None, Instant::now());
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
         let at = |a: usize| ScriptValue::map([("start", pos(0, a)), ("end", pos(0, a))]);
         let virt = |text: &str, where_: &str| {
             ScriptValue::map([
@@ -6283,21 +6289,20 @@ mod tests {
     #[cfg_attr(miri, ignore = "the file system")]
     fn encodings_pairs_word_characters_variables_and_the_clipboard() {
         let (mut s, path) = text_session("misc.txt", "f(a, (b))\nfoo-bar\n");
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
-            s.run_command(name, args, None, Instant::now()).unwrap().0
-        };
+        let run =
+            |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap().0;
         let str = |v: &str| ScriptValue::Str(v.into());
         // A Shift_JIS file, named.
         let sjis = path.parent().unwrap().join("sjis.txt");
         std::fs::write(&sjis, b"\x82\xa0\n").unwrap();
-        assert!(s.run_command("open-file", &[str(sjis.to_str().unwrap())], None, Instant::now()).is_err());
+        assert!(s.run_command("open-file", &[str(sjis.to_str().unwrap())], Instant::now()).is_err());
         let o = ScriptValue::map([("encoding", str("shift_jis"))]);
         run(&mut s, "open-file", &[str(sjis.to_str().unwrap()), o]);
         assert_eq!(text_of(&mut s), "あ\n");
         key(&mut s, "い");
-        cmd(&mut s, "write", &[], None).unwrap();
+        cmd(&mut s, "write", &[]).unwrap();
         assert_eq!(std::fs::read(&sjis).unwrap(), b"\x82\xa2\x82\xa0\n", "written back in Shift_JIS");
-        cmd(&mut s, "close-pane", &[], None).unwrap();
+        cmd(&mut s, "close-pane", &[]).unwrap();
         // Brackets.
         let p = run(&mut s, "text.find-pair", &[pos(0, 1)]);
         assert_eq!(p, pos(0, 8));
@@ -6308,20 +6313,18 @@ mod tests {
         run(&mut s, "text.set-wordchars", &[str(r"[\p{L}\p{N}_-]")]);
         run(&mut s, "text.move", &[str("wordEnd")]);
         assert_eq!(cursor_of(&mut s), (1, 7), "foo-bar is one word now");
-        assert!(s.run_command("text.set-wordchars", &[str("[")], None, Instant::now()).is_err());
+        assert!(s.run_command("text.set-wordchars", &[str("[")], Instant::now()).is_err());
         // Variables, kept by the server, gone with their owner.
         run(&mut s, "set-var", &[str("buffer"), str("x"), ScriptValue::Num(3.0)]);
         run(&mut s, "set-var", &[str("pane"), str("y"), str("p")]);
         assert_eq!(run(&mut s, "get-var", &[str("buffer"), str("x")]), ScriptValue::Num(3.0));
         assert_eq!(run(&mut s, "get-var", &[str("pane"), str("y")]), str("p"));
         assert_eq!(run(&mut s, "get-var", &[str("tab"), str("y")]), ScriptValue::Null);
-        let (pane, _) = s.run_command("split", &[], None, Instant::now()).unwrap();
+        let (pane, _) = s.run_command("split", &[], Instant::now()).unwrap();
         let pane = pane.as_num().unwrap();
         assert_eq!(run(&mut s, "get-var", &[str("pane"), str("y")]), ScriptValue::Null, "the new pane's own");
-        cmd(&mut s, "close-pane", &[], None).unwrap();
-        assert!(
-            s.run_command("get-var", &[str("pane"), str("y"), ScriptValue::Num(pane)], None, Instant::now()).is_err()
-        );
+        cmd(&mut s, "close-pane", &[]).unwrap();
+        assert!(s.run_command("get-var", &[str("pane"), str("y"), ScriptValue::Num(pane)], Instant::now()).is_err());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -6340,9 +6343,8 @@ mod tests {
     #[cfg_attr(miri, ignore = "the file system")]
     fn copies_registers_and_the_clipboard() {
         let (mut s, path) = text_session("copies.txt", "one\ntwo\n");
-        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| {
-            s.run_command(name, args, None, Instant::now()).unwrap().0
-        };
+        let run =
+            |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap().0;
         let str = |v: &str| ScriptValue::Str(v.into());
         let opts = |kv: &[(&str, ScriptValue)]| ScriptValue::map(kv.iter().cloned());
         let texts = |v: ScriptValue| match v {
@@ -6392,7 +6394,7 @@ mod tests {
         assert_eq!(text_of(&mut s), "one\ntlastwo\n");
         run(&mut s, "put", &[opts(&[("register", str("a"))])]);
         assert_eq!(text_of(&mut s), "one\nr1\nr2\ntlastwo\n");
-        assert!(s.run_command("put", &[opts(&[("register", str("z"))])], None, Instant::now()).is_err());
+        assert!(s.run_command("put", &[opts(&[("register", str("z"))])], Instant::now()).is_err());
         // Forgetting.
         let ScriptValue::List(history) = run(&mut s, "history", &[]) else { panic!() };
         let id = history[0].get("id").cloned().unwrap();

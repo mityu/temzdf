@@ -134,9 +134,9 @@ configurations are written with the same system.
 
   ```ts
   defineMode("resize", { transient: true, keepalive: "mapped", timeout: 1500 });
-  keymap.add("resize", "+", action.resizePane("taller"));
-  keymap.add("resize", "-", action.resizePane("shorter"));
-  keymap.add("normal", "s", action.switchMode("resize"));
+  keymap.add("resize", "+", (ctx) => action.resizePane("taller", ctx.count ?? 1));
+  keymap.add("resize", "-", (ctx) => action.resizePane("shorter", ctx.count ?? 1));
+  keymap.add("normal", "s", () => action.switchMode("resize"));
   ```
 
 ## Unchanged

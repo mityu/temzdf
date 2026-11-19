@@ -279,8 +279,8 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
 - **`InvokePre` / `InvokePost`**: once per invocation started by user input
   (a key or key sequence that runs a mapping, the mouse, a CLI action), the
   equivalent of Emacs' `pre-command-hook`/`post-command-hook`. Not per
-  command: `[action.a(), action.b()]` or a function issuing five `cmd.*`
-  calls is one invocation; `cmd.*` from hooks or timers is none. They carry
+  command: a function issuing five `action.*` calls is one invocation;
+  `action.*` from hooks or timers is none. They carry
   a sequence number, what was invoked (an action value or a mapped
   function's id), the keys, the count, the mode, the pane and the source
   (key, mouse, CLI, replay); `InvokePost` adds the cursor and selection
@@ -292,7 +292,7 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   (range in pre-change positions, deleted length, inserted text; not the
   deleted text), a version number, the cause (script, typing, undo, redo,
   reload) and the invocation it happened in (none for hooks and timers).
-  It reaches hooks **before the editing `cmd.*` returns**, also for the
+  It reaches hooks **before the editing `action.*` returns**, also for the
   script's own edits, as Emacs' `after-change-functions` (the host serves
   nested hook calls while waiting for a reply).
 - **`KeyTyped`**: when a key arrives, before matching; observe only (it
@@ -336,7 +336,7 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
 - A mode's `unmapped` becomes **`fallback`** **(user named it)**: `"drop"`,
   `"passthrough"` or a function `(ctx, key) => void` given the unmatched
   key. "Leave and swallow the key" (an invalid key after an operator) is
-  `fallback: () => cmd.exitMode()`. This replaces the third `keepalive`
+  `fallback: () => action.exitMode()`. This replaces the third `keepalive`
   value noted in `todo.md`.
 - Reading one key (`f{char}`, `r{char}`, `m{mark}`, `"{reg}`) is a
   transient mode with a `fallback` function; counts and such pass through
@@ -473,7 +473,7 @@ with `execute-kbd-macro` and applies changes with a function.
 - Declarations attach to a **region of execution** **(user's idea)**:
   ```ts
   keymap.add("ed/insert", "<Left>", () => {
-    plugin.ed.dotrepeat("call", () => { cmd.moveCursor(/* ... */); });
+    plugin.ed.dotrepeat("call", () => { action.moveCursor(/* ... */); });
   });
   ```
   The kind holds while `fn` runs: `call` records `fn` itself and calls it
@@ -482,10 +482,8 @@ with `execute-kbd-macro` and applies changes with a function.
   drops the unit (names provisional). A record is a sequence of regions,
   so a function that edits, calls a wrapped region and edits again records
   all three; the outermost region wins. This replaced naming user commands
-  or attaching `meta` to mappings. (In temzdf `cmd.x()` runs a command now
-  and `action.x()` is the same command as data the server runs itself, as
-  a mapping's right-hand side; mapped functions have no name to attach a
-  declaration to.)
+  or attaching `meta` to mappings. (In temzdf `action.x()` runs a command
+  now, and mapped functions have no name to attach a declaration to.)
 - Open, for when the Vim script is written: the default for an undeclared
   cursor move inside an Insert session (Vim splits there; Evil records it).
 
@@ -493,9 +491,9 @@ with `execute-kbd-macro` and applies changes with a function.
 ```ts
 defineMode("vim/find-char", {
   transient: true, keepalive: "always",
-  fallback: (ctx, key) => { findChar(key.text, pendingCount); cmd.exitMode(); },
+  fallback: (ctx, key) => { findChar(key.text, pendingCount); action.exitMode(); },
 });
-keymap.add("vim/normal", "f", (ctx) => { pendingCount = ctx.count; cmd.switchMode("vim/find-char"); });
+keymap.add("vim/normal", "f", (ctx) => { pendingCount = ctx.count; action.switchMode("vim/find-char"); });
 ```
 
 ## 17. Script host round trips
@@ -535,8 +533,7 @@ Decided with the user on 2026-11-07, before building:
   store beside the PDF, terminal and input ones, and a pane kind whose
   name (and default base mode) is `edit`.
 - **Scripts reach the primitives under `text.*`** **(user)**:
-  `cmd.text.edit([...])`, `cmd.text.move("word", 1)`,
-  `action.text.move(...)` (prompts are edited with them too). The existing `edit(path)`
+  `action.text.edit([...])`, `action.text.move("word", 1)` (prompts are edited with them too). The existing `edit(path)`
   (open a PDF in the focused pane, Vim's `:edit`) stays. The names in the
   sections above (`edit`, `move`, `positionOf`, ...) are these.
 - **A position is `{ line, character }`** **(user)**, LSP's names: zero

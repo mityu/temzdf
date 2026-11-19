@@ -1,6 +1,6 @@
 // Searching: / ? n N * #, with Vim's patterns converted (pattern.ts), and
 // hlsearch through highlightPattern.
-import { cmd } from "temzdf";
+import { action } from "temzdf";
 import type { Position } from "temzdf";
 import { convert } from "./pattern";
 import { options, state } from "./state";
@@ -35,7 +35,7 @@ export function find(pattern: string, backward: boolean, count: number): Positio
 }
 
 function highlight(rust: string): void {
-  if (options.hlsearch) cmd.highlightPattern("vim-search", rust, "Search");
+  if (options.hlsearch) action.highlightPattern("vim-search", rust, "Search");
 }
 
 /** hlsearch as the last search left it (after a preview). */
@@ -53,7 +53,7 @@ export function restoreHighlight(): void {
 }
 
 export function noHighlight(): void {
-  cmd.highlightPattern("vim-search", null);
+  action.highlightPattern("vim-search", null);
 }
 
 /** n and N: the last search again, the same way or (`reverse`) the other. */

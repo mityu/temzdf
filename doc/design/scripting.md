@@ -120,15 +120,23 @@ that part follows tmux and zellij (see "Prior art").
 The redesign agreed on 2026-10-28 (conditions on mappings, transient modes,
 no `inherit`) is in `doc/design/keymaps.md`, which supersedes decision 8 below.
 
-- A mapping goes from a **key sequence to an action**: a script function, or a
-  built-in action given as data (`temzdf.cmd.scroll(1)` returns a description
-  the server can run by itself). Built-in actions as data run synchronously in
-  the server, without an RPC; this is how the default mappings and every mode
-  switch work, so a mode change can never race the next key.
-- A mapping may run **several actions in a row**, executed by the server
-  without other input in between (so "enter the operating mode, do X, go back"
+- A mapping goes from a **key sequence to a script function**, which runs
+  commands with `action.*` (`action.split("right")` splits now). Keys typed
+  while it runs wait for it ("Execution model"), so a mode it switches to can
+  never race the next key, and several commands in one function run without
+  other input in between (so "enter the operating mode, do X, go back"
   behaves like a tmux prefix, while a mapping that only enters the operating
   mode behaves like Vim's Normal mode).
+- *Decided (2026-11-19)*: **no actions as data**. Until then a mapping could
+  also be a command described as data (`action.split("right")`, or an array
+  of them) that the server ran without the script host, and `cmd.*` ran
+  commands now. With the host in WebAssembly a round trip costs 10-15 µs
+  (`doc/survey/script-host-transport.md`), and mapped functions already
+  hold the keys typed meanwhile, so the data form bought nothing a function
+  does not. `cmd` became `action` (the name says it runs an action), and
+  mappings are functions only. Counts, which data actions received
+  implicitly from the mapping, are arguments, as scripts already passed
+  them (`(ctx) => action.scrollDown(ctx.count)`).
 - **No built-in mappings in Rust**: the defaults come from a JavaScript
   configuration shipped with temzdf.
 - Key sequences resolve **as in Vim**: ambiguous prefixes wait for
@@ -370,10 +378,8 @@ with the plan.
   the terminal, then exit the mode), `<Esc>` (exit the mode).
 - API: `defineMode(name, { inherit, unmapped, count })` (built-in modes'
   properties can be changed too), `map(mode | modes, lhs, rhs, { nowait,
-  desc })`, `unmap(mode, lhs)`; `rhs` is a function, an action description
-  or an array of them; `action.*` mirrors `cmd.*` as data, plus
-  `action.switchMode`, `action.exitMode`, `action.feedkeys(keys, { remap })`,
-  `action.sendText`; `feedkeys(keys, { remap = true })`, `currentMode()`;
+  desc })`, `unmap(mode, lhs)`; `rhs` is a function (2026-11-19; until
+  then also an action description or an array of them); `feedkeys(keys, { remap = true })`, `currentMode()`;
   options through a Neovim-like `o` (`o.timeoutlen = 500`); a mapping
   starting with `<C-c>` throws.
 - Options (global for now, Vim-style names): `timeoutlen`, `splitbelow`,
@@ -472,7 +478,7 @@ with the plan.
     shells and editors do not redraw at every step.
   - The command is `resize-pane`, in two forms:
     - `resizePane(dir, cells?)` moves one of the focused pane's borders
-      `cells` cells (default 1, times a mapping's count) in that direction,
+      `cells` cells (default 1; a mapping passes its count) in that direction,
       as tmux's `resize-pane -L/-R/-U/-D` does. The border is the
       right (bottom) one if the pane has one, else the left (top) one.
     - `resizePane({ width?, height? })` sets the size of the focused pane.
@@ -595,7 +601,7 @@ was (2026-10-26). They keep the numbers of the first list (1-7 became
     through mappings (`feedkeys()`, tmux `send-keys -K`), into temzdf's key
     handling without mappings (`feedkeys(..., 'n')`), and straight to a
     terminal buffer (`chansend()`/`term_sendkeys()`, tmux `send-keys`;
-    `cmd.sendText`). Vim's `'x'` (process now) cannot be exact across
+    `action.sendText`). Vim's `'x'` (process now) cannot be exact across
     processes; the call returning once the keys have been processed comes
     close.
 

@@ -7,11 +7,14 @@
   const host = globalThis.__host;
   delete globalThis.__host;
 
+  // A failed command's error (marked by the host) as the command said it.
   const errorJson = (e) =>
-    JSON.stringify({
-      message: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
-      stack: e instanceof Error && e.stack ? String(e.stack) : null,
-    });
+    e instanceof Error && e.temzdfCommandFailed === true
+      ? JSON.stringify({ message: e.message, stack: null, command: true })
+      : JSON.stringify({
+          message: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+          stack: e instanceof Error && e.stack ? String(e.stack) : null,
+        });
 
   // The context token of the synchronous call running now (a mapped or hook
   // function, or the configuration at startup), else the task's inside
@@ -52,28 +55,19 @@
   }
 
   // The session's commands, as functions issuing them under `tokenOf()`.
-  function commands(tokenOf, cmd = {}) {
+  function commands(tokenOf, action = {}) {
     for (const name of JSON.parse(host.commands())) {
-      put(cmd, name, (...args) => promised(request(tokenOf(), "command", { name, args })));
+      put(action, name, (...args) => promised(request(tokenOf(), "command", { name, args })));
     }
-    return deepFreeze(cmd);
+    return deepFreeze(action);
   }
   // Filled once the session has said which commands it has (before the
   // configuration runs).
-  const globalCmd = {};
-  // `action.split("right")` describes a command as data: mappings to such
-  // descriptions (or arrays of them) run in the session without a script.
   const globalAction = {};
-  const ACTION = Symbol.for("temzdf.action");
   globalThis.__temzdfLoad = () => {
-    if (Object.isFrozen(globalCmd)) return;
-    commands(current, globalCmd);
-    for (const name of JSON.parse(host.commands())) {
-      put(globalAction, name, (...args) => Object.freeze({ [ACTION]: true, name, args }));
-    }
-    deepFreeze(globalAction);
+    if (Object.isFrozen(globalAction)) return;
+    commands(current, globalAction);
   };
-  const isAction = (a) => a !== null && typeof a === "object" && a[ACTION] === true;
 
   // Functions by the id they were registered under, for keymap.get.
   const registered = [];
@@ -109,7 +103,7 @@
     if (typeof fn !== "function") throw new TypeError("atomic: expected a function");
     const t = JSON.stringify(token);
     host.atomicBegin(t);
-    // The plain `cmd` works inside too, under the task's token.
+    // The plain `action` works inside too, under the task's token.
     const outer = atomicToken;
     atomicToken = token;
     try {
@@ -125,12 +119,11 @@
   }
 
   const temzdf = {
-    cmd: globalCmd,
     action: globalAction,
     keymap: Object.freeze({
       // keymap.add(mode | modes, lhs, rhs, { nowait, desc, when, namespace,
-      // priority }): rhs is a synchronous function, an action, or an array of
-      // actions; `when` a synchronous function of the key's context.
+      // priority }): rhs and `when` are synchronous functions of the key's
+      // context.
       add(modes, lhs, rhs, options = {}) {
         const payload = {
           modes,
@@ -141,13 +134,8 @@
           namespace: options.namespace ?? null,
           priority: options.priority ?? 0,
         };
-        if (typeof rhs === "function") {
-          payload.func = funcId(rhs, `keymap.add(${lhs})`, false);
-        } else {
-          const list = Array.isArray(rhs) ? rhs : [rhs];
-          if (!list.every(isAction)) throw new TypeError(`keymap.add(${lhs}): expected a function, an action or actions`);
-          payload.actions = list.map((a) => ({ name: a.name, args: a.args }));
-        }
+        if (typeof rhs !== "function") throw new TypeError(`keymap.add(${lhs}): expected a function`);
+        payload.func = funcId(rhs, `keymap.add(${lhs})`, false);
         request(current(), "map", payload);
       },
       // keymap.remove(mode | modes, lhs, { namespace }): that namespace's
@@ -167,9 +155,7 @@
         const payload = { mode: filter.mode ?? null, namespace: filter.namespace ?? null, lhs: filter.lhs ?? null };
         return request(current(), "getMappings", payload).map((m) => ({
           ...m,
-          rhs: Array.isArray(m.rhs)
-            ? m.rhs.map((a) => Object.freeze({ [ACTION]: true, name: a.name, args: a.args }))
-            : back(m.rhs),
+          rhs: back(m.rhs),
           when: m.when === null ? undefined : back(m.when),
           desc: m.desc ?? undefined,
           namespace: m.namespace ?? undefined,
@@ -203,10 +189,10 @@
       });
     },
     feedkeys(keys, options = {}) {
-      return globalCmd.feedkeys(keys, options.remap !== false);
+      return globalAction.feedkeys(keys, options.remap !== false);
     },
     currentMode() {
-      return globalCmd.currentMode();
+      return globalAction.currentMode();
     },
     // Options, as Neovim's vim.o: `o.timeoutlen = 500`.
     o: new Proxy(
@@ -238,7 +224,7 @@
       const task = host.taskStart();
       const token = { Task: task };
       const ctx = Object.freeze({
-        cmd: commands(() => token),
+        action: commands(() => token),
         atomic: (f) => atomicWith(token, f),
       });
       Promise.resolve()
@@ -255,7 +241,7 @@
     // onChange hears the cursor's line as it changes. Either way the pane
     // and the buffer go, and the focus goes back.
     openPrompt(opts = {}) {
-      const c = globalCmd;
+      const c = globalAction;
       const origin = c.focusedPane();
       const buffer = c.newBuffer({ text: opts.text ?? "", basemode: opts.mode ?? "input", attrs: ["nofile", "unlisted"] });
       let pane = null;
@@ -320,11 +306,11 @@
   // Open prompts by buffer (openPrompt), and their hooks while any is.
   const prompts = new Map();
   let promptHooks = null;
-  const focusedBuffer = () => globalCmd.panes().find((p) => p.focused)?.buffer;
+  const focusedBuffer = () => globalAction.panes().find((p) => p.focused)?.buffer;
   // The cursor's line of a prompt (what is run, and previewed).
   const promptLine = (p) => {
-    const at = globalCmd.text.cursor({ pane: p.pane });
-    return globalCmd.text.line(at.line, { pane: p.pane });
+    const at = globalAction.text.cursor({ pane: p.pane });
+    return globalAction.text.line(at.line, { pane: p.pane });
   };
   // Close a prompt: its line, back to where it was opened, the buffer gone.
   function closePrompt(buffer) {
@@ -342,12 +328,12 @@
       promptHooks = null;
     }
     try {
-      if (p.origin !== null) globalCmd.focusPane(p.origin);
+      if (p.origin !== null) globalAction.focusPane(p.origin);
     } catch {
       // That pane is gone.
     }
     try {
-      globalCmd.deleteBuffer(buffer);
+      globalAction.deleteBuffer(buffer);
     } catch {
       // Gone already.
     }

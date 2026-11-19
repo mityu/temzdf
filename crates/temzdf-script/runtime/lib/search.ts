@@ -1,4 +1,4 @@
-import { cmd, openPrompt } from "temzdf";
+import { action, openPrompt } from "temzdf";
 
 // Searching a PDF pane (/) or a terminal in the visual mode (/ and ?): a
 // prompt (openPrompt) one row high below it. As the query is typed the
@@ -7,11 +7,11 @@ import { cmd, openPrompt } from "temzdf";
 // prompt, back to the pane (and its visual mode). Closed any other way,
 // the search is cancelled.
 export function openSearch(backward = false): void {
-  const pane = cmd.focusedPane();
+  const pane = action.focusedPane();
   if (pane === null) return;
-  const visual = cmd.currentMode() === "visual";
+  const visual = action.currentMode() === "visual";
   const back = () => {
-    if (visual) cmd.switchMode("visual");
+    if (visual) action.switchMode("visual");
   };
   const guard = (f: () => void) => {
     try {
@@ -23,20 +23,20 @@ export function openSearch(backward = false): void {
   openPrompt({
     prompt: backward ? "?" : "/",
     onChange: (query) => {
-      if (visual) cmd.visual.searchPreview(query, pane, backward);
-      else cmd.searchPreview(query, pane);
+      if (visual) action.visual.searchPreview(query, pane, backward);
+      else action.searchPreview(query, pane);
     },
     onLine: (query) =>
       guard(() => {
         back();
-        if (visual) cmd.visual.searchFor(query, pane, backward);
-        else cmd.searchFor(query, pane);
+        if (visual) action.visual.searchFor(query, pane, backward);
+        else action.searchFor(query, pane);
       }),
     onCancel: () =>
       guard(() => {
         back();
-        if (visual) cmd.visual.searchCancel(pane);
-        else cmd.searchCancel(pane);
+        if (visual) action.visual.searchCancel(pane);
+        else action.searchCancel(pane);
       }),
   });
 }

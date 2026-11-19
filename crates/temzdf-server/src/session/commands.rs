@@ -35,7 +35,7 @@ const SESSION: &[(&str, &str, &str)] = &[
     (
         "resize-pane",
         "(how: \"left\" | \"right\" | \"up\" | \"down\" | \"wider\" | \"narrower\" | \"taller\" | \"shorter\" | { width?: number; height?: number }, cells?: number): void",
-        "Move the focused pane's right (bottom) border, else its left (top) one, `cells` cells that way (1 times a mapping's count); or make the pane wider, narrower, taller, shorter by `cells` (Vim's <C-w>> < + -); or give it a size",
+        "Move the focused pane's right (bottom) border, else its left (top) one, `cells` cells that way (1 by default); or make the pane wider, narrower, taller, shorter by `cells` (Vim's <C-w>> < + -); or give it a size",
     ),
     (
         "equalize-panes",
@@ -44,8 +44,8 @@ const SESSION: &[(&str, &str, &str)] = &[
     ),
     (
         "maximize-pane",
-        "(axis: \"width\" | \"height\"): void",
-        "Make the focused pane as wide (high) as the others' minimum sizes allow, as Vim's <C-w>| and <C-w>_; a mapping's count N makes it N cells instead",
+        "(axis: \"width\" | \"height\", cells?: number | null): void",
+        "Make the focused pane as wide (high) as the others' minimum sizes allow, as Vim's <C-w>| and <C-w>_; `cells` makes it that many cells instead",
     ),
     (
         "move-pane",
@@ -54,8 +54,8 @@ const SESSION: &[(&str, &str, &str)] = &[
     ),
     (
         "rotate-panes",
-        "(reverse?: boolean): void",
-        "Rotate the panes in the focused pane's row or column, each to the next place (Vim's <C-w>r; reverse: <C-w>R); a mapping's count repeats it",
+        "(reverse?: boolean, count?: number | null): void",
+        "Rotate the panes in the focused pane's row or column, each to the next place (Vim's <C-w>r; reverse: <C-w>R); `count` repeats it",
     ),
     ("close-pane", "(pane?: number): void", "Close a pane, the focused one by default (its buffer stays, hidden)"),
     (
@@ -127,7 +127,7 @@ const SESSION: &[(&str, &str, &str)] = &[
     (
         "font-size",
         "(size?: number | string): void",
-        "GUI clients: the first guifont's size in points (the other sizes scale with it), \"+N\"/\"-N\" points more or less for every size (times a mapping's count), none: back to the configured sizes",
+        "GUI clients: the first guifont's size in points (the other sizes scale with it), \"+N\"/\"-N\" points more or less for every size, none: back to the configured sizes",
     ),
     (
         "feedkeys",
@@ -142,7 +142,7 @@ const SESSION: &[(&str, &str, &str)] = &[
     (
         "invoke",
         "(target: InvokeTarget, opts?: { count?: number }): void",
-        "Run an invocation's target again (as InvokePre and InvokePost give it), as part of what runs now",
+        "Run an invocation's target again (as InvokePre and InvokePost give it), as part of what runs now; `count` goes to a function's ctx",
     ),
     ("switch-mode", "(mode: string): void", "Enter a mode (pushed on the mode history)"),
     ("exit-mode", "(): void", "Back to the previous mode"),
@@ -165,13 +165,13 @@ const SESSION: &[(&str, &str, &str)] = &[
     ),
     (
         "next-tab",
-        "(): void",
-        "Go to the next tab page, after the last to the first; with a mapping's count N, to tab page N (Vim's gt)",
+        "(count?: number | null): void",
+        "Go to the next tab page, after the last to the first; with `count` N, to tab page N (Vim's gt)",
     ),
     (
         "prev-tab",
-        "(): void",
-        "Go to the previous tab page, before the first to the last; a mapping's count goes that many back (Vim's gT)",
+        "(count?: number | null): void",
+        "Go to the previous tab page, before the first to the last; `count` goes that many back (Vim's gT)",
     ),
     ("goto-tab", "(tab: number): void", "Go to tab page `tab` (counted from 1)"),
     (
@@ -218,13 +218,13 @@ pub fn command_specs() -> Vec<CommandSpec> {
     });
     let pdf = Command::NAMES.iter().map(|(_, name)| CommandSpec {
         name: (*name).into(),
-        doc: format!("Page view: {name} in the focused PDF pane (a mapping's count applies)"),
-        ts: "(): void".into(),
+        doc: format!("Page view: {name} in the focused PDF pane (`count` times, where that means something)"),
+        ts: "(count?: number | null): void".into(),
     });
     let visual = VisualOp::NAMES.iter().map(|(_, name, doc)| CommandSpec {
         name: format!("visual.{name}"),
-        doc: format!("Visual mode: {doc} (the focused terminal; a mapping's count applies)"),
-        ts: "(): void".into(),
+        doc: format!("Visual mode: {doc} (the focused terminal; `count` times, where that means something)"),
+        ts: "(count?: number | null): void".into(),
     });
     let text = super::text::COMMANDS
         .iter()
@@ -290,21 +290,29 @@ fn resize_fonts(font: &mut [FontEntry], wide: &mut [FontEntry], change: impl Fn(
     }
 }
 
-/// `cells` times a mapping's `count`, kept within what any screen has
-/// (counts saturate at usize::MAX; scripts pass any number).
-fn times(cells: f64, count: Option<usize>) -> i32 {
+/// `cells`, kept within what any screen has (scripts pass any number).
+fn cells(cells: f64) -> i32 {
     const MOST: f64 = 100_000.0;
-    let cells = if cells.is_nan() { 0.0 } else { cells.clamp(-MOST, MOST) };
-    (cells * count.unwrap_or(1).min(100_000) as f64).clamp(-MOST, MOST) as i32
+    if cells.is_nan() { 0 } else { cells.clamp(-MOST, MOST) as i32 }
+}
+
+/// A count given as a command's argument `v` (a number, or a string from
+/// `temzdf action`): none for anything else, at least 1.
+fn count_arg(v: Option<&ScriptValue>) -> Option<usize> {
+    let n = match v {
+        Some(ScriptValue::Num(n)) => *n,
+        Some(ScriptValue::Str(s)) => s.parse().ok()?,
+        _ => return None,
+    };
+    (n >= 1.0).then(|| n.min(usize::MAX as f64) as usize)
 }
 
 impl Session {
-    /// Run command `name`. `count` comes from a mapping (`3j`).
+    /// Run command `name`.
     pub(super) fn run_command(
         &mut self,
         name: &str,
         args: &[ScriptValue],
-        count: Option<usize>,
         now: Instant,
     ) -> Result<(ScriptValue, Outcome), String> {
         let text = |i: usize| args.get(i).and_then(ScriptValue::as_str).map(str::to_owned);
@@ -318,13 +326,13 @@ impl Session {
         let act = |s: &mut Self, a: Action| {
             s.action_inner(a, now).map(|o| (ScriptValue::Null, o)).map_err(|e| format!("{e:#}"))
         };
-        if let Some(result) = self.text_command(name, args, count) {
+        if let Some(result) = self.text_command(name, args) {
             return result;
         }
         if let Some(result) = self.register_command(name, args) {
             return result;
         }
-        if let Some(result) = self.markdown_command(name, args, count, now) {
+        if let Some(result) = self.markdown_command(name, args, now) {
             return result;
         }
         if let "search-for" | "search-preview" | "search-cancel" = name {
@@ -356,7 +364,7 @@ impl Session {
             let Some(pane) = self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf) else {
                 return Err(format!("{name}: the focused pane is not a PDF"));
             };
-            return match pane.command(cmd, count, now) {
+            return match pane.command(cmd, count_arg(args.first()), now) {
                 temzdf_pdfview::pane::Action::Quit => ok(self.request_close(self.focus)),
                 temzdf_pdfview::pane::Action::Redraw => ok(Outcome::Redraw),
                 temzdf_pdfview::pane::Action::None => ok(Outcome::None),
@@ -396,7 +404,7 @@ impl Session {
             let Some(t) = self.focused_term().filter(|t| t.visual_on()) else {
                 return Err(format!("{name}: the focused pane is not in the visual mode"));
             };
-            return match t.visual(op, count) {
+            return match t.visual(op, count_arg(args.first())) {
                 VisualOutcome::Leave => {
                     let old = self.history.current().to_owned();
                     self.history.pop();
@@ -526,7 +534,10 @@ impl Session {
             "rotate-panes" => {
                 let reverse = matches!(args.first(), Some(ScriptValue::Bool(true)));
                 let (pane, area) = (self.focus, self.area());
-                let moved = self.layout.as_mut().is_some_and(|l| l.rotate(pane, reverse, count.unwrap_or(1), area));
+                let moved = self
+                    .layout
+                    .as_mut()
+                    .is_some_and(|l| l.rotate(pane, reverse, count_arg(args.get(1)).unwrap_or(1), area));
                 if moved {
                     self.dragging = None;
                     self.relayout();
@@ -569,7 +580,7 @@ impl Session {
                 self.set_focus(pane);
                 ok(Outcome::Redraw)
             }
-            "resize-pane" => self.resize_pane(args, count),
+            "resize-pane" => self.resize_pane(args),
             "equalize-panes" => {
                 let only = match text(0).as_deref() {
                     None => None,
@@ -596,7 +607,7 @@ impl Session {
                 }
                 let area = self.area();
                 let Some(layout) = self.layout.as_mut() else { return ok(Outcome::None) };
-                let changed = match count {
+                let changed = match count_arg(args.get(1)) {
                     Some(n) => layout.set_pane_size(pane, split, n.min(u16::MAX as usize) as u32, area),
                     None => layout.maximize(pane, split, area),
                 };
@@ -656,7 +667,7 @@ impl Session {
                 ok(Outcome::Redraw)
             }
             "font-size" => {
-                self.font_size(args.first(), count).map_err(|e| format!("fontSize: {e}"))?;
+                self.font_size(args.first()).map_err(|e| format!("fontSize: {e}"))?;
                 ok(Outcome::None)
             }
             "paste" => {
@@ -799,7 +810,7 @@ impl Session {
                 ok(self.request_close_tab(i))
             }
             "next-tab" => {
-                let i = match count {
+                let i = match count_arg(args.first()) {
                     Some(n) => self.tab_number(n).map_err(|e| format!("nextTab: {e}"))?,
                     None => (self.tab + 1) % self.tabs.len(),
                 };
@@ -808,7 +819,7 @@ impl Session {
             }
             "prev-tab" => {
                 let len = self.tabs.len();
-                let back = count.unwrap_or(1) % len;
+                let back = count_arg(args.first()).unwrap_or(1) % len;
                 self.enter_tab((self.tab + len - back) % len);
                 ok(Outcome::Redraw)
             }
@@ -868,7 +879,7 @@ impl Session {
     /// `font-size`: change the sizes in `guifont` and `guifontwide` (a size
     /// sets the first font's and scales the others'; +N adds to each),
     /// remembering the configured fonts for going back.
-    fn font_size(&mut self, size: Option<&ScriptValue>, count: Option<usize>) -> Result<(), String> {
+    fn font_size(&mut self, size: Option<&ScriptValue>) -> Result<(), String> {
         let o = &self.options;
         let current = temzdf_scene::base_points(&o.guifont) as f64;
         let points = match size {
@@ -882,11 +893,7 @@ impl Session {
             Some(ScriptValue::Num(n)) => *n,
             Some(ScriptValue::Str(s)) => {
                 let n: f64 = s.trim().parse().map_err(|_| format!("{s:?} is not a size or +N/-N"))?;
-                if s.trim_start().starts_with(['+', '-']) {
-                    current + n * count.unwrap_or(1).min(1000) as f64
-                } else {
-                    n
-                }
+                if s.trim_start().starts_with(['+', '-']) { current + n } else { n }
             }
             Some(other) => return Err(format!("{other:?} is not a size")),
         };
@@ -906,11 +913,11 @@ impl Session {
         Ok(())
     }
 
-    fn resize_pane(&mut self, args: &[ScriptValue], count: Option<usize>) -> Result<(ScriptValue, Outcome), String> {
+    fn resize_pane(&mut self, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
         let area = self.area();
         let pane = self.focus;
         if self.is_float(pane) {
-            return self.resize_float_pane(pane, args, count);
+            return self.resize_float_pane(pane, args);
         }
         let Some(layout) = self.layout.as_mut() else { return Ok((ScriptValue::Null, Outcome::None)) };
         let num = |v: Option<&ScriptValue>| match v {
@@ -929,7 +936,7 @@ impl Session {
                 moved
             }
             Some(ScriptValue::Str(how)) if matches!(how.as_str(), "wider" | "narrower" | "taller" | "shorter") => {
-                let cells = times(num(args.get(1)).unwrap_or(1.0), count);
+                let cells = cells(num(args.get(1)).unwrap_or(1.0));
                 let (split, sign) = match how.as_str() {
                     "wider" => (Split::Horizontal, 1),
                     "narrower" => (Split::Horizontal, -1),
@@ -943,7 +950,7 @@ impl Session {
                 layout.set_pane_size(pane, split, (now + sign * cells).max(0) as u32, area)
             }
             dir => {
-                let cells = times(num(args.get(1)).unwrap_or(1.0), count);
+                let cells = cells(num(args.get(1)).unwrap_or(1.0));
                 let (split, sign) = match dir.and_then(ScriptValue::as_str) {
                     Some("left") => (Split::Horizontal, -1),
                     Some("right") => (Split::Horizontal, 1),
@@ -961,12 +968,7 @@ impl Session {
     }
 
     /// `resizePane` on a float: its right or bottom edge moves, or it gets a size.
-    fn resize_float_pane(
-        &mut self,
-        pane: PaneId,
-        args: &[ScriptValue],
-        count: Option<usize>,
-    ) -> Result<(ScriptValue, Outcome), String> {
+    fn resize_float_pane(&mut self, pane: PaneId, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
         let num = |v: Option<&ScriptValue>| match v {
             Some(ScriptValue::Num(n)) => Some(*n as i64),
             Some(ScriptValue::Str(s)) => s.parse().ok(),
@@ -975,7 +977,7 @@ impl Session {
         match args.first() {
             Some(o @ ScriptValue::Map(_)) => self.resize_float(pane, num(o.get("width")), num(o.get("height")), true),
             dir => {
-                let cells = times(num(args.get(1)).unwrap_or(1) as f64, count) as i64;
+                let cells = cells(num(args.get(1)).unwrap_or(1) as f64) as i64;
                 let (w, h) = match dir.and_then(ScriptValue::as_str) {
                     Some("left" | "narrower") => (Some(-cells), None),
                     Some("right" | "wider") => (Some(cells), None),
@@ -1013,16 +1015,19 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use super::times;
+    use super::{cells, count_arg};
+    use temzdf_protocol::script::ScriptValue;
 
     #[test]
     fn counts_and_cells_stay_in_range() {
-        assert_eq!(times(3.0, Some(4)), 12);
-        assert_eq!(times(-2.0, None), -2);
-        // Counts saturate at usize::MAX; scripts pass anything.
-        assert_eq!(times(1.0, Some(usize::MAX)), 100_000);
-        assert_eq!(times(-1.0, Some(usize::MAX)), -100_000);
-        assert_eq!(times(f64::INFINITY, None), 100_000);
-        assert_eq!(times(f64::NAN, Some(5)), 0);
+        assert_eq!(cells(-2.0), -2);
+        assert_eq!(cells(f64::INFINITY), 100_000);
+        assert_eq!(cells(f64::NEG_INFINITY), -100_000);
+        assert_eq!(cells(f64::NAN), 0);
+        assert_eq!(count_arg(Some(&ScriptValue::Num(3.0))), Some(3));
+        assert_eq!(count_arg(Some(&ScriptValue::Str("4".into()))), Some(4));
+        assert_eq!(count_arg(Some(&ScriptValue::Num(0.0))), None);
+        assert_eq!(count_arg(Some(&ScriptValue::Null)), None);
+        assert_eq!(count_arg(None), None);
     }
 }

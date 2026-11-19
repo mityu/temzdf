@@ -38,19 +38,19 @@ export default keyset("builtin-edit-notepad", (d) => {
     [["<PageUp>"], "page", -1],
     [["<PageDown>"], "page", 1],
   ] as const) {
-    d.map("edit", [...keys], action.text.move(unit, n));
-    d.map("edit", keys.map(shifted), action.text.move(unit, n, sel));
+    d.map("edit", [...keys], () => action.text.move(unit, n));
+    d.map("edit", keys.map(shifted), () => action.text.move(unit, n, sel));
   }
-  d.map("edit", ["<CR>"], action.text.type("\n"));
-  d.map("edit", ["<Tab>"], action.text.type("\t"));
-  d.map("edit", ["<BS>"], action.text.erase("grapheme", -1));
-  d.map("edit", ["<Del>"], action.text.erase("grapheme", 1));
-  d.map("edit", ["<C-BS>"], action.text.erase("wordStart", -1));
-  d.map("edit", ["<C-Del>"], action.text.erase("wordEnd", 1));
-  d.map("edit", ["<Esc>"], action.text.clearSelection());
-  d.map("edit", ["<C-s>"], action.write());
-  d.map("edit", ["<C-z>"], action.text.undo());
-  d.map("edit", ["<C-y>", "<C-S-z>"], action.text.redo());
-  d.map("edit", ["<C-S-v>", "<D-v>"], action.paste());
-  d.map("edit", [prefix], action.switchMode("normal"));
+  d.map("edit", ["<CR>"], () => action.text.type("\n"));
+  d.map("edit", ["<Tab>"], () => action.text.type("\t"));
+  d.map("edit", ["<BS>"], () => action.text.erase("grapheme", -1));
+  d.map("edit", ["<Del>"], () => action.text.erase("grapheme", 1));
+  d.map("edit", ["<C-BS>"], () => action.text.erase("wordStart", -1));
+  d.map("edit", ["<C-Del>"], () => action.text.erase("wordEnd", 1));
+  d.map("edit", ["<Esc>"], () => action.text.clearSelection());
+  d.map("edit", ["<C-s>"], () => action.write());
+  d.map("edit", ["<C-z>"], () => action.text.undo());
+  d.map("edit", ["<C-y>", "<C-S-z>"], () => action.text.redo());
+  d.map("edit", ["<C-S-v>", "<D-v>"], () => action.paste());
+  d.map("edit", [prefix], () => action.switchMode("normal"));
 });

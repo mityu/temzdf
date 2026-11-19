@@ -626,7 +626,7 @@ impl Session {
             }
         }
         self.current_invocation = None;
-        let now = Instant::now();
+        let now = self.now();
         // Keys the matcher still holds came before the held ones.
         out = out.merge(self.drive(now));
         while !self.script.busy()
@@ -828,7 +828,11 @@ impl Session {
 
     fn script_error(&mut self, e: &ScriptError) {
         eprintln!("temzdf: script error: {e}");
-        self.message(&format!("script error: {}", e.message));
+        if e.command {
+            self.message(&e.message);
+        } else {
+            self.message(&format!("script error: {}", e.message));
+        }
     }
 
     /// Timers: the load timeout and the busy notice. Returns whether to redraw.
@@ -969,9 +973,9 @@ impl Session {
                 }
                 (Ok(ScriptValue::Null), Outcome::None)
             }
-            HostOp::Map { modes, keys, rhs, nowait, desc, when, namespace, priority } => {
+            HostOp::Map { modes, keys, func, nowait, desc, when, namespace, priority } => {
                 let m = MapSpec { nowait, desc, when, namespace, priority };
-                match self.script_map(&modes, &keys, rhs, m) {
+                match self.script_map(&modes, &keys, func, m) {
                     Ok(()) => (Ok(ScriptValue::Null), Outcome::None),
                     Err(e) => (Err(e), Outcome::None),
                 }
@@ -1023,7 +1027,7 @@ impl Session {
                 Err(e) => (Err(e), Outcome::None),
             },
             HostOp::GetOption { name } => (self.get_option(&name), Outcome::None),
-            HostOp::Command { name, args } => match self.run_command(&name, &args, None, Instant::now()) {
+            HostOp::Command { name, args } => match self.run_command(&name, &args, self.now()) {
                 Ok((v, o)) => (Ok(v), o),
                 Err(e) => (Err(e), Outcome::None),
             },
@@ -1032,32 +1036,15 @@ impl Session {
 }
 
 impl Session {
-    /// `keymap.add(modes, keys, rhs, options)` from a script.
-    fn script_map(
-        &mut self,
-        modes: &[String],
-        keys: &str,
-        rhs: temzdf_protocol::script::MapRhs,
-        spec: MapSpec,
-    ) -> Result<(), String> {
-        use crate::keymap::{Act, Mapping, Target, notation};
+    /// `keymap.add(modes, keys, fn, options)` from a script.
+    fn script_map(&mut self, modes: &[String], keys: &str, func: FuncId, spec: MapSpec) -> Result<(), String> {
+        use crate::keymap::{Mapping, Target, notation};
         let keys = notation::parse(keys).map_err(|e| format!("keymap.add: {e:#}"))?;
         let ctrl_c = notation::parse("<C-c>").expect("notation");
         if keys.first() == ctrl_c.first() {
             return Err("keymap.add: <C-c> is reserved (it cancels and interrupts)".into());
         }
-        let target = match rhs {
-            temzdf_protocol::script::MapRhs::Func(f) => Target::Func(f),
-            temzdf_protocol::script::MapRhs::Actions(list) => {
-                let known: Vec<String> = super::command_specs().into_iter().map(|c| c.name).collect();
-                for (name, _) in &list {
-                    if !known.contains(name) {
-                        return Err(format!("keymap.add: no command {name:?}"));
-                    }
-                }
-                Target::Actions(list.into_iter().map(|(n, a)| Act { name: n, args: a }).collect())
-            }
-        };
+        let target = Target::Func(func);
         for m in modes {
             if !self.modes.exists(m) {
                 return Err(format!("keymap.add: no mode {m:?} (create it with defineMode)"));

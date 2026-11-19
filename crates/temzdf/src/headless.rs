@@ -296,6 +296,9 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     settle(&mut session, &rx, now)?;
     for key in parse_keys(opts.keys.as_deref().unwrap_or(""))? {
         session.key(&key, now);
+        // Mapped functions run in the script host: what they start begins
+        // once settled, then runs to its end.
+        settle(&mut session, &rx, now)?;
         run_out(&mut session, &mut now);
         // Later keys may depend on the results (search hits, loaded pages).
         settle(&mut session, &rx, now)?;

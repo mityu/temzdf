@@ -468,17 +468,16 @@ impl Session {
                 Ok(Outcome::None.or(t.term.paste(text)))
             }
             Some(Kind::Text { .. }) if entry.kind == CopyKind::Line => {
-                let cur = self
-                    .run_command("text.cursor", &[ScriptValue::map([("pane", num(pane))])], None, Instant::now())?
-                    .0;
+                let cur =
+                    self.run_command("text.cursor", &[ScriptValue::map([("pane", num(pane))])], Instant::now())?.0;
                 let line = cur.get("line").and_then(ScriptValue::as_num).unwrap_or(0.0);
                 let at = ScriptValue::map([("line", ScriptValue::Num(line)), ("character", ScriptValue::Num(0.0))]);
                 let args = [ScriptValue::Str(text.clone()), at, ScriptValue::map([("pane", num(pane))])];
-                Ok(self.run_command("text.insert", &args, None, Instant::now())?.1)
+                Ok(self.run_command("text.insert", &args, Instant::now())?.1)
             }
             Some(Kind::Text { .. }) => {
                 let args = [ScriptValue::Str(text.clone()), ScriptValue::map([("pane", num(pane))])];
-                Ok(self.run_command("text.type", &args, None, Instant::now())?.1)
+                Ok(self.run_command("text.type", &args, Instant::now())?.1)
             }
             Some(_) => Err(format!("put: pane {pane} takes no text")),
             None => Err(format!("put: no pane {pane}")),

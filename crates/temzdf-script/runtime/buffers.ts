@@ -4,7 +4,7 @@
 // (ATTENTION: open read-only, edit anyway, recover, delete it, quit,
 // abort). Defined when enabled: `import buffers from "temzdf/buffers";
 // buffers.enable();`.
-import { cmd, defineMode, schedule } from "temzdf";
+import { action, defineMode, schedule } from "temzdf";
 import type { KeyInfo, SwapInfo } from "temzdf";
 import { keyset } from "./lib/keyset";
 
@@ -15,9 +15,9 @@ const CHOICE = "swap-choice";
 
 /** Neovim's E325, for a swap file of a session that is gone. */
 function attention(buf: number, info: SwapInfo): void {
-  const b = cmd.buffers({ all: true }).find((x) => x.id === buf);
+  const b = action.buffers({ all: true }).find((x) => x.id === buf);
   if (b === undefined) return;
-  const path = cmd.text.info({ pane: b.panes[0] }).path ?? b.name;
+  const path = action.text.info({ pane: b.panes[0] }).path ?? b.name;
   const dated = new Date(info.time).toLocaleString();
   const lines = [
     "E325: ATTENTION",
@@ -41,8 +41,8 @@ function attention(buf: number, info: SwapInfo): void {
   ];
   asking = { buf, pane: b.panes[0], info };
   // Until the answer (the next key), as Neovim's.
-  cmd.message(lines.join("\n"), { error: true });
-  cmd.switchMode(CHOICE);
+  action.message(lines.join("\n"), { error: true });
+  action.switchMode(CHOICE);
 }
 
 /** The answer to E325 (one key). */
@@ -50,40 +50,40 @@ function answer(key: KeyInfo): void {
   const a = asking;
   const c = (key.keys === "<Esc>" ? "a" : (key.text ?? "")).toLowerCase();
   if (a === null) {
-    cmd.exitMode();
+    action.exitMode();
     return;
   }
   if (!["o", "e", "r", "d", "q", "a"].includes(c)) {
     // Asked again (Neovim waits for one of them).
-    cmd.message("[O]pen Read-Only, (E)dit anyway, (R)ecover, (D)elete it, (Q)uit, (A)bort:", { error: true });
+    action.message("[O]pen Read-Only, (E)dit anyway, (R)ecover, (D)elete it, (Q)uit, (A)bort:", { error: true });
     return;
   }
   asking = null;
-  cmd.exitMode();
+  action.exitMode();
   switch (c) {
     case "o": {
-      const attrs = cmd.text.info({ pane: a.pane }).attrs;
-      cmd.setBufferAttrs(a.buf, [...attrs.filter((x) => x !== "readonly"), "readonly"]);
-      cmd.useSwap(a.buf);
+      const attrs = action.text.info({ pane: a.pane }).attrs;
+      action.setBufferAttrs(a.buf, [...attrs.filter((x) => x !== "readonly"), "readonly"]);
+      action.useSwap(a.buf);
       break;
     }
     case "e":
-      cmd.useSwap(a.buf);
+      action.useSwap(a.buf);
       break;
     case "r":
-      cmd.text.recover({ swap: a.info.swap, pane: a.pane });
-      cmd.useSwap(a.buf);
-      cmd.message(
+      action.text.recover({ swap: a.info.swap, pane: a.pane });
+      action.useSwap(a.buf);
+      action.message(
         `Recovery completed. You should check if everything is OK; then write the file and delete the swap file "${a.info.swap}" (deleteSwap).`,
       );
       break;
     case "d":
-      cmd.deleteSwap(a.info.swap);
-      cmd.useSwap(a.buf);
+      action.deleteSwap(a.info.swap);
+      action.useSwap(a.buf);
       break;
     default:
       // Quit, abort: the file is not opened after all.
-      cmd.deleteBuffer(a.buf);
+      action.deleteBuffer(a.buf);
   }
 }
 
@@ -101,11 +101,11 @@ export default keyset("builtin-buffers", (d) => {
   // A buffer with unsaved changes is not deleted, unless its variable
   // forceDelete says so (Vim's :bd!).
   d.hook("BufferDeletePre", (buf: number) => {
-    const b = cmd.buffers().find((b) => b.id === buf);
-    if (b?.modified && cmd.getVar("buffer", "forceDelete", buf) !== true) return { cancel: true, reason: `${b.name} has unsaved changes (write it first)` };
+    const b = action.buffers().find((b) => b.id === buf);
+    if (b?.modified && action.getVar("buffer", "forceDelete", buf) !== true) return { cancel: true, reason: `${b.name} has unsaved changes (write it first)` };
   });
   d.hook("SessionEndPre", () => {
-    const names = cmd.buffers().filter((b) => b.modified).map((b) => b.name);
+    const names = action.buffers().filter((b) => b.modified).map((b) => b.name);
     if (names.length > 0) {
       return { cancel: true, reason: `unsaved changes in ${names.join(", ")} (write them, or kill-session --force)` };
     }
@@ -115,9 +115,9 @@ export default keyset("builtin-buffers", (d) => {
   // unsaved changes (Vim's autoread); otherwise say so (writing then needs
   // write({ force: true }), or reload() to drop the changes).
   d.hook("FileChangedOnDisk", (buf: number) => {
-    const b = cmd.buffers().find((b) => b.id === buf);
+    const b = action.buffers().find((b) => b.id === buf);
     if (b === undefined) return;
-    if (b.modified) cmd.message(`${b.name} changed on disk (reload() drops your changes)`);
-    else schedule(() => cmd.reload(buf));
+    if (b.modified) action.message(`${b.name} changed on disk (reload() drops your changes)`);
+    else schedule(() => action.reload(buf));
   });
 });

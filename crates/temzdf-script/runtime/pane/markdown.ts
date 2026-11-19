@@ -6,7 +6,7 @@
 // graphics mode and gO opens the outline. Defined when enabled: `import
 // markdown from "temzdf/pane/markdown"; markdown.enable();` (defaults.ts
 // does).
-import { action, cmd, defineMode, feedkeys } from "temzdf";
+import { action, defineMode, feedkeys } from "temzdf";
 import type { MapContext } from "temzdf";
 import { keyset } from "../lib/keyset";
 import { prefix } from "../lib/prefix";
@@ -19,24 +19,24 @@ const OUTLINE = "markdown/outline";
 const outlines = new Map<number, { viewer: number; anchors: string[]; float: number }>();
 
 function focusedBuffer(): number | null {
-  return cmd.panes().find((p) => p.focused)?.buffer ?? null;
+  return action.panes().find((p) => p.focused)?.buffer ?? null;
 }
 
 /** The headings of the focused viewer in a floating list: <CR> goes there. */
 function openOutline(): void {
-  const viewer = cmd.focusedPane();
+  const viewer = action.focusedPane();
   if (viewer === null) return;
-  const heads = cmd.markdown.outline(viewer);
+  const heads = action.markdown.outline(viewer);
   if (heads.length === 0) {
-    cmd.message("No headings");
+    action.message("No headings");
     return;
   }
   const lines = heads.map((h) => "  ".repeat(h.level - 1) + h.text);
-  const buf = cmd.newBuffer({ text: lines.join("\n"), basemode: OUTLINE, attrs: ["nofile", "unlisted", "nomodifiable"] });
+  const buf = action.newBuffer({ text: lines.join("\n"), basemode: OUTLINE, attrs: ["nofile", "unlisted", "nomodifiable"] });
   // Wide enough for its title too.
   const width = Math.min(Math.max(24, ...lines.map((l) => l.length + 2)), 72);
   const height = Math.min(heads.length, 20);
-  const float = cmd.openFloat({ buffer: buf }, { width, height, title: "Outline", focus: true });
+  const float = action.openFloat({ buffer: buf }, { width, height, title: "Outline", focus: true });
   if (float === null) return;
   outlines.set(buf, { viewer, anchors: heads.map((h) => h.anchor), float });
 }
@@ -45,57 +45,57 @@ function closeOutline(go: boolean): void {
   const buf = focusedBuffer();
   const o = buf === null ? undefined : outlines.get(buf);
   if (buf === null || o === undefined) return;
-  const line = cmd.text.cursor().line;
+  const line = action.text.cursor().line;
   outlines.delete(buf);
-  cmd.closePane(o.float);
-  cmd.deleteBuffer(buf);
+  action.closePane(o.float);
+  action.deleteBuffer(buf);
   const anchor = o.anchors[line];
-  if (go && anchor !== undefined) cmd.markdown.goto(anchor, { pane: o.viewer });
+  if (go && anchor !== undefined) action.markdown.goto(anchor, { pane: o.viewer });
 }
 
-const inText = () => cmd.markdown.mode() === "text";
+const inText = () => action.markdown.mode() === "text";
 
 export default keyset("builtin-pane-markdown", (d) => {
   // The graphics mode.
-  d.map(M, ["q"], action.quit());
-  d.map(M, ["j", "<Down>", "<C-e>"], (c: MapContext) => cmd.markdown.scroll(c.count ?? 1));
-  d.map(M, ["k", "<Up>", "<C-y>"], (c: MapContext) => cmd.markdown.scroll(-(c.count ?? 1)));
-  d.map(M, ["<Space>", "<PageDown>", "<C-f>", "f"], (c: MapContext) => cmd.markdown.page(c.count ?? 1));
-  d.map(M, ["b", "<PageUp>"], (c: MapContext) => cmd.markdown.page(-(c.count ?? 1)));
-  d.map(M, ["d", "<C-d>"], (c: MapContext) => cmd.markdown.page(0.5 * (c.count ?? 1)));
-  d.map(M, ["u", "<C-u>"], (c: MapContext) => cmd.markdown.page(-0.5 * (c.count ?? 1)));
-  d.map(M, ["g", "<Home>"], () => cmd.markdown.top());
-  d.map(M, ["G", "<End>"], () => cmd.markdown.bottom());
-  d.map(M, ["+", "="], () => cmd.markdown.zoom("in"));
-  d.map(M, ["-"], () => cmd.markdown.zoom("out"));
-  d.map(M, ["0"], () => cmd.markdown.zoom("reset"));
+  d.map(M, ["q"], () => action.quit());
+  d.map(M, ["j", "<Down>", "<C-e>"], (c: MapContext) => action.markdown.scroll(c.count ?? 1));
+  d.map(M, ["k", "<Up>", "<C-y>"], (c: MapContext) => action.markdown.scroll(-(c.count ?? 1)));
+  d.map(M, ["<Space>", "<PageDown>", "<C-f>", "f"], (c: MapContext) => action.markdown.page(c.count ?? 1));
+  d.map(M, ["b", "<PageUp>"], (c: MapContext) => action.markdown.page(-(c.count ?? 1)));
+  d.map(M, ["d", "<C-d>"], (c: MapContext) => action.markdown.page(0.5 * (c.count ?? 1)));
+  d.map(M, ["u", "<C-u>"], (c: MapContext) => action.markdown.page(-0.5 * (c.count ?? 1)));
+  d.map(M, ["g", "<Home>"], () => action.markdown.top());
+  d.map(M, ["G", "<End>"], () => action.markdown.bottom());
+  d.map(M, ["+", "="], () => action.markdown.zoom("in"));
+  d.map(M, ["-"], () => action.markdown.zoom("out"));
+  d.map(M, ["0"], () => action.markdown.zoom("reset"));
   d.map(M, ["/"], () => openSearch());
-  d.map(M, ["n"], () => cmd.markdown.searchNext(1));
-  d.map(M, ["N"], () => cmd.markdown.searchNext(-1));
+  d.map(M, ["n"], () => action.markdown.searchNext(1));
+  d.map(M, ["N"], () => action.markdown.searchNext(-1));
   // Text selected with the mouse (a drag copies it when released).
-  d.map(M, ["y"], () => cmd.markdown.copy());
-  d.map(M, ["<Esc>"], () => cmd.markdown.clearSelection());
+  d.map(M, ["y"], () => action.markdown.copy());
+  d.map(M, ["<Esc>"], () => action.markdown.clearSelection());
   // Backspace too: multiplexers (zellij) take Ctrl-o and Alt+arrows.
-  d.map(M, ["<C-o>", "<BS>", "<M-Left>"], () => cmd.markdown.back());
-  d.map(M, ["<Tab>"], () => cmd.markdown.setMode("text"));
+  d.map(M, ["<C-o>", "<BS>", "<M-Left>"], () => action.markdown.back());
+  d.map(M, ["<Tab>"], () => action.markdown.setMode("text"));
   d.map(M, ["o", "gO"], () => openOutline());
-  d.map(M, [prefix], action.switchMode("normal"));
+  d.map(M, [prefix], () => action.switchMode("normal"));
   // The text mode: Vim's keys, and these on a viewer only.
   d.map(
     "vim/normal",
     ["<CR>"],
     (c: MapContext) => {
-      if (!cmd.markdown.follow()) feedkeys(`${c.count ?? ""}+`, { remap: true });
+      if (!action.markdown.follow()) feedkeys(`${c.count ?? ""}+`, { remap: true });
     },
     { when: inText },
   );
-  d.map("vim/normal", ["<BS>"], () => cmd.markdown.back(), { when: inText });
-  d.map("vim/normal", ["<Tab>"], () => cmd.markdown.setMode("graphics"), { when: inText });
+  d.map("vim/normal", ["<BS>"], () => action.markdown.back(), { when: inText });
+  d.map("vim/normal", ["<Tab>"], () => action.markdown.setMode("graphics"), { when: inText });
   d.map("vim/normal", ["gO"], () => openOutline(), { when: inText });
   // The outline's list.
   defineMode(OUTLINE, { fallback: "drop", count: true });
-  d.map(OUTLINE, ["j", "<Down>", "<C-n>"], (c: MapContext) => cmd.text.move("line", c.count ?? 1));
-  d.map(OUTLINE, ["k", "<Up>", "<C-p>"], (c: MapContext) => cmd.text.move("line", -(c.count ?? 1)));
+  d.map(OUTLINE, ["j", "<Down>", "<C-n>"], (c: MapContext) => action.text.move("line", c.count ?? 1));
+  d.map(OUTLINE, ["k", "<Up>", "<C-p>"], (c: MapContext) => action.text.move("line", -(c.count ?? 1)));
   d.map(OUTLINE, ["<CR>"], () => closeOutline(true));
   d.map(OUTLINE, ["q", "<Esc>"], () => closeOutline(false));
 });

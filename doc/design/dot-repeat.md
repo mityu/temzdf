@@ -111,7 +111,7 @@ Examples:
   `[snippet.expand("for")]` right after expanding; the text typed in the
   placeholder is appended, so `.` expands and types it again.
 - A function that only wraps a plugin command (`map("ys", () =>
-  cmd.surround.add())`): the inner `repeat.set` replaces the unit,
+  action.surround.add())`): the inner `repeat.set` replaces the unit,
   including the wrapper's invocation, so `.` repeats correctly.
 
 ### Nesting (decided 2026-11-07: A)

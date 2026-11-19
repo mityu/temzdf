@@ -529,11 +529,11 @@ fn a_mapping_from_a_typescript_configuration() {
     let env = Env::new("script-map");
     env.config(
         "config.ts",
-        r#"import { cmd, keymap } from "temzdf";
+        r#"import { action, keymap } from "temzdf";
 const label: string = "mapped";
 keymap.add("normal", "t", (): void => {
-  cmd.split("right");
-  cmd.sendText(`echo ${label}-$((40+2))\n`);
+  action.split("right");
+  action.sendText(`echo ${label}-$((40+2))\n`);
 });
 "#,
     );
@@ -550,17 +550,17 @@ fn hooks_run_like_vim_autocmds() {
     let env = Env::new("script-hooks");
     env.config(
         "config.js",
-        r#"import { cmd, on, schedule } from "temzdf";
+        r#"import { action, on, schedule } from "temzdf";
 on("SessionReady", () => console.log("ready"));
 on("PaneOpened", (id, kind) => console.log(`opened ${id} ${kind}`));
 on("PaneClosePre", (id) => {
   console.log(`pre ${id}`);
   try {
-    cmd.split("down");
+    action.split("down");
   } catch (e) {
     console.log(`refused`);
   }
-  schedule(() => cmd.split("down"));
+  schedule(() => action.split("down"));
 });
 on("PaneClosed", (id) => console.log(`closed ${id}`));
 "#,
@@ -634,11 +634,11 @@ fn dispatched_tasks_act_later_through_their_ctx() {
     let env = Env::new("script-task");
     env.config(
         "config.js",
-        r#"import { cmd, dispatch } from "temzdf";
+        r#"import { action, dispatch } from "temzdf";
 dispatch(async (ctx) => {
   await new Promise((r) => setTimeout(r, 200));
-  ctx.cmd.sendText("echo from-task\n");
-  try { cmd.sendText("x"); } catch (e) { console.log(`refused: ${e.message.split(":")[0]}`); }
+  ctx.action.sendText("echo from-task\n");
+  try { action.sendText("x"); } catch (e) { console.log(`refused: ${e.message.split(":")[0]}`); }
 });
 "#,
     );
@@ -652,7 +652,7 @@ fn reload_config_registers_again_and_the_session_survives_the_host() {
     let env = Env::new("script-reload");
     env.config(
         "config.js",
-        "import { cmd, keymap } from \"temzdf\";\nconsole.log(\"loaded\");\nkeymap.add(\"normal\", \"e\", () => cmd.sendText(\"echo mapped\\n\"));\n",
+        "import { action, keymap } from \"temzdf\";\nconsole.log(\"loaded\");\nkeymap.add(\"normal\", \"e\", () => action.sendText(\"echo mapped\\n\"));\n",
     );
     let mut t = Term::spawn(&[BIN, "-s", "r"], &env.options());
     t.wait_for("the prompt", prompt);
@@ -713,26 +713,27 @@ fn modes_mappings_and_options_from_the_configuration() {
     let env = Env::new("script-modes");
     env.config(
         "config.ts",
-        r#"import { action, cmd, defineMode, feedkeys, keymap, o, on } from "temzdf";
+        r#"import { action, defineMode, feedkeys, keymap, o, on } from "temzdf";
 o.timeoutlen = 300;
 defineMode("win", { transient: true, keepalive: "always" });
-keymap.add("terminal", "<C-x>w", [action.switchMode("normal"), action.switchMode("win")]);
-keymap.add("win", "v", [action.split("right"), action.sendText("echo in-new\n")]);
-keymap.add("terminal", "<C-x>e", () => cmd.sendText(`echo mode-${cmd.currentMode()}\n`));
+keymap.add("terminal", "<C-x>w", () => { action.switchMode("normal"); action.switchMode("win"); });
+keymap.add("win", "v", () => { action.split("right"); action.sendText("echo in-new\n"); });
+keymap.add("terminal", "<C-x>e", () => action.sendText(`echo mode-${action.currentMode()}\n`));
 keymap.add("terminal", "<C-x>f", () => feedkeys("echo fed<CR>"));
-keymap.add("terminal", "<C-x>k", () => cmd.sendText("echo cond-yes\n"), { when: (ctx) => ctx.paneKind === "terminal" });
-keymap.add("terminal", "<C-x>k", () => cmd.sendText("echo never\n"), { when: (ctx) => ctx.floating });
-keymap.add("terminal", "<C-x>s", () => cmd.sendText("echo side-effect\n"), { when: () => { cmd.split("right"); return true; } });
+keymap.add("terminal", "<C-x>k", () => action.sendText("echo cond-yes\n"), { when: (ctx) => ctx.paneKind === "terminal" });
+keymap.add("terminal", "<C-x>k", () => action.sendText("echo never\n"), { when: (ctx) => ctx.floating });
+keymap.add("terminal", "<C-x>s", () => action.sendText("echo side-effect\n"), { when: () => { action.split("right"); return true; } });
 keymap.remove("normal", "x", { namespace: "builtin-mode-normal" });
-keymap.add(["normal", "pdf"], "Q", action.exitMode(), { namespace: "gone" });
+keymap.add(["normal", "pdf"], "Q", () => action.exitMode(), { namespace: "gone" });
 keymap.clear({ namespace: "gone" });
 console.log(`cleared ${keymap.get({ namespace: "gone" }).length} ${keymap.get({ mode: "pdf", namespace: "builtin-pane-pdf" }).length > 0}`);
-keymap.add(["normal", "pdf"], "<C-b>z", action.exitMode(), { namespace: "lhs" });
-keymap.add("normal", "<C-b>y", action.exitMode(), { namespace: "lhs" });
+keymap.add(["normal", "pdf"], "<C-b>z", () => action.exitMode(), { namespace: "lhs" });
+keymap.add("normal", "<C-b>y", () => action.exitMode(), { namespace: "lhs" });
 console.log(`by lhs ${keymap.get({ namespace: "lhs", lhs: "<C-b>z" }).map((m) => `${m.mode}:${m.lhs}`).join(",")}`);
 try { keymap.clear({ mode: "nope" }); } catch (e) { console.log(`clear refused: ${(e as Error).message}`); }
 on("ModeChanged", (a: string, b: string) => console.log(`mode ${a} ${b}`));
-try { keymap.add("terminal", "<C-c>x", action.exitMode()); } catch (e) { console.log(`refused: ${(e as Error).message}`); }
+try { keymap.add("terminal", "<C-c>x", () => action.exitMode()); } catch (e) { console.log(`refused: ${(e as Error).message}`); }
+try { keymap.add("terminal", "<C-x>d", { name: "exit-mode", args: [] } as any); } catch (e) { console.log(`data refused: ${(e as Error).message}`); }
 o.scrollstep = 90;
 o.linkopener = ["true"];
 o.reloadanchor = "text";
@@ -743,6 +744,7 @@ try { (o as any).nope = 1; } catch (e) { console.log(`option refused: ${(e as Er
     let mut t = Term::spawn(&[BIN, "-s", "md"], &env.options());
     t.wait_for("the prompt", prompt);
     env.wait_log("md", "the refusal", |l| l.contains("refused:") && l.contains("reserved"));
+    env.wait_log("md", "a mapping to data", |l| l.contains("data refused: keymap.add(<C-x>d): expected a function"));
     env.wait_log("md", "the options", |l| l.contains(r#"options 90 ["true"] text 300"#));
     env.wait_log("md", "the unknown option", |l| l.contains("option refused: no option \"nope\""));
     env.wait_log("md", "a namespace cleared", |l| l.contains("cleared 0 true"));
@@ -785,7 +787,7 @@ fn errors_float_until_the_next_key() {
     let env = Env::new("notice");
     env.config(
         "config.js",
-        "import { cmd, keymap } from \"temzdf\";\nkeymap.add(\"terminal\", \"<C-x>\", () => cmd.moveFocus(\"sideways\"));\n",
+        "import { action, keymap } from \"temzdf\";\nkeymap.add(\"terminal\", \"<C-x>\", () => action.moveFocus(\"sideways\"));\n",
     );
     let mut t = Term::spawn(&[BIN, "-s", "n"], &env.options());
     t.wait_for("the prompt", prompt);
@@ -1221,7 +1223,7 @@ fn tabs_switch_by_keys_and_clicks_and_floats_on_all_tabs_follow(pixels: PixelPat
     let env = Env::with_pixels("tabs", pixels);
     env.config(
         "config.js",
-        "import { action, keymap } from \"temzdf\";\nkeymap.add(\"normal\", \"F\", action.openFloat(null, { tabpage: -1 }));\n",
+        "import { action, keymap } from \"temzdf\";\nkeymap.add(\"normal\", \"F\", () => action.openFloat(null, { tabpage: -1 }));\n",
     );
     let mut t = Term::spawn(&[BIN, "-s", "tb"], &env.options());
     t.wait_for("the prompt", prompt);
@@ -1884,9 +1886,9 @@ import vim from "temzdf/edit/vim";
 vim.disable();
 notepad.enable();
 o.undofile = true;
-keymap.add("edit", "<F5>", action.write());
-keymap.add("edit", "<F6>", action.text.undo());
-keymap.add("edit", "<F7>", action.killSession());
+keymap.add("edit", "<F5>", () => action.write());
+keymap.add("edit", "<F6>", () => action.text.undo());
+keymap.add("edit", "<F7>", () => action.killSession());
 "#,
     );
     let file = env.path("u.txt");
@@ -1921,8 +1923,8 @@ fn write_png(path: &std::path::Path, w: u32, h: u32) {
 /// buffer with `decoration` (JavaScript, `id` the image read from `png`).
 fn image_config(png: &std::path::Path, decoration: &str) -> String {
     format!(
-        "{NOTEPAD}import {{ cmd, keymap }} from \"temzdf\";\n\
-         keymap.add(\"edit\", \"<F5>\", () => {{ const id = cmd.loadImage({png:?}); {decoration} }});\n"
+        "{NOTEPAD}import {{ action, keymap }} from \"temzdf\";\n\
+         keymap.add(\"edit\", \"<F5>\", () => {{ const id = action.loadImage({png:?}); {decoration} }});\n"
     )
 }
 
@@ -1934,7 +1936,7 @@ fn an_inline_image_is_placed_in_its_cells_or_its_alt_text_shown() {
         write_png(&p, 40, 20);
         p
     };
-    let deco = "cmd.text.addDecoration({ start: { line: 0, character: 1 }, end: { line: 0, character: 1 } }, \
+    let deco = "action.text.addDecoration({ start: { line: 0, character: 1 }, end: { line: 0, character: 1 } }, \
                 { virtImage: { image: id, alt: \"pic\" }, virtTextPos: \"inline\" });";
     let env = Env::new("text-image");
     env.config("config.ts", &image_config(&png(&env), deco));
@@ -1965,9 +1967,9 @@ fn a_concealed_range_shows_its_image_off_the_cursor_line() {
     let env = Env::new("text-conceal");
     let png = env.path("pic.png");
     write_png(&png, 20, 20);
-    let deco = "cmd.text.addDecoration({ start: { line: 1, character: 1 }, end: { line: 1, character: 5 } }, \
+    let deco = "action.text.addDecoration({ start: { line: 1, character: 1 }, end: { line: 1, character: 5 } }, \
                 { conceal: { image: { image: id, alt: \"P\" } } });\
-                cmd.text.addDecoration({ start: { line: 0, character: 0 }, end: { line: 0, character: 2 } }, \
+                action.text.addDecoration({ start: { line: 0, character: 0 }, end: { line: 0, character: 2 } }, \
                 { conceal: { text: \"=\" } });";
     env.config("config.ts", &image_config(&png, deco));
     let file = env.path("c.txt");
@@ -1990,9 +1992,9 @@ fn a_concealed_range_shows_its_image_off_the_cursor_line() {
 
 #[test]
 fn virtual_lines_show_text_and_an_image_between_the_lines() {
-    let deco = "cmd.text.addDecoration({ start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, \
+    let deco = "action.text.addDecoration({ start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, \
                 { virtLines: { image: { image: id, alt: \"P\" } } });\
-                cmd.text.addDecoration({ start: { line: 1, character: 0 }, end: { line: 1, character: 0 } }, \
+                action.text.addDecoration({ start: { line: 1, character: 0 }, end: { line: 1, character: 0 } }, \
                 { virtLines: { text: [\"-- up --\"], above: true } });";
     for graphics in [true, false] {
         let env = Env::new(if graphics { "text-vlines" } else { "text-vlines-off" });
@@ -2028,8 +2030,8 @@ fn virtual_lines_show_text_and_an_image_between_the_lines() {
 /// Markdown viewer.
 fn markdown_config(file: &std::path::Path) -> String {
     format!(
-        "import {{ cmd, keymap }} from \"temzdf\";\n\
-         keymap.add(\"vim/normal\", \"<F5>\", () => {{ cmd.markdown.open({file:?}, {{ pane: cmd.focusedPane() ?? undefined }}); }});\n"
+        "import {{ action, keymap }} from \"temzdf\";\n\
+         keymap.add(\"vim/normal\", \"<F5>\", () => {{ action.markdown.open({file:?}, {{ pane: action.focusedPane() ?? undefined }}); }});\n"
     )
 }
 
@@ -2149,19 +2151,19 @@ fn a_mode_with_a_fallback_function_reads_one_key() {
 import vim from "temzdf/edit/vim";
 vim.disable();
 notepad.enable();
-import { cmd, defineMode, keymap } from "temzdf";
+import { action, defineMode, keymap } from "temzdf";
 // f{char}: the next key goes to a function, then the mode is left.
 defineMode("find", {
   transient: true,
   fallback: (_ctx, key) => {
-    const line = cmd.text.line(cmd.text.cursor().line);
-    const at = line.indexOf(key.text ?? "", cmd.text.cursor().character + 1);
-    if (at >= 0) cmd.text.setCursor({ line: cmd.text.cursor().line, character: at });
+    const line = action.text.line(action.text.cursor().line);
+    const at = line.indexOf(key.text ?? "", action.text.cursor().character + 1);
+    if (at >= 0) action.text.setCursor({ line: action.text.cursor().line, character: at });
     console.log(`found ${key.keys} at ${at}`);
-    cmd.exitMode();
+    action.exitMode();
   },
 });
-keymap.add("edit", "<C-f>", () => cmd.switchMode("find"));
+keymap.add("edit", "<C-f>", () => action.switchMode("find"));
 "#,
     );
     let file = env.path("f.txt");
@@ -2221,11 +2223,11 @@ fn a_cancelling_hook_makes_the_scripts_command_fail_and_kill_session_still_ends_
     let env = Env::new("hook-cancel");
     env.config(
         "config.ts",
-        r#"import { cmd, keymap, on } from "temzdf";
+        r#"import { action, keymap, on } from "temzdf";
 on("PaneClosePre", () => ({ cancel: true, reason: "kept by a hook" }));
 keymap.add("normal", "c", () => {
   try {
-    cmd.closePane();
+    action.closePane();
   } catch (e) {
     console.log(`closePane: ${(e as Error).message}`);
   }
@@ -2250,7 +2252,7 @@ fn invocations_text_changes_typed_keys_and_scheduled_functions_are_heard_in_orde
 import vim from "temzdf/edit/vim";
 vim.disable();
 notepad.enable();
-import { cmd, keymap, on, schedule } from "temzdf";
+import { action, keymap, on, schedule } from "temzdf";
 import type { InvokeTarget } from "temzdf";
 const log = (s: string) => console.log(s);
 const what = (t: InvokeTarget) =>
@@ -2263,7 +2265,7 @@ on("KeyTyped", (k) => log(`key ${k.keys} ${k.source}`));
 keymap.add("edit", "<C-t>", () => {
   schedule(() => log("first"));
   schedule(() => log("second"));
-  cmd.text.insert("T");
+  action.text.insert("T");
   log("mapped");
 });
 "#,
@@ -2288,7 +2290,7 @@ keymap.add("edit", "<C-t>", () => {
             "pre 1 text x x key",
             "changed typing 1 0-0/0+x",
             "post 1 1",
-            // A mapped function: its change is heard before cmd.text.insert
+            // A mapped function: its change is heard before action.text.insert
             // returns; the scheduled functions run after it, in order, then
             // InvokePost.
             "key <C-t> typed",

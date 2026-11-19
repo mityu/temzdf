@@ -131,12 +131,12 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "markdown.scroll",
         "(rows: number, opts?: { pane?: number }): void",
-        "Graphics mode: scroll by rows of text (negative: up; a mapping's count multiplies)",
+        "Graphics mode: scroll by rows of text (negative: up)",
     ),
     (
         "markdown.page",
         "(pages: number, opts?: { pane?: number }): void",
-        "Graphics mode: scroll by screenfuls (negative: up; a mapping's count multiplies)",
+        "Graphics mode: scroll by screenfuls (negative: up)",
     ),
     ("markdown.top", "(pane?: number): void", "Graphics mode: to the top of the page"),
     ("markdown.bottom", "(pane?: number): void", "Graphics mode: to the bottom of the page"),
@@ -188,7 +188,6 @@ impl Session {
         &mut self,
         name: &str,
         args: &[ScriptValue],
-        count: Option<usize>,
         now: Instant,
     ) -> Option<Result<(ScriptValue, Outcome), String>> {
         let opts = args.iter().find(|v| matches!(v, ScriptValue::Map(_)));
@@ -257,7 +256,7 @@ impl Session {
             | "markdown.search-next" => {
                 let numeric = matches!(name, "markdown.scroll" | "markdown.page" | "markdown.search-next");
                 let pane = pane_opt(if numeric || name == "markdown.zoom" { 1 } else { 0 });
-                let n = args.first().and_then(ScriptValue::as_num).unwrap_or(1.0) * count.unwrap_or(1) as f64;
+                let n = args.first().and_then(ScriptValue::as_num).unwrap_or(1.0);
                 let row = f64::from(self.geometry.cell.height);
                 if name == "markdown.zoom" {
                     let dir = match args.first().and_then(ScriptValue::as_str) {

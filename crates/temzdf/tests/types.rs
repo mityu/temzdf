@@ -91,12 +91,13 @@ fn mistakes_do_not_type_check() {
         return;
     }
     for bad in [
-        "import { cmd } from \"temzdf\";\ncmd.split(\"sideways\");\n",
+        "import { action } from \"temzdf\";\naction.split(\"sideways\");\n",
         "import { on } from \"temzdf\";\non(\"NoSuchEvent\", () => {});\n",
         "import { keymap } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", 42);\n",
         "import { o } from \"temzdf\";\no.timeoutlen = \"slow\";\n",
         "import { defineMode } from \"temzdf\";\ndefineMode(\"m\", { inherit: \"normal\" });\n",
-        "import { keymap, action } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", action.quit(), { when: () => 1 });\n",
+        "import { keymap, action } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", () => action.quit(), { when: () => 1 });\n",
+        "import { keymap, action } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", action.quit());\n",
     ] {
         assert!(check(&[("config.ts", bad)]).is_err(), "should not type check:\n{bad}");
     }

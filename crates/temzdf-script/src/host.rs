@@ -19,7 +19,7 @@ use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::promise::PromiseState;
 use rquickjs::{Context, Ctx, Exception, Function, Module, Persistent, Runtime, Value};
 use temzdf_protocol::script::{
-    CommandSpec, Fallback, FromHost, FuncId, HostOp, Keepalive, MapRhs, ScriptError, ScriptValue, TaskId, ToHost, Token,
+    CommandSpec, Fallback, FromHost, FuncId, HostOp, Keepalive, ScriptError, ScriptValue, TaskId, ToHost, Token,
 };
 
 use crate::link::{Link, Received, StreamLink};
@@ -35,7 +35,7 @@ const BUNDLED: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/bundled.rs"
 const DEFAULTS_NAME: &str = "temzdf:defaults";
 /// What `import ... from "temzdf"` gets.
 const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
-     export const cmd = t.cmd, action = t.action, on = t.on, keymap = t.keymap, defineMode = t.defineMode,\n\
+     export const action = t.action, on = t.on, keymap = t.keymap, defineMode = t.defineMode,\n\
      o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, dispatch = t.dispatch,\n\
      atomic = t.atomic, schedule = t.schedule, openPrompt = t.openPrompt, acceptPrompt = t.acceptPrompt,\n\
      cancelPrompt = t.cancelPrompt, isPrompt = t.isPrompt;\n\
@@ -283,7 +283,7 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
         "taskDone",
         Function::new(ctx.clone(), move |task: f64, error: String| {
             let result = match serde_json::from_str::<Option<JsError>>(&error) {
-                Ok(Some(e)) => Err(ScriptError { message: e.message, stack: e.stack }),
+                Ok(Some(e)) => Err(ScriptError { message: e.message, stack: e.stack, command: e.command }),
                 _ => Ok(()),
             };
             if let Err(e) = &result {
@@ -361,6 +361,8 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
 struct JsError {
     message: String,
     stack: Option<String>,
+    #[serde(default)]
+    command: bool,
 }
 
 fn json<T: serde::Serialize>(v: &T) -> String {
@@ -422,21 +424,7 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
         "map" => HostOp::Map {
             modes: strings(&payload, "modes"),
             keys: text("keys"),
-            rhs: match payload.get("func").and_then(|v| v.as_u64()) {
-                Some(f) => MapRhs::Func(f as FuncId),
-                None => MapRhs::Actions(payload.get("actions").and_then(|a| a.as_array()).map_or(Vec::new(), |a| {
-                    a.iter()
-                        .map(|act| {
-                            let name = act.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_owned();
-                            let args = act
-                                .get("args")
-                                .and_then(|a| a.as_array())
-                                .map_or(Vec::new(), |a| a.iter().map(to_script).collect());
-                            (name, args)
-                        })
-                        .collect()
-                })),
-            },
+            func: payload.get("func").and_then(|v| v.as_u64()).unwrap_or(0) as FuncId,
             nowait: payload.get("nowait").and_then(|v| v.as_bool()).unwrap_or(false),
             desc: payload.get("desc").and_then(|v| v.as_str()).map(str::to_owned),
             when: payload.get("when").and_then(|v| v.as_u64()).map(|f| f as FuncId),
@@ -472,7 +460,11 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
         st.send(&FromHost::Request { req, token, op });
         let answer = |result: Result<ScriptValue, String>| match result {
             Ok(v) => Ok(serde_json::to_string(&from_script(&v)).unwrap_or_else(|_| "null".into())),
-            Err(e) => throw(&e),
+            // Marked, so that one nothing catches shows as the command's.
+            Err(e) => Err(Exception::from_message(ctx.clone(), &e).and_then(|x| {
+                x.as_object().set(COMMAND_FAILED, true)?;
+                Ok(x.throw())
+            })?),
         };
         loop {
             if st.gone.get() {
@@ -748,6 +740,10 @@ fn read_module(path: &Path) -> Result<String, String> {
     }
 }
 
+/// The property marking an error a command answered with (`prelude.js`
+/// reads it too).
+const COMMAND_FAILED: &str = "temzdfCommandFailed";
+
 /// The error a failed call left, as message and stack.
 fn error_of(ctx: &Ctx<'_>, e: rquickjs::Error) -> ScriptError {
     if !matches!(e, rquickjs::Error::Exception) {
@@ -756,6 +752,9 @@ fn error_of(ctx: &Ctx<'_>, e: rquickjs::Error) -> ScriptError {
     let caught = ctx.catch();
     if let Some(obj) = caught.as_object() {
         let message: Option<String> = obj.get("message").ok();
+        if obj.get::<_, bool>(COMMAND_FAILED).unwrap_or(false) {
+            return ScriptError { message: message.unwrap_or_default(), stack: None, command: true };
+        }
         let name: Option<String> = obj.get("name").ok();
         let stack: Option<String> = obj.get("stack").ok();
         let message = match (name, message) {
@@ -763,7 +762,7 @@ fn error_of(ctx: &Ctx<'_>, e: rquickjs::Error) -> ScriptError {
             (_, Some(m)) => m,
             _ => "error".into(),
         };
-        return ScriptError { message, stack: stack.filter(|s| !s.trim().is_empty()) };
+        return ScriptError { message, stack: stack.filter(|s| !s.trim().is_empty()), command: false };
     }
     let text: Option<String> = caught.as_string().and_then(|s| s.to_string().ok());
     ScriptError::new(text.unwrap_or_else(|| "uncatchable error (interrupted?)".into()))

@@ -756,7 +756,6 @@ impl Session {
         &mut self,
         name: &str,
         args: &[ScriptValue],
-        count: Option<usize>,
     ) -> Option<Result<(ScriptValue, Outcome), String>> {
         let result = match name {
             "open-file" | "new-buffer" | "write" | "reload" => self.text_file_command(name, args),
@@ -766,7 +765,7 @@ impl Session {
             "highlight-pattern" => self.highlight_pattern(args),
             "highlight" => self.define_highlight(args),
             "get-var" | "set-var" => self.var_command(name, args),
-            n if n.starts_with("text.") => self.text_primitive(&n["text.".len()..], args, count),
+            n if n.starts_with("text.") => self.text_primitive(&n["text.".len()..], args),
             _ => return None,
         };
         Some(result.map_err(|e| format!("{}: {e}", camel(name))))
@@ -954,12 +953,7 @@ impl Session {
         }
     }
 
-    fn text_primitive(
-        &mut self,
-        name: &str,
-        args: &[ScriptValue],
-        count: Option<usize>,
-    ) -> Result<(ScriptValue, Outcome), String> {
+    fn text_primitive(&mut self, name: &str, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
         // The options object, last, may name the pane (a position or range
         // is not one).
         let opts = args
@@ -1275,7 +1269,7 @@ impl Session {
                     _ => {
                         let unit = args.first().and_then(ScriptValue::as_str).unwrap_or("grapheme");
                         let unit = ViewUnit::from_name(unit).ok_or_else(|| format!("no unit {unit:?}"))?;
-                        let n = num(1).unwrap_or(1.0) as i64 * count.unwrap_or(1) as i64;
+                        let n = num(1).unwrap_or(1.0) as i64;
                         let to = tv.view.position_of(&t.buf, cursor.pos, unit, n).0;
                         (cursor.pos.min(to), cursor.pos.max(to))
                     }
@@ -1290,7 +1284,7 @@ impl Session {
             "move" => {
                 let unit = args.first().and_then(ScriptValue::as_str).ok_or("which unit?")?;
                 let unit = ViewUnit::from_name(unit).ok_or_else(|| format!("no unit {unit:?}"))?;
-                let n = num(1).unwrap_or(1.0) as i64 * count.unwrap_or(1) as i64;
+                let n = num(1).unwrap_or(1.0) as i64;
                 let select = flag("select");
                 let b = &self.texts[&buf].buf;
                 if let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) {
@@ -1366,7 +1360,7 @@ impl Session {
             }
             // The view.
             "scroll" => {
-                let n = num(0).ok_or("how many rows?")? as i64 * count.unwrap_or(1) as i64;
+                let n = num(0).ok_or("how many rows?")? as i64;
                 let b = &self.texts[&buf].buf;
                 if let Some(Kind::Text { view, .. }) = self.panes.get_mut(&pane).map(|e| &mut e.kind) {
                     view.view.scroll(b, n);
@@ -1393,9 +1387,9 @@ impl Session {
                     return Err(NOT_MODIFIABLE.into());
                 }
                 let mut changed = Vec::new();
-                for _ in 0..count.unwrap_or(1).max(1) {
+                'step: {
                     let t = self.texts.get_mut(&buf).expect("found");
-                    let Some(edited) = (if name == "undo" { t.buf.undo() } else { t.buf.redo() }) else { break };
+                    let Some(edited) = (if name == "undo" { t.buf.undo() } else { t.buf.redo() }) else { break 'step };
                     // The ranges it changed, in the text now.
                     let text = t.buf.text();
                     if let Some(last) = edited.batches.last() {
@@ -1659,7 +1653,7 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "text.move",
         "(unit: TextUnit, count?: number, opts?: { select?: boolean, pane?: number }): void",
-        "Move the cursor `count` units (times the mapping's count); `select` extends the selection",
+        "Move the cursor `count` units; `select` extends the selection",
     ),
     (
         "text.set-cursor",

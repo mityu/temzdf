@@ -37,22 +37,25 @@ temzdf runs with what was registered before the problem (at least the
 defaults).
 
 ```ts
-import { action, cmd, defineMode, keymap, o, on } from "temzdf";
+import { action, defineMode, keymap, o, on } from "temzdf";
 
 o.timeoutlen = 500;
 o.synctexeditor = "nvim --server /tmp/nvim.sock --remote-send ':e %{input}<CR>%{line}G'";
 
-// Page view: J scrolls down (a count still multiplies).
-keymap.add("pdf", "J", action.scrollDown(), { desc: "scroll" });
+// Page view: J scrolls down (3J: three times; counts are arguments).
+keymap.add("pdf", "J", (ctx) => action.scrollDown(ctx.count), { desc: "scroll" });
 // A window submode entered from the normal mode; the normal mode's keys
 // work in it too.
 defineMode("window", { transient: true, keepalive: "always" });
-keymap.add("normal", "w", action.switchMode("window"));
-keymap.add("window", "v", [action.split("right"), action.exitMode()]);
-// A script function (synchronous; dispatch() for asynchronous work).
-keymap.add("terminal", "<C-b>m", (ctx) => cmd.sendText(`make -j${ctx.count ?? 4}\n`));
+keymap.add("normal", "w", () => action.switchMode("window"));
+keymap.add("window", "v", () => {
+  action.split("right");
+  action.exitMode();
+});
+// Mapped functions are synchronous (dispatch() for asynchronous work).
+keymap.add("terminal", "<C-b>m", (ctx) => action.sendText(`make -j${ctx.count ?? 4}\n`));
 // Only in floating terminal panes.
-keymap.add("terminal", "<C-b>q", action.toggleFloating(), { when: (ctx) => ctx.floating });
+keymap.add("terminal", "<C-b>q", () => action.toggleFloating(), { when: (ctx) => ctx.floating });
 keymap.remove("normal", "x", { namespace: "builtin-mode-normal" });
 on("ModeChanged", (old, now) => console.log(`${old} -> ${now}`));
 ```
@@ -88,10 +91,12 @@ mode on the mode history (at most `modehistory` entries), `exitMode` returns
 to the previous one, and below the history there is always `normal`. The
 design is in doc/design/keymaps.md.
 
-Mappings go from a key sequence to an action, an array of actions (run in
-order by temzdf itself, without the script host, so they are fast and cannot
-race the next key), or a synchronous function. `action.<command>(...)`
-describes a command as data; `cmd.<command>(...)` runs one now. Sequences
+Mappings go from a key sequence to a synchronous function, which gets the
+key's context (`ctx.count`: the count typed before the keys, or null).
+`action.<command>(...)` runs a command now; commands that repeat take the
+count as an argument (`(ctx) => action.nextTab(ctx.count)`). Keys typed
+while a mapped function runs wait for it, so a mode it switches to is in
+place for the next key. Sequences
 work as in Vim: a key that starts a longer mapping waits `timeoutlen`
 milliseconds (unless the shorter mapping has `nowait`); in a pass-through
 mode keys that time out go to the pane.
@@ -103,7 +108,7 @@ mode keys that time out go to the pane.
   (another mapping, else the mode's `fallback`). `ctx` is the context of
   the sequence's first key: `pane`, `paneKind` (`"terminal"`, `"pdf"`),
   `floating`, `mode`, `keys` (typed before). Conditions run in the script
-  host, synchronously, and may only read (`cmd.panes()`, `o.x`, ...); one
+  host, synchronously, and may only read (`action.panes()`, `o.x`, ...); one
   that throws counts as false. Only keys some conditional mapping could
   take ask the host. Use conditions for what happens to you (a pane's
   kind, a state of the program), modes for what you enter on purpose.
@@ -135,7 +140,7 @@ given the key (`key.keys` in notation, `key.text` what it types or
 null): reading one key (`f{char}`) is a transient mode with a fallback
 function (a transient mode's own fallback function takes the keys it
 does not map instead of leaving, whatever its `keepalive`), and leaving a
-mode on a key it does not know is `fallback: () => cmd.exitMode()`. A **transient** mode (a submode, as
+mode on a key it does not know is `fallback: () => action.exitMode()`. A **transient** mode (a submode, as
 kana/vim-submode or Emacs' transient keymaps) sits over the mode it was
 entered from:
 
@@ -150,9 +155,9 @@ A focus change leaves submodes, as it leaves the `normal` mode.
 
 ```ts
 defineMode("resize", { transient: true, timeout: 1500 });
-keymap.add("resize", "+", action.resizePane("taller"));
-keymap.add("resize", "-", action.resizePane("shorter"));
-keymap.add("normal", "s", action.switchMode("resize")); // <C-b>s++-
+keymap.add("resize", "+", (ctx) => action.resizePane("taller", ctx.count ?? 1));
+keymap.add("resize", "-", (ctx) => action.resizePane("shorter", ctx.count ?? 1));
+keymap.add("normal", "s", () => action.switchMode("resize")); // <C-b>s++-
 ```
 
 Key notation follows Neovim: `j`, `G`, `%`, `<C-h>`, `<M-x>`, `<D-k>`,
@@ -166,9 +171,11 @@ legacy terminals send, so mapping `A` or `<Tab>` covers both everywhere.
 cancels pending keys and counts.
 
 `feedkeys(keys, { remap })` feeds keys as if typed (after the running
-mapping); an error in a script function, or `cmd.beep()` (failing
+mapping); an error in a script function, or `action.beep()` (failing
 quietly, as Vim's beep), drops what was fed and not yet run (a macro
-stops). `cmd.sendText(text)` writes straight to the terminal pane.
+stops). `action.sendText(text)` writes straight to the terminal pane.
+A command that fails throws; uncaught, its message shows as it is
+(`write: ... changed on disk`), other errors as `script error: ...`.
 
 `on(event, fn)` returns a function that removes the hook; a `KeyTyped`
 hook holds every key until it ran, so hook it only while needed.
@@ -365,8 +372,8 @@ For example, a mapping that shows the next hidden buffer:
 
 ```ts
 keymap.add("normal", "n", () => {
-  const hidden = cmd.buffers().filter((b) => b.panes.length === 0);
-  if (hidden.length > 0) cmd.showBuffer(hidden[0].id);
+  const hidden = action.buffers().filter((b) => b.panes.length === 0);
+  if (hidden.length > 0) action.showBuffer(hidden[0].id);
 });
 ```
 
@@ -396,14 +403,14 @@ most `o.copyhistory`): `{ id, text, kind, how, register, source, time }`,
   Promise: a terminal client asks its terminal (OSC 52; kitty and Ghostty
   may ask you first, WezTerm does not answer), the GUI reads its own; no
   answer within 10 s fails it. Await it in a dispatched task; inside
-  `ctx.atomic(fn)` the plain `cmd` works too:
+  `ctx.atomic(fn)` the plain `action` works too:
 
 ```ts
 import { dispatch, keymap } from "temzdf";
 keymap.add("terminal", "<C-S-p>", () =>
   dispatch(async (ctx) => {
     // The clipboard into register c, for a later put({ register: "c" }).
-    ctx.cmd.copyText(await ctx.cmd.readClipboard(), { register: "c" });
+    ctx.action.copyText(await ctx.action.readClipboard(), { register: "c" });
   }),
 );
 ```
@@ -462,8 +469,8 @@ largest pane in any of them. All clients show the same tab page.
   `openFloat`; a shell by default; `temzdf action new-tab FILE.pdf` or
   `new-tab -- htop`), `closeTab(n?)` closes one with its panes (their
   buffers stay; the last tab page stays: `killSession` ends the session),
-  `nextTab()`, `prevTab()` and `gotoTab(n)` go to one (counted from 1;
-  `gt`, `gT`), `moveTab(to?)` moves the current one as Vim's `:tabmove`
+  `nextTab(n?)`, `prevTab(n?)` and `gotoTab(n)` go to one (counted from 1;
+  `gt`, `gT`; `nextTab(n)` goes to tab page n, `prevTab(n)` n back), `moveTab(to?)` moves the current one as Vim's `:tabmove`
   (after tab page `to`, `0` first, none last, or `"+1"` / `"-1"`),
   `breakPane(pane?)` moves a pane to a new tab page (`T`), `tabs()` lists
   them, `currentTab()` gives the current one's number.
@@ -479,7 +486,7 @@ Each pane's bottom row is its status line, drawn by the session as text: a
 PDF pane's says its file, the search, the page and the zoom, and its
 messages (errors, "Copied ..."); a terminal's is blank. The shipped
 configuration hides the terminals' (a `PaneOpened` hook calling
-`cmd.statusLine(false, id)`); without the script host every pane has one.
+`action.statusLine(false, id)`); without the script host every pane has one.
 A pane one row high shows its status line only. Changing what they say
 comes later (`doc/design/floating-panes.md`).
 
@@ -584,8 +591,7 @@ JavaScript strings index; out of range is clamped), ranges
   punctuation and between scripts, so unspaced Japanese is several
   words), `"lineStart"`, `"firstNonBlank"`, `"lineEnd"`, `"line"` (keeping
   the column), `"displayLine"`, `"page"`, `"documentStart"`,
-  `"documentEnd"`; negative counts go backwards, and a mapping's count
-  multiplies;
+  `"documentEnd"`; negative counts go backwards;
 - the cursor and view: `text.setCursor(pos, { select? })`,
   `text.setSelection(anchor, active, kind?)` (`"char"`, `"line"`,
   `"block"`), `text.clearSelection()`, `text.setCursorStyle(style)`,
@@ -724,7 +730,7 @@ closes).
 
 ## Commands
 
-`cmd.*` and `action.*` share the command registry
+`action.*` runs the commands of the registry
 (`crates/temzdf-server/src/session/commands.rs`; `temzdf print-types` lists
 them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `focusNextPane`, `focusPane`, `resizePane`, `equalizePanes`, `maximizePane`, `movePane`, `rotatePanes`, `closePane`,
@@ -735,7 +741,7 @@ them with their signatures): the session's (`split`, `newPane`, `moveFocus`,
 `deleteBuffer`, `killSession`, `detach`, `reloadConfig`, `message`,
 the visual mode's (`visual.left`, `visual.wordForward`, `visual.top`,
 `visual.charwise`, `visual.yank`, `visual.escape`, ...: one for each key of
-the table above, counts where it says so; `visual.searchFor(query, pane?,
+the table above, taking a count, `visual.down(3)`, where it says so; `visual.searchFor(query, pane?,
 backward?)`, `visual.searchPreview`, `visual.searchCancel(pane?)` take the
 terminal's pane, as the PDF search does),
 `statusLine` (shows or hides a pane's status line, its bottom row:
@@ -745,11 +751,11 @@ gives back the row; `temzdf action status-line off`), `sendText`, `paste` (the c
 terminal clients paste with the terminal's keys), `fontSize` (GUI
 clients' font: `fontSize(16)` sets the first font of `guifont` to 16 points
 and scales the other sizes given with it, `fontSize("+1")` / `fontSize("-1")`
-one point more or less for each, times a mapping's count, `fontSize()` back to the
+one point more or less for each, `fontSize()` back to the
 configured sizes; terminal clients keep their terminal's font), `feedkeys`, `switchMode`, `exitMode`, `currentMode`, `panes`,
 `focusedPane`, `sessionName`) and the page view's (`scrollDown`, `zoomIn`,
-`nextMatch`, ...: every action of the PDF table above, taking the count where it says
-"counts"), and the searches of a PDF pane (the focused one, else `pane`):
+`nextMatch`, ...: every action of the PDF table above, taking a count,
+`scrollDown(3)`, where it says "counts"), and the searches of a PDF pane (the focused one, else `pane`):
 `searchFor(query, pane?)` searches for `query` (the place it starts from
 goes on the back history, the first hit is shown once known; `""` clears
 the search; `temzdf action search-for needle`); `searchPreview(query,
@@ -758,9 +764,9 @@ the preview began; nothing found or empty, back there), and `searchFor` of
 it then keeps that hit and puts where the preview began on the back
 history; `searchCancel(pane?)` drops the search, a preview's view back
 where it began.
-Commands named `ns.name` are in a namespace: `cmd.ns.name()` and
-`action.ns.name()` (`temzdf action ns.name`), the name camelCased as the
-others (`text.get-text` is `cmd.text.getText`).
+Commands named `ns.name` are in a namespace: `action.ns.name()`
+(`temzdf action ns.name`), the name camelCased as the others
+(`text.get-text` is `action.text.getText`).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
 action split right`). `resizePane("left", 5)` moves a border of the focused
 pane five cells left (as tmux's `resize-pane -L 5`), `resizePane("wider",

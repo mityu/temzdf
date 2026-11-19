@@ -6,7 +6,7 @@
 // Emacs: modes vim/normal, vim/insert, vim/visual, and the transient
 // vim/pending (an operator waiting for its motion), vim/char (the
 // character of f, t, r), vim/register ("x) and vim/cmdline (/ ? :).
-import { cmd, defineMode, isPrompt, keymap, o, schedule } from "temzdf";
+import { action, defineMode, isPrompt, keymap, o, schedule } from "temzdf";
 import type { Define } from "../lib/keyset";
 import { keyset } from "../lib/keyset";
 import type { KeyInfo, MapContext } from "temzdf";
@@ -93,7 +93,7 @@ function define(hook: Define["hook"]): void {
     const what = charFor;
     charFor = null;
     // vim/char goes; an operator's vim/pending below it stays for the motion.
-    cmd.exitMode();
+    action.exitMode();
     if (what === null || key.keys === "<Esc>") {
       cancelPending();
       return;
@@ -128,23 +128,23 @@ function define(hook: Define["hook"]): void {
   for (const kind of ["f", "F", "t", "T"] as const) {
     map([N, P, V], [kind], (ctx) => {
       charFor = { kind, count: ctx.count ?? null };
-      cmd.switchMode("vim/char");
+      action.switchMode("vim/char");
     });
   }
   map([N], ["r"], (ctx) => {
     charFor = { kind: "r", count: ctx.count ?? null };
-    cmd.switchMode("vim/char");
+    action.switchMode("vim/char");
   });
 
   // Marks: m{x} sets one; '{x} goes to its line, `{x} to it (motions).
   map([N], ["m"], () => {
     charFor = { kind: "m", count: null };
-    cmd.switchMode("vim/char");
+    action.switchMode("vim/char");
   });
   for (const kind of ["'", "`"] as const) {
     map([N, P, V], [kind], (ctx) => {
       charFor = { kind, count: ctx.count ?? null };
-      cmd.switchMode("vim/char");
+      action.switchMode("vim/char");
     });
   }
 
@@ -156,11 +156,11 @@ function define(hook: Define["hook"]): void {
       return;
     }
     charFor = { kind: "q", count: null };
-    cmd.switchMode("vim/char");
+    action.switchMode("vim/char");
   });
   map([N], ["@"], (ctx) => {
     charFor = { kind: "@", count: ctx.count ?? null };
-    cmd.switchMode("vim/char");
+    action.switchMode("vim/char");
   });
 
   function markKey(kind: "m" | "'" | "`", name: string, count: number | null): void {
@@ -214,7 +214,7 @@ function define(hook: Define["hook"]): void {
   map([N], ["u"], (ctx) => undo(false, ctx.count ?? null));
   map([N], ["<C-r>"], (ctx) => undo(true, ctx.count ?? null));
   map([N], ["."], (ctx) => repeatLast(ctx.count ?? null));
-  map([N, V], ['"'], () => cmd.switchMode("vim/register"));
+  map([N, V], ['"'], () => action.switchMode("vim/register"));
   map([N], ["v"], () => enterVisual("char"));
   map([N], ["V"], () => enterVisual("line"));
   map([N], ["<C-v>"], () => enterVisual("block"));
@@ -263,7 +263,7 @@ function define(hook: Define["hook"]): void {
   map([V], ["A"], () => visualInsert("A"));
   map([V], ["r"], () => {
     charFor = { kind: "r", count: null };
-    cmd.switchMode("vim/char");
+    action.switchMode("vim/char");
   });
   map([V], ["J"], () => {
     const v = state.visual!;
@@ -286,7 +286,7 @@ function define(hook: Define["hook"]): void {
     const c = cursor();
     t.delete({ start: { line: c.line, character: 0 }, end: c });
   });
-  map([I], ["<C-r>"], () => cmd.switchMode("vim/insreg"));
+  map([I], ["<C-r>"], () => action.switchMode("vim/insreg"));
   map([I], ["<Left>"], () => t.move("grapheme", -1));
   map([I], ["<Right>"], () => t.move("grapheme", 1));
   map([I], ["<Up>"], () => t.move("displayLine", -1));
@@ -300,13 +300,13 @@ function define(hook: Define["hook"]): void {
   map(["vim/cmdline"], ["<BS>", "<C-h>"], () => backspace());
 
   // The prefix reaches temzdf's normal mode, as from other panes.
-  map([N, V, I], ["<C-b>"], () => cmd.switchMode("normal"));
+  map([N, V, I], ["<C-b>"], () => action.switchMode("normal"));
 
   // The cursor's shape follows the mode; what a focus change interrupts is
   // closed (hooks only read: these wait for the safe point).
   hook("ModeChanged", (old: string, now: string) => {
     schedule(() => {
-      const focused = cmd.panes().find((p) => p.focused);
+      const focused = action.panes().find((p) => p.focused);
       // Not a text pane, or a prompt (the command line): not the Vim mode's.
       if (focused === undefined || focused.kind !== "edit" || isPrompt(focused.buffer)) return;
       // vim/insreg (<C-r>) is a key read inside the insert mode.
@@ -330,7 +330,7 @@ function teardown(): void {
   state.visual = null;
   state.pending = null;
   try {
-    const focused = cmd.panes().find((p) => p.focused);
+    const focused = action.panes().find((p) => p.focused);
     if (focused !== undefined && focused.kind === "edit" && !isPrompt(focused.buffer)) t.clearNamespace("vim-visual");
   } catch {
     // Nothing to clear.

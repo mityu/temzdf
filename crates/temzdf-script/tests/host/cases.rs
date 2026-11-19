@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use temzdf_protocol::script::{CommandSpec, FromHost, HostOp, MapRhs, ScriptValue, ToHost, Token};
+use temzdf_protocol::script::{CommandSpec, FromHost, HostOp, ScriptValue, ToHost, Token};
 
 struct Session {
     to_host: UnixStream,
@@ -126,7 +126,7 @@ fn base() -> u32 {
             match s.recv() {
                 FromHost::Request { req, op, .. } => {
                     let f = match op {
-                        HostOp::On { func, .. } | HostOp::Map { rhs: MapRhs::Func(func), .. } => Some(func),
+                        HostOp::On { func, .. } | HostOp::Map { func, .. } => Some(func),
                         _ => None,
                     };
                     most = most.max(f);
@@ -168,13 +168,11 @@ fn describe(token: Token, op: &HostOp) -> String {
                 .collect();
             format!("{t} {name}({})", args.join(","))
         }
-        HostOp::On { func, .. } | HostOp::Map { rhs: MapRhs::Func(func), .. } if *func < base() => String::new(),
+        HostOp::On { func, .. } | HostOp::Map { func, .. } if *func < base() => String::new(),
         HostOp::On { event, func, nested } => format!("{t} on {event} f{} nested={nested}", func - base()),
-        HostOp::Map { modes, keys, rhs: MapRhs::Func(f), .. } => {
+        HostOp::Map { modes, keys, func: f, .. } => {
             format!("{t} map {} {keys} f{}", modes.join(","), f - base())
         }
-        // The shipped defaults map actions; leave them out.
-        HostOp::Map { rhs: MapRhs::Actions(_), .. } => String::new(),
         // And they enable the Vim mode (its modes and base mode) and the
         // Markdown viewer's keys (its outline's mode).
         HostOp::DefineMode { name, .. } if name.starts_with("vim/") || name.starts_with("markdown/") => String::new(),
@@ -197,12 +195,12 @@ fn ready_ok(msg: FromHost) {
 #[test]
 fn a_typescript_configuration_registers_and_runs_commands() {
     let config = r#"
-import { cmd, on, keymap } from "temzdf";
+import { action, keymap, on } from "temzdf";
 import { greeting } from "./lib.ts";
 const n: number = 2;
-on("PaneOpened", (pane: number) => cmd.message(`opened ${pane}`));
-keymap.add("normal", "t", () => { cmd.split("right"); cmd.newPane(); });
-cmd.message(greeting(n));
+on("PaneOpened", (pane: number) => action.message(`opened ${pane}`));
+keymap.add("normal", "t", () => { action.split("right"); action.newPane(); });
+action.message(greeting(n));
 keymap.clear({ namespace: "default" });
 keymap.clear();
 "#;
@@ -241,10 +239,9 @@ keymap.clear();
 #[test]
 fn namespaced_commands_are_objects_of_their_own() {
     let config = r#"
-import { action, cmd, keymap } from "temzdf";
-keymap.add("input", "<C-w>", () => cmd.text.getText());
-keymap.add("input", "<BS>", action.text.erase());
-cmd.message(typeof cmd.text + " " + Object.isFrozen(cmd.text) + " " + typeof action.text.getText);
+import { action, keymap } from "temzdf";
+keymap.add("input", "<C-w>", () => action.text.getText());
+action.message(typeof action.text + " " + Object.isFrozen(action.text) + " " + typeof action.text.getText);
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
     s.load("config.ts");
@@ -266,9 +263,9 @@ cmd.message(typeof cmd.text + " " + Object.isFrozen(cmd.text) + " " + typeof act
 #[test]
 fn hooks_run_nested_inside_the_command_that_caused_them() {
     let config = r#"
-import { cmd, on, keymap } from "temzdf";
-on("PaneOpened", () => cmd.message("hook"));
-keymap.add("normal", "s", () => { cmd.split("right"); cmd.message("after split"); });
+import { action, keymap, on } from "temzdf";
+on("PaneOpened", () => action.message("hook"));
+keymap.add("normal", "s", () => { action.split("right"); action.message("after split"); });
 "#;
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
@@ -289,10 +286,11 @@ keymap.add("normal", "s", () => { cmd.split("right"); cmd.message("after split")
 
 #[test]
 fn mapped_functions_must_be_synchronous_and_errors_carry_positions() {
-    let config = r#"import { keymap, cmd } from "temzdf";
+    let config = r#"import { action, keymap } from "temzdf";
 keymap.add("normal", "a", async () => {});
 keymap.add("normal", "b", () => { throw new Error("boom"); });
-keymap.add("normal", "c", () => cmd.message(String(1)));
+keymap.add("normal", "c", () => action.message(String(1)));
+keymap.add("normal", "d", () => { try { action.message("x"); } catch (e) { throw new Error(`caught ${(e as Error).message}`); } });
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
     s.load("config.ts");
@@ -309,14 +307,23 @@ keymap.add("normal", "c", () => cmd.message(String(1)));
     let FromHost::Request { req, .. } = s.recv() else { panic!() };
     s.send(ToHost::Reply { req, result: Err("no such pane".into()) });
     let FromHost::Done { result: Err(e), .. } = s.recv() else { panic!() };
-    assert!(e.message.contains("no such pane"), "{e}");
+    // Uncaught, it is the command's message, shown as it would be without a
+    // script.
+    assert_eq!((e.message.as_str(), e.stack.as_deref(), e.command), ("no such pane", None, true));
+    // Caught, it is an ordinary Error, and what is thrown then is the
+    // script's.
+    s.send(ToHost::Call { id: 4, func: user(3), args: vec![] });
+    let FromHost::Request { req, .. } = s.recv() else { panic!() };
+    s.send(ToHost::Reply { req, result: Err("no such pane".into()) });
+    let FromHost::Done { result: Err(e), .. } = s.recv() else { panic!() };
+    assert_eq!((e.message.as_str(), e.command), ("Error: caught no such pane", false));
 }
 
 #[test]
 fn an_endless_function_is_interrupted_even_if_it_catches() {
-    let config = r#"import { keymap, cmd } from "temzdf";
+    let config = r#"import { action, keymap } from "temzdf";
 keymap.add("normal", "l", () => { for (;;) { try { for (;;) {} } catch (e) {} } });
-keymap.add("normal", "w", () => { try { cmd.message("waits"); } catch (e) {} for (;;) {} });
+keymap.add("normal", "w", () => { try { action.message("waits"); } catch (e) {} for (;;) {} });
 "#;
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
@@ -332,7 +339,7 @@ keymap.add("normal", "w", () => { try { cmd.message("waits"); } catch (e) {} for
     s.send(ToHost::Interrupt);
     assert!(matches!(s.recv(), FromHost::Done { id: 2, result: Err(_) }));
     // The host still works afterwards.
-    s.send(ToHost::Call { id: 3, func: 100, args: vec![] });
+    s.send(ToHost::Call { id: 3, func: 1_000_000, args: vec![] });
     assert!(matches!(s.recv(), FromHost::Done { id: 3, result: Err(_) }));
 }
 
@@ -363,12 +370,12 @@ fn top_level_await_and_syntax_errors_fail_the_load() {
 
 #[test]
 fn dispatched_tasks_use_their_ctx_and_stray_commands_are_refused() {
-    let config = r#"import { cmd, dispatch } from "temzdf";
+    let config = r#"import { action, dispatch } from "temzdf";
 dispatch(async (ctx) => {
   await new Promise((r) => setTimeout(r, 30));
-  ctx.cmd.message("late");
-  try { cmd.message("global"); } catch (e) { ctx.cmd.message(String(e.message).split(":")[0]); }
-  ctx.atomic(() => { ctx.cmd.message("in atomic"); });
+  ctx.action.message("late");
+  try { action.message("global"); } catch (e) { ctx.action.message(String(e.message).split(":")[0]); }
+  ctx.atomic(() => { ctx.action.message("in atomic"); });
 });
 "#;
     let mut s = Session::start(&[("config.js", config)]);
@@ -406,14 +413,14 @@ dispatch(async (ctx) => {
 }
 
 #[test]
-fn commands_answering_later_give_promises_and_atomic_lends_cmd_the_task() {
+fn commands_answering_later_give_promises_and_atomic_lends_action_the_task() {
     // A command answering `{ $promise: n }` is a Promise, settled by
-    // ToHost::Resolve; inside ctx.atomic the plain cmd issues as the task.
-    let config = r#"import { cmd, dispatch } from "temzdf";
+    // ToHost::Resolve; inside ctx.atomic the plain action issues as the task.
+    let config = r#"import { action, dispatch } from "temzdf";
 dispatch(async (ctx) => {
-  const v = await ctx.cmd.readClipboard();
-  ctx.atomic(() => cmd.message(`got ${v}`));
-  try { await ctx.cmd.readClipboard(); } catch (e) { ctx.cmd.message(`failed ${e.message}`); }
+  const v = await ctx.action.readClipboard();
+  ctx.atomic(() => action.message(`got ${v}`));
+  try { await ctx.action.readClipboard(); } catch (e) { ctx.action.message(`failed ${e.message}`); }
 });
 "#;
     let mut s = Session::start(&[("config.js", config)]);
@@ -457,7 +464,7 @@ dispatch(async (ctx) => {
 fn paths_resolve_relative_to_the_importing_module() {
     let mut s = Session::start(&[(
         "config.js",
-        "import { v } from \"./sub/m.js\";\nimport { cmd } from \"temzdf\";\ncmd.message(v);\n",
+        "import { v } from \"./sub/m.js\";\nimport { action } from \"temzdf\";\naction.message(v);\n",
     )]);
     std::fs::create_dir_all(s.dir.join("sub")).unwrap();
     std::fs::write(s.dir.join("sub/m.js"), "export { v } from \"../n.js\";\n").unwrap();
@@ -471,7 +478,7 @@ fn paths_resolve_relative_to_the_importing_module() {
 #[test]
 fn timers_take_any_delay() {
     // Infinity, huge and odd delays once panicked the host.
-    let config = r#"import { cmd } from "temzdf";
+    let config = r#"import { action } from "temzdf";
 const a = setTimeout(() => {}, Infinity);
 const b = setTimeout(() => {}, 1e300);
 setTimeout(() => {}, NaN);
@@ -482,7 +489,7 @@ clearTimeout(b);
 clearTimeout(undefined);
 clearTimeout(null);
 clearTimeout("x");
-cmd.message("ok");
+action.message("ok");
 "#;
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
@@ -496,18 +503,18 @@ fn abort_controllers_come_from_the_polyfills() {
     // AbortController (an npm polyfill, runtime/polyfills.ts): abort with a
     // reason, its event, throwIfAborted, and AbortSignal.timeout firing
     // through the host's timers inside a dispatched task.
-    let config = r#"import { cmd, dispatch } from "temzdf";
+    let config = r#"import { action, dispatch } from "temzdf";
 const c = new AbortController();
 let heard = "";
 c.signal.addEventListener("abort", () => { heard = String(c.signal.reason); });
 c.abort("why");
 let thrown = "";
 try { c.signal.throwIfAborted(); } catch (e) { thrown = String(e); }
-cmd.message(`${c.signal.aborted} ${heard} ${thrown}`);
+action.message(`${c.signal.aborted} ${heard} ${thrown}`);
 dispatch(async (ctx) => {
   const t = AbortSignal.timeout(5);
   await new Promise<void>((resolve) => t.addEventListener("abort", () => resolve()));
-  ctx.atomic(() => ctx.cmd.message(`timeout ${(t.reason as Error).name}`));
+  ctx.atomic(() => ctx.action.message(`timeout ${(t.reason as Error).name}`));
 });
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
@@ -531,9 +538,9 @@ dispatch(async (ctx) => {
 
 #[test]
 fn a_runaway_timer_is_stopped_and_the_call_behind_it_runs() {
-    let config = r#"import { keymap, cmd } from "temzdf";
+    let config = r#"import { action, keymap } from "temzdf";
 setTimeout(() => { for (;;) {} }, 0);
-keymap.add("normal", "x", () => cmd.message("ran"));
+keymap.add("normal", "x", () => action.message("ran"));
 "#;
     // The user's <C-c>: it stops the timer; the call waiting behind it then
     // runs (it used to fail as "interrupted").
@@ -560,11 +567,11 @@ keymap.add("normal", "x", () => cmd.message("ran"));
 
 #[test]
 fn imports_find_typescript_files_as_tsc_does() {
-    let config = r#"import { cmd } from "temzdf";
+    let config = r#"import { action } from "temzdf";
 import { a } from "./lib/a";
 import { b } from "./lib/b.js";
 import { c } from "./lib";
-cmd.message(a + b + c);
+action.message(a + b + c);
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
     std::fs::create_dir_all(s.dir.join("lib")).unwrap();
@@ -580,10 +587,10 @@ cmd.message(a + b + c);
 #[test]
 fn conditions_answer_booleans_and_get_mappings_gives_the_functions_back() {
     let config = r#"
-import { action, cmd, keymap } from "temzdf";
-keymap.add("normal", "t", () => cmd.message("t"), { when: (ctx) => ctx.paneKind === "terminal", namespace: "mine" });
-keymap.add("normal", "u", action.split("right"), { when: () => { throw new Error("bad"); } });
-keymap.add("normal", "v", action.split("right"), { when: (async () => true) as any });
+import { action, keymap } from "temzdf";
+keymap.add("normal", "t", () => action.message("t"), { when: (ctx) => ctx.paneKind === "terminal", namespace: "mine" });
+keymap.add("normal", "u", () => action.split("right"), { when: () => { throw new Error("bad"); } });
+keymap.add("normal", "v", () => action.split("right"), { when: (async () => true) as any });
 keymap.add("normal", "w", () => {
   for (const m of keymap.get({ mode: "normal", namespace: "mine", lhs: "t" })) keymap.add("copy", m.lhs, m.rhs, { when: m.when });
 });
@@ -595,10 +602,10 @@ keymap.add("normal", "w", () => {
         match s.recv() {
             FromHost::Request { req, op, .. } => {
                 // (Not the shipped modules' mappings.)
-                if let HostOp::Map { keys, rhs, when, namespace, .. } = &op
+                if let HostOp::Map { keys, func, when, namespace, .. } = &op
                     && !namespace.as_deref().is_some_and(|n| n.starts_with("builtin-"))
                 {
-                    maps.push((keys.clone(), rhs.clone(), *when, namespace.clone()));
+                    maps.push((keys.clone(), *func, *when, namespace.clone()));
                 }
                 s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
             }
@@ -607,7 +614,7 @@ keymap.add("normal", "w", () => {
     };
     ready_ok(ready);
     // Each condition is registered once, before the mapped function.
-    assert_eq!(maps[0], ("t".into(), MapRhs::Func(user(1)), Some(user(0)), Some("mine".into())));
+    assert_eq!(maps[0], ("t".into(), user(1), Some(user(0)), Some("mine".into())));
     let (when_u, when_v) = (maps[1].2.unwrap(), maps[2].2.unwrap());
 
     // Values in order: true, an exception, a Promise (refused).
@@ -624,10 +631,7 @@ keymap.add("normal", "w", () => {
 
     // keymap.get gives the functions back: mapping them again reuses
     // their ids.
-    let w = match &maps[3].1 {
-        MapRhs::Func(f) => *f,
-        other => panic!("{other:?}"),
-    };
+    let w = maps[3].1;
     s.send(ToHost::Call { id: 10, func: w, args: vec![] });
     let mut copied = None;
     loop {
@@ -650,8 +654,8 @@ keymap.add("normal", "w", () => {
                 ]);
                 s.send(ToHost::Reply { req, result: Ok(ScriptValue::List(vec![m])) });
             }
-            FromHost::Request { req, op: HostOp::Map { modes, rhs, when, .. }, .. } => {
-                copied = Some((modes, rhs, when));
+            FromHost::Request { req, op: HostOp::Map { modes, func, when, .. }, .. } => {
+                copied = Some((modes, func, when));
                 s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
             }
             FromHost::Done { id: 10, result } => {
@@ -661,7 +665,7 @@ keymap.add("normal", "w", () => {
             other => panic!("{other:?}"),
         }
     }
-    assert_eq!(copied, Some((vec!["copy".to_owned()], MapRhs::Func(user(1)), Some(user(0)))));
+    assert_eq!(copied, Some((vec!["copy".to_owned()], user(1), Some(user(0)))));
 }
 
 /// What the host says about task 1 until it is done.
@@ -714,11 +718,11 @@ dispatch(async (ctx) => {
 
 #[test]
 fn an_interrupt_a_task_took_is_not_taken_again() {
-    let config = r#"import { dispatch, keymap, cmd } from "temzdf";
-keymap.add("normal", "x", () => { cmd.message("x"); });
+    let config = r#"import { action, dispatch, keymap } from "temzdf";
+keymap.add("normal", "x", () => { action.message("x"); });
 dispatch(async (ctx) => {
   await new Promise((r) => setTimeout(r, 30));
-  try { ctx.cmd.message("wait"); } catch (e) {}
+  try { ctx.action.message("wait"); } catch (e) {}
 });
 "#;
     let mut s = Session::start(&[("config.js", config)]);
@@ -744,7 +748,7 @@ dispatch(async (ctx) => {
 fn a_call_inside_a_tasks_wait_gets_its_own_time() {
     let config = r#"import { dispatch, keymap } from "temzdf";
 keymap.add("normal", "x", () => { const t = Date.now(); while (Date.now() - t < 100) {} });
-dispatch(async (ctx) => { await new Promise((r) => setTimeout(r, 30)); ctx.cmd.message("wait"); });
+dispatch(async (ctx) => { await new Promise((r) => setTimeout(r, 30)); ctx.action.message("wait"); });
 "#;
     let mut s = Session::start_with_limit(&[("config.js", config)], Duration::from_millis(300));
     s.load("config.js");
@@ -769,12 +773,12 @@ fn answers_taken_by_a_nested_wait_reach_their_request_and_promise() {
     // scheduled function) waits for its own, and the task's answer and the
     // Promise's settling come during that inner wait. Neither may be lost,
     // and the Promise settles without another message to wake the host.
-    let config = r#"import { cmd, dispatch, keymap } from "temzdf";
+    let config = r#"import { action, dispatch, keymap } from "temzdf";
 keymap.add("normal", "a", () => dispatch(async (ctx) => {
-  const v = await ctx.cmd.readClipboard();
-  ctx.cmd.message(`got ${v}`);
+  const v = await ctx.action.readClipboard();
+  ctx.action.message(`got ${v}`);
 }));
-keymap.add("normal", "b", () => cmd.message("inner"));
+keymap.add("normal", "b", () => action.message("inner"));
 "#;
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");

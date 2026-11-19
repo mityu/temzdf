@@ -1,7 +1,7 @@
 // The command line (/ ? :): a prompt (openPrompt) one row high below the
 // text pane, in the mode vim/cmdline over the input mode (its editing keys
 // work); <CR> runs the cursor's line in the text pane, <Esc> cancels.
-import { acceptPrompt, cancelPrompt, cmd, openPrompt } from "temzdf";
+import { acceptPrompt, action, cancelPrompt, openPrompt } from "temzdf";
 import type { Position } from "temzdf";
 import { ex } from "./ex";
 import { rememberEx } from "./macros";
@@ -18,7 +18,7 @@ type Open = { buf: number; pane: number; kind: string; count: number | null; ori
 let open: null | Open = null;
 
 export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
-  const pane = cmd.focusedPane();
+  const pane = action.focusedPane();
   if (pane === null) return;
   // From the visual mode, : works on its lines.
   let initial = "";
@@ -42,7 +42,7 @@ export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
     return;
   }
   o.buf = p.buffer;
-  cmd.switchMode("vim/cmdline");
+  action.switchMode("vim/cmdline");
 }
 
 // incsearch: while a search is typed, the text pane's cursor goes to the
@@ -79,7 +79,7 @@ function preview(o: NonNullable<typeof open>, text: string): void {
   }
   t.setCursor(r.range.start, pane);
   t.addDecoration(r.range, { style: "IncSearch", namespace: INC, pane: o.pane });
-  if (options.hlsearch) cmd.highlightPattern("vim-search", rust, "Search");
+  if (options.hlsearch) action.highlightPattern("vim-search", rust, "Search");
 }
 
 /** The prompt closed (back in the text pane): run the line (`run`) or

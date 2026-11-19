@@ -20,7 +20,7 @@ configuration); how to write a configuration is in `doc/config.md`.
 | `crates/temzdf-script/runtime/` | The shipped scripts, an npm package bundled by `crates/temzdf-script/build.rs` with esbuild (npm packages from `package-lock.json`, built by Nix into `$TEMZDF_NODE_MODULES`): `defaults.ts`, the default configuration (loaded before the user's); `polyfills.ts`, globals QuickJS lacks (`AbortController` from `abortcontroller-polyfill`), evaluated first; modules scripts import as `temzdf/NAME` (`MODULES` in `build.rs`: `edit/vim`, `edit/notepad`, `pane/pdf`, `pane/terminal`, `mode/normal`, `mode/input`, `buffers`; each a keyset, `runtime/lib/keyset.ts`: nothing on import, `enable()`/`disable()`), kept as imports in every bundle so that one instance of each is shared; `defaults.ts` only enables them. The user's configuration is not bundled. |
 | `crates/temzdf-script/src/types.rs` | `temzdf.d.ts` for `temzdf print-types`, from the command registry. |
 | `crates/temzdf-server/src/session/script.rs` | The session's side: starting the host, holding input while scripts run, the frame stack that runs hooks nested, options, mapping and mode operations. |
-| `crates/temzdf-server/src/session/commands.rs` | The command registry (`cmd.*`, `action.*`, `temzdf action`). |
+| `crates/temzdf-server/src/session/commands.rs` | The command registry (`action.*`, `temzdf action`). |
 | `crates/temzdf-server/src/keymap/` | Key notation (Neovim's, with fallbacks for keys legacy terminals cannot tell apart), modes, the sequence matcher, the mode history. |
 | `crates/temzdf-server/src/session/notices.rs` | Floating messages; `session.rs` has the escape keymap used while the host is down. |
 | `crates/temzdf` | `temzdf print-types` (hidden), `--clean`, `--config`, finding `config.ts`/`config.js`. |
@@ -87,8 +87,8 @@ configured the same way). Under Miri the build script embeds nothing.
   reach hooks registered with `nested: true`, up to 10 levels. "Before" events
   (`PaneClosePre`) run ahead of the operation, which waits for them.
 - **`dispatch(async (ctx) => ...)`** starts a task without waiting for it. Its
-  commands go through `ctx.cmd`; `ctx.atomic(fn)` runs a synchronous `fn` with
-  everything else held, and the plain `cmd` works inside it (under the
+  commands go through `ctx.action`; `ctx.atomic(fn)` runs a synchronous `fn` with
+  everything else held, and the plain `action` works inside it (under the
   task's token), so code shared with mappings runs there unchanged. Errors
   of tasks are reported as messages and in the log.
 - **Commands answering later** (`readClipboard`): the session replies
@@ -104,7 +104,7 @@ configured the same way). Under Miri the build script embeds nothing.
   may come to wake it).
 - **Context tokens**: every command carries the call or task it belongs to;
   the session refuses commands of calls that have finished and of tasks that
-  ended. Global functions (`cmd.split()`) only work inside a mapped or hook
+  ended. Global functions (`action.split()`) only work inside a mapped or hook
   function (or while the configuration loads); elsewhere they throw "no
   context".
 - **Deadlock rules**: while the session waits for the host it keeps answering
@@ -126,8 +126,9 @@ configured the same way). Under Miri the build script embeds nothing.
 `doc/config.md` describes it for users; `temzdf print-types` gives the exact
 declarations. In short, `import { ... } from "temzdf"`:
 
-- `cmd.*` runs registry commands now (synchronous requests); `action.*`
-  describes them as data for mappings.
+- `action.*` runs registry commands now (synchronous requests; until
+  2026-11-19 this was `cmd.*`, and `action.*` described commands as data for
+  mappings, `doc/design/scripting.md`).
 - `keymap.add(modes, lhs, rhs, { nowait, desc, when, namespace, priority })`,
   `keymap.remove(modes, lhs, { namespace })`, `keymap.clear({ mode,
   namespace })`, `keymap.get({ mode, namespace, lhs })`, `defineMode(name,
@@ -196,7 +197,7 @@ declarations. In short, `import { ... } from "temzdf"`:
   shipped defaults refuse to delete a text buffer with unsaved changes or
   to end the session while one has them. Every hook returns what it
   likes; only "before" hooks' answers are read.
-- `dispatch(async (ctx) => ...)` with `ctx.cmd` and `ctx.atomic(fn)`;
+- `dispatch(async (ctx) => ...)` with `ctx.action` and `ctx.atomic(fn)`;
   `atomic(fn)`.
 - Globals: `setTimeout`, `clearTimeout`, `console`.
 

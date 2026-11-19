@@ -1,6 +1,6 @@
 // Ex commands (after :): ranges (% . $ numbers '< '> and +N -N), :w :q :wq
 // :x :e :s :noh :d :y, a line number alone, and a few of :set.
-import { cmd, o } from "temzdf";
+import { action, o } from "temzdf";
 import type { KeyInfo, Position, Range as TextRange } from "temzdf";
 import { operate } from "./operators";
 import { convert } from "./pattern";
@@ -66,7 +66,7 @@ function clampRange(r: Range): Range {
 /** Panes on a script's own buffers (unlisted: prompts, the command line). */
 function ownPanes(): (p: { buffer: number }) => boolean {
   const own = new Set(
-    cmd
+    action
       .buffers({ all: true })
       .filter((b) => b.attrs.includes("unlisted"))
       .map((b) => b.id),
@@ -75,8 +75,8 @@ function ownPanes(): (p: { buffer: number }) => boolean {
 }
 
 /** The panes of the current tab page a user works in (not command lines). */
-function workPanes(): ReturnType<typeof cmd.panes> {
-  const all = cmd.panes();
+function workPanes(): ReturnType<typeof action.panes> {
+  const all = action.panes();
   const tab = all.find((p) => p.focused)?.tab ?? null;
   const own = ownPanes();
   return all.filter((p) => !own(p) && p.tab === tab);
@@ -86,13 +86,13 @@ function workPanes(): ReturnType<typeof cmd.panes> {
  * file `file` (o.splitbelow and o.splitright say where). */
 function splitPane(vertical: boolean, buffer: number, file: string): void {
   const side = vertical ? (o.splitright ? "right" : "left") : o.splitbelow ? "bottom" : "top";
-  const pane = cmd.split({ side, buffer });
-  if (pane !== null && file !== "") cmd.openFile(file, { pane });
+  const pane = action.split({ side, buffer });
+  if (pane !== null && file !== "") action.openFile(file, { pane });
 }
 
 /** The buffers :bnext, :ls and such go through. */
-function bufferList(): ReturnType<typeof cmd.buffers> {
-  return cmd
+function bufferList(): ReturnType<typeof action.buffers> {
+  return action
     .buffers()
     .sort((a, b) => a.id - b.id);
 }
@@ -120,7 +120,7 @@ function cycleBuffer(delta: number, count: number): void {
   if (i < 0) i = 0;
   const n = list.length;
   i = (((i + delta * count) % n) + n) % n;
-  cmd.showBuffer(list[i].id, cmd.focusedPane() ?? undefined);
+  action.showBuffer(list[i].id, action.focusedPane() ?? undefined);
 }
 
 /** :ls: Vim's list (% the pane's, a shown, h hidden, + modified). */
@@ -141,32 +141,32 @@ function deleteBuffer(id: number, force: boolean): void {
   const b = list.find((x) => x.id === id);
   if (b === undefined) throw new Error(`E516: No buffers were deleted: ${id}`);
   if (b.modified && !force) throw new Error(`E89: No write since last change for buffer ${id} (add ! to override)`);
-  if (force) cmd.setVar("buffer", "forceDelete", true, id);
+  if (force) action.setVar("buffer", "forceDelete", true, id);
   const others = list.filter((x) => x.id !== id);
   const alt = others.find((x) => x.panes.length === 0) ?? others[0];
-  const instead = alt?.id ?? cmd.newBuffer();
-  for (const pane of b.panes) cmd.showBuffer(instead, pane);
-  cmd.deleteBuffer(id);
+  const instead = alt?.id ?? action.newBuffer();
+  for (const pane of b.panes) action.showBuffer(instead, pane);
+  action.deleteBuffer(id);
 }
 
 /** :wall: every text buffer with unsaved changes. */
 function writeAll(): void {
-  for (const b of cmd.buffers()) if (b.kind === "edit" && b.modified) cmd.write({ buffer: b.id });
+  for (const b of action.buffers()) if (b.kind === "edit" && b.modified) action.write({ buffer: b.id });
 }
 
 /** :tabonly: the other tab pages close. */
 function onlyTab(): void {
-  const tabs = cmd.tabs();
-  for (const tab of [...tabs].reverse()) if (!tab.current) cmd.closeTab(tab.index);
+  const tabs = action.tabs();
+  for (const tab of [...tabs].reverse()) if (!tab.current) action.closeTab(tab.index);
 }
 
 /** Quit the pane; the last one ends the session (refused with unsaved
  * changes unless `force`). */
 function quit(force: boolean): void {
   const own = ownPanes();
-  const panes = cmd.panes().filter((p) => !own(p));
-  if (panes.length <= 1) cmd.killSession({ force });
-  else cmd.closePane();
+  const panes = action.panes().filter((p) => !own(p));
+  if (panes.length <= 1) action.killSession({ force });
+  else action.closePane();
 }
 
 /** Split `s` (after the delimiter) at the next unescaped `delim`. */
@@ -268,7 +268,7 @@ function confirmSubstitute(range: Range, conv: { rust: string; group: number }, 
   t.undoBegin();
   const end = t.addDecoration({ start: endAt, end: endAt }, { namespace: CONFIRM, endGravity: "after" });
   confirming = { rust: conv.rust, group: conv.group, rep, global, end, at: pos(range.first, 0), match: null, lastChanged: -1 };
-  cmd.switchMode("vim/confirm");
+  action.switchMode("vim/confirm");
   if (!nextMatch()) finishConfirm();
 }
 
@@ -283,7 +283,7 @@ function nextMatch(): boolean {
   c.match = m;
   t.addDecoration(m.range, { style: "IncSearch", namespace: CONFIRM + "-match" });
   t.setCursor(m.range.start);
-  cmd.message(`replace with ${c.rep} (y/n/a/q/l/^E/^Y)?`);
+  action.message(`replace with ${c.rep} (y/n/a/q/l/^E/^Y)?`);
   return true;
 }
 
@@ -319,14 +319,14 @@ function finishConfirm(): void {
   t.clearNamespace(CONFIRM);
   t.clearNamespace(CONFIRM + "-match");
   t.undoEnd();
-  if (cmd.currentMode() === "vim/confirm") cmd.exitMode();
+  if (action.currentMode() === "vim/confirm") action.exitMode();
   if (c.lastChanged >= 0) t.setCursor(firstNonBlank(Math.min(lastLine(), c.lastChanged)));
 }
 
 /** A key answering :s///c. */
 export function confirmKey(key: KeyInfo): void {
   if (confirming === null) {
-    if (cmd.currentMode() === "vim/confirm") cmd.exitMode();
+    if (action.currentMode() === "vim/confirm") action.exitMode();
     return;
   }
   switch (key.keys) {
@@ -423,11 +423,11 @@ export function ex(input: string): void {
     return;
   }
   if (is("w", "write")) {
-    cmd.write(arg === "" ? { force: bang } : { path: arg, force: bang });
+    action.write(arg === "" ? { force: bang } : { path: arg, force: bang });
     return;
   }
   if (is("wq", "wq") || is("x", "xit") || is("exi", "exit")) {
-    if (!is("x", "xit") || t.info().modified) cmd.write(arg === "" ? { force: bang } : { path: arg, force: bang });
+    if (!is("x", "xit") || t.info().modified) action.write(arg === "" ? { force: bang } : { path: arg, force: bang });
     quit(bang);
     return;
   }
@@ -437,9 +437,9 @@ export function ex(input: string): void {
   }
   if (is("e", "edit")) {
     if (arg !== "") {
-      cmd.openFile(arg, { pane: cmd.focusedPane() ?? undefined });
+      action.openFile(arg, { pane: action.focusedPane() ?? undefined });
     } else if (bang || !t.info().modified) {
-      cmd.reload();
+      action.reload();
     } else {
       throw new Error("E37: No write since last change (add ! to override)");
     }
@@ -450,21 +450,21 @@ export function ex(input: string): void {
     return;
   }
   if (is("new", "new") || is("vne", "vnew")) {
-    splitPane(is("vne", "vnew"), cmd.newBuffer(), arg);
+    splitPane(is("vne", "vnew"), action.newBuffer(), arg);
     return;
   }
   if (is("ene", "enew")) {
-    cmd.showBuffer(cmd.newBuffer(), cmd.focusedPane() ?? undefined);
+    action.showBuffer(action.newBuffer(), action.focusedPane() ?? undefined);
     return;
   }
   if (is("clo", "close")) {
     if (workPanes().length <= 1) throw new Error("E444: Cannot close last window");
-    cmd.closePane();
+    action.closePane();
     return;
   }
   if (is("on", "only")) {
-    const me = cmd.focusedPane();
-    for (const p of workPanes()) if (p.id !== me) cmd.closePane(p.id);
+    const me = action.focusedPane();
+    for (const p of workPanes()) if (p.id !== me) action.closePane(p.id);
     return;
   }
   if (is("bn", "bnext") || is("bp", "bprevious") || is("bN", "bNext")) {
@@ -473,11 +473,11 @@ export function ex(input: string): void {
   }
   if (is("b", "buffer")) {
     if (arg === "" && range === null) return;
-    cmd.showBuffer(bufferNamed(arg === "" ? String(range!.last + 1) : arg), cmd.focusedPane() ?? undefined);
+    action.showBuffer(bufferNamed(arg === "" ? String(range!.last + 1) : arg), action.focusedPane() ?? undefined);
     return;
   }
   if (is("ls", "ls") || is("buffers", "buffers") || is("files", "files")) {
-    cmd.message(listBuffers());
+    action.message(listBuffers());
     return;
   }
   if (is("bd", "bdelete")) {
@@ -485,21 +485,21 @@ export function ex(input: string): void {
     return;
   }
   if (is("tabnew", "tabnew") || is("tabe", "tabedit")) {
-    cmd.newTab(arg === "" ? { buffer: cmd.newBuffer() } : { file: arg });
+    action.newTab(arg === "" ? { buffer: action.newBuffer() } : { file: arg });
     return;
   }
   if (is("tabn", "tabnext")) {
-    if (arg === "") cmd.nextTab();
-    else cmd.gotoTab(Number(arg));
+    if (arg === "") action.nextTab();
+    else action.gotoTab(Number(arg));
     return;
   }
   if (is("tabp", "tabprevious") || is("tabN", "tabNext")) {
-    cmd.prevTab();
+    action.prevTab();
     return;
   }
   if (is("tabc", "tabclose")) {
-    if (cmd.tabs().length <= 1) throw new Error("E784: Cannot close last tab page");
-    cmd.closeTab();
+    if (action.tabs().length <= 1) throw new Error("E784: Cannot close last tab page");
+    action.closeTab();
     return;
   }
   if (is("tabo", "tabonly")) {
@@ -511,16 +511,16 @@ export function ex(input: string): void {
     return;
   }
   if (is("qa", "qall") || is("quita", "quitall")) {
-    cmd.killSession({ force: bang });
+    action.killSession({ force: bang });
     return;
   }
   if (is("wqa", "wqall") || is("xa", "xall")) {
     writeAll();
-    cmd.killSession({ force: bang });
+    action.killSession({ force: bang });
     return;
   }
   if (is("marks", "marks")) {
-    cmd.message(listMarks());
+    action.message(listMarks());
     return;
   }
   if (is("delm", "delmarks")) {

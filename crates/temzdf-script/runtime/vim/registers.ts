@@ -7,7 +7,7 @@
 //   a-z     named registers (A-Z append)
 //   + *     the system clipboard (read asynchronously: see normal.ts)
 //   _       nothing is stored
-import { cmd, type Copied } from "temzdf";
+import { action, type Copied } from "temzdf";
 
 export type Kind = "char" | "line" | "block";
 
@@ -29,20 +29,20 @@ export function isClipboard(name: string | null): boolean {
 /** A register's content (not the clipboard's: see `isClipboard`). */
 export function get(name: string | null): Register | undefined {
   const n = name ?? '"';
-  if (n === '"') return reg(cmd.history({ limit: 1 })[0]);
+  if (n === '"') return reg(action.history({ limit: 1 })[0]);
   if (n === "_") return undefined;
-  if (n === "0") return reg(cmd.history().find((e) => e.how === "copy" && plain(e)));
+  if (n === "0") return reg(action.history().find((e) => e.how === "copy" && plain(e)));
   if (/^[1-9]$/.test(n)) {
-    return reg(cmd.history().filter((e) => e.how === "delete" && plain(e) && multiLine(e))[Number(n) - 1]);
+    return reg(action.history().filter((e) => e.how === "delete" && plain(e) && multiLine(e))[Number(n) - 1]);
   }
-  if (n === "-") return reg(cmd.history().find((e) => e.how === "delete" && plain(e) && !multiLine(e)));
-  return reg(cmd.register(n.toLowerCase()));
+  if (n === "-") return reg(action.history().find((e) => e.how === "delete" && plain(e) && !multiLine(e)));
+  return reg(action.register(n.toLowerCase()));
 }
 
 /** What the clipboard's `text` is: the kind it was copied as here, else
  * lines when it ends with a line break (as Vim). */
 export function fromClipboard(text: string): Register {
-  const known = cmd.history().find((e) => e.text === text);
+  const known = action.history().find((e) => e.text === text);
   if (known !== undefined) return { text, kind: known.kind };
   return { text, kind: text.endsWith("\n") ? "line" : "char" };
 }
@@ -52,14 +52,14 @@ export function store(name: string | null, r: Register, how: "yank" | "delete"):
   if (name === "_") return;
   const opts = { kind: r.kind, how: how === "yank" ? ("copy" as const) : ("delete" as const) };
   if (name !== null && /^[A-Z]$/.test(name)) {
-    cmd.copyText(r.text, { ...opts, register: name.toLowerCase(), append: true });
+    action.copyText(r.text, { ...opts, register: name.toLowerCase(), append: true });
   } else if (name !== null && /^[a-z]$/.test(name)) {
-    cmd.copyText(r.text, { ...opts, register: name });
+    action.copyText(r.text, { ...opts, register: name });
   } else if (isClipboard(name)) {
-    cmd.copyText(r.text, { ...opts, clipboard: true });
+    action.copyText(r.text, { ...opts, clipboard: true });
   } else {
     // ", or a numbered one named: as the unnamed register.
-    cmd.copyText(r.text, opts);
+    action.copyText(r.text, opts);
   }
 }
 

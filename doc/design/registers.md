@@ -55,7 +55,7 @@ terminal pane pipes into it (`temzdf copy`). Decided with the user on
   attached. Inside tmux the query goes to tmux, not through passthrough
   (tmux answers it as its `set-clipboard` says). Not yet tried in real
   terminals (kitty, Ghostty, WezTerm, tmux): see todo.md. Scripts get a Promise
-  (`await ctx.cmd.readClipboard()` in a dispatched task); it is built
+  (`await ctx.action.readClipboard()` in a dispatched task); it is built
   **(user)**, so the Vim mode's `"+p` reads the real clipboard.
 - What other applications copy is not seen until read; it does not enter
   the history by itself.
@@ -76,7 +76,7 @@ terminal pane pipes into it (`temzdf copy`). Decided with the user on
 - A command may answer with a Promise: the server replies
   `{ "$promise": n }` and later sends `ToHost::Resolve`; the prelude turns
   it into a Promise. Its continuation has no context of its own, so it is
-  awaited in a dispatched task; inside `ctx.atomic(fn)` the plain `cmd`
+  awaited in a dispatched task; inside `ctx.atomic(fn)` the plain `action`
   works too (it issues under the task's token), which lets shared code
   (the Vim mode's put) run there unchanged.
 

@@ -12,7 +12,7 @@
 //   < >     the last visual selection (state.lastVisual)
 // The jump list is per pane (the pane variable `vim.jumps`): what G, gg,
 // searches, marks and such left, <C-o> back and <C-i> forward.
-import { cmd } from "temzdf";
+import { action } from "temzdf";
 import type { Position } from "temzdf";
 import { state } from "./state";
 import { clampNormal, cmp, cursor, lastLine, pos, setCursor, t } from "./util";
@@ -38,7 +38,7 @@ function buffer(): number {
 }
 
 function marksOf(buf?: number): Marks {
-  const v = cmd.getVar("buffer", MARKS, buf);
+  const v = action.getVar("buffer", MARKS, buf);
   return v !== null && typeof v === "object" ? (v as Marks) : {};
 }
 
@@ -68,19 +68,19 @@ export function setMark(name: string, p: Position = cursor()): void {
   const buf = buffer();
   if (/^[A-Z]$/.test(key)) {
     // One in the session: out of the buffer that had it.
-    for (const b of cmd.buffers()) {
+    for (const b of action.buffers()) {
       if (b.id === buf) continue;
       const m = marksOf(b.id);
       if (key in m) {
         delete m[key];
-        cmd.setVar("buffer", MARKS, m, b.id);
+        action.setVar("buffer", MARKS, m, b.id);
       }
     }
   }
   const m = marksOf(buf);
   if (key in m) forget(m[key]);
   m[key] = newMark(p);
-  cmd.setVar("buffer", MARKS, m, buf);
+  action.setVar("buffer", MARKS, m, buf);
 }
 
 /** The marks the editing commands set: the last change's ([ ] .) or a
@@ -110,13 +110,13 @@ export function markPos(name: string, show = false): Position | null {
   const here = marksOf();
   if (key in here) return where(here[key]);
   if (!/^[A-Z]$/.test(key)) return null;
-  for (const b of cmd.buffers()) {
+  for (const b of action.buffers()) {
     const m = marksOf(b.id);
     if (!(key in m)) continue;
     if (!show) return null;
     // A jump to another buffer: the jump list keeps where it left.
     recordJump(cursor());
-    cmd.showBuffer(b.id, cmd.focusedPane() ?? undefined);
+    action.showBuffer(b.id, action.focusedPane() ?? undefined);
     return where(m[key]);
   }
   return null;
@@ -147,16 +147,16 @@ export function deleteMarks(arg: string, all: boolean): void {
       forget(m[key]);
       delete m[key];
     } else if (/^[A-Z]$/.test(key)) {
-      for (const b of cmd.buffers()) {
+      for (const b of action.buffers()) {
         const other = marksOf(b.id);
         if (key in other) {
           delete other[key];
-          cmd.setVar("buffer", MARKS, other, b.id);
+          action.setVar("buffer", MARKS, other, b.id);
         }
       }
     }
   }
-  cmd.setVar("buffer", MARKS, m, buffer());
+  action.setVar("buffer", MARKS, m, buffer());
 }
 
 /** :marks: the marks set, as Vim lists them. */
@@ -171,7 +171,7 @@ export function listMarks(): string {
   const order = "'abcdefghijklmnopqrstuvwxyz";
   for (const k of order) if (k in m) add(k, where(m[k]));
   const here = buffer();
-  for (const b of cmd.buffers()) {
+  for (const b of action.buffers()) {
     const other = marksOf(b.id);
     for (const k of Object.keys(other).filter((x) => /^[A-Z]$/.test(x)).sort()) {
       if (b.id === here) add(k, where(other[k]));
@@ -186,13 +186,13 @@ export function listMarks(): string {
 // The jump list.
 
 function jumpsOf(): Jumps {
-  const v = cmd.getVar("pane", JUMPS);
+  const v = action.getVar("pane", JUMPS);
   if (v !== null && typeof v === "object" && Array.isArray((v as Jumps).list)) return v as Jumps;
   return { list: [], index: 0 };
 }
 
 function saveJumps(j: Jumps): void {
-  cmd.setVar("pane", JUMPS, j);
+  action.setVar("pane", JUMPS, j);
 }
 
 /** Put position `p` of this buffer at the end of the jump list (others on
@@ -243,8 +243,8 @@ export function jump(delta: number): void {
     }
     const e = j.list[i];
     if (e.buffer !== buffer()) {
-      if (!cmd.buffers().some((b) => b.id === e.buffer)) continue;
-      cmd.showBuffer(e.buffer, cmd.focusedPane() ?? undefined);
+      if (!action.buffers().some((b) => b.id === e.buffer)) continue;
+      action.showBuffer(e.buffer, action.focusedPane() ?? undefined);
     }
     const p = where(e.id);
     if (p === null) continue;

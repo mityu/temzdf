@@ -8,7 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use temzdf_protocol::script::{CommandSpec, FromHost, HostOp, MapRhs, ScriptValue, ToHost};
+use temzdf_protocol::script::{CommandSpec, FromHost, HostOp, ScriptValue, ToHost};
 use temzdf_script_runner::{Event, Options, ScriptHost};
 
 #[path = "../../temzdf-script/tests/host/cases.rs"]
@@ -134,7 +134,7 @@ fn until_answer(host: &ScriptHost, rx: &mpsc::Receiver<Event>, maps: &mut Vec<(u
     loop {
         match rx.recv_timeout(Duration::from_secs(10)).expect("no answer") {
             Event::Msg(FromHost::Request { req, op, .. }) => {
-                if let HostOp::Map { keys, rhs: MapRhs::Func(f), .. } = op
+                if let HostOp::Map { keys, func: f, .. } = op
                     && let Some(k) = keys.strip_prefix('k').and_then(|k| k.parse().ok())
                 {
                     maps.push((k, f));
@@ -152,10 +152,10 @@ fn until_answer(host: &ScriptHost, rx: &mpsc::Receiver<Event>, maps: &mut Vec<(u
 fn keys_and_startup() {
     let dir = std::env::temp_dir().join(format!("temzdf-guest-timing-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let mut config = String::from("import { cmd, keymap } from \"temzdf\";\n");
+    let mut config = String::from("import { action, keymap } from \"temzdf\";\n");
     for k in KS {
         config += &format!(
-            "keymap.add(\"normal\", \"k{k}\", () => {{ for (let i = 0; i < {k}; i++) cmd.message(\"\"); }});\n"
+            "keymap.add(\"normal\", \"k{k}\", () => {{ for (let i = 0; i < {k}; i++) action.message(\"\"); }});\n"
         );
     }
     std::fs::write(dir.join("config.js"), config).unwrap();

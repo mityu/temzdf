@@ -1,6 +1,6 @@
 // The normal mode's commands, and how motions run: moving the cursor, or
 // the range of a pending operator, or the visual selection's end.
-import { cmd, dispatch } from "temzdf";
+import { action, dispatch } from "temzdf";
 import type { KeyInfo, Position } from "temzdf";
 import { endInsert, startInsert } from "./insert";
 import { recordJump } from "./marks";
@@ -31,7 +31,7 @@ const TRANSIENT = new Set(["vim/pending", "vim/char", "vim/register", "vim/cmdli
 
 /** Leave the transient modes back to the mode below them. */
 export function leaveTransient(): void {
-  for (let i = 0; i < 4 && TRANSIENT.has(cmd.currentMode()); i++) cmd.exitMode();
+  for (let i = 0; i < 4 && TRANSIENT.has(action.currentMode()); i++) action.exitMode();
 }
 
 /** Two counts given around an operator multiply; none given: null. */
@@ -112,7 +112,7 @@ export function runMotion(key: string, fn: MotionFn, count: number | null): void
     const m = f(cursor(), total);
     if (m === null) {
       // A motion that fails stops a macro (Vim's beep).
-      cmd.beep();
+      action.beep();
       return;
     }
     operator(p.op, m, p.register, (c) => f(cursor(), c ?? total), total);
@@ -122,7 +122,7 @@ export function runMotion(key: string, fn: MotionFn, count: number | null): void
   const buf = JUMPS.has(key) ? t.info().buffer : null;
   const m = fn(before, count);
   if (m === null) {
-    cmd.beep();
+    action.beep();
     return;
   }
   // A jump (G, gg, %, a mark, ...) within the buffer goes into the jump
@@ -182,7 +182,7 @@ export function startOperator(op: Operator, count: number | null): void {
     return;
   }
   state.pending = { op, count, register: takeRegister() };
-  cmd.switchMode("vim/pending");
+  action.switchMode("vim/pending");
 }
 
 /** The operator's key again (dd, cc, yy, >>, g~~): the cursor's line and
@@ -416,7 +416,7 @@ export function putRegister(after: boolean, count: number | null): void {
   if (registers.isClipboard(name)) {
     // The client's clipboard comes later: put it then, as one change.
     dispatch(async (ctx) => {
-      const text = await ctx.cmd.readClipboard({ primary: name === "*" });
+      const text = await ctx.action.readClipboard({ primary: name === "*" });
       ctx.atomic(() => {
         if (text === "") throw new Error(`E353: Nothing in register ${name}`);
         putWith(registers.fromClipboard(text), after, count);

@@ -1,10 +1,10 @@
 // Positions and the text, through the framework's primitives
 // (doc/design/text-editor.md). Vim's cursor is *on* a character: here, the
 // character after the framework's cursor (which sits between characters).
-import { cmd } from "temzdf";
+import { action } from "temzdf";
 import type { Position, Range } from "temzdf";
 
-export const t = cmd.text;
+export const t = action.text;
 
 export const pos = (line: number, character: number): Position => ({ line, character });
 

@@ -89,11 +89,15 @@ pub struct ScriptError {
     /// The JavaScript stack, positions in the source as written (type
     /// stripping keeps them).
     pub stack: Option<String>,
+    /// A command failed and nothing caught its error: `message` is the
+    /// command's, shown as it would be without a script.
+    #[serde(default)]
+    pub command: bool,
 }
 
 impl ScriptError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into(), stack: None }
+        Self { message: message.into(), stack: None, command: false }
     }
 }
 
@@ -217,7 +221,8 @@ pub enum HostOp {
     Map {
         modes: Vec<String>,
         keys: String,
-        rhs: MapRhs,
+        /// The mapped function.
+        func: FuncId,
         nowait: bool,
         desc: Option<String>,
         when: Option<FuncId>,
@@ -270,14 +275,6 @@ pub enum Keepalive {
     Func(FuncId),
 }
 
-/// What a mapping runs.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum MapRhs {
-    Func(FuncId),
-    /// Commands by name with their arguments, run by the session itself.
-    Actions(Vec<(String, Vec<ScriptValue>)>),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,13 +305,13 @@ mod tests {
         });
         round_trip(&FromHost::Done {
             id: 7,
-            result: Err(ScriptError { message: "boom".into(), stack: Some("at f".into()) }),
+            result: Err(ScriptError { message: "boom".into(), stack: Some("at f".into()), command: false }),
         });
         round_trip(&ToHost::Reply { req: 1, result: Ok(v) });
         round_trip(&ToHost::Eval { id: 8, funcs: vec![3, 4], args: vec![] });
         round_trip(&FromHost::Values {
             id: 8,
-            results: vec![Ok(true), Err(ScriptError { message: "x".into(), stack: None })],
+            results: vec![Ok(true), Err(ScriptError { message: "x".into(), stack: None, command: true })],
         });
         round_trip(&FromHost::Request {
             req: 2,
@@ -322,7 +319,7 @@ mod tests {
             op: HostOp::Map {
                 modes: vec!["normal".into()],
                 keys: "<Tab>".into(),
-                rhs: MapRhs::Func(1),
+                func: 1,
                 nowait: false,
                 desc: None,
                 when: Some(2),

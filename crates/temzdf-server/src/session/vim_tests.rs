@@ -240,18 +240,18 @@ fn run(case: &Case, dir: &Path) -> Result<(), String> {
         ("line", ScriptValue::Num(cursor.0 as f64)),
         ("character", ScriptValue::Num(cursor.1 as f64)),
     ]);
-    s.run_command("text.set-cursor", &[pos], None, Instant::now())?;
+    s.run_command("text.set-cursor", &[pos], Instant::now())?;
     for (kind, text) in &case.copies {
         let opts = ScriptValue::map([("kind", ScriptValue::Str(kind.clone()))]);
-        s.run_command("copy-text", &[ScriptValue::Str(text.clone()), opts], None, Instant::now())?;
+        s.run_command("copy-text", &[ScriptValue::Str(text.clone()), opts], Instant::now())?;
     }
     let text_pane = s.focus;
     let mut seen = errors(&s);
     seen.extend(type_keys(&mut s, &rx, &case.keys, case.clipboard.as_deref())?);
     // The text pane the case began in (a command line may be open below).
     let opts = ScriptValue::map([("pane", ScriptValue::Num(text_pane as f64))]);
-    let got_text = s.run_command("text.get-text", &[ScriptValue::Null, opts.clone()], None, Instant::now())?.0;
-    let c = s.run_command("text.cursor", &[opts], None, Instant::now())?.0;
+    let got_text = s.run_command("text.get-text", &[ScriptValue::Null, opts.clone()], Instant::now())?.0;
+    let c = s.run_command("text.cursor", &[opts], Instant::now())?.0;
     let n = |k: &str| c.get(k).and_then(ScriptValue::as_num).unwrap_or(0.0) as usize;
     let got = mark(got_text.as_str().unwrap_or(""), (n("line"), n("character")));
     let mut errors = Vec::new();
@@ -345,10 +345,10 @@ fn ex_commands_split_switch_and_close_panes_buffers_and_tabs() {
     let (mut s, rx) = vim_session(&dir, "one\n").unwrap();
     let ex = |s: &mut Session, line: &str| type_keys(s, &rx, &format!(":{line}<CR>"), None).unwrap();
     let shown = |s: &mut Session| {
-        let info = s.run_command("text.info", &[], None, Instant::now()).unwrap().0;
+        let info = s.run_command("text.info", &[], Instant::now()).unwrap().0;
         info.get("name").and_then(ScriptValue::as_str).unwrap_or_default().to_owned()
     };
-    let buffer_count = |s: &mut Session| match s.run_command("buffers", &[], None, Instant::now()).unwrap().0 {
+    let buffer_count = |s: &mut Session| match s.run_command("buffers", &[], Instant::now()).unwrap().0 {
         ScriptValue::List(l) => l.iter().filter(|b| b.get("kind") != Some(&ScriptValue::Str("input".into()))).count(),
         _ => 0,
     };
@@ -430,7 +430,7 @@ fn editors_are_enabled_and_disabled_while_running() {
     assert_eq!(ns(&mut s, "builtin-edit-vim"), 0);
     assert!(!s.script.hooks_on("ModeChanged"), "its hook went");
     type_keys(&mut s, &rx, "x<Right>y", None).unwrap();
-    let text = s.run_command("text.get-text", &[], None, Instant::now()).unwrap().0;
+    let text = s.run_command("text.get-text", &[], Instant::now()).unwrap().0;
     assert_eq!(text, ScriptValue::Str("xayb\n".into()));
     // Vim again: once only, however often enabled.
     type_keys(&mut s, &rx, "<F2>", None).unwrap();
@@ -484,7 +484,7 @@ fn a_gone_sessions_swap_file_is_asked_about_as_neovim_does() {
     assert_eq!(s.history.current(), "swap-choice");
     // R: the text not saved comes back, and its own swap file is the next name.
     type_keys(&mut s, &rx, "r", None).unwrap();
-    let text = s.run_command("text.get-text", &[], None, Instant::now()).unwrap().0;
+    let text = s.run_command("text.get-text", &[], Instant::now()).unwrap().0;
     assert_eq!(text, ScriptValue::Str("lost base\n".into()));
     assert!(names[1].exists(), "its own swap file");
     assert!(names[0].exists(), "the old one stays until deleted");
