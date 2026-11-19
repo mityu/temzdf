@@ -237,6 +237,29 @@ keymap.clear();
 }
 
 #[test]
+fn malformed_mappings_are_refused() {
+    let config = r#"
+import { action, keymap } from "temzdf";
+const tries: [string, () => void][] = [
+  ["priority", () => keymap.add("normal", "a", () => {}, { priority: 1.5 })],
+  ["modes", () => keymap.add(42 as any, "b", () => {})],
+  ["mode list", () => keymap.add(["normal", 1] as any, "c", () => {})],
+];
+for (const [what, f] of tries) {
+  try { f(); action.message(`${what} taken`); } catch (e) { action.message(`${what} refused`); }
+}
+"#;
+    let mut s = Session::start(&[("config.ts", config)]);
+    s.load("config.ts");
+    let mut log = Vec::new();
+    ready_ok(s.serve(&mut log));
+    assert_eq!(
+        log,
+        ["load message(priority refused)", "load message(modes refused)", "load message(mode list refused)"]
+    );
+}
+
+#[test]
 fn namespaced_commands_are_objects_of_their_own() {
     let config = r#"
 import { action, keymap } from "temzdf";

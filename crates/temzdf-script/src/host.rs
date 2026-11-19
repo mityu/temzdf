@@ -421,16 +421,42 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
             },
             timeout: payload.get("timeout").and_then(|v| v.as_f64()),
         },
-        "map" => HostOp::Map {
-            modes: strings(&payload, "modes"),
-            keys: text("keys"),
-            func: payload.get("func").and_then(|v| v.as_u64()).unwrap_or(0) as FuncId,
-            nowait: payload.get("nowait").and_then(|v| v.as_bool()).unwrap_or(false),
-            desc: payload.get("desc").and_then(|v| v.as_str()).map(str::to_owned),
-            when: payload.get("when").and_then(|v| v.as_u64()).map(|f| f as FuncId),
-            namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
-            priority: payload.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-        },
+        "map" => {
+            // What the prelude sends; anything else is refused, not mapped
+            // to function 0 or to no mode.
+            let modes = match payload.get("modes") {
+                Some(serde_json::Value::String(s)) => vec![s.clone()],
+                Some(serde_json::Value::Array(a)) if a.iter().all(serde_json::Value::is_string) => {
+                    strings(&payload, "modes")
+                }
+                other => {
+                    return throw(&format!(
+                        "keymap.add: modes {} is not a mode or a list of modes",
+                        other.unwrap_or(&serde_json::Value::Null)
+                    ));
+                }
+            };
+            let Some(func) = payload.get("func").and_then(|v| v.as_u64()) else {
+                return throw("keymap.add: no function");
+            };
+            let priority = match payload.get("priority") {
+                None | Some(serde_json::Value::Null) => 0,
+                Some(v) => match v.as_i64().and_then(|p| i32::try_from(p).ok()) {
+                    Some(p) => p,
+                    None => return throw(&format!("keymap.add: priority {v} is not a whole number")),
+                },
+            };
+            HostOp::Map {
+                modes,
+                keys: text("keys"),
+                func: func as FuncId,
+                nowait: payload.get("nowait").and_then(|v| v.as_bool()).unwrap_or(false),
+                desc: payload.get("desc").and_then(|v| v.as_str()).map(str::to_owned),
+                when: payload.get("when").and_then(|v| v.as_u64()).map(|f| f as FuncId),
+                namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
+                priority,
+            }
+        }
         "unmap" => HostOp::Unmap {
             modes: strings(&payload, "modes"),
             keys: text("keys"),
