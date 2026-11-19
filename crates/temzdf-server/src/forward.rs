@@ -23,8 +23,12 @@ pub struct ForwardRequest {
 }
 
 impl ForwardRequest {
-    /// Parse `LINE[:COLUMN]:FILE` (the file may itself contain colons).
+    /// Parse `LINE[:COLUMN]:FILE` (the file may itself contain colons, not
+    /// a line break: the request is one line).
     pub fn parse_spec(spec: &str) -> Option<Self> {
+        if spec.contains(['\n', '\r']) {
+            return None;
+        }
         let (line, rest) = spec.split_once(':')?;
         let line = line.parse().ok()?;
         let (column, file) = match rest.split_once(':') {
@@ -166,6 +170,7 @@ mod tests {
         assert_eq!((r.line, r.column, r.file.to_str().unwrap()), (12, 5, "/a/b:c.tex"));
         assert!(ForwardRequest::parse_spec("x:main.tex").is_none());
         assert!(ForwardRequest::parse_spec("3:").is_none());
+        assert!(ForwardRequest::parse_spec("3:a\nb.tex").is_none(), "a line break would cut the request");
         let req = ForwardRequest { file: "a b.tex".into(), line: 3, column: 1 };
         assert_eq!(ForwardRequest::decode(&req.encode()), Some(req));
     }

@@ -115,6 +115,15 @@ server on one `Session`). Next and open:
   editor is called (a function instead of `o.synctexeditor`).
   `temzdf --forward` keeps working without scripts (decision 27 in
   `doc/design/scripting.md`). Not urgent (the user, 2026-11-17).
+- How `temzdf --forward` finds its viewer (2026-11-19). Today it connects
+  to the per-PDF socket of whichever session opened the file first
+  (`crates/temzdf-server/src/forward.rs`). That socket serves one
+  connection at a time and waits up to 2 s for each request, and the
+  client too waits 2 s for its answer: a connection that sends nothing
+  (a stray `nc`, a crashed client) makes a forward search behind it fail.
+  Open question: lengthen the client's wait or serve each connection on
+  its own, or rather name the session to search in (the user's idea)
+  instead of finding one by the file.
 - Terminal panes' scrollback limit in lines, as a setting (like Neovim's
   `'scrollback'`). Now it is a byte limit, `SCROLLBACK_BYTES` in
   `crates/temzdf-term/src/lib.rs` (10 MB: about 13,600 rows at 80 columns,
