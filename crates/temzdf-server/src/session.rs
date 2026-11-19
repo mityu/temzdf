@@ -5477,6 +5477,24 @@ mod tests {
         let frame = painted(&mut s);
         assert!(frame.layers.iter().all(|l| (l.src.w, l.dst.w) == (900, 900)), "{:?}", frame.layers);
         assert_eq!(s.md_graphics(s.focus).unwrap().0.viewport.offset().0, 0.0);
+        // Search marks are images as large as shown: a pinch makes new
+        // sizes at each step, and they do not pile up.
+        run(&mut s, "search-for", &[str("Section")]).unwrap();
+        let at = {
+            let (p, page) = s.md_graphics(s.focus).unwrap();
+            let scroll = p.scroll();
+            let r = *page.find("Section").iter().find(|r| r.y0 >= scroll).unwrap();
+            (((r.x0 + r.x1) / 2.0) as i32, ((r.y0 + r.y1) / 2.0 - scroll) as i32)
+        };
+        let images = s.images().len();
+        pinch(&mut s, 0, PinchPhase::Begin, at);
+        for _ in 0..400 {
+            pinch(&mut s, 54, PinchPhase::Change, at);
+            let marks = s.frame().layers.iter().filter(|l| l.z == 1).count();
+            assert!(marks > 0);
+        }
+        assert!(s.images().len() < images + 300, "{} images, {images} before", s.images().len());
+        pinch(&mut s, 0, PinchPhase::End, at);
     }
 
     #[test]
@@ -5616,6 +5634,18 @@ mod tests {
         assert!(marks >= 1, "marked");
         assert!(top(&mut s) >= section(12), "from where it was");
         assert_eq!(run(&mut s, "markdown.search-next", &[]).unwrap().0, ScriptValue::Bool(true));
+        // Laid out again (a zoom): the marks are on the new page's words.
+        run(&mut s, "markdown.zoom", &[str("in")]).unwrap();
+        let frame = s.frame();
+        let scroll = s.md_graphics(s.focus).unwrap().0.scroll();
+        let hits = s.md_docs[&md].pages[0].find("Section 1");
+        let marks: Vec<_> = frame.layers.iter().filter(|l| l.z == 1).collect();
+        assert!(!marks.is_empty());
+        for l in marks {
+            let on_a_hit =
+                hits.iter().any(|r| (r.x0.floor() as i32, (r.y0 - scroll).floor() as i32) == (l.dst.x, l.dst.y));
+            assert!(on_a_hit, "a mark at {:?}, off the words: {hits:?}", l.dst);
+        }
         run(&mut s, "search-cancel", &[]).unwrap();
         assert_eq!(s.frame().layers.iter().filter(|l| l.z == 1).count(), 0);
         // Back to text, at the same place.

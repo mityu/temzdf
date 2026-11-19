@@ -59,8 +59,12 @@ struct Selection {
 #[derive(Clone, Debug, Default)]
 pub struct Search {
     pub query: String,
+    /// Where the hits are, on the page searched (`page`).
     pub hits: Vec<Rect>,
     pub current: Option<usize>,
+    /// The page the hits are on: one laid out since (a zoom, a new width,
+    /// the file changed) is searched again.
+    page: Option<PageId>,
     /// The scroll position before a preview moved it.
     from: Option<f64>,
 }
@@ -434,7 +438,7 @@ impl MdPane {
         let from = *self.search.from.get_or_insert(self.destination());
         let hits = page.find(query);
         let current = hits.iter().position(|r| r.y0 >= from).or((!hits.is_empty()).then_some(0));
-        self.search = Search { query: query.to_owned(), hits, current, from: Some(from) };
+        self.search = Search { query: query.to_owned(), hits, current, from: Some(from), page: Some(page.id) };
         match current {
             Some(i) => self.reveal(page, i),
             None => self.scroll_to(page, from),
@@ -443,7 +447,7 @@ impl MdPane {
     }
 
     /// Back to where the search began, its marks gone (their images go
-    /// with `release`, or the next search).
+    /// with `release`, or once many piled up).
     pub fn search_cancel(&mut self, page: &Page) {
         if let Some(from) = self.search.from {
             self.scroll_to(page, from);
@@ -451,8 +455,36 @@ impl MdPane {
         self.search = Search::default();
     }
 
+    /// The search's hits on `page`: found again on a page laid out since
+    /// the search (the current hit stays the same one, by its number).
+    fn follow_search(&mut self, page: &Page) {
+        if self.search.page.is_some_and(|p| p != page.id) {
+            let hits = page.find(&self.search.query);
+            self.search.current = self.search.current.filter(|&i| i < hits.len());
+            self.search.hits = hits;
+            self.search.page = Some(page.id);
+        }
+    }
+
+    /// Drop the marks' and the selection's images when they pile up (a
+    /// pinch makes new sizes each step): before a frame, so none it shows
+    /// goes.
+    fn trim_images(&mut self, images: &mut Images) {
+        if self.marks.len() > 256 {
+            for (_, k) in self.marks.drain() {
+                images.remove(k);
+            }
+        }
+        if self.selection_images.len() > 256 {
+            for (_, k) in self.selection_images.drain() {
+                images.remove(k);
+            }
+        }
+    }
+
     /// The next hit (`dir` > 0) or the one before; around the ends.
     pub fn search_next(&mut self, page: &Page, dir: i32) -> bool {
+        self.follow_search(page);
         let n = self.search.hits.len();
         if n == 0 {
             return false;
@@ -489,6 +521,8 @@ impl MdPane {
         tag: u32,
         images: &mut Images,
     ) -> (Frame, Vec<Want<StripJob>>) {
+        self.follow_search(page);
+        self.trim_images(images);
         if self.magnify != 1.0 {
             return self.frame_magnified(view, page, strips, tag, images);
         }
@@ -569,11 +603,6 @@ impl MdPane {
     /// The selection's box `i` at `dst` (pane pixels).
     fn selection_layer(&mut self, i: usize, dst: SceneRect, images: &mut Images) -> Layer {
         let (w, h) = (dst.w, dst.h);
-        if self.selection_images.len() > 256 {
-            for (_, k) in self.selection_images.drain() {
-                images.remove(k);
-            }
-        }
         let image = *self
             .selection_images
             .entry((w, h))
