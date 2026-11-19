@@ -573,10 +573,12 @@ impl Session {
             "focus-pane" => {
                 let pane = id(0).ok_or("focusPane: which pane?")?;
                 let tab = self.tab_of(pane).ok_or_else(|| format!("focusPane: no pane {pane}"))?;
-                self.enter_tab(tab);
-                if self.is_float(pane) && !self.shown_floats().iter().any(|f| f.pane == pane) {
+                // Refused before going to its tab page (else a failed call
+                // would have changed tabs).
+                if self.is_float(pane) && self.tab_floats_hidden(tab) {
                     return Err(format!("focusPane: pane {pane} is a hidden float"));
                 }
+                self.enter_tab(tab);
                 self.set_focus(pane);
                 ok(Outcome::Redraw)
             }

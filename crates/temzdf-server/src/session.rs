@@ -5024,6 +5024,9 @@ mod tests {
         assert!(shown(&s).is_empty());
         cmd(&mut s, "goto-tab", &["2"]).unwrap();
         assert_eq!(shown(&s), [second, all]);
+        // A hidden float is not focused, and its tab page stays where it is.
+        assert!(cmd(&mut s, "focus-pane", &[&own.to_string()]).is_err());
+        assert_eq!(s.tab, 1, "still on the second tab page");
         // panes() says where each pane is.
         assert_eq!(pane_info(&mut s, own).get("tab"), Some(&ScriptValue::Num(1.0)));
         assert_eq!(pane_info(&mut s, second).get("tab"), Some(&ScriptValue::Num(2.0)));
