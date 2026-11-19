@@ -35,7 +35,8 @@ the way, with the reasons.
   draft (nothing built): styled text, a minimal layout, keyed updates,
   which libraries were looked at.
 - [design/text-editor.md](design/text-editor.md): the text editor
-  framework's specification (nothing built): positions, cursor and
+  framework's specification (built in part, `crates/temzdf-texteditor`):
+  positions, cursor and
   selection, primitives, search, decorations, undo, events, what hooks may
   do, key input, base modes, files, drawing; editors such as Vim are
   scripts.
@@ -50,9 +51,9 @@ the way, with the reasons.
   history kept by the session (every pane's copies, Vim's registers as
   queries of it, the system clipboard read asynchronously, `temzdf
   copy`/`paste`).
-- [design/dot-repeat.md](design/dot-repeat.md): Vim's `.` for the future
-  text editor, a draft (nothing built): recorded as actions, units,
-  `repeat.set`, nesting.
+- [design/dot-repeat.md](design/dot-repeat.md): Vim's `.` for the text
+  editor, an earlier draft superseded in part (`.` is built in the Vim
+  script, `repeatLast`): recorded as actions, units, `repeat.set`, nesting.
 - [design/gui-client.md](design/gui-client.md): the native GUI client
   (`temzdf-gui`): the design, the decisions and how it was built.
 - [design/reload.md](design/reload.md): auto-reload (learned from Skim and

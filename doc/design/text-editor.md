@@ -121,7 +121,7 @@ Following VS Code **(user)**:
   cursor assertions are post-checks. Back references, look-around, atomic
   groups and `\&` need `fancy-regex`; the engine is picked per pattern.
 - Large buffers are searched in place with `regex-cursor` (as Helix);
-  `fancy-regex` works on lines or nearby ranges.
+  `fancy-regex` searches a copy of the whole range.
 - Building replacements (`\1`, `&`, `\u`, `\=` expressions) is the script's.
 
 ## 7. Decorations and marks
@@ -281,8 +281,8 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   equivalent of Emacs' `pre-command-hook`/`post-command-hook`. Not per
   command: a function issuing five `action.*` calls is one invocation;
   `action.*` from hooks or timers is none. They carry
-  a sequence number, what was invoked (an action value or a mapped
-  function's id), the keys, the count, the mode, the pane and the source
+  a sequence number, what was invoked (a `temzdf action` command, a
+  mapped function's id, or typed text), the keys, the count, the mode, the pane and the source
   (key, mouse, CLI, replay); `InvokePost` adds the cursor and selection
   after. `invoke(target, { count })` runs it again.
 - Unmapped keys: a key that types into an editor buffer (a prompt too) is an
@@ -447,10 +447,11 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   added by the user), held by the server, JSON values only, gone with their
   owner, surviving host restarts. Function values are deferred **(user)**
   (a split, JSON in the server and functions in the host, was considered).
-- `copy(text, { primary? })` writes the clipboard. Reading it is deferred
+- `copy(text, { primary? })` writes the clipboard. Reading it was deferred
   with asynchronous mappings **(user)**: terminals usually refuse OSC 52
-  reads and the GUI's answer is a round trip; until then `paste` inserts
-  what arrives at the cursor.
+  reads and the GUI's answer is a round trip. (2026-11-19:
+  `readClipboard({ primary? })` is a Promise awaited in a dispatched task,
+  `doc/design/registers.md`.)
 
 ## 16. Guidance for scripts
 
@@ -567,9 +568,10 @@ Decided with the user on 2026-11-07, before building:
 
 ## 19. Deferred and open
 
-- `readKey`/`input()` and asynchronous mappings; reading the clipboard;
-  function values in variables.
-- Decorations beyond highlights and virtual text; folding; `listchars`.
+- `readKey`/`input()` and asynchronous mappings; function values in
+  variables (reading the clipboard is built: `readClipboard`).
+- Folding; `listchars` (decorations have highlights, virtual text and
+  lines, conceal and images).
 - Backups, and swap files of buffers without a file (swap files and undo
   files are built: `o.swapfile`, `o.undofile`).
 - Customising the status line.

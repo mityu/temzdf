@@ -57,9 +57,10 @@ impl Action {
         Ok(Action::Split { split, before, root })
     }
 
-    /// Parse `new-pane [--cwd DIR] [FILE | -- COMMAND...]`, `split right|down`,
-    /// `move-focus left|right|up|down`, `focus-next-pane`, `close-pane` or
-    /// `detach`.
+    /// Parse `new-pane [--cwd DIR] [FILE | -- COMMAND...]`,
+    /// `split right|left|bottom|top [screen]` (`down`, `up` too),
+    /// `move-focus left|right|up|down`, `focus-next-pane`, `close-pane`,
+    /// `detach` or `reload-config`.
     pub fn parse(words: &[String]) -> Result<Self> {
         let w: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
         Ok(match w.as_slice() {
@@ -92,7 +93,8 @@ impl Action {
             ["detach"] => Action::Detach,
             ["reload-config"] => Action::ReloadConfig,
             _ => bail!(
-                "unknown action {:?}; known: new-pane [--cwd DIR] [FILE | -- COMMAND...], split right|down, \
+                "unknown action {:?}; known: new-pane [--cwd DIR] [FILE | -- COMMAND...], \
+                 split right|left|bottom|top [screen], \
                  move-focus DIRECTION, focus-next-pane, close-pane, detach, reload-config",
                 words.join(" ")
             ),

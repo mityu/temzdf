@@ -144,7 +144,8 @@ enum Cmd {
     },
     /// Run a command in a session: any command of the registry (`temzdf
     /// print-types` lists them), e.g. new-pane [FILE | -- COMMAND...], split
-    /// right|down, move-focus left|right|up|down, close-pane, detach.
+    /// right|left|down|up [screen], move-focus left|right|up|down, close-pane,
+    /// detach.
     Action {
         /// The session (the only one when left out).
         #[arg(short, long, value_name = "NAME")]

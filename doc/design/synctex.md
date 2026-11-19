@@ -19,7 +19,10 @@ FILE` names it, or `-s NAME`), sends the search once the pane listens, and
 attaches. `temzdf standalone pdf --forward ... doc.pdf` starts the standalone
 viewer in the current terminal instead.
 
-`FILE` is matched the way SyncTeX does it: as given, then by its file name.
+`FILE` is matched against the input names SyncTeX recorded: the same file
+on disk (through symlinks and `..`, ignoring case on macOS), then the same
+absolute path, then a name ending with the given path's components, then the
+same file name (`choose_input` in `crates/temzdf-pdfcore/src/synctex.rs`).
 
 A request that arrives while a reload is pending or running (the PDF just
 changed) waits until the new version is open and its SyncTeX data is re-read,
@@ -93,9 +96,11 @@ any compile hook can do the same with `temzdf --forward LINE:FILE doc.pdf`.
   safe wrapper in `crates/temzdf-pdfcore/src/synctex.rs`.
 - Queries run on a worker thread (`workers::spawn_synctex`); the `.synctex.gz`
   is parsed lazily and again after every reload.
-- The parser prints errors to stderr; in interactive mode stdout/stderr are
-  redirected to `temzdf.log` in the log directory (`doc/config.md`) so nothing scribbles over the
-  screen (`termpix::tty::StdioRedirect`).
+- The parser prints errors to stderr. It runs in the session server, whose
+  output goes to `NAME.log` in the log directory (`temzdf ls -v` shows it);
+  the standalone viewer redirects stdout/stderr to `temzdf.log` there
+  (`doc/config.md`) so nothing scribbles over the screen
+  (`termpix::tty::StdioRedirect`).
 - Tests: `synctex::tests` (forward and inverse on the fixture) and
   `tests/e2e/synctex.actions` (a second process sends a forward search to a
   running viewer; Ctrl+click runs the editor command) and

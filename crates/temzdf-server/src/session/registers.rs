@@ -24,7 +24,8 @@ pub(super) enum How {
 /// Where an entry came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Source {
-    /// A buffer's kind (`terminal`, `pdf`, `edit`, `input`), or `cli`.
+    /// The pane's kind it came from (`terminal`, `pdf`, `edit`, `markdown`),
+    /// or `script` (no pane) or `cli`.
     pub kind: String,
     pub name: String,
     pub buffer: Option<BufferId>,

@@ -216,7 +216,8 @@ server on one `Session`). Next and open:
   through a MuPDF-device-to-`vello_cpu` translation.
 - Two-page (spread) layout.
 - Markdown viewer (`doc/design/markdown-viewer.md`): built (2026-11-09:
-  text and graphics modes, links, images, search, zoom, the outline).
+  text and graphics modes, links, images, search, zoom, the outline; in the
+  graphics mode pinch zoom and, since 2026-11-18, text selection and copy).
   Later:
   - math as MathML once Blitz lays it out;
   - a live preview of an edited buffer, through LSP-like change

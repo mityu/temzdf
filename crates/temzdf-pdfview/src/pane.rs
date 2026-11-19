@@ -56,7 +56,7 @@ const AUTOSCROLL_GAIN: f32 = 25.0;
 /// How long a text reload anchor waits for the pages around it to load.
 const TEXT_ANCHOR_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// A line of text from before a reload (`[reload] anchor = "text"`), with its
+/// A line of text from before a reload (`o.reloadanchor = "text"`), with its
 /// neighbours to tell repeated lines apart and its place on screen.
 #[derive(Clone, Debug)]
 struct TextAnchor {
@@ -173,7 +173,7 @@ pub struct PdfPane {
     /// Selection auto-scroll speed in pixels per second (0 when off).
     autoscroll: f32,
     autoscroll_at: Option<Instant>,
-    /// `[reload] anchor = "text"`: keep the line being read in place on reload.
+    /// `o.reloadanchor = "text"`: keep the line being read in place on reload.
     pub anchor_by_text: bool,
     /// Page-view key bindings (`[keys]` in the config).
     pub keymap: Keymap,
@@ -980,7 +980,7 @@ impl PdfPane {
     }
 
     /// The file changed and the document thread has the new version. Keep the
-    /// reading position (see `Viewer::replace_pages`), sidebar state, outline
+    /// reading position (see `Viewer::document_replaced`), sidebar state, outline
     /// expansion and the search query (re-run on the new text); drop the text
     /// selection and per-page caches. History entries are clamped to the new
     /// page count. See doc/design/reload.md.
@@ -1545,7 +1545,7 @@ fn contains(r: &PageRect, x: f32, y: f32) -> bool {
     x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1
 }
 
-/// Pixel size of the page area: the screen minus the status bar row.
+/// Pixel size of the page area: the whole pane.
 fn page_area(g: Geometry) -> (u32, u32) {
     (g.width_px(), g.height_px().max(1))
 }

@@ -26,8 +26,8 @@ Known problems:
 - WezTerm: placement-move glitches (#5892), delete-by-placement fails after
   resize (#2422), aspect ratio (#5402), crash when repositioning with DECSTBM
   scrolling (#7953), no pixel size on WSL (#6781). ratatui-image and yazi avoid
-  kitty graphics on WezTerm entirely and use the iTerm2 protocol. We plan the
-  `Composited` backend for it.
+  kitty graphics on WezTerm entirely and use the iTerm2 protocol. temzdf
+  uses the `Composited` backend there (one whole-screen image per frame).
 - Ghostty: older placement/deletion bugs are closed; require >= 1.3.1. No `a=f`
   frame edits in 1.3.
 - tmux: no native kitty graphics. Needs `allow-passthrough on` and DCS wrapping;
@@ -241,12 +241,16 @@ Layered placements hit #5573/#5567, and everything is forwarded uncompressed.
 
 ### Plan
 
-Detect `Zellij(`/`tmux` from XTVERSION (plus `$ZELLIJ`/`$TMUX`) and use a
-multiplexer profile: no 1016 (cell mouse), reduced keyboard flags, `t=d` only,
-probe the features we rely on (`p=`, crops, `z<0`) instead of assuming them.
-zellij 0.45.1: Composited full frames; zellij main: Layered with `c,r` on every
-crop. tmux 3.8: Unicode placeholders via passthrough; tmux master: native with
-`z=0` (Composited, or Layered without z-layering).
+The plan was a multiplexer profile chosen from XTVERSION (`Zellij(`, `tmux`)
+plus `$ZELLIJ`/`$TMUX`, probing the features relied on (`p=`, crops, `z<0`),
+with Layered on zellij main and native placements on tmux master. As built
+(`Caps::backend` in `crates/termpix/src/probe.rs`), detection is the same,
+but the mouse and keyboard follow what the probe answers rather than a
+profile, and the backend is fixed per multiplexer: inside tmux (any
+version) Unicode placeholders through passthrough (`Placeholders`, strips of
+2 rows); inside zellij `Composited` in strips of 2 rows (only changed strips
+are sent, since zellij forwards images uncompressed); WezTerm whole-frame
+`Composited`; everything else `Layered`.
 - kitty 0.49.2: OSC 52 clipboard writes work (verified with `xclip` in
   `tests/e2e/select.actions`); OSC 22 pointer shapes are accepted.
 - SGR-pixel (1016) coordinates are zero-based in kitty 0.49.2 and Ghostty 1.3.1

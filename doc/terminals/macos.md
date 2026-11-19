@@ -20,7 +20,8 @@ works.
 - UI font: `sans-serif` resolves to Helvetica, which lacks some symbols (▸, ▾)
   that font fallback does not find either. Draw such marks as shapes. CJK
   fallback works.
-- Links open with `open` instead of `xdg-open` (`config.rs`).
+- Links open with `open` instead of `xdg-open` (`default_opener` in
+  `crates/temzdf-client/src/lib.rs`).
 - Terminal panes: on macOS libghostty-vt's key encoder takes Alt for an
   Option key that composes characters (Alt+x sent as `x`) unless
   `macos_option_as_alt` is set, and `set_options_from_terminal` resets it.

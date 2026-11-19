@@ -446,8 +446,9 @@ impl MdPane {
         current.is_some()
     }
 
-    /// Back to where the search began, its marks gone (their images go
-    /// with `release`, or once many piled up).
+    /// Back to where the search began, its marks no longer drawn (their
+    /// images stay cached until `release`, or `trim_images` once more than
+    /// 256 piled up).
     pub fn search_cancel(&mut self, page: &Page) {
         if let Some(from) = self.search.from {
             self.scroll_to(page, from);

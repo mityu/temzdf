@@ -113,8 +113,11 @@ pixels:
   client maps layers to kitty placements (or composited strips, or a text
   fallback when the terminal has no graphics); the GUI client to textured
   quads.
-- Pacing: one frame in flight per client, coalescing until the ack; on attach,
-  resize or overload the client gets a full resync from state.
+- Pacing: one frame in flight per client, coalescing until the ack: image
+  changes wait per image (`Client::pending` in
+  `crates/temzdf-server/src/daemon.rs`, the latest of each), so a slow
+  client gets fewer frames, not a backlog; on attach the client gets a
+  snapshot of every image.
   A due frame first lets the server handle the events already queued (a
   program's write arrives in several pty reads), for at most 4 ms
   (`DRAIN_LIMIT` in `crates/temzdf-server/src/daemon.rs`), as Alacritty and

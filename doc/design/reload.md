@@ -79,14 +79,14 @@ shrinking. Each must keep the viewport and never show an empty view.
 |---|---|
 | Watcher (parent dir + symlink target, filtered by file name) | `workers::spawn_watcher` |
 | `%%EOF` pre-check | `pdf::looks_complete` |
-| Debounce 200 ms, retry every 300 ms, give up after 100 attempts until the next change | `ReloadState` in `app.rs` |
+| Debounce 200 ms, retry every 300 ms, give up after 100 attempts until the next change | `ReloadState` in `crates/temzdf-pdfview/src/host.rs` |
 | Open-then-swap on the document thread (`DocCmd::Reload` -> `Reloaded` / `ReloadFailed`) | `workers::spawn_document` |
-| Position restore (page + fraction of page height, clamp to last page, keep zoom/fit mode/horizontal scroll) | `Viewer::replace_pages` |
-| Outline collapse state by title path, selected entry by title, search re-run (current hit restored), selection dropped, history clamped | `Session::reload` |
+| Position restore (page + fraction of page height, clamp to last page, keep zoom/fit mode/horizontal scroll) | `Viewer::document_replaced` |
+| Outline collapse state by title path, selected entry by title, search re-run (current hit restored), selection dropped, history clamped | `PdfPane::before_reload` / `after_reload` |
 
 Generations: the document thread and the viewer both count successful
 reloads. Display lists, links and tiles carry the generation they belong to
-(`TileKey::generation`, `AppEvent::PageLoaded`), so results computed from the
+(`TileKey::generation`, `DocEvent::PageLoaded`), so results computed from the
 old file can never be shown after a swap. The search worker opens the bytes
 the document thread opened (`workers::Snapshot`, by generation) rather than
 the file, so it searches the version the viewer shows (reading the file

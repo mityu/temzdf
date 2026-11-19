@@ -1,8 +1,8 @@
 # Dot-repeat: design draft
 
-Vim's `.` for the future text editor (`doc/survey/text-editor.md`), with
+Vim's `.` for the text editor (`doc/survey/text-editor.md`), with
 users able to define what `.` repeats. Discussed with the user on
-2026-11-06 and 2026-11-07. **Nothing is built yet**; this records the
+2026-11-06 and 2026-11-07. This draft records the
 direction agreed and the choice made for nesting. Items marked
 **(decided)** were put to the user; the others are proposals accepted as
 the direction.
@@ -13,8 +13,8 @@ server no longer manages repeat units or `repeat.set`; it provides events
 (`InvokePre`/`InvokePost`, `TextChanged`) and the Vim script builds `.`
 from them, with declarations attached to regions of execution
 (`doc/design/text-editor.md`, "Guidance for scripts"). What follows is kept
-for its analysis of recording and nesting and is rewritten when the Vim
-script is.
+for its analysis of recording and nesting. (2026-11-19: `.` is built in
+the Vim script, `repeatLast` in `crates/temzdf-script/runtime/vim/normal.ts`.)
 
 ## What a repeat is recorded as
 

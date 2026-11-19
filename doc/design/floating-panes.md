@@ -24,7 +24,9 @@ defaults, accepted with the design.
    as proposed. Later the flag should not be limited to floats: a tiled pane
    that never takes the focus (as Emacs side windows with `no-other-window`)
    could then carry a status bar or similar. So the flag lives on the pane
-   entry, not on the float geometry.
+   entry, not on the float geometry. (2026-11-19: as built it is a field of
+   `Float` in `crates/temzdf-server/src/session/floats.rs`, unused yet; it
+   moves to the pane entry when tiled panes need it.)
 4. The topmost float is embedded when the last tiled pane closes, as
    proposed.
 5. Default mappings `w`, `W`, `e` in the `normal` mode, as proposed.
@@ -33,6 +35,8 @@ Second round (the user, 2026-10-26), all as proposed:
 
 6. Floats hidden and the last tiled pane closes: the session ends (hidden
    floats are not shown panes, as for hidden buffers since `57ec52f`).
+   (2026-11-19: superseded by tab pages: the tab page closes, and the
+   session ends only with the last tab page.)
 7. `toggleFloats` with no float opens a floating shell (zellij's Alt f).
 8. Splitting or `new-pane` while a float has the focus opens a new float,
    2 cells right and down of the focused one (zellij).
@@ -214,7 +218,7 @@ release, as with borders.
 | (existing) | `panes()` | gains `floating: boolean` and the rectangle |
 
 `temzdf action open-float -- htop` and `temzdf action open-float FILE.pdf`
-follow `new-pane`'s words. Events: `PaneCreated` and `PaneClosed` as now,
+follow `new-pane`'s words. Events: `PaneOpened` and `PaneClosed` as now,
 with the pane's `floating` flag in `panes()`.
 
 **(decide)** Default mappings in the `normal` mode, after zellij: `w`

@@ -342,7 +342,8 @@ succeeds, Ctrl+click runs the editor on the title's lines). Its results go to
 Both sides run the same viewer code, so a bug in viewer state shows up on
 both and passes: zooming anchored at the top-left instead of the pointer did
 (found by the user). Behaviour of the view itself needs unit tests
-(e.g. `session::tests::ctrl_wheel_zooms_around_the_pointer`).
+(e.g. `ctrl_wheel_zooms_around_the_pointer` in
+`crates/temzdf-pdfview/src/pane.rs`).
 
 `tests/e2e/expect.actions` passes in kitty, WezTerm, tmux and zellij
 (2026-10-25) and Ghostty (2026-10-28); `search`, `viewer`, `links`,

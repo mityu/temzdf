@@ -2,8 +2,9 @@
 //! forward-search request to the viewer that has `doc.pdf` open.
 //!
 //! Each viewer listens on a Unix socket at
-//! `$XDG_RUNTIME_DIR/temzdf/<hash of the canonical PDF path>.sock` (falling back
-//! to the per-user temp dir on macOS, else the system temp dir). The protocol
+//! `<runtime dir>/temzdf/<hash of the canonical PDF path>.sock`, the runtime
+//! directory being `temzdf_protocol::runtime_dir`: `$XDG_RUNTIME_DIR`, else
+//! the per-user temp dir on macOS, else `<temp dir>/temzdf-<uid>`. The protocol
 //! is one line per request:
 //! `forward\t<line>\t<column>\t<source file>\n`, answered with `ok\n`.
 

@@ -13,7 +13,7 @@ use crate::text::{LineEnding, Text};
 pub struct FileInfo {
     pub path: PathBuf,
     pub bom: bool,
-    /// The encoding's name (only UTF-8 so far).
+    /// The encoding's name, lower case ("utf-8", "shift_jis", ...).
     pub encoding: String,
     pub line_ending: LineEnding,
     /// When it was last read or written, to notice changes made elsewhere.

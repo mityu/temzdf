@@ -1,8 +1,8 @@
 //! Math as SVG for the page (RaTeX: glyphs as paths, no fonts needed),
 //! sitting on the text's baseline.
 
-/// `tex` as an inline SVG at `size` CSS pixels per em (a display block
-/// larger); its source in `<code>` when it does not parse.
+/// `tex` as an inline SVG at 16 CSS pixels per em (`display`: a display
+/// block, larger); its source in `<code>` when it does not parse.
 pub fn svg(tex: &str, display: bool) -> String {
     use ratex_layout::{LayoutOptions, layout, to_display_list};
     use ratex_types::math_style::MathStyle;

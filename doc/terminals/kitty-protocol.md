@@ -55,11 +55,14 @@ Lowercase keeps the image data; uppercase frees it.
 
 Virtual placement shown wherever cells containing U+10EEEE (with row/column
 diacritics, image id in the foreground colour) are printed. Needed under tmux,
-cell-granular only, at most ~297 rows/columns. Not used in the main path.
+cell-granular only, at most ~297 rows/columns. Used inside tmux: the
+`Placeholders` backend shows composited strips through them (`Caps::backend`
+in `crates/termpix/src/probe.rs`); elsewhere placements are direct.
 
 ## Other sequences we use
 
 - Synchronized output: `CSI ? 2026 h` ... `CSI ? 2026 l` around every frame.
 - Cell size: `TIOCGWINSZ` (`ws_xpixel`/`ws_ypixel`, may be 0), `CSI 16 t`
-  (cell size), `CSI 14 t` (window size). In-band resize reports: mode 2048.
-- Clipboard: OSC 52. Hyperlinks: OSC 8. Pointer shape: OSC 22.
+  (cell size). In-band resize reports: mode 2048.
+- Clipboard: OSC 52. Pointer shape: OSC 22. (Links are opened by temzdf
+  itself, so no OSC 8.)

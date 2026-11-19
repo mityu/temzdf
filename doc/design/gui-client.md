@@ -295,7 +295,8 @@ Also decided (the user, 2026-10-27):
   session's chrome, xterm's 256-colour palette).
 - The dev shell already has the tools (`flake.nix`: Vulkan loader,
   lavapipe as `TEMZDF_LAVAPIPE_ICD`, the font as `TEMZDF_TEST_FONTS`,
-  xfwm4, sway, grim, wtype, fcitx5 with Mozc).
+  xfwm4, sway, grim, wtype, fcitx5 with Mozc; keys and the pointer on
+  sway were later driven by `crates/wlinput` instead of wtype).
 
 The items below were the questions and their recommendations.
 
@@ -363,22 +364,25 @@ Besides the (decide) items above:
 - **Fractional scales** (1.25, 1.5): cell sizes round to whole physical
   pixels; layers are already in pixels, so nothing else changes.
 - **Large textures**: PDF tiles are 512 px squares at most today, well under
-  GPU limits; a whole-page thumbnail at 4K may approach 8192 px on old GPUs.
+  GPU limits; an image beyond the GPU's `max_texture_dimension_2d` (a
+  program may show a 10000 px one) is scaled down to fit when uploaded
+  (`Renderer::set_image` in `crates/temzdf-gui/src/render.rs`).
   Upload cost per frame needs a budget (staging belt).
 - **Testing on GPUs we do not have**: CI has no GPU; pixel tests need a
   software adapter (Mesa lavapipe/llvmpipe), and its output differs from a
   real GPU in anti-aliasing, so comparisons need tolerance or must avoid
   filtering.
 - **The dev shell** has the GUI's test tools since 2026-10-27 (the Vulkan
-  loader and lavapipe, xfwm4, headless sway, `grim`, `wtype`, `fcitx5` with
-  Mozc); the `ci` shell has none of them, so GPU and window tests skip
+  loader and lavapipe, xfwm4, headless sway, `grim`, `fcitx5` with Mozc;
+  keys and the pointer on sway through `crates/wlinput`); the `ci` shell has none of them, so GPU and window tests skip
   there.
 - **Miri**: the draw list and input translation are plain Rust and run
   under `scripts/miri.sh`; tests that open a window or a GPU device get
   `#[cfg_attr(miri, ignore = "...")]`.
 - **NixOS**: wgpu needs the Vulkan loader and drivers at runtime
-  (`LD_LIBRARY_PATH` with `vulkan-loader` and `/run/opengl-driver/lib`,
-  as `doc/survey/gpu.md` notes); a `nix run` wrapper must set that up.
+  (`vulkan-loader` and `/run/opengl-driver/lib`, as `doc/survey/gpu.md`
+  notes). Solved without a wrapper: the libraries go into the binary's
+  RUNPATH ("Packaging" above).
 - **Licences**: MuPDF's AGPL covers the server; the GUI client links no
   MuPDF, so it could be licensed separately if ever wanted.
 
@@ -401,7 +405,8 @@ without a human:
   modifiers, location), unit-tested for the kitty-equivalent output
   (`<S-a>`, `<C-i>`, Option/Cmd, keypad, dead keys).
 - **End to end**: under Xvfb on Linux (X11) and headless sway (Wayland,
-  `WLR_BACKENDS=headless`, screenshots with `grim`, keys with `wtype`), the
+  `WLR_BACKENDS=headless`, screenshots with `grim`, keys and the pointer
+  with `crates/wlinput`), the
   GUI driven like `scripts/e2e.sh` drives terminals; on macOS through
   `scripts/macos-gui.sh` (virtual display). IME needs fcitx5 or ibus in the
   test session; at least one scripted Japanese commit per platform.

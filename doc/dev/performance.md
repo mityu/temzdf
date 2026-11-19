@@ -29,7 +29,8 @@ Tiles per second by pool size, 2026-10-25:
 - Image-heavy pages scale almost linearly (decoding and scaling images dominate).
 - Either way a whole screen (about 12 tiles at HiDPI) takes a few milliseconds,
   far below what reaching the terminal costs. The pool stays at
-  `min(available_parallelism, 4)` (`app.rs`) as a compromise.
+  `min(available_parallelism, 4)` (`DocumentHost` in
+  `crates/temzdf-pdfview/src/host.rs`) as a compromise.
 - Tiles are rendered into RGBA pixmaps (on opaque white, premultiplied equals
   straight alpha) and copied out. Converting RGB to RGBA pixel by pixel was
   about half the time of a text tile (4146 -> 5759 tiles/s single-threaded).
@@ -38,7 +39,7 @@ Tiles per second by pool size, 2026-10-25:
 ## Display lists
 
 About 70 KiB and 0.2 ms to load per page of a LaTeX text document (201 pages,
-measured from RSS). At most 256 are kept (`viewer::MAX_LISTS`), dropping the
+measured from RSS). At most 256 are kept (`doc_cache::MAX_LISTS` in `temzdf-pdfcore`), dropping the
 ones farthest from the view.
 
 ## Terminal transfer
@@ -50,12 +51,15 @@ ones farthest from the view.
 
 ## Session socket
 
-Frames go from the session server to each client over its Unix socket:
-postcard-encoded into one buffer (`proto::send`), written, read into a buffer
-grown as the bytes come and decoded into the images' own buffers
-(`proto::recv`). One frame is in flight per client (the next waits for the
-acknowledgement), so this time adds directly to the time to show a change.
-Shared memory would leave about one copy of the pixels.
+Frames go from the session server to each client over its Unix socket
+(`session::send_server` / `recv_server` in `temzdf-protocol`): the message
+is postcard-encoded with the small images (UI parts) inside it; large
+images go in shared memory, a descriptor each with the message, or, when
+the client did not ask for it (`TEMZDF_PIXELS=socket`) or the memory cannot
+be made, their bytes follow the message, written from the images and read
+into buffers of exactly their size. One frame is in flight per client (the
+next waits for the acknowledgement), so this time adds directly to the time
+to show a change.
 
 Benchmark: `cargo test --release -p temzdf-protocol socket_throughput -- --ignored --nocapture`.
 A frame of N 512 px RGBA tiles over a socket pair, by stage; `copy` is one

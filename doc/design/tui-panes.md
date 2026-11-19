@@ -130,7 +130,7 @@ The comparison is in `doc/survey/tui-renderers.md`. Decided:
    asynchronous mapped and hook functions" there.
 2. **The first consumer**: which pane to build first (the built-in help,
    a buffer list, a picker) decides which parts come first.
-3. Whether the content layer becomes the read-only mode of a future editor
+3. Whether the content layer becomes the read-only mode of an editor
    buffer (`doc/survey/text-editor.md`, section 4) or stays separate and
    converges later. Editable marks (`doc/design/text-editor.md`, section
    7, 2026-11-19) make the first realistic: the content is a

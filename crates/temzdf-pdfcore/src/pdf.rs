@@ -2,8 +2,9 @@
 //! lists and tile rasterisation.
 //!
 //! Threading: `mupdf::Document` is not `Send`, so it lives on one thread (see
-//! `docthread.rs`). `DisplayList` is `Send + Sync`; tiles are rasterised from
-//! display lists on worker threads (`render.rs`).
+//! `workers::spawn_document`). `DisplayList` is `Send + Sync`; tiles are
+//! rasterised from display lists on worker threads (the tile jobs in
+//! `workers.rs`, run by `temzdf_scene::tiles::WorkPool`).
 
 use std::path::Path;
 use std::sync::Arc;
