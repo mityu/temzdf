@@ -98,7 +98,7 @@ impl Screen {
         }
         // Text leaving cells that tmux placeholder text covered before: write
         // the placeholders again, and the text over them.
-        if comp.placeholder_text_pending() || (self.text.would_clear(&frame.text) && is_placeholders(comp)) {
+        if comp.placeholder_text_pending() || (is_placeholders(comp) && self.text.would_clear(&frame.text)) {
             comp.rewrite_placeholder_text();
             self.text.invalidate();
         }
@@ -130,7 +130,7 @@ impl Screen {
         let g = comp.geometry();
         if (g.cols, g.rows) != self.size
             || comp.placeholder_text_pending()
-            || (self.text.would_clear(&frame.text) && is_placeholders(comp))
+            || (is_placeholders(comp) && self.text.would_clear(&frame.text))
         {
             return None;
         }
