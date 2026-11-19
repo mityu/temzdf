@@ -73,7 +73,7 @@ impl Client {
     }
 }
 
-pub use temzdf_protocol::discovery::{list, list_all, probe};
+pub use temzdf_protocol::discovery::{Listing, list, list_all, probe};
 
 /// Run the session `name`, starting with a pane showing `first`, until it
 /// ends. Returns once the last pane closed or the session was killed.

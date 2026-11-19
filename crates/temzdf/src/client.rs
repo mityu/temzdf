@@ -252,8 +252,8 @@ pub fn request(name: &str, msg: ClientMsg, timeout: Duration) -> Result<ServerMs
 }
 
 pub fn list_sessions(verbose: bool) -> Result<()> {
-    let (sessions, other) = daemon::list_all()?;
-    if sessions.is_empty() && other.is_empty() {
+    let daemon::Listing { sessions, other, silent } = daemon::list_all()?;
+    if sessions.is_empty() && other.is_empty() && silent.is_empty() {
         println!("no sessions");
     }
     // The session whose pane this runs in, marked as zellij does.
@@ -278,6 +278,9 @@ pub fn list_sessions(verbose: bool) -> Result<()> {
     for name in other {
         println!("{name}  (another temzdf version; end it with that version's `temzdf kill-session {name}`)");
     }
+    for name in silent {
+        println!("{name}  (not answering: busy)");
+    }
     Ok(())
 }
 
@@ -298,10 +301,16 @@ pub fn kill_session(name: &str, force: bool) -> Result<()> {
 /// End every session, those of other versions too when they still take the
 /// request; one that fails does not stop the others.
 pub fn kill_all_sessions(force: bool) -> Result<()> {
-    let (sessions, other) = daemon::list_all()?;
+    let daemon::Listing { sessions, other, silent } = daemon::list_all()?;
     let mut failed = Vec::new();
-    // Another version's sessions only take the plain request.
-    let sessions = sessions.into_iter().map(|s| (s.name, force)).chain(other.into_iter().map(|n| (n, true)));
+    // Another version's sessions only take the plain request. One that did
+    // not answer in time is busy, not another version: asked as asked (its
+    // SessionEndPre hooks may keep unsaved text).
+    let sessions = sessions
+        .into_iter()
+        .map(|s| (s.name, force))
+        .chain(silent.into_iter().map(|n| (n, force)))
+        .chain(other.into_iter().map(|n| (n, true)));
     for (name, force) in sessions {
         if let Err(e) = kill_session(&name, force) {
             failed.push(format!("{name}: {e:#}"));
