@@ -28,12 +28,10 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use temzdf_protocol::script::ScriptValue;
-use termpix_core::geom::{CellSize, Geometry};
 
+use super::host_tests::{GEOMETRY, config_file_session, config_session, errors, settle, type_keys};
 use super::*;
 use crate::keymap::notation;
-
-const GEOMETRY: Geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
 
 struct Case {
     name: String,
@@ -149,41 +147,6 @@ fn mark(text: &str, (line, col): (usize, usize)) -> String {
     out
 }
 
-/// The error messages shown now (a key dismisses them).
-fn errors(s: &Session) -> Vec<String> {
-    s.notices.iter().filter(|n| n.kind == notices::Kind::Error).map(|n| n.text.clone()).collect()
-}
-
-/// Handle events until no script runs (no task either); with `flush`, a key
-/// waiting for a longer mapping times out too (after the last key). The
-/// client's clipboard holds `clipboard`.
-fn settle(s: &mut Session, rx: &Receiver<SessionEvent>, flush: bool, clipboard: Option<&str>) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        while let Ok(ev) = rx.try_recv() {
-            s.handle(ev, Instant::now());
-        }
-        for e in s.take_effects() {
-            if let temzdf_scene::Effect::ReadClipboard { ticket, .. } = e {
-                let answer = clipboard.map(str::to_owned).ok_or_else(|| "no clipboard".to_owned());
-                s.clipboard_answer(ticket, answer);
-            }
-        }
-        if !s.holds_input() && s.script.running() && !s.tasks_running() && rx.try_recv().is_err() {
-            // A key waiting for a longer mapping: as if its time ran out.
-            if flush && s.matcher.deadline(s.options.timeoutlen).is_some() {
-                s.poll(Instant::now() + s.options.timeoutlen + Duration::from_millis(1));
-                continue;
-            }
-            return;
-        }
-        assert!(Instant::now() < deadline, "the script host does not answer");
-        if let Ok(ev) = rx.recv_timeout(Duration::from_millis(20)) {
-            s.handle(ev, Instant::now());
-        }
-    }
-}
-
 /// The configuration the cases run with: the Vim mode enabled explicitly
 /// (not relying on the default editor).
 const VIM_CONFIG: &str = "import vim from \"temzdf/edit/vim\";\nvim.enable();\n";
@@ -195,52 +158,6 @@ fn vim_session(dir: &Path, text: &str) -> Result<(Session, Receiver<SessionEvent
         return Err(format!("the Vim mode did not load: mode {}; {:?}", s.history.current(), errors(&s)));
     }
     Ok((s, rx))
-}
-
-/// A session editing `text`, with `config` (none: the defaults alone).
-fn config_session(dir: &Path, text: &str, config: Option<&str>) -> Result<(Session, Receiver<SessionEvent>), String> {
-    let config = config.map(|c| {
-        let path = dir.join("config.ts");
-        std::fs::write(&path, c).unwrap();
-        path
-    });
-    config_file_session(dir, text, config)
-}
-
-/// A session editing `text`, with the configuration file `config` (where
-/// it is: its relative imports resolve from there).
-fn config_file_session(
-    dir: &Path,
-    text: &str,
-    config: Option<PathBuf>,
-) -> Result<(Session, Receiver<SessionEvent>), String> {
-    let file = dir.join("case.txt");
-    std::fs::write(&file, text).unwrap();
-    let (tx, rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
-    let settings = Settings { serve_forward: false, script: Some(ScriptSettings { config }), overrides: Vec::new() };
-    let mut s = Session::new("vim".into(), GEOMETRY, Hints::default(), settings, sink);
-    s.start(PaneSpec::File(file), None).map_err(|e| format!("{e:#}"))?;
-    settle(&mut s, &rx, true, None);
-    Ok((s, rx))
-}
-
-/// Type `keys` one at a time, settling after each; the errors shown.
-fn type_keys(
-    s: &mut Session,
-    rx: &Receiver<SessionEvent>,
-    keys: &str,
-    clipboard: Option<&str>,
-) -> Result<Vec<String>, String> {
-    let mut seen = Vec::new();
-    let keys = notation::parse(keys).map_err(|e| format!("keys: {e:#}"))?;
-    for (i, k) in keys.iter().enumerate() {
-        s.key(&k.event(), Instant::now());
-        settle(s, rx, i + 1 == keys.len(), clipboard);
-        seen.extend(errors(s));
-    }
-    Ok(seen)
 }
 
 fn run(case: &Case, dir: &Path) -> Result<(), String> {

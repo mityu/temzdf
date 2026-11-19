@@ -1399,6 +1399,7 @@ fn mapping_value(
     let func = |f: FuncId| ScriptValue::map([("func", ScriptValue::Num(f as f64))]);
     let rhs = match &m.target {
         Target::Func(f) => func(*f),
+        #[cfg(test)]
         Target::Actions(acts) => ScriptValue::List(
             acts.iter()
                 .map(|a| {
@@ -1461,7 +1462,7 @@ mod tests {
         };
         let mut s = Session::new("t".into(), geometry, Default::default(), settings, sink);
         let mode = s.history.current().to_owned();
-        let act = crate::keymap::Target::Actions(vec![crate::keymap::Act::new("current-mode", vec![])]);
+        let act = crate::keymap::Target::Func(1);
         let keys = crate::keymap::notation::parse("zq").unwrap();
         s.modes.map(&mode, keys, crate::keymap::Mapping::new(act));
         let now = Instant::now();

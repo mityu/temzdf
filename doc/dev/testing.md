@@ -36,6 +36,30 @@ host's directories and settings: on the CI runner Ubuntu's fonts came in,
 here Noto Sans CJK, and a test passed here and failed there. macOS finds
 fonts through Core Text, not fontconfig: tests there see the system's.
 
+## Server tests
+
+The `Session` tests in `crates/temzdf-server` come in three kinds, by what
+they exercise:
+
+- **Commands**: what a command does is tested by calling it, with
+  `run_command` (the helper `cmd` in `session.rs`'s tests), in a session
+  without a script host. Pressing the shipped keys there would test
+  mappings that are not the shipped ones.
+- **The matcher and the modes** (sequences, counts, transient modes,
+  fallbacks, the recursion guard, `feedkeys`, text from input methods
+  matched as keys, the visual mode stacked under the normal mode): tests'
+  mappings of commands, the data form of a mapping (`Target::Actions`,
+  `default_mappings` in `session.rs`), which the session runs at once. It
+  exists under `#[cfg(test)]` only: scripts map functions, so the release
+  build has no such mappings.
+- **The shipped keys** (`crates/temzdf-script/runtime/`: the prefix, the
+  normal mode, PDF and Markdown panes): sessions with the real script host
+  and the defaults alone, in `session/host_tests.rs`, which checks the
+  state keys leave. Its helpers (`host_session`, `settle`, `type_keys`)
+  serve the Vim cases (`session/vim_tests.rs`) too. Counts are a table:
+  a key pressed N times against the key with the count N, so a mapping
+  that drops `c.count` fails; add a row for a new counted key.
+
 ## Mutation checks
 
 A test written for a fix should fail without the fix. `scripts/mutate.sh

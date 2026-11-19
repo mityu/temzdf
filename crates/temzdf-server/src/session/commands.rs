@@ -716,7 +716,7 @@ impl Session {
                 let count = args.get(1).and_then(|o| o.get("count")).and_then(ScriptValue::as_num).map(|c| c as usize);
                 let what = match args.first() {
                     Some(ScriptValue::Num(f)) => {
-                        super::Invoked::Target { target: crate::keymap::Target::Func(*f as u32), count, at: now }
+                        super::Invoked::Target { target: crate::keymap::Target::Func(*f as u32), count }
                     }
                     // A `temzdf action` request (as Invoked::Cli gives it):
                     // the command runs now, its error the caller's.

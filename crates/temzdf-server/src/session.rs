@@ -33,6 +33,8 @@ use temzdf_protocol::script::{FromHost, ScriptValue};
 mod borders;
 mod commands;
 mod floats;
+#[cfg(test)]
+mod host_tests;
 mod images;
 mod markdown;
 mod notices;
@@ -1598,7 +1600,7 @@ impl Session {
                         break;
                     }
                     let keys = keys.iter().map(|k| k.notation()).collect();
-                    out = out.merge(self.invoke(Invoked::Target { target, count, at: now }, "key", keys));
+                    out = out.merge(self.invoke(Invoked::Target { target, count }, "key", keys));
                 }
                 Step::Unmapped(stroke, ev) => {
                     let ev = ev.unwrap_or_else(|| stroke.event());
@@ -1680,7 +1682,7 @@ impl Session {
     /// Run what an invocation invokes (also `invoke`, again).
     pub(super) fn run_invoked(&mut self, what: Invoked) -> Outcome {
         match what {
-            Invoked::Target { target, count, at } => self.run_target(target, count, at),
+            Invoked::Target { target, count } => self.run_target(target, count),
             Invoked::Text(t) => self.text_type(&t).unwrap_or(Outcome::None),
             Invoked::Fallback { func, key } => {
                 let ctx = self.key_context(None, self.invocation_keys.clone());
@@ -1760,12 +1762,13 @@ impl Session {
 
     /// What a mapping runs: a script function, or (tests' mappings only)
     /// commands right here.
-    fn run_target(&mut self, target: Target, count: Option<usize>, now: Instant) -> Outcome {
+    fn run_target(&mut self, target: Target, count: Option<usize>) -> Outcome {
         match target {
+            #[cfg(test)]
             Target::Actions(acts) => {
                 let mut out = Outcome::None;
                 for a in acts {
-                    match self.run_command(&a.name, &a.args, now) {
+                    match self.run_command(&a.name, &a.args, self.now()) {
                         Ok((_, o)) => out = out.merge(o),
                         Err(e) => {
                             self.message(&e);
@@ -2767,9 +2770,8 @@ pub(super) enum VarOwner {
 
 /// What an invocation runs.
 pub(super) enum Invoked {
-    /// A mapping's right-hand side (or `invoke`'s target), and when its
-    /// key came (animations start from it, not from when it runs).
-    Target { target: Target, count: Option<usize>, at: Instant },
+    /// A mapping's right-hand side (or `invoke`'s target).
+    Target { target: Target, count: Option<usize> },
     /// Text typed into a text or input pane (keys no mapping took, input
     /// methods, pastes).
     Text(String),
@@ -2789,6 +2791,7 @@ impl Invoked {
             ScriptValue::map([("name", ScriptValue::Str(name.into())), ("args", ScriptValue::List(args.to_vec()))])
         };
         match self {
+            #[cfg(test)]
             Invoked::Target { target: Target::Actions(acts), .. } => {
                 ScriptValue::List(acts.iter().map(|a| act(&a.name, &a.args)).collect())
             }
@@ -2827,97 +2830,39 @@ fn builtin_modes() -> Modes<Target> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keymap::{Act, Stroke, notation};
+    use crate::keymap::{Act, notation};
     use crate::layout::Direction;
-    use temzdf_pdfview::keys::Keymap;
 
-    /// What the shipped defaults (runtime/defaults.ts) map, for sessions
-    /// without a script host.
+    /// Mappings of commands (the data form, tests only) for the tests of
+    /// the matcher and the modes, in sessions without a script host: the
+    /// prefix, a few keys of the normal mode, the visual mode's stacking.
+    /// The shipped keys themselves are tested with the real script host
+    /// (session/host_tests.rs); commands alone with `run_command`.
     fn default_mappings(m: &mut Modes<Target>) {
         let keys = |s: &str| notation::parse(s).expect("keys");
         let acts =
             |v: &[(&str, &[ScriptValue])]| Target::Actions(v.iter().map(|(n, a)| Act::new(n, a.to_vec())).collect());
         let s = |x: &str| ScriptValue::Str(x.into());
+        let map = |m: &mut Modes<Target>, mode: &str, lhs: &str, target: Target| {
+            m.map(mode, keys(lhs), crate::keymap::Mapping::new(target));
+        };
         for (lhs, target) in [
             ("%", acts(&[("split", &[s("right")])])),
             ("\"", acts(&[("split", &[s("bottom")])])),
-            ("h", acts(&[("move-focus", &[s("left")])])),
             ("j", acts(&[("move-focus", &[s("down")])])),
             ("k", acts(&[("move-focus", &[s("up")])])),
-            ("l", acts(&[("move-focus", &[s("right")])])),
-            ("o", acts(&[("focus-next-pane", &[])])),
-            ("w", acts(&[("toggle-floats", &[])])),
-            ("W", acts(&[("open-float", &[])])),
-            ("e", acts(&[("toggle-floating", &[]), ("exit-mode", &[])])),
-            ("+", acts(&[("resize-pane", &[s("taller")])])),
-            ("-", acts(&[("resize-pane", &[s("shorter")])])),
-            ("<lt>", acts(&[("resize-pane", &[s("narrower")])])),
-            (">", acts(&[("resize-pane", &[s("wider")])])),
             ("=", acts(&[("equalize-panes", &[])])),
-            ("<Bar>", acts(&[("maximize-pane", &[s("width")])])),
-            ("_", acts(&[("maximize-pane", &[s("height")])])),
-            ("H", acts(&[("move-pane", &[s("left")])])),
-            ("J", acts(&[("move-pane", &[s("bottom")])])),
-            ("K", acts(&[("move-pane", &[s("top")])])),
-            ("L", acts(&[("move-pane", &[s("right")])])),
-            ("r", acts(&[("rotate-panes", &[])])),
-            ("R", acts(&[("rotate-panes", &[ScriptValue::Bool(true)])])),
-            ("x", acts(&[("close-pane", &[])])),
-            ("gt", acts(&[("next-tab", &[])])),
-            ("gT", acts(&[("prev-tab", &[])])),
-            ("T", acts(&[("break-pane", &[])])),
-            ("d", acts(&[("detach", &[]), ("exit-mode", &[])])),
-            ("q", acts(&[("kill-session", &[])])),
             ("<C-b>", acts(&[("exit-mode", &[]), ("feedkeys", &[s("<C-b>"), ScriptValue::Bool(false)])])),
             ("<Esc>", acts(&[("exit-mode", &[])])),
+            ("[", acts(&[("exit-mode", &[]), ("switch-mode", &[s("visual")])])),
         ] {
-            m.map("normal", keys(lhs), crate::keymap::Mapping::new(target));
+            map(m, "normal", lhs, target);
         }
-        for mode in ["terminal", "pdf"] {
-            m.map(mode, keys("<C-b>"), crate::keymap::Mapping::new(acts(&[("switch-mode", &[s("normal")])])));
+        for mode in ["terminal", "pdf", "visual"] {
+            map(m, mode, "<C-b>", acts(&[("switch-mode", &[s("normal")])]));
         }
-        for lhs in ["<C-S-v>", "<D-v>"] {
-            m.map("terminal", keys(lhs), crate::keymap::Mapping::new(acts(&[("paste", &[])])));
-        }
-        for lhs in ["[", "v"] {
-            let target = acts(&[("exit-mode", &[]), ("switch-mode", &[s("visual")])]);
-            m.map("normal", keys(lhs), crate::keymap::Mapping::new(target));
-        }
-        for (lhs, name) in [
-            ("h", "visual.left"),
-            ("l", "visual.right"),
-            ("k", "visual.up"),
-            ("j", "visual.down"),
-            ("0", "visual.line-start"),
-            ("$", "visual.line-end"),
-            ("w", "visual.word-forward"),
-            ("e", "visual.word-end"),
-            ("gg", "visual.top"),
-            ("G", "visual.bottom"),
-            ("v", "visual.charwise"),
-            ("V", "visual.linewise"),
-            ("<C-v>", "visual.blockwise"),
-            ("o", "visual.swap-ends"),
-            ("y", "visual.yank"),
-            ("Y", "visual.yank-lines"),
-            ("<Esc>", "visual.escape"),
-            ("n", "visual.next-match"),
-            ("N", "visual.prev-match"),
-            ("q", "exit-mode"),
-        ] {
-            m.map("visual", keys(lhs), crate::keymap::Mapping::new(acts(&[(name, &[])])));
-        }
-        m.map("visual", keys("<C-b>"), crate::keymap::Mapping::new(acts(&[("switch-mode", &[s("normal")])])));
-        for (key, cmd) in Keymap::default().bindings() {
-            let stroke = Stroke::of(&key.event());
-            if stroke != keys("<C-c>")[0] {
-                m.map(
-                    "pdf",
-                    vec![stroke],
-                    crate::keymap::Mapping::new(Target::Actions(vec![Act::new(cmd.name(), vec![])])),
-                );
-            }
-        }
+        map(m, "terminal", "<C-S-v>", acts(&[("paste", &[])]));
+        map(m, "visual", "q", acts(&[("exit-mode", &[])]));
     }
     use std::sync::mpsc::{self, Receiver};
     use temzdf_pdfcore::doc_cache::TileKey;
@@ -3102,28 +3047,23 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
-    fn prefix_keys_split_focus_and_close() {
+    fn panes_split_focus_close_detach_and_quit() {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
         let first = s.focus();
-        assert_eq!(key(&mut s, "<C-b>"), Outcome::Redraw, "the normal mode");
-        assert_eq!(s.current_mode(), "normal");
-        assert_eq!(key(&mut s, "%"), Outcome::Redraw);
+        assert_eq!(cmd(&mut s, "split", &["right"]), Ok(Outcome::Redraw));
         assert_eq!(s.pane_count(), 2);
         let second = s.focus();
         assert_ne!(first, second, "the new pane has the focus");
-        key(&mut s, "<C-b>");
-        key(&mut s, "h");
+        cmd(&mut s, "move-focus", &["left"]).unwrap();
         assert_eq!(s.focus(), first);
         // A click on the right half focuses the pane there.
         click(&mut s, 700, 200);
         assert_eq!(s.focus(), second);
-        key(&mut s, "<C-b>");
-        assert_eq!(key(&mut s, "x"), Outcome::Redraw);
+        assert_eq!(cmd(&mut s, "close-pane", &[]), Ok(Outcome::Redraw));
         assert_eq!((s.pane_count(), s.focus()), (1, first));
-        key(&mut s, "<C-b>");
-        assert_eq!(key(&mut s, "d"), Outcome::Detach);
-        assert_eq!(key(&mut s, "q"), Outcome::Quit, "quitting the last pane ends the session");
+        assert_eq!(cmd(&mut s, "detach", &[]), Ok(Outcome::Detach));
+        assert_eq!(cmd(&mut s, "kill-session", &[]), Ok(Outcome::Quit), "quitting the last pane ends the session");
     }
 
     #[test]
@@ -3211,7 +3151,9 @@ mod tests {
         s.modes.define("win").transient = true;
         s.modes.define("win").keepalive = Keepalive::Always;
         s.modes.map("normal", keys("w"), act("switch-mode", &["win"]));
-        key(&mut s, "<C-b>\"");
+        assert_eq!(key(&mut s, "<C-b>"), Outcome::Redraw, "the normal mode");
+        assert_eq!(s.current_mode(), "normal");
+        key(&mut s, "\"");
         let (top, bottom) = {
             let p = s.layout.as_ref().unwrap().panes();
             (p[0], p[1])
@@ -3243,25 +3185,22 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
-    fn equal_and_maximized_panes_by_the_default_keys() {
+    fn equal_and_maximized_panes() {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
         for _ in 0..2 {
-            key(&mut s, "<C-b>");
-            key(&mut s, "%");
+            cmd(&mut s, "split", &["right"]).unwrap();
         }
         let widths =
             |s: &Session| s.layout.as_ref().unwrap().panes().iter().map(|p| s.panes[p].rect.w).collect::<Vec<_>>();
         assert_eq!(widths(&s), [44, 22, 22], "each split halved the focused pane");
-        key(&mut s, "<C-b>");
-        assert_eq!(key(&mut s, "="), Outcome::Redraw);
+        assert_eq!(cmd(&mut s, "equalize-panes", &[]), Ok(Outcome::Redraw));
         assert_eq!(widths(&s), [29, 30, 29], "90 cells and two borders");
-        assert_eq!(s.current_mode(), "normal", "the keys repeat, as resizing does");
-        assert_eq!(key(&mut s, "<Bar>"), Outcome::Redraw);
+        assert_eq!(cmd(&mut s, "maximize-pane", &["width"]), Ok(Outcome::Redraw));
         assert_eq!(widths(&s), [10, 10, 68], "the focused, last pane takes all it can");
         cmd(&mut s, "maximize-pane", &["width", "30"]).unwrap();
         assert_eq!(widths(&s)[2], 30, "cells are the width");
-        assert_eq!(key(&mut s, "_"), Outcome::None, "nothing stacked with it");
+        assert_eq!(cmd(&mut s, "maximize-pane", &["height"]), Ok(Outcome::None), "nothing stacked with it");
         assert!(s.run_command("maximize-pane", &[], Instant::now()).is_err());
     }
 
@@ -3523,8 +3462,7 @@ mod tests {
     fn splitting_a_terminal_starts_another_shell_beside_it() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo left; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "left");
-        key(&mut s, "<C-b>");
-        assert_eq!(key(&mut s, "%"), Outcome::Redraw);
+        assert_eq!(cmd(&mut s, "split", &["right"]), Ok(Outcome::Redraw));
         assert_eq!(s.pane_count(), 2);
         for c in "echo right-$((40+2))".chars() {
             s.key(&KeyEvent::new(KeyCode::Char(c), Modifiers::NONE), Instant::now());
@@ -3536,8 +3474,7 @@ mod tests {
         let line = rows.iter().find(|l| l.contains("right-42")).unwrap();
         assert!(line.find("right-42").unwrap() >= 45, "{line:?}");
         // Closing it gives the first pane the whole screen again.
-        key(&mut s, "<C-b>");
-        key(&mut s, "x");
+        cmd(&mut s, "close-pane", &[]).unwrap();
         assert_eq!(s.pane_count(), 1);
         // A bigger window: the pane (and its program's pty) grows with it.
         s.resize(Geometry { cols: 100, rows: 34, ..GEOMETRY });
@@ -3565,9 +3502,10 @@ mod tests {
         let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo first; read l; echo \"got:$l\"; read l"]);
         wait_text(&mut s, &rx, |r| r[0] == "first");
         let first = s.panes[&s.focus].buffer();
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let second = s.panes[&s.focus].buffer();
-        key(&mut s, "<C-b>h<C-b>x");
+        cmd(&mut s, "move-focus", &["left"]).unwrap();
+        cmd(&mut s, "close-pane", &[]).unwrap();
         assert_eq!((s.pane_count(), s.buffer_count()), (1, 2));
         assert_eq!(s.panes[&s.focus].buffer(), second);
         // Shown again, it takes input.
@@ -3590,7 +3528,9 @@ mod tests {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo started; sleep 1; echo bye"]);
         wait_text(&mut s, &rx, |r| r[0] == "started");
         let first = s.panes[&s.focus].buffer();
-        key(&mut s, "<C-b>%<C-b>h<C-b>x");
+        cmd(&mut s, "split", &["right"]).unwrap();
+        cmd(&mut s, "move-focus", &["left"]).unwrap();
+        cmd(&mut s, "close-pane", &[]).unwrap();
         pump(&mut s, &rx, |s| s.terms[&first].exited);
         assert_eq!((s.pane_count(), s.buffer_count()), (1, 2));
         let list = s.buffer_list(false);
@@ -3602,7 +3542,7 @@ mod tests {
         assert_eq!(&rows[..2], ["started", "bye"]);
         // Hidden again, it goes.
         let shown = s.focus;
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         assert_eq!(s.close(shown), Outcome::Redraw);
         assert!(!s.terms.contains_key(&first));
         assert_eq!(s.buffer_count(), 2);
@@ -3617,7 +3557,7 @@ mod tests {
         key(&mut s, "<CR>");
         // (Rows less the status line.)
         wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "29 90"));
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let right = s.focus;
         s.show_in(right, first).unwrap();
         let widest = s.panes.values().map(|e| e.rect.w).max().unwrap();
@@ -3639,7 +3579,7 @@ mod tests {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
         let left = s.focus;
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let right = s.focus;
         let (term, width) = (s.panes[&left].buffer(), |s: &Session, p| s.panes[&p].rect.w);
         let cols = |s: &Session| s.terms[&term].term.geometry().cols;
@@ -3665,46 +3605,44 @@ mod tests {
         s.mouse(&at(MouseEventKind::Release(MouseButton::Left), 70), now);
         assert_eq!((width(&s, left), cols(&s)), (70, 70), "and gets the new size on release");
         assert_eq!(s.focus, right, "the border took the press");
-        // The keys size the focused pane (as Vim's <C-w>> and <C-w><);
-        // the shipped ones pass a count as the cells.
-        key(&mut s, "<C-b>");
+        // resize-pane sizes the focused pane (as Vim's <C-w>> and <C-w><),
+        // by the cells given (the shipped keys pass their count).
         assert_eq!(cmd(&mut s, "resize-pane", &["wider", "3"]), Ok(Outcome::Redraw));
         assert_eq!((width(&s, left), cols(&s)), (67, 67));
-        key(&mut s, "<lt>");
-        assert_eq!(width(&s, left), 68, "the normal mode stays");
-        assert_eq!(s.current_mode(), "normal");
+        cmd(&mut s, "resize-pane", &["narrower"]).unwrap();
+        assert_eq!(width(&s, left), 68, "one cell without a count");
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    fn the_shipped_keys_move_and_rotate_panes() {
+    fn panes_move_to_edges_and_rotate() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "ready");
         let one = s.focus;
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let two = s.focus;
-        key(&mut s, "<C-b>\"");
+        cmd(&mut s, "split", &["bottom"]).unwrap();
         let three = s.focus;
         let panes = |s: &Session| s.layout.as_ref().unwrap().panes();
         assert_eq!(panes(&s), [one, two, three]);
         // H: the full height at the left; K: the full width at the top.
-        key(&mut s, "<C-b>H");
+        cmd(&mut s, "move-pane", &["left"]).unwrap();
         assert_eq!(panes(&s), [three, one, two]);
         assert_eq!(s.panes[&three].rect.h, s.area().h);
-        key(&mut s, "K");
+        cmd(&mut s, "move-pane", &["top"]).unwrap();
         assert_eq!((s.panes[&three].rect.y, s.panes[&three].rect.w), (0, s.area().w));
         // r: the row of the others turns; R back.
         s.set_focus(one);
-        key(&mut s, "<C-b>r");
+        cmd(&mut s, "rotate-panes", &[]).unwrap();
         assert_eq!(panes(&s), [three, two, one]);
-        key(&mut s, "R");
+        s.run_command("rotate-panes", &[ScriptValue::Bool(true)], Instant::now()).unwrap();
         assert_eq!(panes(&s), [three, one, two]);
         assert_eq!(s.focus, one, "the focus stays with its pane");
         // Sizes: + and - (one pane in a column: its border moves).
         let h = s.panes[&one].rect.h;
         cmd(&mut s, "resize-pane", &["shorter", "2"]).unwrap();
         assert_eq!(s.panes[&one].rect.h, h - 2);
-        key(&mut s, "+");
+        cmd(&mut s, "resize-pane", &["taller"]).unwrap();
         assert_eq!(s.panes[&one].rect.h, h - 1);
     }
 
@@ -3853,7 +3791,7 @@ mod tests {
         assert_eq!((s.layout.as_ref().unwrap().panes(), s.floats.len(), s.focus), (vec![f], 0, f));
         assert_eq!(s.panes[&f].rect, s.area(), "the whole screen");
         // A tiled pane floats and comes back beside the focused tiled pane.
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let right = s.focus;
         s.run_command("toggle-floating", &[], Instant::now()).unwrap();
         assert!(s.is_float(right));
@@ -3874,7 +3812,7 @@ mod tests {
         assert_ne!(out, Outcome::Quit);
         assert_eq!((s.floats.len(), s.focus), (0, tiled));
         // The tiled pane to return to closes while a float has the focus.
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let right = s.focus;
         float(&mut s, &["sleep", "30"], &[]);
         assert_eq!(s.close(right), Outcome::Redraw);
@@ -3956,24 +3894,24 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    fn the_shipped_keys_open_hide_and_embed_floats() {
+    fn floats_open_hide_and_embed() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "tiled");
         let tiled = s.focus;
-        key(&mut s, "<C-b>W");
+        cmd(&mut s, "open-float", &[]).unwrap();
         let f = s.focus;
-        assert!(s.is_float(f), "W: a floating shell");
+        assert!(s.is_float(f), "open-float: a floating shell");
         assert_eq!(s.current_mode(), "terminal", "in its own mode");
-        key(&mut s, "<C-b>w");
-        assert_eq!((s.focus, s.floats_hidden), (tiled, true), "w: hidden");
-        key(&mut s, "<C-b>w");
-        assert_eq!((s.focus, s.floats_hidden), (f, false), "w: shown");
-        key(&mut s, "<C-b>e");
-        assert!(!s.is_float(f), "e: tiled");
-        assert_eq!(s.current_mode(), "terminal", "back to the pane's mode");
+        cmd(&mut s, "toggle-floats", &[]).unwrap();
+        assert_eq!((s.focus, s.floats_hidden), (tiled, true), "toggle-floats: hidden");
+        cmd(&mut s, "toggle-floats", &[]).unwrap();
+        assert_eq!((s.focus, s.floats_hidden), (f, false), "toggle-floats: shown");
+        cmd(&mut s, "toggle-floating", &[]).unwrap();
+        assert!(!s.is_float(f), "toggle-floating: tiled");
+        assert_eq!(s.current_mode(), "terminal", "the pane's mode");
         assert_eq!(s.layout.as_ref().unwrap().panes(), [tiled, f]);
-        key(&mut s, "<C-b>e");
-        assert!(s.is_float(f), "e: floating again");
+        cmd(&mut s, "toggle-floating", &[]).unwrap();
+        assert!(s.is_float(f), "toggle-floating: floating again");
     }
 
     #[test]
@@ -4063,7 +4001,7 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[0] == "ready");
         let buf = s.panes[&s.focus].buffer();
         let pid = s.terms[&buf].term.pid().unwrap();
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let start = Instant::now();
         s.run_command("delete-buffer", &[ScriptValue::Num(buf as f64)], Instant::now()).unwrap();
         assert!(start.elapsed() < Duration::from_millis(100), "the session waited {:?}", start.elapsed());
@@ -4305,9 +4243,9 @@ mod tests {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "one");
         let left = s.focus;
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         new_tab(&mut s, &["sleep", "30"]);
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let e = cmd(&mut s, "toggle-floating", &[&left.to_string()]).unwrap_err();
         assert!(e.contains("in this tab"), "{e}");
         let places = s.layouts().filter(|(_, l)| l.panes().contains(&left)).count()
@@ -4335,7 +4273,7 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[0] == "one");
         let left = s.focus;
         assert!(cmd(&mut s, "break-pane", &[]).unwrap_err().contains("only tiled pane"));
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let right = s.focus;
         cmd(&mut s, "break-pane", &[]).unwrap();
         assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 1, right));
@@ -4359,7 +4297,7 @@ mod tests {
         wait_text(&mut s, &rx, |r| r[0] == "one");
         let one = s.focus;
         let buf = s.panes[&one].buffer();
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let half = s.panes[&one].rect.w as u16;
         assert_eq!(s.terms[&buf].term.geometry().cols, half);
         let what = ScriptValue::map([("buffer", ScriptValue::Num(buf as f64))]);
@@ -4459,8 +4397,10 @@ mod tests {
         let rows = screen_text(&frame, GEOMETRY);
         assert!(rows[last as usize].starts_with(" Pattern not found: zzzzqqq"), "{rows:?}");
         assert_eq!(cell_at(&frame, 1, last).unwrap().fg, theme_rgb(theme.error));
-        // Another pane: the unfocused one's name is dimmed.
-        key(&mut s, "<C-b>%");
+        // Another pane (the message gone, as the next key takes it): the
+        // unfocused one's name is dimmed.
+        s.panes.get_mut(&s.focus).and_then(PaneEntry::pdf).unwrap().message = None;
+        cmd(&mut s, "split", &["right"]).unwrap();
         let (frame, _) = settle(&mut s, &rx);
         let left = s.panes.iter().find(|(id, _)| **id != s.focus).map(|(_, e)| e.rect).unwrap();
         let right = s.panes[&s.focus].rect;
@@ -4519,32 +4459,37 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    fn the_visual_mode_moves_selects_and_copies_by_keys() {
+    fn the_visual_mode_moves_selects_and_copies() {
         // cat echoes what reaches it: keys in the visual mode must not.
         let (mut s, rx) = terminal_session(&["sh", "-c", "printf 'hello world\\nsecond line\\n'; exec cat"]);
         wait_text(&mut s, &rx, |r| r[1] == "second line");
         key(&mut s, "<C-b>[");
         assert_eq!(s.current_mode(), "visual");
         key(&mut s, "x");
-        key(&mut s, "ggwve");
+        for c in ["visual.top", "visual.word-forward", "visual.charwise", "visual.word-end"] {
+            cmd(&mut s, c, &[]).unwrap();
+        }
         assert!(rows_after(&mut s, &rx, 300)[2].is_empty(), "x went nowhere");
-        key(&mut s, "y");
+        cmd(&mut s, "visual.yank", &[]).unwrap();
         assert_eq!(copied(&mut s), ["world"]);
         assert_eq!(s.current_mode(), "terminal", "y leaves");
         assert!(!s.focused_term().unwrap().visual_kept());
-        // Counts, rows, <Esc> twice.
-        key(&mut s, "<C-b>v");
-        key(&mut s, "ggVjy");
+        // Rows, escaping twice.
+        cmd(&mut s, "switch-mode", &["visual"]).unwrap();
+        for c in ["visual.top", "visual.linewise", "visual.down", "visual.yank"] {
+            cmd(&mut s, c, &[]).unwrap();
+        }
         assert_eq!(copied(&mut s), ["hello world\nsecond line\n"], "lines, with their line break");
         let (history, _) = s.run_command("history", &[], Instant::now()).unwrap();
         let ScriptValue::List(history) = history else { panic!() };
         let newest = &history[0];
         assert_eq!(newest.get("kind").and_then(ScriptValue::as_str), Some("line"));
         assert_eq!(newest.get("source").and_then(|x| x.get("kind")).and_then(ScriptValue::as_str), Some("terminal"));
-        key(&mut s, "<C-b>[");
-        key(&mut s, "v<Esc>");
-        assert_eq!(s.current_mode(), "visual", "the first <Esc> drops the selection");
-        key(&mut s, "<Esc>");
+        cmd(&mut s, "switch-mode", &["visual"]).unwrap();
+        cmd(&mut s, "visual.charwise", &[]).unwrap();
+        cmd(&mut s, "visual.escape", &[]).unwrap();
+        assert_eq!(s.current_mode(), "visual", "the first escape drops the selection");
+        cmd(&mut s, "visual.escape", &[]).unwrap();
         assert_eq!(s.current_mode(), "terminal");
         assert!(cmd(&mut s, "visual.left", &[]).is_err(), "no visual mode now");
     }
@@ -4562,16 +4507,18 @@ mod tests {
         assert!(row.starts_with(" TERMINAL ") && row.ends_with("term"), "{row:?}");
         // The pane is a row shorter.
         assert_eq!(s.panes[&s.focus].rect.h, GEOMETRY.rows as u32 - 1);
-        key(&mut s, "<C-b>");
+        cmd(&mut s, "switch-mode", &["normal"]).unwrap();
         assert!(bottom(&mut s).starts_with(" NORMAL "));
-        key(&mut s, "[");
+        cmd(&mut s, "exit-mode", &[]).unwrap();
+        cmd(&mut s, "switch-mode", &["visual"]).unwrap();
         assert!(bottom(&mut s).starts_with(" VISUAL "));
-        key(&mut s, "V");
+        cmd(&mut s, "visual.linewise", &[]).unwrap();
         assert!(bottom(&mut s).starts_with(" VISUAL LINE "), "the kind of selection");
         let frame = s.frame();
         let cell = &frame.text.last().unwrap().rows[0][1];
         assert!(cell.attrs.bold && cell.bg != frame.text.last().unwrap().rows[0][40].bg, "the mode stands out");
-        key(&mut s, "<Esc><Esc>");
+        cmd(&mut s, "visual.escape", &[]).unwrap();
+        cmd(&mut s, "visual.escape", &[]).unwrap();
         // With tab pages: which one, of how many.
         new_tab(&mut s, &["sh", "-c", "sleep 30"]);
         assert!(bottom(&mut s).ends_with("2/2  term"), "{:?}", bottom(&mut s));
@@ -4604,8 +4551,9 @@ mod tests {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo first; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "first");
         let term = s.focus;
-        key(&mut s, "<C-b>[");
-        key(&mut s, "ggv");
+        cmd(&mut s, "switch-mode", &["visual"]).unwrap();
+        cmd(&mut s, "visual.top", &[]).unwrap();
+        cmd(&mut s, "visual.charwise", &[]).unwrap();
         // The search's input line takes the focus: the visual mode waits.
         let prompt = ScriptValue::map([("basemode", ScriptValue::Str("input".into()))]);
         let (buf, _) = s.run_command("new-buffer", &[prompt], Instant::now()).unwrap();
@@ -4732,7 +4680,7 @@ mod tests {
         // A terminal hidden by closing its pane too.
         let first = s.focus;
         let term = s.panes[&first].buffer();
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         s.script_events.clear();
         s.close(first);
         assert_eq!(
@@ -5057,17 +5005,17 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    fn the_shipped_keys_switch_and_break_out_tabs() {
+    fn tabs_switch_and_break_out() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
         wait_text(&mut s, &rx, |r| r[0] == "one");
-        key(&mut s, "<C-b>%");
+        cmd(&mut s, "split", &["right"]).unwrap();
         let right = s.focus;
-        key(&mut s, "<C-b>T");
+        cmd(&mut s, "break-pane", &[]).unwrap();
         assert_eq!((s.tabs.len(), s.tab, s.focus, s.current_mode()), (2, 1, right, "terminal"));
         new_tab(&mut s, &["sleep", "30"]);
-        key(&mut s, "<C-b>gt");
+        cmd(&mut s, "next-tab", &[]).unwrap();
         assert_eq!((s.tab, s.current_mode()), (0, "terminal"));
-        key(&mut s, "<C-b>gT");
+        cmd(&mut s, "prev-tab", &[]).unwrap();
         assert_eq!(s.tab, 2);
         cmd(&mut s, "next-tab", &["2"]).unwrap();
         assert_eq!((s.tab, s.focus), (1, right));
