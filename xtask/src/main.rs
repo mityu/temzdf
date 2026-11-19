@@ -63,10 +63,12 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask is inside the workspace").to_path_buf()
 }
 
-/// Cargo's target directory: `CARGO_TARGET_DIR`, else `target/` in the root.
+/// Cargo's target directory: `CARGO_TARGET_DIR` (a relative one from the
+/// root, as crates/temzdf-gui/build.rs reads it: a build script cannot know
+/// where cargo was run), else `target/` in the root.
 fn target_dir() -> PathBuf {
     match std::env::var_os("CARGO_TARGET_DIR") {
-        Some(d) => std::env::current_dir().map(|c| c.join(&d)).unwrap_or_else(|_| PathBuf::from(d)),
+        Some(d) => root().join(d),
         None => root().join("target"),
     }
 }
