@@ -318,8 +318,8 @@ declare module "temzdf" {{
     cancel?: boolean;
     reason?: string;
   }}
-  /** What an invocation ran: a mapping's actions ({{ name, args }}), a function's id, or typed text. */
-  export type InvokeTarget = {{ name: string; args: unknown[] }}[] | number | {{ textInput: string }};
+  /** What an invocation ran: a `temzdf action` command ([{{ name, args }}]), a function's id (a mapping, a fallback function), or typed text. */
+  export type InvokeTarget = [{{ name: string; args: unknown[] }}] | number | {{ textInput: string }};
   /** One invocation (a key sequence that ran a mapping, typed text, a fallback function, a CLI action): InvokePre and InvokePost get it. */
   export interface Invocation {{
     seq: number;

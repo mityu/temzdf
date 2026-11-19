@@ -456,6 +456,32 @@ keymap.add("vim/normal", "<F10>", () => action.switchMode("bounce"));
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn invoking_a_command_target_again_answers_as_the_command_does() {
+    let config = r#"import { action, keymap } from "temzdf";
+import vim from "temzdf/edit/vim";
+vim.enable();
+keymap.add("vim/normal", "<F6>", () => {
+  const got: string[] = [];
+  got.push(String(action.invoke([{ name: "current-mode", args: [] }])));
+  for (const target of [[{ name: "no-such", args: [] }], [{ name: "current-mode" }, { name: "current-mode" }]]) {
+    try { action.invoke(target); got.push("no error"); } catch (e) { got.push("threw"); }
+  }
+  action.setVar("pane", "got", got.join(" "));
+});
+"#;
+    let dir = std::env::temp_dir().join(format!("temzdf-invoke-cli-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (mut s, rx) = config_session(&dir, "x\n", Some(config)).unwrap();
+    let seen = type_keys(&mut s, &rx, "<F6>", None).unwrap();
+    assert!(seen.is_empty(), "{seen:?}");
+    let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("got".into())];
+    let got = s.run_command("get-var", &args, Instant::now()).unwrap().0;
+    assert_eq!(got, ScriptValue::Str("vim/normal threw threw".into()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn command_cases() {
     // runtime/test/command.ts: <F5> runs temzdf/command's cases.
     let dir = std::env::temp_dir().join(format!("temzdf-command-cases-{}", std::process::id()));

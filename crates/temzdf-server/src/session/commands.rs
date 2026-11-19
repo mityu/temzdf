@@ -142,7 +142,7 @@ const SESSION: &[(&str, &str, &str)] = &[
     (
         "invoke",
         "(target: InvokeTarget, opts?: { count?: number }): void",
-        "Run an invocation's target again (as InvokePre and InvokePost give it), as part of what runs now; `count` goes to a function's ctx",
+        "Run an invocation's target again (as InvokePre and InvokePost give it), as part of what runs now; `count` goes to a function's ctx; a command's error is thrown",
     ),
     ("switch-mode", "(mode: string): void", "Enter a mode (pushed on the mode history)"),
     ("exit-mode", "(): void", "Back to the previous mode"),
@@ -707,22 +707,19 @@ impl Session {
                     Some(ScriptValue::Num(f)) => {
                         super::Invoked::Target { target: crate::keymap::Target::Func(*f as u32), count, at: now }
                     }
+                    // A `temzdf action` request (as Invoked::Cli gives it):
+                    // the command runs now, its error the caller's.
                     Some(ScriptValue::List(acts)) => {
-                        let acts = acts
-                            .iter()
-                            .map(|a| {
-                                let name = a
-                                    .get("name")
-                                    .and_then(ScriptValue::as_str)
-                                    .ok_or("invoke: an action needs a name")?;
-                                let args = match a.get("args") {
-                                    Some(ScriptValue::List(l)) => l.clone(),
-                                    _ => Vec::new(),
-                                };
-                                Ok(crate::keymap::Act::new(name, args))
-                            })
-                            .collect::<Result<Vec<_>, String>>()?;
-                        super::Invoked::Target { target: crate::keymap::Target::Actions(acts), count, at: now }
+                        let [act] = acts.as_slice() else {
+                            return Err("invoke: a command target is one action, as InvokePre gives it".into());
+                        };
+                        let name =
+                            act.get("name").and_then(ScriptValue::as_str).ok_or("invoke: an action needs a name")?;
+                        let args = match act.get("args") {
+                            Some(ScriptValue::List(l)) => l.clone(),
+                            _ => Vec::new(),
+                        };
+                        return self.run_command(name, &args, now);
                     }
                     Some(v) if let Some(t) = v.get("textInput").and_then(ScriptValue::as_str) => {
                         super::Invoked::Text(t.to_owned())
