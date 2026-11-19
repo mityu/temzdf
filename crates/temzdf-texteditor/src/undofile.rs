@@ -133,7 +133,11 @@ impl UndoTree {
         }
         let mut nodes = Vec::with_capacity(n);
         for (i, f) in file.nodes.iter().enumerate() {
-            let ok = (i == 0 || f.parent < i) && f.redo.is_none_or(|r| r < n && r > 0);
+            // Redo goes to a child; a batch's changes are in order and do
+            // not overlap (undo and redo apply them as they are).
+            let ok = (i == 0 || f.parent < i)
+                && f.redo.is_none_or(|r| r < n && r > 0 && file.nodes[r].parent == i)
+                && f.batches.iter().all(|b| b.windows(2).all(|w| w[1].0 >= w[0].0 + w[0].1.chars().count()));
             if !ok {
                 return Err("a broken undo file".into());
             }
@@ -227,6 +231,29 @@ mod tests {
         let old = json.replacen("\"version\":1", "\"version\":0", 1);
         assert!(UndoTree::from_file(&old, b.text(), path).is_err());
         assert!(UndoTree::from_file("{", b.text(), path).is_err());
+    }
+
+    #[test]
+    fn an_undo_file_that_would_not_apply_is_refused() {
+        let path = Path::new("/notes/a.txt");
+        let b = branched();
+        let json = b.undo_tree().to_file(b.text(), path);
+        let file: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let broken = |f: &dyn Fn(&mut serde_json::Value)| {
+            let mut v = file.clone();
+            f(&mut v);
+            UndoTree::from_file(&v.to_string(), b.text(), path)
+        };
+        assert!(broken(&|_| {}).is_ok());
+        // Overlapping changes in a batch: undo would panic applying them.
+        let overlap = broken(&|v| v["nodes"][1]["batches"] = serde_json::json!([[[0, "ab", ""], [1, "c", ""]]]));
+        assert!(overlap.is_err());
+        // Redo to a node that is not a child: it would garble the text.
+        let parents: Vec<u64> =
+            file["nodes"].as_array().unwrap().iter().map(|n| n["parent"].as_u64().unwrap()).collect();
+        let stranger = (1..parents.len()).find(|&r| parents[r] != 0).unwrap();
+        assert!(broken(&|v| v["nodes"][0]["redo"] = stranger.into()).is_err());
+        assert!(broken(&|v| v["nodes"][0]["redo"] = 1.into()).is_ok(), "a child");
     }
 
     #[test]
