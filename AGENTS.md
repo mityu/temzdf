@@ -194,6 +194,9 @@ Miri and without TeX (Miri runs no test that needs the fixtures); `nix build` bu
 CI (`.github/workflows/ci.yml`) runs `scripts/check.sh --no-miri` in the
 first, `scripts/miri.sh` in the second as a job of its own (both keep built
 dependencies with `Swatinem/rust-cache`), and `nix build` on Linux and macOS.
+The Rust caches are saved only by pushes to `dev` and `main`, and a job after each
+(`prune-rust-cache.yml`) deletes those of the same branch but the one used last; the build
+without Nix uses the cache too.
 The documents' check (`scripts/check-docs.sh`) runs on every push,
 documentation-only ones included (`.github/workflows/docs.yml`).
 `.github/workflows/without-nix.yml` builds `temzdf` and `temzdf-gui` on

@@ -36,7 +36,8 @@ jobs:
         with:
           toolchain: stable
           target: wasm32-wasip1
-          cache: false
+          cache-shared-key: without-nix
+          cache-save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
       # libghostty-vt-sys builds libghostty-vt from source with Zig.
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
@@ -47,3 +48,12 @@ jobs:
       - run: cargo xtask fetch-fonts
       - run: cargo build --locked -p temzdf -p temzdf-gui
       - run: scripts/smoke-session.sh target/debug
+
+  prune:
+    needs: build
+    if: ${{ !cancelled() && github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/prune-rust-cache.yml
+    with:
+      key-prefix: v0-rust-without-nix-

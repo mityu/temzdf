@@ -1,0 +1,25 @@
+name: Prune Rust cache
+
+on:
+  workflow_call:
+    inputs:
+      key-prefix:
+        required: true
+        type: string
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PREFIX: ${{ inputs.key-prefix }}
+        run: |
+          gh cache list --ref "$GITHUB_REF" --key "$PREFIX" \
+              --sort last_accessed_at --order desc --limit 100 --json id,key \
+              --jq '.[1:][] | "\(.id) \(.key)"' |
+            while read -r id key; do
+              echo "deleting $key"
+              gh cache delete "$id"
+            done
