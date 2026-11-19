@@ -338,9 +338,13 @@ pub fn readings(keys: &[Stroke]) -> Vec<Vec<Stroke>> {
 /// Typed keys on their way to mappings.
 #[derive(Debug, Default)]
 pub struct Matcher {
-    /// Keys not looked at yet, as typed, and whether mappings apply.
-    input: VecDeque<(Stroke, Option<KeyEvent>, bool)>,
-    pending: Vec<(Stroke, Option<KeyEvent>)>,
+    /// Keys not looked at yet, as typed, whether mappings apply, and how
+    /// deeply mappings fed them (typed: 0; fed by a mapping at depth d:
+    /// d + 1).
+    input: VecDeque<(Stroke, Option<KeyEvent>, bool, usize)>,
+    pending: Vec<(Stroke, Option<KeyEvent>, usize)>,
+    /// The depth of the keys the last `Run` or `Unmapped` took (the deepest).
+    depth: usize,
     since: Option<Instant>,
     count: Option<usize>,
     /// The pending keys timed out: resolve them with what they match.
@@ -352,26 +356,33 @@ pub struct Matcher {
 impl Matcher {
     /// A typed key.
     pub fn push(&mut self, ev: &KeyEvent) {
-        self.input.push_back((Stroke::of(ev), Some(ev.clone()), true));
+        self.input.push_back((Stroke::of(ev), Some(ev.clone()), true, 0));
     }
 
     /// Keys fed ahead of what is queued, as Vim's `feedkeys` inserts
-    /// typeahead.
-    pub fn feed_front(&mut self, keys: &[Stroke], remap: bool) {
+    /// typeahead, `depth` deep (see [`Matcher::depth`]).
+    pub fn feed_front(&mut self, keys: &[Stroke], remap: bool, depth: usize) {
         for k in keys.iter().rev() {
-            self.input.push_front((*k, None, remap));
+            self.input.push_front((*k, None, remap, depth));
         }
+    }
+
+    /// How deeply mappings fed the keys the last [`Step::Run`] or
+    /// [`Step::Unmapped`] took: 0 for typed keys, one more than the feeding
+    /// mapping's for fed ones (Vim's `maxmapdepth` counts the same way).
+    pub fn depth(&self) -> usize {
+        self.depth
     }
 
     /// Drop the keys `feed_front` queued, keeping typed ones: an error
     /// stops what was fed (Vim flushes typeahead: a macro stops).
     pub fn drop_fed(&mut self) {
-        self.input.retain(|(_, ev, _)| ev.is_some());
+        self.input.retain(|(_, ev, _, _)| ev.is_some());
     }
 
-    fn requeue(&mut self, keys: Vec<(Stroke, Option<KeyEvent>)>) {
-        for (k, ev) in keys.into_iter().rev() {
-            self.input.push_front((k, ev, true));
+    fn requeue(&mut self, keys: Vec<(Stroke, Option<KeyEvent>, usize)>) {
+        for (k, ev, d) in keys.into_iter().rev() {
+            self.input.push_front((k, ev, true, d));
         }
     }
 
@@ -395,7 +406,7 @@ impl Matcher {
     }
 
     pub fn pending(&self) -> Vec<Stroke> {
-        self.pending.iter().map(|(k, _)| *k).collect()
+        self.pending.iter().map(|(k, _, _)| *k).collect()
     }
 
     pub fn count(&self) -> Option<usize> {
@@ -422,17 +433,18 @@ impl Matcher {
                 }
                 continue;
             }
-            let Some((k, ev, remap)) = self.input.pop_front() else {
+            let Some((k, ev, remap, d)) = self.input.pop_front() else {
                 return Step::Wait(self.deadline(timeout));
             };
             if !remap {
                 // Fed without mappings: settle what is pending first.
                 if !self.pending.is_empty() {
-                    self.input.push_front((k, ev, remap));
+                    self.input.push_front((k, ev, remap, d));
                     self.expired = true;
                     continue;
                 }
                 self.count = None;
+                self.depth = d;
                 return Step::Unmapped(k, ev);
             }
             let ls = &layers.modes;
@@ -445,7 +457,7 @@ impl Matcher {
                     unknown.push(c);
                 }
                 if !unknown.is_empty() {
-                    self.input.push_front((k, ev, remap));
+                    self.input.push_front((k, ev, remap, d));
                     return Step::NeedConditions(unknown);
                 }
             }
@@ -475,11 +487,11 @@ impl Matcher {
                 };
                 if leave {
                     // Looked at again below; a count typed so far stays.
-                    self.input.push_front((k, ev, remap));
+                    self.input.push_front((k, ev, remap, d));
                     return Step::Leave;
                 }
             }
-            self.pending.push((k, ev));
+            self.pending.push((k, ev, d));
             let keys = self.pending();
             let exact = modes.lookup_typed(ls, &keys, &self.conds);
             let longer = modes.has_longer_typed(ls, &keys, &self.conds);
@@ -487,6 +499,7 @@ impl Matcher {
                 && (!longer || nowait)
             {
                 self.since = None;
+                self.depth = self.pending.iter().map(|p| p.2).max().unwrap_or(0);
                 self.pending.clear();
                 self.conds.clear();
                 return Step::Run { target, count: self.count.take(), keys };
@@ -509,7 +522,7 @@ impl Matcher {
             return None;
         }
         let mut items = std::mem::take(&mut self.pending);
-        let keys: Vec<Stroke> = items.iter().map(|(k, _)| *k).collect();
+        let keys: Vec<Stroke> = items.iter().map(|(k, _, _)| *k).collect();
         let found = (1..=keys.len())
             .rev()
             .find_map(|n| modes.lookup_typed(&layers.modes, &keys[..n], &self.conds).map(|(t, _, read)| (n, t, read)));
@@ -517,12 +530,14 @@ impl Matcher {
         if let Some((n, target, read)) = found {
             let rest = items.split_off(n);
             self.requeue(rest);
+            self.depth = items.iter().map(|p| p.2).max().unwrap_or(0);
             return Some(Step::Run { target, count: self.count.take(), keys: read });
         }
         let rest = items.split_off(1);
         self.requeue(rest);
         self.count = None;
-        let (k, ev) = items.pop().expect("one pending key");
+        let (k, ev, d) = items.pop().expect("one pending key");
+        self.depth = d;
         Some(Step::Unmapped(k, ev))
     }
 }
@@ -788,7 +803,7 @@ mod tests {
         let base = Layers::of("base", true);
         let mut matcher = Matcher::default();
         let now = Instant::now();
-        matcher.feed_front(&k("j"), false);
+        matcher.feed_front(&k("j"), false, 1);
         assert_eq!(matcher.step(&m, &base, T, now), Step::Unmapped(k("j")[0], None));
         matcher.push(&k("3")[0].event());
         matcher.push(&k("g")[0].event());
@@ -799,7 +814,7 @@ mod tests {
         assert_eq!(matcher.step(&m, &base, T, now), Step::Wait(None));
         // drop_fed keeps what was typed.
         matcher.push(&k("x")[0].event());
-        matcher.feed_front(&k("jk"), false);
+        matcher.feed_front(&k("jk"), false, 1);
         matcher.drop_fed();
         assert!(matches!(matcher.step(&m, &base, T, now), Step::Run { target: "close", .. }), "x is mapped");
         assert_eq!(matcher.step(&m, &base, T, now), Step::Wait(None), "j and k went");

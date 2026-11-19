@@ -286,7 +286,7 @@ const NO_GRAPHICS_MARKDOWN: &str =
 /// The session's own cells: borders, frames, the tab line.
 const BACKGROUND: [u8; 4] = [0x3a, 0x3a, 0x3a, 0xff];
 const BORDER: [u8; 4] = [0x5a, 0x5a, 0x5a, 0xff];
-/// The most mappings one typed key may run (Vim's `maxmapdepth`).
+/// How deeply mappings may feed keys to mappings (Vim's `maxmapdepth`).
 const MAX_MAP_DEPTH: usize = 1000;
 
 /// What a pane shows and where, for a split of it to show the same.
@@ -546,8 +546,8 @@ pub struct Session {
     /// The terminal buffer with a visual mode, on or suspended (one at a
     /// time; see [`Session::mode_changed`]).
     visual: Option<BufferId>,
-    /// Mappings run since the matcher last used up its keys (Vim's
-    /// `maxmapdepth`).
+    /// How deeply mappings fed the keys of what runs now (0: typed); keys
+    /// it feeds are one deeper (Vim's `maxmapdepth`).
     map_depth: usize,
     keys: Keys,
     effects: Vec<Effect>,
@@ -1460,7 +1460,6 @@ impl Session {
         self.cli_cancel = None;
         // A key dismisses error messages (and is handled as usual).
         let dismissed = Outcome::None.or(self.dismiss_errors());
-        self.map_depth = 0;
         if self.hold_key(k) {
             return dismissed;
         }
@@ -1570,9 +1569,8 @@ impl Session {
             let layers = self.layers();
             match self.matcher.step(&self.modes, &layers, self.options.timeoutlen, now) {
                 Step::Wait(_) => {
-                    // The keys and what they expanded to are used up: the
-                    // next keys (typed or fed by a hook) count from zero,
-                    // as Vim counts per typeahead expansion.
+                    // The keys and what they expanded to are used up: keys
+                    // fed later (by a hook, a timer) start from the top.
                     if !self.matcher.has_input() && self.matcher.pending().is_empty() {
                         self.map_depth = 0;
                     }
@@ -1589,12 +1587,7 @@ impl Session {
                     out = out.merge(Outcome::Redraw);
                 }
                 Step::Run { target, count, keys } => {
-                    // Mappings that feed keys mapping to themselves (`a` to
-                    // `a`, or to `aa`) would run forever, as in Vim.
-                    self.map_depth += 1;
-                    if self.map_depth > MAX_MAP_DEPTH {
-                        self.matcher.cancel();
-                        self.message("recursive mapping (more than 1000 mappings for one key)");
+                    if self.too_deep() {
                         out = out.merge(Outcome::Redraw);
                         break;
                     }
@@ -1614,6 +1607,10 @@ impl Session {
                             _ => out = out.merge(self.send_to_pane(&ev)),
                         },
                         Fallback::Func(func) => {
+                            if self.too_deep() {
+                                out = out.merge(Outcome::Redraw);
+                                break;
+                            }
                             let text = ev.text.clone().or_else(|| match ev.code {
                                 KeyCode::Char(c) => Some(c.to_string()),
                                 _ => None,
@@ -1629,6 +1626,23 @@ impl Session {
             }
         }
         out
+    }
+
+    /// Mappings (and fallback functions) that feed keys mapping to
+    /// themselves (`a` to `a`, or to `aa`) would run forever, as in Vim:
+    /// keys fed more than `MAX_MAP_DEPTH` mappings deep stop with an error
+    /// (Vim's maxmapdepth, E223). Else what runs now has that depth, and the
+    /// keys it feeds one more.
+    fn too_deep(&mut self) -> bool {
+        let depth = self.matcher.depth();
+        if depth > MAX_MAP_DEPTH {
+            self.matcher.cancel();
+            self.map_depth = 0;
+            self.message("recursive mapping (mappings fed keys more than 1000 deep)");
+            return true;
+        }
+        self.map_depth = depth;
+        false
     }
 
     /// Start an invocation (a mapping, typed text, a fallback function, a

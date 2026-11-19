@@ -408,6 +408,54 @@ fn ex_commands_split_switch_and_close_panes_buffers_and_tabs() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn the_recursion_guard_counts_how_deep_mappings_feed_keys() {
+    let config = r#"import { action, defineMode, feedkeys, keymap } from "temzdf";
+import vim from "temzdf/edit/vim";
+vim.enable();
+let runs = 0;
+keymap.add("vim/normal", "<F6>", () => action.setVar("pane", "runs", ++runs));
+keymap.add("vim/normal", "<F7>", () => feedkeys("<F6>".repeat(1100)));
+let deep = 0;
+keymap.add("vim/normal", "<F8>", () => { action.setVar("pane", "deep", ++deep); feedkeys("<F8>"); });
+defineMode("bounce", { fallback: (_c, k) => feedkeys(k.keys) });
+keymap.add("vim/normal", "<F10>", () => action.switchMode("bounce"));
+"#;
+    let dir = std::env::temp_dir().join(format!("temzdf-map-depth-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (mut s, rx) = config_session(&dir, "x\n", Some(config)).unwrap();
+    let recursive = |s: &Session| s.notices.iter().any(|n| n.text.contains("recursive mapping"));
+    // Many keys fed at once, none of them fed by what they run: all run.
+    let seen = type_keys(&mut s, &rx, "<F7>", None).unwrap();
+    assert!(seen.is_empty(), "{seen:?}");
+    let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("runs".into())];
+    assert_eq!(s.run_command("get-var", &args, Instant::now()).unwrap().0, ScriptValue::Num(1100.0));
+    // A mapping feeding itself stops after 1001 runs (typed 0 deep, then
+    // fed 1 to 1000 deep), though keys are typed all the while (typed keys
+    // held meanwhile dismiss the error when they come: count the runs).
+    let deep = |s: &mut Session| {
+        let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("deep".into())];
+        s.run_command("get-var", &args, Instant::now()).unwrap().0.as_num().unwrap_or(0.0)
+    };
+    s.key(&notation::parse("<F8>").unwrap()[0].event(), Instant::now());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while deep(&mut s) < 1001.0 {
+        assert!(Instant::now() < deadline, "too slow");
+        if let Ok(ev) = rx.recv_timeout(Duration::from_millis(20)) {
+            s.handle(ev, Instant::now());
+        }
+        s.key(&notation::parse("<F9>").unwrap()[0].event(), Instant::now());
+    }
+    settle(&mut s, &rx, true, None);
+    assert_eq!(deep(&mut s), 1001.0);
+    s.notices.clear();
+    // So does a fallback function feeding the key it got back.
+    type_keys(&mut s, &rx, "<F10>z", None).unwrap();
+    assert!(recursive(&s), "{:?}", s.notices.iter().map(|n| &n.text).collect::<Vec<_>>());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn command_cases() {
     // runtime/test/command.ts: <F5> runs temzdf/command's cases.
     let dir = std::env::temp_dir().join(format!("temzdf-command-cases-{}", std::process::id()));

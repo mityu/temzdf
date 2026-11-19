@@ -691,7 +691,8 @@ impl Session {
                         self.key_typed(k.notation(), None, "feedkeys");
                     }
                 }
-                self.matcher.feed_front(&keys, remap);
+                // One deeper than the mapping running (if any): Vim's maxmapdepth.
+                self.matcher.feed_front(&keys, remap, self.map_depth + 1);
                 ok(Outcome::None)
             }
             "beep" => {
