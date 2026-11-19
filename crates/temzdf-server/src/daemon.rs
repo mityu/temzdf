@@ -634,6 +634,11 @@ fn focus_change(clients: &HashMap<ClientId, Client>, told: &mut Option<bool>) ->
     for f in reported {
         any = Some(any.unwrap_or(false) || f);
     }
+    // No client attached any more: programs lose the focus (as tmux tells
+    // panes when the last client detaches).
+    if !clients.values().any(|c| c.attached) && *told == Some(true) {
+        any = Some(false);
+    }
     let now = any?;
     (*told != Some(now)).then(|| {
         *told = Some(now);
@@ -1051,6 +1056,12 @@ mod tests {
         // The focused client goes.
         clients.remove(&1);
         assert_eq!(focus_change(&clients, &mut told), Some(false));
+        // The last attached client detaches while it has the focus.
+        clients.get_mut(&3).unwrap().focused = Some(true);
+        assert_eq!(focus_change(&clients, &mut told), Some(true));
+        clients.get_mut(&3).unwrap().attached = false;
+        assert_eq!(focus_change(&clients, &mut told), Some(false), "nobody has it");
+        assert_eq!(focus_change(&clients, &mut told), None, "told already");
     }
 
     #[test]
