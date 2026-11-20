@@ -97,7 +97,7 @@ come from it, and a test runs each), and the generated
 `temzdf-all.d.ts`; editors use `crates/temzdf-script/runtime/tsconfig.json`
 (the dev shell's `tsc --lsp --stdio` is a language server). The
 devDependencies of `runtime/package.json` (dts-bundle-generator,
-TypeScript 6) are tools, never bundled. The default dev shell has no Miri (check.sh
+TypeScript 6, type-fest's types) are tools, never bundled. The default dev shell has no Miri (check.sh
 says it skipped it); `nix develop .#enable-miri` has it, and the user runs
 it from time to time. To run Miri yourself, `nix develop .#alldeps -c
 scripts/check.sh` (or `-c scripts/miri.sh`) is the one allowed use of
