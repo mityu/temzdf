@@ -338,6 +338,17 @@ const FIRST_OPEN_RETRY: std::time::Duration = std::time::Duration::from_millis(3
 /// The document thread: opens `path` (a snapshot of it, see [`pdf::open`],
 /// shared with the search thread through `snapshot`) and loads pages.
 pub fn spawn_document(path: PathBuf, events: Sink, snapshot: Snapshot) -> std::io::Result<Sender<DocCmd>> {
+    spawn_document_waiting(path, events, snapshot, FIRST_OPEN_FOR)
+}
+
+/// [`spawn_document`], trying to open the file for `first_open_for` (tests
+/// wait less than [`FIRST_OPEN_FOR`]).
+fn spawn_document_waiting(
+    path: PathBuf,
+    events: Sink,
+    snapshot: Snapshot,
+    first_open_for: std::time::Duration,
+) -> std::io::Result<Sender<DocCmd>> {
     let open = move |path: &Path| -> anyhow::Result<(Arc<[u8]>, pdf::Doc, DocInfo)> {
         let bytes = pdf::read(path)?;
         let doc = anyhow::Context::with_context(pdf::open_bytes(&bytes), || format!("cannot open {}", path.display()))?;
@@ -348,7 +359,7 @@ pub fn spawn_document(path: PathBuf, events: Sink, snapshot: Snapshot) -> std::i
     std::thread::Builder::new().name("temzdf-doc".into()).spawn(move || {
         // Started while TeX writes the file: wait for it, as reloads do.
         let first = || {
-            let deadline = std::time::Instant::now() + FIRST_OPEN_FOR;
+            let deadline = std::time::Instant::now() + first_open_for;
             loop {
                 let complete = pdf::looks_complete(&path);
                 if let Err(e) = &complete
@@ -683,13 +694,15 @@ mod tests {
         // Valid (the spec allows %%EOF anywhere near the end): only a hint
         // that TeX is done, never a reason to refuse the file.
         let dir = std::env::temp_dir().join(format!("temzdf-padded-{}", std::process::id()));
+        // A shorter wait for an incomplete-looking file than FIRST_OPEN_FOR.
+        let wait = std::time::Duration::from_millis(700);
         std::fs::create_dir_all(&dir).unwrap();
         let open = |name: &str, bytes: &[u8]| {
             let path = dir.join(name);
             std::fs::write(&path, bytes).unwrap();
             let (tx, rx) = mpsc::channel::<DocEvent>();
             let start = std::time::Instant::now();
-            let _cmds = spawn_document(path, channel_sink(tx, |e| e), Snapshot::default()).unwrap();
+            let _cmds = spawn_document_waiting(path, channel_sink(tx, |e| e), Snapshot::default(), wait).unwrap();
             let opened = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
             (opened, start.elapsed())
         };
@@ -701,17 +714,17 @@ mod tests {
             _ => String::new(),
         };
         assert!(matches!(opened, DocEvent::Opened(Ok(_))), "refused a complete PDF: {}", error(&opened));
-        assert!(took < std::time::Duration::from_secs(1), "waited {took:?}");
+        assert!(took < wait, "waited {took:?}");
         // Not a PDF: MuPDF's own error, at once.
         let (failed, took) = open("notes.txt", b"just some notes, no PDF here\n");
         assert!(matches!(&failed, DocEvent::Opened(Err(e)) if !e.contains("looks incomplete")), "{}", error(&failed));
-        assert!(took < std::time::Duration::from_secs(1), "waited {took:?}");
+        assert!(took < wait, "waited {took:?}");
         // Other bytes after %%EOF: waited for, then opened all the same.
         let mut junk = std::fs::read(pdf::fixture("sample.pdf")).unwrap();
         junk.extend(std::iter::repeat_n(b'x', 2048));
         let (opened, took) = open("junk.pdf", &junk);
         assert!(matches!(opened, DocEvent::Opened(Ok(_))), "{}", error(&opened));
-        assert!(took >= FIRST_OPEN_FOR, "{took:?}");
+        assert!(took >= wait, "{took:?}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
