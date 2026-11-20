@@ -69,7 +69,7 @@ function workPanes(): ReturnType<typeof action.panes> {
 function splitPane(vertical: boolean, buffer: number, file: string): void {
   const side = vertical ? (o.splitright ? "right" : "left") : o.splitbelow ? "bottom" : "top";
   const pane = action.split({ side, buffer });
-  if (pane !== null && file !== "") action.openFile(file, { pane });
+  if (pane !== undefined && file !== "") action.openFile(file, { pane });
 }
 
 /** The focused pane's buffer (in any kind of pane). */
@@ -107,7 +107,7 @@ function cycleBuffer(delta: number, count: number): void {
   if (i < 0) i = 0;
   const n = list.length;
   i = (((i + delta * count) % n) + n) % n;
-  action.showBuffer(list[i].id, action.focusedPane() ?? undefined);
+  action.showBuffer(list[i].id, action.focusedPane());
 }
 
 /** :ls: Vim's list (% the pane's, a shown, h hidden, + modified). */
@@ -214,13 +214,13 @@ function replacement(rep: string, groups: string[]): string {
   return out;
 }
 
-type Match = { range: TextRange; groups: (TextRange | null)[] };
+type Match = { range: TextRange; groups: (TextRange | undefined)[] };
 
 /** A match's groups as a replacement reads them: the match first (\zs
  * \ze's group when there is one), then the pattern's own (shifted past
  * the one \zs \ze added). */
 function groupsOf(m: Match, group: number): string[] {
-  const groupTexts = m.groups.map((g) => (g === null ? "" : text(g)));
+  const groupTexts = m.groups.map((g) => (g === undefined ? "" : text(g)));
   const own = group > 0 ? groupTexts.filter((_, k) => k !== group && k !== 0) : groupTexts.slice(1);
   return [groupTexts[group] ?? "", ...own];
 }
@@ -265,7 +265,7 @@ function confirmSubstitute(
     lines: [range.first, range.last],
     group: conv.group,
   });
-  if (first === null) throw new Error(`E486: Pattern not found: ${pattern}`);
+  if (first === undefined) throw new Error(`E486: Pattern not found: ${pattern}`);
   t.undoBegin();
   const end = t.addDecoration({ start: endAt, end: endAt }, { namespace: CONFIRM, endGravity: "after" });
   confirming = {
@@ -290,7 +290,7 @@ function nextMatch(): boolean {
   const endPos = t.decoration(c.end)?.range.start ?? c.at;
   if (c.at.line > endPos.line) return false;
   const m = t.search(c.rust, { from: c.at, wrap: false, lines: [c.at.line, endPos.line], group: c.group });
-  if (m === null || m.range.start.line > endPos.line) return false;
+  if (m === undefined || m.range.start.line > endPos.line) return false;
   c.match = m;
   t.addDecoration(m.range, { style: "IncSearch", namespace: `${CONFIRM}-match` });
   t.setCursor(m.range.start);
@@ -507,7 +507,7 @@ export function exCommands(add: Define["command"]): void {
   add("vsplit", (c) => splitPane(true, focusedBuffer(), bangArg(c.args)[1]), { shortName: "vs" });
   add("new", (c) => splitPane(false, action.newBuffer(), bangArg(c.args)[1]));
   add("vnew", (c) => splitPane(true, action.newBuffer(), bangArg(c.args)[1]), { shortName: "vne" });
-  add("enew", () => action.showBuffer(action.newBuffer(), action.focusedPane() ?? undefined), { shortName: "ene" });
+  add("enew", () => action.showBuffer(action.newBuffer(), action.focusedPane()), { shortName: "ene" });
   add(
     "close",
     () => {
@@ -545,7 +545,7 @@ export function exCommands(add: Define["command"]): void {
       // :3b: the range is a buffer's number, not a line.
       if (arg === "" && c.range === undefined) return;
       const n = arg !== "" ? arg : String(resolveRange(c.range!, env).last + 1);
-      action.showBuffer(bufferNamed(n), action.focusedPane() ?? undefined);
+      action.showBuffer(bufferNamed(n), action.focusedPane());
     },
     { shortName: "b", prefix: "vim-range" },
   );

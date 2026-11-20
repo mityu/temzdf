@@ -102,7 +102,7 @@ to the previous one, and below the history there is always `normal`. The
 design is in doc/design/keymaps.md.
 
 Mappings go from a key sequence to a synchronous function, which gets the
-key's context (`ctx.count`: the count typed before the keys, or null;
+key's context (`ctx.count`: the count typed before the keys, or undefined;
 `ctx.keys`: the keys that ran it).
 `action.<command>(...)` runs a command now; commands that repeat take the
 count as an argument (`(ctx) => action.scrollDown(ctx.count)`). Keys typed
@@ -148,7 +148,7 @@ makes a mode (or changes one). Properties left out are the mode below's
 takes do: `"drop"`, `"passthrough"` (to the focused pane: typed into a
 terminal, an input or a text pane), or a function `(ctx, key) => void`
 given the key (`key.keys` in notation, `key.text` what it types or
-null): reading one key (`f{char}`) is a transient mode with a fallback
+undefined): reading one key (`f{char}`) is a transient mode with a fallback
 function (a transient mode's own fallback function takes the keys it
 does not map instead of leaving, whatever its `keepalive`), and leaving a
 mode on a key it does not know is `fallback: () => action.exitMode()`. A **transient** mode (a submode, as
@@ -315,6 +315,8 @@ pane. A floating message says so.
 ## Options
 
 Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
+An option without a value (unset) reads as undefined, and `o.<name> = undefined`
+unsets it.
 
 | Option | Default | |
 |---|---|---|
@@ -326,16 +328,16 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `clipboard` | `"all"` | what goes to the client's clipboard as well: copies and deletes (`"all"`, Vim's `clipboard=unnamedplus`), `"copies"`, or `"none"`; a copy to a named register never does |
 | `scrollstep` | `60` | pixels per wheel step, before flick acceleration (PDF panes, the Markdown viewer's graphics mode) |
 | `scrollsmoothness` | `60` | easing time constant in milliseconds (smaller is snappier; the same panes) |
-| `linkopener` | `null` | command opening external links, the URI appended (`["firefox"]`); `null`: `xdg-open` / `open`. Runs in the client; a failure shows as a message. Only `http`, `https`, `mailto` and `ftp` links open, and `file` links to existing documents: regular files, not executable, not of a kind openers launch (`.desktop`, `.command`, scripts, ...): documents and programs are not trusted |
+| `linkopener` | unset | command opening external links, the URI appended (`["firefox"]`); unset: `xdg-open` / `open`. Runs in the client; a failure shows as a message. Only `http`, `https`, `mailto` and `ftp` links open, and `file` links to existing documents: regular files, not executable, not of a kind openers launch (`.desktop`, `.command`, scripts, ...): documents and programs are not trusted |
 | `linkpreview` | `true` | preview internal links (references, citations, the outline) when the pointer rests on one |
 | `linkpreviewdelay` | `300` | milliseconds before the preview |
 | `reloaddebounce` | `200` | milliseconds after the PDF last changed before reloading |
 | `reloadanchor` | `"position"` | `"position"` keeps the page and place on it (as Skim, Okular); `"text"` finds the line read a third down the screen in the new PDF (falling back to the position) |
-| `synctexeditor` | `null` | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/design/synctex.md. `--editor` overrides it |
+| `synctexeditor` | unset | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/design/synctex.md. `--editor` overrides it |
 | `remainonexit` | `false` | a shown terminal whose program ended keeps its panes (tmux's `remain-on-exit`) |
 | `showtabline` | `"auto"` | when the tab line shows (Vim's): `"never"`, `"auto"` (with two tab pages or more), `"always"` |
 | `showstatusline` | `"always"` | whether the window's status line shows (its bottom row: the mode, the session, the tab page): `"always"`, `"never"` |
-| `foreground`, `background` | `null` | default colours (`"#rrggbb"`) of GUI clients and terminal panes (programs asking with OSC 10/11 are told); `null`: the client's own. A terminal client's terminal keeps its own |
+| `foreground`, `background` | unset | default colours (`"#rrggbb"`) of GUI clients and terminal panes (programs asking with OSC 10/11 are told); unset: the client's own. A terminal client's terminal keeps its own |
 | `palette` | `[]` | the first colours of the 256-colour palette (`["#000000", "#cd0000", ...]`), for GUI clients and terminal panes (OSC 4); the rest stay the default |
 | `guifont` | `[{ font: "JetBrains Mono", size: 14 }]` | the GUI client's fonts, `{ font, size? }` (size in points, 4 to 200; left out: the first font's, else 14). The first installed one sets the cell size; a character goes to the first font of the list that has it, at that font's size, then (as WezTerm) to the built-in JetBrains Mono, Noto Color Emoji and Symbols Nerd Font Mono, then the system's fonts for its script. A font that is not installed is skipped: `temzdf ls-fonts` shows what the list resolves to |
 | `guifontwide` | `[]` | fonts tried first for wide (CJK) characters, as `guifont` |
@@ -350,8 +352,8 @@ Set with `o.<name> = value` (read with `o.<name>`); they apply at once.
 | `scrolloff` | `0` | rows kept between the cursor and the top or bottom of text panes |
 | `swapfile` | `true` | keep text buffers' text in swap files while they are edited (as Neovim), so what was not saved survives a crash: `$XDG_STATE_HOME/temzdf/swap/` (else `~/.local/state/temzdf/swap/`), readable by the user only, gone when the buffer is deleted or the session ends normally |
 | `updatetime` | `4000` | milliseconds after the last change before a swap file is written |
-| `directory` | `null` | where swap files go (Vim's `'directory'`): a path (`~/` is the home directory, a relative one from where the session started); `null` or `""` is `$XDG_STATE_HOME/temzdf/swap/`. Swap files started before a change stay where they are |
-| `undodir` | `null` | where undo files go (Vim's `'undodir'`), as `directory`; `null` or `""` is `$XDG_STATE_HOME/temzdf/undo/` |
+| `directory` | unset | where swap files go (Vim's `'directory'`): a path (`~/` is the home directory, a relative one from where the session started); unset or `""` is `$XDG_STATE_HOME/temzdf/swap/`. Swap files started before a change stay where they are |
+| `undodir` | unset | where undo files go (Vim's `'undodir'`), as `directory`; unset or `""` is `$XDG_STATE_HOME/temzdf/undo/` |
 | `markdownmode` | `"text"` | the mode Markdown viewers open in (`markdown.open`): `"text"` (a text pane) or `"graphics"` (pixels, like a PDF page) |
 | `undofile` | `false` | keep text buffers' undo trees in files (Vim's undofile): written when the buffer is written, read back when the file is opened again if it still holds what was written. In `$XDG_STATE_HOME/temzdf/undo/` (else `~/.local/state/temzdf/undo/`), readable by the user only. Off by default: deleted text stays in them |
 
@@ -407,7 +409,7 @@ most `o.copyhistory`): `{ id, text, kind, how, register, source, time }`,
   entry and returns it; it goes to the client's clipboard as `o.clipboard`
   says, unless `clipboard` says otherwise or it names a `register`;
 - named registers: `register(name)`, `registers()`, `setRegister(name,
-  entry | { text, kind? } | null)`; any string names one (the Vim mode uses
+  entry | { text, kind? } | undefined)`; any string names one (the Vim mode uses
   `a`-`z`);
 - `put({ register?, index?, pane? })` puts an entry into a pane: pasted
   into a terminal (lines without their last line break), typed into a text
@@ -492,7 +494,7 @@ largest pane in any of them. All clients show the same tab page.
 - Closing a tab page's last pane (or its program ending) closes the tab
   page, unless a float of its own shows (it takes the place); the tab page
   after it becomes current. With the last tab page, the session ends.
-- `panes()` gives each pane's `tab` (`null` for a float on every tab page).
+- `panes()` gives each pane's `tab` (undefined for a float on every tab page).
 - Hooks: `TabEntered(n)`, `TabClosed(n)`.
 
 ## Status lines
@@ -657,7 +659,7 @@ JavaScript strings index; out of range is clamped), ranges
 - search: `text.search(pattern, { from?, backward?, wrap?, lines?, group?,
   word? })` and `text.searchAll(pattern, { range? })` take Rust regex
   syntax (`^` and `$` at lines; back references and look-around work too),
-  and give `{ range, groups }`; `highlightPattern(ns, pattern | null,
+  and give `{ range, groups }`; `highlightPattern(ns, pattern | undefined,
   style?)` paints a pattern's matches in every text pane (`Search` by
   default), what hlsearch is;
 - decorations and marks: `text.addDecoration(range, { style?, namespace?,

@@ -624,6 +624,68 @@ action.message(a + b + c);
 }
 
 #[test]
+fn the_sessions_nulls_reach_scripts_as_undefined() {
+    // Absent values are undefined in the script API: the prelude turns the
+    // session's nulls into undefined in answers (in arrays too, without
+    // holes) and in what mapped functions get; an option set to undefined
+    // reaches it as null (unset).
+    let config = r#"import { action, keymap, o } from "temzdf";
+const pane = action.focusedPane();
+const list = action.panes() as unknown as unknown[];
+action.message(`${pane === undefined} ${list.length} ${list[1] === undefined} ${1 in list}`);
+o.foreground = undefined;
+keymap.add("normal", "a", (ctx) => action.message(`${ctx.count === undefined} ${ctx.paneKind === undefined}`));
+"#;
+    let mut s = Session::start(&[("config.ts", config)]);
+    s.load("config.ts");
+    #[derive(Default)]
+    struct Seen {
+        messages: Vec<ScriptValue>,
+        set: Option<ScriptValue>,
+        func: Option<u32>,
+    }
+    let serve = |s: &mut Session, seen: &mut Seen| loop {
+        match s.recv() {
+            FromHost::Request { req, op, .. } => {
+                let result = match op {
+                    HostOp::Command { name, .. } if name == "panes" => {
+                        ScriptValue::List(vec![ScriptValue::Num(1.0), ScriptValue::Null])
+                    }
+                    HostOp::Command { name, args } if name == "message" => {
+                        seen.messages.push(args[0].clone());
+                        ScriptValue::Null
+                    }
+                    HostOp::SetOption { name, value } if name == "foreground" => {
+                        seen.set = Some(value);
+                        ScriptValue::Null
+                    }
+                    HostOp::Map { keys, func, .. } if keys == "a" => {
+                        seen.func = Some(func);
+                        ScriptValue::Null
+                    }
+                    _ => ScriptValue::Null,
+                };
+                s.send(ToHost::Reply { req, result: Ok(result) });
+            }
+            other => break other,
+        }
+    };
+    let mut seen = Seen::default();
+    ready_ok(serve(&mut s, &mut seen));
+    let ctx = ScriptValue::map([("count", ScriptValue::Null), ("paneKind", ScriptValue::Null)]);
+    s.send(ToHost::Call { id: 7, func: seen.func.expect("mapped"), args: vec![ctx] });
+    match serve(&mut s, &mut seen) {
+        FromHost::Done { id: 7, result } => {
+            result.unwrap();
+        }
+        other => panic!("{other:?}"),
+    }
+    let str = |s: &str| ScriptValue::Str(s.into());
+    assert_eq!(seen.messages, [str("true 2 true true"), str("true true")]);
+    assert_eq!(seen.set, Some(ScriptValue::Null));
+}
+
+#[test]
 fn options_left_out_get_their_defaults_and_wrong_ones_are_refused() {
     // The prelude's schemas (runtime/lib/validate.ts): what keymap.add and
     // defineMode send for options left out, and a TypeError naming the call

@@ -67,13 +67,26 @@ const errorJson = (e: unknown): string =>
 let atomicToken: Token = null;
 const current = (): Token => JSON.parse(host.current()) ?? atomicToken;
 
+// What the session sends scripts, with its nulls as undefined: absent
+// values are undefined in the script API (doc/design/scripting.md). In
+// place (fresh from JSON.parse), keys kept, arrays without holes.
+function noNull(v: unknown): unknown {
+  if (v === null) return undefined;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    for (const k of Object.keys(o)) o[k] = noNull(o[k]);
+  }
+  return v;
+}
+const fromSession = (json: string): unknown => noNull(JSON.parse(json));
+
 // A command answering later answers `{ $promise: n }`: a Promise, settled
 // when the session sends ToHost::Resolve.
 const isLater = guard(z.object({ $promise: z.number() }));
 function promised(result: Answer): Answer {
   if (!isLater(result)) return result;
   return new Promise((resolve, reject) =>
-    host.awaitPromise(result.$promise, (ok, json) => (ok ? resolve(JSON.parse(json)) : reject(new Error(json)))),
+    host.awaitPromise(result.$promise, (ok, json) => (ok ? resolve(fromSession(json)) : reject(new Error(json)))),
   );
 }
 
@@ -83,7 +96,7 @@ function request(token: Token, op: string, payload: unknown): Answer {
       "no context: commands outside a mapped or hook function go through the ctx a dispatched task receives",
     );
   }
-  return JSON.parse(host.request(JSON.stringify(token), op, JSON.stringify(payload)));
+  return fromSession(host.request(JSON.stringify(token), op, JSON.stringify(payload)));
 }
 
 const camel = (name: string): string => name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -136,7 +149,7 @@ function register(fn: unknown, what: string, condition = false): number {
   check(what, func<Fn>(), fn);
   const f = fn;
   const id = host.register((argsJson) => {
-    const r = f(...JSON.parse(argsJson));
+    const r = f(...(fromSession(argsJson) as unknown[]));
     if (isThenable(r)) {
       throw new TypeError(
         condition
@@ -179,7 +192,7 @@ function atomicWith<T>(token: Token, fn: () => T): T {
 /** An open prompt (openPrompt), by its buffer. */
 type Prompt = {
   pane: number;
-  origin: number | null;
+  origin: number | undefined;
   onLine?: (line: string) => void;
   onCancel?: () => void;
   onChange?: (line: string) => void;
@@ -239,10 +252,10 @@ const mappingAnswers = z.array(
     mode: z.string(),
     lhs: z.string(),
     rhs: z.unknown(),
-    when: z.nullable(z.unknown()),
+    when: z.unknown(),
     nowait: z.boolean(),
-    desc: z.nullable(z.string()),
-    namespace: z.nullable(z.string()),
+    desc: z.optional(z.string()),
+    namespace: z.optional(z.string()),
     priority: z.number(),
   }),
 );
@@ -284,9 +297,7 @@ const temzdf: Temzdf = {
       return answer.map((m) => ({
         ...m,
         rhs: back(m.rhs),
-        when: m.when === null ? undefined : (back(m.when) as Condition),
-        desc: m.desc ?? undefined,
-        namespace: m.namespace ?? undefined,
+        when: m.when === undefined ? undefined : (back(m.when) as Condition),
       }));
     },
   }),
@@ -324,6 +335,7 @@ const temzdf: Temzdf = {
     {
       get: (_, name) => (typeof name === "string" ? request(current(), "getOption", { name }) : undefined),
       set: (_, name, value) => {
+        // undefined: unset (JSON drops it; the host reads it as null).
         request(current(), "setOption", { name, value });
         return true;
       },
@@ -372,16 +384,16 @@ const temzdf: Temzdf = {
     const c = globalAction;
     const origin = c.focusedPane();
     const buffer = c.newBuffer({ text: opts.text, basemode: opts.mode, attrs: ["nofile", "unlisted"] });
-    let pane: number | null = null;
+    let pane: number | undefined;
     try {
       pane = c.split({ side: opts.side, buffer, height: opts.height });
     } catch (e) {
       c.deleteBuffer(buffer);
       throw e;
     }
-    if (pane === null) {
+    if (pane === undefined) {
       c.deleteBuffer(buffer);
-      return null;
+      return undefined;
     }
     c.statusLine(false, pane);
     c.text.setOptions({ wrap: false, number: "off", cursorline: false, scrolloff: 0 }, { pane });
@@ -462,7 +474,7 @@ function closePrompt(buffer: number | undefined): { p: Prompt; line: string } | 
     promptHooks = null;
   }
   try {
-    if (p.origin !== null) globalAction.focusPane(p.origin);
+    if (p.origin !== undefined) globalAction.focusPane(p.origin);
   } catch {
     // That pane is gone.
   }

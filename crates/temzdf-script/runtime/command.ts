@@ -120,10 +120,10 @@ function removeWhere(keep: (e: Entry) => boolean): void {
 /** The context `when` gets, as a mapping's (no keys typed). */
 function keyContext(): KeyContext {
   const pane = action.focusedPane();
-  const info = pane === null ? undefined : action.panes().find((p) => p.id === pane);
+  const info = pane === undefined ? undefined : action.panes().find((p) => p.id === pane);
   return {
     pane: pane ?? -1,
-    paneKind: info?.kind ?? null,
+    paneKind: info?.kind,
     floating: info?.floating ?? false,
     mode: action.currentMode(),
     keys: "",

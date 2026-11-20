@@ -288,7 +288,7 @@ Decided (the whole model was settled with the user on 2026-10-26):
   wait for something return Promises** (a PDF finishing to load, a forward
   search result). This revises the earlier "commands return Promises", which
   assumed asynchronous mapped functions. `split()` returns the new pane
-  synchronously, or `null` for a document still opening.
+  synchronously, or undefined for a document still opening.
 - **`temzdf.atomic(fn)`** for dispatched tasks: `fn` must be synchronous (typed
   `() => T`, and a returned Promise is an error), so the critical section
   ends when `fn` returns and can never be held across an `await`. Only an
@@ -752,6 +752,16 @@ was (2026-10-26). They keep the numbers of the first list (1-7 became
     registrations only wrong at run time, such as unknown or cyclic parent
     modes), and starting temzdf reports those too; the shipped defaults are
     loaded by the tests anyway. Can come later as a dry-run load.
+
+30. *Decided (2026-11-21)*: **absent values are `undefined`, not `null`**,
+    everywhere in the script API (as `temzdf/command` started,
+    `doc/design/ex-commands.md`). The protocol keeps JSON's null and Rust's
+    `Option`: the prelude turns the session's nulls into undefined in
+    answers and in what mapped and hook functions get (inside objects and
+    arrays, keys kept, no holes), and what scripts send may leave a value
+    out or pass undefined (JSON drops it, or makes it null in an array). An
+    option is unset with `o.name = undefined`. WHATWG's own APIs (`URL`,
+    `URLSearchParams.get`) keep their null.
 
 ## Prior art: modes and keys in tmux and zellij
 

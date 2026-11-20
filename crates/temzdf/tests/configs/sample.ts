@@ -6,7 +6,10 @@ o.timeoutlen = 500;
 o.splitright = false;
 
 defineMode("window", { fallback: "drop", count: true, transient: true, keepalive: "always", timeout: 2000 });
-defineMode("resize", { transient: true, keepalive: (ctx) => ctx.paneKind !== null && ctx.paneKind !== "markdown" });
+defineMode("resize", {
+  transient: true,
+  keepalive: (ctx) => ctx.paneKind !== undefined && ctx.paneKind !== "markdown",
+});
 keymap.add("normal", "w", () => action.switchMode("window"));
 keymap.add(
   "window",
@@ -23,7 +26,7 @@ keymap.add(
   ["pdf", "terminal"],
   "<C-b>%",
   (ctx) => {
-    action.split(ctx.count === null ? "right" : "bottom");
+    action.split(ctx.count === undefined ? "right" : "bottom");
   },
   { when: (ctx) => !ctx.floating && ctx.keys === "" },
 );

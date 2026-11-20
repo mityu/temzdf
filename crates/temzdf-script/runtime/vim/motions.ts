@@ -108,7 +108,7 @@ function percent(from: Position, n: number | null): Motion | null {
   if (i >= text.length) return null;
   const [open, close] = brackets[text[i]];
   const to = t.findPair(pos(from.line, i), { open, close });
-  return to === null ? null : { to, kind: "inclusive" };
+  return to === undefined ? null : { to, kind: "inclusive" };
 }
 
 function paragraph(from: Position, n: number, forward: boolean): Motion {

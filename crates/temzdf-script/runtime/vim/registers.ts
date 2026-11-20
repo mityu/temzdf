@@ -16,10 +16,10 @@ export interface Register {
   kind: Kind;
 }
 
-const plain = (e: Copied) => e.register === null;
+const plain = (e: Copied) => e.register === undefined;
 const multiLine = (e: Copied) => e.kind === "line" || e.text.includes("\n");
-const reg = (e: Copied | null | undefined): Register | undefined =>
-  e === null || e === undefined ? undefined : { text: e.text, kind: e.kind };
+const reg = (e: Copied | undefined): Register | undefined =>
+  e === undefined ? undefined : { text: e.text, kind: e.kind };
 
 /** Whether `name` is the system clipboard (read with readClipboard). */
 export function isClipboard(name: string | null): boolean {

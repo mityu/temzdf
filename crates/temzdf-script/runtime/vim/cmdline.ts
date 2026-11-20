@@ -19,7 +19,7 @@ let open: null | Open = null;
 
 export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
   const pane = action.focusedPane();
-  if (pane === null) return;
+  if (pane === undefined) return;
   // From the visual mode, : works on its lines.
   let initial = "";
   if (state.visual !== null && kind === ":") {
@@ -37,7 +37,7 @@ export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
     onLine: (line) => finish(o, line, true),
     onCancel: () => finish(o, "", false),
   });
-  if (p === null) {
+  if (p === undefined) {
     open = null;
     return;
   }
@@ -61,7 +61,7 @@ function preview(o: NonNullable<typeof open>, text: string): void {
     back();
     return;
   }
-  let r = null;
+  let r: ReturnType<typeof t.search>;
   let rust = "";
   try {
     const conv = convert(text, options.ignorecase, options.smartcase);
@@ -73,7 +73,7 @@ function preview(o: NonNullable<typeof open>, text: string): void {
   } catch {
     // A pattern still being typed.
   }
-  if (r === null) {
+  if (r === undefined) {
     back();
     return;
   }

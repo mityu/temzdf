@@ -107,11 +107,11 @@ function define(d: Define): void {
       return;
     }
     if (what.kind === "q") {
-      if (key.text !== null) startRecording(key.text);
+      if (key.text !== undefined) startRecording(key.text);
       return;
     }
     if (what.kind === "@") {
-      if (key.text !== null) runMacro(key.text, what.count, (line) => command.execute(line));
+      if (key.text !== undefined) runMacro(key.text, what.count, (line) => command.execute(line));
       return;
     }
     if (what.kind === "m" || what.kind === "'" || what.kind === "`") {
@@ -119,7 +119,7 @@ function define(d: Define): void {
       return;
     }
     const ch = key.text;
-    if (ch === null || ch === "") {
+    if (ch === undefined || ch === "") {
       cancelPending();
       return;
     }

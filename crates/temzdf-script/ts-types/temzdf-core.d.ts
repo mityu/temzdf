@@ -62,8 +62,8 @@ declare module "temzdf" {
   export interface KeyContext {
     /** The focused pane. */
     pane: number;
-    /** Its kind; null without a pane. */
-    paneKind: PaneKind | null;
+    /** Its kind; undefined without a pane. */
+    paneKind: PaneKind | undefined;
     /** Whether it is a floating pane. */
     floating: boolean;
     /** The current mode. */
@@ -74,7 +74,7 @@ declare module "temzdf" {
   /** What a mapped function gets. */
   export interface MapContext extends KeyContext {
     /** The count typed before the keys (`3j`), if any. */
-    count: number | null;
+    count: number | undefined;
   }
   /** A mapping runs a synchronous function (counts go to commands as arguments: `(ctx) => action.scrollDown(ctx.count)`). */
   export type Rhs = (ctx: MapContext) => void;
@@ -103,7 +103,7 @@ declare module "temzdf" {
   /** A key a mode's fallback function gets: its notation, and the text it types (if any). */
   export interface KeyInfo {
     keys: string;
-    text: string | null;
+    text: string | undefined;
   }
   export interface ModeProperties {
     /** What keys no mapping takes do (default: the mode below's, else drop): drop them, pass them to the pane (typed into a terminal, an input or a text pane), or call a function with the key (reading one key; leaving the mode: `() => action.exitMode()`). */
@@ -154,7 +154,7 @@ declare module "temzdf" {
     range: Range;
     deleted: boolean;
     namespace: string;
-    style: string | null;
+    style: string | undefined;
     virtText: VirtChunk[];
     virtTextPos: "inline" | "eol" | "overlay";
   }
@@ -180,7 +180,7 @@ declare module "temzdf" {
   /** A piece of virtual text and its style (a highlight group). */
   export interface VirtChunk {
     text: string;
-    style?: string | null;
+    style?: string;
   }
   /** What copied text is, as Vim's register types: characters, whole lines (ending with a line break), or a block (one line of it per line). */
   export type CopyKind = "char" | "line" | "block";
@@ -191,9 +191,9 @@ declare module "temzdf" {
     kind: CopyKind;
     how: "copy" | "delete";
     /** The named register it was copied to. */
-    register: string | null;
+    register: string | undefined;
     /** Where it came from: the buffer's kind and name, or "cli" (temzdf copy). */
-    source: { kind: PaneKind | "cli" | "script"; name: string; buffer: number | null };
+    source: { kind: PaneKind | "cli" | "script"; name: string; buffer: number | undefined };
     /** Milliseconds since the Unix epoch. */
     time: number;
   }
@@ -230,8 +230,8 @@ declare module "temzdf" {
     scrollstep: number;
     /** Milliseconds of the scrolling animation's easing. */
     scrollsmoothness: number;
-    /** The command opening external links (the URI appended); null: the system's. */
-    linkopener: string[] | null;
+    /** The command opening external links (the URI appended); undefined: the system's. */
+    linkopener: string[] | undefined;
     /** Preview internal links when the pointer rests on one. */
     linkpreview: boolean;
     /** Milliseconds the pointer rests before a preview. */
@@ -241,17 +241,17 @@ declare module "temzdf" {
     /** What a reload keeps in place: the position or the line being read. */
     reloadanchor: "position" | "text";
     /** The inverse-search command (`%{input}`, `%{line}`, `%{column}`). */
-    synctexeditor: string | null;
+    synctexeditor: string | undefined;
     /** A shown terminal whose program ended keeps its panes. */
     remainonexit: boolean;
     /** When the tab line shows: "auto" with two tab pages or more. */
     showtabline: "never" | "auto" | "always";
     /** Whether the window's status line shows (its bottom row: the mode, the session, the tab page). */
     showstatusline: "never" | "always";
-    /** Default text colour (#rrggbb) for GUI clients and terminal panes; null: the client's. */
-    foreground: string | null;
-    /** Default background colour (#rrggbb); null: the client's. */
-    background: string | null;
+    /** Default text colour (#rrggbb) for GUI clients and terminal panes; undefined: the client's. */
+    foreground: string | undefined;
+    /** Default background colour (#rrggbb); undefined: the client's. */
+    background: string | undefined;
     /** The first palette colours (#rrggbb), index 0 first; the rest stay the default. */
     palette: string[];
     /** The GUI fonts: the first installed one sets the cell size, the rest fill in what it lacks, then JetBrains Mono, Noto Color Emoji, Symbols Nerd Font Mono and the system's fonts. */
@@ -284,10 +284,10 @@ declare module "temzdf" {
     markdownmode: "text" | "graphics";
     /** Milliseconds after the last change before the swap file is written. */
     updatetime: number;
-    /** Where undo files go (null or "": $XDG_STATE_HOME/temzdf/undo; "~/" is the home directory). */
-    undodir: string | null;
-    /** Where swap files go (null or "": $XDG_STATE_HOME/temzdf/swap; "~/" is the home directory). */
-    directory: string | null;
+    /** Where undo files go (undefined or "": $XDG_STATE_HOME/temzdf/undo; "~/" is the home directory). */
+    undodir: string | undefined;
+    /** Where swap files go (undefined or "": $XDG_STATE_HOME/temzdf/swap; "~/" is the home directory). */
+    directory: string | undefined;
   }
   export const o: Options;
 
@@ -307,8 +307,8 @@ declare module "temzdf" {
     BufferDeleted: [buffer: number];
     BufferHidden: [buffer: number, kind: PaneKind];
     InvokePre: [info: Invocation];
-    InvokePost: [info: Invocation & { cursor: Position | null; selection: Range | null }];
-    KeyTyped: [key: { keys: string; text: string | null; source: "typed" | "feedkeys" }];
+    InvokePost: [info: Invocation & { cursor: Position | undefined; selection: Range | undefined }];
+    KeyTyped: [key: { keys: string; text: string | undefined; source: "typed" | "feedkeys" }];
     SwapExists: [buffer: number, info: SwapInfo];
     TextChanged: [buffer: number, change: TextChange];
     FileChangedOnDisk: [buffer: number];
@@ -326,17 +326,17 @@ declare module "temzdf" {
     seq: number;
     target: InvokeTarget;
     keys: string;
-    count: number | null;
+    count: number | undefined;
     mode: string;
     pane: number;
     source: "key" | "cli";
   }
-  /** What TextChanged gets: the changes in positions before them (rangeLength in UTF-16 units), the buffer's version after, why, and the invocation it happened in (null from hooks, timers, tasks). */
+  /** What TextChanged gets: the changes in positions before them (rangeLength in UTF-16 units), the buffer's version after, why, and the invocation it happened in (undefined from hooks, timers, tasks). */
   export interface TextChange {
     changes: { range: Range; rangeLength: number; text: string }[];
     version: number;
     cause: "typing" | "script" | "undo" | "redo" | "reload";
-    invocation: number | null;
+    invocation: number | undefined;
   }
   /** Run `fn` at the safe point: after the current invocation and its hooks, before the next key, in the order scheduled. Hooks change things this way (only InvokePost and SessionReady hooks may act themselves). */
   export function schedule(fn: () => void): void;
@@ -385,8 +385,8 @@ declare module "temzdf" {
     /** The cursor's line as it changes (a preview). */
     onChange?: (line: string) => void;
   }
-  /** A prompt (Vim's command-line window): a text buffer (nofile, unlisted) in a pane, its base mode `input`, the prompt inline virtual text at its start. Returns its buffer and pane, or null. */
-  export function openPrompt(opts?: PromptOptions): { buffer: number; pane: number } | null;
+  /** A prompt (Vim's command-line window): a text buffer (nofile, unlisted) in a pane, its base mode `input`, the prompt inline virtual text at its start. Returns its buffer and pane, or undefined. */
+  export function openPrompt(opts?: PromptOptions): { buffer: number; pane: number } | undefined;
   /** Run the prompt (the focused pane's, or `buffer`) with the cursor's line, closing it. */
   export function acceptPrompt(buffer?: number): void;
   /** Close the prompt (the focused pane's, or `buffer`) without running it. */

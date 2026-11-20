@@ -36,7 +36,7 @@ export function startInsert(
 
 let insertReplay: Replay | null = null;
 let insertPrefix = "";
-let insertPane: number | null = null;
+let insertPane: number | undefined;
 
 /** Leave the insert mode (<Esc>): repeat the text for a count, remember it
  * for `.`, close the undo step, and the cursor goes back one. */
@@ -47,12 +47,12 @@ export function endInsert(): void {
   if (ins !== null) {
     const d = t.decoration(ins.mark);
     const c = cursor();
-    if (d !== null && cmp(d.range.start, c) < 0) typed = text({ start: d.range.start, end: c });
+    if (d !== undefined && cmp(d.range.start, c) < 0) typed = text({ start: d.range.start, end: c });
     // ^ where it was left; [ ] and . what was typed.
     setMark("^", c);
-    if (d !== null) setChanged(min(d.range.start, c), c, true);
+    if (d !== undefined) setChanged(min(d.range.start, c), c, true);
     t.clearNamespace("vim-insert");
-    if (ins.block !== undefined && d !== null) {
+    if (ins.block !== undefined && d !== undefined) {
       endBlockInsert(ins.block, typed, d.range.start);
       return;
     }
@@ -127,7 +127,7 @@ function endBlockInsert(b: BlockInsert, typed: string, start: Position): void {
 export function insertRegister(key: KeyInfo): void {
   action.exitMode();
   const name = key.text;
-  if (name === null || !registers.isName(name)) return;
+  if (name === undefined || !registers.isName(name)) return;
   if (registers.isClipboard(name)) {
     dispatch(async (ctx) => {
       const text = await ctx.action.readClipboard({ primary: name === "*" });
@@ -154,7 +154,7 @@ export function abandonInsert(): void {
   state.insert = null;
   const pane = insertPane;
   try {
-    if (pane !== null) {
+    if (pane !== undefined) {
       t.clearNamespace("vim-insert", { pane });
       t.undoEnd({ pane });
     }

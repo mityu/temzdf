@@ -4,5 +4,5 @@ import { action, keymap } from "temzdf";
 
 keymap.add("vim/normal", "<F5>", () => {
   const path = action.text.info().path;
-  if (path !== null) action.markdown.open(path, { pane: action.focusedPane() ?? undefined });
+  if (path !== undefined) action.markdown.open(path, { pane: action.focusedPane() });
 });

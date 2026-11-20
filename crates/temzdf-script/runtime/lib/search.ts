@@ -8,7 +8,7 @@ import { action, openPrompt } from "temzdf";
 // the search is cancelled.
 export function openSearch(backward = false): void {
   const pane = action.focusedPane();
-  if (pane === null) return;
+  if (pane === undefined) return;
   const visual = action.currentMode() === "visual";
   const back = () => {
     if (visual) action.switchMode("visual");

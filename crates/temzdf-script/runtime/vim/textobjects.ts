@@ -86,11 +86,11 @@ function quote(from: Position, q: string, around: boolean): Motion | null {
 /** i( a( and the like: the pair around the cursor (`count` levels out). */
 function pair(from: Position, open: string, close: string, around: boolean, count: number): Motion | null {
   const here = t.line(from.line)[from.character];
-  let o: Position | null = here === open ? from : t.findPair(from, { open, close, direction: "backward" });
-  for (let i = 1; i < count && o !== null; i++) o = t.findPair(o, { open, close, direction: "backward" });
-  if (o === null) return null;
+  let o: Position | undefined = here === open ? from : t.findPair(from, { open, close, direction: "backward" });
+  for (let i = 1; i < count && o !== undefined; i++) o = t.findPair(o, { open, close, direction: "backward" });
+  if (o === undefined) return null;
   const c = t.findPair(o, { open, close });
-  if (c === null) return null;
+  if (c === undefined) return null;
   if (around) return { from: o, to: c, kind: "inclusive" };
   const start = nextChar(o);
   // Multi-line, the pair on lines of their own: the lines between.

@@ -5,7 +5,7 @@
 
 declare module "temzdf" {
   export interface Actions {
-    /** Another pane like the focused one (the same document at the same place, or a new shell), or showing `buffer`; `screen` puts it at that edge of the whole screen; `pane` splits that pane; `width`/`height` (cells or "N%" of the screen) make it that size, fixed (as Vim's winfixwidth/winfixheight); returns the new pane (null for a document still opening) */
+    /** Another pane like the focused one (the same document at the same place, or a new shell), or showing `buffer`; `screen` puts it at that edge of the whole screen; `pane` splits that pane; `width`/`height` (cells or "N%" of the screen) make it that size, fixed (as Vim's winfixwidth/winfixheight); returns the new pane (undefined for a document still opening) */
     split(
       side?:
         | "right"
@@ -21,7 +21,7 @@ declare module "temzdf" {
             pane?: number;
           },
       scope?: "pane" | "screen",
-    ): number | null;
+    ): number | undefined;
     /** As `temzdf action new-pane`: a file, or "--" and a command */
     newPane(...words: string[]): void;
     /** Focus the pane in that direction */
@@ -47,16 +47,16 @@ declare module "temzdf" {
     /** Make the tiled panes the same size (only their widths, or heights), as Vim's <C-w>= */
     equalizePanes(only?: "width" | "height"): void;
     /** Make the focused pane as wide (high) as the others' minimum sizes allow, as Vim's <C-w>| and <C-w>_; `cells` makes it that many cells instead */
-    maximizePane(axis: "width" | "height", cells?: number | null): void;
+    maximizePane(axis: "width" | "height", cells?: number): void;
     /** Move the focused pane to that edge of the screen, the full height or width there (Vim's <C-w>H J K L) */
     movePane(side: "left" | "right" | "top" | "bottom"): void;
     /** Rotate the panes in the focused pane's row or column, each to the next place (Vim's <C-w>r; reverse: <C-w>R); `count` repeats it */
-    rotatePanes(reverse?: boolean, count?: number | null): void;
+    rotatePanes(reverse?: boolean, count?: number): void;
     /** Close a pane, the focused one by default (its buffer stays, hidden) */
     closePane(pane?: number): void;
-    /** Open a floating pane (a new shell by default); sizes in cells (the content's) or "N%" of the screen, centred unless col/row; tabpage as Vim's popups (0 the current tab page, -1 all, N tab page N); returns the pane (null for a file still opening) */
+    /** Open a floating pane (a new shell by default); sizes in cells (the content's) or "N%" of the screen, centred unless col/row; tabpage as Vim's popups (0 the current tab page, -1 all, N tab page N); returns the pane (undefined for a file still opening) */
     openFloat(
-      what?: { buffer: number } | { file: string } | { command: string[] } | null,
+      what?: { buffer: number } | { file: string } | { command: string[] },
       opts?: {
         width?: number | string;
         height?: number | string;
@@ -66,10 +66,10 @@ declare module "temzdf" {
         focus?: boolean;
         tabpage?: number;
       },
-    ): number | null;
-    /** Move or resize a floating pane (the focused one for null), change its title, or the tab pages it shows on (tabpage) */
+    ): number | undefined;
+    /** Move or resize a floating pane (the focused one for undefined), change its title, or the tab pages it shows on (tabpage) */
     floatConfig(
-      pane: number | null,
+      pane: number | undefined,
       opts: {
         width?: number | string;
         height?: number | string;
@@ -134,26 +134,26 @@ declare module "temzdf" {
     exitMode(): void;
     /** The current mode's name */
     currentMode(): string;
-    /** The panes of every tab (tab: its index from 1, null for a float on all tabs; rect: the content, in cells) */
+    /** The panes of every tab (tab: its index from 1, undefined for a float on all tabs; rect: the content, in cells) */
     panes(): {
       id: number;
       kind: PaneKind;
       buffer: number;
       focused: boolean;
       floating: boolean;
-      tab: number | null;
+      tab: number | undefined;
       rect: { col: number; row: number; width: number; height: number };
     }[];
     /** The focused pane's id */
-    focusedPane(): number | null;
-    /** Open a tab page after the current one, its pane showing `what` (a new shell by default), as Vim's :tabnew; returns the pane (null for a file still opening) */
-    newTab(what?: { buffer: number } | { file: string } | { command: string[] } | null): number | null;
+    focusedPane(): number | undefined;
+    /** Open a tab page after the current one, its pane showing `what` (a new shell by default), as Vim's :tabnew; returns the pane (undefined for a file still opening) */
+    newTab(what?: { buffer: number } | { file: string } | { command: string[] }): number | undefined;
     /** Close a tab page (the current one; counted from 1) and its panes; their buffers stay, hidden. The last tab page stays (kill-session ends the session) */
     closeTab(tab?: number): void;
     /** Go to the next tab page, after the last to the first; with `count` N, to tab page N (Vim's gt) */
-    nextTab(count?: number | null): void;
+    nextTab(count?: number): void;
     /** Go to the previous tab page, before the first to the last; `count` goes that many back (Vim's gT) */
-    prevTab(count?: number | null): void;
+    prevTab(count?: number): void;
     /** Go to tab page `tab` (counted from 1) */
     gotoTab(tab: number): void;
     /** Move the current tab page after tab page `to` (0: first; none: last), or "+N"/"-N" places, as Vim's :tabmove */
@@ -163,7 +163,7 @@ declare module "temzdf" {
     /** Move a pane (the focused one) to a new tab page, as Vim's <C-w>T */
     breakPane(pane?: number): void;
     /** The tab pages in order (index from 1; panes: tiled, and floats on that tab only) */
-    tabs(): { index: number; name: string | null; label: string; current: boolean; panes: number[] }[];
+    tabs(): { index: number; name: string | undefined; label: string; current: boolean; panes: number[] }[];
     /** The current tab page's index (from 1, as Vim's tabpagenr()) */
     currentTab(): number;
     /** The session's name */
@@ -178,9 +178,9 @@ declare module "temzdf" {
     write(opts?: { path?: string; force?: boolean; buffer?: number }): void;
     /** Read a text buffer (the focused pane's) from its file again: the difference is one undoable edit, and the result the saved state */
     reload(buffer?: number): void;
-    /** A buffer's, pane's or tab page's variable (Vim's b:, w:, t:; the focused one's; tabs by number from 1); null when unset */
+    /** A buffer's, pane's or tab page's variable (Vim's b:, w:, t:; the focused one's; tabs by number from 1); undefined when unset */
     getVar(scope: "buffer" | "pane" | "tab", name: string, id?: number): unknown;
-    /** Set one (JSON values; null unsets it). Held by the server: it outlives script host restarts and goes with its owner */
+    /** Set one (JSON values; undefined unsets it). Held by the server: it outlives script host restarts and goes with its owner */
     setVar(scope: "buffer" | "pane" | "tab", name: string, value: unknown, id?: number): void;
     /** Define a highlight group for text panes: colours "#rrggbb", a palette index or "default" (left out: unchanged under it) */
     highlight(
@@ -198,8 +198,8 @@ declare module "temzdf" {
         overline?: boolean;
       },
     ): void;
-    /** Paint a pattern's matches in every text pane with a highlight group (Search by default), one pattern per namespace; null removes it (hlsearch) */
-    highlightPattern(namespace: string, pattern: string | null, style?: string): void;
+    /** Paint a pattern's matches in every text pane with a highlight group (Search by default), one pattern per namespace; undefined removes it (hlsearch) */
+    highlightPattern(namespace: string, pattern: string | undefined, style?: string): void;
     /** Record `text` in the copy history (doc/design/registers.md): as characters, lines or a block, copied or deleted, to a named `register` (`append` adds to its text); it goes to the client's clipboard as o.clipboard says (`clipboard` overrides; never for a named register unless true); returns the entry */
     copyText(
       text: string,
@@ -208,9 +208,9 @@ declare module "temzdf" {
     /** The copy history, newest first (at most o.copyhistory entries) */
     history(opts?: { limit?: number }): Copied[];
     /** The entry of a named register */
-    register(name: string): Copied | null;
-    /** Set a named register to an entry (of the history, or text) without recording a copy; null empties it */
-    setRegister(name: string, entry: Copied | { text: string; kind?: CopyKind } | null): void;
+    register(name: string): Copied | undefined;
+    /** Set a named register to an entry (of the history, or text) without recording a copy; undefined empties it */
+    setRegister(name: string, entry: Copied | { text: string; kind?: CopyKind } | undefined): void;
     /** The named registers */
     registers(): Record<string, Copied>;
     /** Drop an entry from the history (and registers); no id: everything */
@@ -219,8 +219,8 @@ declare module "temzdf" {
     put(opts?: { register?: string; index?: number; pane?: number }): void;
     /** Read the client's clipboard (the primary selection): a terminal client asks the terminal (OSC 52), which may refuse or not answer (an error after 10 s); await it in a dispatched task */
     readClipboard(opts?: { primary?: boolean }): Promise<string>;
-    /** The swap file found when the buffer's file was opened, of a session that is gone (SwapExists): null when none is waiting */
-    swapInfo(buffer?: number): SwapInfo | null;
+    /** The swap file found when the buffer's file was opened, of a session that is gone (SwapExists): undefined when none is waiting */
+    swapInfo(buffer?: number): SwapInfo | undefined;
     /** Start the buffer's own swap file (its first free name; after SwapExists was answered); returns its path */
     useSwap(buffer?: number): string;
     /** Delete a swap file (one in the swap directory) */
@@ -230,47 +230,47 @@ declare module "temzdf" {
     /** Drop an image: decorations showing it show their alt text instead */
     unloadImage(id: number): void;
     /** Page view: quit in the focused PDF pane (`count` times, where that means something) */
-    quit(count?: number | null): void;
+    quit(count?: number): void;
     /** Page view: cancel in the focused PDF pane (`count` times, where that means something) */
-    cancel(count?: number | null): void;
+    cancel(count?: number): void;
     /** Page view: scroll-down in the focused PDF pane (`count` times, where that means something) */
-    scrollDown(count?: number | null): void;
+    scrollDown(count?: number): void;
     /** Page view: scroll-up in the focused PDF pane (`count` times, where that means something) */
-    scrollUp(count?: number | null): void;
+    scrollUp(count?: number): void;
     /** Page view: scroll-left in the focused PDF pane (`count` times, where that means something) */
-    scrollLeft(count?: number | null): void;
+    scrollLeft(count?: number): void;
     /** Page view: scroll-right in the focused PDF pane (`count` times, where that means something) */
-    scrollRight(count?: number | null): void;
+    scrollRight(count?: number): void;
     /** Page view: page-down in the focused PDF pane (`count` times, where that means something) */
-    pageDown(count?: number | null): void;
+    pageDown(count?: number): void;
     /** Page view: page-up in the focused PDF pane (`count` times, where that means something) */
-    pageUp(count?: number | null): void;
+    pageUp(count?: number): void;
     /** Page view: half-page-down in the focused PDF pane (`count` times, where that means something) */
-    halfPageDown(count?: number | null): void;
+    halfPageDown(count?: number): void;
     /** Page view: half-page-up in the focused PDF pane (`count` times, where that means something) */
-    halfPageUp(count?: number | null): void;
+    halfPageUp(count?: number): void;
     /** Page view: first-page in the focused PDF pane (page `count` instead, given one) */
-    firstPage(count?: number | null): void;
+    firstPage(count?: number): void;
     /** Page view: last-page in the focused PDF pane (page `count` instead, given one) */
-    lastPage(count?: number | null): void;
+    lastPage(count?: number): void;
     /** Page view: back in the focused PDF pane (`count` times, where that means something) */
-    back(count?: number | null): void;
+    back(count?: number): void;
     /** Page view: forward in the focused PDF pane (`count` times, where that means something) */
-    forward(count?: number | null): void;
+    forward(count?: number): void;
     /** Page view: zoom-in in the focused PDF pane (`count` times, where that means something) */
-    zoomIn(count?: number | null): void;
+    zoomIn(count?: number): void;
     /** Page view: zoom-out in the focused PDF pane (`count` times, where that means something) */
-    zoomOut(count?: number | null): void;
+    zoomOut(count?: number): void;
     /** Page view: fit-width in the focused PDF pane (`count` times, where that means something) */
-    fitWidth(count?: number | null): void;
+    fitWidth(count?: number): void;
     /** Page view: next-match in the focused PDF pane (`count` times, where that means something) */
-    nextMatch(count?: number | null): void;
+    nextMatch(count?: number): void;
     /** Page view: prev-match in the focused PDF pane (`count` times, where that means something) */
-    prevMatch(count?: number | null): void;
+    prevMatch(count?: number): void;
     /** Page view: copy in the focused PDF pane (`count` times, where that means something) */
-    copy(count?: number | null): void;
+    copy(count?: number): void;
     /** Page view: toggle-sidebar in the focused PDF pane (`count` times, where that means something) */
-    toggleSidebar(count?: number | null): void;
+    toggleSidebar(count?: number): void;
     visual: {
       /** Visual mode: to the next match of `query` (plain text, case-insensitive) in the terminal's screen and scrollback (the focused pane's), after the cursor or where a preview began, backwards with `backward`; n and N go on */
       searchFor(query: string, pane?: number, backward?: boolean): void;
@@ -279,75 +279,75 @@ declare module "temzdf" {
       /** Visual mode: drop the search being typed in the terminal (the focused pane's): back where its preview began */
       searchCancel(pane?: number): void;
       /** Visual mode: One character left (Vim's h) (the focused terminal; `count` times, where that means something) */
-      left(count?: number | null): void;
+      left(count?: number): void;
       /** Visual mode: One character right (l) (the focused terminal; `count` times, where that means something) */
-      right(count?: number | null): void;
+      right(count?: number): void;
       /** Visual mode: One row up, keeping the column (k) (the focused terminal; `count` times, where that means something) */
-      up(count?: number | null): void;
+      up(count?: number): void;
       /** Visual mode: One row down, keeping the column (j) (the focused terminal; `count` times, where that means something) */
-      down(count?: number | null): void;
+      down(count?: number): void;
       /** Visual mode: To the first column (0) (the focused terminal; `count` times, where that means something) */
-      lineStart(count?: number | null): void;
+      lineStart(count?: number): void;
       /** Visual mode: To the first character that is not blank (^) (the focused terminal; `count` times, where that means something) */
-      firstNonBlank(count?: number | null): void;
+      firstNonBlank(count?: number): void;
       /** Visual mode: To the last character of the row ($) (the focused terminal; `count` times, where that means something) */
-      lineEnd(count?: number | null): void;
+      lineEnd(count?: number): void;
       /** Visual mode: To the start of the next word (w) (the focused terminal; `count` times, where that means something) */
-      wordForward(count?: number | null): void;
+      wordForward(count?: number): void;
       /** Visual mode: To the start of the word (b) (the focused terminal; `count` times, where that means something) */
-      wordBackward(count?: number | null): void;
+      wordBackward(count?: number): void;
       /** Visual mode: To the end of the word (e) (the focused terminal; `count` times, where that means something) */
-      wordEnd(count?: number | null): void;
+      wordEnd(count?: number): void;
       /** Visual mode: To the start of the next blank-separated word (W) (the focused terminal; `count` times, where that means something) */
-      bigWordForward(count?: number | null): void;
+      bigWordForward(count?: number): void;
       /** Visual mode: To the start of the blank-separated word (B) (the focused terminal; `count` times, where that means something) */
-      bigWordBackward(count?: number | null): void;
+      bigWordBackward(count?: number): void;
       /** Visual mode: To the end of the blank-separated word (E) (the focused terminal; `count` times, where that means something) */
-      bigWordEnd(count?: number | null): void;
+      bigWordEnd(count?: number): void;
       /** Visual mode: To the first row of the scrollback, or row {count} (gg) (the focused terminal; `count` times, where that means something) */
-      top(count?: number | null): void;
+      top(count?: number): void;
       /** Visual mode: To the last row with text, or row {count} (G) (the focused terminal; `count` times, where that means something) */
-      bottom(count?: number | null): void;
+      bottom(count?: number): void;
       /** Visual mode: To the top row shown (H) (the focused terminal; `count` times, where that means something) */
-      screenTop(count?: number | null): void;
+      screenTop(count?: number): void;
       /** Visual mode: To the middle row shown (M) (the focused terminal; `count` times, where that means something) */
-      screenMiddle(count?: number | null): void;
+      screenMiddle(count?: number): void;
       /** Visual mode: To the bottom row shown (L) (the focused terminal; `count` times, where that means something) */
-      screenBottom(count?: number | null): void;
+      screenBottom(count?: number): void;
       /** Visual mode: Half a screen up, the view with it (<C-u>) (the focused terminal; `count` times, where that means something) */
-      halfPageUp(count?: number | null): void;
+      halfPageUp(count?: number): void;
       /** Visual mode: Half a screen down, the view with it (<C-d>) (the focused terminal; `count` times, where that means something) */
-      halfPageDown(count?: number | null): void;
+      halfPageDown(count?: number): void;
       /** Visual mode: A screen up, the view with it (<C-b>) (the focused terminal; `count` times, where that means something) */
-      pageUp(count?: number | null): void;
+      pageUp(count?: number): void;
       /** Visual mode: A screen down, the view with it (<C-f>) (the focused terminal; `count` times, where that means something) */
-      pageDown(count?: number | null): void;
+      pageDown(count?: number): void;
       /** Visual mode: The view a row up, the cursor kept in it (<C-y>) (the focused terminal; `count` times, where that means something) */
-      scrollUp(count?: number | null): void;
+      scrollUp(count?: number): void;
       /** Visual mode: The view a row down, the cursor kept in it (<C-e>) (the focused terminal; `count` times, where that means something) */
-      scrollDown(count?: number | null): void;
+      scrollDown(count?: number): void;
       /** Visual mode: To the shell prompt above (OSC 133 marks) (the focused terminal; `count` times, where that means something) */
-      prevPrompt(count?: number | null): void;
+      prevPrompt(count?: number): void;
       /** Visual mode: To the shell prompt below (OSC 133 marks) (the focused terminal; `count` times, where that means something) */
-      nextPrompt(count?: number | null): void;
+      nextPrompt(count?: number): void;
       /** Visual mode: Select characters from the cursor; again: stop selecting (v) (the focused terminal; `count` times, where that means something) */
-      charwise(count?: number | null): void;
+      charwise(count?: number): void;
       /** Visual mode: Select rows from the cursor; again: stop selecting (V) (the focused terminal; `count` times, where that means something) */
-      linewise(count?: number | null): void;
+      linewise(count?: number): void;
       /** Visual mode: Select a block from the cursor; again: stop selecting (<C-v>) (the focused terminal; `count` times, where that means something) */
-      blockwise(count?: number | null): void;
+      blockwise(count?: number): void;
       /** Visual mode: The cursor to the other end of the selection (o) (the focused terminal; `count` times, where that means something) */
-      swapEnds(count?: number | null): void;
+      swapEnds(count?: number): void;
       /** Visual mode: Copy the selection and leave the visual mode (y) (the focused terminal; `count` times, where that means something) */
-      yank(count?: number | null): void;
+      yank(count?: number): void;
       /** Visual mode: Copy the selected rows (else the cursor's, {count} of them) and leave (Y) (the focused terminal; `count` times, where that means something) */
-      yankLines(count?: number | null): void;
+      yankLines(count?: number): void;
       /** Visual mode: Drop the selection; without one, leave the visual mode (<Esc>) (the focused terminal; `count` times, where that means something) */
-      escape(count?: number | null): void;
+      escape(count?: number): void;
       /** Visual mode: To the next match of the search (n) (the focused terminal; `count` times, where that means something) */
-      nextMatch(count?: number | null): void;
+      nextMatch(count?: number): void;
       /** Visual mode: To the previous match of the search (N) (the focused terminal; `count` times, where that means something) */
-      prevMatch(count?: number | null): void;
+      prevMatch(count?: number): void;
     };
     text: {
       /** Lines of the text pane's buffer */
@@ -361,7 +361,7 @@ declare module "temzdf" {
       /** The selection, if any (its active end is the cursor) */
       selection(opts?: {
         pane?: number;
-      }): { anchor: Position; active: Position; kind: "char" | "line" | "block" } | null;
+      }): { anchor: Position; active: Position; kind: "char" | "line" | "block" } | undefined;
       /** A position's UTF-16 offset from the start */
       offsetAt(pos: Position, opts?: { pane?: number }): number;
       /** The position at a UTF-16 offset */
@@ -369,7 +369,7 @@ declare module "temzdf" {
       /** About the buffer */
       info(opts?: { pane?: number }): {
         buffer: number;
-        path: string | null;
+        path: string | undefined;
         name: string;
         modified: boolean;
         encoding: string;
@@ -393,17 +393,17 @@ declare module "temzdf" {
           word?: boolean;
           pane?: number;
         },
-      ): { range: Range; groups: (Range | null)[] } | null;
+      ): { range: Range; groups: (Range | undefined)[] } | undefined;
       /** Every match in a range (the whole text) */
       searchAll(
         pattern: string,
         opts?: { range?: Range; group?: number; word?: boolean; pane?: number },
-      ): { range: Range; groups: (Range | null)[] }[];
+      ): { range: Range; groups: (Range | undefined)[] }[];
       /** The matching bracket (Vim's %; ( and ) by default): from one on `open` forward, on `close` backward; with `direction`, the enclosing one that way. Nesting counts; strings and comments do not */
       findPair(
         at?: Position,
         opts?: { open?: string; close?: string; direction?: "forward" | "backward"; pane?: number },
-      ): Position | null;
+      ): Position | undefined;
       /** The buffer's word characters, a regex character class */
       wordchars(opts?: { pane?: number }): string;
       /** Set the buffer's word characters (Vim's iskeyword): one regex character class, e.g. [\p{L}\p{N}_] */
@@ -428,7 +428,7 @@ declare module "temzdf" {
         },
       ): number;
       /** A decoration or mark by id */
-      decoration(id: number, opts?: { pane?: number }): Decoration | null;
+      decoration(id: number, opts?: { pane?: number }): Decoration | undefined;
       /** Options of the pane alone, over the session's (Vim's window-local options: a prompt goes without wrapping and numbers) */
       setOptions(
         options: {
@@ -505,8 +505,8 @@ declare module "temzdf" {
       goto(anchor: string, opts?: { pane?: number }): void;
       /** Show a Markdown viewer (the focused pane) as text (a text pane: Vim's keys, selecting and copying) or in pixels like a PDF page, at the same place */
       setMode(mode: "text" | "graphics", opts?: { pane?: number }): void;
-      /** The mode a pane shows its Markdown file in (null: not a Markdown viewer) */
-      mode(pane?: number): "text" | "graphics" | null;
+      /** The mode a pane shows its Markdown file in (undefined: not a Markdown viewer) */
+      mode(pane?: number): "text" | "graphics" | undefined;
       /** Graphics mode: scroll by rows of text (negative: up) */
       scroll(rows: number, opts?: { pane?: number }): void;
       /** Graphics mode: scroll by screenfuls (negative: up) */

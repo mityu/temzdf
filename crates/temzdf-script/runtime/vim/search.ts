@@ -24,7 +24,7 @@ export function find(pattern: string, backward: boolean, count: number, start?: 
       from = at.character < lineLength(at.line) ? nextChar(at) : at.line < lastLine() + 1 ? pos(at.line + 1, 0) : at;
     }
     const r = t.search(conv.rust, { from, backward, wrap: options.wrapscan, group: conv.group });
-    if (r === null) {
+    if (r === undefined) {
       highlight(conv.rust);
       throw new Error(`E486: Pattern not found: ${pattern}`);
     }
@@ -53,7 +53,7 @@ export function restoreHighlight(): void {
 }
 
 export function noHighlight(): void {
-  action.highlightPattern("vim-search", null);
+  action.highlightPattern("vim-search", undefined);
 }
 
 /** n and N: the last search again, the same way or (`reverse`) the other. */

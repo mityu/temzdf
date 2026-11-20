@@ -69,7 +69,7 @@ function newMark(p: Position): number {
 /** Where mark `id` of the shown buffer is (null: gone, or its text deleted). */
 function where(id: number): Position | null {
   const d = t.decoration(id);
-  return d === null || d.deleted ? null : d.range.start;
+  return d === undefined || d.deleted ? null : d.range.start;
 }
 
 /** Set mark `name` at `p` (the cursor). */
@@ -128,7 +128,7 @@ export function markPos(name: string, show = false): Position | null {
     if (!show) return null;
     // A jump to another buffer: the jump list keeps where it left.
     recordJump(cursor());
-    action.showBuffer(b.id, action.focusedPane() ?? undefined);
+    action.showBuffer(b.id, action.focusedPane());
     return where(m[key]);
   }
   return null;
@@ -257,7 +257,7 @@ export function jump(delta: number): void {
     const e = j.list[i];
     if (e.buffer !== buffer()) {
       if (!action.buffers().some((b) => b.id === e.buffer)) continue;
-      action.showBuffer(e.buffer, action.focusedPane() ?? undefined);
+      action.showBuffer(e.buffer, action.focusedPane());
     }
     const p = where(e.id);
     if (p === null) continue;
