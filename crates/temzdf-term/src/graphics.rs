@@ -121,8 +121,13 @@ fn rgba(image: &Image<'_>) -> Option<(u32, u32, Vec<u8>)> {
 /// Inflate zlib `data` that should come to `size` bytes, never past them
 /// (a few kilobytes can inflate to gigabytes).
 fn inflate(data: &[u8], size: usize) -> Option<Vec<u8>> {
+    read_exactly(flate2::read::ZlibDecoder::new(data), size)
+}
+
+/// The `size` bytes `r` should give, reading no further than one past them.
+fn read_exactly(r: impl Read, size: usize) -> Option<Vec<u8>> {
     let mut out = Vec::new();
-    flate2::read::ZlibDecoder::new(data).take(size as u64 + 1).read_to_end(&mut out).ok()?;
+    r.take(size as u64 + 1).read_to_end(&mut out).ok()?;
     (out.len() == size).then_some(out)
 }
 
@@ -190,10 +195,23 @@ mod tests {
         };
         assert_eq!(inflate(&zlib(&[7; 16]), 16), Some(vec![7; 16]));
         assert_eq!(inflate(&zlib(&[7; 15]), 16), None, "too short");
-        // 64 MB of zeros for a 2x2 RGBA image: refused after 17 bytes.
-        let bomb = zlib(&vec![0; 64 << 20]);
-        assert!(bomb.len() < 100_000);
+        // 1 MiB of zeros for a 2x2 RGBA image: refused after 17 bytes.
+        let bomb = zlib(&vec![0; 1 << 20]);
+        assert!(bomb.len() < 10_000);
         assert_eq!(inflate(&bomb, 16), None);
+        /// Counts the bytes it reads from the decoder.
+        struct Counted<R>(R, std::rc::Rc<std::cell::Cell<usize>>);
+        impl<R: Read> Read for Counted<R> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.0.read(buf)?;
+                self.1.set(self.1.get() + n);
+                Ok(n)
+            }
+        }
+        let read = std::rc::Rc::default();
+        let decoder = Counted(flate2::read::ZlibDecoder::new(bomb.as_slice()), std::rc::Rc::clone(&read));
+        assert_eq!(read_exactly(decoder, 16), None);
+        assert_eq!(read.get(), 17, "inflated no further than one byte past the image");
     }
 
     #[test]
