@@ -4,6 +4,8 @@
 // registry; the shipped scripts import it by that name too.
 import { action } from "temzdf";
 import type { KeyContext } from "temzdf";
+import * as z from "zod/mini";
+import { func, check as validate } from "./lib/validate";
 
 /** What modifier commands (`:vertical`, say) pass on to the rest. */
 export type Mods = { [key: string]: unknown };
@@ -76,18 +78,24 @@ function now<T>(fn: () => T): T {
   return fn();
 }
 
-function check(name: string, fn: unknown, opts: CmdOpts): void {
-  if (!/^[A-Za-z]*$/.test(name)) throw new TypeError(`command.add(${name}): a name is letters only`);
-  if (typeof fn !== "function") throw new TypeError(`command.add(${name}): expected a function`);
+const cmdName = z.string().check(z.regex(/^[A-Za-z]*$/, { error: "a name is letters only" }));
+const cmdOpts = z.object({
+  shortName: z.optional(z.string()),
+  when: z.optional(func<(ctx: KeyContext) => boolean>()),
+  prefix: z.optional(z.literal("vim-range")),
+  bar: z.optional(z.enum(["auto", "handle"])),
+  desc: z.optional(z.string()),
+  namespace: z.optional(z.string()),
+}) satisfies z.ZodMiniType<CmdOpts>;
+
+function check(name: unknown, fn: unknown, opts: unknown): void {
+  const what = `command.add(${String(name)})`;
+  validate(what, cmdName, name, "name");
+  validate(what, func(), fn, "fn");
+  validate(what, cmdOpts, opts, "opts");
   const s = opts.shortName;
   if (s !== undefined && (s === "" || !name.startsWith(s))) {
-    throw new TypeError(`command.add(${name}): shortName ${s} is not a prefix of the name`);
-  }
-  if (opts.prefix !== undefined && opts.prefix !== "vim-range") {
-    throw new TypeError(`command.add(${name}): unknown prefix ${String(opts.prefix)}`);
-  }
-  if (opts.bar !== undefined && opts.bar !== "auto" && opts.bar !== "handle") {
-    throw new TypeError(`command.add(${name}): bar is "auto" or "handle", not ${String(opts.bar)}`);
+    throw new TypeError(`${what}: opts.shortName: ${s} is not a prefix of the name`);
   }
 }
 

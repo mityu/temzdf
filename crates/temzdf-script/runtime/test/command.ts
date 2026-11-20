@@ -49,7 +49,21 @@ const cases: [string, () => void][] = [
       );
       eq("any shortName for the empty name", thrown(() => command.add("", record, { shortName: "a" })) !== "", true);
       eq("unknown prefix", thrown(() => command.add("w", record, { prefix: "lines" as never })) !== "", true);
-      eq("unknown bar", thrown(() => command.add("w", record, { bar: "split" as never })) !== "", true);
+      eq(
+        "unknown bar",
+        thrown(() => command.add("w", record, { bar: "split" as never })),
+        'command.add(w): opts.bar: Invalid option: expected one of "auto"|"handle"',
+      );
+      eq(
+        "two problems",
+        thrown(() => command.add("w", 42 as never, { when: true as never })),
+        "command.add(w): fn: expected a function",
+      );
+      eq(
+        "shortName not a string",
+        thrown(() => command.add("w", record, { shortName: 1 as never })),
+        "command.add(w): opts.shortName: Invalid input: expected string, received number",
+      );
       eq("nothing registered", command.list().length, 0);
     },
   ],

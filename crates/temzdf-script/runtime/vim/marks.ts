@@ -14,6 +14,8 @@
 // searches, marks and such left, <C-o> back and <C-i> forward.
 import { action } from "temzdf";
 import type { Position } from "temzdf";
+import * as z from "zod/mini";
+import { guard } from "../lib/validate";
 import { state } from "./state";
 import { clampNormal, cmp, cursor, lastLine, pos, setCursor, t } from "./util";
 
@@ -33,13 +35,22 @@ interface Jumps {
   index: number;
 }
 
+// What the variables hold, when a script (this one, earlier) set them.
+const isMarks = guard(z.record(z.string(), z.number()) satisfies z.ZodMiniType<Marks>);
+const isJumps = guard(
+  z.object({
+    list: z.array(z.object({ buffer: z.number(), id: z.number() })),
+    index: z.number(),
+  }) satisfies z.ZodMiniType<Jumps>,
+);
+
 function buffer(): number {
   return t.info().buffer;
 }
 
 function marksOf(buf?: number): Marks {
   const v = action.getVar("buffer", MARKS, buf);
-  return v !== null && typeof v === "object" ? (v as Marks) : {};
+  return isMarks(v) ? v : {};
 }
 
 /** Drop mark `id` of the shown buffer (gone already: nothing). */
@@ -190,8 +201,7 @@ export function listMarks(): string {
 
 function jumpsOf(): Jumps {
   const v = action.getVar("pane", JUMPS);
-  if (v !== null && typeof v === "object" && Array.isArray((v as Jumps).list)) return v as Jumps;
-  return { list: [], index: 0 };
+  return isJumps(v) ? v : { list: [], index: 0 };
 }
 
 function saveJumps(j: Jumps): void {
