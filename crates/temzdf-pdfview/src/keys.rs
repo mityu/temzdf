@@ -1,5 +1,5 @@
-//! Key bindings: viewer commands, the key notation shared by the config file
-//! (`[keys]`) and `--keys`, and the keymap that turns key presses into commands.
+//! Key bindings: viewer commands, the key notation, and the keymap that turns
+//! key presses into commands.
 //!
 //! Counts (digits before a command), the outline sidebar and the one-line input
 //! keep fixed keys; see `doc/config.md`.
@@ -72,11 +72,6 @@ impl Command {
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::NAMES.iter().find(|(_, n)| *n == name).map(|(c, _)| *c)
-    }
-
-    /// The default keys of every command, in the notation of [`Key::parse`].
-    pub fn defaults() -> &'static [(Command, &'static [&'static str])] {
-        DEFAULTS
     }
 }
 
@@ -185,7 +180,7 @@ impl Key {
     }
 }
 
-/// Key -> command, built from [`DEFAULTS`] and the config's `[keys]`.
+/// Key -> command, built from [`DEFAULTS`].
 #[derive(Clone, Debug)]
 pub struct Keymap {
     map: HashMap<Key, Command>,
@@ -193,48 +188,17 @@ pub struct Keymap {
 
 impl Default for Keymap {
     fn default() -> Self {
-        Self::new(&HashMap::new()).expect("default bindings parse")
+        let map = DEFAULTS
+            .iter()
+            .flat_map(|&(cmd, keys)| keys.iter().map(move |k| (Key::parse(k).expect("default bindings parse"), cmd)))
+            .collect();
+        Self { map }
     }
 }
 
 impl Keymap {
-    /// The defaults, with the keys of each command in `overrides` replaced by
-    /// the given ones (an empty list unbinds the command). A key given in
-    /// `overrides` leaves whatever default command it had.
-    pub fn new(overrides: &HashMap<Command, Vec<String>>) -> Result<Self> {
-        let mut map = HashMap::new();
-        for &(cmd, keys) in DEFAULTS {
-            if overrides.contains_key(&cmd) {
-                continue;
-            }
-            for k in keys {
-                map.insert(Key::parse(k)?, cmd);
-            }
-        }
-        let mut seen = HashMap::new();
-        for (&cmd, keys) in overrides {
-            for k in keys {
-                let key = Key::parse(k)?;
-                if let Some(other) = seen.insert(key, cmd)
-                    && other != cmd
-                {
-                    bail!("{k:?} is bound to both {other:?} and {cmd:?}");
-                }
-                map.insert(key, cmd);
-            }
-        }
-        Ok(Self { map })
-    }
-
     pub fn get(&self, ev: &KeyEvent) -> Option<Command> {
         self.map.get(&Key::of(ev)).copied()
-    }
-
-    /// Every binding (for building mappings from it).
-    pub fn bindings(&self) -> Vec<(Key, Command)> {
-        let mut v: Vec<(Key, Command)> = self.map.iter().map(|(k, c)| (*k, *c)).collect();
-        v.sort_by_key(|(_, c)| c.name());
-        v
     }
 }
 
@@ -284,24 +248,13 @@ mod tests {
     }
 
     #[test]
-    fn overrides_replace_a_commands_keys_and_steal_keys() {
-        let overrides = HashMap::from([
-            (Command::Quit, vec!["Q".to_string()]),
-            (Command::NextMatch, vec!["f".to_string(), "/".to_string()]),
-            (Command::Copy, vec![]),
-        ]);
-        let m = Keymap::new(&overrides).unwrap();
-        assert_eq!(m.get(&press(KeyCode::Char('q'), Modifiers::NONE)), None);
-        assert_eq!(m.get(&press(KeyCode::Char('Q'), Modifiers::SHIFT)), Some(Command::Quit));
-        assert_eq!(m.get(&press(KeyCode::Char('f'), Modifiers::NONE)), Some(Command::NextMatch));
-        assert_eq!(m.get(&press(KeyCode::Char('y'), Modifiers::NONE)), None);
-        // Untouched commands keep their defaults.
-        assert_eq!(m.get(&press(KeyCode::Char('f'), Modifiers::CTRL)), Some(Command::PageDown));
-    }
-
-    #[test]
-    fn a_key_bound_twice_is_an_error() {
-        let overrides = HashMap::from([(Command::Quit, vec!["x".to_string()]), (Command::Copy, vec!["x".to_string()])]);
-        assert!(Keymap::new(&overrides).is_err());
+    fn the_defaults_bind_each_key_once() {
+        let mut seen = HashMap::new();
+        for &(cmd, keys) in DEFAULTS {
+            for k in keys {
+                let other = seen.insert(Key::parse(k).unwrap(), cmd);
+                assert!(other.is_none(), "{k:?} is bound to both {other:?} and {cmd:?}");
+            }
+        }
     }
 }
