@@ -194,16 +194,17 @@ come from the host profile. `nix develop .#alldeps` provides all of them.
 end-to-end tools), `.#ci-miri` the same with the nightly toolchain and
 Miri and without TeX (Miri runs no test that needs the fixtures); `nix build` builds the `temzdf` package (`nix run . -- FILE` runs it).
 CI (`.github/workflows/ci.yml`) runs `scripts/check.sh --no-miri` in the
-first, `scripts/miri.sh` in the second as a job of its own (both keep built
-dependencies with `Swatinem/rust-cache`), and `nix build` on Linux and macOS.
-The Rust caches are saved only by pushes to `dev` and `main`, and a job after each
-(`prune-rust-cache.yml`) deletes those of the same branch but the one used last; the build
-without Nix uses the cache too.
-The documents' check (`scripts/check-docs.sh`) runs on every push,
-documentation-only ones included (`.github/workflows/docs.yml`).
-`.github/workflows/without-nix.yml` builds `temzdf` and `temzdf-gui` on
+first (job `check-with-nix`), `scripts/miri.sh` in the second as a job of
+its own (`miri-with-nix`; both keep built dependencies with
+`Swatinem/rust-cache`), and `nix build` on Linux and macOS
+(`build-with-nix`). Its job `build` builds `temzdf` and `temzdf-gui` on
 Ubuntu without Nix and starts them (`scripts/smoke-session.sh`: a session
 splits its pane on `<C-b>%`).
+The Rust caches (of `build`, `check-with-nix` and `miri-with-nix`) are saved only by pushes to
+`dev` and `main`, and a job after each (`prune-rust-cache.yml`) deletes
+those of the same branch but the one used last.
+The documents' check (`scripts/check-docs.sh`) runs on every push,
+documentation-only ones included (`.github/workflows/docs.yml`).
 `nix build` uses crane: the Rust dependencies, the script host's guest
 and the guest's dependencies are derivations of their own (`.#deps`,
 `.#guest`, `.#guest-deps`), for a Nix cache to keep between runs. There
