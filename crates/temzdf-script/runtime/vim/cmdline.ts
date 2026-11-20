@@ -13,13 +13,14 @@ import { options, state } from "./state";
 import type { Motion } from "./state";
 import { clampNormal, cursor, setCursor, t } from "./util";
 import { exitVisual, moveVisual } from "./visual";
+import { isNullish } from "../lib/validate";
 
 type Open = { buf: number; pane: number; kind: string; count: number | null; origin: Position };
 let open: null | Open = null;
 
 export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
   const pane = action.focusedPane();
-  if (pane === undefined) return;
+  if (isNullish(pane)) return;
   // From the visual mode, : works on its lines.
   let initial = "";
   if (state.visual !== null && kind === ":") {
@@ -37,7 +38,7 @@ export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
     onLine: (line) => finish(o, line, true),
     onCancel: () => finish(o, "", false),
   });
-  if (p === undefined) {
+  if (isNullish(p)) {
     open = null;
     return;
   }
@@ -73,7 +74,7 @@ function preview(o: NonNullable<typeof open>, text: string): void {
   } catch {
     // A pattern still being typed.
   }
-  if (r === undefined) {
+  if (isNullish(r)) {
     back();
     return;
   }

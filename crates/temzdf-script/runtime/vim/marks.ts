@@ -15,7 +15,7 @@
 import { action } from "temzdf";
 import type { Position } from "temzdf";
 import * as z from "zod/mini";
-import { guard } from "../lib/validate";
+import { guard, isNullish } from "../lib/validate";
 import { state } from "./state";
 import { clampNormal, cmp, cursor, lastLine, pos, setCursor, t } from "./util";
 
@@ -69,7 +69,7 @@ function newMark(p: Position): number {
 /** Where mark `id` of the shown buffer is (null: gone, or its text deleted). */
 function where(id: number): Position | null {
   const d = t.decoration(id);
-  return d === undefined || d.deleted ? null : d.range.start;
+  return isNullish(d) || d.deleted ? null : d.range.start;
 }
 
 /** Set mark `name` at `p` (the cursor). */

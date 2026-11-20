@@ -78,6 +78,9 @@ as TypeScript's do: `./util` finds `util.ts` or `util.js`, `./util.js` finds
 `util.ts`, a directory its `index.ts` or `index.js`. `console.log` goes to the
 log, as do promise rejections nothing handled.
 
+A value the API may leave out (no count typed, no focused pane, an unset
+option) is `undefined`, never `null`; `x == null` checks for either.
+
 ## Modes and keys
 
 Like Vim, temzdf is always in a mode; the window's status line (the bottom

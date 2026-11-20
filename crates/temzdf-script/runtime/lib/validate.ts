@@ -12,12 +12,20 @@ import type { IsEqual } from "./types";
 import { en } from "zod/locales";
 import * as z from "zod/mini";
 
-z.config(en());
+// English messages, set when a check first needs them: nothing runs on
+// import, so a module using only isNullish bundles none of zod.
+let english = false;
+function messages(): void {
+  if (english) return;
+  z.config(en());
+  english = true;
+}
 
 /** Throw a TypeError naming `what` (`command.add(w)`, say) for what
  * `schema` finds wrong in `value` (`name`: what it is, in the message), one
  * line a problem (`command.add(w): opts.bar: Invalid option: ...`). */
 export function check<T>(what: string, schema: z.ZodMiniType<T>, value: unknown, name = ""): asserts value is T {
+  messages();
   const r = z.safeParse(schema, value);
   if (!r.success) fail(what, name, r.error);
 }
@@ -25,6 +33,7 @@ export function check<T>(what: string, schema: z.ZodMiniType<T>, value: unknown,
 /** `value` as `schema` makes it (its defaults filled in, keys it does
  * not know dropped), or a TypeError as `check` throws. */
 export function parse<S extends z.ZodMiniType>(what: string, schema: S, value: unknown, name = ""): z.output<S> {
+  messages();
   const r = z.safeParse(schema, value);
   if (!r.success) fail(what, name, r.error);
   return r.data;
@@ -37,6 +46,10 @@ function fail(what: string, name: string, error: z.core.$ZodError): never {
   });
   throw new TypeError(lines.join("\n"));
 }
+
+/** null or undefined: a value left out (the API's are undefined; either
+ * is taken, so a check does not depend on which). */
+export const isNullish = (v: unknown): v is null | undefined => v == null;
 
 /** `schema` as a type predicate. */
 export function guard<T>(schema: z.ZodMiniType<T>): (value: unknown) => value is T {

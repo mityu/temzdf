@@ -8,6 +8,7 @@
 //   + *     the system clipboard (read asynchronously: see normal.ts)
 //   _       nothing is stored
 import { action, type Copied } from "temzdf";
+import { isNullish } from "../lib/validate";
 
 export type Kind = "char" | "line" | "block";
 
@@ -16,10 +17,10 @@ export interface Register {
   kind: Kind;
 }
 
-const plain = (e: Copied) => e.register === undefined;
+const plain = (e: Copied) => isNullish(e.register);
 const multiLine = (e: Copied) => e.kind === "line" || e.text.includes("\n");
 const reg = (e: Copied | undefined): Register | undefined =>
-  e === undefined ? undefined : { text: e.text, kind: e.kind };
+  isNullish(e) ? undefined : { text: e.text, kind: e.kind };
 
 /** Whether `name` is the system clipboard (read with readClipboard). */
 export function isClipboard(name: string | null): boolean {

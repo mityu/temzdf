@@ -11,6 +11,7 @@ import type { MapContext } from "temzdf";
 import { keyset } from "temzdf/keyset";
 import { prefix } from "../lib/prefix";
 import { openSearch } from "../lib/search";
+import { isNullish } from "../lib/validate";
 
 const M = "markdown";
 const OUTLINE = "markdown/outline";
@@ -25,7 +26,7 @@ function focusedBuffer(): number | null {
 /** The headings of the focused viewer in a floating list: <CR> goes there. */
 function openOutline(): void {
   const viewer = action.focusedPane();
-  if (viewer === undefined) return;
+  if (isNullish(viewer)) return;
   const heads = action.markdown.outline(viewer);
   if (heads.length === 0) {
     action.message("No headings");
@@ -41,7 +42,7 @@ function openOutline(): void {
   const width = Math.min(Math.max(24, ...lines.map((l) => l.length + 2)), 72);
   const height = Math.min(heads.length, 20);
   const float = action.openFloat({ buffer: buf }, { width, height, title: "Outline", focus: true });
-  if (float === undefined) return;
+  if (isNullish(float)) return;
   outlines.set(buf, { viewer, anchors: heads.map((h) => h.anchor), float });
 }
 

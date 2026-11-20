@@ -4,8 +4,9 @@
 import type { Position, TextUnit } from "temzdf";
 import { state } from "./state";
 import type { Motion, MotionFn } from "./state";
+import { isNullish } from "../lib/validate";
 import {
-  charAt,
+  type charAt,
   cmp,
   firstNonBlank,
   lastChar,
@@ -108,7 +109,7 @@ function percent(from: Position, n: number | null): Motion | null {
   if (i >= text.length) return null;
   const [open, close] = brackets[text[i]];
   const to = t.findPair(pos(from.line, i), { open, close });
-  return to === undefined ? null : { to, kind: "inclusive" };
+  return isNullish(to) ? null : { to, kind: "inclusive" };
 }
 
 function paragraph(from: Position, n: number, forward: boolean): Motion {
@@ -206,4 +207,4 @@ export const aliases: Record<string, string> = {
   "<CR>": "+",
 };
 
-export { charAt };
+export type { charAt };

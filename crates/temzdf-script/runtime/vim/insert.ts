@@ -9,6 +9,7 @@ import { state } from "./state";
 import type { BlockInsert } from "./state";
 import type { Position } from "temzdf";
 import { clampNormal, cmp, cursor, lastLine, min, pos, prevChar, setCursor, t, text } from "./util";
+import { isNullish } from "../lib/validate";
 
 /** What `.` runs before typing the text again: it positions the cursor (and
  * may delete, as `c` does); it returns how many times the text goes in. */
@@ -47,12 +48,12 @@ export function endInsert(): void {
   if (ins !== null) {
     const d = t.decoration(ins.mark);
     const c = cursor();
-    if (d !== undefined && cmp(d.range.start, c) < 0) typed = text({ start: d.range.start, end: c });
+    if (!isNullish(d) && cmp(d.range.start, c) < 0) typed = text({ start: d.range.start, end: c });
     // ^ where it was left; [ ] and . what was typed.
     setMark("^", c);
-    if (d !== undefined) setChanged(min(d.range.start, c), c, true);
+    if (!isNullish(d)) setChanged(min(d.range.start, c), c, true);
     t.clearNamespace("vim-insert");
-    if (ins.block !== undefined && d !== undefined) {
+    if (ins.block !== undefined && !isNullish(d)) {
       endBlockInsert(ins.block, typed, d.range.start);
       return;
     }
@@ -127,7 +128,7 @@ function endBlockInsert(b: BlockInsert, typed: string, start: Position): void {
 export function insertRegister(key: KeyInfo): void {
   action.exitMode();
   const name = key.text;
-  if (name === undefined || !registers.isName(name)) return;
+  if (isNullish(name) || !registers.isName(name)) return;
   if (registers.isClipboard(name)) {
     dispatch(async (ctx) => {
       const text = await ctx.action.readClipboard({ primary: name === "*" });
@@ -154,7 +155,7 @@ export function abandonInsert(): void {
   state.insert = null;
   const pane = insertPane;
   try {
-    if (pane !== undefined) {
+    if (!isNullish(pane)) {
       t.clearNamespace("vim-insert", { pane });
       t.undoEnd({ pane });
     }

@@ -14,7 +14,7 @@ import type { Condition, KeyContext, KeyInfo, MapOptions, ModeProperties, Prompt
 import type { Assert } from "../runtime/lib/types";
 import type { Takes } from "../runtime/lib/validate";
 import * as z from "../runtime/lib/zod";
-import { check, func, guard, options, parse } from "../runtime/lib/validate";
+import { check, func, guard, isNullish, options, parse } from "../runtime/lib/validate";
 
 /** The native functions host.rs gives this prelude (`install`), and only
  * it: taken off the globals at once. */
@@ -297,7 +297,7 @@ const temzdf: Temzdf = {
       return answer.map((m) => ({
         ...m,
         rhs: back(m.rhs),
-        when: m.when === undefined ? undefined : (back(m.when) as Condition),
+        when: isNullish(m.when) ? undefined : (back(m.when) as Condition),
       }));
     },
   }),
@@ -391,7 +391,7 @@ const temzdf: Temzdf = {
       c.deleteBuffer(buffer);
       throw e;
     }
-    if (pane === undefined) {
+    if (isNullish(pane)) {
       c.deleteBuffer(buffer);
       return undefined;
     }
@@ -474,7 +474,7 @@ function closePrompt(buffer: number | undefined): { p: Prompt; line: string } | 
     promptHooks = null;
   }
   try {
-    if (p.origin !== undefined) globalAction.focusPane(p.origin);
+    if (!isNullish(p.origin)) globalAction.focusPane(p.origin);
   } catch {
     // That pane is gone.
   }

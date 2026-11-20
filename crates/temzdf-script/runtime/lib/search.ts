@@ -1,4 +1,5 @@
 import { action, openPrompt } from "temzdf";
+import { isNullish } from "./validate";
 
 // Searching a PDF pane (/) or a terminal in the visual mode (/ and ?): a
 // prompt (openPrompt) one row high below it. As the query is typed the
@@ -8,7 +9,7 @@ import { action, openPrompt } from "temzdf";
 // the search is cancelled.
 export function openSearch(backward = false): void {
   const pane = action.focusedPane();
-  if (pane === undefined) return;
+  if (isNullish(pane)) return;
   const visual = action.currentMode() === "visual";
   const back = () => {
     if (visual) action.switchMode("visual");

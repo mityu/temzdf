@@ -3,6 +3,7 @@
 import type { Position } from "temzdf";
 import type { Motion } from "./state";
 import { firstNonBlank, lineLength, nextChar, pos, t, wordRegExp } from "./util";
+import { isNullish } from "../lib/validate";
 
 type Class = "blank" | "word" | "punct";
 
@@ -87,10 +88,10 @@ function quote(from: Position, q: string, around: boolean): Motion | null {
 function pair(from: Position, open: string, close: string, around: boolean, count: number): Motion | null {
   const here = t.line(from.line)[from.character];
   let o: Position | undefined = here === open ? from : t.findPair(from, { open, close, direction: "backward" });
-  for (let i = 1; i < count && o !== undefined; i++) o = t.findPair(o, { open, close, direction: "backward" });
-  if (o === undefined) return null;
+  for (let i = 1; i < count && !isNullish(o); i++) o = t.findPair(o, { open, close, direction: "backward" });
+  if (isNullish(o)) return null;
   const c = t.findPair(o, { open, close });
-  if (c === undefined) return null;
+  if (isNullish(c)) return null;
   if (around) return { from: o, to: c, kind: "inclusive" };
   const start = nextChar(o);
   // Multi-line, the pair on lines of their own: the lines between.

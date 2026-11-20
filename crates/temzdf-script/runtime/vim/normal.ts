@@ -12,6 +12,7 @@ import { state } from "./state";
 import type { Motion, MotionFn, Operator } from "./state";
 import { textObject } from "./textobjects";
 import { block, draw, exitVisual, moveVisual, selection } from "./visual";
+import { isNullish } from "../lib/validate";
 import {
   charAt,
   clampNormal,
@@ -330,7 +331,7 @@ export function visualReplace(key: KeyInfo): void {
   const v = state.visual;
   const ch = key.text;
   if (v === null) return;
-  if (ch === undefined || ch === "" || key.keys === "<Esc>" || key.keys === "<CR>") {
+  if (isNullish(ch) || ch === "" || key.keys === "<Esc>" || key.keys === "<CR>") {
     exitVisual();
     return;
   }
@@ -482,7 +483,7 @@ function putWith(reg: registers.Register, after: boolean, count: number | null):
 /** r{char}: replace `count` characters. */
 export function replaceChars(key: KeyInfo, count: number | null): void {
   const ch = key.keys === "<CR>" ? "\n" : key.text;
-  if (ch === undefined || ch === "" || key.keys === "<Esc>") return;
+  if (isNullish(ch) || ch === "" || key.keys === "<Esc>") return;
   const run = (n: number) => {
     const c = cursor();
     let end: Position = c;
@@ -569,7 +570,7 @@ export function scroll(how: "half" | "page" | "line", down: boolean, count: numb
 
 export function selectRegister(key: KeyInfo): void {
   leaveTransient();
-  if (key.text !== undefined && registers.isName(key.text)) state.register = key.text;
+  if (!isNullish(key.text) && registers.isName(key.text)) state.register = key.text;
 }
 
 export { endInsert };

@@ -761,7 +761,9 @@ was (2026-10-26). They keep the numbers of the first list (1-7 became
     arrays, keys kept, no holes), and what scripts send may leave a value
     out or pass undefined (JSON drops it, or makes it null in an array). An
     option is unset with `o.name = undefined`. WHATWG's own APIs (`URL`,
-    `URLSearchParams.get`) keep their null.
+    `URLSearchParams.get`) keep their null. The shipped scripts check a
+    value the API may leave out with `isNullish` (`runtime/lib/validate.ts`,
+    `== null`), which does not depend on which of the two it is.
 
 ## Prior art: modes and keys in tmux and zellij
 

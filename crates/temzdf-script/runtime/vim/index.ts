@@ -42,6 +42,7 @@ import { isRecording, runMacro, startRecording, stopRecording } from "./macros";
 import { isMarkName, jump, markPos, setMark } from "./marks";
 import { cursor, firstNonBlank, t } from "./util";
 import { draw, enterVisual, exitVisual, reselect, swapEnds } from "./visual";
+import { isNullish } from "../lib/validate";
 
 const NAMESPACE = "builtin-edit-vim";
 const NS = { namespace: NAMESPACE };
@@ -107,11 +108,11 @@ function define(d: Define): void {
       return;
     }
     if (what.kind === "q") {
-      if (key.text !== undefined) startRecording(key.text);
+      if (!isNullish(key.text)) startRecording(key.text);
       return;
     }
     if (what.kind === "@") {
-      if (key.text !== undefined) runMacro(key.text, what.count, (line) => command.execute(line));
+      if (!isNullish(key.text)) runMacro(key.text, what.count, (line) => command.execute(line));
       return;
     }
     if (what.kind === "m" || what.kind === "'" || what.kind === "`") {
@@ -119,7 +120,7 @@ function define(d: Define): void {
       return;
     }
     const ch = key.text;
-    if (ch === undefined || ch === "") {
+    if (isNullish(ch) || ch === "") {
       cancelPending();
       return;
     }

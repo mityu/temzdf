@@ -15,6 +15,7 @@ import { deleteMarks, listMarks, markLine, recordJump, setMark } from "./marks";
 import { find, noHighlight } from "./search";
 import { options, state } from "./state";
 import { cursor, firstNonBlank, lastLine, lineEnd, pos, t, text } from "./util";
+import { isNullish } from "../lib/validate";
 
 type Range = { first: number; last: number };
 
@@ -69,7 +70,7 @@ function workPanes(): ReturnType<typeof action.panes> {
 function splitPane(vertical: boolean, buffer: number, file: string): void {
   const side = vertical ? (o.splitright ? "right" : "left") : o.splitbelow ? "bottom" : "top";
   const pane = action.split({ side, buffer });
-  if (pane !== undefined && file !== "") action.openFile(file, { pane });
+  if (!isNullish(pane) && file !== "") action.openFile(file, { pane });
 }
 
 /** The focused pane's buffer (in any kind of pane). */
@@ -220,7 +221,7 @@ type Match = { range: TextRange; groups: (TextRange | undefined)[] };
  * \ze's group when there is one), then the pattern's own (shifted past
  * the one \zs \ze added). */
 function groupsOf(m: Match, group: number): string[] {
-  const groupTexts = m.groups.map((g) => (g === undefined ? "" : text(g)));
+  const groupTexts = m.groups.map((g) => (isNullish(g) ? "" : text(g)));
   const own = group > 0 ? groupTexts.filter((_, k) => k !== group && k !== 0) : groupTexts.slice(1);
   return [groupTexts[group] ?? "", ...own];
 }
@@ -265,7 +266,7 @@ function confirmSubstitute(
     lines: [range.first, range.last],
     group: conv.group,
   });
-  if (first === undefined) throw new Error(`E486: Pattern not found: ${pattern}`);
+  if (isNullish(first)) throw new Error(`E486: Pattern not found: ${pattern}`);
   t.undoBegin();
   const end = t.addDecoration({ start: endAt, end: endAt }, { namespace: CONFIRM, endGravity: "after" });
   confirming = {
@@ -290,7 +291,7 @@ function nextMatch(): boolean {
   const endPos = t.decoration(c.end)?.range.start ?? c.at;
   if (c.at.line > endPos.line) return false;
   const m = t.search(c.rust, { from: c.at, wrap: false, lines: [c.at.line, endPos.line], group: c.group });
-  if (m === undefined || m.range.start.line > endPos.line) return false;
+  if (isNullish(m) || m.range.start.line > endPos.line) return false;
   c.match = m;
   t.addDecoration(m.range, { style: "IncSearch", namespace: `${CONFIRM}-match` });
   t.setCursor(m.range.start);

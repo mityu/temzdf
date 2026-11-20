@@ -5,6 +5,7 @@ import type { Position } from "temzdf";
 import { convert } from "./pattern";
 import { options, state } from "./state";
 import { cursor, lastLine, lineLength, nextChar, pos, t, wordRegExp } from "./util";
+import { isNullish } from "../lib/validate";
 
 /** Where the `count`th match of `pattern` is from the cursor (null: none,
  * said in an error). It becomes the last search. */
@@ -24,7 +25,7 @@ export function find(pattern: string, backward: boolean, count: number, start?: 
       from = at.character < lineLength(at.line) ? nextChar(at) : at.line < lastLine() + 1 ? pos(at.line + 1, 0) : at;
     }
     const r = t.search(conv.rust, { from, backward, wrap: options.wrapscan, group: conv.group });
-    if (r === undefined) {
+    if (isNullish(r)) {
       highlight(conv.rust);
       throw new Error(`E486: Pattern not found: ${pattern}`);
     }

@@ -7,7 +7,7 @@ import type { KeyContext } from "temzdf";
 import * as z from "zod/mini";
 import type { Assert } from "./lib/types";
 import type { Takes } from "./lib/validate";
-import { func, options, parse, check as validate } from "./lib/validate";
+import { func, isNullish, options, parse, check as validate } from "./lib/validate";
 
 /** What modifier commands (`:vertical`, say) pass on to the rest. */
 export type Mods = { [key: string]: unknown };
@@ -120,7 +120,7 @@ function removeWhere(keep: (e: Entry) => boolean): void {
 /** The context `when` gets, as a mapping's (no keys typed). */
 function keyContext(): KeyContext {
   const pane = action.focusedPane();
-  const info = pane === undefined ? undefined : action.panes().find((p) => p.id === pane);
+  const info = isNullish(pane) ? undefined : action.panes().find((p) => p.id === pane);
   return {
     pane: pane ?? -1,
     paneKind: info?.kind,
