@@ -7,9 +7,11 @@
 //! stay imports (the host provides them: one instance of each module, so
 //! defaults.ts and a configuration enable and disable the same).
 //!
-//! npm packages come from `$TEMZDF_NODE_MODULES`: the dev shells and `nix
-//! build` set it to node_modules built from runtime/package-lock.json, so
-//! no build needs the network. esbuild comes from `PATH` (`$ESBUILD`
+//! npm packages come from runtime/node_modules, which `npm ci` installs
+//! from runtime/package-lock.json (refused when it no longer matches the
+//! lock file), else from `$TEMZDF_NODE_MODULES`: the dev shells and `nix
+//! build` set it to node_modules Nix built from the same lock file, so `nix
+//! build` needs no network. esbuild comes from `PATH` (`$ESBUILD`
 //! overrides). Only with the feature `host` (the type declarations alone
 //! need none of this).
 
@@ -45,7 +47,15 @@ fn main() {
     for var in ["TEMZDF_NODE_MODULES", "ESBUILD"] {
         println!("cargo::rerun-if-env-changed={var}");
     }
-    let modules = std::env::var_os("TEMZDF_NODE_MODULES").map(PathBuf::from);
+    // runtime/node_modules (npm's), else Nix's. NODE_PATH for the entries
+    // outside runtime/ (src/), which esbuild would not find it from.
+    let installed = runtime.join("node_modules");
+    let modules = if installed.is_dir() {
+        check_installed(&runtime);
+        Some(installed)
+    } else {
+        std::env::var_os("TEMZDF_NODE_MODULES").map(PathBuf::from)
+    };
     let esbuild = std::env::var_os("ESBUILD").unwrap_or_else(|| "esbuild".into());
     let bundle = |entry: &Path, out_file: &str, format: &str| {
         let mut cmd = Command::new(&esbuild);
@@ -68,7 +78,7 @@ fn main() {
         });
         assert!(
             status.success(),
-            "esbuild failed on {} (npm packages come from $TEMZDF_NODE_MODULES, which the dev shell sets)",
+            "esbuild failed on {} (npm packages come from runtime/node_modules (`npm ci` there) or $TEMZDF_NODE_MODULES, which the dev shell sets)",
             entry.display()
         );
     };
@@ -87,4 +97,37 @@ fn main() {
     }
     list.push(']');
     std::fs::write(out.join("bundled.rs"), list).unwrap();
+}
+
+/// Refuse runtime/node_modules when it is not what runtime/package-lock.json
+/// says: npm's record of what it installed (`node_modules/.package-lock.json`)
+/// has every package of the lock file at its version and integrity, the
+/// devDependencies excepted when left out (`npm ci --omit=dev`), and no other.
+fn check_installed(runtime: &Path) {
+    let read = |path: &Path| -> serde_json::Value {
+        let text = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("{}: {e} (run `npm ci` in crates/temzdf-script/runtime)", path.display()));
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    };
+    let lock = runtime.join("package-lock.json");
+    let record = runtime.join("node_modules/.package-lock.json");
+    println!("cargo::rerun-if-changed={}", lock.display());
+    println!("cargo::rerun-if-changed={}", record.display());
+    let (lock, record) = (read(&lock), read(&record));
+    let empty = serde_json::Map::new();
+    let packages = |v: &serde_json::Value| v["packages"].as_object().unwrap_or(&empty).clone();
+    let (wanted, installed) = (packages(&lock), packages(&record));
+    let same =
+        |a: &serde_json::Value, b: &serde_json::Value| a["version"] == b["version"] && a["integrity"] == b["integrity"];
+    let stale = wanted.iter().filter(|(name, _)| !name.is_empty()).find(|(name, want)| match installed.get(*name) {
+        Some(have) => !same(want, have),
+        None => want["dev"] != serde_json::Value::Bool(true),
+    });
+    let extra = installed.keys().find(|name| !name.is_empty() && !wanted.contains_key(*name));
+    if let Some(name) = stale.map(|(name, _)| name).or(extra) {
+        panic!(
+            "crates/temzdf-script/runtime/node_modules is not what package-lock.json says ({name}): \
+             run `npm ci` in crates/temzdf-script/runtime"
+        );
+    }
 }

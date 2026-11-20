@@ -11,7 +11,8 @@
 # Usage: scripts/ts-types.sh [OUT]   (default: the committed file)
 #
 # dts-bundle-generator and TypeScript 6 are devDependencies of
-# crates/temzdf-script/runtime/package.json, found in $TEMZDF_NODE_MODULES.
+# crates/temzdf-script/runtime/package.json, found in its node_modules
+# (`npm ci`), else in $TEMZDF_NODE_MODULES (Nix's).
 # It keeps an import as it is only for a library, a module found in a
 # node_modules directory: so `temzdf` (the declarations by hand) and the
 # runtime are put under target/ts-types/node_modules/temzdf here, and
@@ -27,7 +28,9 @@ fi
 
 types=crates/temzdf-script/ts-types
 out=${1:-$types/temzdf-all.d.ts}
-bundler=${TEMZDF_NODE_MODULES:?the dev shell sets it}/.bin/dts-bundle-generator
+bundler=crates/temzdf-script/runtime/node_modules/.bin/dts-bundle-generator
+[[ -x $bundler ]] || bundler=${TEMZDF_NODE_MODULES:?run npm ci in crates/temzdf-script/runtime}/.bin/dts-bundle-generator
+bundler=$(realpath "$bundler")
 work=$PWD/target/ts-types
 runtime=$PWD/crates/temzdf-script/runtime
 rm -rf "$work"

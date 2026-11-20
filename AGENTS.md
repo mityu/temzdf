@@ -63,11 +63,16 @@ Everything runs inside the Nix dev shell (`flake.nix`). Its Rust toolchain
 nixpkgs' WASI clang (for the script host's guest; never put that clang on
 `PATH`, it would replace the native `cc`). The shipped scripts
 (`crates/temzdf-script/runtime/`, an npm package) are bundled by
-`crates/temzdf-script/build.rs` with esbuild; their npm packages come from
-`runtime/package-lock.json`, built by Nix into `$TEMZDF_NODE_MODULES` (no
-network in builds). To add one: `npm install --package-lock-only PKG` in
-`runtime/` (widely used, maintained, plain ES code: it runs in QuickJS),
-then restart the dev shell. Agents are started
+`crates/temzdf-script/build.rs` with esbuild; npm manages their packages
+in `runtime/node_modules`: run `npm ci` in `runtime/` once after cloning and
+whenever `package-lock.json` changes (`build.rs` refuses node_modules that
+no longer match it, `scripts/check.sh` stops without them; tsc and editors
+read the packages' types there). To add one: `npm install PKG` in
+`runtime/` (widely used, maintained, plain ES code: it runs in QuickJS; its
+install scripts never run, `runtime/.npmrc`). `nix build` has Nix build
+the same lock file into `$TEMZDF_NODE_MODULES` (no network in builds; the
+dev shells set it too, used where `runtime/node_modules` is missing, as in
+CI's Nix jobs but `check-with-nix`). Agents are started
 inside it, so run tools directly, not through `nix develop -c` (it costs a
 shell evaluation each time); if a tool the dev shell should provide is
 missing, say so instead of working around it. A tool added to `flake.nix`
@@ -201,7 +206,7 @@ come from the host profile. `nix develop .#alldeps` provides all of them.
 `nix develop .#ci` is the minimal shell CI uses (toolchain, TeX, no
 end-to-end tools), `.#ci-miri` the same with the nightly toolchain and
 Miri and without TeX (Miri runs no test that needs the fixtures); `nix build` builds the `temzdf` package (`nix run . -- FILE` runs it).
-CI (`.github/workflows/ci.yml`) runs `scripts/check.sh --no-miri` in the
+CI (`.github/workflows/ci.yml`) runs `npm ci` and `scripts/check.sh --no-miri` in the
 first (job `check-with-nix`), `scripts/miri.sh` in the second as a job of
 its own (`miri-with-nix`; both keep built dependencies with
 `Swatinem/rust-cache`), and `nix build` on Linux and macOS

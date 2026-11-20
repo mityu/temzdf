@@ -73,6 +73,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
+      # The shipped scripts' npm packages (tsc reads their types).
+      - run: nix develop .#ci --command npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund
       - run: nix develop .#ci --command scripts/check.sh --verbose --no-miri
       # What a failure leaves: the whole outputs, and the screens of failed
       # simulated-terminal waits.

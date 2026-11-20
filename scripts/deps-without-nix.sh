@@ -4,9 +4,9 @@
 #
 #   - libtexprintf (crates/texprintf), built as a static library with a
 #     pkg-config file of our own, as nix/libtexprintf.nix builds it;
-#   - the shipped scripts' npm packages (crates/temzdf-script/runtime/),
-#     installed outside the repository (a node_modules inside it would be
-#     picked up by scripts/check-docs.sh).
+#   - the shipped scripts' npm packages, in
+#     crates/temzdf-script/runtime/node_modules (`npm ci`, without the
+#     devDependencies, tools the build does not use).
 #
 # Prints the environment the build needs as KEY=VALUE lines on stdout (CI
 # appends them to $GITHUB_ENV), and its progress on stderr.
@@ -55,11 +55,7 @@ Cflags: -I$prefix/include
 PC
 
     echo "== npm packages of crates/temzdf-script/runtime"
-    mkdir -p "$prefix/runtime-npm"
-    cp "$root/crates/temzdf-script/runtime/package.json" \
-        "$root/crates/temzdf-script/runtime/package-lock.json" "$prefix/runtime-npm/"
-    (cd "$prefix/runtime-npm" && npm ci --omit=dev --no-audit --no-fund)
+    (cd "$root/crates/temzdf-script/runtime" && npm ci --omit=dev --no-audit --no-fund)
 } >&2
 
 echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig"
-echo "TEMZDF_NODE_MODULES=$prefix/runtime-npm/node_modules"

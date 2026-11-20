@@ -62,6 +62,13 @@ if ((!all)) && [[ $# -eq 0 ]]; then
   fi
 fi
 
+# The shipped scripts' npm packages, for tsc (crates/temzdf/tests/types.rs)
+# and esbuild; build.rs refuses them when they no longer match the lock.
+if [[ ! -d crates/temzdf-script/runtime/node_modules ]]; then
+  echo "FAIL npm (no crates/temzdf-script/runtime/node_modules: run \`npm ci\` there)"
+  exit 1
+fi
+
 status=0
 if ((fix)); then
   cargo fmt --all
