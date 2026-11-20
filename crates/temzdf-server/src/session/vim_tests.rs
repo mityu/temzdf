@@ -509,8 +509,6 @@ fn a_gone_sessions_swap_file_is_asked_about_as_neovim_does() {
     s.swap_dir = Some(swaps.clone());
     s.start(PaneSpec::File(file.clone()), None).unwrap();
     settle(&mut s, &rx, true, None);
-    let shown = || -> Vec<String> { Vec::new() };
-    let _ = shown;
     let texts: Vec<String> = s.notices.iter().map(|n| n.text.clone()).collect();
     assert!(
         texts.iter().any(|t| t.contains("E325: ATTENTION") && t.contains("(R)ecover")),
