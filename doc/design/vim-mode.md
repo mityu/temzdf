@@ -95,12 +95,19 @@ user's.
   ASCII classes (`\s \d \w \a \l \u \x \h`, `\k` as the default word
   characters), `\n`, `\_x`, `\c \C`, back references (through
   fancy-regex). `hlsearch` is `highlightPattern`.
-- Ex commands (`ex.ts`): ranges (`%`, `.`, `$`, numbers, `'<,'>`, `+N`
-  `-N`), `:w[!] [file]`, `:q[!]`, `:wq`, `:x`, `:e[!] [file]`,
+- Ex commands (`ex.ts`), defined with `temzdf/command` in the mode's
+  namespace (`doc/design/ex-commands.md`): Vim's ranges (`%`, `.`, `$`,
+  numbers, marks, `/pat/`, `?pat?`, `\/`, `\?`, `\&`, `+N` `-N`, `,` `;`;
+  a pattern becomes the last search), `|` between commands (`:s` takes
+  its own after its flags; a `|` in its pattern or replacement is a
+  character), `:w[!] [file]`, `:q[!]`, `:wq`, `:x`, `:e[!] [file]`,
   `:s/pat/rep/[gieIc]` (`&`, `\0`-`\9`, `\r`, `\n`, `\t`, `\u \l \U \L \E`),
-  `:d`, `:y`, `:noh`, `:set`, a line number. Errors are Vim's (`E486` and
-  such), shown as error messages. They move onto scripts' Ex commands
-  (`doc/design/ex-commands.md`).
+  `:d`, `:y`, `:noh`, `:set`, a line number (the command with the empty
+  name). Only `""`, `:s`, `:d`, `:y`, `:mark`/`:k` and `:b` take a range
+  (`:5w` is `E481`). The commands on text are for text panes only (`when`);
+  those on panes, buffers and tab pages run in any pane, from `<C-b>:`
+  (`:e` without a file reloads text panes only: `E32` elsewhere).
+  Errors are Vim's (`E486` and such), shown as error messages.
 - Panes, buffers and tab pages, as Vim's windows, buffers and tabs:
   `:sp[lit]`/`:vs[plit] [file]` (the same buffer, or the file, in a pane
   beside: `o.splitbelow`, `o.splitright`), `:new`/`:vne[w] [file]` (a new

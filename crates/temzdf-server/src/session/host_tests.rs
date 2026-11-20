@@ -308,6 +308,29 @@ fn the_prefix_splits_terminal_and_pdf_panes() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn the_prefix_and_a_colon_run_ex_commands_in_any_pane() {
+    let dir = TempDir::new("colon");
+    for (what, mode) in [(Open::Pdf, "pdf"), (Open::Terminal, "terminal")] {
+        let (mut s, rx) = open(what, &dir.0);
+        // The commands on panes run here, back in the pane's mode.
+        assert_eq!(type_keys(&mut s, &rx, "<C-b>:vsplit<CR>", None).unwrap(), Vec::<String>::new(), "{what:?}");
+        assert_eq!(s.pane_count(), 2, "{what:?}");
+        assert_eq!(s.current_mode(), mode, "{what:?}");
+        assert_eq!(type_keys(&mut s, &rx, "<C-b>:close | tabnew<CR>", None).unwrap(), Vec::<String>::new(), "{what:?}");
+        assert_eq!((s.pane_count(), s.tabs.len()), (2, 2), "{what:?}: one pane on each tab page");
+        // Those on text are not commands here.
+        let seen = type_keys(&mut s, &rx, "<C-b>:tabprevious | s/a/b/<CR>", None).unwrap();
+        assert!(seen.iter().any(|e| e.contains("E492")), "{what:?}: {seen:?}");
+        assert_eq!(s.current_mode(), mode, "{what:?}");
+    }
+    // :e without a file reloads text panes only.
+    let (mut s, rx) = open(Open::Pdf, &dir.0);
+    let seen = type_keys(&mut s, &rx, "<C-b>:e<CR>", None).unwrap();
+    assert!(seen.iter().any(|e| e.contains("E32")), "{seen:?}");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn the_prefix_twice_reaches_the_program() {
     let dir = TempDir::new("prefix-twice");
     let out = dir.0.join("got");

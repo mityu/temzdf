@@ -36,7 +36,8 @@ import {
 import { options, state } from "./state";
 import type { MotionFn, Operator } from "./state";
 import { textObjectKeys } from "./textobjects";
-import { confirmKey, ex } from "./ex";
+import { command } from "temzdf/command";
+import { confirmKey, exCommands } from "./ex";
 import { isRecording, runMacro, startRecording, stopRecording } from "./macros";
 import { isMarkName, jump, markPos, setMark } from "./marks";
 import { cursor, firstNonBlank, t } from "./util";
@@ -62,7 +63,9 @@ const V = "vim/visual";
 const I = "vim/insert";
 
 /** Define the modes, mappings and hook (vim.enable()). */
-function define(hook: Define["hook"]): void {
+function define(d: Define): void {
+  const hook = d.hook;
+  exCommands(d.command);
   defineMode(N, { fallback: "drop", count: true });
   defineMode(I, { fallback: "passthrough", count: false });
   defineMode(V, { fallback: "drop", count: true });
@@ -108,7 +111,7 @@ function define(hook: Define["hook"]): void {
       return;
     }
     if (what.kind === "@") {
-      if (key.text !== null) runMacro(key.text, what.count, ex);
+      if (key.text !== null) runMacro(key.text, what.count, (line) => command.execute(line));
       return;
     }
     if (what.kind === "m" || what.kind === "'" || what.kind === "`") {
@@ -343,7 +346,7 @@ function teardown(): void {
   }
 }
 
-const keys = keyset(NAMESPACE, (d) => define(d.hook), teardown);
+const keys = keyset(NAMESPACE, (d) => define(d), teardown);
 
 void draw;
 

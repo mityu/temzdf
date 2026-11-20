@@ -3,7 +3,7 @@
 // work); <CR> runs the cursor's line in the text pane, <Esc> cancels.
 import { acceptPrompt, action, cancelPrompt, openPrompt } from "temzdf";
 import type { Position } from "temzdf";
-import { ex } from "./ex";
+import { command } from "temzdf/command";
 import { rememberEx } from "./macros";
 import { recordJump } from "./marks";
 import { combine, leaveTransient, operator } from "./normal";
@@ -100,7 +100,7 @@ function finish(o: Open, line: string, run: boolean): void {
   if (o.kind === ":") {
     state.pending = null;
     rememberEx(line);
-    ex(line);
+    command.execute(line);
     return;
   }
   const backward = o.kind === "?";

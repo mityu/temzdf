@@ -209,6 +209,7 @@ hook holds every key until it ran, so hook it only while needed.
 | `normal` | `<Esc>` | back to the pane's mode |
 | `normal` | `[` `v` | the `visual` mode (a terminal pane; so `<C-b>[` from it, as tmux's copy mode) |
 | `normal` | `]` `p` | put the newest copy (any pane's, see Copies and registers) into the pane (tmux's `<C-b>]`) |
+| `normal` | `:` | an Ex command line below the pane, in any pane (see Ex commands) |
 | `pdf` | `q` | close the pane (see Buffers) |
 | `pdf` | `<Esc>` | clear the selection, else the search, else quit |
 | `pdf` | `j` `k` / `<Down>` `<Up>` | scroll (counts) |
@@ -517,8 +518,9 @@ mode maps readline's keys (`<C-a>`, `<C-e>`, `<C-w>`, `<C-u>`, `<C-k>`,
 ## Ex commands
 
 `temzdf/command` keeps the Ex commands scripts define and runs command
-lines (`doc/design/ex-commands.md`). No `:` command line runs it yet; the
-Vim mode's `:` still has its own commands.
+lines (`doc/design/ex-commands.md`): the Vim mode's `:` in text panes and
+`<C-b>:` in any pane run them, and the Vim mode's own commands are defined
+with it (those on text only in text panes).
 
 ```ts
 import { command, parseBang, resolveRange } from "temzdf/command";
@@ -530,7 +532,8 @@ command.execute("w! | quit");
 ```
 
 - `command.add(name, fn, { shortName?, when?, prefix?, bar?, desc?,
-  namespace? })`: names are letters only; `:wri` runs `write` when
+  namespace? })`: names are letters only; the empty name gets the lines
+  without one (a range alone, `:5`, or `:!...`); `:wri` runs `write` when
   `shortName` is at most that long (without one, only the full name).
   Among the commands whose `when` holds (the context a mapping's `when`
   gets), an exact name wins over an abbreviation, then the one defined
@@ -712,9 +715,10 @@ clipboard), the insert and visual
 modes (characters, lines, blocks), `u`, `<C-r>`, `.`, marks and the jump
 list (`m`, `'`, `` ` ``, `<C-o>`, `<C-i>`), macros (`q`, `@`), searching
 with Vim's patterns (`/ ? n N * #`, hlsearch, incsearch) and Ex commands
-(`:w :q :wq :x :e :s :d :y :noh :set :marks :delm`, `:s///c`, ranges; for
-panes, buffers and tab pages `:sp :vs :new :vnew :enew :close :only :bn
-:bp :b :ls :bd :tabnew :tabn :tabp :tabc :tabo :wa :qa :wqa`). `import vim from "temzdf/edit/vim";
+(`:w :q :wq :x :e :s :d :y :noh :set :marks :delm`, `:s///c`, Vim's
+ranges, `|`; for panes, buffers and tab pages, also from `<C-b>:` in any
+pane, `:sp :vs :new :vnew :enew :close :only :bn :bp :b :ls :bd :tabnew
+:tabn :tabp :tabc :tabo :wa :qa :wqa`). `import vim from "temzdf/edit/vim";
 vim.options.shiftwidth = 2;` changes its settings. Its mappings are in the
 namespace `builtin-edit-vim`; `vim.disable()` takes them away
 (`temzdf/edit/notepad` edits without modes instead).

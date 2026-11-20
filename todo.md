@@ -27,11 +27,6 @@ server on one `Session`). Next and open:
   pixels through the encoder either). Left: why the GUI's
   uploads at scale 2 got slower on lavapipe (`doc/dev/performance.md`, "With
   shared memory"); measure on a real GPU and on macOS.
-- [ ] Ex commands scripts define (`doc/design/ex-commands.md`): the
-  registry and `command.execute` are done (`temzdf/command`); next the
-  Vim mode's `ex()` moved onto them (its `resolveRange` env with the
-  marks; decide what a range alone, `:5`, runs), then `:` in panes other
-  than text panes.
 - [ ] Deep recursion in a script exhausts the guest's WebAssembly stack
   and ends the script host (a trap, not a JavaScript error): QuickJS has
   no stack limit set below it. Found with `temzdf/command`'s depth limit
@@ -93,6 +88,8 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- `:w` with a range (Vim's `:5w`, `:'<,'>w FILE`: those lines only) is
+  not built; a range on `:w` is `E481` (`crates/temzdf-script/runtime/vim/ex.ts`).
 - A Nix cache for CI. Magic Nix Cache (in GitHub's cache) was turned off
   on 2026-11-20: it asks the cache API once per store path, ran into its
   rate limit (HTTP 429), and rust-cache's restores in the same run failed

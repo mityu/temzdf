@@ -3,13 +3,13 @@
 Commands typed on a `:` command line, as Vim's Ex commands, that scripts
 (and the user's configuration) define. Agreed with the user on 2026-11-19.
 
-Status: the registry and `command.execute` are built, in TypeScript only:
-the module `temzdf/command` (`crates/temzdf-script/runtime/command.ts`;
-cases in `crates/temzdf-script/runtime/test/command.ts`). Nothing uses it
-yet: the Vim mode's commands are still one function in
-`crates/temzdf-script/runtime/vim/ex.ts` (`ex()`) that parses a range and
-then picks the command with a long chain of `if`s, and only text panes
-have a command line. The steps left are in `todo.md`.
+Status: built, in TypeScript only: the module `temzdf/command`
+(`crates/temzdf-script/runtime/command.ts`; cases in
+`crates/temzdf-script/runtime/test/command.ts`). The Vim mode defines its
+commands with it (`crates/temzdf-script/runtime/vim/ex.ts`, in its
+namespace; those on text with a `when` for text panes), and two command
+lines run it: the Vim mode's `:` in text panes and `<C-b>:` (the normal
+mode's `:`, `crates/temzdf-script/runtime/lib/cmdline.ts`) in any pane.
 
 "Command" in this document means an Ex command. The session's registry
 commands are **actions** (`action.*` in scripts, `temzdf action` on the
@@ -118,9 +118,11 @@ option is a string so other kinds can be added beside it.
   `.`, `'a` or `'<` mean belongs to the pane and to whoever keeps the marks
   (the Vim mode keeps its marks itself). A command turns it into lines
   with `resolveRange(spec, env)`, `env` giving the current line, the last
-  one, marks and, optionally, searches; a text pane's `env` comes from the
-  Vim mode when `ex.ts` moves onto this. A pane that has no lines refuses
-  the range there, with an error of its own.
+  one, marks and, optionally, searches; a text pane's `env` is the Vim
+  mode's (its marks; a pattern searches as `/` does and becomes the last
+  search). A pane that has no lines refuses the range there, with an
+  error of its own (the Vim mode's commands taking ranges are for text
+  panes only).
 - `resolveRange` gives zero-based lines, first ≤ last (Vim asks before
   swapping a backward range; here it is swapped), and after `;` counts the
   second address from the first.
@@ -190,8 +192,6 @@ open panes read the ones they understand.
 
 ## Left for later
 
-- Mapping `:` in panes other than text panes (any pane can then run
-  commands that do not need a range).
 - Running JavaScript from the CLI (`temzdf action eval`, say), which then
   reaches commands through `command.execute` without an entry point of
   its own.

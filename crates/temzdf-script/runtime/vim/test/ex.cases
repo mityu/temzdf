@@ -135,3 +135,80 @@ text:
 keys: xx:w<CR>
 want:
 |c
+
+=== marks give a range
+text:
+|1
+2
+3
+4
+keys: jmajmbgg:'a,'bd<CR>
+want:
+1
+|4
+
+=== a pattern gives a range: the next line it matches
+text:
+|1
+foo
+3
+foo
+keys: :/foo/d<CR>
+want:
+1
+|3
+foo
+
+=== a backward pattern and the cursor's line
+text:
+1
+foo
+3
+|4
+keys: :?foo?,.d<CR>
+want:
+|1
+
+=== :s runs what follows a | after its flags
+text:
+|a
+a
+x
+keys: :2,3s/a/b/ | 1d<CR>
+want:
+|b
+x
+
+=== a | in the pattern of :s is the character
+text:
+|a|b
+keys: :s/a|b/x/<CR>
+want:
+|x
+
+=== a range on a command that takes none is an error
+text:
+|x
+keys: :5w<CR>
+want:
+|x
+error: yes
+
+=== ranges alone after a |
+text:
+|1
+2
+3
+keys: :3 | 2<CR>
+want:
+1
+|2
+3
+
+=== a line starting with another character is not a command
+text:
+|x
+keys: :!x<CR>
+want:
+|x
+error: yes

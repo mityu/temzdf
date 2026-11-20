@@ -1,58 +1,40 @@
-// Ex commands (after :): ranges (% . $ numbers '< '> and +N -N), :w :q :wq
-// :x :e :s :noh :d :y, a line number alone, and a few of :set.
+// The Vim mode's Ex commands, defined with temzdf/command (exCommands):
+// :w :q :e :s :d :y :marks, panes, buffers and tab pages, a range alone
+// (the command with the empty name), and a few of :set. Ranges are Vim's
+// (resolveRange, with this buffer's marks and searches). The commands on
+// text are for text panes only; those on panes, buffers and tab pages work
+// in any pane (<C-b>: opens a command line there).
 import { action, o } from "temzdf";
-import type { KeyInfo, Position, Range as TextRange } from "temzdf";
+import type { KeyContext, KeyInfo, Position, Range as TextRange } from "temzdf";
+import { command, parseBang, resolveRange, splitBar } from "temzdf/command";
+import type { CmdCtx, VimRangeEnv } from "temzdf/command";
+import type { Define } from "../lib/keyset";
 import { operate } from "./operators";
 import { convert } from "./pattern";
 import { deleteMarks, listMarks, markLine, recordJump, setMark } from "./marks";
-import { noHighlight } from "./search";
+import { find, noHighlight } from "./search";
 import { options, state } from "./state";
 import { cursor, firstNonBlank, lastLine, lineEnd, pos, t, text } from "./util";
 
 type Range = { first: number; last: number };
 
-/** Parse an address at `s[i]`: its line (zero based) and where it ends. */
-function address(s: string, i: number): [number | null, number] {
-  let line: number | null = null;
-  const cur = cursor().line;
-  if (s[i] === ".") {
-    line = cur;
-    i++;
-  } else if (s[i] === "$") {
-    line = lastLine();
-    i++;
-  } else if (s[i] === "'" && s[i + 1] !== undefined) {
-    line = markLine(s[i + 1]);
-    i += 2;
-  } else {
-    const m = /^\d+/.exec(s.slice(i));
-    if (m !== null) {
-      line = Number(m[0]) - 1;
-      i += m[0].length;
-    }
-  }
-  // +N and -N (a sign alone: one).
-  for (;;) {
-    const m = /^([+-])(\d*)/.exec(s.slice(i));
-    if (m === null || m[0] === "") break;
-    const n = m[2] === "" ? 1 : Number(m[2]);
-    line = (line ?? cur) + (m[1] === "+" ? n : -n);
-    i += m[0].length;
-  }
-  return [line, i];
-}
+/** Where this buffer's ranges find their lines (marks, searches). */
+const env: VimRangeEnv = {
+  current: () => cursor().line,
+  last: () => lastLine(),
+  mark: (name) => markLine(name),
+  // /pat/ from the line after `from`, ?pat? from the lines before it (an
+  // empty pattern, \/ \? \&: the last search's); it becomes the last search.
+  search: (pattern, backward, from) => {
+    const start = backward ? pos(from, 0) : lineEnd(from);
+    return find(pattern ?? "", backward, 1, start)!.line;
+  },
+};
 
-function parseRange(s: string): [Range | null, string] {
-  let i = 0;
-  while (s[i] === " " || s[i] === ":") i++;
-  if (s[i] === "%") return [{ first: 0, last: lastLine() }, s.slice(i + 1)];
-  const [a, j] = address(s, i);
-  if (a === null) return [null, s.slice(j)];
-  if (s[j] === "," || s[j] === ";") {
-    const [b, k] = address(s, j + 1);
-    return [{ first: a, last: b ?? a }, s.slice(k)];
-  }
-  return [{ first: a, last: a }, s.slice(j)];
+/** The lines a command's range gives, within the buffer; none: the cursor's. */
+function lines(ctx: CmdCtx): Range {
+  if (ctx.range === undefined) return { first: cursor().line, last: cursor().line };
+  return clampRange(resolveRange(ctx.range, env));
 }
 
 function clampRange(r: Range): Range {
@@ -90,6 +72,13 @@ function splitPane(vertical: boolean, buffer: number, file: string): void {
   if (pane !== null && file !== "") action.openFile(file, { pane });
 }
 
+/** The focused pane's buffer (in any kind of pane). */
+function focusedBuffer(): number {
+  const p = action.panes().find((x) => x.focused);
+  if (p === undefined) throw new Error("no pane");
+  return p.buffer;
+}
+
 /** The buffers :bnext, :ls and such go through. */
 function bufferList(): ReturnType<typeof action.buffers> {
   return action
@@ -115,7 +104,7 @@ function bufferNamed(arg: string): number {
 function cycleBuffer(delta: number, count: number): void {
   const list = bufferList();
   if (list.length === 0) return;
-  const cur = t.info().buffer;
+  const cur = focusedBuffer();
   let i = list.findIndex((b) => b.id === cur);
   if (i < 0) i = 0;
   const n = list.length;
@@ -125,7 +114,7 @@ function cycleBuffer(delta: number, count: number): void {
 
 /** :ls: Vim's list (% the pane's, a shown, h hidden, + modified). */
 function listBuffers(): string {
-  const cur = t.info().buffer;
+  const cur = focusedBuffer();
   return bufferList()
     .map((b) => {
       const flags = `${b.id === cur ? "%" : " "}${b.panes.length > 0 ? "a" : "h"} ${b.modified ? "+" : " "}`;
@@ -259,15 +248,24 @@ let confirming: null | {
   match: Match | null;
   /** The last line replaced on (-1: none). */
   lastChanged: number;
+  /** What followed `|` after the flags: run once answered. */
+  then: string | undefined;
 } = null;
 
-function confirmSubstitute(range: Range, conv: { rust: string; group: number }, rep: string, global: boolean, pattern: string): void {
+function confirmSubstitute(
+  range: Range,
+  conv: { rust: string; group: number },
+  rep: string,
+  global: boolean,
+  pattern: string,
+  then: string | undefined,
+): void {
   const endAt = lineEnd(range.last);
   const first = t.search(conv.rust, { from: pos(range.first, 0), wrap: false, lines: [range.first, range.last], group: conv.group });
   if (first === null) throw new Error(`E486: Pattern not found: ${pattern}`);
   t.undoBegin();
   const end = t.addDecoration({ start: endAt, end: endAt }, { namespace: CONFIRM, endGravity: "after" });
-  confirming = { rust: conv.rust, group: conv.group, rep, global, end, at: pos(range.first, 0), match: null, lastChanged: -1 };
+  confirming = { rust: conv.rust, group: conv.group, rep, global, end, at: pos(range.first, 0), match: null, lastChanged: -1, then };
   action.switchMode("vim/confirm");
   if (!nextMatch()) finishConfirm();
 }
@@ -321,6 +319,7 @@ function finishConfirm(): void {
   t.undoEnd();
   if (action.currentMode() === "vim/confirm") action.exitMode();
   if (c.lastChanged >= 0) t.setCursor(firstNonBlank(Math.min(lastLine(), c.lastChanged)));
+  if (c.then !== undefined) command.execute(c.then);
 }
 
 /** A key answering :s///c. */
@@ -360,19 +359,27 @@ export function confirmKey(key: KeyInfo): void {
   if (!nextMatch()) finishConfirm();
 }
 
+/** :s/pat/rep/flags: `|` in the pattern and the replacement is theirs;
+ * after the flags it runs what follows (when a :s///c is answered). */
 function substitute(range: Range, args: string): void {
   const delim = args[0];
   if (delim === undefined || /[\w\s"|]/.test(delim)) throw new Error("E488: Trailing characters");
   const [pat, rest] = cut(args.slice(1), delim);
   const [rep, flagsRest] = rest === null ? ["", null] : cut(rest, delim);
-  const flags = flagsRest ?? "";
+  const [flagsText, then] = splitBar(flagsRest ?? "");
+  const flags = flagsText.trim();
+  substituteLines(range, pat, rep, flags, then);
+  if (then !== undefined && !flags.includes("c")) command.execute(then);
+}
+
+function substituteLines(range: Range, pat: string, rep: string, flags: string, then: string | undefined): void {
   const pattern = pat === "" ? (state.lastSearch?.pattern ?? "") : pat;
   if (pattern === "") throw new Error("E35: No previous regular expression");
   const ic = flags.includes("i") ? true : flags.includes("I") ? false : options.ignorecase;
   const conv = convert(pattern, ic, options.smartcase && !flags.includes("i") && !flags.includes("I"));
   const global = flags.includes("g");
   if (flags.includes("c")) {
-    confirmSubstitute(range, conv, rep, global, pattern);
+    confirmSubstitute(range, conv, rep, global, pattern, then);
     return;
   }
   const found = t.searchAll(conv.rust, { range: { start: pos(range.first, 0), end: lineEnd(range.last) }, group: conv.group });
@@ -400,155 +407,213 @@ function substitute(range: Range, args: string): void {
   t.setCursor(firstNonBlank(Math.min(lastLine(), lastLineChanged)));
 }
 
-/** Run an Ex command line (what was typed after `:`). */
-export function ex(input: string): void {
-  const [range, rest] = parseRange(input);
-  const m = /^\s*([a-zA-Z]*|&)(!?)\s*(.*)$/.exec(rest)!;
-  const name = m[1];
-  const bang = m[2] === "!";
-  const arg = m[3].trim();
-  const is = (short: string, full: string) => name.length >= short.length && full.startsWith(name);
-  if (name === "" && arg === "") {
-    if (range !== null) {
-      const to = firstNonBlank(clampRange(range).last);
+/** Whether the focused pane is a text pane (the commands on text). */
+const inText = (c: KeyContext) => c.paneKind === "edit";
+
+/** `!` and the argument (trimmed), as :w! FILE has them. */
+function bangArg(args: string): [boolean, string] {
+  const [bang, rest] = parseBang(args);
+  return [bang, rest.trim()];
+}
+
+function isModified(buffer: number): boolean {
+  return action.buffers({ all: true }).find((b) => b.id === buffer)?.modified ?? false;
+}
+
+/** Define the Ex commands with `add` (the Vim mode's keyset's). */
+export function exCommands(add: Define["command"]): void {
+  const text = { when: inText };
+  const range = { when: inText, prefix: "vim-range" } as const;
+  const write = (bang: boolean, arg: string) => action.write(arg === "" ? { force: bang } : { path: arg, force: bang });
+
+  // A range alone: to its last line.
+  add(
+    "",
+    (c) => {
+      if (c.args.trim() !== "") throw new Error(`E492: Not an editor command: ${c.line.trim()}`);
+      if (c.range === undefined) return;
+      const to = firstNonBlank(lines(c).last);
       const at = cursor();
       if (to.line !== at.line) recordJump(at);
       t.setCursor(to);
-    }
-    return;
+    },
+    range,
+  );
+  add("substitute", (c) => substitute(lines(c), c.args.replace(/^\s+/, "")), { ...range, shortName: "s", bar: "handle" });
+  add("write", (c) => write(...bangArg(c.args)), { ...text, shortName: "w" });
+  add(
+    "wq",
+    (c) => {
+      const [bang, arg] = bangArg(c.args);
+      write(bang, arg);
+      quit(bang);
+    },
+    text,
+  );
+  for (const [name, shortName] of [
+    ["xit", "x"],
+    ["exit", "exi"],
+  ]) {
+    add(
+      name,
+      (c) => {
+        const [bang, arg] = bangArg(c.args);
+        if (name !== "xit" || t.info().modified) write(bang, arg);
+        quit(bang);
+      },
+      { ...text, shortName },
+    );
   }
-  if (name === "" || is("s", "substitute")) {
-    const r = clampRange(range ?? { first: cursor().line, last: cursor().line });
-    substitute(r, name === "" ? arg : m[3]);
-    return;
+  add("quit", (c) => quit(bangArg(c.args)[0]), { shortName: "q" });
+  add(
+    "edit",
+    (c) => {
+      const [bang, arg] = bangArg(c.args);
+      const pane = action.panes().find((p) => p.focused);
+      if (arg !== "") {
+        action.openFile(arg, { pane: pane?.id });
+      } else if (pane?.kind !== "edit") {
+        // Reloading is for text panes (the others follow their files).
+        throw new Error("E32: No file name");
+      } else if (bang || !isModified(pane.buffer)) {
+        action.reload();
+      } else {
+        throw new Error("E37: No write since last change (add ! to override)");
+      }
+    },
+    { shortName: "e" },
+  );
+  add("split", (c) => splitPane(false, focusedBuffer(), bangArg(c.args)[1]), { shortName: "sp" });
+  add("vsplit", (c) => splitPane(true, focusedBuffer(), bangArg(c.args)[1]), { shortName: "vs" });
+  add("new", (c) => splitPane(false, action.newBuffer(), bangArg(c.args)[1]));
+  add("vnew", (c) => splitPane(true, action.newBuffer(), bangArg(c.args)[1]), { shortName: "vne" });
+  add("enew", () => action.showBuffer(action.newBuffer(), action.focusedPane() ?? undefined), { shortName: "ene" });
+  add(
+    "close",
+    () => {
+      if (workPanes().length <= 1) throw new Error("E444: Cannot close last window");
+      action.closePane();
+    },
+    { shortName: "clo" },
+  );
+  add(
+    "only",
+    () => {
+      const me = action.focusedPane();
+      for (const p of workPanes()) if (p.id !== me) action.closePane(p.id);
+    },
+    { shortName: "on" },
+  );
+  for (const [name, shortName, delta] of [
+    ["bnext", "bn", 1],
+    ["bprevious", "bp", -1],
+    ["bNext", "bN", -1],
+  ] as const) {
+    add(
+      name,
+      (c) => {
+        const arg = bangArg(c.args)[1];
+        cycleBuffer(delta, arg === "" ? 1 : Number(arg) || 1);
+      },
+      { shortName },
+    );
   }
-  if (is("w", "write")) {
-    action.write(arg === "" ? { force: bang } : { path: arg, force: bang });
-    return;
-  }
-  if (is("wq", "wq") || is("x", "xit") || is("exi", "exit")) {
-    if (!is("x", "xit") || t.info().modified) action.write(arg === "" ? { force: bang } : { path: arg, force: bang });
-    quit(bang);
-    return;
-  }
-  if (is("q", "quit")) {
-    quit(bang);
-    return;
-  }
-  if (is("e", "edit")) {
-    if (arg !== "") {
-      action.openFile(arg, { pane: action.focusedPane() ?? undefined });
-    } else if (bang || !t.info().modified) {
-      action.reload();
-    } else {
-      throw new Error("E37: No write since last change (add ! to override)");
-    }
-    return;
-  }
-  if (is("sp", "split") || is("vs", "vsplit")) {
-    splitPane(is("vs", "vsplit"), t.info().buffer, arg);
-    return;
-  }
-  if (is("new", "new") || is("vne", "vnew")) {
-    splitPane(is("vne", "vnew"), action.newBuffer(), arg);
-    return;
-  }
-  if (is("ene", "enew")) {
-    action.showBuffer(action.newBuffer(), action.focusedPane() ?? undefined);
-    return;
-  }
-  if (is("clo", "close")) {
-    if (workPanes().length <= 1) throw new Error("E444: Cannot close last window");
-    action.closePane();
-    return;
-  }
-  if (is("on", "only")) {
-    const me = action.focusedPane();
-    for (const p of workPanes()) if (p.id !== me) action.closePane(p.id);
-    return;
-  }
-  if (is("bn", "bnext") || is("bp", "bprevious") || is("bN", "bNext")) {
-    cycleBuffer(is("bn", "bnext") ? 1 : -1, arg === "" ? 1 : Number(arg) || 1);
-    return;
-  }
-  if (is("b", "buffer")) {
-    if (arg === "" && range === null) return;
-    action.showBuffer(bufferNamed(arg === "" ? String(range!.last + 1) : arg), action.focusedPane() ?? undefined);
-    return;
-  }
-  if (is("ls", "ls") || is("buffers", "buffers") || is("files", "files")) {
-    action.message(listBuffers());
-    return;
-  }
-  if (is("bd", "bdelete")) {
-    deleteBuffer(arg === "" ? t.info().buffer : bufferNamed(arg), bang);
-    return;
-  }
-  if (is("tabnew", "tabnew") || is("tabe", "tabedit")) {
+  add(
+    "buffer",
+    (c) => {
+      const arg = bangArg(c.args)[1];
+      // :3b: the range is a buffer's number, not a line.
+      if (arg === "" && c.range === undefined) return;
+      const n = arg !== "" ? arg : String(resolveRange(c.range!, env).last + 1);
+      action.showBuffer(bufferNamed(n), action.focusedPane() ?? undefined);
+    },
+    { shortName: "b", prefix: "vim-range" },
+  );
+  for (const name of ["ls", "buffers", "files"]) add(name, () => action.message(listBuffers()));
+  add(
+    "bdelete",
+    (c) => {
+      const [bang, arg] = bangArg(c.args);
+      deleteBuffer(arg === "" ? focusedBuffer() : bufferNamed(arg), bang);
+    },
+    { shortName: "bd" },
+  );
+  const tabnew = (c: CmdCtx) => {
+    const arg = bangArg(c.args)[1];
     action.newTab(arg === "" ? { buffer: action.newBuffer() } : { file: arg });
-    return;
-  }
-  if (is("tabn", "tabnext")) {
-    if (arg === "") action.nextTab();
-    else action.gotoTab(Number(arg));
-    return;
-  }
-  if (is("tabp", "tabprevious") || is("tabN", "tabNext")) {
-    action.prevTab();
-    return;
-  }
-  if (is("tabc", "tabclose")) {
-    if (action.tabs().length <= 1) throw new Error("E784: Cannot close last tab page");
-    action.closeTab();
-    return;
-  }
-  if (is("tabo", "tabonly")) {
-    onlyTab();
-    return;
-  }
-  if (is("wa", "wall")) {
+  };
+  add("tabnew", tabnew);
+  add("tabedit", tabnew, { shortName: "tabe" });
+  add(
+    "tabnext",
+    (c) => {
+      const arg = bangArg(c.args)[1];
+      if (arg === "") action.nextTab();
+      else action.gotoTab(Number(arg));
+    },
+    { shortName: "tabn" },
+  );
+  add("tabprevious", () => action.prevTab(), { shortName: "tabp" });
+  add("tabNext", () => action.prevTab(), { shortName: "tabN" });
+  add(
+    "tabclose",
+    () => {
+      if (action.tabs().length <= 1) throw new Error("E784: Cannot close last tab page");
+      action.closeTab();
+    },
+    { shortName: "tabc" },
+  );
+  add("tabonly", () => onlyTab(), { shortName: "tabo" });
+  add("wall", () => writeAll(), { shortName: "wa" });
+  const quitAll = (c: CmdCtx) => action.killSession({ force: bangArg(c.args)[0] });
+  add("qall", quitAll, { shortName: "qa" });
+  add("quitall", quitAll, { shortName: "quita" });
+  const writeQuitAll = (c: CmdCtx) => {
     writeAll();
-    return;
-  }
-  if (is("qa", "qall") || is("quita", "quitall")) {
-    action.killSession({ force: bang });
-    return;
-  }
-  if (is("wqa", "wqall") || is("xa", "xall")) {
-    writeAll();
-    action.killSession({ force: bang });
-    return;
-  }
-  if (is("marks", "marks")) {
-    action.message(listMarks());
-    return;
-  }
-  if (is("delm", "delmarks")) {
-    if (arg === "" && !bang) throw new Error("E471: Argument required");
-    deleteMarks(arg, bang);
-    return;
-  }
-  if (is("ma", "mark") || name === "k") {
-    const r = clampRange(range ?? { first: cursor().line, last: cursor().line });
+    quitAll(c);
+  };
+  add("wqall", writeQuitAll, { shortName: "wqa" });
+  add("xall", writeQuitAll, { shortName: "xa" });
+  add("marks", () => action.message(listMarks()), text);
+  add(
+    "delmarks",
+    (c) => {
+      const [bang, arg] = bangArg(c.args);
+      if (arg === "" && !bang) throw new Error("E471: Argument required");
+      deleteMarks(arg, bang);
+    },
+    { ...text, shortName: "delm" },
+  );
+  const mark = (c: CmdCtx) => {
+    const arg = bangArg(c.args)[1];
     if (arg.length !== 1) throw new Error("E471: Argument required");
-    setMark(arg, pos(r.last, 0));
-    return;
+    setMark(arg, pos(lines(c).last, 0));
+  };
+  add("mark", mark, { ...range, shortName: "ma" });
+  add("k", mark, range);
+  add("nohlsearch", () => noHighlight(), { ...text, shortName: "noh" });
+  for (const [name, op] of [
+    ["delete", "d"],
+    ["yank", "y"],
+  ] as const) {
+    add(
+      name,
+      (c) => {
+        const r = lines(c);
+        const arg = bangArg(c.args)[1];
+        const reg = /^[a-zA-Z0-9"\-_+*]$/.test(arg) ? arg : null;
+        operate(op, { kind: "line", first: r.first, last: r.last }, reg);
+      },
+      { ...range, shortName: op },
+    );
   }
-  if (is("noh", "nohlsearch")) {
-    noHighlight();
-    return;
-  }
-  if (is("d", "delete") || is("y", "yank")) {
-    const r = clampRange(range ?? { first: cursor().line, last: cursor().line });
-    const reg = /^[a-zA-Z0-9"\-_+*]$/.test(arg) ? arg : null;
-    operate(is("d", "delete") ? "d" : "y", { kind: "line", first: r.first, last: r.last }, reg);
-    return;
-  }
-  if (is("se", "set")) {
-    for (const opt of arg.split(/\s+/).filter((s) => s !== "")) setOption(opt);
-    return;
-  }
-  throw new Error(`E492: Not an editor command: ${input}`);
+  add(
+    "set",
+    (c) => {
+      for (const opt of bangArg(c.args)[1].split(/\s+/).filter((x) => x !== "")) setOption(opt);
+    },
+    { ...text, shortName: "se" },
+  );
 }
 
 const names: Record<string, keyof typeof options> = {

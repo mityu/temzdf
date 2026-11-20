@@ -1,8 +1,9 @@
 // The normal mode (namespace builtin-mode-normal), reached with the prefix
 // from any pane: panes, floating panes, tab pages, putting the newest copy,
-// detaching, ending the session. Defined when enabled: `import normal from
+// an Ex command line, detaching, ending the session. Defined when enabled: `import normal from
 // "temzdf/mode/normal"; normal.enable();`.
 import { action } from "temzdf";
+import { openCommandLine } from "../lib/cmdline";
 import { keyset } from "../lib/keyset";
 import { prefix } from "../lib/prefix";
 
@@ -64,5 +65,10 @@ export default keyset("builtin-mode-normal", (d) => {
   d.map("normal", ["]", "p"], () => {
     action.exitMode();
     action.put();
+  });
+  // An Ex command line below the pane, whatever its kind (lib/cmdline.ts).
+  d.map("normal", [":"], () => {
+    action.exitMode();
+    openCommandLine();
   });
 });
