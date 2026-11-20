@@ -5,7 +5,9 @@
 import { action } from "temzdf";
 import type { KeyContext } from "temzdf";
 import * as z from "zod/mini";
-import { func, check as validate } from "./lib/validate";
+import type { Assert } from "./lib/types";
+import type { Takes } from "./lib/validate";
+import { func, options, parse, check as validate } from "./lib/validate";
 
 /** What modifier commands (`:vertical`, say) pass on to the rest. */
 export type Mods = { [key: string]: unknown };
@@ -79,24 +81,34 @@ function now<T>(fn: () => T): T {
 }
 
 const cmdName = z.string().check(z.regex(/^[A-Za-z]*$/, { error: "a name is letters only" }));
-const cmdOpts = z.object({
+const cmdOpts = options({
   shortName: z.optional(z.string()),
   when: z.optional(func<(ctx: KeyContext) => boolean>()),
   prefix: z.optional(z.literal("vim-range")),
-  bar: z.optional(z.enum(["auto", "handle"])),
+  bar: z._default(z.enum(["auto", "handle"]), "auto"),
   desc: z.optional(z.string()),
   namespace: z.optional(z.string()),
-}) satisfies z.ZodMiniType<CmdOpts>;
+});
+const namespaceFilter = options({ namespace: z.optional(z.string()) });
+// A new {} each time: commands may add to the mods they pass on.
+const executeOptions = options({ mods: z._default(z.record(z.string(), z.unknown()), () => ({})) });
+type _Options = Assert<
+  | Takes<typeof cmdOpts, CmdOpts>
+  | Takes<typeof namespaceFilter, { namespace?: string }>
+  | Takes<typeof executeOptions, { mods?: Mods }>
+>;
 
-function check(name: unknown, fn: unknown, opts: unknown): void {
+/** command.add's arguments, checked; the options with their defaults. */
+function check(name: unknown, fn: unknown, opts: unknown) {
   const what = `command.add(${String(name)})`;
   validate(what, cmdName, name, "name");
-  validate(what, func(), fn, "fn");
-  validate(what, cmdOpts, opts, "opts");
-  const s = opts.shortName;
+  validate(what, func<(ctx: CmdCtx) => void>(), fn, "fn");
+  const o = parse(what, cmdOpts, opts, "opts");
+  const s = o.shortName;
   if (s !== undefined && (s === "" || !name.startsWith(s))) {
     throw new TypeError(`${what}: opts.shortName: ${s} is not a prefix of the name`);
   }
+  return o;
 }
 
 function removeWhere(keep: (e: Entry) => boolean): void {
@@ -173,19 +185,21 @@ function run(line: string, mods: Mods): void {
 /** Ex commands (doc/design/ex-commands.md): the registry and running a command line (with helpers parsing one: `parseBang`, `splitArgs`, `splitBar`, `parsePrefix`, `resolveRange`). */
 export const command = {
   /** Define an Ex command (`:name`). */
-  add(name: string, fn: (ctx: CmdCtx) => void, opts: CmdOpts = {}): void {
-    check(name, fn, opts);
-    const { shortName, when, prefix, bar = "auto", desc, namespace } = opts;
+  add(name: string, fn: (ctx: CmdCtx) => void, opts?: CmdOpts): void {
+    const { shortName, when, prefix, bar, desc, namespace } = check(name, fn, opts);
     if (namespace !== undefined) removeWhere((e) => !(e.name === name && e.namespace === namespace));
     registry.push({ name, fn, shortName, when, prefix, bar, desc, namespace });
   },
   /** Remove the commands called `name`: those of a namespace, or all. */
-  remove(name: string, filter: { namespace?: string } = {}): void {
-    removeWhere((e) => !(e.name === name && (filter.namespace === undefined || e.namespace === filter.namespace)));
+  remove(name: string, filter?: { namespace?: string }): void {
+    validate("command.remove", z.string(), name, "name");
+    const { namespace } = parse("command.remove", namespaceFilter, filter, "filter");
+    removeWhere((e) => !(e.name === name && (namespace === undefined || e.namespace === namespace)));
   },
   /** Remove the commands of a namespace, or every one. */
-  clear(filter: { namespace?: string } = {}): void {
-    removeWhere((e) => filter.namespace !== undefined && e.namespace !== filter.namespace);
+  clear(filter?: { namespace?: string }): void {
+    const { namespace } = parse("command.clear", namespaceFilter, filter, "filter");
+    removeWhere((e) => namespace !== undefined && e.namespace !== namespace);
   },
   /** The commands, in the order defined (a snapshot). */
   list(): CmdSpec[] {
@@ -206,11 +220,13 @@ export const command = {
      * the script host, so half that leaves room for commands doing more. */
     let depth = 0;
     const MAX_DEPTH = 100;
-    return (line: string, opts: { mods?: Mods } = {}): void => {
+    return (line: string, opts?: { mods?: Mods }): void => {
+      validate("command.execute", z.string(), line, "line");
+      const { mods } = parse("command.execute", executeOptions, opts, "opts");
       if (depth >= MAX_DEPTH) throw new Error("E169: Command too recursive");
       depth++;
       try {
-        run(line, opts.mods ?? {});
+        run(line, mods);
       } finally {
         depth--;
       }

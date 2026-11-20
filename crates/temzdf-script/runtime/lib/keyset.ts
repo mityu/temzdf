@@ -7,6 +7,8 @@ import { keymap, on } from "temzdf";
 import type { Events, HookAnswer, MapOptions, Rhs } from "temzdf";
 import { command } from "temzdf/command";
 import type { CmdCtx, CmdOpts } from "temzdf/command";
+import * as z from "zod/mini";
+import { check, func } from "./validate";
 
 export interface Keyset {
   /** Define the mappings and hooks (again: nothing more). */
@@ -35,6 +37,10 @@ export interface Define {
  * what else it left (state, modes' options) after the mappings and hooks
  * went. */
 export function keyset(namespace: string, setup: (d: Define) => void, teardown?: () => void): Keyset {
+  const what = `keyset(${String(namespace)})`;
+  check(what, z.string(), namespace, "namespace");
+  check(what, func(), setup, "setup");
+  check(what, z.optional(func()), teardown, "teardown");
   let offs: (() => void)[] | null = null;
   return {
     enable() {
@@ -43,6 +49,7 @@ export function keyset(namespace: string, setup: (d: Define) => void, teardown?:
       offs = mine;
       setup({
         map(modes, keys, rhs, options) {
+          check(`${what} map`, z.readonly(z.array(z.string())), keys, "keys");
           for (const m of typeof modes === "string" ? [modes] : modes) {
             for (const k of keys) keymap.add(m, k, rhs, { ...options, namespace });
           }
