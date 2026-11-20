@@ -28,7 +28,11 @@ export interface Vertical extends Motion {
 function lines(from: Position, delta: number): Vertical | null {
   const line = Math.max(0, Math.min(lastLine(), from.line + delta));
   if (line === from.line) return null;
-  return { to: t.positionOf(from, "line", line - from.line), kind: "linewise", vertical: { unit: "line", count: line - from.line } };
+  return {
+    to: t.positionOf(from, "line", line - from.line),
+    kind: "linewise",
+    vertical: { unit: "line", count: line - from.line },
+  };
 }
 
 /** A word motion forward to just past `n` word ends: Vim's e (the last
@@ -53,7 +57,13 @@ function words(from: Position, n: number, unit: TextUnit): Motion | null {
 }
 
 /** The `n`th `char` in the line from `from` (f, F, t, T). */
-export function findChar(from: Position, kind: "f" | "F" | "t" | "T", char: string, n: number, again = false): Motion | null {
+export function findChar(
+  from: Position,
+  kind: "f" | "F" | "t" | "T",
+  char: string,
+  n: number,
+  again = false,
+): Motion | null {
   const line = t.line(from.line);
   const forward = kind === "f" || kind === "t";
   // ; after t starts past the character it stopped before.
@@ -161,7 +171,8 @@ export const motions: Record<string, MotionFn> = {
   gg: (_from, n) => ({ to: firstNonBlank(Math.min(lastLine(), n1(n) - 1)), kind: "linewise" }),
   G: (_from, n) => ({ to: firstNonBlank(n === null ? lastLine() : Math.min(lastLine(), n - 1)), kind: "linewise" }),
   _: (from, n) => ({ to: firstNonBlank(Math.min(lastLine(), from.line + n1(n) - 1)), kind: "linewise" }),
-  "+": (from, n) => (from.line >= lastLine() ? null : { to: firstNonBlank(Math.min(lastLine(), from.line + n1(n))), kind: "linewise" }),
+  "+": (from, n) =>
+    from.line >= lastLine() ? null : { to: firstNonBlank(Math.min(lastLine(), from.line + n1(n))), kind: "linewise" },
   "-": (from, n) => (from.line === 0 ? null : { to: firstNonBlank(Math.max(0, from.line - n1(n))), kind: "linewise" }),
   "|": (from, n) => ({ to: pos(from.line, Math.min(lineLength(from.line), n1(n) - 1)), kind: "exclusive" }),
   "%": percent,
@@ -170,7 +181,8 @@ export const motions: Record<string, MotionFn> = {
   H: (_from, n) => screen("H", n),
   M: (_from, n) => screen("M", n),
   L: (_from, n) => screen("L", n),
-  ";": (from, n) => (state.lastFind === null ? null : findChar(from, state.lastFind.kind, state.lastFind.char, n1(n), true)),
+  ";": (from, n) =>
+    state.lastFind === null ? null : findChar(from, state.lastFind.kind, state.lastFind.char, n1(n), true),
   ",": (from, n) => {
     const f = state.lastFind;
     if (f === null) return null;

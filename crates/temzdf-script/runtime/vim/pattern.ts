@@ -193,7 +193,12 @@ export function convert(pattern: string, ignorecase = false, smartcase = false):
           out += "\\{";
           continue;
         }
-        out += braces(chars.slice(i + 1, close).join("").replace(/\\$/, ""));
+        out += braces(
+          chars
+            .slice(i + 1, close)
+            .join("")
+            .replace(/\\$/, ""),
+        );
         i = close;
         continue;
       }

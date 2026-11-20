@@ -46,7 +46,12 @@ export const state = {
   /** The last change, for `.`: run it again (a count replaces its own). */
   lastChange: null as null | ((count: number | null) => void),
   /** An insert session: where it began (a mark), and how `.` begins it again. */
-  insert: null as null | { mark: number; replay: ((count: number | null) => void) | null; count: number | null; block?: BlockInsert },
+  insert: null as null | {
+    mark: number;
+    replay: ((count: number | null) => void) | null;
+    count: number | null;
+    block?: BlockInsert;
+  },
 };
 
 /** Settings of the Vim mode (vim.options in a configuration). */

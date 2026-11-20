@@ -75,13 +75,21 @@ export function selection(): Span {
   const v = state.visual!;
   const c = cursor();
   if (v.kind === "line") {
-    return { kind: "line", first: Math.min(v.anchor.line, c.line), last: Math.min(lastLine(), Math.max(v.anchor.line, c.line)) };
+    return {
+      kind: "line",
+      first: Math.min(v.anchor.line, c.line),
+      last: Math.min(lastLine(), Math.max(v.anchor.line, c.line)),
+    };
   }
   const start = min(v.anchor, c);
   const last = max(v.anchor, c);
   // Inclusive; on an empty line (or past the end) its line break.
   const end =
-    last.character >= lineLength(last.line) ? (last.line + 1 < lineCount() ? pos(last.line + 1, 0) : last) : nextChar(last);
+    last.character >= lineLength(last.line)
+      ? last.line + 1 < lineCount()
+        ? pos(last.line + 1, 0)
+        : last
+      : nextChar(last);
   return { kind: "char", start, end };
 }
 
@@ -94,7 +102,13 @@ export function block(): { first: number; last: number; c0: number; c1: number; 
   const c = cursor();
   const [c0, c1] = blockColumns(v.anchor, c);
   const toEnd = v.toEnd === true;
-  return { first: Math.min(v.anchor.line, c.line), last: Math.max(v.anchor.line, c.line), c0, c1: toEnd ? TO_END : c1, toEnd };
+  return {
+    first: Math.min(v.anchor.line, c.line),
+    last: Math.max(v.anchor.line, c.line),
+    c0,
+    c1: toEnd ? TO_END : c1,
+    toEnd,
+  };
 }
 
 /** A motion in the visual mode moves the cursor; the anchor stays. `key`:

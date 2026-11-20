@@ -308,7 +308,11 @@ export function parsePrefix(s: string): [VimRangeSpec | undefined, string] {
   let i = /^[\s:]*/.exec(s)![0].length;
   if (s[i] === "%") {
     return [
-      { start: { base: { kind: "number", number: 1 }, offset: 0 }, end: { base: { kind: "last" }, offset: 0 }, separator: "," },
+      {
+        start: { base: { kind: "number", number: 1 }, offset: 0 },
+        end: { base: { kind: "last" }, offset: 0 },
+        separator: ",",
+      },
       s.slice(i + 1),
     ];
   }
@@ -362,6 +366,7 @@ function resolveAddress(a: VimLineAddress, env: VimRangeEnv, cur: number): numbe
 export function resolveRange(spec: VimRangeSpec, env: VimRangeEnv): { first: number; last: number } {
   const start = resolveAddress(spec.start, env, env.current());
   // After `;` the second address counts from the first.
-  const end = spec.end === undefined ? start : resolveAddress(spec.end, env, spec.separator === ";" ? start : env.current());
+  const end =
+    spec.end === undefined ? start : resolveAddress(spec.end, env, spec.separator === ";" ? start : env.current());
   return { first: Math.min(start, end), last: Math.max(start, end) };
 }

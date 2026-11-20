@@ -126,4 +126,7 @@ export function textObject(key: string, from: Position, count: number | null): M
   return p === undefined ? null : pair(from, p[0], p[1], around, n);
 }
 
-export const textObjectKeys: string[] = ["w", "W", '"', "'", "`", ...Object.keys(pairs)].flatMap((k) => [`i${k}`, `a${k}`]);
+export const textObjectKeys: string[] = ["w", "W", '"', "'", "`", ...Object.keys(pairs)].flatMap((k) => [
+  `i${k}`,
+  `a${k}`,
+]);

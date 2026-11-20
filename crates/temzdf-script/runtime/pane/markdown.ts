@@ -32,7 +32,11 @@ function openOutline(): void {
     return;
   }
   const lines = heads.map((h) => "  ".repeat(h.level - 1) + h.text);
-  const buf = action.newBuffer({ text: lines.join("\n"), basemode: OUTLINE, attrs: ["nofile", "unlisted", "nomodifiable"] });
+  const buf = action.newBuffer({
+    text: lines.join("\n"),
+    basemode: OUTLINE,
+    attrs: ["nofile", "unlisted", "nomodifiable"],
+  });
   // Wide enough for its title too.
   const width = Math.min(Math.max(24, ...lines.map((l) => l.length + 2)), 72);
   const height = Math.min(heads.length, 20);

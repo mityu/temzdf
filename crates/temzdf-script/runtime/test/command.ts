@@ -42,7 +42,11 @@ const cases: [string, () => void][] = [
       eq("not a function", thrown(() => command.add("w", 42 as never)) !== "", true);
       eq("shortName not a prefix", thrown(() => command.add("write", record, { shortName: "x" })) !== "", true);
       eq("empty shortName", thrown(() => command.add("write", record, { shortName: "" })) !== "", true);
-      eq("an empty shortName for the empty name", thrown(() => command.add("", record, { shortName: "" })) !== "", true);
+      eq(
+        "an empty shortName for the empty name",
+        thrown(() => command.add("", record, { shortName: "" })) !== "",
+        true,
+      );
       eq("any shortName for the empty name", thrown(() => command.add("", record, { shortName: "a" })) !== "", true);
       eq("unknown prefix", thrown(() => command.add("w", record, { prefix: "lines" as never })) !== "", true);
       eq("unknown bar", thrown(() => command.add("w", record, { bar: "split" as never })) !== "", true);
@@ -55,9 +59,21 @@ const cases: [string, () => void][] = [
       command.add("write", record, { shortName: "w" });
       command.add("edit", record);
       for (const typed of ["w", "wri", "write"]) command.execute(typed);
-      eq("abbreviations", log, [["write", ""], ["write", ""], ["write", ""]]);
-      eq("too long", thrown(() => command.execute("writes")), "E492: Not an editor command: writes");
-      eq("no shortName: full name only", thrown(() => command.execute("ed")), "E492: Not an editor command: ed");
+      eq("abbreviations", log, [
+        ["write", ""],
+        ["write", ""],
+        ["write", ""],
+      ]);
+      eq(
+        "too long",
+        thrown(() => command.execute("writes")),
+        "E492: Not an editor command: writes",
+      );
+      eq(
+        "no shortName: full name only",
+        thrown(() => command.execute("ed")),
+        "E492: Not an editor command: ed",
+      );
     },
   ],
   [
@@ -83,7 +99,11 @@ const cases: [string, () => void][] = [
       command.add("go", () => log.push("pdf"), { when: (c) => c.paneKind === "pdf" });
       command.execute("go");
       command.add("only", () => log.push("never"), { when: () => false });
-      eq("none live", thrown(() => command.execute("only")), "E492: Not an editor command: only");
+      eq(
+        "none live",
+        thrown(() => command.execute("only")),
+        "E492: Not an editor command: only",
+      );
       eq("the live one", log, ["text"]);
     },
   ],
@@ -93,13 +113,21 @@ const cases: [string, () => void][] = [
       command.add("a", () => log.push("a1"), { namespace: "x" });
       command.add("a", () => log.push("a2"), { namespace: "x" });
       command.add("a", () => log.push("a3"), { namespace: "y" });
-      eq("replaced in x, added in y", command.list().map((c) => c.namespace), ["x", "y"]);
+      eq(
+        "replaced in x, added in y",
+        command.list().map((c) => c.namespace),
+        ["x", "y"],
+      );
       command.remove("a", { namespace: "y" });
       command.execute("a");
       command.add("b", record, { namespace: "x" });
       command.add("c", record);
       command.clear({ namespace: "x" });
-      eq("left", command.list().map((c) => c.name), ["c"]);
+      eq(
+        "left",
+        command.list().map((c) => c.name),
+        ["c"],
+      );
       command.remove("c");
       eq("all gone", command.list().length, 0);
       eq("ran", log, ["a2"]);
@@ -113,7 +141,12 @@ const cases: [string, () => void][] = [
       command.execute("w !sort");
       command.execute("  :w  x  ");
       command.execute("w1");
-      eq("args", log, [["w", "!"], ["w", " !sort"], ["w", "  x  "], ["w", "1"]]);
+      eq("args", log, [
+        ["w", "!"],
+        ["w", " !sort"],
+        ["w", "  x  "],
+        ["w", "1"],
+      ]);
     },
   ],
   [
@@ -124,31 +157,25 @@ const cases: [string, () => void][] = [
       const last = { base: { kind: "last" }, offset: 0 };
       eq("%", parsePrefix("%d"), [{ start: n(1), end: last, separator: "," }, "d"]);
       eq(".,$", parsePrefix(".,$d"), [{ start: cur(), end: last, separator: "," }, "d"]);
-      eq(
-        "'<,'>",
-        parsePrefix("'<,'>s/a/b/"),
-        [
-          {
-            start: { base: { kind: "mark", name: "<" }, offset: 0 },
-            end: { base: { kind: "mark", name: ">" }, offset: 0 },
-            separator: ",",
-          },
-          "s/a/b/",
-        ],
-      );
+      eq("'<,'>", parsePrefix("'<,'>s/a/b/"), [
+        {
+          start: { base: { kind: "mark", name: "<" }, offset: 0 },
+          end: { base: { kind: "mark", name: ">" }, offset: 0 },
+          separator: ",",
+        },
+        "s/a/b/",
+      ]);
       eq("3", parsePrefix("3"), [{ start: n(3) }, ""]);
       eq("+2", parsePrefix("+2y"), [{ start: cur(2) }, "y"]);
       eq("offsets add up", parsePrefix("$-3+1--"), [{ start: { base: { kind: "last" }, offset: -4 } }, ""]);
-      eq(
-        "/a\\/b/",
-        parsePrefix("/a\\/b/d"),
-        [{ start: { base: { kind: "pattern", pattern: "a/b", backward: false }, offset: 0 } }, "d"],
-      );
-      eq(
-        "1;?x?",
-        parsePrefix("1;?x?+1p"),
-        [{ start: n(1), end: { base: { kind: "pattern", pattern: "x", backward: true }, offset: 1 }, separator: ";" }, "p"],
-      );
+      eq("/a\\/b/", parsePrefix("/a\\/b/d"), [
+        { start: { base: { kind: "pattern", pattern: "a/b", backward: false }, offset: 0 } },
+        "d",
+      ]);
+      eq("1;?x?", parsePrefix("1;?x?+1p"), [
+        { start: n(1), end: { base: { kind: "pattern", pattern: "x", backward: true }, offset: 1 }, separator: ";" },
+        "p",
+      ]);
       eq("a missing side is the current line", parsePrefix(",5"), [{ start: cur(), end: n(5), separator: "," }, ""]);
       eq("\\/ \\& ", parsePrefix("\\/,\\&"), [
         {
@@ -168,23 +195,39 @@ const cases: [string, () => void][] = [
       command.add("pwd", record);
       command.execute("2,3d");
       command.execute("d");
-      eq("no prefix", thrown(() => command.execute("2pwd")), "E481: No range allowed");
-      eq("a range alone, with no command named \"\"", thrown(() => command.execute("5")), "E492: Not an editor command: 5");
+      eq(
+        "no prefix",
+        thrown(() => command.execute("2pwd")),
+        "E481: No range allowed",
+      );
+      eq(
+        'a range alone, with no command named ""',
+        thrown(() => command.execute("5")),
+        "E492: Not an editor command: 5",
+      );
       eq("passed as typed", log, [
-        { start: { base: { kind: "number", number: 2 }, offset: 0 }, end: { base: { kind: "number", number: 3 }, offset: 0 }, separator: "," },
+        {
+          start: { base: { kind: "number", number: 2 }, offset: 0 },
+          end: { base: { kind: "number", number: 3 }, offset: 0 },
+          separator: ",",
+        },
         undefined,
       ]);
     },
   ],
   [
-    "a line without a name runs the command named \"\"",
+    'a line without a name runs the command named ""',
     () => {
       command.add("", (c) => log.push([c.range?.start.base, c.args]), { prefix: "vim-range" });
       command.add("d", (c) => log.push(["d", c.range?.start.base]), { prefix: "vim-range" });
       command.execute("5");
       command.execute("5 | 3d");
       command.execute("!ls");
-      eq("a name is not taken for it", thrown(() => command.execute("x")), "E492: Not an editor command: x");
+      eq(
+        "a name is not taken for it",
+        thrown(() => command.execute("x")),
+        "E492: Not an editor command: x",
+      );
       command.execute("");
       eq("range, arguments", log, [
         [{ kind: "number", number: 5 }, ""],
@@ -193,7 +236,11 @@ const cases: [string, () => void][] = [
         [undefined, "!ls"],
       ]);
       command.add("", record);
-      eq("without a prefix", thrown(() => command.execute("5")), "E481: No range allowed");
+      eq(
+        "without a prefix",
+        thrown(() => command.execute("5")),
+        "E481: No range allowed",
+      );
     },
   ],
   [
@@ -209,7 +256,11 @@ const cases: [string, () => void][] = [
       command.add("a", (c) => log.push(["a", c.args, c.line]));
       command.add("b", (c) => log.push(["b", c.args, c.line]), { prefix: "vim-range" });
       command.execute("a x\\|y | 2b|a");
-      eq("ran", log, [["a", " x|y ", "a x\\|y "], ["b", "", "2b"], ["a", "", "a"]]);
+      eq("ran", log, [
+        ["a", " x|y ", "a x\\|y "],
+        ["b", "", "2b"],
+        ["a", "", "a"],
+      ]);
     },
   ],
   [
@@ -219,8 +270,16 @@ const cases: [string, () => void][] = [
         throw new Error("boom");
       });
       command.add("a", () => log.push("a"));
-      eq("thrown", thrown(() => command.execute("a | fail | a")), "boom");
-      eq("unknown", thrown(() => command.execute("a | nope | a")), "E492: Not an editor command: nope | a");
+      eq(
+        "thrown",
+        thrown(() => command.execute("a | fail | a")),
+        "boom",
+      );
+      eq(
+        "unknown",
+        thrown(() => command.execute("a | nope | a")),
+        "E492: Not an editor command: nope | a",
+      );
       eq("ran", log, ["a", "a"]);
     },
   ],
@@ -247,9 +306,13 @@ const cases: [string, () => void][] = [
   [
     "bar handle: a callback may run the rest many times (as :g)",
     () => {
-      command.add("each", (c) => {
-        for (let i = 0; i < 3; i++) command.execute(c.args);
-      }, { bar: "handle" });
+      command.add(
+        "each",
+        (c) => {
+          for (let i = 0; i < 3; i++) command.execute(c.args);
+        },
+        { bar: "handle" },
+      );
       command.add("x", () => log.push("x"));
       command.execute("each x");
       eq("ran", log, ["x", "x", "x"]);
@@ -259,11 +322,19 @@ const cases: [string, () => void][] = [
     "depth: a command running itself stops; long chains do not",
     () => {
       command.add("again", () => command.execute("again"));
-      eq("E169", thrown(() => command.execute("again")), "E169: Command too recursive");
+      eq(
+        "E169",
+        thrown(() => command.execute("again")),
+        "E169: Command too recursive",
+      );
       command.add("n", () => log.push(1));
       command.execute(Array(1000).fill("n").join("|"));
       eq("a chain of 1000", log.length, 1000);
-      eq("the depth came back", thrown(() => command.execute("n")), "");
+      eq(
+        "the depth came back",
+        thrown(() => command.execute("n")),
+        "",
+      );
     },
   ],
   [
@@ -296,7 +367,11 @@ const cases: [string, () => void][] = [
       eq("backward", r("?x?"), { first: 8, last: 8 });
       eq("last pattern", r("\\/"), { first: 11, last: 11 });
       const noSearch: VimRangeEnv = { current: () => 0, last: () => 0, mark: () => 0 };
-      eq("patterns refused", thrown(() => resolveRange(parsePrefix("/x/")[0]!, noSearch)), "E16: Invalid range");
+      eq(
+        "patterns refused",
+        thrown(() => resolveRange(parsePrefix("/x/")[0]!, noSearch)),
+        "E16: Invalid range",
+      );
     },
   ],
   [
@@ -305,7 +380,11 @@ const cases: [string, () => void][] = [
       const set = keyset("test-commands", (d) => d.command("hello", () => log.push("hello")));
       set.enable();
       command.execute("hello");
-      eq("its namespace", command.list().map((c) => c.namespace), ["test-commands"]);
+      eq(
+        "its namespace",
+        command.list().map((c) => c.namespace),
+        ["test-commands"],
+      );
       set.disable();
       eq("gone", command.list().length, 0);
       set.enable();

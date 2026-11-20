@@ -176,13 +176,17 @@ function define(d: Define): void {
       cancelPending();
       return;
     }
-    runMotion(kind, (from) => {
-      // Another buffer's mark: shown first, without an operator only.
-      const p = markPos(name, state.pending === null && state.visual === null);
-      if (p === null) throw new Error("E20: Mark not set");
-      void from;
-      return kind === "'" ? { to: firstNonBlank(p.line), kind: "linewise" } : { to: p, kind: "exclusive" };
-    }, count);
+    runMotion(
+      kind,
+      (from) => {
+        // Another buffer's mark: shown first, without an operator only.
+        const p = markPos(name, state.pending === null && state.visual === null);
+        if (p === null) throw new Error("E20: Mark not set");
+        void from;
+        return kind === "'" ? { to: firstNonBlank(p.line), kind: "linewise" } : { to: p, kind: "exclusive" };
+      },
+      count,
+    );
   }
 
   // Operators.

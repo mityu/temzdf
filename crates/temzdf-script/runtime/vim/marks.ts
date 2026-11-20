@@ -63,7 +63,8 @@ function where(id: number): Position | null {
 
 /** Set mark `name` at `p` (the cursor). */
 export function setMark(name: string, p: Position = cursor()): void {
-  if (!isMarkName(name) || name === "<" || name === ">") throw new Error("E191: Argument must be a letter or forward/backward quote");
+  if (!isMarkName(name) || name === "<" || name === ">")
+    throw new Error("E191: Argument must be a letter or forward/backward quote");
   const key = name === "`" ? "'" : name;
   const buf = buffer();
   if (/^[A-Z]$/.test(key)) {
@@ -173,7 +174,9 @@ export function listMarks(): string {
   const here = buffer();
   for (const b of action.buffers()) {
     const other = marksOf(b.id);
-    for (const k of Object.keys(other).filter((x) => /^[A-Z]$/.test(x)).sort()) {
+    for (const k of Object.keys(other)
+      .filter((x) => /^[A-Z]$/.test(x))
+      .sort()) {
       if (b.id === here) add(k, where(other[k]));
       else rows.push(` ${k}      -    - ${b.name}`);
     }

@@ -81,9 +81,7 @@ function focusedBuffer(): number {
 
 /** The buffers :bnext, :ls and such go through. */
 function bufferList(): ReturnType<typeof action.buffers> {
-  return action
-    .buffers()
-    .sort((a, b) => a.id - b.id);
+  return action.buffers().sort((a, b) => a.id - b.id);
 }
 
 /** The buffer `arg` names: its number, or a unique part of its name. */
@@ -261,11 +259,26 @@ function confirmSubstitute(
   then: string | undefined,
 ): void {
   const endAt = lineEnd(range.last);
-  const first = t.search(conv.rust, { from: pos(range.first, 0), wrap: false, lines: [range.first, range.last], group: conv.group });
+  const first = t.search(conv.rust, {
+    from: pos(range.first, 0),
+    wrap: false,
+    lines: [range.first, range.last],
+    group: conv.group,
+  });
   if (first === null) throw new Error(`E486: Pattern not found: ${pattern}`);
   t.undoBegin();
   const end = t.addDecoration({ start: endAt, end: endAt }, { namespace: CONFIRM, endGravity: "after" });
-  confirming = { rust: conv.rust, group: conv.group, rep, global, end, at: pos(range.first, 0), match: null, lastChanged: -1, then };
+  confirming = {
+    rust: conv.rust,
+    group: conv.group,
+    rep,
+    global,
+    end,
+    at: pos(range.first, 0),
+    match: null,
+    lastChanged: -1,
+    then,
+  };
   action.switchMode("vim/confirm");
   if (!nextMatch()) finishConfirm();
 }
@@ -382,7 +395,10 @@ function substituteLines(range: Range, pat: string, rep: string, flags: string, 
     confirmSubstitute(range, conv, rep, global, pattern, then);
     return;
   }
-  const found = t.searchAll(conv.rust, { range: { start: pos(range.first, 0), end: lineEnd(range.last) }, group: conv.group });
+  const found = t.searchAll(conv.rust, {
+    range: { start: pos(range.first, 0), end: lineEnd(range.last) },
+    group: conv.group,
+  });
   const seen = new Set<number>();
   const edits = [];
   // The last substitution's line, once the line breaks before it (put in or
@@ -439,7 +455,11 @@ export function exCommands(add: Define["command"]): void {
     },
     range,
   );
-  add("substitute", (c) => substitute(lines(c), c.args.replace(/^\s+/, "")), { ...range, shortName: "s", bar: "handle" });
+  add("substitute", (c) => substitute(lines(c), c.args.replace(/^\s+/, "")), {
+    ...range,
+    shortName: "s",
+    bar: "handle",
+  });
   add("write", (c) => write(...bangArg(c.args)), { ...text, shortName: "w" });
   add(
     "wq",
@@ -610,7 +630,10 @@ export function exCommands(add: Define["command"]): void {
   add(
     "set",
     (c) => {
-      for (const opt of bangArg(c.args)[1].split(/\s+/).filter((x) => x !== "")) setOption(opt);
+      for (const opt of bangArg(c.args)[1]
+        .split(/\s+/)
+        .filter((x) => x !== ""))
+        setOption(opt);
     },
     { ...text, shortName: "se" },
   );

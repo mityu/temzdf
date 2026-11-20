@@ -55,7 +55,13 @@ export function clampKeep(): void {
 }
 
 /** Run an operator over a motion's range, remembering it for `.`. */
-export function operator(op: Operator, m: Motion | null, register: string | null, again: (count: number | null) => Motion | null, count: number | null): void {
+export function operator(
+  op: Operator,
+  m: Motion | null,
+  register: string | null,
+  again: (count: number | null) => Motion | null,
+  count: number | null,
+): void {
   if (m === null) return;
   const at = cursor();
   const s = span(m, at);
@@ -67,7 +73,12 @@ export function operator(op: Operator, m: Motion | null, register: string | null
 
 /** Do `op` on `s`; `.` does it again on what `respan` gives then (with
  * its count, if given). */
-function runOperator(op: Operator, s: Span, register: string | null, respan: (count: number | null) => Span | null): void {
+function runOperator(
+  op: Operator,
+  s: Span,
+  register: string | null,
+  respan: (count: number | null) => Span | null,
+): void {
   if (op === "c") {
     t.undoBegin();
     operate("c", s, register);
@@ -105,7 +116,8 @@ export function runMotion(key: string, fn: MotionFn, count: number | null): void
     const total = combine(p.count, count);
     let f = fn;
     // cw is ce (on a non-blank): the blanks after the word stay.
-    if (p.op === "c" && (key === "w" || key === "W") && !/^\s?$/.test(charAt(cursor()))) f = motions[key === "w" ? "e" : "E"];
+    if (p.op === "c" && (key === "w" || key === "W") && !/^\s?$/.test(charAt(cursor())))
+      f = motions[key === "w" ? "e" : "E"];
     // With an operator, w stops at the end of the line its last word is on
     // (dw on a line's last word leaves the line break).
     else if (key === "w" || key === "W") f = wordToLineEnd(fn);
@@ -196,7 +208,11 @@ export function lineOperator(op: Operator, count: number | null): void {
   state.pending = null;
   leaveTransient();
   const total = combine(p.count, count) ?? 1;
-  const lines = (n: number): Span => ({ kind: "line", first: cursor().line, last: Math.min(lastLine(), cursor().line + n - 1) });
+  const lines = (n: number): Span => ({
+    kind: "line",
+    first: cursor().line,
+    last: Math.min(lastLine(), cursor().line + n - 1),
+  });
   runOperator(op, lines(total), p.register, (c) => lines(c ?? total));
 }
 
@@ -246,9 +262,14 @@ function blockOperator(op: Operator, register: string | null): void {
     if (op === "d" || op === "c") edits.push({ range, newText: "" });
     else if (op === "gu") edits.push({ range, newText: piece.toLowerCase() });
     else if (op === "gU") edits.push({ range, newText: piece.toUpperCase() });
-    else if (op === "g~") edits.push({ range, newText: [...piece].map((c) => (c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase())).join("") });
+    else if (op === "g~")
+      edits.push({
+        range,
+        newText: [...piece].map((c) => (c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase())).join(""),
+      });
   }
-  if (op === "y" || op === "d" || op === "c") registers.store(register, { text: pieces.join("\n"), kind: "block" }, op === "y" ? "yank" : "delete");
+  if (op === "y" || op === "d" || op === "c")
+    registers.store(register, { text: pieces.join("\n"), kind: "block" }, op === "y" ? "yank" : "delete");
   if (op === "c") t.undoBegin();
   if (edits.length > 0) t.edit(edits);
   if (op === "c") {
@@ -365,16 +386,25 @@ export function insert(where: "i" | "a" | "I" | "A" | "o" | "O", count: number |
   };
   t.undoBegin();
   place();
-  startInsert((n) => {
-    place();
-    return n ?? count ?? 1;
-  }, count, true, where === "o" || where === "O" ? "\n" : "");
+  startInsert(
+    (n) => {
+      place();
+      return n ?? count ?? 1;
+    },
+    count,
+    true,
+    where === "o" || where === "O" ? "\n" : "",
+  );
 }
 
 /** x X D C s S Y: shorthands of operators. */
 export function shorthand(key: "x" | "X" | "D" | "C" | "s" | "S" | "Y", count: number | null): void {
   const register = takeRegister();
-  const line = (n: number | null): Span => ({ kind: "line", first: cursor().line, last: Math.min(lastLine(), cursor().line + (n ?? 1) - 1) });
+  const line = (n: number | null): Span => ({
+    kind: "line",
+    first: cursor().line,
+    last: Math.min(lastLine(), cursor().line + (n ?? 1) - 1),
+  });
   switch (key) {
     case "x":
       if (lineLength(cursor().line) === 0) return;
@@ -496,7 +526,10 @@ export function tilde(count: number | null): void {
     let end: Position = c;
     for (let i = 0; i < n && end.character < len; i++) end = nextChar(end);
     const s = t.getText({ start: c, end });
-    t.replace({ start: c, end }, [...s].map((x) => (x === x.toUpperCase() ? x.toLowerCase() : x.toUpperCase())).join(""));
+    t.replace(
+      { start: c, end },
+      [...s].map((x) => (x === x.toUpperCase() ? x.toLowerCase() : x.toUpperCase())).join(""),
+    );
     setCursor(clampNormal(end));
   };
   run(count ?? 1);
@@ -521,7 +554,8 @@ export function repeatLast(count: number | null): void {
 export function scroll(how: "half" | "page" | "line", down: boolean, count: number | null): void {
   const r = t.visibleRange();
   const rows = Math.max(1, r.end.line - r.start.line);
-  const n = how === "half" ? (count ?? Math.max(1, Math.floor(rows / 2))) : how === "page" ? (count ?? 1) : (count ?? 1);
+  const n =
+    how === "half" ? (count ?? Math.max(1, Math.floor(rows / 2))) : how === "page" ? (count ?? 1) : (count ?? 1);
   if (how === "page") {
     t.move("page", down ? n : -n);
   } else if (how === "half") {

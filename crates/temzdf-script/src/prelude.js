@@ -166,7 +166,9 @@
     // count, transient, keepalive: "mapped" | "always" | (ctx) => boolean, timeout })
     defineMode(name, props = {}) {
       if ("inherit" in props) {
-        throw new TypeError("defineMode: inherit is gone; a transient mode with keepalive takes the keys of the mode below");
+        throw new TypeError(
+          "defineMode: inherit is gone; a transient mode with keepalive takes the keys of the mode below",
+        );
       }
       if ("unmapped" in props) {
         throw new TypeError("defineMode: unmapped is now fallback");
@@ -243,7 +245,11 @@
     openPrompt(opts = {}) {
       const c = globalAction;
       const origin = c.focusedPane();
-      const buffer = c.newBuffer({ text: opts.text ?? "", basemode: opts.mode ?? "input", attrs: ["nofile", "unlisted"] });
+      const buffer = c.newBuffer({
+        text: opts.text ?? "",
+        basemode: opts.mode ?? "input",
+        attrs: ["nofile", "unlisted"],
+      });
       let pane = null;
       try {
         pane = c.split({ side: opts.side ?? "bottom", buffer, height: opts.height ?? 1 });
@@ -358,7 +364,10 @@
       return String(v);
     }
   };
-  const print = (level) => (...args) => host.print(level, args.map(show).join(" "));
+  const print =
+    (level) =>
+    (...args) =>
+      host.print(level, args.map(show).join(" "));
   globalThis.console = Object.freeze({
     log: print("log"),
     info: print("info"),

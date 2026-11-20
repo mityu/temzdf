@@ -1,16 +1,6 @@
 // A configuration using the whole scripting API; crates/temzdf/tests/types.rs
 // type checks it against `temzdf print-types`.
-import {
-  action,
-  atomic,
-  currentMode,
-  defineMode,
-  dispatch,
-  feedkeys,
-  keymap,
-  o,
-  on,
-} from "temzdf";
+import { action, atomic, currentMode, defineMode, dispatch, feedkeys, keymap, o, on } from "temzdf";
 
 o.timeoutlen = 500;
 o.splitright = false;
@@ -18,15 +8,25 @@ o.splitright = false;
 defineMode("window", { fallback: "drop", count: true, transient: true, keepalive: "always", timeout: 2000 });
 defineMode("resize", { transient: true, keepalive: (ctx) => ctx.paneKind !== null && ctx.paneKind !== "markdown" });
 keymap.add("normal", "w", () => action.switchMode("window"));
-keymap.add("window", "v", () => {
-  action.split("right");
-  action.exitMode();
-}, { desc: "split right", namespace: "mine" });
+keymap.add(
+  "window",
+  "v",
+  () => {
+    action.split("right");
+    action.exitMode();
+  },
+  { desc: "split right", namespace: "mine" },
+);
 keymap.add("window", "q", () => action.exitMode(), { priority: 1 });
 keymap.add("window", "gt", (ctx) => action.nextTab(ctx.count));
-keymap.add(["pdf", "terminal"], "<C-b>%", (ctx) => {
-  action.split(ctx.count === null ? "right" : "bottom");
-}, { when: (ctx) => !ctx.floating && ctx.keys === "" });
+keymap.add(
+  ["pdf", "terminal"],
+  "<C-b>%",
+  (ctx) => {
+    action.split(ctx.count === null ? "right" : "bottom");
+  },
+  { when: (ctx) => !ctx.floating && ctx.keys === "" },
+);
 keymap.remove("normal", "x");
 keymap.remove("normal", "q", { namespace: "builtin-mode-normal" });
 keymap.clear({ mode: "window", namespace: "mine" });
@@ -36,9 +36,13 @@ for (const m of keymap.get({ mode: "normal", namespace: "builtin-mode-normal" })
 }
 
 on("ModeChanged", (old, now) => console.log(`${old} -> ${now} (${currentMode()})`));
-on("PaneOpened", (pane, kind) => {
-  if (kind === "terminal") action.message(`terminal ${pane}`);
-}, { nested: true });
+on(
+  "PaneOpened",
+  (pane, kind) => {
+    if (kind === "terminal") action.message(`terminal ${pane}`);
+  },
+  { nested: true },
+);
 
 dispatch(async (ctx) => {
   await new Promise<void>((resolve) => setTimeout(resolve, 10));

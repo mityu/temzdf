@@ -17,7 +17,13 @@ export type Replay = (count: number | null) => number;
 /** Enter the insert mode at the cursor. `groupStarted`: an undo group is
  * open already (c deleted first). `prefix`: put before each repetition
  * (`3o`: a line each). */
-export function startInsert(replay: Replay | null, count: number | null, groupStarted = false, prefix = "", block?: BlockInsert): void {
+export function startInsert(
+  replay: Replay | null,
+  count: number | null,
+  groupStarted = false,
+  prefix = "",
+  block?: BlockInsert,
+): void {
   if (!groupStarted) t.undoBegin();
   const at = cursor();
   const mark = t.addDecoration({ start: at, end: at }, { namespace: "vim-insert" });

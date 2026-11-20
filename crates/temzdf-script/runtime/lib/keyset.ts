@@ -18,7 +18,12 @@ export interface Keyset {
 
 export interface Define {
   /** Map `keys` in each of `modes` (in the set's namespace). */
-  map(modes: string | readonly string[], keys: readonly string[], rhs: Rhs, options?: Omit<MapOptions, "namespace">): void;
+  map(
+    modes: string | readonly string[],
+    keys: readonly string[],
+    rhs: Rhs,
+    options?: Omit<MapOptions, "namespace">,
+  ): void;
   /** Define the Ex command `:name` (in the set's namespace). */
   command(name: string, fn: (ctx: CmdCtx) => void, options?: Omit<CmdOpts, "namespace">): void;
   /** Hear `event` while enabled. */

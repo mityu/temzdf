@@ -31,14 +31,19 @@ export type Span = { kind: "char"; start: Position; end: Position } | { kind: "l
 export function span(m: Motion, at: Position): Span {
   const a0 = m.from ?? at;
   if (m.kind === "linewise") {
-    return { kind: "line", first: Math.min(a0.line, m.to.line), last: Math.min(lastLine(), Math.max(a0.line, m.to.line)) };
+    return {
+      kind: "line",
+      first: Math.min(a0.line, m.to.line),
+      last: Math.min(lastLine(), Math.max(a0.line, m.to.line)),
+    };
   }
   let start = min(a0, m.to);
   let end = max(a0, m.to);
   if (m.kind === "inclusive") {
     // The character at the end; on an empty line (or past the end) its
     // line break.
-    end = end.character >= lineLength(end.line) ? (end.line < lineCount() - 1 ? pos(end.line + 1, 0) : end) : nextChar(end);
+    end =
+      end.character >= lineLength(end.line) ? (end.line < lineCount() - 1 ? pos(end.line + 1, 0) : end) : nextChar(end);
   } else if (m.from === undefined && end.character === 0 && end.line > start.line) {
     // An exclusive motion ending at a line's start ends at the previous
     // line's end; from at or before the first non-blank it is linewise.
@@ -90,7 +95,12 @@ function changeCase(s: string, how: "g~" | "gu" | "gU"): string {
 export function operate(op: Operator, s: Span, register: string | null): boolean {
   const changes = op !== "y" && op !== "c";
   const first = s.kind === "char" ? s.start : pos(s.first, 0);
-  const last = s.kind === "char" ? (cmp(s.end, s.start) > 0 ? t.positionOf(s.end, "grapheme", -1) : s.end) : pos(s.last, Math.max(0, lineLength(s.last) - 1));
+  const last =
+    s.kind === "char"
+      ? cmp(s.end, s.start) > 0
+        ? t.positionOf(s.end, "grapheme", -1)
+        : s.end
+      : pos(s.last, Math.max(0, lineLength(s.last) - 1));
   const c = operate1(op, s, register);
   // The [ ] marks: what was yanked, or where the change was (its text,
   // or where it was taken out); c sets them when its insert ends.

@@ -102,10 +102,14 @@ export default keyset("builtin-buffers", (d) => {
   // forceDelete says so (Vim's :bd!).
   d.hook("BufferDeletePre", (buf: number) => {
     const b = action.buffers().find((b) => b.id === buf);
-    if (b?.modified && action.getVar("buffer", "forceDelete", buf) !== true) return { cancel: true, reason: `${b.name} has unsaved changes (write it first)` };
+    if (b?.modified && action.getVar("buffer", "forceDelete", buf) !== true)
+      return { cancel: true, reason: `${b.name} has unsaved changes (write it first)` };
   });
   d.hook("SessionEndPre", () => {
-    const names = action.buffers().filter((b) => b.modified).map((b) => b.name);
+    const names = action
+      .buffers()
+      .filter((b) => b.modified)
+      .map((b) => b.name);
     if (names.length > 0) {
       return { cancel: true, reason: `unsaved changes in ${names.join(", ")} (write them, or kill-session --force)` };
     }
