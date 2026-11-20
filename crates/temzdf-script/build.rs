@@ -40,6 +40,8 @@ fn main() {
     println!("cargo::rerun-if-changed={}", runtime.display());
     let prelude = manifest.join("src/prelude.ts");
     println!("cargo::rerun-if-changed={}", prelude.display());
+    let module = manifest.join("src/temzdf.ts");
+    println!("cargo::rerun-if-changed={}", module.display());
     for var in ["TEMZDF_NODE_MODULES", "ESBUILD"] {
         println!("cargo::rerun-if-env-changed={var}");
     }
@@ -73,6 +75,8 @@ fn main() {
     // The host's prelude: a script (a function, called at once), as the
     // polyfills.
     bundle(&prelude, "prelude.js", "iife");
+    // What `import ... from "temzdf"` gets.
+    bundle(&module, "temzdf.js", "esm");
     bundle(&runtime.join("polyfills.ts"), "polyfills.js", "iife");
     bundle(&runtime.join("defaults.ts"), "defaults.js", "esm");
     let mut list = String::from("&[\n");

@@ -33,13 +33,9 @@ const POLYFILLS: &str = include_str!(concat!(env!("OUT_DIR"), "/polyfills.js"));
 /// The modules scripts import as `temzdf/NAME` (bundled by build.rs).
 const BUNDLED: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/bundled.rs"));
 const DEFAULTS_NAME: &str = "temzdf:defaults";
-/// What `import ... from "temzdf"` gets.
-const TEMZDF_MODULE: &str = "const t = globalThis.__temzdf;\n\
-     export const action = t.action, on = t.on, keymap = t.keymap, defineMode = t.defineMode,\n\
-     o = t.o, feedkeys = t.feedkeys, currentMode = t.currentMode, dispatch = t.dispatch,\n\
-     atomic = t.atomic, schedule = t.schedule, openPrompt = t.openPrompt, acceptPrompt = t.acceptPrompt,\n\
-     cancelPrompt = t.cancelPrompt, isPrompt = t.isPrompt;\n\
-     export default t;\n";
+/// What `import ... from "temzdf"` gets (`src/temzdf.ts`, bundled by
+/// `build.rs`).
+const TEMZDF_MODULE: &str = include_str!(concat!(env!("OUT_DIR"), "/temzdf.js"));
 
 use crate::UNATTENDED_LIMIT;
 
