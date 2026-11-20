@@ -3382,9 +3382,10 @@ mod tests {
         let mut outcome = Outcome::None;
         loop {
             let rows = screen_text(&s.frame(), GEOMETRY);
-            if done(&rows) || outcome == Outcome::Quit || Instant::now() > deadline {
+            if done(&rows) || outcome == Outcome::Quit {
                 return (outcome, rows);
             }
+            assert!(Instant::now() <= deadline, "the screen never showed what was waited for: {rows:?}");
             if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
                 outcome = s.handle(ev, Instant::now());
             }
@@ -4141,12 +4142,12 @@ mod tests {
         let one = s.focus;
         let two = new_tab(&mut s, &["sh", "-c", "echo two; sleep 30"]);
         assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 1, two));
-        let (_, rows) = wait_text(&mut s, &rx, |r| r[0] == "two");
+        let (_, rows) = wait_text(&mut s, &rx, |r| r[1] == "two");
         assert!(!rows.iter().any(|r| r.contains("one")), "only the current tab shows");
         // After the last, the first; the focus is the tab's own.
         cmd(&mut s, "next-tab", &[]).unwrap();
         assert_eq!((s.tab, s.focus), (0, one));
-        wait_text(&mut s, &rx, |r| r[0] == "one");
+        wait_text(&mut s, &rx, |r| r[1] == "one");
         // A count goes to that tab (Vim's {N}gt), back as many (gT).
         cmd(&mut s, "next-tab", &["2"]).unwrap();
         assert_eq!((s.tab, s.focus), (1, two));
@@ -4498,7 +4499,8 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn the_window_status_line_names_the_mode_and_the_session() {
         let (mut s, rx) = terminal_session(&["sh", "-c", "stty size; sleep 30"]);
-        wait_text(&mut s, &rx, |r| r[0] == format!("{} {}", GEOMETRY.rows, GEOMETRY.cols));
+        // The pane's own status line takes a row.
+        wait_text(&mut s, &rx, |r| r[0] == format!("{} {}", GEOMETRY.rows - 1, GEOMETRY.cols));
         s.set_option("showstatusline", &ScriptValue::Str("always".into())).unwrap();
         assert_eq!(s.get_option("showstatusline"), Ok(ScriptValue::Str("always".into())));
         let last = GEOMETRY.rows as usize - 1;
