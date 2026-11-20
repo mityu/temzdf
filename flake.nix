@@ -120,12 +120,17 @@
           # The shipped scripts (crates/temzdf-script/runtime) are bundled by
           # crates/temzdf-script/build.rs with esbuild; their npm packages
           # come from the lock file, built here so builds need no network.
-          runtimeNodeModules = pkgs.importNpmLock.buildNodeModules {
-            npmRoot = ./crates/temzdf-script/runtime;
-            nodejs = pkgs.nodejs;
-          };
-          scriptEnv = {
-            TEMZDF_NODE_MODULES = "${runtimeNodeModules}/node_modules";
+          # Builds get the dependencies only; the dev shells also the
+          # devDependencies (scripts/ts-types.sh bundles declarations).
+          runtimeNodeModules =
+            dev:
+            pkgs.importNpmLock.buildNodeModules {
+              npmRoot = ./crates/temzdf-script/runtime;
+              nodejs = pkgs.nodejs;
+              derivationArgs = lib.optionalAttrs (!dev) { npmInstallFlags = [ "--omit=dev" ]; };
+            };
+          scriptEnv = dev: {
+            TEMZDF_NODE_MODULES = "${runtimeNodeModules dev}/node_modules";
           };
           stableToolchain = pkgs.rust-bin.stable.latest.minimal.override {
             targets = wasmTargets;
@@ -182,11 +187,12 @@
                         shellcheck
                         esbuild
                         biome # Formats and lints the shipped scripts (scripts/check.sh).
-                      ]
-                      ++ lib.optionals (!forCi) [
+                        # scripts/ts-types.sh (checked by scripts/check.sh), and
                         # npm install --package-lock-only in
                         # crates/temzdf-script/runtime (adding a package).
                         nodejs
+                      ]
+                      ++ lib.optionals (!forCi) [
                         agent-browser
                         python3
                         imagemagick # Screenshots compared in scripts/e2e.sh (expect).
@@ -287,7 +293,7 @@
                     TEMZDF_TEST_FONTCONFIG = testFontConfig;
                   }
                   // wasmEnv
-                  // scriptEnv
+                  // scriptEnv true
                   // lib.optionalAttrs isLinux {
                     # winit and wgpu open these with dlopen. The real GPU's Vulkan
                     # driver comes from the system (/run/opengl-driver on NixOS).
@@ -409,7 +415,7 @@
                 # not exported).
                 env =
                   wasmEnv
-                  // scriptEnv
+                  // scriptEnv false
                   // {
                     TEMZDF_BUNDLED_FONTS = bundleFontPath;
                   };

@@ -58,7 +58,7 @@ PC
     mkdir -p "$prefix/runtime-npm"
     cp "$root/crates/temzdf-script/runtime/package.json" \
         "$root/crates/temzdf-script/runtime/package-lock.json" "$prefix/runtime-npm/"
-    (cd "$prefix/runtime-npm" && npm ci --no-audit --no-fund)
+    (cd "$prefix/runtime-npm" && npm ci --omit=dev --no-audit --no-fund)
 } >&2
 
 echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig"
