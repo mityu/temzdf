@@ -1607,24 +1607,19 @@ fn a_terminal_without_graphics_shows_pdf_panes_as_a_line_and_says_why() {
 }
 
 #[test]
-fn a_program_s_images_without_graphics_are_said_once() {
+fn a_program_s_images_without_graphics_are_said() {
     let env = Env::new("no-graphics-img");
     let mut t = Term::spawn(&["env", "SHELL=/bin/sh", BIN, "-s", "ni"], &no_graphics(&env));
     t.wait_for("the prompt", prompt);
     t.key("Enter");
     t.wait_for("the message gone", |s| !s.text().contains("TERMPIX_GRAPHICS=off"));
-    // A 2x2 RGBA image over 4x2 cells, by the kitty graphics protocol, twice.
+    // A 2x2 RGBA image over 4x2 cells, by the kitty graphics protocol.
     let image = "printf '\\033_Ga=T,f=32,s=2,v=2,c=4,r=2,q=2;/wAA/wD/AP8AAP///////w==\\033\\\\'; echo\n";
     t.type_text(&format!("clear; {image}"));
     // (The message wraps: its first words.)
     let said = "Images in pane 1 are not shown";
     let s = t.wait_for("the message", |s| s.text().contains(said));
     assert!(s.images.is_empty(), "{:?}", s.images);
-    // Still there: not said again (the message fades in a few seconds).
-    t.type_text(image);
-    t.wait_for("the message faded", |s| !s.text().contains(said));
-    t.settle(std::time::Duration::from_millis(1500));
-    assert!(!t.screen().text().contains(said), "said once while the image stays");
 }
 
 #[test]

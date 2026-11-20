@@ -4874,7 +4874,8 @@ mod tests {
         let (mut s, rx) = terminal_session(&[
             "sh",
             "-c",
-            "read l; printf '\\033_Ga=T,f=32,s=2,v=2,c=4,r=2,q=2;/wAA/wD/AP8AAP///////w==\\033\\\\'; echo; sleep 30",
+            "img() { printf '\\033_Ga=T,f=32,s=2,v=2,c=4,r=2,q=2;/wAA/wD/AP8AAP///////w==\\033\\\\'; echo; }; \
+             read l; img; read l; img; echo second-done; sleep 30",
         ]);
         let pane = s.focus;
         let images = |s: &mut Session| s.frame().regions.iter().find(|r| r.pane == pane).map(|r| r.images);
@@ -4888,6 +4889,18 @@ mod tests {
             }
         }
         assert!(s.frame().fallback_text.is_empty(), "terminal panes have no line");
+        // A second image: the flag stays set in every frame (a frontend names
+        // the pane again whenever it goes false and true).
+        key(&mut s, "<CR>");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !screen_text(&s.frame(), GEOMETRY).iter().any(|r| r.contains("second-done")) {
+            assert!(Instant::now() < deadline, "the second image never came");
+            assert_eq!(images(&mut s), Some(true), "the flag flickered");
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(50)) {
+                s.handle(ev, Instant::now());
+            }
+        }
+        assert_eq!(images(&mut s), Some(true));
     }
 
     #[test]

@@ -144,6 +144,9 @@ mod tests {
         assert_eq!(n.deadline(), Some(t + SHOWN_FOR));
         assert!(n.tick(t + SHOWN_FOR));
         assert!(n.texts().is_empty());
+        // Still there after the interval too: not named again.
+        assert!(!n.frame(&[region(1, true)], t + Duration::from_secs(6)));
+        assert!(n.texts().is_empty());
         // Gone and back: named again (after the interval).
         n.frame(&[region(1, false)], t + Duration::from_secs(6));
         assert!(n.frame(&[region(1, true)], t + Duration::from_secs(7)));
