@@ -636,7 +636,8 @@ mod tests {
 
     #[test]
     fn a_match_near_the_cursor_is_found_without_visiting_the_rest() {
-        let lines = 200_000;
+        // Under Miri a few windows' worth: the full size takes minutes there.
+        let lines = if cfg!(miri) { 4 * WINDOW_LINES } else { 200_000 };
         let mut s = "foo bar baz qux\n".repeat(lines);
         let mid = s.len() / 2;
         s.insert_str(mid, "needle ");
