@@ -624,6 +624,54 @@ action.message(a + b + c);
 }
 
 #[test]
+fn options_left_out_get_their_defaults_and_wrong_ones_are_refused() {
+    // The prelude's schemas (runtime/lib/validate.ts): what keymap.add and
+    // defineMode send for options left out, and a TypeError naming the call
+    // and the option for a wrong one (accepted silently before).
+    let config = r#"import { action, defineMode, keymap } from "temzdf";
+keymap.add("normal", "x", () => {});
+defineMode("m");
+const refused = (f: () => void) => { try { f(); return "accepted"; } catch (e) { return (e as Error).message; } };
+action.message(refused(() => keymap.add("normal", "y", () => {}, { priority: "high" as never })));
+action.message(refused(() => defineMode("n", { fallback: "eat" as never })));
+action.message(refused(() => keymap.add(["normal", 1 as never], "z", () => {})));
+"#;
+    let mut s = Session::start(&[("config.ts", config)]);
+    s.load("config.ts");
+    let (mut map, mut mode, mut messages) = (None, None, Vec::new());
+    let ready = loop {
+        match s.recv() {
+            FromHost::Request { req, op, .. } => {
+                match op {
+                    HostOp::Map { keys, nowait, desc, when, namespace, priority, .. } if keys == "x" => {
+                        map = Some((nowait, desc, when, namespace, priority));
+                    }
+                    HostOp::DefineMode { name, fallback, count, transient, keepalive, timeout } if name == "m" => {
+                        mode = Some((fallback.is_none(), count, transient, keepalive.is_none(), timeout));
+                    }
+                    HostOp::Command { name, args } if name == "message" => messages.push(args[0].clone()),
+                    _ => {}
+                }
+                s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
+            }
+            other => break other,
+        }
+    };
+    ready_ok(ready);
+    assert_eq!(map, Some((false, None, None, None, 0)));
+    assert_eq!(mode, Some((true, None, None, true, None)));
+    let str = |s: &str| ScriptValue::Str(s.into());
+    assert_eq!(
+        messages,
+        [
+            str("keymap.add(y): options.priority: Invalid input: expected number, received string"),
+            str(r#"defineMode(n): properties.fallback: Invalid input"#),
+            str("keymap.add(z): mode: Invalid input"),
+        ]
+    );
+}
+
+#[test]
 fn conditions_answer_booleans_and_get_mappings_gives_the_functions_back() {
     let config = r#"
 import { action, keymap } from "temzdf";

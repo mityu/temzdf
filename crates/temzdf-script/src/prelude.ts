@@ -4,9 +4,17 @@
 // from "temzdf"` exports) on top of the host's native functions in
 // `__host` (crates/temzdf-script/src/host.rs). Values cross into Rust as
 // JSON. What it builds is typed as the `temzdf` module of
-// ts-types/temzdf-core.d.ts, so the declarations and this agree.
+// ts-types/temzdf-core.d.ts, so the declarations and this agree. What
+// scripts pass and the session answers is checked with zod
+// (runtime/lib/validate.ts): the answers come as unknown.
 // biome-ignore lint/suspicious/noRedundantUseStrict: evaluated as a script, not a module.
 "use strict";
+
+import type { Condition, KeyContext, KeyInfo, MapOptions, ModeProperties, PromptOptions, Rhs } from "temzdf";
+import type { Assert } from "../runtime/lib/types";
+import type { Takes } from "../runtime/lib/validate";
+import * as z from "../runtime/lib/zod";
+import { check, func, guard, options, parse } from "../runtime/lib/validate";
 
 /** The native functions host.rs gives this prelude (`install`), and only
  * it: taken off the globals at once. */
@@ -38,8 +46,7 @@ type Actions = Temzdf["action"];
 /** The session's context token, as it came in JSON (null: none). */
 type Token = unknown;
 /** What the session answers (JSON parsed): its shape depends on the request. */
-// biome-ignore lint/suspicious/noExplicitAny: the session's answers are not typed here.
-type Answer = any;
+type Answer = unknown;
 
 const g = globalThis as unknown as Record<string, unknown>;
 const host = g.__host as Host;
@@ -62,8 +69,9 @@ const current = (): Token => JSON.parse(host.current()) ?? atomicToken;
 
 // A command answering later answers `{ $promise: n }`: a Promise, settled
 // when the session sends ToHost::Resolve.
+const isLater = guard(z.object({ $promise: z.number() }));
 function promised(result: Answer): Answer {
-  if (result === null || typeof result !== "object" || typeof result.$promise !== "number") return result;
+  if (!isLater(result)) return result;
   return new Promise((resolve, reject) =>
     host.awaitPromise(result.$promise, (ok, json) => (ok ? resolve(JSON.parse(json)) : reject(new Error(json)))),
   );
@@ -116,15 +124,20 @@ g.__temzdfLoad = () => {
 type Fn = (...args: any[]) => unknown;
 const registered: ({ fn: Fn; condition: boolean } | undefined)[] = [];
 
+// A Promise, or what awaits as one.
+// biome-ignore lint/suspicious/noThenProperty: the schema of a thenable, not one.
+const isThenable = guard(z.object({ then: func() }));
+const isFunc = guard(func());
+
 // Register `fn` as a mapped or hook function, or (`condition`) as a
 // mapping's `when` or a mode's `keepalive`, which gives a boolean:
 // synchronous only.
 function register(fn: unknown, what: string, condition = false): number {
-  if (typeof fn !== "function") throw new TypeError(`${what}: expected a function`);
-  const f = fn as Fn;
+  check(what, func<Fn>(), fn);
+  const f = fn;
   const id = host.register((argsJson) => {
     const r = f(...JSON.parse(argsJson));
-    if (r !== null && typeof r === "object" && typeof (r as { then?: unknown }).then === "function") {
+    if (isThenable(r)) {
       throw new TypeError(
         condition
           ? `${what}: conditions must be synchronous`
@@ -145,7 +158,7 @@ const funcId = (f: unknown, what: string, condition: boolean): number => {
 };
 
 function atomicWith<T>(token: Token, fn: () => T): T {
-  if (typeof fn !== "function") throw new TypeError("atomic: expected a function");
+  check("atomic", func(), fn);
   const t = JSON.stringify(token);
   host.atomicBegin(t);
   // The plain `action` works inside too, under the task's token.
@@ -153,7 +166,7 @@ function atomicWith<T>(token: Token, fn: () => T): T {
   atomicToken = token;
   try {
     const r = fn();
-    if (r !== null && typeof r === "object" && typeof (r as { then?: unknown }).then === "function") {
+    if (isThenable(r)) {
       throw new TypeError("atomic: the function must be synchronous");
     }
     return r;
@@ -172,46 +185,106 @@ type Prompt = {
   onChange?: (line: string) => void;
 };
 
+// What the API takes from scripts, with the defaults the session gets
+// for what is left out; each checked against its declared type.
+const nullable = <T extends z.ZodMiniType>(t: T) => z._default(z.nullable(t), null);
+const modeNames = z.union([z.string(), z.readonly(z.array(z.string()))]);
+const mapOptions = options({
+  nowait: z._default(z.boolean(), false),
+  desc: nullable(z.string()),
+  when: nullable(func<Condition>()),
+  namespace: nullable(z.string()),
+  priority: z._default(z.number(), 0),
+});
+const namespaceOption = options({ namespace: nullable(z.string()) });
+const clearFilter = options({ mode: nullable(z.string()), namespace: nullable(z.string()) });
+const getFilter = options({ mode: nullable(z.string()), namespace: nullable(z.string()), lhs: nullable(z.string()) });
+const modeProperties = options({
+  fallback: nullable(z.union([z.enum(["drop", "passthrough"]), func<(ctx: KeyContext, key: KeyInfo) => void>()])),
+  count: nullable(z.boolean()),
+  transient: nullable(z.boolean()),
+  keepalive: nullable(z.union([z.enum(["mapped", "always"]), func<Condition>()])),
+  timeout: nullable(z.number()),
+});
+const feedOptions = options({ remap: z._default(z.boolean(), true) });
+const hookOptions = options({ nested: z._default(z.boolean(), false) });
+const promptOptions = options({
+  prompt: z._default(z.string(), ""),
+  text: z._default(z.string(), ""),
+  side: z._default(z.enum(["bottom", "top", "left", "right"]), "bottom"),
+  height: z._default(z.number(), 1),
+  mode: z._default(z.string(), "input"),
+  style: z._default(z.string(), "Prompt"),
+  onLine: z.optional(func<(line: string) => void>()),
+  onCancel: z.optional(func<() => void>()),
+  onChange: z.optional(func<(line: string) => void>()),
+});
+const promptBuffer = z.optional(z.number());
+type _Options = Assert<
+  | Takes<typeof mapOptions, MapOptions>
+  | Takes<typeof namespaceOption, { namespace?: string }>
+  | Takes<typeof clearFilter, { mode?: string; namespace?: string }>
+  | Takes<typeof getFilter, { mode?: string; namespace?: string; lhs?: string }>
+  | Takes<typeof modeProperties, ModeProperties>
+  | Takes<typeof feedOptions, { remap?: boolean }>
+  | Takes<typeof hookOptions, { nested?: boolean }>
+  | Takes<typeof promptOptions, PromptOptions>
+>;
+
+// What getMappings answers: `rhs` and `when` are functions' ids (test
+// builds' mappings of actions list them instead).
+const funcRef = guard(z.object({ func: z.number() }));
+const mappingAnswers = z.array(
+  z.object({
+    mode: z.string(),
+    lhs: z.string(),
+    rhs: z.unknown(),
+    when: z.nullable(z.unknown()),
+    nowait: z.boolean(),
+    desc: z.nullable(z.string()),
+    namespace: z.nullable(z.string()),
+    priority: z.number(),
+  }),
+);
+const isObject = guard(z.object({}));
+
 const temzdf: Temzdf = {
   action: globalAction,
   keymap: Object.freeze({
     // keymap.add(mode | modes, lhs, rhs, { nowait, desc, when, namespace,
     // priority }): rhs and `when` are synchronous functions of the key's
     // context.
-    add(modes, lhs, rhs, options = {}) {
-      const payload = {
-        modes,
-        keys: lhs,
-        nowait: !!options.nowait,
-        desc: options.desc ?? null,
-        when: options.when == null ? null : funcId(options.when, `keymap.add(${lhs}) when`, true),
-        namespace: options.namespace ?? null,
-        priority: options.priority ?? 0,
-        func: 0,
-      };
-      if (typeof rhs !== "function") throw new TypeError(`keymap.add(${lhs}): expected a function`);
-      payload.func = funcId(rhs, `keymap.add(${lhs})`, false);
-      request(current(), "map", payload);
+    add(modes, lhs, rhs, opts) {
+      const what = `keymap.add(${String(lhs)})`;
+      check(what, modeNames, modes, "mode");
+      check(what, z.string(), lhs, "lhs");
+      const o = parse(what, mapOptions, opts, "options");
+      const when = o.when === null ? null : funcId(o.when, `${what} when`, true);
+      request(current(), "map", { modes, keys: lhs, ...o, when, func: funcId(rhs, what, false) });
     },
     // keymap.remove(mode | modes, lhs, { namespace }): that namespace's
     // mappings, or all of them.
-    remove(modes, lhs, options = {}) {
-      request(current(), "unmap", { modes, keys: lhs, namespace: options.namespace ?? null });
+    remove(modes, lhs, opts) {
+      const what = `keymap.remove(${String(lhs)})`;
+      check(what, modeNames, modes, "mode");
+      check(what, z.string(), lhs, "lhs");
+      request(current(), "unmap", { modes, keys: lhs, ...parse(what, namespaceOption, opts, "options") });
     },
     // keymap.clear({ mode, namespace }): every mapping of the mode and the
     // namespace; one left out is not a filter.
-    clear(filter = {}) {
-      request(current(), "clearMappings", { mode: filter.mode ?? null, namespace: filter.namespace ?? null });
+    clear(filter) {
+      request(current(), "clearMappings", parse("keymap.clear", clearFilter, filter, "filter"));
     },
     // keymap.get({ mode, namespace, lhs }): the mappings as keymap.add()
     // takes them; one left out is not a filter.
-    get(filter = {}) {
-      const back = (v: Answer) => (v !== null && typeof v === "object" && "func" in v ? registered[v.func]?.fn : v);
-      const payload = { mode: filter.mode ?? null, namespace: filter.namespace ?? null, lhs: filter.lhs ?? null };
-      return request(current(), "getMappings", payload).map((m: Answer) => ({
+    get(filter) {
+      const answer = request(current(), "getMappings", parse("keymap.get", getFilter, filter, "filter"));
+      check("keymap.get", mappingAnswers, answer, "answer");
+      const back = (v: unknown) => (funcRef(v) ? registered[v.func]?.fn : v) as Rhs;
+      return answer.map((m) => ({
         ...m,
         rhs: back(m.rhs),
-        when: m.when === null ? undefined : back(m.when),
+        when: m.when === null ? undefined : (back(m.when) as Condition),
         desc: m.desc ?? undefined,
         namespace: m.namespace ?? undefined,
       }));
@@ -219,34 +292,28 @@ const temzdf: Temzdf = {
   }),
   // defineMode(name, { fallback: "drop" | "passthrough" | (ctx, key) => void,
   // count, transient, keepalive: "mapped" | "always" | (ctx) => boolean, timeout })
-  defineMode(name, props = {}) {
-    if ("inherit" in props) {
+  defineMode(name, props) {
+    const what = `defineMode(${String(name)})`;
+    check(what, z.string(), name, "name");
+    if (isObject(props) && "inherit" in props) {
       throw new TypeError(
         "defineMode: inherit is gone; a transient mode with keepalive takes the keys of the mode below",
       );
     }
-    if ("unmapped" in props) {
+    if (isObject(props) && "unmapped" in props) {
       throw new TypeError("defineMode: unmapped is now fallback");
     }
-    const fallback =
-      typeof props.fallback === "function"
-        ? funcId(props.fallback, `defineMode(${name}) fallback`, false)
-        : (props.fallback ?? null);
-    const keepalive =
-      typeof props.keepalive === "function"
-        ? funcId(props.keepalive, `defineMode(${name}) keepalive`, true)
-        : (props.keepalive ?? null);
+    const p = parse(what, modeProperties, props, "properties");
     request(current(), "defineMode", {
       name,
-      fallback,
-      count: props.count ?? null,
-      transient: props.transient ?? null,
-      keepalive,
-      timeout: props.timeout ?? null,
+      ...p,
+      fallback: isFunc(p.fallback) ? funcId(p.fallback, `${what} fallback`, false) : p.fallback,
+      keepalive: isFunc(p.keepalive) ? funcId(p.keepalive, `${what} keepalive`, true) : p.keepalive,
     });
   },
-  feedkeys(keys, options = {}) {
-    return globalAction.feedkeys(keys, options.remap !== false);
+  feedkeys(keys, opts) {
+    check("feedkeys", z.string(), keys, "keys");
+    return globalAction.feedkeys(keys, parse("feedkeys", feedOptions, opts, "options").remap);
   },
   currentMode() {
     return globalAction.currentMode();
@@ -264,9 +331,12 @@ const temzdf: Temzdf = {
   ) as Temzdf["o"],
   // Returns a function that stops it (a hook only while it is wanted:
   // KeyTyped hooks hold every key until they ran).
-  on(event, fn, options = {}) {
-    const func = register(fn, `on(${event})`);
-    request(current(), "on", { event, func, nested: !!options.nested });
+  on(event, fn, opts) {
+    const what = `on(${String(event)})`;
+    check(what, z.string(), event, "event");
+    const { nested } = parse(what, hookOptions, opts, "options");
+    const func = register(fn, what);
+    request(current(), "on", { event, func, nested });
     return () => request(current(), "off", { event, func });
   },
   // Run `fn` at the safe point (after the invocation and its hooks), in
@@ -277,7 +347,7 @@ const temzdf: Temzdf = {
   // Start an asynchronous task without waiting for it. It issues commands
   // through its `ctx`.
   dispatch(fn) {
-    if (typeof fn !== "function") throw new TypeError("dispatch: expected a function");
+    check("dispatch", func(), fn);
     const task = host.taskStart();
     const token = { Task: task };
     const ctx = Object.freeze({
@@ -297,17 +367,14 @@ const temzdf: Temzdf = {
   // onLine, <Esc> (cancelPrompt) or closing it otherwise calls onCancel;
   // onChange hears the cursor's line as it changes. Either way the pane
   // and the buffer go, and the focus goes back.
-  openPrompt(opts = {}) {
+  openPrompt(given) {
+    const opts = parse("openPrompt", promptOptions, given, "options");
     const c = globalAction;
     const origin = c.focusedPane();
-    const buffer = c.newBuffer({
-      text: opts.text ?? "",
-      basemode: opts.mode ?? "input",
-      attrs: ["nofile", "unlisted"],
-    });
+    const buffer = c.newBuffer({ text: opts.text, basemode: opts.mode, attrs: ["nofile", "unlisted"] });
     let pane: number | null = null;
     try {
-      pane = c.split({ side: opts.side ?? "bottom", buffer, height: opts.height ?? 1 });
+      pane = c.split({ side: opts.side, buffer, height: opts.height });
     } catch (e) {
       c.deleteBuffer(buffer);
       throw e;
@@ -319,10 +386,10 @@ const temzdf: Temzdf = {
     c.statusLine(false, pane);
     c.text.setOptions({ wrap: false, number: "off", cursorline: false, scrolloff: 0 }, { pane });
     const origin0 = { line: 0, character: 0 };
-    if ((opts.prompt ?? "") !== "") {
+    if (opts.prompt !== "") {
       c.text.addDecoration(
         { start: origin0, end: origin0 },
-        { virtText: [{ text: opts.prompt as string, style: opts.style ?? "Prompt" }], namespace: "prompt", pane },
+        { virtText: [{ text: opts.prompt, style: opts.style }], namespace: "prompt", pane },
       );
     }
     const last = c.text.lineCount({ pane }) - 1;
@@ -347,19 +414,23 @@ const temzdf: Temzdf = {
     return { buffer, pane };
   },
   acceptPrompt(buffer) {
+    check("acceptPrompt", promptBuffer, buffer, "buffer");
     const r = closePrompt(buffer ?? focusedBuffer());
     if (r !== null) r.p.onLine?.(r.line);
   },
   cancelPrompt(buffer) {
+    check("cancelPrompt", promptBuffer, buffer, "buffer");
     const r = closePrompt(buffer ?? focusedBuffer());
     if (r !== null) r.p.onCancel?.();
   },
   isPrompt(buffer) {
+    check("isPrompt", promptBuffer, buffer, "buffer");
     const b = buffer ?? focusedBuffer();
     return b !== undefined && prompts.has(b);
   },
   // Inside a mapped or hook function everything is atomic already.
   atomic(fn) {
+    check("atomic", func(), fn);
     const token = current();
     if (token === null) throw new Error("atomic: in a dispatched task use ctx.atomic");
     return fn();
