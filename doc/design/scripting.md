@@ -69,8 +69,14 @@ that part follows tmux and zellij (see "Prior art").
   "Execution model" below.
 - The language is JavaScript, with TypeScript accepted through type stripping
   (erasable syntax only, as TypeScript's `erasableSyntaxOnly`; positions kept
-  so errors point at the source). Type definitions (`.d.ts`) are generated
-  from the same registry as the commands, so they cannot drift.
+  so errors point at the source). The type definitions are in
+  `crates/temzdf-script/ts-types/`: Rust's API written by hand
+  (`temzdf-core.d.ts`), the actions written by hand
+  (`temzdf-actions.d.ts`, which the server's list of action names is
+  built from, and a test checks that each one runs), and
+  `temzdf-all.d.ts`, generated from those and the shipped modules'
+  TypeScript (`scripts/ts-types.sh`, dts-bundle-generator; each module
+  shows what it exports) and committed, checked by `scripts/check.sh`.
 - The TOML configuration was removed (there were no outside users); where
   each of its settings went is decision 22.
 - Mouse handling is **built in only** and cannot be remapped; scripts can set
@@ -356,7 +362,8 @@ with the plan.
   still handled), information fades after a few seconds, the host-down
   notice stays until the host is back.
 - (u) TypeScript joins the dev shells so the shipped defaults are type
-  checked with `tsc` against the generated `temzdf.d.ts`.
+  checked with `tsc` (now with `crates/temzdf-script/runtime/tsconfig.json`,
+  which editors use too).
 - Built-in modes: `normal` (operating; unmapped `drop`, counts),
   `terminal` (pass-through, the default of terminal panes; unmapped
   `passthrough`, no counts), `pdf` (the default of PDF panes; inherits
@@ -388,7 +395,10 @@ with the plan.
   `reloaddebounce` (200), `reloadanchor`, `synctexeditor`.
 - `ModeChanged(old, new)` joins the events.
 - `temzdf print-types` (hidden) writes `temzdf.d.ts` from the command
-  registry and the static API; generated, never committed.
+  registry and the static API; generated, never committed. (Since
+  2026-11-20 it prints the committed
+  `crates/temzdf-script/ts-types/temzdf-all.d.ts`, and the actions' names
+  come from `temzdf-actions.d.ts`: see "The language" above.)
 - The link opener travels with the effect (`OpenUri { uri, command }`) from
   the server's options to the client.
 - TOML goes: `--config FILE` names the script; `[terminal]` and `log_dir`

@@ -8,7 +8,7 @@ import { action, o } from "temzdf";
 import type { KeyContext, KeyInfo, Position, Range as TextRange } from "temzdf";
 import { command, parseBang, resolveRange, splitBar } from "temzdf/command";
 import type { CmdCtx, VimRangeEnv } from "temzdf/command";
-import type { Define } from "../lib/keyset";
+import type { Define } from "temzdf/keyset";
 import { operate } from "./operators";
 import { convert } from "./pattern";
 import { deleteMarks, listMarks, markLine, recordJump, setMark } from "./marks";

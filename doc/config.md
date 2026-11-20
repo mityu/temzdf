@@ -24,6 +24,12 @@ removing the hooks), `enabled` says which:
 | `temzdf/edit/vim` | `builtin-edit-vim` | text panes edit as Vim does (the default) |
 | `temzdf/edit/notepad` | `builtin-edit-notepad` | text panes edit without modes, as Notepad does (not enabled by default) |
 
+They are made with `temzdf/keyset`, which configurations can use too:
+`keyset(namespace, (d) => { d.map(...); d.command(...); d.hook(...) })`
+returns a `Keyset` defined only while enabled (its mappings and commands in
+that namespace, its hooks removed on `disable()`). `vim.options` holds the
+Vim mode's settings; the mode's state is not shown.
+
 ```ts
 import vim from "temzdf/edit/vim";
 import notepad from "temzdf/edit/notepad";
@@ -61,8 +67,10 @@ on("ModeChanged", (old, now) => console.log(`${old} -> ${now}`));
 ```
 
 `temzdf print-types > temzdf.d.ts` writes the API's TypeScript declarations
-(generated from the command registry, so always current); point the editor's
-TypeScript at it (`"paths": { "temzdf": ["./temzdf.d.ts"] }`). TypeScript is
+(`temzdf` and the shipped modules, `temzdf/NAME`, as one file: the
+repository's `crates/temzdf-script/ts-types/temzdf-all.d.ts`); point the
+editor's TypeScript at it (`"files": ["./temzdf.d.ts"]` in tsconfig.json, as
+`tests/e2e/configs/tsconfig.json` does). TypeScript is
 type-stripped, so only erasable syntax works (no `enum`, no `namespace` with
 values); errors report positions in the source as written. Imports: relative
 paths and `"temzdf"`; no npm packages or Node APIs. Relative imports resolve

@@ -84,7 +84,15 @@ cargo build --workspace
 
 Run `scripts/check.sh` before every commit. The scripts (TypeScript and
 the script host's `prelude.js`) are formatted and linted by Biome
-(`biome.jsonc`; `biome check --write .` alone fixes what it can). The default dev shell has no Miri (check.sh
+(`biome.jsonc`; `biome check --write .` alone fixes what it can). Their
+TypeScript declarations are in `crates/temzdf-script/ts-types/`: Rust's
+API by hand in `temzdf-core.d.ts`, the session's actions by hand in
+`temzdf-actions.d.ts` (a new action is declared there: the server's names
+come from it, and a test runs each), and the generated
+`temzdf-all.d.ts`; editors use `crates/temzdf-script/runtime/tsconfig.json`
+(the dev shell's `tsc --lsp --stdio` is a language server). The
+devDependencies of `runtime/package.json` (dts-bundle-generator,
+TypeScript 6) are tools, never bundled. The default dev shell has no Miri (check.sh
 says it skipped it); `nix develop .#enable-miri` has it, and the user runs
 it from time to time. To run Miri yourself, `nix develop .#alldeps -c
 scripts/check.sh` (or `-c scripts/miri.sh`) is the one allowed use of
@@ -220,7 +228,10 @@ made rust-cache's restores fail with it (`todo.md`).
   Generated files can embed machine-specific absolute paths without anyone
   noticing. Commit the source plus a script that generates the output into
   `target/` instead, as `scripts/build-fixtures.sh` does. Exceptions: lock files
-  (`Cargo.lock`, `flake.lock`), which pin dependencies and contain no paths.
+  (`Cargo.lock`, `flake.lock`), which pin dependencies and contain no paths,
+  and `crates/temzdf-script/ts-types/temzdf-all.d.ts`, which editors and
+  `temzdf print-types` read, written by `scripts/ts-types.sh` and checked
+  by `scripts/check.sh` (`--fix` writes it again).
 - Paths written in docs, comments and commit messages are relative to the
   repository root. Never write absolute paths (home directories, scratch
   directories, `/nix/store/...`).

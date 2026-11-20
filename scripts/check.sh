@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Pre-commit gate: rustfmt check, Biome (the scripts' formatting and
-# lints, biome.jsonc), shellcheck, references to documents
+# lints, biome.jsonc), the generated declarations
+# (crates/temzdf-script/ts-types/temzdf-all.d.ts, scripts/ts-types.sh),
+# the scripts' shell lint, references to documents
 # (scripts/check-docs.sh), clippy (warnings are errors) and tests for the
 # whole workspace, then the unit tests under Miri (scripts/miri.sh) when
 # `cargo miri` is available, with terse output. Re-executes itself inside the
@@ -8,7 +10,8 @@
 #
 # Usage: scripts/check.sh [--fix] [--no-miri] [--all] [--verbose] [cargo test args...]
 #   --fix      run `cargo fmt` and `biome check --write` (formatting and
-#              Biome's safe fixes) instead of only checking
+#              Biome's safe fixes) and write temzdf-all.d.ts again instead
+#              of only checking
 #   --no-miri  skip Miri (about a minute and a half)
 #   --all      run the tests even when only documents changed (see below)
 #   --verbose  print a failed step's whole output, not its main lines (CI)
@@ -85,6 +88,20 @@ if ! biome check --colors=off . >target/check/biome.log 2>&1; then
   status=1
 fi
 
+# temzdf-all.d.ts as scripts/ts-types.sh writes it from the declarations
+# by hand and the shipped modules.
+declarations=crates/temzdf-script/ts-types/temzdf-all.d.ts
+if ((fix)); then
+  scripts/ts-types.sh >target/check/ts-types.log 2>&1 || true
+fi
+if ! scripts/ts-types.sh target/check/temzdf-all.d.ts >target/check/ts-types.log 2>&1; then
+  failed ts-types target/check/ts-types.log "" 20
+  status=1
+elif ! cmp -s target/check/temzdf-all.d.ts "$declarations"; then
+  echo "FAIL ts-types ($declarations is not what scripts/ts-types.sh writes; run scripts/check.sh --fix)"
+  status=1
+fi
+
 if ! shellcheck --color=never --format=gcc ./scripts/{*.sh,*/*.sh} ./tests/*/*.sh >target/check/shellcheck.log 2>&1; then
   failed shellcheck target/check/shellcheck.log "^" 100
   status=1
@@ -117,7 +134,7 @@ else
 fi
 
 if ((status == 0)); then
-  echo "OK fmt, biome, shellcheck, docs, clippy, $summary"
+  echo "OK fmt, biome, ts-types, shellcheck, docs, clippy, $summary"
 fi
 
 if ((miri)); then

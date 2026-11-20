@@ -337,7 +337,7 @@ fn main() -> Result<()> {
             return lsfonts::run(&looks, &rest);
         }
         Some(Cmd::PrintTypes) => {
-            print!("{}", temzdf_script::types::declarations(&temzdf_server::session::command_specs()));
+            print!("{}", temzdf_script::types::DECLARATIONS);
             return Ok(());
         }
         Some(Cmd::RenderSession {

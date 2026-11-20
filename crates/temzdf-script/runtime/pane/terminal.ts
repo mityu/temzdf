@@ -3,10 +3,11 @@
 // ? to search), and status lines off for terminal panes. Defined when
 // enabled: `import terminal from "temzdf/pane/terminal"; terminal.enable();`.
 import { action, schedule } from "temzdf";
-import { keyset } from "../lib/keyset";
+import { keyset } from "temzdf/keyset";
 import { prefix } from "../lib/prefix";
 import { openSearch } from "../lib/search";
 
+/** Terminal panes' keys and their visual mode (namespace builtin-pane-terminal). */
 export default keyset("builtin-pane-terminal", (d) => {
   // From a pane to the normal mode.
   d.map("terminal", [prefix], () => action.switchMode("normal"));

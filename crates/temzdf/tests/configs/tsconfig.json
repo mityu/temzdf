@@ -1,0 +1,11 @@
+{
+  // Configurations as users write them: `temzdf` and its modules from what
+  // `temzdf print-types` prints (for editors and crates/temzdf/tests/types.rs).
+  "compilerOptions": {
+    "strict": true, "noEmit": true, "target": "es2022", "module": "esnext",
+    "moduleResolution": "bundler", "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true, "types": [], "lib": ["es2022"]
+  },
+  "files": ["../../../temzdf-script/ts-types/temzdf-all.d.ts"],
+  "include": ["*.ts"]
+}

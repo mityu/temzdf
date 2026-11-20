@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use temzdf_protocol::script::{CommandSpec, FromHost, HostOp, ScriptValue, ToHost, Token};
+use temzdf_protocol::script::{FromHost, HostOp, ScriptValue, ToHost, Token};
 
 struct Session {
     to_host: UnixStream,
@@ -50,10 +50,7 @@ impl Session {
 
     fn load(&mut self, file: &str) {
         let config = Some(self.dir.join(file));
-        let commands = command_names()
-            .into_iter()
-            .map(|name| CommandSpec { name, doc: String::new(), ts: "(...args: unknown[]): void".into() })
-            .collect();
+        let commands = command_names().into_iter().collect();
         self.send(ToHost::Load { config, commands });
     }
 

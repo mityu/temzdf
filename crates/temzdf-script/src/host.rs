@@ -19,7 +19,7 @@ use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::promise::PromiseState;
 use rquickjs::{Context, Ctx, Exception, Function, Module, Persistent, Runtime, Value};
 use temzdf_protocol::script::{
-    CommandSpec, Fallback, FromHost, FuncId, HostOp, Keepalive, ScriptError, ScriptValue, TaskId, ToHost, Token,
+    Fallback, FromHost, FuncId, HostOp, Keepalive, ScriptError, ScriptValue, TaskId, ToHost, Token,
 };
 
 use crate::link::{Link, Received, StreamLink};
@@ -205,7 +205,7 @@ struct State {
     /// handlers (QuickJS: uncatchable), so they are closed from here.
     open_atomic: RefCell<Vec<Token>>,
     running_tasks: RefCell<std::collections::BTreeSet<TaskId>>,
-    commands: RefCell<Vec<CommandSpec>>,
+    commands: RefCell<Vec<String>>,
     /// Promises commands answered with, by number: the function settling
     /// each (`(ok, json)`), and answers that came while code ran.
     promises: RefCell<std::collections::HashMap<u64, Persistent<Function<'static>>>>,
@@ -245,12 +245,7 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
     let s = st.clone();
     host.set("current", Function::new(ctx.clone(), move || json(&s.tokens.borrow().last().copied()))?)?;
     let s = st.clone();
-    host.set(
-        "commands",
-        Function::new(ctx.clone(), move || {
-            json(&s.commands.borrow().iter().map(|c| c.name.clone()).collect::<Vec<_>>())
-        })?,
-    )?;
+    host.set("commands", Function::new(ctx.clone(), move || json(&*s.commands.borrow()))?)?;
     let s = st.clone();
     host.set(
         "request",

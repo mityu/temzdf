@@ -4,7 +4,7 @@
 // undo and redo. temzdf's default is the Vim mode; `import notepad from
 // "temzdf/edit/notepad"; vim.disable(); notepad.enable();` edits this way.
 import { action, o } from "temzdf";
-import { keyset } from "../lib/keyset";
+import { keyset } from "temzdf/keyset";
 import { prefix } from "../lib/prefix";
 
 /** Text panes in the mode `edit` (not another editor's). */
@@ -21,6 +21,7 @@ function shifted(key: string): string {
   return key.startsWith("<C-") ? `<C-S-${key.slice(3)}` : `<S-${key.slice(1)}`;
 }
 
+/** Editing text panes without modes, as Notepad does (namespace builtin-edit-notepad, the mode `edit`). */
 export default keyset("builtin-edit-notepad", (d) => {
   useEditMode();
   const sel = { select: true };

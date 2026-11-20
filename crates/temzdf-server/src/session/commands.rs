@@ -4,7 +4,7 @@
 use std::time::Instant;
 
 use temzdf_pdfview::keys::Command;
-use temzdf_protocol::script::{CommandSpec, ScriptValue};
+use temzdf_protocol::script::ScriptValue;
 use temzdf_scene::FontEntry;
 
 use temzdf_term::Spawn;
@@ -16,233 +16,15 @@ use crate::action::{Action, PaneSpec};
 use crate::keymap::notation;
 use crate::layout::{Direction, PaneId, Split};
 
-/// The session's own commands; the page-view commands follow (see
-/// [`command_specs`]).
-const SESSION: &[(&str, &str, &str)] = &[
-    (
-        "split",
-        "(side?: \"right\" | \"left\" | \"bottom\" | \"top\" | { side?: \"right\" | \"left\" | \"bottom\" | \"top\"; scope?: \"pane\" | \"screen\"; buffer?: number; width?: number | string; height?: number | string; pane?: number }, scope?: \"pane\" | \"screen\"): number | null",
-        "Another pane like the focused one (the same document at the same place, or a new shell), or showing `buffer`; `screen` puts it at that edge of the whole screen; `pane` splits that pane; `width`/`height` (cells or \"N%\" of the screen) make it that size, fixed (as Vim's winfixwidth/winfixheight); returns the new pane (null for a document still opening)",
-    ),
-    ("new-pane", "(...words: string[]): void", "As `temzdf action new-pane`: a file, or \"--\" and a command"),
-    ("move-focus", "(dir: \"left\" | \"right\" | \"up\" | \"down\"): void", "Focus the pane in that direction"),
-    ("focus-next-pane", "(): void", "Focus the next pane"),
-    (
-        "focus-pane",
-        "(pane: number): void",
-        "Focus pane `pane`, going to its tab page (as Vim's win_gotoid); not a hidden float",
-    ),
-    (
-        "resize-pane",
-        "(how: \"left\" | \"right\" | \"up\" | \"down\" | \"wider\" | \"narrower\" | \"taller\" | \"shorter\" | { width?: number; height?: number }, cells?: number): void",
-        "Move the focused pane's right (bottom) border, else its left (top) one, `cells` cells that way (1 by default); or make the pane wider, narrower, taller, shorter by `cells` (Vim's <C-w>> < + -); or give it a size",
-    ),
-    (
-        "equalize-panes",
-        "(only?: \"width\" | \"height\"): void",
-        "Make the tiled panes the same size (only their widths, or heights), as Vim's <C-w>=",
-    ),
-    (
-        "maximize-pane",
-        "(axis: \"width\" | \"height\", cells?: number | null): void",
-        "Make the focused pane as wide (high) as the others' minimum sizes allow, as Vim's <C-w>| and <C-w>_; `cells` makes it that many cells instead",
-    ),
-    (
-        "move-pane",
-        "(side: \"left\" | \"right\" | \"top\" | \"bottom\"): void",
-        "Move the focused pane to that edge of the screen, the full height or width there (Vim's <C-w>H J K L)",
-    ),
-    (
-        "rotate-panes",
-        "(reverse?: boolean, count?: number | null): void",
-        "Rotate the panes in the focused pane's row or column, each to the next place (Vim's <C-w>r; reverse: <C-w>R); `count` repeats it",
-    ),
-    ("close-pane", "(pane?: number): void", "Close a pane, the focused one by default (its buffer stays, hidden)"),
-    (
-        "open-float",
-        "(what?: { buffer: number } | { file: string } | { command: string[] } | null, opts?: { width?: number | string; height?: number | string; col?: number | string; row?: number | string; title?: string; focus?: boolean; tabpage?: number }): number | null",
-        "Open a floating pane (a new shell by default); sizes in cells (the content's) or \"N%\" of the screen, centred unless col/row; tabpage as Vim's popups (0 the current tab page, -1 all, N tab page N); returns the pane (null for a file still opening)",
-    ),
-    (
-        "float-config",
-        "(pane: number | null, opts: { width?: number | string; height?: number | string; col?: number | string; row?: number | string; title?: string; focus?: boolean; tabpage?: number }): void",
-        "Move or resize a floating pane (the focused one for null), change its title, or the tab pages it shows on (tabpage)",
-    ),
-    ("toggle-floats", "(): void", "Show or hide every floating pane; with none, open a floating shell"),
-    ("toggle-floating", "(pane?: number): void", "Turn a pane (the focused one) floating, or tiled again"),
-    (
-        "buffers",
-        "(opts?: { all?: boolean }): { id: number; kind: PaneKind; name: string; panes: number[]; exited: boolean; modified: boolean; attrs: BufferAttr[] }[]",
-        "The buffers (documents, terminals, text), shown or hidden, but `unlisted` ones (all: those too); `modified`: a text buffer with unsaved changes; `attrs` a text buffer's attributes",
-    ),
-    (
-        "show-buffer",
-        "(buffer: number, pane?: number): void",
-        "Show a buffer in a pane (the focused one), as Vim's :buffer",
-    ),
-    (
-        "edit",
-        "(path: string): void",
-        "Open a file in the focused pane, as Vim's :edit: a PDF by its extension, anything else as text",
-    ),
-    (
-        "delete-buffer",
-        "(buffer?: number): void",
-        "Delete a buffer (the focused pane's): end its program or close its document, and close its panes; a BufferDeletePre hook may cancel it",
-    ),
-    (
-        "kill-session",
-        "(opts?: { force?: boolean }): void",
-        "End the session; a SessionEndPre hook may cancel it (unsaved changes), unless `force`",
-    ),
-    ("detach", "(): void", "The operating client detaches"),
-    ("reload-config", "(): void", "Restart the script host and load the configuration again"),
-    (
-        "message",
-        "(text: string, opts?: { error?: boolean }): void",
-        "Show a message: it fades after a few seconds; with error, it stays until the next key (an error, a question asked)",
-    ),
-    (
-        "status-line",
-        "(show?: boolean, pane?: number): void",
-        "Show or hide a pane's status line (the focused pane's; no `show`: the other way round); its content gets or gives back the row",
-    ),
-    (
-        "search-for",
-        "(query: string, pane?: number): void",
-        "Page view: search the PDF pane (the focused one) for `query`, the first hit shown once known; after a searchPreview of it, from where that began (the hit shown stays); an empty query clears the search",
-    ),
-    (
-        "search-preview",
-        "(query: string, pane?: number): void",
-        "Page view: show the first hit of `query` after where the preview began, as typed (Vim's incsearch); nothing found or empty: back there. searchFor ends it, searchCancel drops it",
-    ),
-    (
-        "search-cancel",
-        "(pane?: number): void",
-        "Page view: drop the search of the PDF pane (the focused one); a preview's view goes back where it began",
-    ),
-    ("send-text", "(text: string): void", "Type text into the focused terminal pane (Vim's chansend)"),
-    (
-        "paste",
-        "(from?: \"clipboard\" | \"primary\"): void",
-        "Paste the client's clipboard (or the primary selection) into the focused pane; terminals paste with their own keys",
-    ),
-    (
-        "font-size",
-        "(size?: number | string): void",
-        "GUI clients: the first guifont's size in points (the other sizes scale with it), \"+N\"/\"-N\" points more or less for every size, none: back to the configured sizes",
-    ),
-    (
-        "feedkeys",
-        "(keys: string, remap?: boolean): void",
-        "Keys as if typed, after the running mapping; remap false skips mappings",
-    ),
-    (
-        "beep",
-        "(): void",
-        "Fail quietly, as Vim's beep: the keys feedkeys queued are dropped (a macro stops); an error does the same",
-    ),
-    (
-        "invoke",
-        "(target: InvokeTarget, opts?: { count?: number }): void",
-        "Run an invocation's target again (as InvokePre and InvokePost give it), as part of what runs now; `count` goes to a function's ctx; a command's error is thrown",
-    ),
-    ("switch-mode", "(mode: string): void", "Enter a mode (pushed on the mode history)"),
-    ("exit-mode", "(): void", "Back to the previous mode"),
-    ("current-mode", "(): string", "The current mode's name"),
-    (
-        "panes",
-        "(): { id: number; kind: PaneKind; buffer: number; focused: boolean; floating: boolean; tab: number | null; rect: { col: number; row: number; width: number; height: number } }[]",
-        "The panes of every tab (tab: its index from 1, null for a float on all tabs; rect: the content, in cells)",
-    ),
-    ("focused-pane", "(): number | null", "The focused pane's id"),
-    (
-        "new-tab",
-        "(what?: { buffer: number } | { file: string } | { command: string[] } | null): number | null",
-        "Open a tab page after the current one, its pane showing `what` (a new shell by default), as Vim's :tabnew; returns the pane (null for a file still opening)",
-    ),
-    (
-        "close-tab",
-        "(tab?: number): void",
-        "Close a tab page (the current one; counted from 1) and its panes; their buffers stay, hidden. The last tab page stays (kill-session ends the session)",
-    ),
-    (
-        "next-tab",
-        "(count?: number | null): void",
-        "Go to the next tab page, after the last to the first; with `count` N, to tab page N (Vim's gt)",
-    ),
-    (
-        "prev-tab",
-        "(count?: number | null): void",
-        "Go to the previous tab page, before the first to the last; `count` goes that many back (Vim's gT)",
-    ),
-    ("goto-tab", "(tab: number): void", "Go to tab page `tab` (counted from 1)"),
-    (
-        "move-tab",
-        "(to?: number | string): void",
-        "Move the current tab page after tab page `to` (0: first; none: last), or \"+N\"/\"-N\" places, as Vim's :tabmove",
-    ),
-    (
-        "rename-tab",
-        "(name?: string): void",
-        "Name the current tab page in the tab line (no name: the focused pane's buffer again)",
-    ),
-    ("break-pane", "(pane?: number): void", "Move a pane (the focused one) to a new tab page, as Vim's <C-w>T"),
-    (
-        "tabs",
-        "(): { index: number; name: string | null; label: string; current: boolean; panes: number[] }[]",
-        "The tab pages in order (index from 1; panes: tiled, and floats on that tab only)",
-    ),
-    ("current-tab", "(): number", "The current tab page's index (from 1, as Vim's tabpagenr())"),
-    ("session-name", "(): string", "The session's name"),
-    (
-        "visual.search-for",
-        "(query: string, pane?: number, backward?: boolean): void",
-        "Visual mode: to the next match of `query` (plain text, case-insensitive) in the terminal's screen and scrollback (the focused pane's), after the cursor or where a preview began, backwards with `backward`; n and N go on",
-    ),
-    (
-        "visual.search-preview",
-        "(query: string, pane?: number, backward?: boolean): void",
-        "Visual mode: show the first match of `query` after where the preview began, as typed; nothing found: back there. visual.searchFor ends it, visual.searchCancel drops it",
-    ),
-    (
-        "visual.search-cancel",
-        "(pane?: number): void",
-        "Visual mode: drop the search being typed in the terminal (the focused pane's): back where its preview began",
-    ),
-];
+/// How a name no action has fails (and only that): a test tells it from
+/// an action's own errors.
+pub(super) const NO_ACTION: &str = "no action";
 
-/// Every command, for the script host.
-pub fn command_specs() -> Vec<CommandSpec> {
-    let session = SESSION.iter().map(|(name, ts, doc)| CommandSpec {
-        name: (*name).into(),
-        doc: (*doc).into(),
-        ts: (*ts).into(),
-    });
-    let pdf = Command::NAMES.iter().map(|(_, name)| CommandSpec {
-        name: (*name).into(),
-        doc: match *name {
-            "first-page" | "last-page" => {
-                format!("Page view: {name} in the focused PDF pane (page `count` instead, given one)")
-            }
-            _ => format!("Page view: {name} in the focused PDF pane (`count` times, where that means something)"),
-        },
-        ts: "(count?: number | null): void".into(),
-    });
-    let visual = VisualOp::NAMES.iter().map(|(_, name, doc)| CommandSpec {
-        name: format!("visual.{name}"),
-        doc: format!("Visual mode: {doc} (the focused terminal; `count` times, where that means something)"),
-        ts: "(count?: number | null): void".into(),
-    });
-    let text = super::text::COMMANDS
-        .iter()
-        .chain(super::registers::COMMANDS)
-        .chain(super::swap::COMMANDS)
-        .chain(super::images::COMMANDS)
-        .chain(super::markdown::COMMANDS)
-        .map(|(name, ts, doc)| CommandSpec { name: (*name).into(), doc: (*doc).into(), ts: (*ts).into() });
-    session.chain(text).chain(visual).chain(pdf).collect()
+/// The session's actions (`action.*` in scripts, `temzdf action`) by name,
+/// as crates/temzdf-script/ts-types/temzdf-actions.d.ts declares them
+/// (build.rs reads them from there).
+pub fn action_names() -> &'static [&'static str] {
+    include!(concat!(env!("OUT_DIR"), "/actions.rs"))
 }
 
 /// What a new pane shows (`openFloat`, `newTab`): `{ buffer }`, `{ file }`,
@@ -881,7 +663,7 @@ impl Session {
                 Outcome::None,
             )),
             "session-name" => Ok((ScriptValue::Str(self.name.clone()), Outcome::None)),
-            other => Err(format!("no command {other:?}")),
+            other => Err(format!("{NO_ACTION} {other:?}")),
         }
     }
 

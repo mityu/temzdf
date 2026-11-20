@@ -124,26 +124,6 @@ pub(super) fn write(path: &Path, f: &SwapFile) -> Result<(), String> {
     })
 }
 
-/// The commands of swap files.
-pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
-    (
-        "swap-info",
-        "(buffer?: number): SwapInfo | null",
-        "The swap file found when the buffer's file was opened, of a session that is gone (SwapExists): null when none is waiting",
-    ),
-    (
-        "use-swap",
-        "(buffer?: number): string",
-        "Start the buffer's own swap file (its first free name; after SwapExists was answered); returns its path",
-    ),
-    ("delete-swap", "(path: string): void", "Delete a swap file (one in the swap directory)"),
-    (
-        "text.recover",
-        "(opts?: { swap?: string, pane?: number }): void",
-        "Replace the text with a swap file's (the one found, by default), as one change that undo takes back",
-    ),
-];
-
 impl Session {
     /// The buffer's file was opened: its own swap file, or the swap file of
     /// a session that is gone (`SwapExists`; nobody hearing it: edited

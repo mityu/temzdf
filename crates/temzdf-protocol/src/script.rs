@@ -73,15 +73,6 @@ pub enum Token {
     Load,
 }
 
-/// A command the server offers to scripts (`temzdf.action.<name>(...)`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommandSpec {
-    pub name: String,
-    pub doc: String,
-    /// Its TypeScript signature after the name (`(text: string): void`).
-    pub ts: String,
-}
-
 /// A script failed: an exception, a syntax error, or an interrupt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScriptError {
@@ -117,7 +108,8 @@ pub enum ToHost {
     /// with `--clean`); answered by [`FromHost::Ready`].
     Load {
         config: Option<PathBuf>,
-        commands: Vec<CommandSpec>,
+        /// The actions scripts may call (`action.<name>(...)`), by name.
+        commands: Vec<String>,
     },
     /// Run a registered function; answered by [`FromHost::Done`].
     Call {
@@ -294,10 +286,7 @@ mod tests {
         ]);
         assert_eq!(v.get("pane").and_then(ScriptValue::as_num), Some(3.0));
         round_trip(&ToHost::Call { id: 7, func: 2, args: vec![v.clone()] });
-        round_trip(&ToHost::Load {
-            config: Some("config.ts".into()),
-            commands: vec![CommandSpec { name: "split".into(), doc: "split right|down".into(), ts: "(): void".into() }],
-        });
+        round_trip(&ToHost::Load { config: Some("config.ts".into()), commands: vec!["split".into()] });
         round_trip(&FromHost::Request {
             req: 1,
             token: Token::Task(4),

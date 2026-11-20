@@ -162,6 +162,7 @@ function run(line: string, mods: Mods): void {
   }
 }
 
+/** Ex commands (doc/design/ex-commands.md): the registry and running a command line (with helpers parsing one: `parseBang`, `splitArgs`, `splitBar`, `parsePrefix`, `resolveRange`). */
 export const command = {
   /** Define an Ex command (`:name`). */
   add(name: string, fn: (ctx: CmdCtx) => void, opts: CmdOpts = {}): void {

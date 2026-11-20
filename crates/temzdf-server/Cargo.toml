@@ -28,6 +28,13 @@ temzdf-term.workspace = true
 termpix-core.workspace = true
 termpix-ui.workspace = true
 
+# build.rs: the actions' names from crates/temzdf-script/ts-types/temzdf-actions.d.ts
+# (the swc crates the script host already uses to strip TypeScript).
+[build-dependencies]
+swc_common = "26.0.0"
+swc_ecma_ast = "29.0.2"
+swc_ecma_parser = "46.1.2"
+
 [dev-dependencies]
 # Images written in tests (loadImage).
 png = "0.18.1"

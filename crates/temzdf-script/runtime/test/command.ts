@@ -6,7 +6,7 @@ import { action, keymap } from "temzdf";
 import vim from "temzdf/edit/vim";
 import { command, parseBang, parsePrefix, resolveRange, splitArgs, splitBar } from "temzdf/command";
 import type { CmdCtx, VimRangeEnv } from "temzdf/command";
-import { keyset } from "../lib/keyset";
+import { keyset } from "temzdf/keyset";
 
 const failures: string[] = [];
 

@@ -141,37 +141,10 @@ impl Entry {
     }
 }
 
-/// The commands of this module: (name, TypeScript signature, documentation).
-pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
-    (
-        "copy-text",
-        "(text: string, opts?: { kind?: CopyKind; how?: \"copy\" | \"delete\"; register?: string; append?: boolean; clipboard?: boolean }): Copied",
-        "Record `text` in the copy history (doc/design/registers.md): as characters, lines or a block, copied or deleted, to a named `register` (`append` adds to its text); it goes to the client's clipboard as o.clipboard says (`clipboard` overrides; never for a named register unless true); returns the entry",
-    ),
-    (
-        "history",
-        "(opts?: { limit?: number }): Copied[]",
-        "The copy history, newest first (at most o.copyhistory entries)",
-    ),
-    ("register", "(name: string): Copied | null", "The entry of a named register"),
-    (
-        "set-register",
-        "(name: string, entry: Copied | { text: string; kind?: CopyKind } | null): void",
-        "Set a named register to an entry (of the history, or text) without recording a copy; null empties it",
-    ),
-    ("registers", "(): Record<string, Copied>", "The named registers"),
-    ("forget-copy", "(id?: number): void", "Drop an entry from the history (and registers); no id: everything"),
-    (
-        "put",
-        "(opts?: { register?: string; index?: number; pane?: number }): void",
-        "Put an entry (a named register's, else the history's `index`, 0 the newest) into a pane (the focused one): pasted into a terminal, typed into a text or input pane (lines go in before the cursor's line)",
-    ),
-    (
-        "read-clipboard",
-        "(opts?: { primary?: boolean }): Promise<string>",
-        "Read the client's clipboard (the primary selection): a terminal client asks the terminal (OSC 52), which may refuse or not answer (an error after 10 s); await it in a dispatched task",
-    ),
-];
+/// The names of the commands this module runs (declared with the others in
+/// crates/temzdf-script/ts-types/temzdf-actions.d.ts).
+const NAMES: &[&str] =
+    &["copy-text", "history", "register", "set-register", "registers", "forget-copy", "put", "read-clipboard"];
 
 impl Session {
     /// The source of a copy made in `buf` (the focused pane's buffer for
@@ -328,13 +301,13 @@ impl Session {
         self.copies.deadline()
     }
 
-    /// The commands of [`COMMANDS`]; `None` for other names.
+    /// The commands of [`NAMES`]; `None` for other names.
     pub(super) fn register_command(
         &mut self,
         name: &str,
         args: &[ScriptValue],
     ) -> Option<Result<(ScriptValue, Outcome), String>> {
-        if !COMMANDS.iter().any(|(n, _, _)| *n == name) {
+        if !NAMES.contains(&name) {
             return None;
         }
         // What panes copied just now (a visual mode's yank) is in.

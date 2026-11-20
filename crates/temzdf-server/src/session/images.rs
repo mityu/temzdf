@@ -23,16 +23,6 @@ pub(super) struct Loaded {
 
 pub(super) type LoadedImages = HashMap<u64, Loaded>;
 
-/// The commands of images.
-pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
-    (
-        "load-image",
-        "(path: string): number",
-        "Read an image (PNG, JPEG, GIF, WebP or SVG) for decorations to show (virtImage); the same file again replaces it under the same id. Returns its id",
-    ),
-    ("unload-image", "(id: number): void", "Drop an image: decorations showing it show their alt text instead"),
-];
-
 impl Session {
     pub(super) fn image_command(&mut self, name: &str, args: &[ScriptValue]) -> Result<(ScriptValue, Outcome), String> {
         match name {

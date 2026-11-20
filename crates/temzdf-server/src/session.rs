@@ -47,7 +47,7 @@ mod text;
 #[cfg(test)]
 mod vim_tests;
 
-pub use commands::command_specs;
+pub use commands::action_names;
 
 pub use script::{EVENTS as SCRIPT_EVENTS, ScriptSettings};
 
@@ -6444,13 +6444,35 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "spawns programs (actions opening panes run `true`)")]
+    fn every_declared_action_has_a_handler() {
+        // Each name of temzdf-actions.d.ts, without arguments, in a session
+        // without panes: an action's own error is fine, the dispatch's "no
+        // action" (nothing ran it) is not.
+        let start = Instant::now();
+        let mut unhandled = Vec::new();
+        for name in commands::action_names() {
+            let sink: EventSink = Arc::new(|_| true);
+            let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+            let mut s = Session::new("actions".into(), GEOMETRY, Hints::default(), settings, sink);
+            s.shell = Some(vec!["true".into()]);
+            if let Err(e) = s.run_command(name, &[], Instant::now())
+                && e.starts_with(commands::NO_ACTION)
+            {
+                unhandled.push(format!("{name}: {e}"));
+            }
+        }
+        assert!(unhandled.is_empty(), "declared but not handled: {unhandled:#?}");
+        eprintln!("{} actions in {:?}", commands::action_names().len(), start.elapsed());
+    }
+
+    #[test]
     fn command_names_are_unique() {
         // A name twice: the first one found would hide the other (`copy`,
         // the PDF pane's, once was).
-        let specs = commands::command_specs();
         let mut seen = std::collections::HashSet::new();
-        for c in &specs {
-            assert!(seen.insert(c.name.as_str()), "{} twice", c.name);
+        for name in commands::action_names() {
+            assert!(seen.insert(name), "{name} twice");
         }
     }
 

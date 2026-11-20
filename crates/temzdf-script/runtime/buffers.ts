@@ -6,7 +6,7 @@
 // buffers.enable();`.
 import { action, defineMode, schedule } from "temzdf";
 import type { KeyInfo, SwapInfo } from "temzdf";
-import { keyset } from "./lib/keyset";
+import { keyset } from "temzdf/keyset";
 
 /** The swap file being asked about: its buffer and the pane showing it. */
 let asking: null | { buf: number; pane: number | undefined; info: SwapInfo } = null;
@@ -87,6 +87,7 @@ function answer(key: KeyInfo): void {
   }
 }
 
+/** What happens to buffers: unsaved changes kept, files read again (hooks; namespace builtin-buffers). */
 export default keyset("builtin-buffers", (d) => {
   defineMode(CHOICE, { count: false, fallback: (_ctx, key) => answer(key) });
   // A swap file of a session that is gone (SwapExists): asked about.

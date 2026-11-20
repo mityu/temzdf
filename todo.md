@@ -88,6 +88,11 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- Actions handled but not declared in
+  `crates/temzdf-script/ts-types/temzdf-actions.d.ts` (an arm of
+  `run_command`'s `match` with no declaration) are not found by any test;
+  turning the `match` into a table (name -> function) would let a test
+  compare both ways.
 - `:w` with a range (Vim's `:5w`, `:'<,'>w FILE`: those lines only) is
   not built; a range on `:w` is `E481` (`crates/temzdf-script/runtime/vim/ex.ts`).
 - A Nix cache for CI. Magic Nix Cache (in GitHub's cache) was turned off

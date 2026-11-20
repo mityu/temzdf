@@ -8,7 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use temzdf_protocol::script::{CommandSpec, FromHost, HostOp, ScriptValue, ToHost};
+use temzdf_protocol::script::{FromHost, HostOp, ScriptValue, ToHost};
 use temzdf_script_runner::{Event, Options, ScriptHost};
 
 #[path = "../../temzdf-script/tests/host/cases.rs"]
@@ -50,10 +50,7 @@ fn start(config: &str, options: Options) -> (ScriptHost, mpsc::Receiver<Event>, 
         let _ = tx.send(e);
     })
     .unwrap();
-    let commands = cases::command_names()
-        .into_iter()
-        .map(|name| CommandSpec { name, doc: String::new(), ts: "(...args: unknown[]): void".into() })
-        .collect();
+    let commands = cases::command_names().into_iter().collect();
     assert!(host.send(ToHost::Load { config: Some(path), commands }));
     (host, rx, dir)
 }
@@ -159,10 +156,7 @@ fn keys_and_startup() {
         );
     }
     std::fs::write(dir.join("config.js"), config).unwrap();
-    let commands: Vec<CommandSpec> = cases::command_names()
-        .into_iter()
-        .map(|name| CommandSpec { name, doc: String::new(), ts: "(...args: unknown[]): void".into() })
-        .collect();
+    let commands: Vec<String> = cases::command_names().into_iter().collect();
 
     // Startup: the first in the process (it also loads the engine and the
     // module), then a few more.

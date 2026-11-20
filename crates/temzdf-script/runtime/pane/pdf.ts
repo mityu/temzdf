@@ -2,10 +2,11 @@
 // search (a prompt), the prefix. Defined when enabled: `import pdf from
 // "temzdf/pane/pdf"; pdf.enable();` (defaults.ts does).
 import { action } from "temzdf";
-import { keyset } from "../lib/keyset";
+import { keyset } from "temzdf/keyset";
 import { prefix } from "../lib/prefix";
 import { openSearch } from "../lib/search";
 
+/** PDF panes' keys (namespace builtin-pane-pdf). */
 export default keyset("builtin-pane-pdf", (d) => {
   d.map("pdf", ["q"], () => action.quit());
   d.map("pdf", ["<Esc>"], () => action.cancel());

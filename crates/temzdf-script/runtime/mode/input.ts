@@ -3,9 +3,10 @@
 // Defined when enabled: `import input from "temzdf/mode/input";
 // input.enable();`.
 import { acceptPrompt, action, cancelPrompt } from "temzdf";
-import { keyset } from "../lib/keyset";
+import { keyset } from "temzdf/keyset";
 import { prefix } from "../lib/prefix";
 
+/** Prompts' input mode (namespace builtin-mode-input). */
 export default keyset("builtin-mode-input", (d) => {
   // The input mode (prompts): editing with readline's keys, <CR> runs the
   // cursor's line, <Esc> cancels, the prefix. Pasted lines go in as they are.

@@ -7,8 +7,8 @@
 // vim/pending (an operator waiting for its motion), vim/char (the
 // character of f, t, r), vim/register ("x) and vim/cmdline (/ ? :).
 import { action, defineMode, isPrompt, keymap, o, schedule } from "temzdf";
-import type { Define } from "../lib/keyset";
-import { keyset } from "../lib/keyset";
+import type { Define } from "temzdf/keyset";
+import { keyset } from "temzdf/keyset";
 import type { KeyInfo, MapContext } from "temzdf";
 import { backspace, cancelCmdline, openCmdline, runCmdline, searchAgain, searchWord } from "./cmdline";
 import { abandonInsert, endInsert, insertRegister } from "./insert";
@@ -354,8 +354,9 @@ const keys = keyset(NAMESPACE, (d) => define(d), teardown);
 
 void draw;
 
-/** `import vim from "temzdf/edit/vim"; vim.enable(); vim.options.shiftwidth
- * = 2;`. */
+/** temzdf's Vim mode for text panes (doc/design/vim-mode.md), namespace
+ * builtin-edit-vim; the default editor (defaults.ts enables it). `import vim
+ * from "temzdf/edit/vim"; vim.enable(); vim.options.shiftwidth = 2;`. */
 const vim = {
   enable: () => keys.enable(),
   disable: () => keys.disable(),
@@ -363,7 +364,6 @@ const vim = {
     return keys.enabled;
   },
   options,
-  state,
 };
 export default vim;
 export { options };

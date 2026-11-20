@@ -251,7 +251,10 @@ impl Session {
         self.clear_host_notice();
         self.script.loading = Some(Instant::now() + LOAD_TIMEOUT);
         self.script.busy_since = Some(Instant::now());
-        self.script.send(&ToHost::Load { config: s.config.clone(), commands: super::commands::command_specs() })
+        self.script.send(&ToHost::Load {
+            config: s.config.clone(),
+            commands: super::commands::action_names().iter().map(|n| (*n).to_owned()).collect(),
+        })
     }
 
     /// `reload-config`: a new host, every mapping and hook registered again.

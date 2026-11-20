@@ -4,9 +4,10 @@
 // "temzdf/mode/normal"; normal.enable();`.
 import { action } from "temzdf";
 import { openCommandLine } from "../lib/cmdline";
-import { keyset } from "../lib/keyset";
+import { keyset } from "temzdf/keyset";
 import { prefix } from "../lib/prefix";
 
+/** The normal mode: panes, tab pages, sessions (namespace builtin-mode-normal). */
 export default keyset("builtin-mode-normal", (d) => {
   // The normal mode: panes. Moving the focus returns to that pane's mode.
   d.map("normal", ["%"], () => action.split("right"));

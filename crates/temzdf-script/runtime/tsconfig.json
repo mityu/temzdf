@@ -1,0 +1,19 @@
+{
+  // The shipped scripts, for editors and crates/temzdf/tests/types.rs:
+  // `temzdf` from the declarations written by hand (Rust's API), the
+  // shipped modules (`temzdf/NAME`, crates/temzdf-script/build.rs) from
+  // their sources here. QuickJS runs them: no DOM, no Node.
+  "compilerOptions": {
+    "strict": true, "noEmit": true, "target": "es2022", "module": "esnext",
+    "moduleResolution": "bundler", "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true, "types": [], "lib": ["es2022"],
+    "paths": {
+      "temzdf/keyset": ["./lib/keyset.ts"],
+      "temzdf/*": ["./*"]
+    }
+  },
+  "files": ["../ts-types/temzdf-core.d.ts", "../ts-types/temzdf-actions.d.ts"],
+  "include": ["**/*.ts"],
+  // From npm (their own types are not ours to check).
+  "exclude": ["polyfills.ts", "polyfills/**"]
+}

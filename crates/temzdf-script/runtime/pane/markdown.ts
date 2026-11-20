@@ -8,7 +8,7 @@
 // does).
 import { action, defineMode, feedkeys } from "temzdf";
 import type { MapContext } from "temzdf";
-import { keyset } from "../lib/keyset";
+import { keyset } from "temzdf/keyset";
 import { prefix } from "../lib/prefix";
 import { openSearch } from "../lib/search";
 
@@ -59,6 +59,7 @@ function closeOutline(go: boolean): void {
 
 const inText = () => action.markdown.mode() === "text";
 
+/** Markdown viewers' keys (namespace builtin-pane-markdown): the graphics mode (the mode `markdown`), links and the outline in the text mode. */
 export default keyset("builtin-pane-markdown", (d) => {
   // The graphics mode.
   d.map(M, ["q"], () => action.quit());

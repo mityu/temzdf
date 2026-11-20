@@ -26,6 +26,7 @@ const MODULES: &[(&str, &str)] = &[
     ("mode/input", "mode/input.ts"),
     ("buffers", "buffers.ts"),
     ("command", "command.ts"),
+    ("keyset", "lib/keyset.ts"),
 ];
 
 fn main() {
