@@ -181,7 +181,7 @@
                       [
                         shellcheck
                         esbuild
-                        biome
+                        biome # Formats and lints the shipped scripts (scripts/check.sh).
                       ]
                       ++ lib.optionals (!forCi) [
                         # npm install --package-lock-only in

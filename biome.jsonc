@@ -1,0 +1,28 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
+  // The scripts written by hand: the shipped ones, the script host's
+  // prelude and the tests' configurations (scripts/check.sh checks them).
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": [
+      "crates/temzdf-script/runtime/**/*.ts",
+      "crates/temzdf-script/src/prelude.js",
+      "crates/temzdf/tests/configs/*.ts",
+      "tests/e2e/configs/*.ts"
+    ]
+  },
+  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },
+  "javascript": {
+    "formatter": { "quoteStyle": "double", "trailingCommas": "all", "semicolons": "always" }
+  },
+  "assist": { "enabled": false },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      // `x!` where the code knows a value is there (a match found, a
+      // state set by the caller): checks would only add dead branches.
+      "style": { "noNonNullAssertion": "off" }
+    }
+  }
+}
