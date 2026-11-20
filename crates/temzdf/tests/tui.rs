@@ -1666,25 +1666,37 @@ fn ls_fonts_shows_the_configured_fonts_or_a_sessions() {
     assert_eq!(run(&["ls-fonts", "-s", "lf"]), "ls-fonts|--font|No Such Font:20|--font|Other|--font-wide|Wide|");
 }
 
-#[test]
-fn a_session_in_use_outlives_a_removed_socket() {
-    let env = Env::new("sock-gone");
-    let mut t = Term::spawn(&[BIN, "-s", "sg"], &env.options());
+/// A session in use whose socket (`whole_dir`: the whole directory, the lock
+/// too) a cleaner removed listens again once the server's check (every 2 s)
+/// has run: polled for, not slept.
+fn removed_socket_is_rebound(name: &str, whole_dir: bool) {
+    let env = Env::new(name);
+    let mut t = Term::spawn(&[BIN, "-s", name], &env.options());
     t.wait_for("the prompt", prompt);
     let dir = env.path("run/temzdf/sessions");
-    // A cleaner removes the socket, then the whole directory (the lock too).
-    for round in 0..2 {
-        if round == 0 {
-            std::fs::remove_file(dir.join("sg.sock")).unwrap();
-        } else {
-            std::fs::remove_dir_all(&dir).unwrap();
-        }
-        // The server checks every 2 s.
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        t.type_text(&format!("echo alive-{round}\n"));
-        t.wait_text(&format!("alive-{round}"));
-        assert!(session_names(&env).contains(&"sg".to_owned()), "listening again");
+    if whole_dir {
+        std::fs::remove_dir_all(&dir).unwrap();
+    } else {
+        std::fs::remove_file(dir.join(format!("{name}.sock"))).unwrap();
     }
+    // While the socket is gone `ls` does not list the session.
+    let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
+    while !session_names(&env).contains(&name.to_owned()) {
+        assert!(std::time::Instant::now() < deadline, "never listening again");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    t.type_text("echo alive-$((1 + 1))\n");
+    t.wait_text("alive-2");
+}
+
+#[test]
+fn a_session_in_use_outlives_a_removed_socket() {
+    removed_socket_is_rebound("sock-gone", false);
+}
+
+#[test]
+fn a_session_in_use_outlives_a_removed_session_directory() {
+    removed_socket_is_rebound("dir-gone", true);
 }
 
 #[test]
