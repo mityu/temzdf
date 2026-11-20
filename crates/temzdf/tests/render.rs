@@ -36,20 +36,32 @@ fn render(dir: &Path, name: &str, flag: &str, input: &str) -> Vec<u8> {
 fn a_replayed_timeline_renders_as_its_input_did() {
     let dir = TempDir::new("render");
     let d = dir.path();
-    // Keys one by one, a second apart: as --keys.
-    assert!(
-        render(d, "keys", "--keys", "jjj") == render(d, "timed-keys", "--events", "0 key j\n1000 key j\n2000 key j\n"),
-        "the same screen"
-    );
     // Wheel steps 30 ms apart accelerate; 200 ms apart they do not.
     let wheel = |gap: u32| (0..3).map(|i| format!("{} wheel down 300 300\n", i * gap)).collect::<String>();
-    assert!(render(d, "flick", "--events", &wheel(30)) != render(d, "slow", "--events", &wheel(200)));
     // Resting on a link in the table of contents opens its preview after
     // the delay (300 ms): not yet at 100 ms.
     let hover = |end: u32| format!("0 move 150 412\n{end} end\n");
-    let early = render(d, "early", "--events", &hover(100));
-    assert!(early == render(d, "none", "--events", "100 end\n"), "no preview yet");
-    assert!(early != render(d, "late", "--events", &hover(1000)), "the preview");
+    // The renders are independent processes: run them at once.
+    let jobs = [
+        // Keys one by one, a second apart: as --keys.
+        ("keys", "--keys", "jjj".to_owned()),
+        ("timed-keys", "--events", "0 key j\n1000 key j\n2000 key j\n".to_owned()),
+        ("flick", "--events", wheel(30)),
+        ("slow", "--events", wheel(200)),
+        ("early", "--events", hover(100)),
+        ("none", "--events", "100 end\n".to_owned()),
+        ("late", "--events", hover(1000)),
+    ];
+    let out: Vec<Vec<u8>> = std::thread::scope(|s| {
+        let handles: Vec<_> =
+            jobs.iter().map(|(name, flag, input)| s.spawn(move || render(d, name, flag, input))).collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let [keys, timed_keys, flick, slow, early, none, late] = &out[..] else { unreachable!() };
+    assert!(keys == timed_keys, "the same screen");
+    assert!(flick != slow);
+    assert!(early == none, "no preview yet");
+    assert!(early != late, "the preview");
 }
 
 #[test]
