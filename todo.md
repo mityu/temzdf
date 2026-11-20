@@ -93,6 +93,12 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- A Nix cache for CI. Magic Nix Cache (in GitHub's cache) was turned off
+  on 2026-11-20: it asks the cache API once per store path, ran into its
+  rate limit (HTTP 429), and rust-cache's restores in the same run failed
+  with it. Without one, `nix build` builds crane's `.#deps` and the guest
+  every run, and the dev shells build libghostty-vt. Cachix would keep the
+  store outside GitHub's cache (an account and a signing key needed).
 - libtexprintf as a crate of its own (like a `libtexprintf-sys`) compiling
   its C with `cc`: builds without Nix would need neither autotools nor a
   pkg-config file of ours (`scripts/deps-without-nix.sh`). Not now.

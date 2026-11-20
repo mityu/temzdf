@@ -204,8 +204,9 @@ Ubuntu without Nix and starts them (`scripts/smoke-session.sh`: a session
 splits its pane on `<C-b>%`).
 `nix build` uses crane: the Rust dependencies, the script host's guest
 and the guest's dependencies are derivations of their own (`.#deps`,
-`.#guest`, `.#guest-deps`), and every job keeps the Nix store between
-runs with Magic Nix Cache, so only what changed is built.
+`.#guest`, `.#guest-deps`), for a Nix cache to keep between runs. There
+is none for now: Magic Nix Cache ran into the cache API's rate limit and
+made rust-cache's restores fail with it (`todo.md`).
 
 ## Conventions
 
