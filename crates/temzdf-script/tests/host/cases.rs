@@ -557,6 +557,25 @@ dispatch(async (ctx) => {
 }
 
 #[test]
+fn urls_come_from_the_polyfills() {
+    // URL and URLSearchParams (core-js, runtime/polyfills.ts): an
+    // internationalised host, dot segments, the query, and a refusal.
+    let config = r#"import { action } from "temzdf";
+const u = new URL("https://例え.jp:8080/a/../b?x=1&y=two#h");
+const p = new URLSearchParams("a=1");
+p.append("b", "2 3");
+let refused = "";
+try { new URL("not a url"); } catch (e) { refused = (e as Error).name; }
+action.message(`${u.href} ${u.searchParams.get("y")} ${p} ${refused} ${URL.canParse("x:")}`);
+"#;
+    let mut s = Session::start(&[("config.ts", config)]);
+    s.load("config.ts");
+    let mut log = Vec::new();
+    ready_ok(s.serve(&mut log));
+    assert_eq!(log, ["load message(https://xn--r8jz45g.jp:8080/b?x=1&y=two#h two a=1&b=2+3 TypeError true)"]);
+}
+
+#[test]
 fn a_runaway_timer_is_stopped_and_the_call_behind_it_runs() {
     let config = r#"import { action, keymap } from "temzdf";
 setTimeout(() => { for (;;) {} }, 0);

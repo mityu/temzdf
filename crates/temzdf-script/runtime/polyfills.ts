@@ -5,3 +5,6 @@ import "./polyfills/self";
 // AbortController and AbortSignal (abort, reason, throwIfAborted,
 // addEventListener, AbortSignal.timeout and any).
 import "abortcontroller-polyfill/dist/abortcontroller-polyfill-only";
+// URL and URLSearchParams (the WHATWG URL Standard; zod's z.url() needs
+// URL). core-js's: whatwg-url is ten times its size and needs TextEncoder.
+import "./polyfills/url";

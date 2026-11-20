@@ -44,7 +44,14 @@ mapfile -t modules < <(sed -n '/^const MODULES/,/^];/s/^ *("\([^"]*\)", "\([^"]*
 # `temzdf` as a library: the bodies of the declarations' `declare module
 # "temzdf"` blocks; what comes before the block (globals) stays global.
 body() { sed -n '/^declare module "temzdf" {$/,/^}$/p' "$1" | sed '1d;$d'; }
-{ body "$types/temzdf-core.d.ts"; body "$types/temzdf-actions.d.ts"; } >"$work/node_modules/temzdf/index.d.ts"
+# The globals, referred to from there: the bundler's programs start from
+# the entries alone (no `files`), and the npm packages' types use them too
+# (zod's URL).
+{
+  echo '/// <reference path="../../globals.d.ts" />'
+  body "$types/temzdf-core.d.ts"
+  body "$types/temzdf-actions.d.ts"
+} >"$work/node_modules/temzdf/index.d.ts"
 sed '/^declare module "temzdf" {$/,$d' "$types/temzdf-core.d.ts" >"$work/globals.d.ts"
 ln -s "$runtime" "$work/node_modules/temzdf/runtime"
 echo '{ "name": "temzdf", "version": "0.0.0", "types": "index.d.ts" }' >"$work/node_modules/temzdf/package.json"

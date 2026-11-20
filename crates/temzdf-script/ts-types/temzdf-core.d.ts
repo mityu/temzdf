@@ -16,6 +16,44 @@ declare var console: {
 declare function setTimeout(fn: (...args: any[]) => void, ms?: number, ...args: any[]): number;
 declare function clearTimeout(id: number): void;
 
+// The WHATWG URL Standard's URL and URLSearchParams (runtime/polyfills.ts).
+declare class URL {
+  constructor(url: string | URL, base?: string | URL);
+  static canParse(url: string | URL, base?: string | URL): boolean;
+  static parse(url: string | URL, base?: string | URL): URL | null;
+  hash: string;
+  host: string;
+  hostname: string;
+  href: string;
+  readonly origin: string;
+  password: string;
+  pathname: string;
+  port: string;
+  protocol: string;
+  search: string;
+  readonly searchParams: URLSearchParams;
+  username: string;
+  toJSON(): string;
+  toString(): string;
+}
+declare class URLSearchParams {
+  constructor(init?: string[][] | Record<string, string> | string | URLSearchParams);
+  readonly size: number;
+  append(name: string, value: string): void;
+  delete(name: string, value?: string): void;
+  get(name: string): string | null;
+  getAll(name: string): string[];
+  has(name: string, value?: string): boolean;
+  set(name: string, value: string): void;
+  sort(): void;
+  toString(): string;
+  forEach(fn: (value: string, key: string, parent: URLSearchParams) => void): void;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
+}
+
 declare module "temzdf" {
   /** The session's actions (synchronous; inside a mapped or hook function); see temzdf-actions.d.ts. */
   export const action: Actions;
