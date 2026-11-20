@@ -6,10 +6,10 @@ on:
     branches:
       - main
       - dev
-    # (Markdown elsewhere may be a test's input: tests/fixtures/sample.md.)
     paths-ignore:
       - 'doc/**'
       - 'experiments/**'
+      - '*.md'
   pull_request:
 
 permissions:
@@ -22,10 +22,37 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # script(1), used by the smoke test, comes with util-linux.
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev libfontconfig-dev pkg-config autoconf automake libtool
+      # Its default RUSTFLAGS (-D warnings) stay.
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+        with:
+          toolchain: stable
+          target: wasm32-wasip1
+          cache-shared-key: without-nix
+          cache-save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
+      # libghostty-vt-sys builds libghostty-vt from source with Zig.
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+          use-cache: false
+      - run: npm i -g esbuild
+      - run: scripts/deps-without-nix.sh "$RUNNER_TEMP/deps" >>"$GITHUB_ENV"
+      - run: cargo xtask fetch-fonts
+      - run: cargo build --locked -p temzdf -p temzdf-gui
+      - run: scripts/smoke-session.sh target/debug
+
   # rustfmt, clippy (warnings are errors) and tests, fixtures built with TeX
   # from the `ci` dev shell. End-to-end terminal tests stay local (doc/dev/testing.md).
   # Miri runs in a job of its own, beside this one.
-  check:
+  check-with-nix:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Line tables are all a failing test's backtrace needs: the build and
@@ -60,14 +87,14 @@ jobs:
 
   # The unit tests under Miri (scripts/miri.sh), with the nightly toolchain of
   # the `ci-miri` dev shell.
-  miri:
+  miri-with-nix:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - run: nix develop .#ci-miri --command bash -c 'dirname "$(command -v cargo)"' >>"$GITHUB_PATH"
-      # As in `check`.
+      # As in `check-with-nix`.
       - run: rustup self uninstall -y
       # Also Miri's standard library, built by `cargo miri setup`.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -86,11 +113,13 @@ jobs:
           if-no-files-found: ignore
 
   # The package output (`nix build`).
-  build:
+  build-with-nix:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os:
+          - ubuntu-latest
+          - macos-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -99,8 +128,17 @@ jobs:
       - run: nix build --print-build-logs
       - run: ./result/bin/temzdf --help
 
-  prune-check:
-    needs: check
+  prune-cache-build:
+    needs: build
+    if: ${{ !cancelled() && github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/prune-rust-cache.yml
+    with:
+      key-prefix: v0-rust-without-nix-
+
+  prune-cache-check-with-nix:
+    needs: check-with-nix
     if: ${{ !cancelled() && github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
     permissions:
       actions: write
@@ -108,8 +146,8 @@ jobs:
     with:
       key-prefix: v0-rust-check-
 
-  prune-miri:
-    needs: miri
+  prune-cache-miri-with-nix:
+    needs: miri-with-nix
     if: ${{ !cancelled() && github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
     permissions:
       actions: write
