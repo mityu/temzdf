@@ -1,0 +1,11 @@
+{
+  // The script host's prelude (prelude.ts): what it builds is typed as the
+  // `temzdf` module of the declarations by hand (for editors and
+  // crates/temzdf/tests/types.rs). QuickJS runs it: no DOM, no Node.
+  "compilerOptions": {
+    "strict": true, "noEmit": true, "target": "es2022", "module": "esnext",
+    "moduleResolution": "bundler", "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true, "types": [], "lib": ["es2022"]
+  },
+  "files": ["prelude.ts", "../ts-types/temzdf-core.d.ts", "../ts-types/temzdf-actions.d.ts"]
+}

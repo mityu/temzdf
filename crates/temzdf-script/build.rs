@@ -1,5 +1,6 @@
 //! Bundles the shipped scripts (runtime/) with esbuild into `$OUT_DIR`, for
-//! the host to embed (src/host.rs): `polyfills.js` (globals scripts expect,
+//! the host to embed (src/host.rs): `prelude.js` (the API's JavaScript
+//! half, from src/prelude.ts), `polyfills.js` (globals scripts expect,
 //! from npm packages), `defaults.js` (the default configuration) and the
 //! modules scripts import as `temzdf/NAME` ([`MODULES`]), with
 //! `bundled.rs` listing them for the host. `"temzdf"` and `"temzdf/NAME"`
@@ -37,6 +38,8 @@ fn main() {
     let runtime = manifest.join("runtime");
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     println!("cargo::rerun-if-changed={}", runtime.display());
+    let prelude = manifest.join("src/prelude.ts");
+    println!("cargo::rerun-if-changed={}", prelude.display());
     for var in ["TEMZDF_NODE_MODULES", "ESBUILD"] {
         println!("cargo::rerun-if-env-changed={var}");
     }
@@ -67,6 +70,9 @@ fn main() {
             entry.display()
         );
     };
+    // The host's prelude: a script (a function, called at once), as the
+    // polyfills.
+    bundle(&prelude, "prelude.js", "iife");
     bundle(&runtime.join("polyfills.ts"), "polyfills.js", "iife");
     bundle(&runtime.join("defaults.ts"), "defaults.js", "esm");
     let mut list = String::from("&[\n");

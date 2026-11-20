@@ -83,7 +83,7 @@ cargo build --workspace
 ```
 
 Run `scripts/check.sh` before every commit. The scripts (TypeScript and
-the script host's `prelude.js`) are formatted and linted by Biome
+the script host's `prelude.ts`) are formatted and linted by Biome
 (`biome.jsonc`; `biome check --write .` alone fixes what it can). Their
 TypeScript declarations are in `crates/temzdf-script/ts-types/`: Rust's
 API by hand in `temzdf-core.d.ts`, the session's actions by hand in

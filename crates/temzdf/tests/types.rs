@@ -94,6 +94,8 @@ fn the_shipped_scripts_type_check() {
     // runtime/ with its tsconfig.json (editors use it too), and a
     // configuration using the shipped modules as a user's would.
     check_project(&root().join("crates/temzdf-script/runtime")).unwrap();
+    // The host's prelude builds what the declarations say `temzdf` is.
+    check_project(&root().join("crates/temzdf-script/src")).unwrap();
     let config = "import vim from \"temzdf/edit/vim\";\nimport notepad from \"temzdf/edit/notepad\";\n\
         import { keyset } from \"temzdf/keyset\";\nimport type { Keyset } from \"temzdf/keyset\";\n\
         vim.options.shiftwidth = 2;\nif (vim.enabled) vim.disable();\nnotepad.enable();\n\

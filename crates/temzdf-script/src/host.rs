@@ -1,5 +1,5 @@
 //! The host's event loop and the native half of the API (`__host`, used by
-//! `prelude.js`).
+//! `prelude.ts`).
 //!
 //! JavaScript runs on one thread; the [`Link`] counts the session's
 //! interrupts as they are sent, so one can be noticed while JavaScript runs
@@ -24,7 +24,7 @@ use temzdf_protocol::script::{
 
 use crate::link::{Link, Received, StreamLink};
 
-const PRELUDE: &str = include_str!("prelude.js");
+const PRELUDE: &str = include_str!(concat!(env!("OUT_DIR"), "/prelude.js"));
 /// The shipped default configuration, loaded before the user's.
 const DEFAULTS: &str = include_str!(concat!(env!("OUT_DIR"), "/defaults.js"));
 /// Globals QuickJS lacks (AbortController, ...), evaluated before any
@@ -239,7 +239,7 @@ impl State {
     }
 }
 
-/// The native functions `prelude.js` builds on, then the prelude itself.
+/// The native functions `prelude.ts` builds on, then the prelude itself.
 fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
     let host = rquickjs::Object::new(ctx.clone())?;
     let s = st.clone();
@@ -761,7 +761,7 @@ fn read_module(path: &Path) -> Result<String, String> {
     }
 }
 
-/// The property marking an error a command answered with (`prelude.js`
+/// The property marking an error a command answered with (`prelude.ts`
 /// reads it too).
 const COMMAND_FAILED: &str = "temzdfCommandFailed";
 

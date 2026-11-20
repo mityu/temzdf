@@ -6,7 +6,7 @@
   "files": {
     "includes": [
       "crates/temzdf-script/runtime/**/*.ts",
-      "crates/temzdf-script/src/prelude.js",
+      "crates/temzdf-script/src/prelude.ts",
       // The declarations written by hand (not temzdf-all.d.ts, generated).
       "crates/temzdf-script/ts-types/temzdf-core.d.ts",
       "crates/temzdf-script/ts-types/temzdf-actions.d.ts",
