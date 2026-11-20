@@ -379,6 +379,9 @@ fn backward(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
     use super::*;
 
     fn find(text: &str, pat: &str, opts: SearchOptions) -> Option<(usize, usize)> {
@@ -437,21 +440,37 @@ mod tests {
         assert_eq!(m.map(|m| m.start), Some(5 << 20));
     }
 
-    /// The search before it stopped early: every match, then pick.
-    fn reference_search(text: &Text, pat: &Pattern, opts: &SearchOptions, words: &WordChars) -> Option<Found> {
+    /// The enumerations [`reference_search`] picks from, by the range they
+    /// enumerate: they depend on the text, the pattern and the options but
+    /// `from`, `backward` and `wrap`, so a test going over every `from`
+    /// shares them instead of enumerating again for each.
+    type Enumerated = HashMap<(usize, usize), Rc<Vec<Found>>>;
+
+    /// The search before it stopped early: every match, then pick. It takes
+    /// the enumerations from (and adds them to) `cache`, which must only ever see one text, pattern and options
+    /// (`from`, `backward` and `wrap` aside).
+    fn reference_search(
+        text: &Text,
+        pat: &Pattern,
+        opts: &SearchOptions,
+        words: &WordChars,
+        cache: &mut Enumerated,
+    ) -> Option<Found> {
         let (lo, hi) = match opts.lines {
             Some((a, b)) => (text.line_start(a.min(b)), text.line_end(a.max(b))),
             None => (0, text.len_chars()),
         };
         let from = opts.from.clamp(lo, hi);
-        let all = |a: usize, b: usize| reference_find_all(text, pat, a, b, opts, words);
+        let mut enumerate = |a: usize, b: usize| {
+            Rc::clone(cache.entry((a, b)).or_insert_with(|| Rc::new(reference_find_all(text, pat, a, b, opts, words))))
+        };
         if opts.backward {
-            let found = all(lo, hi);
+            let found = enumerate(lo, hi);
             found.iter().rev().find(|m| m.start < from).or(if opts.wrap { found.last() } else { None }).cloned()
         } else {
             let line_start = text.line_start(text.line_of(from)).max(lo);
-            let found = all(line_start, hi).into_iter().find(|m| m.start >= from);
-            found.or_else(|| if opts.wrap { all(lo, hi).into_iter().next() } else { None })
+            let found = enumerate(line_start, hi).iter().find(|m| m.start >= from).cloned();
+            found.or_else(|| if opts.wrap { enumerate(lo, hi).first().cloned() } else { None })
         }
     }
 
@@ -583,10 +602,18 @@ mod tests {
                         reference_find_all(&t, &pat, 0, t.len_chars(), &o, &w),
                         "find_all {p:?} in {s:?}, {o:?}"
                     );
-                    for from in 0..=t.len_chars() + 1 {
+                    // Both searches clamp `from` to the range first, so one
+                    // position below it and one above stand for all others.
+                    let (lo, hi) = match lines {
+                        Some((a, b)) => (t.line_start(a.min(b)), t.line_end(a.max(b))),
+                        None => (0, t.len_chars()),
+                    };
+                    let froms = lo.checked_sub(1).into_iter().chain(lo..=hi).chain([hi + 1]);
+                    let mut cache = Enumerated::new();
+                    for from in froms {
                         for (backward, wrap) in [(false, false), (false, true), (true, false), (true, true)] {
                             let o = SearchOptions { from, backward, wrap, ..o };
-                            let want = reference_search(&t, &pat, &o, &w);
+                            let want = reference_search(&t, &pat, &o, &w, &mut cache);
                             for window in if backward { &[1, 2, 1000][..] } else { &[1000] } {
                                 let got = search_with(&t, &pat, &o, &w, *window);
                                 assert_eq!(got, want, "{p:?} in {s:?}, {o:?}, window {window}");
@@ -597,7 +624,8 @@ mod tests {
                 }
             }
         }
-        assert!(checked > 10_000);
+        // 264176 searches at the time of writing.
+        assert!(checked > 250_000, "{checked} searches");
     }
 
     fn visited<T>(f: impl FnOnce() -> T) -> (T, (usize, usize)) {
