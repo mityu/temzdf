@@ -31,6 +31,11 @@ command.add(name: string, fn: (ctx: CmdCtx) => void, opts?: {
 
 - **Names are letters only**, as Vim's. So `:b1` is `b` with the argument
   `1`, `:s#a#b#` is `s` with `#a#b#`, and `:w!` is `w` with `!`.
+- **The empty name** is the command of lines with no name: a range alone
+  (`:5`, which the Vim mode defines as going to line 5) or a line that
+  starts with another character (`:!ls` gives it the argument `!ls`).
+  Without one such lines are `E492`. It takes no `shortName` (none is a
+  prefix of the empty name), so no name typed ever reaches it.
 - `shortName` is a prefix of `name`. Without it, only the full name runs
   the command.
 - `when` works as a mapping's `when` (`doc/design/keymaps.md`), with the
@@ -122,11 +127,11 @@ option is a string so other kinds can be added beside it.
 - Count ranges (Vim's `-count`) are left out; another value of `prefix`
   (`"count"`, say) can be added later.
 
+A range alone (`:5`) runs the command with the empty name (see
+"Registering"; decided 2026-11-20).
+
 Undecided (2026-11-19):
 
-- **A range alone** (`:5`, which goes to line 5 in Vim): for now an error
-  (`E492`), as a line without a name. One proposal was to allow
-  `command.add("", fn, { prefix: "vim-range" })` for it.
 - Whether to state as a rule that **prefixes never start with a letter**,
   so that a word before a command (`:vert edit`) is always a command of
   its own taking the rest. Vim's range grammar starts with no letter, so
@@ -215,6 +220,13 @@ open panes read the ones they understand.
 - **Ranges resolved by the core**, with a reader registered per pane kind
   or marks put in from outside: resolving needs the Vim mode's marks, so
   the range is passed as typed instead.
+- **A range alone handled elsewhere** than by a command with the empty
+  name: by the caller before `command.execute` (then not after a `|`, in
+  `@:` or from the CLI); by a handler of its own (`command.onRangeOnly`,
+  needing its own namespaces and order); by marking a named command as
+  the one for no name (`{ bare: true }`, a name Vim does not have); or by
+  a handler for every line no command matches (typing mistakes would go
+  there too).
 - **Three kinds of `bar`** (`"split"`, `"self"` returning the rest it did
   not use, `"none"`), as Vim's command flags: the continuation covers
   `"self"` and `"none"` with one kind and also expresses `:g` and the

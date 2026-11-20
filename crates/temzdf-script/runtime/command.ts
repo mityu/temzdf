@@ -77,7 +77,7 @@ function now<T>(fn: () => T): T {
 }
 
 function check(name: string, fn: unknown, opts: CmdOpts): void {
-  if (!/^[A-Za-z]+$/.test(name)) throw new TypeError(`command.add(${name}): a name is letters only`);
+  if (!/^[A-Za-z]*$/.test(name)) throw new TypeError(`command.add(${name}): a name is letters only`);
   if (typeof fn !== "function") throw new TypeError(`command.add(${name}): expected a function`);
   const s = opts.shortName;
   if (s !== undefined && (s === "" || !name.startsWith(s))) {
@@ -138,9 +138,9 @@ function run(line: string, mods: Mods): void {
     rest = rest.replace(/^[\s:]+/, "");
     if (rest === "") return;
     const [range, afterRange] = parsePrefix(rest);
+    // No name (a range alone, `:5`): the command named "" if one is defined.
     const name = /^[A-Za-z]*/.exec(afterRange)![0];
-    // A range alone (`:5`) is undecided (doc/design/ex-commands.md): an error for now.
-    const cmd = name === "" ? undefined : lookup(name);
+    const cmd = lookup(name);
     if (cmd === undefined) throw new Error(`E492: Not an editor command: ${rest.trimEnd()}`);
     if (range !== undefined && cmd.prefix === undefined) throw new Error("E481: No range allowed");
     const args = afterRange.slice(name.length);

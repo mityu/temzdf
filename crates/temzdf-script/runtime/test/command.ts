@@ -39,10 +39,11 @@ const cases: [string, () => void][] = [
     "registering checks its arguments",
     () => {
       eq("name with a digit", thrown(() => command.add("w2", record)) !== "", true);
-      eq("empty name", thrown(() => command.add("", record)) !== "", true);
       eq("not a function", thrown(() => command.add("w", 42 as never)) !== "", true);
       eq("shortName not a prefix", thrown(() => command.add("write", record, { shortName: "x" })) !== "", true);
       eq("empty shortName", thrown(() => command.add("write", record, { shortName: "" })) !== "", true);
+      eq("an empty shortName for the empty name", thrown(() => command.add("", record, { shortName: "" })) !== "", true);
+      eq("any shortName for the empty name", thrown(() => command.add("", record, { shortName: "a" })) !== "", true);
       eq("unknown prefix", thrown(() => command.add("w", record, { prefix: "lines" as never })) !== "", true);
       eq("unknown bar", thrown(() => command.add("w", record, { bar: "split" as never })) !== "", true);
       eq("nothing registered", command.list().length, 0);
@@ -168,11 +169,31 @@ const cases: [string, () => void][] = [
       command.execute("2,3d");
       command.execute("d");
       eq("no prefix", thrown(() => command.execute("2pwd")), "E481: No range allowed");
-      eq("a range alone, for now", thrown(() => command.execute("5")), "E492: Not an editor command: 5");
+      eq("a range alone, with no command named \"\"", thrown(() => command.execute("5")), "E492: Not an editor command: 5");
       eq("passed as typed", log, [
         { start: { base: { kind: "number", number: 2 }, offset: 0 }, end: { base: { kind: "number", number: 3 }, offset: 0 }, separator: "," },
         undefined,
       ]);
+    },
+  ],
+  [
+    "a line without a name runs the command named \"\"",
+    () => {
+      command.add("", (c) => log.push([c.range?.start.base, c.args]), { prefix: "vim-range" });
+      command.add("d", (c) => log.push(["d", c.range?.start.base]), { prefix: "vim-range" });
+      command.execute("5");
+      command.execute("5 | 3d");
+      command.execute("!ls");
+      eq("a name is not taken for it", thrown(() => command.execute("x")), "E492: Not an editor command: x");
+      command.execute("");
+      eq("range, arguments", log, [
+        [{ kind: "number", number: 5 }, ""],
+        [{ kind: "number", number: 5 }, " "],
+        ["d", { kind: "number", number: 3 }],
+        [undefined, "!ls"],
+      ]);
+      command.add("", record);
+      eq("without a prefix", thrown(() => command.execute("5")), "E481: No range allowed");
     },
   ],
   [
