@@ -1,0 +1,5 @@
+# Formatting only: git blame --ignore-revs-file .git-blame-ignore-revs (or
+# git config blame.ignoreRevsFile .git-blame-ignore-revs) skips these.
+
+# chore(script): format the scripts with Biome
+61fc00e945229684dd9fdd0902211bce4da9e9ce
