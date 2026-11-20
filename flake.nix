@@ -181,6 +181,7 @@
                       [
                         shellcheck
                         esbuild
+                        biome
                       ]
                       ++ lib.optionals (!forCi) [
                         # npm install --package-lock-only in
