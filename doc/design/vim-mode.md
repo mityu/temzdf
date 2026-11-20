@@ -162,7 +162,9 @@ user's.
   optionally the mode or an error), run by
   `crates/temzdf-server/src/session/vim_tests.rs`: a session with the real
   script host (the WebAssembly guest, in process), keys typed one at a
-  time. `VIM_CASE=name cargo test -p temzdf-server vim_cases` runs some.
+  time. Each file is a test of its own (`vim_cases::motions`, ...),
+  listed in `case_files!`; `VIM_CASE=name cargo test -p temzdf-server
+  vim_cases` runs some.
 - `crates/temzdf/tests/types.rs` type checks the sources with `tsc`.
 - `crates/temzdf/tests/tui.rs`: the real binary with the mode turned on,
   editing and `:w`, `:q`.

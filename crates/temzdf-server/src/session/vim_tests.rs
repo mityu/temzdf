@@ -200,36 +200,55 @@ fn run(case: &Case, dir: &Path) -> Result<(), String> {
     if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
 }
 
-#[test]
-#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-fn vim_cases() {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(cases_dir())
-        .unwrap()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "cases"))
-        .collect();
-    files.sort();
+/// Run the cases of `runtime/vim/test/NAME.cases` (only those whose name
+/// contains `$VIM_CASE`, if set).
+fn run_file(name: &str) {
+    let file = format!("{name}.cases");
     let only = std::env::var("VIM_CASE").ok();
-    let dir = std::env::temp_dir().join(format!("temzdf-vim-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("temzdf-vim-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut failed = Vec::new();
     let mut count = 0;
-    for f in &files {
-        let name = f.file_name().unwrap().to_string_lossy().into_owned();
-        for case in parse(&name, &std::fs::read_to_string(f).unwrap()) {
-            if only.as_ref().is_some_and(|o| !case.name.contains(o.as_str())) {
-                continue;
-            }
-            count += 1;
-            if let Err(e) = run(&case, &dir) {
-                failed.push(format!("--- {}: {} (keys {})\n{e}", case.file, case.name, case.keys));
-            }
+    for case in parse(&file, &std::fs::read_to_string(cases_dir().join(&file)).unwrap()) {
+        if only.as_ref().is_some_and(|o| !case.name.contains(o.as_str())) {
+            continue;
+        }
+        count += 1;
+        if let Err(e) = run(&case, &dir) {
+            failed.push(format!("--- {}: {} (keys {})\n{e}", case.file, case.name, case.keys));
         }
     }
     let _ = std::fs::remove_dir_all(&dir);
-    assert!(count > 0, "no cases");
+    assert!(count > 0 || only.is_some(), "no cases in {file}");
     assert!(failed.is_empty(), "{} of {count} cases failed:\n{}", failed.len(), failed.join("\n"));
+}
+
+/// A test per case file, so that they run in parallel.
+macro_rules! case_files {
+    ($($name:ident),* $(,)?) => {
+        const CASE_FILES: &[&str] = &[$(stringify!($name)),*];
+        mod vim_cases {
+            $(
+                #[test]
+                #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+                fn $name() {
+                    super::run_file(stringify!($name));
+                }
+            )*
+        }
+    };
+}
+case_files!(confirm, ex, insert, macros, marks, motions, operators, registers, search, visual);
+
+#[test]
+fn every_case_file_has_a_test() {
+    let mut files: Vec<String> = std::fs::read_dir(cases_dir())
+        .unwrap()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.strip_suffix(".cases").map(str::to_owned))
+        .collect();
+    files.sort();
+    assert_eq!(files, CASE_FILES, "add new case files to case_files!");
 }
 
 #[test]
