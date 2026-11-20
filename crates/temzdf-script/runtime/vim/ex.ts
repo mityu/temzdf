@@ -286,13 +286,13 @@ function confirmSubstitute(
 /** Show the next match (false: none left in the range). */
 function nextMatch(): boolean {
   const c = confirming!;
-  t.clearNamespace(CONFIRM + "-match");
+  t.clearNamespace(`${CONFIRM}-match`);
   const endPos = t.decoration(c.end)?.range.start ?? c.at;
   if (c.at.line > endPos.line) return false;
   const m = t.search(c.rust, { from: c.at, wrap: false, lines: [c.at.line, endPos.line], group: c.group });
   if (m === null || m.range.start.line > endPos.line) return false;
   c.match = m;
-  t.addDecoration(m.range, { style: "IncSearch", namespace: CONFIRM + "-match" });
+  t.addDecoration(m.range, { style: "IncSearch", namespace: `${CONFIRM}-match` });
   t.setCursor(m.range.start);
   action.message(`replace with ${c.rep} (y/n/a/q/l/^E/^Y)?`);
   return true;
@@ -328,7 +328,7 @@ function finishConfirm(): void {
   confirming = null;
   if (c === null) return;
   t.clearNamespace(CONFIRM);
-  t.clearNamespace(CONFIRM + "-match");
+  t.clearNamespace(`${CONFIRM}-match`);
   t.undoEnd();
   if (action.currentMode() === "vim/confirm") action.exitMode();
   if (c.lastChanged >= 0) t.setCursor(firstNonBlank(Math.min(lastLine(), c.lastChanged)));

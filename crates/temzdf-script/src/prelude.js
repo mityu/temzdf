@@ -3,6 +3,7 @@
 // "temzdf"` exports) on top of the host's native functions in `__host`
 // (crates/temzdf-script/src/host.rs). Values cross into Rust as JSON.
 (() => {
+  // biome-ignore lint/suspicious/noRedundantUseStrict: evaluated as a script, not a module.
   "use strict";
   const host = globalThis.__host;
   delete globalThis.__host;
@@ -280,7 +281,7 @@
             if (prompts.has(buf)) {
               temzdf.schedule(() => {
                 const p = prompts.get(buf);
-                if (p !== undefined && p.onChange) p.onChange(promptLine(p));
+                if (p?.onChange) p.onChange(promptLine(p));
               });
             }
           }),

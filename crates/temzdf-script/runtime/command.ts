@@ -112,8 +112,13 @@ function keyContext(): KeyContext {
 
 /** The command `input` names: exact names first, then abbreviations; the last defined of either. */
 function lookup(input: string): Entry | undefined {
+  // The context, made once, when a `when` asks for it.
   let ctx: KeyContext | undefined;
-  const live = (e: Entry) => e.when === undefined || e.when((ctx ??= keyContext()));
+  const context = () => {
+    if (ctx === undefined) ctx = keyContext();
+    return ctx;
+  };
+  const live = (e: Entry) => e.when === undefined || e.when(context());
   let abbreviated: Entry | undefined;
   for (let i = registry.length - 1; i >= 0; i--) {
     const e = registry[i];

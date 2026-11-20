@@ -220,7 +220,7 @@ export function convert(pattern: string, ignorecase = false, smartcase = false):
   }
   let group = 0;
   if (zs >= 0 || ze >= 0) {
-    const s = zs >= 0 ? zs : 0;
+    const s = Math.max(zs, 0);
     const e = ze >= 0 ? ze : out.length;
     // The groups before \zs come first: the match group's number follows.
     group = countGroups(out.slice(0, s)) + 1;

@@ -67,7 +67,7 @@ export function again(reverse: boolean, count: number): Position | null {
 }
 
 /** Vim's pattern for a literal string. */
-function escape(s: string): string {
+function escapePattern(s: string): string {
   return s.replace(/[\\/.*$^~[\]]/g, (c) => `\\${c}`);
 }
 
@@ -86,5 +86,5 @@ export function wordUnder(backward: boolean, count: number): Position | null {
   const word = line.slice(start, end);
   // From the word's start, so the match under the cursor is not the first
   // (the cursor stays: an operator acts from it).
-  return find(`\\<${escape(word)}\\>`, backward, count, pos(cursor().line, start));
+  return find(`\\<${escapePattern(word)}\\>`, backward, count, pos(cursor().line, start));
 }

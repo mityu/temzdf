@@ -74,15 +74,17 @@ missing, say so instead of working around it. A tool added to `flake.nix`
 needs the shell, and the agent in it, restarted.
 
 ```sh
-scripts/check.sh            # fmt check + clippy -D warnings + tests (+ Miri where available), terse output
-scripts/check.sh --fix      # same, but apply rustfmt
+scripts/check.sh            # fmt check + Biome (scripts) + clippy -D warnings + tests (+ Miri where available), terse output
+scripts/check.sh --fix      # same, but apply rustfmt and Biome's formatting and safe fixes
 scripts/check.sh --no-miri  # without Miri (it takes about a minute and a half)
 scripts/check.sh --all      # the tests even when only Markdown under doc/ changed (skipped then)
 scripts/check.sh --verbose  # a failed step's whole output (CI); always in target/check/
 cargo build --workspace
 ```
 
-Run `scripts/check.sh` before every commit. The default dev shell has no Miri (check.sh
+Run `scripts/check.sh` before every commit. The scripts (TypeScript and
+the script host's `prelude.js`) are formatted and linted by Biome
+(`biome.jsonc`; `biome check --write .` alone fixes what it can). The default dev shell has no Miri (check.sh
 says it skipped it); `nix develop .#enable-miri` has it, and the user runs
 it from time to time. To run Miri yourself, `nix develop .#alldeps -c
 scripts/check.sh` (or `-c scripts/miri.sh`) is the one allowed use of

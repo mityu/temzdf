@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Pre-commit gate: rustfmt check, shellcheck, references to documents
+# Pre-commit gate: rustfmt check, Biome (the scripts' formatting and
+# lints, biome.jsonc), shellcheck, references to documents
 # (scripts/check-docs.sh), clippy (warnings are errors) and tests for the
 # whole workspace, then the unit tests under Miri (scripts/miri.sh) when
 # `cargo miri` is available, with terse output. Re-executes itself inside the
 # Nix dev shell when needed, so it works from any shell.
 #
 # Usage: scripts/check.sh [--fix] [--no-miri] [--all] [--verbose] [cargo test args...]
-#   --fix      run `cargo fmt` instead of only checking formatting
+#   --fix      run `cargo fmt` and `biome check --write` (formatting and
+#              Biome's safe fixes) instead of only checking
 #   --no-miri  skip Miri (about a minute and a half)
 #   --all      run the tests even when only documents changed (see below)
 #   --verbose  print a failed step's whole output, not its main lines (CI)
@@ -74,6 +76,15 @@ failed() {
   if ((verbose)); then cat "$log"; else grep -E "$pattern" "$log" | head -"$n"; fi
 }
 
+# Biome's safe fixes with --fix; what is left (lints to fix by hand) fails.
+if ((fix)); then
+  biome check --write --colors=off . >target/check/biome.log 2>&1 || true
+fi
+if ! biome check --colors=off . >target/check/biome.log 2>&1; then
+  failed "biome (scripts/check.sh --fix formats)" target/check/biome.log "━━|^ *×" 20
+  status=1
+fi
+
 if ! shellcheck --color=never --format=gcc ./scripts/{*.sh,*/*.sh} ./tests/*/*.sh >target/check/shellcheck.log 2>&1; then
   failed shellcheck target/check/shellcheck.log "^" 100
   status=1
@@ -106,7 +117,7 @@ else
 fi
 
 if ((status == 0)); then
-  echo "OK fmt, shellcheck, docs, clippy, $summary"
+  echo "OK fmt, biome, shellcheck, docs, clippy, $summary"
 fi
 
 if ((miri)); then

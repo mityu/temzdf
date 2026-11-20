@@ -27,6 +27,7 @@ export interface Define {
   /** Define the Ex command `:name` (in the set's namespace). */
   command(name: string, fn: (ctx: CmdCtx) => void, options?: Omit<CmdOpts, "namespace">): void;
   /** Hear `event` while enabled. */
+  // biome-ignore lint/suspicious/noConfusingVoidType: as `on`'s (types.rs): a hook may return nothing.
   hook<E extends keyof Events>(event: E, fn: (...args: Events[E]) => void | HookAnswer): void;
 }
 

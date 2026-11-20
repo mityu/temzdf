@@ -3,7 +3,7 @@
 import type { Position, Range } from "temzdf";
 import { setChanged } from "./marks";
 import * as registers from "./registers";
-import { options, state } from "./state";
+import { options } from "./state";
 import type { Motion, Operator } from "./state";
 import {
   clampNormal,
