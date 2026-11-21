@@ -91,7 +91,8 @@ Run `scripts/check.sh` before every commit. The scripts (TypeScript and
 the script host's `prelude.ts` and `temzdf.ts`) are formatted and linted by Biome
 (`biome.jsonc`; `biome check --write .` alone fixes what it can). Their
 TypeScript declarations are in `crates/temzdf-script/ts-types/`: Rust's
-API by hand in `temzdf-core.d.ts`, the session's actions by hand in
+API by hand in `temzdf-core.d.ts` (the server takes its events from
+`interface Events`, and a test holds its options to `interface Options`), the session's actions by hand in
 `temzdf-actions.d.ts` (a new action is declared there: the server's names
 come from it, and a test runs each), and the generated
 `temzdf-all.d.ts`; editors use `crates/temzdf-script/runtime/tsconfig.json`

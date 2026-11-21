@@ -206,15 +206,20 @@ fn flags(t: &TextEntry) -> &'static str {
 }
 
 /// A number column's mode by name.
-pub(super) fn number_mode(name: Option<&str>) -> Option<temzdf_texteditor::NumberMode> {
+/// The option `number`'s values, used both ways (setting it, a pane's own
+/// with `setLocal`, and reading it).
+pub(super) const NUMBER_MODES: &[(&str, temzdf_texteditor::NumberMode)] = {
     use temzdf_texteditor::NumberMode;
-    Some(match name? {
-        "off" => NumberMode::Off,
-        "absolute" => NumberMode::Absolute,
-        "relative" => NumberMode::Relative,
-        "both" => NumberMode::Both,
-        _ => return None,
-    })
+    &[
+        ("off", NumberMode::Off),
+        ("absolute", NumberMode::Absolute),
+        ("relative", NumberMode::Relative),
+        ("both", NumberMode::Both),
+    ]
+};
+
+pub(super) fn number_mode(name: Option<&str>) -> Option<temzdf_texteditor::NumberMode> {
+    super::options::by_name(NUMBER_MODES, name)
 }
 
 fn name_of(path: Option<&Path>) -> String {

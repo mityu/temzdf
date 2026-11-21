@@ -9,6 +9,12 @@ use termpix_core::scroll::ScrollConfig;
 
 use super::*;
 
+/// The options `interface Options` declares in
+/// crates/temzdf-script/ts-types/temzdf-core.d.ts (build.rs reads them from
+/// there), for the tests that hold `set_option` and `get_option` to them.
+#[cfg(test)]
+pub(super) const OPTIONS: &[&str] = include!(concat!(env!("OUT_DIR"), "/options.rs"));
+
 /// When the tab line shows (the option `showtabline`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShowTabline {
@@ -16,6 +22,27 @@ pub enum ShowTabline {
     /// With two tab pages or more.
     Auto,
     Always,
+}
+
+/// The values of the options that name one of a few: one table each, used
+/// both by `set_option` and by `get_option`.
+const SHOWTABLINE: &[(&str, ShowTabline)] =
+    &[("never", ShowTabline::Never), ("auto", ShowTabline::Auto), ("always", ShowTabline::Always)];
+/// `reloadanchor`: whether reloads keep the line being read.
+const RELOADANCHOR: &[(&str, bool)] = &[("position", false), ("text", true)];
+/// `showstatusline`: whether the window's status line shows.
+const SHOWSTATUSLINE: &[(&str, bool)] = &[("never", false), ("always", true)];
+
+/// The value a table gives a name.
+pub(super) fn by_name<T: Copy>(table: &[(&str, T)], name: Option<&str>) -> Option<T> {
+    let name = name?;
+    table.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
+}
+
+/// A value's name in its table, as scripts read it.
+fn name_in<T: PartialEq>(table: &[(&'static str, T)], value: &T) -> ScriptValue {
+    let name = table.iter().find(|(_, v)| v == value).map(|(n, _)| *n).expect("every value is in its table");
+    ScriptValue::Str(name.into())
 }
 
 /// Options scripts set with `o.<name> = ...` (global for now).
@@ -174,7 +201,7 @@ impl Session {
         let text = || match value {
             ScriptValue::Null => Ok(None),
             ScriptValue::Str(s) => Ok(Some(s.clone())),
-            _ => Err(format!("o.{name}: expected a string or null")),
+            _ => Err(format!("o.{name}: expected a string or undefined")),
         };
         let o = &mut self.options;
         match name {
@@ -198,18 +225,15 @@ impl Session {
                         let words: Option<Vec<String>> = l.iter().map(|w| w.as_str().map(str::to_owned)).collect();
                         Some(words.filter(|w| !w.is_empty()).ok_or("o.linkopener: expected a list of strings")?)
                     }
-                    _ => return Err("o.linkopener: expected a list of strings or null".into()),
+                    _ => return Err("o.linkopener: expected a list of strings or undefined".into()),
                 }
             }
             "linkpreview" => o.linkpreview = flag()?,
             "linkpreviewdelay" => o.linkpreviewdelay = ms()?,
             "reloaddebounce" => o.reloaddebounce = ms()?,
             "reloadanchor" => {
-                o.reloadanchor_text = match value.as_str() {
-                    Some("position") => false,
-                    Some("text") => true,
-                    _ => return Err("o.reloadanchor: expected \"position\" or \"text\"".into()),
-                }
+                o.reloadanchor_text =
+                    by_name(RELOADANCHOR, value.as_str()).ok_or("o.reloadanchor: expected \"position\" or \"text\"")?
             }
             "synctexeditor" => o.synctexeditor = text()?,
             "remainonexit" => o.remainonexit = flag()?,
@@ -240,12 +264,8 @@ impl Session {
                 self.configured_fonts = None;
             }
             "showtabline" => {
-                o.showtabline = match value.as_str() {
-                    Some("never") => ShowTabline::Never,
-                    Some("auto") => ShowTabline::Auto,
-                    Some("always") => ShowTabline::Always,
-                    _ => return Err("o.showtabline: expected \"never\", \"auto\" or \"always\"".into()),
-                }
+                o.showtabline = by_name(SHOWTABLINE, value.as_str())
+                    .ok_or("o.showtabline: expected \"never\", \"auto\" or \"always\"")?
             }
             "basemode" => {
                 let ScriptValue::Map(pairs) = value else {
@@ -292,11 +312,8 @@ impl Session {
                     .ok_or("o.number: expected \"off\", \"absolute\", \"relative\" or \"both\"")?;
             }
             "showstatusline" => {
-                o.showstatusline = match value.as_str() {
-                    Some("never") => false,
-                    Some("always") => true,
-                    _ => return Err("o.showstatusline: expected \"never\" or \"always\"".into()),
-                }
+                o.showstatusline = by_name(SHOWSTATUSLINE, value.as_str())
+                    .ok_or("o.showstatusline: expected \"never\" or \"always\"")?
             }
             other => return Err(format!("no option {other:?}")),
         }
@@ -325,18 +342,11 @@ impl Session {
             "linkpreview" => ScriptValue::Bool(o.linkpreview),
             "linkpreviewdelay" => ms(o.linkpreviewdelay),
             "reloaddebounce" => ms(o.reloaddebounce),
-            "reloadanchor" => ScriptValue::Str(if o.reloadanchor_text { "text" } else { "position" }.into()),
+            "reloadanchor" => name_in(RELOADANCHOR, &o.reloadanchor_text),
             "synctexeditor" => o.synctexeditor.clone().map_or(ScriptValue::Null, ScriptValue::Str),
             "remainonexit" => ScriptValue::Bool(o.remainonexit),
-            "showtabline" => ScriptValue::Str(
-                match o.showtabline {
-                    ShowTabline::Never => "never",
-                    ShowTabline::Auto => "auto",
-                    ShowTabline::Always => "always",
-                }
-                .into(),
-            ),
-            "showstatusline" => ScriptValue::Str(if o.showstatusline { "always" } else { "never" }.into()),
+            "showtabline" => name_in(SHOWTABLINE, &o.showtabline),
+            "showstatusline" => name_in(SHOWSTATUSLINE, &o.showstatusline),
             "basemode" => {
                 ScriptValue::Map(o.basemode.iter().map(|(k, v)| (k.clone(), ScriptValue::Str(v.clone()))).collect())
             }
@@ -357,15 +367,7 @@ impl Session {
             "directory" => {
                 self.swap_dir.as_ref().map_or(ScriptValue::Null, |d| ScriptValue::Str(d.display().to_string()))
             }
-            "number" => ScriptValue::Str(
-                match o.text.number {
-                    temzdf_texteditor::NumberMode::Off => "off",
-                    temzdf_texteditor::NumberMode::Absolute => "absolute",
-                    temzdf_texteditor::NumberMode::Relative => "relative",
-                    temzdf_texteditor::NumberMode::Both => "both",
-                }
-                .into(),
-            ),
+            "number" => name_in(super::text::NUMBER_MODES, &o.text.number),
             "foreground" => o.foreground.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "background" => o.background.map_or(ScriptValue::Null, |c| ScriptValue::Str(hex(c))),
             "palette" => ScriptValue::List(o.palette.iter().map(|c| ScriptValue::Str(hex(*c))).collect()),

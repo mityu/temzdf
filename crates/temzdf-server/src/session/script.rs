@@ -38,30 +38,10 @@ const BUSY_NOTICE: Duration = Duration::from_secs(1);
 /// Nesting limit for hooks that cause hooks (Vim's is 10, E218).
 const MAX_HOOK_DEPTH: usize = 10;
 
-/// Events scripts can hook (`on(name, fn)`).
-pub const EVENTS: &[&str] = &[
-    "SessionReady",
-    "SessionEndPre",
-    "InvokePre",
-    "InvokePost",
-    "SwapExists",
-    "KeyTyped",
-    "TextChanged",
-    "PaneOpened",
-    "PaneClosePre",
-    "PaneClosed",
-    "PaneFocused",
-    "TabEntered",
-    "TabClosed",
-    "DocumentReloaded",
-    "ModeChanged",
-    "BufferCreated",
-    "BufferDeletePre",
-    "BufferDeleted",
-    "BufferHidden",
-    "FileChangedOnDisk",
-    "Copied",
-];
+/// Events scripts can hook (`on(name, fn)`): `interface Events` in
+/// crates/temzdf-script/ts-types/temzdf-core.d.ts (build.rs reads them from
+/// there).
+pub const EVENTS: &[&str] = include!(concat!(env!("OUT_DIR"), "/events.rs"));
 
 /// Input that arrived while a script ran.
 enum Held {

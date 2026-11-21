@@ -3807,6 +3807,64 @@ fn every_declared_action_has_a_handler() {
 }
 
 #[test]
+fn every_declared_option_reads_and_writes_back() {
+    // Each name of `interface Options` (temzdf-core.d.ts): get_option reads
+    // it, and set_option takes what it read and leaves it so.
+    //
+    // Not from its start, by design: `directory` starts undefined in this
+    // crate's tests (no swap files), and undefined sets the state
+    // directory's (so does it outside tests, where it also starts there).
+    // It round-trips from a path, below.
+    const NOT_FROM_THE_START: &[&str] = &["directory"];
+    let sink: EventSink = Arc::new(|_| true);
+    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let mut s = Session::new("options".into(), GEOMETRY, Hints::default(), settings, sink);
+    let mut failed = Vec::new();
+    for name in options::OPTIONS.iter().filter(|n| !NOT_FROM_THE_START.contains(n)) {
+        let value = match s.get_option(name) {
+            Ok(v) => v,
+            Err(e) => {
+                failed.push(format!("get {name}: {e}"));
+                continue;
+            }
+        };
+        if let Err(e) = s.set_option(name, &value) {
+            failed.push(format!("set {name} to {value:?}: {e}"));
+            continue;
+        }
+        let after = s.get_option(name);
+        if after.as_ref() != Ok(&value) {
+            failed.push(format!("{name}: {value:?} read back as {after:?}"));
+        }
+    }
+    assert!(failed.is_empty(), "{failed:#?}");
+    let dir = ScriptValue::Str(std::env::temp_dir().display().to_string());
+    for name in NOT_FROM_THE_START {
+        s.set_option(name, &dir).unwrap();
+        assert_eq!(s.get_option(name), Ok(dir.clone()), "{name}");
+    }
+    // Every value of the options naming one of a few, both ways.
+    for (name, values) in [
+        ("showtabline", &["never", "auto", "always"][..]),
+        ("showstatusline", &["never", "always"]),
+        ("reloadanchor", &["position", "text"]),
+        ("number", &["off", "absolute", "relative", "both"]),
+        ("clipboard", &["all", "copies", "none"]),
+        ("markdownmode", &["text", "graphics"]),
+    ] {
+        for v in values {
+            let v = ScriptValue::Str((*v).into());
+            s.set_option(name, &v).unwrap_or_else(|e| panic!("{name} = {v:?}: {e}"));
+            assert_eq!(s.get_option(name), Ok(v), "{name}");
+        }
+    }
+    // A name the declarations do not have is refused both ways.
+    assert!(!options::OPTIONS.contains(&"nosuchoption"));
+    assert_eq!(s.get_option("nosuchoption"), Err("no option \"nosuchoption\"".into()));
+    assert_eq!(s.set_option("nosuchoption", &ScriptValue::Bool(true)), Err("no option \"nosuchoption\"".into()));
+}
+
+#[test]
 fn command_names_are_unique() {
     // A name twice: the first one found would hide the other (`copy`,
     // the PDF pane's, once was).
