@@ -205,10 +205,12 @@ impl Session {
     }
 
     /// What panes copied since the last call goes into the history (with a
-    /// notice, [`Session::pane_copied`]); their other effects stay for the
-    /// client. A redraw when something was copied (the notice shows).
-    pub(super) fn collect_copies(&mut self) -> Outcome {
+    /// notice, [`Session::pane_copied`]), and a PDF pane's search that found
+    /// nothing gets its notice; their other effects stay for the client. A
+    /// redraw when there was a notice.
+    pub(super) fn collect_pane_requests(&mut self) -> Outcome {
         let mut copied: Vec<(BufferId, String, CopyKind, Option<String>)> = Vec::new();
+        let mut not_found = Vec::new();
         let mut others = Vec::new();
         for (id, t) in &mut self.terms {
             for e in t.term.take_effects() {
@@ -221,7 +223,9 @@ impl Session {
         for e in self.panes.values_mut() {
             if let Kind::Pdf { pane, doc } = &mut e.kind {
                 for req in pane.take_requests() {
-                    if let Some(host) = self.docs.get_mut(doc).and_then(|d| d.host.as_mut())
+                    if let temzdf_pdfview::pane::Request::NotFound(query) = req {
+                        not_found.push(query);
+                    } else if let Some(host) = self.docs.get_mut(doc).and_then(|d| d.host.as_mut())
                         && let Some(effect) = host.request(req)
                     {
                         match effect {
@@ -233,9 +237,12 @@ impl Session {
             }
         }
         self.effects.extend(others);
-        let out = if copied.is_empty() { Outcome::None } else { Outcome::Redraw };
+        let out = if copied.is_empty() && not_found.is_empty() { Outcome::None } else { Outcome::Redraw };
         for (buf, text, kind, note) in copied {
             self.pane_copied(buf, text, kind, note.as_deref());
+        }
+        for query in not_found {
+            self.not_found(&query);
         }
         out
     }
@@ -317,7 +324,7 @@ impl Session {
             return None;
         }
         // What panes copied just now (a visual mode's yank) is in.
-        let copied = self.collect_copies();
+        let copied = self.collect_pane_requests();
         let opts = args.iter().find(|a| matches!(a, ScriptValue::Map(_)));
         let opt_str = |k: &str| opts.and_then(|o| o.get(k)).and_then(ScriptValue::as_str).map(str::to_owned);
         let opt_bool = |k: &str| match opts.and_then(|o| o.get(k)) {

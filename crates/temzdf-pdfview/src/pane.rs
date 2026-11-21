@@ -104,6 +104,8 @@ pub enum Request {
         text: String,
         note: Option<String>,
     },
+    /// The search found nothing (the session's notice says so).
+    NotFound(String),
     /// SyncTeX inverse search at a page-space point.
     Inverse {
         page: usize,
@@ -485,13 +487,7 @@ impl PdfPane {
         if !self.search.is_active() {
             return String::new();
         }
-        let total = self.search.total();
-        let more = if self.search.is_complete() { "" } else { "+" };
-        match self.search.current_ordinal() {
-            Some(k) => format!("{k}/{total}{more}"),
-            None if total == 0 && self.search.is_complete() => "no match".into(),
-            None => format!("{total}{more}"),
-        }
+        temzdf_scene::search::hit_count(self.search.current_ordinal(), self.search.total(), self.search.is_complete())
     }
 
     /// The line nearest a third of the way down the screen, with its neighbours,
@@ -833,10 +829,9 @@ impl PdfPane {
         // "Searching" message is out of date.
         if self.search.is_complete() {
             let waited = self.pending_first_hit.take().is_some() || self.searching_shown();
+            self.clear_searching();
             if waited && self.search.total() == 0 {
-                self.message = Some(format!("Pattern not found: {}", self.search.query));
-            } else {
-                self.clear_searching();
+                self.not_found();
             }
         }
         true
@@ -861,6 +856,12 @@ impl PdfPane {
         if self.searching_shown() {
             self.message = None;
         }
+    }
+
+    /// Nothing was found: the session says so ([`Request::NotFound`]).
+    fn not_found(&mut self) {
+        self.clear_searching();
+        self.requests.push(Request::NotFound(self.search.query.clone()));
     }
 
     fn reveal_hit(&mut self, hit: (usize, usize), now: Instant) {
@@ -1107,7 +1108,7 @@ impl PdfPane {
             self.pending_first_hit = Some(origin.map_or_else(|| self.viewer.top_position(), |o| o.0));
         }
         if self.search.is_active() && self.search.total() == 0 && self.search.is_complete() {
-            self.message = Some(format!("Pattern not found: {}", self.search.query));
+            self.not_found();
         }
     }
 
@@ -1136,7 +1137,7 @@ impl PdfPane {
                 }
                 self.message = Some(format!("Searching: {}", self.search.query));
             }
-            None => self.message = Some(format!("Pattern not found: {}", self.search.query)),
+            None => self.not_found(),
         }
     }
 
@@ -1607,11 +1608,8 @@ mod tests {
             for p in 0..s.viewer.page_count() {
                 s.search_hits(generation, p, Vec::new(), now);
             }
-            assert!(
-                s.message.as_deref().is_some_and(|m| m.starts_with("Pattern not found")),
-                "{step:?}: {:?}",
-                s.message
-            );
+            assert_eq!(s.take_requests(), vec![Request::NotFound("x".into())], "{step:?}");
+            assert_eq!(s.message, None, "{step:?}: not in the status line");
         }
     }
 

@@ -38,6 +38,8 @@ pub enum Request {
     Zoom(i32),
     /// Text was selected (released, or copied again): its text.
     Copy(String),
+    /// The search found nothing (the session's notice says so).
+    NotFound(String),
 }
 
 /// Text selected on a page, from `anchor` (where the drag began) to
@@ -389,10 +391,14 @@ impl MdPane {
     }
 
     /// Search for `query`: its hits marked, the first from the top of the
-    /// pane shown. Whether there was one.
+    /// pane shown. Whether there was one (else the session is asked to
+    /// say so).
     pub fn search_for(&mut self, page: &Page, query: &str) -> bool {
         let found = self.preview(page, query);
         self.search.from = None;
+        if !found && !query.is_empty() {
+            self.requests.push(Request::NotFound(query.to_owned()));
+        }
         found
     }
 
@@ -431,10 +437,15 @@ impl MdPane {
     }
 
     /// The next hit (`dir` > 0) or the one before; around the ends.
+    /// Whether there was one (else the session is asked to say so, when
+    /// there is a search).
     pub fn search_next(&mut self, page: &Page, dir: i32) -> bool {
         self.follow_search(page);
         let n = self.search.hits.len();
         if n == 0 {
+            if !self.search.query.is_empty() {
+                self.requests.push(Request::NotFound(self.search.query.clone()));
+            }
             return false;
         }
         let i = match self.search.current {
@@ -694,10 +705,11 @@ impl MdPane {
     pub fn status(&self, page: Option<&Page>, name: &str) -> StatusBar {
         let percent = page.map_or(0, |p| self.percent(p));
         let zoom = if (self.zoom - 1.0).abs() > 1e-3 { format!("  {:.0}%z", self.zoom * 100.0) } else { String::new() };
-        let search = match (self.search.current, self.search.hits.len()) {
-            (Some(i), n) if n > 0 => format!("  [{}/{n}]", i + 1),
-            (_, 0) if !self.search.query.is_empty() => "  [no match]".to_owned(),
-            _ => String::new(),
+        let search = if self.search.query.is_empty() {
+            String::new()
+        } else {
+            let ordinal = self.search.current.map(|i| i + 1);
+            format!("  {}", temzdf_scene::search::hit_count(ordinal, self.search.hits.len(), true))
         };
         StatusBar {
             left: format!(" {}", self.hover.as_deref().unwrap_or(name)),

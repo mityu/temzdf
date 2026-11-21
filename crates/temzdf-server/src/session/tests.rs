@@ -1551,11 +1551,18 @@ fn pdf_panes_say_their_file_page_zoom_and_messages_in_their_status_line() {
     // No page lies on the status line.
     let row_px = s.pixels(&Rect::new(0, last as i32, GEOMETRY.cols as u32, 1));
     assert!(frame.layers.iter().all(|l| l.dst.intersect(&row_px).is_none()), "an image on the status line");
-    // Messages take the left side.
+    // A search finding nothing says so in the session's notice, not here.
     s.run_cli(&["search-for".into(), "zzzzqqq".into()]).unwrap();
     let (frame, _) = settle(&mut s, &rx);
     let rows = screen_text(&frame, GEOMETRY);
-    assert!(rows[last as usize].starts_with(" Pattern not found: zzzzqqq"), "{rows:?}");
+    assert!(s.notices.iter().any(|n| n.text == "Pattern not found: zzzzqqq"), "the notice");
+    assert!(rows[1].contains("│ Pattern not found: zzzzqqq │"), "drawn: {rows:?}");
+    assert!(rows[last as usize].starts_with(" sample.pdf"), "{rows:?}");
+    // Messages take the left side.
+    s.panes.get_mut(&s.focus).and_then(PaneEntry::pdf).unwrap().message = Some("SyncTeX: broken".into());
+    let (frame, _) = settle(&mut s, &rx);
+    let rows = screen_text(&frame, GEOMETRY);
+    assert!(rows[last as usize].starts_with(" SyncTeX: broken"), "{rows:?}");
     assert_eq!(cell_at(&frame, 1, last).unwrap().fg, theme_rgb(theme.error));
     // Another pane (the message gone, as the next key takes it): the
     // unfocused one's name is dimmed.
@@ -3073,7 +3080,7 @@ fn the_markdown_graphics_mode_scrolls_zooms_searches_and_switches_back_in_place(
 #[test]
 #[cfg_attr(miri, ignore = "the file system, Blitz")]
 fn the_markdown_graphics_status_line_says_the_file_search_and_zoom() {
-    let src = "word ".repeat(12);
+    let src = format!("{}Ｆｕｌｌ", "word ".repeat(12));
     let (mut s, path) = markdown_session("st.md", &src, &[]);
     let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
     let str = |v: &str| ScriptValue::Str(v.into());
@@ -3086,10 +3093,19 @@ fn the_markdown_graphics_status_line_says_the_file_search_and_zoom() {
     run(&mut s, "markdown.search-next", &[]).unwrap();
     run(&mut s, "markdown.zoom", &[str("in")]).unwrap();
     let line = status(&mut s);
-    assert!(line.ends_with("markdown  [3/12]  110%z  100%"), "{line:?}");
+    assert!(line.ends_with("markdown  3/12  110%z  100%"), "{line:?}");
+    // Not found: the count says so, and the session's notice.
     run(&mut s, "search-for", &[str("nothing")]).unwrap();
     let line = status(&mut s);
-    assert!(line.ends_with("markdown  [no match]  110%z  100%"), "{line:?}");
+    assert!(line.ends_with("markdown  no match  110%z  100%"), "{line:?}");
+    assert!(s.notices.iter().any(|n| n.text == "Pattern not found: nothing"), "the notice");
+    s.notices.clear();
+    assert_eq!(run(&mut s, "markdown.search-next", &[]).unwrap().0, ScriptValue::Bool(false));
+    assert!(s.notices.iter().any(|n| n.text == "Pattern not found: nothing"), "n says so too");
+    // Case folded beyond ASCII: full-width letters.
+    run(&mut s, "search-for", &[str("ｆＵＬＬ")]).unwrap();
+    let line = status(&mut s);
+    assert!(line.ends_with("markdown  1/1  110%z  100%"), "{line:?}");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 

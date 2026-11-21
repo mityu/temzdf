@@ -303,6 +303,8 @@ impl DocumentHost {
             }
             Request::OpenUri(uri) => Some(Effect::OpenUri { uri, command: None }),
             Request::Copy { text, note } => Some(Effect::Copied { text, kind: temzdf_scene::CopyKind::Char, note }),
+            // The session's to say, before it hands requests here.
+            Request::NotFound(_) => None,
         }
     }
 }

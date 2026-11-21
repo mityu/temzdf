@@ -301,7 +301,8 @@ blanks dropped; rows end with a line break) and leaves. Keys do not reach the
 program meanwhile; its output goes on, and the cursor and the selection stay
 on their characters. Leaving returns the view to the live screen.
 
-Searching (`/`, `?`) is plain text, case-insensitive, matches shown black on
+Searching (`/`, `?`) is plain text, case-insensitive (Unicode's case,
+full-width letters too, as the Markdown viewer's), matches shown black on
 yellow; a match across a soft wrap is not found. While the search's input
 line has the focus the visual mode waits, and `<CR>` or `<Esc>` there comes
 back to it; so does `<Esc>` from the `normal` mode entered with `<C-b>`.
@@ -510,8 +511,12 @@ largest pane in any of them. All clients show the same tab page.
 ## Status lines
 
 Each pane's bottom row is its status line, drawn by the session as text: a
-PDF pane's says its file, the search, the page and the zoom, and its
-messages (errors, "Copied ..."); a terminal's is blank. The shipped
+PDF pane's says its file, the search (`/query 3/12`, `3/12+` while pages
+are still searched, `no match`), the page and the zoom, and its messages
+(errors); a Markdown graphics pane's its file, `markdown`, the search's
+count (`3/12`, `no match`), the zoom and how far down it is; a terminal's
+is blank. A search that finds nothing, in any pane, also says `Pattern not
+found: QUERY` in the floating notice at the top right. The shipped
 configuration hides the terminals' (a `PaneOpened` hook calling
 `action.statusLine(false, id)`); without the script host every pane has one.
 A pane one row high shows its status line only. Changing what they say
@@ -784,7 +789,8 @@ document in the background.
 In the graphics mode, `markdown.scroll(rows)`, `markdown.page(n)`,
 `markdown.top()`, `markdown.bottom()`, `markdown.zoom("in" | "out" |
 "reset")`, and `searchFor` / `searchPreview` / `searchCancel` (the `/`
-prompt) mark the matches, `markdown.searchNext(dir)` goes through them.
+prompt) mark the matches (plain text, case-insensitive with Unicode's
+case), `markdown.searchNext(dir)` goes through them.
 A drag from text selects it (past the top or bottom the page scrolls on)
 and its release copies it, as a PDF's selection; `markdown.copy()` copies
 it again, `markdown.clearSelection()` forgets it.

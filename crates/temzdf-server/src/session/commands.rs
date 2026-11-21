@@ -168,7 +168,7 @@ impl Session {
             match name {
                 "visual.search-for" => {
                     if !t.term.visual_search(&query, backward, false) && !query.is_empty() {
-                        self.message(&format!("Pattern not found: {query}"));
+                        self.not_found(&query);
                     }
                 }
                 "visual.search-preview" => {

@@ -234,6 +234,7 @@ impl Session {
                     }
                     _ => ScriptValue::Bool(p.search_next(page, if n < 0.0 { -1 } else { 1 })),
                 };
+                let _ = self.md_requests(pane);
                 Ok((result, Outcome::Redraw))
             }
             "markdown.load-remote-images" => {
@@ -370,7 +371,7 @@ impl Session {
     }
 
     /// Carry out what graphics-mode pane `pane` asked for: follow a link,
-    /// zoom, copy its selection.
+    /// zoom, copy its selection, say its search found nothing.
     pub(super) fn md_requests(&mut self, pane: PaneId) -> Outcome {
         let (requests, doc) = match self.panes.get_mut(&pane).map(|e| &mut e.kind) {
             Some(Kind::Markdown { pane: p, doc }) => (p.take_requests(), *doc),
@@ -383,6 +384,10 @@ impl Session {
                 temzdf_mdview::Request::Zoom(n) => self.md_zoom(pane, n.signum(), n.unsigned_abs()),
                 temzdf_mdview::Request::Copy(text) => {
                     self.pane_copied(doc, text, temzdf_scene::CopyKind::Char, None);
+                    Ok(())
+                }
+                temzdf_mdview::Request::NotFound(query) => {
+                    self.not_found(&query);
                     Ok(())
                 }
             };
@@ -505,14 +510,16 @@ impl Session {
     /// `searchCancel` there): `None` when it is not one.
     pub(super) fn md_search(&mut self, pane: PaneId, how: &str, query: &str) -> Option<bool> {
         let (p, page) = self.md_graphics(pane)?;
-        Some(match how {
+        let found = match how {
             "search-for" => p.search_for(page, query),
             "search-preview" => p.preview(page, query),
             _ => {
                 p.search_cancel(page);
                 true
             }
-        })
+        };
+        let _ = self.md_requests(pane);
+        Some(found)
     }
 
     /// The mode viewer `pane` is in.

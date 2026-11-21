@@ -16,6 +16,7 @@ pub use termpix_core::input;
 pub use termpix_core::raster::Pixels;
 
 pub mod notice;
+pub mod search;
 pub mod sink;
 mod swatches;
 pub mod theme;

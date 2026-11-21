@@ -333,18 +333,17 @@ impl Page {
         best.map_or(f64::from(self.height), |(y, _)| y)
     }
 
-    /// Where `query` is in the text (case not counted for ASCII), in
-    /// reading order.
+    /// Where `query` is in the text (case folded,
+    /// [`temzdf_scene::search::fold`]), in reading order.
     pub fn find(&self, query: &str) -> Vec<Rect> {
         let mut out = Vec::new();
         if query.is_empty() {
             return out;
         }
-        let q = query.to_ascii_lowercase();
         for root in 0..self.roots.len() {
             let Some((_, text)) = self.root(root) else { continue };
-            for (start, _) in text.text.to_ascii_lowercase().match_indices(&q) {
-                out.extend(self.range_rects(root, start, start + q.len()));
+            for r in temzdf_scene::search::find_folded(&text.text, query) {
+                out.extend(self.range_rects(root, r.start, r.end));
             }
         }
         out.sort_by(|a, b| a.y0.total_cmp(&b.y0).then(a.x0.total_cmp(&b.x0)));

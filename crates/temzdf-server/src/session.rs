@@ -1060,6 +1060,11 @@ impl Session {
         self.notify(notices::Kind::Error, m);
     }
 
+    /// A pane's search found nothing: every kind says so alike.
+    fn not_found(&mut self, query: &str) {
+        self.message(&format!("Pattern not found: {query}"));
+    }
+
     /// Give every pane its rectangle (after the layout or the screen changed).
     fn relayout(&mut self) {
         let area = self.area();
@@ -1475,7 +1480,7 @@ impl Session {
     /// Effects for the frontend, including requests panes made since the last
     /// call (call every loop iteration: inverse search does not redraw).
     pub fn take_effects(&mut self) -> Vec<Effect> {
-        let _ = self.collect_copies();
+        let _ = self.collect_pane_requests();
         // Links open with the configured command, in the client.
         for e in &mut self.effects {
             if let Effect::OpenUri { command, .. } = e
@@ -1587,9 +1592,10 @@ impl Session {
             self.last_key = now;
             out = out.merge(Outcome::Redraw);
         }
-        // What panes copied in the events just handled: its notice now,
-        // not after the next frame (take_effects comes after it).
-        out = out.merge(self.collect_copies());
+        // What panes copied in the events just handled, or their searches
+        // not finding anything: the notice now, not after the next frame
+        // (take_effects comes after it).
+        out = out.merge(self.collect_pane_requests());
         out.merge(self.flush_events())
     }
 

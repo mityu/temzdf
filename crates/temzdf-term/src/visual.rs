@@ -13,6 +13,7 @@ use std::time::Instant;
 use libghostty_vt::screen::{CellWide, RowSemanticPrompt, TrackedGridRef};
 use libghostty_vt::selection::{FormatOptions, Order, SelectWordOptions, Selection};
 use libghostty_vt::terminal::{Point, PointCoordinate, PointSpace, ScrollViewport};
+use temzdf_scene::search::fold;
 use temzdf_scene::{Cell, Color, CopyKind, Effect};
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
 
@@ -458,8 +459,8 @@ impl TermBuffer {
         Outcome::Stay(true)
     }
 
-    /// Search the screen and scrollback for `query` (as the PDF search:
-    /// plain text, case-insensitive) from the cursor, or from where the
+    /// Search the screen and scrollback for `query` (plain text, case
+    /// folded as the Markdown viewer's, [`fold`]) from the cursor, or from where the
     /// preview began. A preview moves to the first match after that place as
     /// typed (back there when nothing matches); a search keeps the query for
     /// `n` and `N`. Returns whether something matched.
@@ -899,13 +900,13 @@ impl TermBuffer {
         Some((first, text.split('\n').map(str::to_owned).collect()))
     }
 
-    /// The columns where `needle` (lowercase) starts on row `y`.
+    /// The columns where `needle` (case folded) starts on row `y`.
     fn matches_on(&self, y: u32, needle: &[char]) -> Vec<u16> {
         let row = self.row_chars(y);
         let mut chars: Vec<(char, u16)> = Vec::new();
         for c in &row {
             for ch in c.text.chars() {
-                chars.push((lower(ch), c.x));
+                chars.push((fold(ch), c.x));
             }
         }
         (0..chars.len())
@@ -920,7 +921,7 @@ impl TermBuffer {
     /// The next match of `query` after `from` (or before it), wrapping
     /// around the scrollback.
     fn find(&self, query: &str, from: Pos, backward: bool) -> Option<Pos> {
-        let needle: Vec<char> = query.chars().map(lower).collect();
+        let needle: Vec<char> = query.chars().map(fold).collect();
         let needle_s: String = needle.iter().collect();
         let (first, lines) = self.screen_lines()?;
         let n = lines.len() as u32;
@@ -932,7 +933,7 @@ impl TermBuffer {
         // side).
         for k in 0..=n {
             let i = if backward { (start + n - k % n) % n } else { (start + k) % n };
-            let line: String = lines[i as usize].chars().map(lower).collect();
+            let line: String = lines[i as usize].chars().map(fold).collect();
             if !line.contains(&needle_s) {
                 continue;
             }
@@ -961,14 +962,10 @@ fn first_non_blank(row: &[Ch]) -> u16 {
     row.iter().find(|c| !c.blank).map_or(0, |c| c.x)
 }
 
-fn lower(c: char) -> char {
-    c.to_lowercase().next().unwrap_or(c)
-}
-
 /// Highlight where `query` shows in `rows` (cells of the view), as Vim's
 /// `hlsearch`: black on yellow.
 pub(crate) fn highlight(rows: &mut [Vec<Cell>], query: &str) {
-    let needle: Vec<char> = query.chars().map(lower).collect();
+    let needle: Vec<char> = query.chars().map(fold).collect();
     if needle.is_empty() {
         return;
     }
@@ -982,7 +979,7 @@ pub(crate) fn highlight(rows: &mut [Vec<Cell>], query: &str) {
                 chars.push((' ', i));
             }
             for ch in c.text.chars() {
-                chars.push((lower(ch), i));
+                chars.push((fold(ch), i));
             }
         }
         let mut i = 0;
