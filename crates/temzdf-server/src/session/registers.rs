@@ -150,7 +150,7 @@ impl Session {
     /// The source of a copy made in `buf` (the focused pane's buffer for
     /// `None`).
     pub(super) fn copy_source(&self, buf: Option<BufferId>) -> Source {
-        let buf = buf.or_else(|| self.panes.get(&self.focus).map(super::PaneEntry::buffer));
+        let buf = buf.or_else(|| self.pane_buffer(self.focus));
         let found = buf.and_then(|b| {
             if let Some(t) = self.terms.get(&b) {
                 return Some(("terminal", t.term.title().unwrap_or_else(|| "shell".into())));

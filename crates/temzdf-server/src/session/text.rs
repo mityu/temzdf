@@ -398,6 +398,14 @@ impl Session {
 
     /// A new text buffer (no pane), with its file if any.
     pub(super) fn add_text_buffer(&mut self, text: Text, file: Option<FileInfo>) -> BufferId {
+        let id = self.new_text_buffer(text, file);
+        self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("edit".into())]);
+        id
+    }
+
+    /// A new text buffer, without `BufferCreated` (a Markdown viewer's
+    /// drawing: scripts see its document).
+    pub(super) fn new_text_buffer(&mut self, text: Text, file: Option<FileInfo>) -> BufferId {
         let id = self.alloc_id();
         let buf = Buffer::new(text, file.as_ref().map_or(LineEnding::Lf, |f| f.line_ending));
         let name = name_of(file.as_ref().map(|f| f.path.as_path()));
@@ -418,7 +426,6 @@ impl Session {
             },
         );
         self.watch_text(id);
-        self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("edit".into())]);
         id
     }
 
@@ -836,7 +843,7 @@ impl Session {
         let id = id_arg.and_then(ScriptValue::as_num).map(|n| n as u32);
         let owner = match scope {
             "buffer" => {
-                let b = id.unwrap_or_else(|| self.panes.get(&self.focus).map_or(0, |e| e.buffer()));
+                let b = id.unwrap_or_else(|| self.pane_buffer(self.focus).unwrap_or(0));
                 self.has_buffer(b).then_some(super::VarOwner::Buffer(b))
             }
             "pane" => {
@@ -1001,7 +1008,8 @@ impl Session {
                 none(position_value(text.position(text.from_utf16_offset(units))))
             }
             "info" => none(ScriptValue::map([
-                ("buffer", ScriptValue::Num(buf as f64)),
+                // A Markdown viewer's is its document, not the drawing.
+                ("buffer", ScriptValue::Num(t.markdown.unwrap_or(buf) as f64)),
                 ("path", t.file.as_ref().map_or(ScriptValue::Null, |f| ScriptValue::Str(f.path.display().to_string()))),
                 ("name", ScriptValue::Str(t.name.clone())),
                 ("modified", ScriptValue::Bool(t.modified())),

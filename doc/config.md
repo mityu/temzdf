@@ -385,6 +385,9 @@ cursor and scroll.
   `edit(path)` opens a file in the focused pane (`:edit`; a PDF by its
   extension, anything else as text); `deleteBuffer(id?)`
   ends a terminal's program or closes a document and closes its panes.
+  A Markdown viewer's buffer is its document (kind `markdown`) in either
+  mode: switching modes keeps it, `deleteBuffer` closes its panes in both
+  modes, and `showBuffer` opens it in the viewer.
 - A terminal shown in several panes is as large as the largest (as in
   Neovim); smaller panes show its bottom left part.
 

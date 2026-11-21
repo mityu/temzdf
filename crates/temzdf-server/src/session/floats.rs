@@ -423,6 +423,7 @@ impl Session {
                 None
             }
             FloatWhat::Buffer(buf) if self.docs.contains_key(&buf) => self.add_pdf_pane(buf, spot),
+            FloatWhat::Buffer(buf) if self.md_docs.contains_key(&buf) => Some(self.md_open_doc(buf, spot)?),
             FloatWhat::Buffer(buf) => return Err(format!("no buffer {buf}")),
         })
     }

@@ -423,6 +423,9 @@ impl Session {
             "show-buffer" => {
                 let buf = id(0).ok_or("showBuffer: which buffer?")?;
                 let pane = id(1).unwrap_or(self.focus);
+                if !self.has_buffer(buf) {
+                    return Err(format!("showBuffer: no buffer {buf}"));
+                }
                 ok(self.show_in(pane, buf).map_err(|e| format!("showBuffer: {e}"))?)
             }
             "edit" => {
@@ -434,7 +437,7 @@ impl Session {
             "delete-buffer" => {
                 let buf = match id(0) {
                     Some(b) => b,
-                    None => self.panes.get(&self.focus).map(PaneEntry::buffer).ok_or("deleteBuffer: which buffer?")?,
+                    None => self.pane_buffer(self.focus).ok_or("deleteBuffer: which buffer?")?,
                 };
                 ok(self.request_delete_buffer(buf).map_err(|e| format!("deleteBuffer: {e}"))?)
             }
@@ -555,11 +558,12 @@ impl Session {
                     .map(|id| {
                         let e = &self.panes[&id];
                         let kind = e.kind_name();
+                        let buffer = self.kind_buffer(&e.kind).0;
                         let r = e.rect;
                         ScriptValue::map([
                             ("id", ScriptValue::Num(id as f64)),
                             ("kind", ScriptValue::Str(kind.into())),
-                            ("buffer", ScriptValue::Num(e.buffer() as f64)),
+                            ("buffer", ScriptValue::Num(buffer as f64)),
                             ("focused", ScriptValue::Bool(id == self.focus)),
                             ("floating", ScriptValue::Bool(self.is_float(id))),
                             (

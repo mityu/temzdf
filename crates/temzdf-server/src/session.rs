@@ -942,24 +942,50 @@ impl Session {
         }
     }
 
+    /// The buffer `kind` shows as scripts see it, and the buffer's kind: a
+    /// Markdown viewer's is its document in either mode (its drawings are
+    /// internal).
+    fn kind_buffer(&self, kind: &Kind) -> (BufferId, &'static str) {
+        match kind {
+            Kind::Pdf { doc, .. } => (*doc, "pdf"),
+            Kind::Markdown { doc, .. } => (*doc, "markdown"),
+            Kind::Term { buf, .. } => (*buf, "terminal"),
+            Kind::Text { buf, .. } => match self.texts.get(buf).and_then(|t| t.markdown) {
+                Some(md) => (md, "markdown"),
+                None => (*buf, "edit"),
+            },
+        }
+    }
+
+    /// The buffer pane `pane` shows, as scripts see it (`kind_buffer`).
+    fn pane_buffer(&self, pane: PaneId) -> Option<BufferId> {
+        self.panes.get(&pane).map(|e| self.kind_buffer(&e.kind).0)
+    }
+
     /// Whether a pane shows buffer `buf`.
     fn shown(&self, buf: BufferId) -> bool {
-        self.panes.values().any(|e| e.buffer() == buf)
+        self.panes.values().any(|e| self.kind_buffer(&e.kind).0 == buf)
     }
 
     /// The panes showing `buf`.
     fn panes_showing(&self, buf: BufferId) -> Vec<PaneId> {
-        let mut v: Vec<PaneId> = self.panes.iter().filter(|(_, e)| e.buffer() == buf).map(|(id, _)| *id).collect();
+        let mut v: Vec<PaneId> =
+            self.panes.iter().filter(|(_, e)| self.kind_buffer(&e.kind).0 == buf).map(|(id, _)| *id).collect();
         v.sort();
         v
     }
 
     /// Show buffer `buf` in pane `pane` instead of what it shows (Vim's
-    /// `:buffer`). A document still opening shows once it opened.
+    /// `:buffer`). A document still opening shows once it opened; a
+    /// Markdown document in the viewer at the pane's width.
     fn show_in(&mut self, pane: PaneId, buf: BufferId) -> Result<Outcome, String> {
         let Some(e) = self.panes.get(&pane) else { return Err(format!("no pane {pane}")) };
-        if e.buffer() == buf {
+        if e.buffer() == buf || self.kind_buffer(&e.kind).0 == buf {
             return Ok(Outcome::None);
+        }
+        if self.md_docs.contains_key(&buf) {
+            self.md_open_doc(buf, Spot::Replace(pane))?;
+            return Ok(Outcome::Redraw);
         }
         let g = content_geometry(e.content(), self.geometry.cell, None);
         let kind = if let Some(t) = self.terms.get_mut(&buf) {
@@ -1006,16 +1032,7 @@ impl Session {
     /// stays, hidden (`BufferHidden`): a document keeps its position (and
     /// drops its tiles), a terminal keeps running; an ended terminal goes.
     fn hide(&mut self, kind: Kind) {
-        let buf = match &kind {
-            Kind::Pdf { doc, .. } | Kind::Markdown { doc, .. } => *doc,
-            Kind::Term { buf, .. } | Kind::Text { buf, .. } => *buf,
-        };
-        let name = match &kind {
-            Kind::Pdf { .. } => "pdf",
-            Kind::Term { .. } => "terminal",
-            Kind::Text { .. } => "edit",
-            Kind::Markdown { .. } => "markdown",
-        };
+        let (buf, name) = self.kind_buffer(&kind);
         if !self.shown(buf) {
             self.event("BufferHidden", vec![ScriptValue::Num(buf as f64), ScriptValue::Str(name.into())]);
         }
@@ -1086,12 +1103,18 @@ impl Session {
         self.killed
     }
 
+    /// Whether `buf` is a buffer scripts know (a Markdown viewer's
+    /// drawings are not: its document is).
     fn has_buffer(&self, buf: BufferId) -> bool {
-        self.terms.contains_key(&buf) || self.docs.contains_key(&buf) || self.texts.contains_key(&buf)
+        self.terms.contains_key(&buf)
+            || self.docs.contains_key(&buf)
+            || self.texts.get(&buf).is_some_and(|t| t.markdown.is_none())
+            || self.md_docs.contains_key(&buf)
     }
 
     /// Delete a buffer: end its program or close its document, and close the
-    /// panes showing it (the last pane: the session ends). `PaneClosePre`
+    /// panes showing it (the last pane: the session ends; a Markdown
+    /// document's in either mode). `PaneClosePre`
     /// hooks do not run (the buffer goes either way); `PaneClosed` does.
     fn delete_buffer(&mut self, buf: BufferId) -> Result<Outcome, String> {
         if !self.has_buffer(buf) {
@@ -1106,8 +1129,14 @@ impl Session {
         Ok(Outcome::Redraw)
     }
 
-    /// Forget a buffer no pane shows.
+    /// Forget a buffer no pane shows. A Markdown viewer's drawing goes
+    /// without `BufferDeleted` (scripts never saw it), its document with.
     fn remove_buffer(&mut self, buf: BufferId) {
+        if self.md_docs.contains_key(&buf) {
+            // No pane shows it: it goes, and its drawings.
+            self.md_collect(buf);
+            return;
+        }
         if let Some(d) = self.docs.remove(&buf) {
             if let Some(host) = d.host {
                 host.doc.borrow_mut().release(&mut self.images);
@@ -1116,21 +1145,24 @@ impl Session {
             t.term.release(&mut self.images);
         } else {
             self.drop_swap(buf);
-            if self.texts.remove(&buf).is_none() {
-                return;
+            match self.texts.remove(&buf) {
+                None => return,
+                Some(t) if t.markdown.is_some() => return,
+                Some(_) => {}
             }
         }
         self.event("BufferDeleted", vec![ScriptValue::Num(buf as f64)]);
     }
 
-    /// The buffers, for `buffers()`.
-    /// The buffers, `unlisted` ones only with `all`.
+    /// The buffers, for `buffers()`: `unlisted` ones only with `all`, a
+    /// Markdown viewer's drawings never (its document is listed).
     fn buffer_list(&self, all: bool) -> ScriptValue {
         let mut list: Vec<(BufferId, &str, String, bool)> = self
             .docs
             .iter()
             .filter(|(_, d)| d.host.is_some())
             .map(|(id, d)| (*id, "pdf", d.name.clone(), false))
+            .chain(self.md_docs.iter().map(|(id, d)| (*id, "markdown", d.name.clone(), false)))
             .chain(
                 self.terms
                     .iter()
@@ -1139,7 +1171,7 @@ impl Session {
             .chain(
                 self.texts
                     .iter()
-                    .filter(|(_, t)| all || !t.has("unlisted"))
+                    .filter(|(_, t)| t.markdown.is_none() && (all || !t.has("unlisted")))
                     .map(|(id, t)| (*id, "edit", t.name.clone(), false)),
             )
             .collect();
@@ -1165,6 +1197,7 @@ impl Session {
     /// The number of buffers (for `temzdf ls`).
     pub fn buffer_count(&self) -> usize {
         self.docs.values().filter(|d| d.host.is_some()).count()
+            + self.md_docs.len()
             + self.terms.len()
             + self.texts.values().filter(|t| !t.has("unlisted")).count()
     }
@@ -4814,6 +4847,132 @@ mod tests {
         let float = split_focused(&mut s, "right");
         assert!(s.is_float(float));
         assert_eq!((s.md_mode(float), s.md_top_line(float)), (Some("text"), Some(line)));
+    }
+
+    /// The buffer `panes()` says pane `pane` shows.
+    fn pane_buffer_of(s: &mut Session, pane: PaneId) -> BufferId {
+        pane_info(s, pane).get("buffer").and_then(ScriptValue::as_num).unwrap() as BufferId
+    }
+
+    /// The ids and kinds `buffers()` (all of them) lists.
+    fn listed_buffers(s: &mut Session) -> Vec<(BufferId, String)> {
+        let all = ScriptValue::map([("all", ScriptValue::Bool(true))]);
+        let ScriptValue::List(list) = s.run_command("buffers", &[all], Instant::now()).unwrap().0 else { panic!() };
+        list.iter()
+            .map(|b| {
+                let id = b.get("id").and_then(ScriptValue::as_num).unwrap() as BufferId;
+                (id, b.get("kind").and_then(ScriptValue::as_str).unwrap().to_owned())
+            })
+            .collect()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, libtexprintf")]
+    fn a_markdown_viewer_s_buffer_is_its_document_in_either_mode() {
+        let words = "word ".repeat(40);
+        let src: String = (0..30).map(|i| format!("## Section {i}\n\n{words}\n\n")).collect();
+        let (mut s, path) = markdown_session("buffer.md", &src, &[]);
+        s.listen(&["BufferCreated", "BufferHidden", "BufferDeleted"]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
+        let pane = s.focus;
+        let md = *s.md_docs.keys().next().unwrap();
+        assert_eq!(pane_buffer_of(&mut s, pane), md, "not its drawing");
+        let info = run(&mut s, "text.info", &[]).unwrap().0;
+        assert_eq!(info.get("buffer").and_then(ScriptValue::as_num), Some(f64::from(md)));
+        // Listed as a document; its drawings are not, even with `all`.
+        let listed = listed_buffers(&mut s);
+        assert!(listed.contains(&(md, "markdown".to_owned())), "{listed:?}");
+        let drawings: Vec<BufferId> = s.md_docs[&md].renders.iter().map(|r| r.buf).collect();
+        assert!(listed.iter().all(|(b, _)| !drawings.contains(b)), "{listed:?} {drawings:?}");
+        // The buffer's variable, the focused pane's buffer, in either mode.
+        let var = |s: &mut Session| run(s, "get-var", &[str("buffer"), str("x")]).unwrap().0;
+        run(&mut s, "set-var", &[str("buffer"), str("x"), ScriptValue::Num(1.0)]).unwrap();
+        s.script_events.clear();
+        for mode in ["graphics", "text", "graphics", "text"] {
+            run(&mut s, "markdown.set-mode", &[str(mode)]).unwrap();
+            assert_eq!(s.md_mode(pane), Some(mode));
+            assert_eq!(pane_buffer_of(&mut s, pane), md, "in {mode} mode");
+            assert_eq!(var(&mut s), ScriptValue::Num(1.0), "in {mode} mode");
+        }
+        assert!(listed_buffers(&mut s).contains(&(md, "markdown".to_owned())));
+        assert!(s.script_events.is_empty(), "switching modes: {:?}", s.script_events);
+        // Narrower: another drawing, the same buffer, no events.
+        let drawing = |s: &Session| match &s.panes[&pane].kind {
+            Kind::Text { buf, .. } => *buf,
+            _ => panic!("text"),
+        };
+        let before = drawing(&s);
+        s.resize(Geometry { cols: 50, ..GEOMETRY });
+        assert_ne!(drawing(&s), before, "drawn again for the new width");
+        assert_eq!(pane_buffer_of(&mut s, pane), md);
+        assert!(s.script_events.is_empty(), "a new width: {:?}", s.script_events);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, libtexprintf")]
+    fn deleting_a_markdown_document_closes_its_panes_in_either_mode() {
+        let (mut s, path) = markdown_session("delete.md", "# Title\n\nText.\n", &[]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
+        let md = *s.md_docs.keys().next().unwrap();
+        let text = s.focus;
+        // Another buffer's pane stays (the last pane would end the session).
+        let other = run(&mut s, "new-buffer", &[]).unwrap().0;
+        run(&mut s, "split", &[ScriptValue::map([("buffer", other)])]).unwrap();
+        s.set_focus(text);
+        let graphics = split_focused(&mut s, "right");
+        run(&mut s, "markdown.set-mode", &[ScriptValue::Str("graphics".into())]).unwrap();
+        assert_eq!((s.md_mode(text), s.md_mode(graphics)), (Some("text"), Some("graphics")));
+        assert_eq!(s.panes_showing(md), [text, graphics]);
+        s.listen(&["BufferHidden", "BufferDeleted"]);
+        s.script_events.clear();
+        // From the graphics pane: the text one closes too.
+        run(&mut s, "delete-buffer", &[]).unwrap();
+        assert!(!s.panes.contains_key(&text) && !s.panes.contains_key(&graphics));
+        assert!(s.md_docs.is_empty() && s.texts.values().all(|t| t.markdown.is_none()), "drawings gone");
+        let events: Vec<(String, Vec<ScriptValue>)> = s.script_events.clone();
+        let m = ScriptValue::Num(f64::from(md));
+        assert_eq!(
+            events,
+            [
+                ("BufferHidden".to_owned(), vec![m.clone(), ScriptValue::Str("markdown".into())]),
+                ("BufferDeleted".to_owned(), vec![m])
+            ]
+        );
+        assert!(run(&mut s, "delete-buffer", &[ScriptValue::Num(f64::from(md))]).is_err(), "gone");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, libtexprintf")]
+    fn a_markdown_document_is_shown_by_its_buffer_and_hidden_with_its_last_pane() {
+        let (mut s, path) = markdown_session("show.md", "# Title\n\nText.\n", &[]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
+        let md = *s.md_docs.keys().next().unwrap();
+        let viewer = s.focus;
+        let other = run(&mut s, "new-buffer", &[]).unwrap().0;
+        let (pane, _) = run(&mut s, "split", &[ScriptValue::map([("buffer", other.clone())])]).unwrap();
+        let pane = pane.as_num().unwrap() as PaneId;
+        // showBuffer: the viewer, at the pane's width, in the mode the
+        // option says.
+        s.set_option("markdownmode", &ScriptValue::Str("graphics".into())).unwrap();
+        run(&mut s, "show-buffer", &[ScriptValue::Num(f64::from(md)), ScriptValue::Num(f64::from(pane))]).unwrap();
+        assert_eq!((s.md_mode(pane), pane_buffer_of(&mut s, pane)), (Some("graphics"), md));
+        // A drawing is no buffer to scripts.
+        let drawing = s.md_docs[&md].renders[0].buf;
+        assert!(run(&mut s, "show-buffer", &[ScriptValue::Num(f64::from(drawing))]).is_err());
+        // Hidden once, with its last pane (then gone: nothing keeps it).
+        s.listen(&["BufferHidden", "BufferDeleted"]);
+        s.script_events.clear();
+        s.close(viewer);
+        assert!(s.script_events.is_empty(), "{:?}", s.script_events);
+        let o = other.as_num().unwrap() as BufferId;
+        s.show_in(pane, o).unwrap();
+        let names: Vec<&str> = s.script_events.iter().map(|(e, _)| e.as_str()).collect();
+        assert_eq!(names, ["BufferHidden", "BufferDeleted"]);
+        assert_eq!(s.script_events[0].1, [ScriptValue::Num(f64::from(md)), ScriptValue::Str("markdown".into())]);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

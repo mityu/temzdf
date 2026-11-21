@@ -78,6 +78,19 @@ would fail the link rather than go unnoticed.
   one width share it; a pane that changes width moves to the drawing for
   it (made if needed) at the same source lines, and drawings no pane shows
   go (the document too, once no pane shows it).
+- Drawings are internal. A viewer pane shows the same document in either
+  mode (the mode only changes how), so the buffer scripts see is the
+  document, in both modes: `panes()`, `text.info()`, the focused pane's
+  buffer (`deleteBuffer()`, `getVar("buffer", ...)`), `buffers()` (kind
+  `markdown`; drawings are never listed, not even with `all`) and the
+  buffer events (`BufferCreated` when the document is read,
+  `BufferHidden` when its last pane goes, in whichever mode, then
+  `BufferDeleted`, as nothing keeps a document no pane shows). Switching
+  modes or moving to another drawing for a new width keeps the number
+  and sends nothing. `deleteBuffer` closes the document's panes in both
+  modes (Vim's `:bwipeout`); `showBuffer` opens it in the viewer at the
+  pane's width (a viewer pane keeps its mode, another takes
+  `markdownmode`).
 - A changed file is read and drawn again, each pane at the same place:
   source lines map from the old text to the new through a line diff
   (`map_line`), then to drawn lines.

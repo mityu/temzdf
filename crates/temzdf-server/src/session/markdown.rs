@@ -2,7 +2,9 @@
 //! read once per file and shared by the panes on it; its text mode is
 //! drawn into `nomodifiable` text buffers, one per width the panes on it
 //! have, so panes of one width share a buffer and a pane that changes
-//! width moves to another (keeping its place by the source line).
+//! width moves to another (keeping its place by the source line). Those
+//! drawings are internal: the buffer scripts see, in either mode, is the
+//! document (`Session::kind_buffer`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -322,6 +324,12 @@ impl Session {
     /// Open `path` in the viewer at `spot`; returns the pane.
     pub(super) fn md_open(&mut self, path: &Path, spot: Spot) -> Result<PaneId, String> {
         let md = self.md_doc(path)?;
+        self.md_open_doc(md, spot)
+    }
+
+    /// Open document `md` in the viewer at `spot` (`showBuffer` too);
+    /// returns the pane.
+    pub(super) fn md_open_doc(&mut self, md: MdId, spot: Spot) -> Result<PaneId, String> {
         // A width to start with; the pane's own once it is laid out
         // (`md_fit`).
         let width = match spot {
@@ -329,9 +337,9 @@ impl Session {
             _ => self.geometry.cols as usize,
         };
         let buf = self.md_buffer(md, width.max(1));
-        // A graphics-mode viewer goes on in it; others as the option says.
+        // A viewer goes on in its mode; others as the option says.
         let graphics = match spot {
-            Spot::Replace(p) => self.panes.get(&p).is_some_and(|e| matches!(e.kind, Kind::Markdown { .. })),
+            Spot::Replace(p) if self.md_mode(p).is_some() => self.md_mode(p) == Some("graphics"),
             _ => self.options.markdownmode == "graphics",
         };
         let pane = if let Spot::Replace(pane) = spot {
@@ -606,6 +614,7 @@ impl Session {
             },
         );
         self.md_load_local(id);
+        self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("markdown".into())]);
         Ok(id)
     }
 
@@ -712,7 +721,7 @@ impl Session {
         let drawn = temzdf_markdown::render(&d.doc, width, &math);
         let name = d.name.clone();
         let sizes = self.md_image_sizes(md);
-        let buf = self.add_text_buffer(Text::from(drawn.text.as_str()), None);
+        let buf = self.new_text_buffer(Text::from(drawn.text.as_str()), None);
         let t = self.texts.get_mut(&buf).expect("made");
         t.attrs = ["nofile", "unlisted", "nomodifiable"].map(str::to_owned).to_vec();
         t.name = name;
@@ -813,6 +822,7 @@ impl Session {
                     self.images.remove(l.key);
                 }
             }
+            self.event("BufferDeleted", vec![ScriptValue::Num(md as f64)]);
         }
     }
 
