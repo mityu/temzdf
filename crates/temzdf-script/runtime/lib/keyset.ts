@@ -50,9 +50,7 @@ export function keyset(namespace: string, setup: (d: Define) => void, teardown?:
       setup({
         map(modes, keys, rhs, options) {
           check(`${what} map`, z.readonly(z.array(z.string())), keys, "keys");
-          for (const m of typeof modes === "string" ? [modes] : modes) {
-            for (const k of keys) keymap.add(m, k, rhs, { ...options, namespace });
-          }
+          for (const k of keys) keymap.add(modes, k, rhs, { ...options, namespace });
         },
         command(name, fn, options) {
           command.add(name, fn, { ...options, namespace });

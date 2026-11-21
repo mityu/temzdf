@@ -9,6 +9,7 @@
 import { action, defineMode, feedkeys } from "temzdf";
 import type { MapContext } from "temzdf";
 import { keyset } from "temzdf/keyset";
+import { focusedPaneInfo } from "../lib/panes";
 import { prefix } from "../lib/prefix";
 import { openSearch } from "../lib/search";
 import { isNullish } from "../lib/validate";
@@ -18,10 +19,6 @@ const OUTLINE = "markdown/outline";
 
 /** Open outline pickers: their buffer, the viewer and its headings' anchors. */
 const outlines = new Map<number, { viewer: number; anchors: string[]; float: number }>();
-
-function focusedBuffer(): number | null {
-  return action.panes().find((p) => p.focused)?.buffer ?? null;
-}
 
 /** The headings of the focused viewer in a floating list: <CR> goes there. */
 function openOutline(): void {
@@ -47,9 +44,9 @@ function openOutline(): void {
 }
 
 function closeOutline(go: boolean): void {
-  const buf = focusedBuffer();
-  const o = buf === null ? undefined : outlines.get(buf);
-  if (buf === null || o === undefined) return;
+  const buf = focusedPaneInfo(action)?.buffer;
+  const o = buf === undefined ? undefined : outlines.get(buf);
+  if (buf === undefined || o === undefined) return;
   const line = action.text.cursor().line;
   outlines.delete(buf);
   action.closePane(o.float);

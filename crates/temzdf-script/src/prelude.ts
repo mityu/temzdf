@@ -14,6 +14,7 @@ import type { Condition, KeyContext, KeyInfo, MapOptions, ModeProperties, Prompt
 import type { Assert } from "../runtime/lib/types";
 import type { Takes } from "../runtime/lib/validate";
 import * as z from "../runtime/lib/zod";
+import { focusedPaneInfo } from "../runtime/lib/panes";
 import { check, func, guard, isNullish, options, parse } from "../runtime/lib/validate";
 
 /** The native functions host.rs gives this prelude (`install`), and only
@@ -453,7 +454,7 @@ const temzdf: Temzdf = {
 // Open prompts by buffer (openPrompt), and their hooks while any is.
 const prompts = new Map<number, Prompt>();
 let promptHooks: (() => void)[] | null = null;
-const focusedBuffer = (): number | undefined => globalAction.panes().find((p) => p.focused)?.buffer;
+const focusedBuffer = (): number | undefined => focusedPaneInfo(globalAction)?.buffer;
 // The cursor's line of a prompt (what is run, and previewed).
 const promptLine = (p: Prompt): string => {
   const at = globalAction.text.cursor({ pane: p.pane });

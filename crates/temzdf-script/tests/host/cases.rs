@@ -82,10 +82,11 @@ impl Drop for Session {
 /// `action.fooBar(` in runtime/defaults.ts as `foo-bar`, `action.ns.fooBar(`
 /// as `ns.foo-bar`).
 pub(crate) fn command_names() -> Vec<String> {
-    let mut names: Vec<String> = ["split", "new-pane", "message", "text.erase", "text.get-text", "read-clipboard"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let mut names: Vec<String> =
+        ["split", "new-pane", "message", "panes", "text.erase", "text.get-text", "read-clipboard"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     // The shipped modules the defaults enable (their mappings name actions).
     let shipped = [
         include_str!("../../runtime/defaults.ts"),

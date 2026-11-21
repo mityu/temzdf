@@ -42,6 +42,7 @@ import { isRecording, runMacro, startRecording, stopRecording } from "./macros";
 import { isMarkName, jump, markPos, setMark } from "./marks";
 import { cursor, firstNonBlank, isTextPane, t } from "./util";
 import { draw, enterVisual, exitVisual, reselect, swapEnds } from "./visual";
+import { focusedPaneInfo } from "../lib/panes";
 import { isNullish } from "../lib/validate";
 
 const NAMESPACE = "builtin-edit-vim";
@@ -315,7 +316,7 @@ function define(d: Define): void {
   // closed (hooks only read: these wait for the safe point).
   hook("ModeChanged", (old: string, now: string) => {
     schedule(() => {
-      const focused = action.panes().find((p) => p.focused);
+      const focused = focusedPaneInfo(action);
       // Not a text pane, or a prompt (the command line): not the Vim mode's.
       if (focused === undefined || !isTextPane(focused.id, focused.kind) || isPrompt(focused.buffer)) return;
       // vim/insreg (<C-r>) is a key read inside the insert mode.
@@ -339,7 +340,7 @@ function teardown(): void {
   state.visual = null;
   state.pending = null;
   try {
-    const focused = action.panes().find((p) => p.focused);
+    const focused = focusedPaneInfo(action);
     if (focused !== undefined && isTextPane(focused.id, focused.kind) && !isPrompt(focused.buffer)) {
       t.clearNamespace("vim-visual");
     }

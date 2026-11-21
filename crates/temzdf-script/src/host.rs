@@ -587,7 +587,7 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
         st.next_req.set(req + 1);
         st.send(&FromHost::Request { req, token, op });
         let answer = |result: Result<ScriptValue, String>| match result {
-            Ok(v) => Ok(serde_json::to_string(&from_script(&v)).unwrap_or_else(|_| "null".into())),
+            Ok(v) => Ok(json(&from_script(&v))),
             // Marked, so that one nothing catches shows as the command's.
             Err(e) => Err(Exception::from_message(ctx.clone(), &e).and_then(|x| {
                 x.as_object().set(COMMAND_FAILED, true)?;
@@ -636,24 +636,17 @@ fn run_call(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, func: FuncId, args: Vec<Scri
 
 fn run_call_now(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, func: FuncId, args: Vec<ScriptValue>) {
     let f = st.funcs.borrow().get(func as usize).cloned();
-    st.tokens.borrow_mut().push(Token::Call(id));
-    let result = match f {
+    let result = as_call(st, id, || match f {
         None => Err(ScriptError::new(format!("no function {func}"))),
-        Some(f) => {
-            let args = serde_json::to_string(&args.iter().map(from_script).collect::<Vec<_>>()).unwrap_or_default();
-            f.restore(ctx)
-                .and_then(|f| f.call::<_, Option<String>>((args,)))
-                .map(|r| {
-                    r.and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-                        .map_or(ScriptValue::Null, |v| to_script(&v))
-                })
-                .map_err(|e| error_of(ctx, e))
-        }
-    };
-    st.tokens.borrow_mut().pop();
-    if st.tokens.borrow().is_empty() {
-        st.interrupt.clear();
-    }
+        Some(f) => f
+            .restore(ctx)
+            .and_then(|f| f.call::<_, Option<String>>((args_json(&args),)))
+            .map(|r| {
+                r.and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                    .map_or(ScriptValue::Null, |v| to_script(&v))
+            })
+            .map_err(|e| error_of(ctx, e)),
+    });
     st.send(&FromHost::Done { id, result });
 }
 
@@ -664,21 +657,39 @@ fn run_eval(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, funcs: &[FuncId], args: Vec<
 }
 
 fn run_eval_now(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, funcs: &[FuncId], args: Vec<ScriptValue>) {
-    let args = serde_json::to_string(&args.iter().map(from_script).collect::<Vec<_>>()).unwrap_or_default();
+    let args = args_json(&args);
+    let results = as_call(st, id, || {
+        funcs
+            .iter()
+            .map(|&func| {
+                let f = st.funcs.borrow().get(func as usize).cloned();
+                match f {
+                    None => Err(ScriptError::new(format!("no function {func}"))),
+                    Some(f) => {
+                        f.restore(ctx).and_then(|f| f.call::<_, bool>((args.clone(),))).map_err(|e| error_of(ctx, e))
+                    }
+                }
+            })
+            .collect()
+    });
+    st.send(&FromHost::Values { id, results });
+}
+
+/// Run `f` as call `id`: its token on the stack meanwhile, and the
+/// interrupt flag cleared once no call runs any more.
+fn as_call<R>(st: &State, id: u64, f: impl FnOnce() -> R) -> R {
     st.tokens.borrow_mut().push(Token::Call(id));
-    let mut results = Vec::new();
-    for &func in funcs {
-        let f = st.funcs.borrow().get(func as usize).cloned();
-        results.push(match f {
-            None => Err(ScriptError::new(format!("no function {func}"))),
-            Some(f) => f.restore(ctx).and_then(|f| f.call::<_, bool>((args.clone(),))).map_err(|e| error_of(ctx, e)),
-        });
-    }
+    let result = f();
     st.tokens.borrow_mut().pop();
     if st.tokens.borrow().is_empty() {
         st.interrupt.clear();
     }
-    st.send(&FromHost::Values { id, results });
+    result
+}
+
+/// A call's arguments as the JSON array the prelude's wrappers take.
+fn args_json(args: &[ScriptValue]) -> String {
+    json(&args.iter().map(from_script).collect::<Vec<_>>())
 }
 
 fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {
@@ -709,7 +720,7 @@ fn settle_promises(ctx: &Ctx<'_>, st: &Rc<State>) {
         let Some((id, result)) = st.settled.borrow_mut().pop_front() else { return };
         let Some(f) = st.promises.borrow_mut().remove(&id) else { continue };
         let (ok, json) = match result {
-            Ok(v) => (true, serde_json::to_string(&from_script(&v)).unwrap_or_else(|_| "null".into())),
+            Ok(v) => (true, json(&from_script(&v))),
             Err(e) => (false, e),
         };
         st.unattended(|| {

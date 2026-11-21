@@ -15,6 +15,7 @@ import { deleteMarks, listMarks, markLine, recordJump, setMark } from "./marks";
 import { find, noHighlight } from "./search";
 import { options, state } from "./state";
 import { cursor, firstNonBlank, isTextPane, lastLine, lineEnd, pos, t, text } from "./util";
+import { focusedPaneInfo } from "../lib/panes";
 import { isNullish } from "../lib/validate";
 
 type Range = { first: number; last: number };
@@ -75,7 +76,7 @@ function splitPane(vertical: boolean, buffer: number, file: string): void {
 
 /** The focused pane's buffer (in any kind of pane). */
 function focusedBuffer(): number {
-  const p = action.panes().find((x) => x.focused);
+  const p = focusedPaneInfo(action);
   if (p === undefined) throw new Error("no pane");
   return p.buffer;
 }
@@ -490,7 +491,7 @@ export function exCommands(add: Define["command"]): void {
     "edit",
     (c) => {
       const [bang, arg] = bangArg(c.args);
-      const pane = action.panes().find((p) => p.focused);
+      const pane = focusedPaneInfo(action);
       if (arg !== "") {
         action.openFile(arg, { pane: pane?.id });
       } else if (pane?.kind !== "edit") {
