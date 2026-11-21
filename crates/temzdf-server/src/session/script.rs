@@ -924,12 +924,6 @@ impl Session {
                 (Ok(ScriptValue::Null), Outcome::None)
             }
             HostOp::DefineMode { name, fallback, count, transient, keepalive, timeout } => {
-                use temzdf_protocol::script::Fallback as F;
-                let fallback = fallback.map(|f| match f {
-                    F::Drop => crate::keymap::Fallback::Drop,
-                    F::Passthrough => crate::keymap::Fallback::Passthrough,
-                    F::Func(f) => crate::keymap::Fallback::Func(f),
-                });
                 if timeout.is_some_and(|t| !t.is_finite() || t < 0.0) {
                     return (Err("defineMode: timeout is a number of milliseconds".into()), Outcome::None);
                 }
@@ -938,12 +932,7 @@ impl Session {
                     d.transient = t;
                 }
                 if let Some(k) = keepalive {
-                    use temzdf_protocol::script::Keepalive as K;
-                    d.keepalive = match k {
-                        K::Mapped => crate::keymap::Keepalive::Mapped,
-                        K::Always => crate::keymap::Keepalive::Always,
-                        K::Func(f) => crate::keymap::Keepalive::Func(f),
-                    };
+                    d.keepalive = k;
                 }
                 if let Some(t) = timeout {
                     d.timeout = (t > 0.0).then(|| Duration::from_secs_f64(t / 1000.0));

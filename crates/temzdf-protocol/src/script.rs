@@ -249,9 +249,8 @@ pub enum HostOp {
     },
 }
 
-/// How long a transient mode stays (`defineMode`'s `keepalive`).
-/// What a mode does with keys no mapping takes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What a mode does with keys no mapping takes (`defineMode`'s `fallback`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Fallback {
     Drop,
     /// To the focused pane (typed into a terminal, an input or a text pane).
@@ -260,10 +259,16 @@ pub enum Fallback {
     Func(FuncId),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// How long a transient mode stays (`defineMode`'s `keepalive`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Keepalive {
+    /// While its own mappings take the keys; another key leaves it and is
+    /// handled again below.
+    #[default]
     Mapped,
+    /// Always: keys it does not map are looked up in the modes below.
     Always,
+    /// While the function returns true (asked at each sequence's first key).
     Func(FuncId),
 }
 

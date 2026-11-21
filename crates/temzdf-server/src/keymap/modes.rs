@@ -29,27 +29,9 @@ use super::notation::Stroke;
 /// (`when`) or a submode stays (`keepalive`).
 pub type Cond = u32;
 
-/// What a mode does with keys it has no mapping for (its `fallback`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fallback {
-    Drop,
-    Passthrough,
-    /// A script function given the key.
-    Func(Cond),
-}
-
-/// How long a transient mode stays.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum Keepalive {
-    /// While its own mappings take the keys; another key leaves it and is
-    /// handled again below.
-    #[default]
-    Mapped,
-    /// Always: keys it does not map are looked up in the modes below.
-    Always,
-    /// While the condition holds (asked at each sequence's first key).
-    Func(Cond),
-}
+/// What a mode does with keys it has no mapping for (its `fallback`), and
+/// how long a transient mode stays: the protocol's, as scripts give them.
+pub use temzdf_protocol::script::{Fallback, Keepalive};
 
 /// One mapping of a key sequence.
 #[derive(Clone, Debug)]
