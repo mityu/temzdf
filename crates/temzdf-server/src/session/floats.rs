@@ -541,15 +541,7 @@ impl Session {
     /// A pane's buffer name: the document's file name, the terminal's title
     /// or the input's prompt.
     pub(super) fn pane_name(&self, pane: PaneId) -> String {
-        let Some(e) = self.panes.get(&pane) else { return String::new() };
-        match &e.kind {
-            super::Kind::Pdf { doc, .. } => self.docs.get(doc).map(|d| d.name.clone()).unwrap_or_default(),
-            super::Kind::Term { buf, .. } => {
-                self.terms.get(buf).and_then(|t| t.term.title()).unwrap_or_else(|| "shell".into())
-            }
-            super::Kind::Text { buf, .. } => self.texts.get(buf).map(|t| t.name.clone()).unwrap_or_default(),
-            super::Kind::Markdown { doc, .. } => self.md_docs.get(doc).map(|d| d.name.clone()).unwrap_or_default(),
-        }
+        self.pane_buffer(pane).and_then(|b| self.buffer_info(b)).map(|(_, name)| name).unwrap_or_default()
     }
 }
 

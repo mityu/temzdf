@@ -151,18 +151,7 @@ impl Session {
     /// `None`).
     pub(super) fn copy_source(&self, buf: Option<BufferId>) -> Source {
         let buf = buf.or_else(|| self.pane_buffer(self.focus));
-        let found = buf.and_then(|b| {
-            if let Some(t) = self.terms.get(&b) {
-                return Some(("terminal", t.term.title().unwrap_or_else(|| "shell".into())));
-            }
-            if let Some(t) = self.texts.get(&b) {
-                return Some(("edit", t.name.clone()));
-            }
-            if let Some(d) = self.md_docs.get(&b) {
-                return Some(("markdown", d.name.clone()));
-            }
-            self.docs.get(&b).map(|d| ("pdf", d.name.clone()))
-        });
+        let found = buf.and_then(|b| self.buffer_info(b));
         match found {
             Some((kind, name)) => Source { kind: kind.into(), name, buffer: buf },
             None => Source { kind: "script".into(), name: String::new(), buffer: None },

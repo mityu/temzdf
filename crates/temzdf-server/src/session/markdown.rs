@@ -637,7 +637,7 @@ impl Session {
             },
         );
         self.md_load_local(id);
-        self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("markdown".into())]);
+        self.buffer_created(id);
         Ok(id)
     }
 

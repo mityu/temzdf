@@ -391,7 +391,7 @@ impl Session {
     /// A new text buffer (no pane), with its file if any.
     pub(super) fn add_text_buffer(&mut self, text: Text, file: Option<FileInfo>) -> BufferId {
         let id = self.new_text_buffer(text, file);
-        self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("edit".into())]);
+        self.buffer_created(id);
         id
     }
 

@@ -345,6 +345,20 @@ struct TermEntry {
     exited: bool,
 }
 
+/// The kinds of buffers by name, as scripts see them (`buffers()`,
+/// `panes()`, the events, a copy's source; see `Session::kind_buffer` and
+/// `Session::buffer_info`), and the kinds of views by name, which base
+/// modes go by (`Kind::mode_kind`).
+mod kind_name {
+    pub(super) const PDF: &str = "pdf";
+    pub(super) const TERMINAL: &str = "terminal";
+    pub(super) const EDIT: &str = "edit";
+    pub(super) const MARKDOWN: &str = "markdown";
+}
+
+/// A terminal's name while its program has set no title.
+const TERMINAL_NAME: &str = "shell";
+
 enum Kind {
     Pdf {
         pane: Box<PdfPane>,
@@ -426,15 +440,22 @@ impl PaneEntry {
         }
     }
 
-    /// The kind's own name, which picks its base mode: a text-mode
-    /// Markdown viewer is a text pane here (`edit`). Scripts see the
-    /// buffer's kind (`Session::kind_buffer`).
-    fn kind_name(&self) -> &'static str {
-        match &self.kind {
-            Kind::Pdf { .. } => "pdf",
-            Kind::Term { .. } => "terminal",
-            Kind::Text { .. } => "edit",
-            Kind::Markdown { .. } => "markdown",
+    /// See [`Kind::mode_kind`].
+    fn mode_kind(&self) -> &'static str {
+        self.kind.mode_kind()
+    }
+}
+
+impl Kind {
+    /// The view's own kind, which picks the pane's base mode: a
+    /// Markdown viewer in its text mode is a text view here (`edit`).
+    /// Scripts see its buffer's kind (`markdown`, `Session::kind_buffer`).
+    fn mode_kind(&self) -> &'static str {
+        match self {
+            Kind::Pdf { .. } => kind_name::PDF,
+            Kind::Term { .. } => kind_name::TERMINAL,
+            Kind::Text { .. } => kind_name::EDIT,
+            Kind::Markdown { .. } => kind_name::MARKDOWN,
         }
     }
 }
@@ -1011,14 +1032,40 @@ impl Session {
     /// internal).
     fn kind_buffer(&self, kind: &Kind) -> (BufferId, &'static str) {
         match kind {
-            Kind::Pdf { doc, .. } => (*doc, "pdf"),
-            Kind::Markdown { doc, .. } => (*doc, "markdown"),
-            Kind::Term { buf, .. } => (*buf, "terminal"),
+            Kind::Pdf { doc, .. } => (*doc, kind_name::PDF),
+            Kind::Markdown { doc, .. } => (*doc, kind_name::MARKDOWN),
+            Kind::Term { buf, .. } => (*buf, kind_name::TERMINAL),
             Kind::Text { buf, .. } => match self.texts.get(buf).and_then(|t| t.markdown) {
-                Some(md) => (md, "markdown"),
-                None => (*buf, "edit"),
+                Some(md) => (md, kind_name::MARKDOWN),
+                None => (*buf, kind_name::EDIT),
             },
         }
+    }
+
+    /// Buffer `buf`'s kind, as scripts see it, and its name: the
+    /// document's file name, the terminal's title, the text's name (an
+    /// input's prompt). A Markdown viewer's drawing answers for its
+    /// document (scripts see that).
+    fn buffer_info(&self, buf: BufferId) -> Option<(&'static str, String)> {
+        if let Some(t) = self.terms.get(&buf) {
+            return Some((kind_name::TERMINAL, t.term.title().unwrap_or_else(|| TERMINAL_NAME.into())));
+        }
+        if let Some(t) = self.texts.get(&buf) {
+            return match t.markdown {
+                Some(md) => self.buffer_info(md),
+                None => Some((kind_name::EDIT, t.name.clone())),
+            };
+        }
+        if let Some(d) = self.md_docs.get(&buf) {
+            return Some((kind_name::MARKDOWN, d.name.clone()));
+        }
+        self.docs.get(&buf).map(|d| (kind_name::PDF, d.name.clone()))
+    }
+
+    /// Buffer `buf` was made: hooks hear `BufferCreated` with its kind.
+    fn buffer_created(&mut self, buf: BufferId) {
+        let kind = self.buffer_info(buf).map_or("", |(kind, _)| kind);
+        self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str(kind.into())]);
     }
 
     /// The buffer pane `pane` shows, as scripts see it (`kind_buffer`).
@@ -1220,30 +1267,28 @@ impl Session {
     /// The buffers, for `buffers()`: `unlisted` ones only with `all`, a
     /// Markdown viewer's drawings never (its document is listed).
     fn buffer_list(&self, all: bool) -> ScriptValue {
-        let mut list: Vec<(BufferId, &str, String, bool)> = self
+        let mut ids: Vec<BufferId> = self
             .docs
             .iter()
             .filter(|(_, d)| d.host.is_some())
-            .map(|(id, d)| (*id, "pdf", d.name.clone(), false))
-            .chain(self.md_docs.iter().map(|(id, d)| (*id, "markdown", d.name.clone(), false)))
-            .chain(
-                self.terms
-                    .iter()
-                    .map(|(id, t)| (*id, "terminal", t.term.title().unwrap_or_else(|| "shell".into()), t.exited)),
-            )
+            .map(|(id, _)| *id)
+            .chain(self.md_docs.keys().copied())
+            .chain(self.terms.keys().copied())
             .chain(
                 self.texts
                     .iter()
                     .filter(|(_, t)| t.markdown.is_none() && (all || !t.has("unlisted")))
-                    .map(|(id, t)| (*id, "edit", t.name.clone(), false)),
+                    .map(|(id, _)| *id),
             )
             .collect();
-        list.sort_by_key(|b| b.0);
+        ids.sort();
         ScriptValue::List(
-            list.into_iter()
-                .map(|(id, kind, name, exited)| {
+            ids.into_iter()
+                .filter_map(|id| {
+                    let (kind, name) = self.buffer_info(id)?;
+                    let exited = self.terms.get(&id).is_some_and(|t| t.exited);
                     let panes = self.panes_showing(id).into_iter().map(|p| ScriptValue::Num(p as f64)).collect();
-                    ScriptValue::map([
+                    Some(ScriptValue::map([
                         ("id", ScriptValue::Num(id as f64)),
                         ("kind", ScriptValue::Str(kind.into())),
                         ("name", ScriptValue::Str(name)),
@@ -1251,7 +1296,7 @@ impl Session {
                         ("exited", ScriptValue::Bool(exited)),
                         ("modified", ScriptValue::Bool(self.texts.get(&id).is_some_and(|t| t.modified()))),
                         ("attrs", self.texts.get(&id).map_or(ScriptValue::List(Vec::new()), |t| t.attrs_value())),
-                    ])
+                    ]))
                 })
                 .collect(),
         )
@@ -1298,7 +1343,7 @@ impl Session {
             &self.options.full_palette(),
         );
         self.terms.insert(buf, TermEntry { term, exited: false });
-        self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str("terminal".into())]);
+        self.buffer_created(buf);
         self.insert_pane(id, rect, buf, focus).map_err(anyhow::Error::msg)?;
         Ok(id)
     }
@@ -1463,7 +1508,7 @@ impl Session {
                     Ok(info) if !info.bounds.is_empty() => {
                         let doc = Document::shared(info.bounds.clone());
                         entry.host = Some(opening.finish(info, doc, self.options.host()));
-                        self.event("BufferCreated", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
+                        self.buffer_created(id);
                         let Some(entry) = self.docs.get_mut(&id) else { return Outcome::Redraw };
                         let forward = entry.forward_waiting.take();
                         for (spot, tab) in std::mem::take(&mut entry.waiting) {
@@ -1969,7 +2014,7 @@ impl Session {
     /// to the kind's.
     fn pane_mode(&self, id: PaneId) -> String {
         let Some(e) = self.panes.get(&id) else { return "normal".into() };
-        let kind = e.kind_name();
+        let kind = e.mode_kind();
         let chosen = match &e.kind {
             Kind::Text { buf, .. } => self.texts.get(buf).and_then(|t| t.basemode.clone()),
             _ => None,
@@ -4668,7 +4713,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn prompts_are_text_panes_taking_typed_text() {
         let (mut s, _rx, buf, pane) = prompt_session();
-        assert_eq!((s.current_mode(), s.panes[&pane].kind_name()), ("input", "edit"));
+        assert_eq!((s.current_mode(), s.panes[&pane].mode_kind()), ("input", "edit"));
         assert_eq!(prompt_row(&mut s), ("/".into(), Some((1, 29))));
         // Characters typed go in after the prompt; keys with Ctrl or Alt,
         // and Enter, do not (unmapped here).
@@ -4711,7 +4756,7 @@ mod tests {
         s.listen(&["BufferHidden", "BufferDeleted"]);
         let b = ScriptValue::Num(buf as f64);
         // Shown in a second pane: closing one does not hide it.
-        let term_pane = *s.panes.iter().find(|(_, e)| e.kind_name() == "terminal").unwrap().0;
+        let term_pane = *s.panes.iter().find(|(_, e)| e.mode_kind() == "terminal").unwrap().0;
         let o = ScriptValue::map([("buffer", b.clone()), ("pane", ScriptValue::Num(term_pane as f64))]);
         let (second, _) = s.run_command("split", &[o], Instant::now()).unwrap();
         s.script_events.clear();
@@ -6027,7 +6072,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "the file system")]
     fn a_text_file_opens_takes_typing_and_is_written_back() {
         let (mut s, path) = text_session("notes.txt", "one\r\ntwo\r\n");
-        assert_eq!(s.panes[&s.focus].kind_name(), "edit");
+        assert_eq!(s.panes[&s.focus].mode_kind(), "edit");
         assert_eq!(s.history.current(), "edit", "the pane's mode");
         assert_eq!(text_of(&mut s), "one\ntwo\n");
         key(&mut s, "hi");
