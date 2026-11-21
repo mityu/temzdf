@@ -102,7 +102,9 @@ TypeScript 6, type-fest's types) are tools, never bundled. A value the API may l
 `isNullish` (`runtime/lib/validate.ts`). The default dev shell has no Miri (check.sh
 says it skipped it); `nix develop .#enable-miri` has it, and the user runs
 it from time to time. To run Miri yourself, `scripts/miri.sh` (it enters
-`.#enable-miri` by itself; its toolchain is nightly). The scripts enter their
+`.#enable-miri` by itself when started outside a dev shell; its toolchain is
+nightly); from inside the default dev shell, as agents are, run it as `env -u
+IN_NIX_SHELL scripts/miri.sh`, or it only says it skipped. The scripts enter their
 dev shell by themselves when started outside it (`scripts/lib/devshell.sh`), so
 never use `nix develop -c` to run them. A unit test Miri cannot run (foreign
 code, ptys, processes, sockets) gets `#[cfg_attr(miri, ignore = "why")]`;
