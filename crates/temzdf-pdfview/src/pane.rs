@@ -99,8 +99,12 @@ pub enum Request {
     },
     /// Open an external link with the system handler.
     OpenUri(String),
-    /// Put text on the clipboard (OSC 52).
-    Copy(String),
+    /// Copied text, for the session's copy history and clipboard; `note`
+    /// says what was left out (the session's notice shows it).
+    Copy {
+        text: String,
+        note: Option<String>,
+    },
     /// SyncTeX inverse search at a page-space point.
     Inverse {
         page: usize,
@@ -1197,12 +1201,8 @@ impl PdfPane {
         let missing = (p0..=p1).filter(|&p| self.text_of_page(p).is_none()).count();
         let text = sel.text(&self.viewer.doc.borrow().texts);
         if !text.is_empty() {
-            let n = text.chars().count();
-            self.notice = Some(match missing {
-                0 => format!("Copied {n} characters"),
-                m => format!("Copied {n} characters; {m} page(s) not loaded were left out"),
-            });
-            self.requests.push(Request::Copy(text));
+            let note = (missing > 0).then(|| format!("{missing} page(s) not loaded were left out"));
+            self.requests.push(Request::Copy { text, note });
         }
     }
 
@@ -1686,9 +1686,8 @@ mod tests {
         }
         s.selection = Some(crate::selection::Selection { anchor: (0, 0), head: (2, 5) });
         s.copy_selection();
-        assert!(matches!(s.take_requests()[..], [Request::Copy(_)]));
-        let notice = s.notice.clone().unwrap_or_default();
-        assert!(notice.contains("1 page(s) not loaded were left out"), "{notice}");
+        let [Request::Copy { note: Some(note), .. }] = &s.take_requests()[..] else { panic!("a copy with a note") };
+        assert_eq!(note, "1 page(s) not loaded were left out");
     }
 
     #[test]
@@ -1748,7 +1747,7 @@ mod tests {
         mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), over);
         mouse(&mut s, MouseEventKind::Release(MouseButton::Left), over);
         assert!(!s.selecting, "the release reached the page");
-        assert!(matches!(s.take_requests()[..], [Request::Copy(_)]));
+        assert!(matches!(s.take_requests()[..], [Request::Copy { .. }]));
     }
 
     #[test]
@@ -1762,7 +1761,9 @@ mod tests {
         mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), ((a.0 + b.0) / 2.0, a.1));
         mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), (b.0 + 4.0, b.1));
         mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (b.0 + 4.0, b.1));
-        assert_eq!(s.take_requests(), vec![Request::Copy("temzdf sample document".into())]);
+        assert_eq!(s.take_requests(), vec![Request::Copy { text: "temzdf sample document".into(), note: None }]);
+        // The session says it copied, not the status bar.
+        assert_eq!(s.status().notice, None);
     }
 
     fn info(name: &str) -> DocInfo {

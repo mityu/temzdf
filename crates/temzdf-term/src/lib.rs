@@ -223,7 +223,11 @@ impl TermBuffer {
             .on_clipboard_write(move |_, write| {
                 for content in write.contents() {
                     if content.mime.starts_with("text/plain") {
-                        e.borrow_mut().push(Effect::Copied { text: content.data.to_owned(), kind: CopyKind::Char });
+                        e.borrow_mut().push(Effect::Copied {
+                            text: content.data.to_owned(),
+                            kind: CopyKind::Char,
+                            note: None,
+                        });
                         break;
                     }
                 }

@@ -920,7 +920,10 @@ fn the_visual_mode_copies_a_shells_output_by_keys() {
     t.wait_for("back in the shell", |s| mode_shown(s) == "TERMINAL");
     t.keys(&["C-b", "["]);
     let s = t.wait_for("the visual mode", |s| mode_shown(s) == "VISUAL");
-    let third = format!("{}\n", s.lines()[2].trim_end());
+    // Left of the copy notices' box (top right), when it reaches the row.
+    let lines = s.lines();
+    let row = lines[2].split(|c| ('\u{2500}'..='\u{257f}').contains(&c)).next().unwrap_or_default();
+    let third = format!("{}\n", row.trim_end());
     t.type_text("3HY");
     assert_eq!(copies(&mut t, 5)[4], third);
     t.wait_for("back in the shell", |s| mode_shown(s) == "TERMINAL");

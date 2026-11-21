@@ -204,15 +204,16 @@ impl Session {
         entry
     }
 
-    /// What panes copied since the last call goes into the history; their
-    /// other effects stay for the client.
-    pub(super) fn collect_copies(&mut self) {
-        let mut copied: Vec<(BufferId, String, CopyKind)> = Vec::new();
+    /// What panes copied since the last call goes into the history (with a
+    /// notice, [`Session::pane_copied`]); their other effects stay for the
+    /// client. A redraw when something was copied (the notice shows).
+    pub(super) fn collect_copies(&mut self) -> Outcome {
+        let mut copied: Vec<(BufferId, String, CopyKind, Option<String>)> = Vec::new();
         let mut others = Vec::new();
         for (id, t) in &mut self.terms {
             for e in t.term.take_effects() {
                 match e {
-                    Effect::Copied { text, kind } => copied.push((*id, text, kind)),
+                    Effect::Copied { text, kind, note } => copied.push((*id, text, kind, note)),
                     e => others.push(e),
                 }
             }
@@ -224,7 +225,7 @@ impl Session {
                         && let Some(effect) = host.request(req)
                     {
                         match effect {
-                            Effect::Copied { text, kind } => copied.push((*doc, text, kind)),
+                            Effect::Copied { text, kind, note } => copied.push((*doc, text, kind, note)),
                             e => others.push(e),
                         }
                     }
@@ -232,18 +233,34 @@ impl Session {
             }
         }
         self.effects.extend(others);
-        for (buf, text, kind) in copied {
-            let source = self.copy_source(Some(buf));
-            self.record_copy(NewCopy {
-                text,
-                kind,
-                how: How::Copy,
-                register: None,
-                append: false,
-                clipboard: None,
-                source,
-            });
+        let out = if copied.is_empty() { Outcome::None } else { Outcome::Redraw };
+        for (buf, text, kind, note) in copied {
+            self.pane_copied(buf, text, kind, note.as_deref());
         }
+        out
+    }
+
+    /// A pane on `buf` copied `text` (a terminal's or a document's
+    /// selection; a program in a terminal through OSC 52): into the
+    /// history, and a notice says so, `note` after the count. Text panes'
+    /// copies (yanks) go through `copy-text` instead, without a notice.
+    pub(super) fn pane_copied(&mut self, buf: BufferId, text: String, kind: CopyKind, note: Option<&str>) {
+        let n = text.chars().count();
+        let source = self.copy_source(Some(buf));
+        self.record_copy(NewCopy {
+            text,
+            kind,
+            how: How::Copy,
+            register: None,
+            append: false,
+            clipboard: None,
+            source,
+        });
+        let notice = match note {
+            Some(note) => format!("Copied {n} characters; {note}"),
+            None => format!("Copied {n} characters"),
+        };
+        self.notify(super::notices::Kind::Info, &notice);
     }
 
     /// `temzdf copy`.
@@ -300,7 +317,7 @@ impl Session {
             return None;
         }
         // What panes copied just now (a visual mode's yank) is in.
-        self.collect_copies();
+        let copied = self.collect_copies();
         let opts = args.iter().find(|a| matches!(a, ScriptValue::Map(_)));
         let opt_str = |k: &str| opts.and_then(|o| o.get(k)).and_then(ScriptValue::as_str).map(str::to_owned);
         let opt_bool = |k: &str| match opts.and_then(|o| o.get(k)) {
@@ -312,7 +329,7 @@ impl Session {
             None => Ok(CopyKind::Char),
             Some(s) => CopyKind::parse(&s).ok_or(format!("{s:?} is not char, line or block")),
         };
-        Some(match name {
+        let result = match name {
             "copy-text" => (|| {
                 let text = args.first().and_then(ScriptValue::as_str).ok_or("copyText: what text?")?.to_owned();
                 let kind = kind_of(opt_str("kind")).map_err(|e| format!("copyText: kind {e}"))?;
@@ -414,7 +431,8 @@ impl Session {
                 Ok((ScriptValue::map([("$promise", ScriptValue::Num(ticket as f64))]), Outcome::None))
             }
             _ => return None,
-        })
+        };
+        Some(result.map(|(v, o)| (v, o.merge(copied))))
     }
 
     /// Put `entry` into `pane`.

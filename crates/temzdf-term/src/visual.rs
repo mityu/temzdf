@@ -873,7 +873,7 @@ impl TermBuffer {
         if let Ok(Some(bytes)) = self.terminal.format_selection_alloc(None, options) {
             let text = String::from_utf8_lossy(&bytes).into_owned();
             if !text.is_empty() {
-                self.effects.borrow_mut().push(Effect::Copied { text, kind });
+                self.effects.borrow_mut().push(Effect::Copied { text, kind, note: None });
             }
         }
     }

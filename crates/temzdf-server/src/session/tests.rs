@@ -1569,11 +1569,17 @@ fn a_selection_released_over_the_status_line_is_copied() {
     s.mouse(&at(MouseEventKind::Press(left), 318, 188), Instant::now());
     s.mouse(&at(MouseEventKind::Drag(left), 450, 590), Instant::now());
     s.mouse(&at(MouseEventKind::Release(left), 450, 590), Instant::now());
+    // The loop's poll after the event takes the copy in: its notice shows
+    // in the next frame.
+    let _ = s.poll(Instant::now());
+    let notice = s.notices.iter().find(|n| n.text.starts_with("Copied ")).map(|n| n.text.clone());
     let copied = s.take_effects().into_iter().find_map(|e| match e {
         temzdf_scene::Effect::Copy(t) => Some(t),
         _ => None,
     });
     assert!(copied.as_deref().is_some_and(|t| t.starts_with("temzdf sample document")), "{copied:?}");
+    let n = copied.as_deref().unwrap().chars().count();
+    assert_eq!(notice, Some(format!("Copied {n} characters")));
     // It is the copy history's newest entry, from the PDF, as characters.
     let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap().0;
     let newest = match run(&mut s, "history", &[]) {
@@ -1591,6 +1597,16 @@ fn a_selection_released_over_the_status_line_is_copied() {
     run(&mut s, "split", &[o]);
     run(&mut s, "put", &[]);
     assert_eq!(Some(text_of(&mut s)), copied);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+fn a_pane_copy_notice_says_what_was_left_out() {
+    let (mut s, rx) = session();
+    settle(&mut s, &rx);
+    let buf = s.panes[&s.focus].buffer();
+    s.pane_copied(buf, "abc".into(), temzdf_scene::CopyKind::Char, Some("1 page(s) not loaded were left out"));
+    assert!(s.notices.iter().any(|n| n.text == "Copied 3 characters; 1 page(s) not loaded were left out"));
 }
 
 /// What the session copied (OSC 52 in a terminal client).
@@ -1619,6 +1635,7 @@ fn the_visual_mode_moves_selects_and_copies() {
     assert!(rows_after(&mut s, &rx, 300)[2].is_empty(), "x went nowhere");
     cmd(&mut s, "visual.yank", &[]).unwrap();
     assert_eq!(copied(&mut s), ["world"]);
+    assert!(s.notices.iter().any(|n| n.text == "Copied 5 characters"), "said so");
     assert_eq!(s.current_mode(), "terminal", "y leaves");
     assert!(!s.focused_term().unwrap().visual_kept());
     // Rows, escaping twice.

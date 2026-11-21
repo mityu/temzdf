@@ -394,18 +394,7 @@ impl Session {
                 temzdf_mdview::Request::Follow(target) => self.md_follow(pane, &target),
                 temzdf_mdview::Request::Zoom(n) => self.md_zoom(pane, n.signum(), n.unsigned_abs()),
                 temzdf_mdview::Request::Copy(text) => {
-                    let n = text.chars().count();
-                    let source = self.copy_source(Some(doc));
-                    self.record_copy(super::registers::NewCopy {
-                        text,
-                        kind: temzdf_scene::CopyKind::Char,
-                        how: super::registers::How::Copy,
-                        register: None,
-                        append: false,
-                        clipboard: None,
-                        source,
-                    });
-                    self.notify(super::notices::Kind::Info, &format!("Copied {n} characters"));
+                    self.pane_copied(doc, text, temzdf_scene::CopyKind::Char, None);
                     Ok(())
                 }
             };

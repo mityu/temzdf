@@ -304,7 +304,7 @@ impl DocumentHost {
                 None
             }
             Request::OpenUri(uri) => Some(Effect::OpenUri { uri, command: None }),
-            Request::Copy(text) => Some(Effect::Copied { text, kind: temzdf_scene::CopyKind::Char }),
+            Request::Copy { text, note } => Some(Effect::Copied { text, kind: temzdf_scene::CopyKind::Char, note }),
         }
     }
 }

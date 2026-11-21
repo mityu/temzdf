@@ -430,8 +430,9 @@ pub enum Effect {
     Copy(String),
     /// A pane copied text (pane to session, never sent to clients): the
     /// session records it in its copy history and puts it on the client's
-    /// clipboard as `o.clipboard` says (doc/design/registers.md).
-    Copied { text: String, kind: CopyKind },
+    /// clipboard as `o.clipboard` says (doc/design/registers.md), and says
+    /// so in a notice, `note` after the count (what was left out).
+    Copied { text: String, kind: CopyKind, note: Option<String> },
     /// Read the client's clipboard (`primary`: the X11/Wayland primary
     /// selection), answered with `ClientMsg::Clipboard` carrying `ticket`.
     ReadClipboard { ticket: u64, primary: bool },

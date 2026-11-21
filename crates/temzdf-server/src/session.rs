@@ -1480,7 +1480,7 @@ impl Session {
     /// Effects for the frontend, including requests panes made since the last
     /// call (call every loop iteration: inverse search does not redraw).
     pub fn take_effects(&mut self) -> Vec<Effect> {
-        self.collect_copies();
+        let _ = self.collect_copies();
         // Links open with the configured command, in the client.
         for e in &mut self.effects {
             if let Effect::OpenUri { command, .. } = e
@@ -1592,6 +1592,9 @@ impl Session {
             self.last_key = now;
             out = out.merge(Outcome::Redraw);
         }
+        // What panes copied in the events just handled: its notice now,
+        // not after the next frame (take_effects comes after it).
+        out = out.merge(self.collect_copies());
         out.merge(self.flush_events())
     }
 

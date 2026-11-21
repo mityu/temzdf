@@ -50,6 +50,12 @@ terminal pane pipes into it (`temzdf copy`). Decided with the user on
   `clipboard: false`. Copies to a named register do not go (Vim's `"ayy`).
   To keep a key from touching the clipboard, map it so (`"_x`, or a
   function copying with `clipboard: false`) **(user)**.
+- A pane's own copy (a terminal's selection or visual-mode yank, a
+  program's OSC 52 in a terminal, a PDF's or a Markdown page's
+  selection) shows one floating notice, `Copied N characters`, with what
+  was left out after it (a PDF's pages not loaded); text panes' copies
+  (yanks through `copyText`) show none (decided with the user on
+  2026-11-22).
 - Reading it is asynchronous: the session asks the client that typed last
   (`Effect::ReadClipboard`), which answers `ClientMsg::Clipboard`. A
   terminal client asks the terminal with an OSC 52 query (kitty and
