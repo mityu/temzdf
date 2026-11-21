@@ -4,12 +4,11 @@
 //! [`DocEvent`]s in, collects the panes' work with [`DocumentHost::dispatch`]
 //! and performs the returned [`Effect`]s. See doc/design/reload.md and doc/design/synctex.md.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
-use temzdf_scene::tiles::Want;
+use temzdf_scene::tiles::{self, Want};
 use temzdf_scene::{Effect, Images};
 
 use crate::doc_cache::{DocCache, Need, RenderJob};
@@ -57,8 +56,7 @@ impl Opening {
     pub fn start(path: &Path, sink: Sink) -> std::io::Result<Self> {
         let snapshot = workers::Snapshot::default();
         let cmd = workers::spawn_document(path.to_owned(), sink.clone(), snapshot.clone())?;
-        let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
-        let pool = workers::raster_pool(threads, sink.clone())?;
+        let pool = workers::raster_pool(tiles::default_threads(), sink.clone())?;
         let search = workers::spawn_search(snapshot, sink.clone())?;
         // Without a watcher the viewer still works, just without auto-reload.
         let watcher = workers::spawn_watcher(path, sink.clone());
@@ -316,7 +314,6 @@ impl DocumentHost {
 /// the same tiles) counts once.
 fn claim(cache: &mut DocCache, needs: Vec<Need>) -> (Vec<usize>, Vec<Want<RenderJob>>) {
     let (mut loads, mut wants) = (Vec::new(), Vec::new());
-    let mut seen = HashSet::new();
     for need in needs {
         match need {
             Need::LoadPage(p) if cache.is_requested(p) => {}
@@ -324,17 +321,11 @@ fn claim(cache: &mut DocCache, needs: Vec<Need>) -> (Vec<usize>, Vec<Want<Render
                 cache.mark_requested(&need);
                 loads.push(p);
             }
-            Need::Render(job) if !seen.insert(job.key) => {}
-            Need::Render(job) if cache.is_in_flight(job.key) => wants.push(Want::Queued(job.key)),
-            Need::Render(job) => {
-                cache.tiles.mark_in_flight(job.key);
-                wants.push(Want::New(job));
-            }
-            Need::Queued(key) if seen.insert(key) => wants.push(Want::Queued(key)),
-            Need::Queued(_) => {}
+            Need::Render(job) => wants.push(Want::New(job)),
+            Need::Queued(key) => wants.push(Want::Queued(key)),
         }
     }
-    (loads, wants)
+    (loads, tiles::claim(wants, |job| cache.tiles.mark_in_flight(job.key)))
 }
 
 /// The inverse-search shell command for a source location: `template` with

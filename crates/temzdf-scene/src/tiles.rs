@@ -81,9 +81,10 @@ impl<K: Copy + Eq + Hash> TileCache<K> {
         self.in_flight.is_empty()
     }
 
-    /// The work for `key` was handed to the threads.
-    pub fn mark_in_flight(&mut self, key: K) {
-        self.in_flight.insert(key);
+    /// The work for `key` was handed to the threads; false when it was
+    /// in flight already.
+    pub fn mark_in_flight(&mut self, key: K) -> bool {
+        self.in_flight.insert(key)
     }
 
     /// The work for `key` was dropped before it ran, or its result is not
@@ -281,6 +282,31 @@ pub enum Want<J: Job> {
     Queued(J::Key),
 }
 
+/// A frame's wants as a pool takes them: work asked for twice (several
+/// views on one document ask for the same tiles) counts once, in its
+/// first place. New work is marked in flight with `mark` (false: it was in
+/// flight already, and is kept queued instead: it is queued or running).
+pub fn claim<J: Job>(wants: impl IntoIterator<Item = Want<J>>, mut mark: impl FnMut(&J) -> bool) -> Vec<Want<J>>
+where
+    J::Key: Copy + Eq + Hash,
+{
+    let mut seen = HashSet::new();
+    wants
+        .into_iter()
+        .filter_map(|w| match w {
+            Want::New(j) if !seen.insert(j.key()) => None,
+            Want::New(j) if mark(&j) => Some(Want::New(j)),
+            Want::New(j) => Some(Want::Queued(j.key())),
+            Want::Queued(k) => seen.insert(k).then_some(Want::Queued(k)),
+        })
+        .collect()
+}
+
+/// Threads a pool paints with: one a core, 1 to 4.
+pub fn default_threads() -> usize {
+    std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4))
+}
+
 type Queue<J> = Arc<(Mutex<VecDeque<J>>, Condvar)>;
 
 /// Worker threads with a replaceable queue: each frame the views' whole
@@ -331,17 +357,6 @@ impl<J: Job> WorkPool<J> {
             })?;
         }
         Ok(Self { shared, stop })
-    }
-
-    /// Replace queued (not yet started) jobs with `jobs`. Returns the keys
-    /// of the jobs that were dropped.
-    pub fn replace(&self, jobs: Vec<J>) -> Vec<J::Key> {
-        let (lock, cv) = &*self.shared;
-        let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
-        let dropped = q.drain(..).map(|j| j.key()).collect();
-        q.extend(jobs);
-        cv.notify_all();
-        dropped
     }
 
     /// Replace the queue with what a frame wants, in its order: new jobs,
@@ -494,13 +509,15 @@ mod tests {
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let (tx, rx) = mpsc::channel();
         let pool = WorkPool::new("test-pool", 1, channel_sink(tx, |n| n)).unwrap();
-        pool.replace(vec![Wait(1, gate.clone())]);
+        pool.replace_wanted(vec![Want::New(Wait(1, gate.clone()))]);
         // Job 1 is running (or about to): wait until the queue is empty.
         while !pool.shared.0.lock().unwrap().is_empty() {
             std::thread::yield_now();
         }
-        assert!(pool.replace(vec![Wait(2, gate.clone()), Wait(3, gate.clone())]).is_empty());
-        assert_eq!(pool.replace(vec![Wait(4, gate.clone())]), [2, 3]);
+        assert!(
+            pool.replace_wanted(vec![Want::New(Wait(2, gate.clone())), Want::New(Wait(3, gate.clone()))]).is_empty()
+        );
+        assert_eq!(pool.replace_wanted(vec![Want::New(Wait(4, gate.clone()))]), [2, 3]);
         *gate.0.lock().unwrap() = true;
         gate.1.notify_all();
         let got: Vec<u32> = (0..2).map(|_| rx.recv_timeout(Duration::from_secs(10)).unwrap()).collect();
@@ -512,11 +529,11 @@ mod tests {
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let (tx, rx) = mpsc::channel();
         let pool = WorkPool::new("test-pool", 1, channel_sink(tx, |n| n)).unwrap();
-        pool.replace(vec![Wait(1, gate.clone())]);
+        pool.replace_wanted(vec![Want::New(Wait(1, gate.clone()))]);
         while !pool.shared.0.lock().unwrap().is_empty() {
             std::thread::yield_now();
         }
-        pool.replace(vec![Wait(2, gate.clone()), Wait(3, gate.clone())]);
+        pool.replace_wanted(vec![Want::New(Wait(2, gate.clone())), Want::New(Wait(3, gate.clone()))]);
         // 3 still wanted (first now), 2 not, 1 is running, 4 is new.
         let wants = vec![Want::Queued(3), Want::Queued(1), Want::New(Wait(4, gate.clone()))];
         assert_eq!(pool.replace_wanted(wants), [2]);
@@ -524,5 +541,28 @@ mod tests {
         gate.1.notify_all();
         let got: Vec<u32> = (0..3).map(|_| rx.recv_timeout(Duration::from_secs(10)).unwrap()).collect();
         assert_eq!(got, [1, 3, 4]);
+    }
+
+    #[test]
+    fn claiming_counts_work_once_and_keeps_work_in_flight_queued() {
+        let gate = Arc::new((Mutex::new(true), Condvar::new()));
+        let mut cache = TileCache::new(0, 0..1);
+        cache.mark_in_flight(2);
+        let wants = vec![
+            Want::New(Wait(1, gate.clone())),
+            Want::Queued(3),
+            Want::New(Wait(2, gate.clone())),
+            Want::New(Wait(1, gate.clone())),
+            Want::New(Wait(3, gate.clone())),
+        ];
+        let got: Vec<_> = claim(wants, |j| cache.mark_in_flight(j.0))
+            .into_iter()
+            .map(|w| match w {
+                Want::New(j) => (true, j.0),
+                Want::Queued(k) => (false, k),
+            })
+            .collect();
+        assert_eq!(got, [(true, 1), (false, 3), (false, 2)]);
+        assert!(cache.is_in_flight(1) && !cache.is_in_flight(3));
     }
 }

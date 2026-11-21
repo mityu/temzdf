@@ -14,7 +14,7 @@ use temzdf_markdown::{Deco, Document, Rendered};
 use temzdf_mdview::{Strip, StripJob, StripKey};
 use temzdf_protocol::script::ScriptValue;
 use temzdf_scene::Effect;
-use temzdf_scene::tiles::{Job, TileCache, Want, WorkPool};
+use temzdf_scene::tiles::{self, TileCache, Want, WorkPool};
 use temzdf_texteditor::{MarkSpec, Text};
 
 use super::text::TextView;
@@ -273,8 +273,11 @@ impl Session {
         }
         if self.md_pool.is_none() {
             let events = self.events.clone();
-            let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
-            match WorkPool::new("temzdf-markdown", threads, Arc::new(move |s| events(SessionEvent::MarkdownStrip(s)))) {
+            match WorkPool::new(
+                "temzdf-markdown",
+                tiles::default_threads(),
+                Arc::new(move |s| events(SessionEvent::MarkdownStrip(s))),
+            ) {
                 Ok(pool) => self.md_pool = Some(pool),
                 Err(e) => {
                     self.message(&format!("markdown: no threads to paint with: {e}"));
@@ -282,23 +285,8 @@ impl Session {
                 }
             }
         }
-        let mut seen = std::collections::HashSet::new();
-        let wants: Vec<Want<StripJob>> = wants
-            .into_iter()
-            .filter(|w| {
-                seen.insert(match w {
-                    Want::New(j) => j.key(),
-                    Want::Queued(k) => *k,
-                })
-            })
-            .collect();
-        for w in &wants {
-            if let Want::New(j) = w
-                && let Some(d) = self.md_docs.get_mut(&j.tag)
-            {
-                d.strips.mark_in_flight(j.key);
-            }
-        }
+        let docs = &mut self.md_docs;
+        let wants = tiles::claim(wants, |j| docs.get_mut(&j.tag).is_none_or(|d| d.strips.mark_in_flight(j.key)));
         let dropped = self.md_pool.as_ref().map(|p| p.replace_wanted(wants)).unwrap_or_default();
         for (md, key) in dropped {
             if let Some(d) = self.md_docs.get_mut(&md) {

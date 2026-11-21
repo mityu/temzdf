@@ -208,7 +208,9 @@ impl DocCache {
             Need::LoadPage(p) => {
                 self.lists_requested.insert(*p);
             }
-            Need::Render(job) => self.tiles.mark_in_flight(job.key),
+            Need::Render(job) => {
+                self.tiles.mark_in_flight(job.key);
+            }
             Need::Queued(_) => {}
         }
     }

@@ -471,6 +471,7 @@ mod tests {
     use crate::doc_cache::{TILE, TileKind};
     use crate::pdf::PixelRect;
     use temzdf_scene::sink::channel_sink;
+    use temzdf_scene::tiles::Want;
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
@@ -800,7 +801,7 @@ mod tests {
             let (tx, rx) = mpsc::channel::<DocEvent>();
             let pool = raster_pool(threads, channel_sink(tx, |e| e)).unwrap();
             let start = std::time::Instant::now();
-            pool.replace(jobs());
+            pool.replace_wanted(jobs().into_iter().map(Want::New).collect());
             for _ in 0..n {
                 assert!(matches!(rx.recv().unwrap(), DocEvent::Rendered(_)));
             }
