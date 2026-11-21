@@ -17,8 +17,8 @@ configuration); how to write a configuration is in `doc/config.md`.
 | `crates/temzdf-script` | The host: QuickJS through `rquickjs`, TypeScript type stripping (`swc_ts_fast_strip`), module loading, the event loop, the native half of the API (`src/host.rs`) and its JavaScript half (`src/prelude.ts`: TypeScript typed as the `temzdf` module of `ts-types/temzdf-core.d.ts`, so it builds what the declarations say; what scripts pass is checked, and its defaults filled in, by zod schemas checked against the declared types, and the session's answers come as `unknown`, their shapes checked by zod too; esbuild turns it into a script in `build.rs`) and the module `import ... from "temzdf"` gets (`src/temzdf.ts`: the prelude's API export by export, checked to export exactly what the declarations do), all behind its feature `host`. It talks through a `Link` (`src/link.rs`); `StreamLink` runs it natively over a byte stream (its tests). |
 | `crates/temzdf-script-guest` | The host built for `wasm32-wasip1`: a `Link` made of imports, and the export `run`. Empty when built for anything else. |
 | `crates/temzdf-script-runner` | Runs the guest in the server: `build.rs` builds it (nested cargo, profile `script-guest`) and precompiles it with Cranelift; at run time wasmtime's runtime alone loads it (`ScriptHost`). |
-| `crates/temzdf-script/runtime/` | The shipped scripts, an npm package bundled by `crates/temzdf-script/build.rs` with esbuild (npm packages from `package-lock.json`: `runtime/node_modules` by `npm ci`, else built by Nix into `$TEMZDF_NODE_MODULES`): `defaults.ts`, the default configuration (loaded before the user's); `polyfills.ts`, globals QuickJS lacks (`AbortController` from `abortcontroller-polyfill`, `URL` and `URLSearchParams` from `core-js-pure`; quickjs-ng has `atob`, `btoa` and `queueMicrotask` itself), evaluated first; `lib/validate.ts`, checking values with zod (`zod/mini`); modules scripts import as `temzdf/NAME` (`MODULES` in `build.rs`: `edit/vim`, `edit/notepad`, `pane/pdf`, `pane/terminal`, `pane/markdown`, `mode/normal`, `mode/input`, `buffers`, each a keyset, `runtime/lib/keyset.ts`: nothing on import, `enable()`/`disable()`; and `command`, the Ex command registry every script shares), kept as imports in every bundle so that one instance of each is shared; `defaults.ts` only enables them. The user's configuration is not bundled. |
-| `crates/temzdf-script/src/types.rs` | `temzdf.d.ts` for `temzdf print-types`, from the command registry. |
+| `crates/temzdf-script/runtime/` | The shipped scripts, an npm package bundled by `crates/temzdf-script/build.rs` with esbuild (npm packages from `package-lock.json`: `runtime/node_modules` by `npm ci`, else built by Nix into `$TEMZDF_NODE_MODULES`): `defaults.ts`, the default configuration (loaded before the user's); `polyfills.ts`, globals QuickJS lacks (`AbortController` from `abortcontroller-polyfill`, `URL` and `URLSearchParams` from `core-js-pure`; quickjs-ng has `atob`, `btoa` and `queueMicrotask` itself), evaluated first; `lib/validate.ts`, checking values with zod (`zod/mini`); modules scripts import as `temzdf/NAME` (`MODULES` in `build.rs`: `edit/vim`, `edit/notepad`, `pane/pdf`, `pane/terminal`, `pane/markdown`, `mode/normal`, `mode/input`, `buffers`, each a keyset (`keyset`, `runtime/lib/keyset.ts`: nothing on import, `enable()`/`disable()`); `command`, the Ex command registry every script shares; and `keyset` itself, for scripts' own keysets), kept as imports in every bundle so that one instance of each is shared; `defaults.ts` only enables them. The user's configuration is not bundled. |
+| `crates/temzdf-script/src/types.rs` | The declarations `temzdf print-types` prints: `ts-types/temzdf-all.d.ts`, embedded as it is (`scripts/ts-types.sh` writes it from the declarations written by hand and the shipped modules). |
 | `crates/temzdf-server/src/session/script.rs` | The session's side: starting the host, holding input while scripts run, the frame stack that runs hooks nested, options, mapping and mode operations. |
 | `crates/temzdf-server/src/session/commands.rs` | The command registry (`action.*`, `temzdf action`). |
 | `crates/temzdf-server/src/keymap/` | Key notation (Neovim's, with fallbacks for keys legacy terminals cannot tell apart), modes, the sequence matcher, the mode history. |
@@ -109,6 +109,19 @@ dependencies are cached apart from the server.
   during such an inner wait is kept for it; a `Resolve` is queued, and the
   host settles queued answers before it waits for a message again (none
   may come to wake it).
+- **The prelude's payloads**: each operation's JSON payload (`map`,
+  `defineMode`, `on`, ...) is read into a struct of its own in `host_op`
+  (`src/host.rs`). One that breaks the protocol (a required `func`
+  missing, a wrong type, a `fallback` that is neither a name nor a
+  function's id) is the prelude's bug: the call throws `internal: OP:
+  what is wrong`, as it does for a bad context token or an unknown
+  operation. Never a default (function 0, no mode), which would map or
+  hook the wrong function silently, and never a panic, which would trap
+  the guest and stop every script; the exception shows where the call
+  was made, with its stack, and the other mappings and hooks live on.
+  What scripts get wrong the prelude refuses before, by its zod schemas,
+  with messages naming the call and the option (`keymap.add`'s
+  `priority` is a 32-bit integer there).
 - **Context tokens**: every command carries the call or task it belongs to;
   the session refuses commands of calls that have finished and of tasks that
   ended. Global functions (`action.split()`) only work inside a mapped or hook

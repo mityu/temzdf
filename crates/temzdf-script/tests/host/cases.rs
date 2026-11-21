@@ -239,11 +239,12 @@ fn malformed_mappings_are_refused() {
 import { action, keymap } from "temzdf";
 const tries: [string, () => void][] = [
   ["priority", () => keymap.add("normal", "a", () => {}, { priority: 1.5 })],
+  ["large priority", () => keymap.add("normal", "a", () => {}, { priority: 2 ** 40 })],
   ["modes", () => keymap.add(42 as any, "b", () => {})],
   ["mode list", () => keymap.add(["normal", 1] as any, "c", () => {})],
 ];
 for (const [what, f] of tries) {
-  try { f(); action.message(`${what} taken`); } catch (e) { action.message(`${what} refused`); }
+  try { f(); action.message(`${what} taken`); } catch (e) { action.message(`${what} refused: ${(e as Error).message}`); }
 }
 "#;
     let mut s = Session::start(&[("config.ts", config)]);
@@ -252,7 +253,12 @@ for (const [what, f] of tries) {
     ready_ok(s.serve(&mut log));
     assert_eq!(
         log,
-        ["load message(priority refused)", "load message(modes refused)", "load message(mode list refused)"]
+        [
+            "load message(priority refused: keymap.add(a): options.priority: Invalid input: expected int, received number)",
+            "load message(large priority refused: keymap.add(a): options.priority: Too big: expected number to be <=2147483647)",
+            "load message(modes refused: keymap.add(b): mode: Invalid input)",
+            "load message(mode list refused: keymap.add(c): mode: Invalid input)",
+        ]
     );
 }
 

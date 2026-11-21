@@ -360,113 +360,224 @@ fn json<T: serde::Serialize>(v: &T) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "null".into())
 }
 
+/// The operation `op` with its JSON `payload`, as the prelude sends them.
+/// A payload that breaks that protocol (a field missing, a wrong type) is
+/// the prelude's bug, refused with an `internal:` error the call throws:
+/// never read as a default (function 0, no mode), and never a panic, which
+/// would stop every script. What scripts get wrong the prelude refuses
+/// before, with messages of its own.
+fn host_op(op: &str, payload: &str) -> Result<HostOp, String> {
+    fn parse<T: serde::de::DeserializeOwned>(op: &str, payload: &str) -> Result<T, String> {
+        serde_json::from_str(payload).map_err(|e| format!("internal: {op}: {e}"))
+    }
+    Ok(match op {
+        "command" => {
+            let a: CommandArgs = parse(op, payload)?;
+            HostOp::Command { name: a.name, args: a.args.iter().map(to_script).collect() }
+        }
+        "schedule" => HostOp::Schedule { func: parse::<ScheduleArgs>(op, payload)?.func },
+        "off" => {
+            let a: HookArgs = parse(op, payload)?;
+            HostOp::Off { event: a.event, func: a.func }
+        }
+        "on" => {
+            let a: HookArgs = parse(op, payload)?;
+            HostOp::On { event: a.event, func: a.func, nested: a.nested }
+        }
+        "defineMode" => {
+            let a: DefineModeArgs = parse(op, payload)?;
+            HostOp::DefineMode {
+                name: a.name,
+                fallback: a.fallback.map(|f| match f {
+                    FallbackArg::Name(FallbackName::Drop) => Fallback::Drop,
+                    FallbackArg::Name(FallbackName::Passthrough) => Fallback::Passthrough,
+                    FallbackArg::Func(f) => Fallback::Func(f),
+                }),
+                count: a.count,
+                transient: a.transient,
+                keepalive: a.keepalive.map(|k| match k {
+                    KeepaliveArg::Name(KeepaliveName::Mapped) => Keepalive::Mapped,
+                    KeepaliveArg::Name(KeepaliveName::Always) => Keepalive::Always,
+                    KeepaliveArg::Func(f) => Keepalive::Func(f),
+                }),
+                timeout: a.timeout,
+            }
+        }
+        "map" => {
+            let a: MapArgs = parse(op, payload)?;
+            HostOp::Map {
+                modes: a.modes.into_vec(),
+                keys: a.keys,
+                func: a.func,
+                nowait: a.nowait,
+                desc: a.desc,
+                when: a.when,
+                namespace: a.namespace,
+                priority: a.priority,
+            }
+        }
+        "unmap" => {
+            let a: UnmapArgs = parse(op, payload)?;
+            HostOp::Unmap { modes: a.modes.into_vec(), keys: a.keys, namespace: a.namespace }
+        }
+        "clearMappings" => {
+            let a: MappingFilter = parse(op, payload)?;
+            HostOp::ClearMappings { mode: a.mode, namespace: a.namespace }
+        }
+        "getMappings" => {
+            let a: MappingFilter = parse(op, payload)?;
+            HostOp::GetMappings { mode: a.mode, namespace: a.namespace, keys: a.keys }
+        }
+        "setOption" => {
+            let a: SetOptionArgs = parse(op, payload)?;
+            HostOp::SetOption { name: a.name, value: to_script(&a.value) }
+        }
+        "getOption" => HostOp::GetOption { name: parse::<GetOptionArgs>(op, payload)?.name },
+        other => return Err(format!("internal: unknown operation {other}")),
+    })
+}
+
+// The payloads of `host_op`: optional fields are `Option`s (absent or
+// null); the rest must be there.
+
+#[derive(serde::Deserialize)]
+struct CommandArgs {
+    name: String,
+    args: Vec<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct ScheduleArgs {
+    func: FuncId,
+}
+
+#[derive(serde::Deserialize)]
+struct HookArgs {
+    event: String,
+    func: FuncId,
+    #[serde(default)]
+    nested: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct DefineModeArgs {
+    name: String,
+    #[serde(default)]
+    fallback: Option<FallbackArg>,
+    #[serde(default)]
+    count: Option<bool>,
+    #[serde(default)]
+    transient: Option<bool>,
+    #[serde(default)]
+    keepalive: Option<KeepaliveArg>,
+    #[serde(default)]
+    timeout: Option<f64>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged, expecting = "fallback: \"drop\", \"passthrough\" or a function")]
+enum FallbackArg {
+    Name(FallbackName),
+    Func(FuncId),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum FallbackName {
+    Drop,
+    Passthrough,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged, expecting = "keepalive: \"mapped\", \"always\" or a function")]
+enum KeepaliveArg {
+    Name(KeepaliveName),
+    Func(FuncId),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum KeepaliveName {
+    Mapped,
+    Always,
+}
+
+/// A mode or a list of modes.
+#[derive(serde::Deserialize)]
+#[serde(untagged, expecting = "modes: a mode or a list of modes")]
+enum OneOrMany {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl OneOrMany {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            OneOrMany::One(s) => vec![s],
+            OneOrMany::Many(v) => v,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct MapArgs {
+    modes: OneOrMany,
+    keys: String,
+    func: FuncId,
+    #[serde(default)]
+    nowait: bool,
+    #[serde(default)]
+    desc: Option<String>,
+    #[serde(default)]
+    when: Option<FuncId>,
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default)]
+    priority: i32,
+}
+
+#[derive(serde::Deserialize)]
+struct UnmapArgs {
+    modes: OneOrMany,
+    keys: String,
+    #[serde(default)]
+    namespace: Option<String>,
+}
+
+/// What `clearMappings` and `getMappings` filter by (`None`: any);
+/// `clearMappings` has no `keys`.
+#[derive(serde::Deserialize)]
+struct MappingFilter {
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default)]
+    keys: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct SetOptionArgs {
+    name: String,
+    /// Left out (undefined, which JSON drops): null, unsetting it.
+    #[serde(default)]
+    value: serde_json::Value,
+}
+
+#[derive(serde::Deserialize)]
+struct GetOptionArgs {
+    name: String,
+}
+
 /// A command from JavaScript: send it, then wait for the answer. A hook the
 /// command causes arrives meanwhile and runs right here, nested (Vim's
 /// autocmds run inside the command that triggered them).
 fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: &str) -> rquickjs::Result<String> {
     let throw = |m: &str| Err(Exception::throw_message(ctx, m));
     let Ok(token) = serde_json::from_str::<Token>(token) else { return throw("internal: bad context token") };
-    let payload: serde_json::Value = serde_json::from_str(payload).unwrap_or(serde_json::Value::Null);
-    let text = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_owned();
-    let func = || payload.get("func").and_then(|v| v.as_u64()).unwrap_or(0) as FuncId;
-    let op = match op {
-        "command" => HostOp::Command {
-            name: text("name"),
-            args: payload
-                .get("args")
-                .and_then(|a| a.as_array())
-                .map_or(Vec::new(), |a| a.iter().map(to_script).collect()),
-        },
-        "schedule" => HostOp::Schedule { func: func() },
-        "off" => HostOp::Off { event: text("event"), func: func() },
-        "on" => HostOp::On {
-            event: text("event"),
-            func: func(),
-            nested: payload.get("nested").and_then(|v| v.as_bool()).unwrap_or(false),
-        },
-        "defineMode" => HostOp::DefineMode {
-            name: text("name"),
-            fallback: match payload.get("fallback") {
-                Some(serde_json::Value::String(s)) if s == "drop" => Some(Fallback::Drop),
-                Some(serde_json::Value::String(s)) if s == "passthrough" => Some(Fallback::Passthrough),
-                Some(serde_json::Value::Number(n)) => Some(Fallback::Func(n.as_u64().unwrap_or(0) as FuncId)),
-                None | Some(serde_json::Value::Null) => None,
-                Some(other) => {
-                    return throw(&format!(
-                        "defineMode: fallback {other} is not \"drop\", \"passthrough\" or a function"
-                    ));
-                }
-            },
-            count: payload.get("count").and_then(|v| v.as_bool()),
-            transient: payload.get("transient").and_then(|v| v.as_bool()),
-            keepalive: match payload.get("keepalive") {
-                Some(serde_json::Value::String(s)) if s == "mapped" => Some(Keepalive::Mapped),
-                Some(serde_json::Value::String(s)) if s == "always" => Some(Keepalive::Always),
-                Some(serde_json::Value::Number(n)) => Some(Keepalive::Func(n.as_u64().unwrap_or(0) as FuncId)),
-                None | Some(serde_json::Value::Null) => None,
-                Some(other) => {
-                    return throw(&format!(
-                        "defineMode: keepalive {other} is not \"mapped\", \"always\" or a function"
-                    ));
-                }
-            },
-            timeout: payload.get("timeout").and_then(|v| v.as_f64()),
-        },
-        "map" => {
-            // What the prelude sends; anything else is refused, not mapped
-            // to function 0 or to no mode.
-            let modes = match payload.get("modes") {
-                Some(serde_json::Value::String(s)) => vec![s.clone()],
-                Some(serde_json::Value::Array(a)) if a.iter().all(serde_json::Value::is_string) => {
-                    strings(&payload, "modes")
-                }
-                other => {
-                    return throw(&format!(
-                        "keymap.add: modes {} is not a mode or a list of modes",
-                        other.unwrap_or(&serde_json::Value::Null)
-                    ));
-                }
-            };
-            let Some(func) = payload.get("func").and_then(|v| v.as_u64()) else {
-                return throw("keymap.add: no function");
-            };
-            let priority = match payload.get("priority") {
-                None | Some(serde_json::Value::Null) => 0,
-                Some(v) => match v.as_i64().and_then(|p| i32::try_from(p).ok()) {
-                    Some(p) => p,
-                    None => return throw(&format!("keymap.add: priority {v} is not a whole number")),
-                },
-            };
-            HostOp::Map {
-                modes,
-                keys: text("keys"),
-                func: func as FuncId,
-                nowait: payload.get("nowait").and_then(|v| v.as_bool()).unwrap_or(false),
-                desc: payload.get("desc").and_then(|v| v.as_str()).map(str::to_owned),
-                when: payload.get("when").and_then(|v| v.as_u64()).map(|f| f as FuncId),
-                namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
-                priority,
-            }
-        }
-        "unmap" => HostOp::Unmap {
-            modes: strings(&payload, "modes"),
-            keys: text("keys"),
-            namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
-        },
-        "clearMappings" => HostOp::ClearMappings {
-            mode: payload.get("mode").and_then(|v| v.as_str()).map(str::to_owned),
-            namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
-        },
-        "getMappings" => HostOp::GetMappings {
-            mode: payload.get("mode").and_then(|v| v.as_str()).map(str::to_owned),
-            namespace: payload.get("namespace").and_then(|v| v.as_str()).map(str::to_owned),
-            keys: payload.get("lhs").and_then(|v| v.as_str()).map(str::to_owned),
-        },
-        "setOption" => {
-            HostOp::SetOption { name: text("name"), value: payload.get("value").map_or(ScriptValue::Null, to_script) }
-        }
-        "getOption" => HostOp::GetOption { name: text("name") },
-        other => return throw(&format!("internal: unknown operation {other}")),
+    let op = match host_op(op, payload) {
+        Ok(op) => op,
+        Err(e) => return throw(&e),
     };
     // Waiting for the session is not running code: no deadline meanwhile
     // (calls run here, nested, are attended).
@@ -785,15 +896,6 @@ fn error_of(ctx: &Ctx<'_>, e: rquickjs::Error) -> ScriptError {
     ScriptError::new(text.unwrap_or_else(|| "uncatchable error (interrupted?)".into()))
 }
 
-/// `payload[key]`: a string or a list of strings.
-fn strings(payload: &serde_json::Value, key: &str) -> Vec<String> {
-    match payload.get(key) {
-        Some(serde_json::Value::String(s)) => vec![s.clone()],
-        Some(serde_json::Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
-        _ => Vec::new(),
-    }
-}
-
 fn to_script(v: &serde_json::Value) -> ScriptValue {
     match v {
         serde_json::Value::Null => ScriptValue::Null,
@@ -913,5 +1015,118 @@ mod tests {
         assert!(rejections_to_log(held(), &failed).is_empty());
         // A load that went fine: they are rejections nobody handles.
         assert_eq!(rejections_to_log(held(), &Ok(())).len(), 2);
+    }
+
+    #[test]
+    fn a_payload_without_its_function_is_refused() {
+        // Not function 0: an internal error the call throws.
+        for (op, payload) in [("on", r#"{"event":"KeyTyped"}"#), ("off", r#"{"event":"KeyTyped"}"#), ("schedule", "{}")]
+        {
+            let e = host_op(op, payload).unwrap_err();
+            assert!(e.starts_with(&format!("internal: {op}: ")), "{e}");
+            assert!(e.contains("func"), "{e}");
+        }
+        let e = host_op("map", r#"{"modes":"normal","keys":"a"}"#).unwrap_err();
+        assert!(e.starts_with("internal: map: ") && e.contains("func"), "{e}");
+    }
+
+    #[test]
+    fn payloads_of_the_wrong_shape_are_refused() {
+        for (op, payload) in [
+            ("defineMode", r#"{"name":"m","fallback":-1}"#),
+            ("defineMode", r#"{"name":"m","fallback":1.5}"#),
+            ("defineMode", r#"{"name":"m","fallback":"eat"}"#),
+            ("defineMode", r#"{"name":"m","keepalive":-2}"#),
+            ("defineMode", r#"{"name":"m","keepalive":0.5}"#),
+            ("defineMode", r#"{"name":"m","keepalive":"drop"}"#),
+            ("map", r#"{"modes":42,"keys":"a","func":1}"#),
+            ("map", r#"{"modes":["normal",1],"keys":"a","func":1}"#),
+            ("map", r#"{"modes":"normal","keys":"a","func":1,"priority":1.5}"#),
+            ("on", r#"{"event":"KeyTyped","func":-1}"#),
+            ("command", r#"{"name":"message"}"#),
+            ("getOption", "null"),
+            ("setOption", "not json"),
+        ] {
+            let e = host_op(op, payload).map(|_| ()).unwrap_err();
+            assert!(e.starts_with(&format!("internal: {op}: ")), "{op} {payload}: {e}");
+        }
+        assert_eq!(host_op("nope", "{}").unwrap_err(), "internal: unknown operation nope");
+    }
+
+    #[test]
+    fn payloads_the_prelude_sends_are_read() {
+        let op = |op: &str, payload: &str| host_op(op, payload).unwrap();
+        assert_eq!(
+            op("on", r#"{"event":"KeyTyped","func":3,"nested":true}"#),
+            HostOp::On { event: "KeyTyped".into(), func: 3, nested: true }
+        );
+        assert_eq!(op("off", r#"{"event":"KeyTyped","func":3}"#), HostOp::Off { event: "KeyTyped".into(), func: 3 });
+        assert_eq!(op("schedule", r#"{"func":7}"#), HostOp::Schedule { func: 7 });
+        assert_eq!(
+            op("command", r#"{"name":"message","args":["hi",1]}"#),
+            HostOp::Command {
+                name: "message".into(),
+                args: vec![ScriptValue::Str("hi".into()), ScriptValue::Num(1.0)]
+            }
+        );
+        assert_eq!(
+            op(
+                "defineMode",
+                r#"{"name":"m","fallback":"passthrough","count":null,"transient":true,"keepalive":4,"timeout":null}"#
+            ),
+            HostOp::DefineMode {
+                name: "m".into(),
+                fallback: Some(Fallback::Passthrough),
+                count: None,
+                transient: Some(true),
+                keepalive: Some(Keepalive::Func(4)),
+                timeout: None,
+            }
+        );
+        assert_eq!(
+            op("defineMode", r#"{"name":"m","fallback":2,"keepalive":"always"}"#),
+            HostOp::DefineMode {
+                name: "m".into(),
+                fallback: Some(Fallback::Func(2)),
+                count: None,
+                transient: None,
+                keepalive: Some(Keepalive::Always),
+                timeout: None,
+            }
+        );
+        assert_eq!(
+            op(
+                "map",
+                r#"{"modes":["normal","copy"],"keys":"a","nowait":true,"desc":"d","when":null,"namespace":"ns","priority":-2,"func":5}"#
+            ),
+            HostOp::Map {
+                modes: vec!["normal".into(), "copy".into()],
+                keys: "a".into(),
+                func: 5,
+                nowait: true,
+                desc: Some("d".into()),
+                when: None,
+                namespace: Some("ns".into()),
+                priority: -2,
+            }
+        );
+        assert_eq!(
+            op("unmap", r#"{"modes":"normal","keys":"a","namespace":null}"#),
+            HostOp::Unmap { modes: vec!["normal".into()], keys: "a".into(), namespace: None }
+        );
+        assert_eq!(
+            op("getMappings", r#"{"mode":"normal","namespace":null,"keys":"t"}"#),
+            HostOp::GetMappings { mode: Some("normal".into()), namespace: None, keys: Some("t".into()) }
+        );
+        assert_eq!(
+            op("clearMappings", r#"{"mode":null,"namespace":"ns"}"#),
+            HostOp::ClearMappings { mode: None, namespace: Some("ns".into()) }
+        );
+        // An option set to undefined: JSON leaves the value out.
+        assert_eq!(
+            op("setOption", r#"{"name":"timeoutlen"}"#),
+            HostOp::SetOption { name: "timeoutlen".into(), value: ScriptValue::Null }
+        );
+        assert_eq!(op("getOption", r#"{"name":"timeoutlen"}"#), HostOp::GetOption { name: "timeoutlen".into() });
     }
 }

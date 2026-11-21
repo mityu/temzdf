@@ -207,7 +207,7 @@ const mapOptions = options({
   desc: nullable(z.string()),
   when: nullable(func<Condition>()),
   namespace: nullable(z.string()),
-  priority: z._default(z.number(), 0),
+  priority: z._default(z.int32(), 0),
 });
 const namespaceOption = options({ namespace: nullable(z.string()) });
 const clearFilter = options({ mode: nullable(z.string()), namespace: nullable(z.string()) });
@@ -291,7 +291,9 @@ const temzdf: Temzdf = {
     // keymap.get({ mode, namespace, lhs }): the mappings as keymap.add()
     // takes them; one left out is not a filter.
     get(filter) {
-      const answer = request(current(), "getMappings", parse("keymap.get", getFilter, filter, "filter"));
+      // The host names the keys `keys`, as map and unmap do.
+      const { lhs, ...rest } = parse("keymap.get", getFilter, filter, "filter");
+      const answer = request(current(), "getMappings", { ...rest, keys: lhs });
       check("keymap.get", mappingAnswers, answer, "answer");
       const back = (v: unknown) => (funcRef(v) ? registered[v.func]?.fn : v) as Rhs;
       return answer.map((m) => ({
