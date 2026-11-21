@@ -994,9 +994,9 @@ impl Session {
             t.term.scroll_to_bottom();
             Kind::Term { buf, view: TermView::new(g) }
         } else if self.texts.contains_key(&buf) {
-            let mut tv = self.text_view_for(buf, pane);
-            (tv.view.width, tv.view.height) = (g.cols, g.rows);
-            Kind::Text { buf, view: Box::new(tv) }
+            // (It takes its size from the pane when laid out, and is laid
+            // out with it: its cursor, taken from another pane, shows.)
+            Kind::Text { buf, view: Box::new(self.text_view_for(buf, pane)) }
         } else if let Some(d) = self.docs.get_mut(&buf) {
             if d.host.is_none() {
                 d.waiting.push((Spot::Replace(pane), self.tabs[self.tab].id));
@@ -6120,6 +6120,23 @@ mod tests {
         let (second, _) = s.run_command("split", &[], Instant::now()).unwrap();
         assert_eq!(s.focus, second.as_num().unwrap() as PaneId);
         assert_eq!(s.history.current(), "edit");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn a_text_shown_in_a_pane_shows_the_cursor_it_takes_from_another() {
+        let content: String = (0..200).map(|i| format!("line{i}\n")).collect();
+        let (mut s, path) = text_session("far.txt", &content);
+        let far = s.pane_buffer(s.focus).unwrap();
+        s.run_command("text.set-cursor", &[pos(150, 0)], Instant::now()).unwrap();
+        let other = path.with_file_name("other.txt");
+        s.open_text(&other, s.next_spot(), true).unwrap();
+        // The pane starts at the cursor of the other pane on the text,
+        // revealed (as a split of it does).
+        assert_eq!(s.show_in(s.focus, far), Ok(Outcome::Redraw));
+        let Kind::Text { view, .. } = &s.panes[&s.focus].kind else { panic!("a text pane") };
+        assert!(view.view.top > 0, "the view scrolled to line 150");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
