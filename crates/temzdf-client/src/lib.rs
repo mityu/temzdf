@@ -6,7 +6,9 @@
 
 mod connection;
 
-pub use connection::{Connection, FromServer, REQUEST_TIMEOUT, connect, request};
+pub use connection::{
+    Connection, FromServer, REQUEST_TIMEOUT, Settling, connect, exit_message, lost_message, request, settle,
+};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

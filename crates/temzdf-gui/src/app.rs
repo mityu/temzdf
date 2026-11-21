@@ -17,8 +17,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::render::Renderer;
-use crate::view::{Applied, View, exit_message};
-use temzdf_client::{Connection, FromServer};
+use crate::view::{Applied, View};
+use temzdf_client::{Connection, FromServer, exit_message, lost_message};
 
 /// The window's size before the system says otherwise (logical pixels).
 const INITIAL_SIZE: (u32, u32) = (900, 600);
@@ -145,7 +145,7 @@ impl App {
 
     fn send(&mut self, msg: ClientMsg) {
         if self.conn.send(&msg).is_err() {
-            self.end(format!("[lost the connection to session {}]", self.name));
+            self.end(lost_message(&self.name));
         }
     }
 
@@ -188,7 +188,7 @@ impl App {
         crate::input::enable_ime(window.as_ref());
         self.gpu = Some(Gpu { window, instance, surface, config, view, geometry });
         if self.conn.hello(geometry, crate::connection::HINTS, None).is_err() {
-            self.end(format!("[lost the connection to session {}]", self.name));
+            self.end(lost_message(&self.name));
         }
         Ok(())
     }
@@ -206,7 +206,7 @@ impl App {
     fn handle_server(&mut self, event_loop: &dyn ActiveEventLoop) {
         while let Ok(msg) = self.rx.try_recv() {
             let FromServer::Msg(msg) = msg else {
-                self.end(format!("[lost the connection to session {}]", self.name));
+                self.end(lost_message(&self.name));
                 event_loop.exit();
                 return;
             };

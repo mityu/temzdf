@@ -3,22 +3,14 @@
 //! to look at without a display).
 
 use std::path::Path;
-use std::sync::mpsc::RecvTimeoutError;
-use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
-use temzdf_client::{Connection, FromServer};
+use anyhow::{Context, Result};
+use temzdf_client::{Connection, Settling};
 use temzdf_protocol::ClientMsg;
 use termpix_core::raster::RgbaImage;
 
 use crate::render::{Renderer, offscreen_device};
 use crate::view::{Applied, View, grid};
-
-/// How long the frame may keep changing after it was first complete
-/// (newer frames replace it: the resize to this geometry, late tiles).
-const SETTLE: Duration = Duration::from_millis(500);
-/// Longest wait for a complete frame.
-const TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Render session `name` on a `size` (pixels) window at `scale` into `out`.
 pub fn render_frame(name: &str, out: &Path, size: (u32, u32), scale: f64) -> Result<()> {
@@ -29,34 +21,20 @@ pub fn render_frame(name: &str, out: &Path, size: (u32, u32), scale: f64) -> Res
     let conn = Connection::open(name, tx, std::convert::identity, || {})?;
     let mut geometry = view.geometry(size);
     conn.hello(geometry, crate::connection::HINTS, None)?;
-    let deadline = Instant::now() + TIMEOUT;
-    // When the latest frame was complete: settle from there.
-    let mut complete_at: Option<Instant> = None;
-    loop {
-        let wait = match complete_at {
-            Some(t) => (t + SETTLE).saturating_duration_since(Instant::now()),
-            None => deadline.saturating_duration_since(Instant::now()),
-        };
-        let msg = match rx.recv_timeout(wait) {
-            Ok(FromServer::Msg(m)) => *m,
-            Ok(FromServer::Gone) => bail!("the session closed the connection"),
-            Err(RecvTimeoutError::Timeout) if complete_at.is_some() => break,
-            Err(_) => bail!("no complete frame from session {name:?} within {} s", TIMEOUT.as_secs()),
-        };
-        match view.apply(msg) {
+    temzdf_client::settle(name, &rx, |msg| {
+        Ok(match view.apply(msg) {
             Applied::Frame(seq, complete) => {
                 conn.send(&ClientMsg::FrameAck(seq))?;
-                complete_at = complete.then(Instant::now);
+                Settling::Frame { complete }
             }
             Applied::Appearance { resized: true } => {
                 geometry = view.geometry(size);
                 conn.send(&ClientMsg::Resize(geometry))?;
-                complete_at = None;
+                Settling::Unsettled
             }
-            Applied::Exit(reason) => bail!("{}", crate::view::exit_message(&reason, name)),
-            _ => {}
-        }
-    }
+            _ => Settling::Other,
+        })
+    })?;
     let list = view.draw_list(geometry);
     let pixels = view.renderer.draw_offscreen(&list, grid(geometry), size)?;
     let _ = conn.send(&ClientMsg::Detach);

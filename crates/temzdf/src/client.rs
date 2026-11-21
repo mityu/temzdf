@@ -29,7 +29,7 @@ impl Event {
     }
 }
 
-use temzdf_client::{Connection, FromServer, REQUEST_TIMEOUT, utf8};
+use temzdf_client::{Connection, FromServer, REQUEST_TIMEOUT, exit_message, lost_message, utf8};
 pub use temzdf_client::{auto_name, first_pane, name_for, request, resolve};
 
 /// Start a server for session `name` (see [`temzdf_client::spawn_server`])
@@ -97,7 +97,7 @@ pub fn attach(name: &str) -> Result<String> {
     front.spawn_input(tx.clone(), Event::Term)?;
     let conn = Connection::open(name, tx, Event::from_server, || {})?;
     let send = |msg: ClientMsg| conn.send(&msg);
-    conn.hello(front.geometry(), front.hints(), inside).context("lost the session")?;
+    conn.hello(front.geometry(), front.hints(), inside).with_context(|| lost_message(name))?;
     // The latest frame received and not shown yet (its sequence number is
     // acknowledged once it is), and the last one shown (shown again when the
     // terminal lost images).
@@ -187,14 +187,12 @@ pub fn attach(name: &str) -> Result<String> {
         }
     };
     drop(front);
-    Ok(match reason {
-        Some(ExitReason::Detached) => format!("[detached from session {name}]"),
-        Some(ExitReason::SessionEnded) => format!("[session {name} ended]"),
-        Some(ExitReason::Killed) => format!("[session {name} was killed]"),
+    match reason {
         // Failures: an error, so the command's exit status says so.
-        Some(ExitReason::Error(e)) => bail!("[session {name}: {e}]"),
-        None => bail!("[lost session {name}]"),
-    })
+        Some(reason @ ExitReason::Error(_)) => bail!("{}", exit_message(&reason, name)),
+        Some(reason) => Ok(exit_message(&reason, name)),
+        None => bail!("{}", lost_message(name)),
+    }
 }
 
 /// Sending failed: the server closed the connection. It usually said why

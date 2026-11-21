@@ -8,11 +8,10 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::sync::mpsc;
 
-use anyhow::{Context, Result, bail};
-use temzdf_client::{Connection, FromServer};
+use anyhow::{Context, Result};
+use temzdf_client::{Connection, Settling, lost_message};
 use temzdf_protocol::{ClientMsg, ServerMsg};
 use temzdf_scene::{Attrs, Cell, Color, Frame, Hints};
 use temzdf_tty::{Presenter, Screen};
@@ -21,12 +20,6 @@ use termpix::geom::Geometry;
 use termpix::graphics::Medium;
 use termpix::mock::MockTerminal;
 use termpix::raster::{Blending, RgbaImage};
-
-/// How long the frame may keep changing after it was first complete (the
-/// resize to this geometry, late tiles).
-const SETTLE: Duration = Duration::from_millis(500);
-/// Longest wait for a complete frame.
-const TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct SnapshotOptions {
     /// The terminal's: the session lays out for the latest client.
@@ -45,36 +38,19 @@ pub struct SnapshotOptions {
 pub fn render_session(name: &str, out: &Path, opts: &SnapshotOptions) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     let conn = Connection::open(name, tx, std::convert::identity, || {})?;
-    let send = |msg: ClientMsg| conn.send(&msg).context("lost the session");
-    conn.hello(opts.geometry, opts.hints, None).context("lost the session")?;
+    let send = |msg: ClientMsg| conn.send(&msg).with_context(|| lost_message(name));
+    conn.hello(opts.geometry, opts.hints, None).with_context(|| lost_message(name))?;
     // Into the mock terminal, as inline transfers (it reads no shared memory).
     let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, opts.geometry);
     let mut presenter = Presenter::new();
-    let deadline = Instant::now() + TIMEOUT;
     let mut latest: Option<Arc<Frame>> = None;
-    let mut complete_at: Option<Instant> = None;
-    loop {
-        let wait = match complete_at {
-            Some(t) => (t + SETTLE).saturating_duration_since(Instant::now()),
-            None => deadline.saturating_duration_since(Instant::now()),
-        };
-        match rx.recv_timeout(wait).map(|m| match m {
-            FromServer::Msg(m) => Some(*m),
-            FromServer::Gone => None,
-        }) {
-            Ok(Some(ServerMsg::Frame { seq, updates, frame, complete, .. })) => {
-                presenter.apply(&mut comp, updates);
-                latest = Some(frame);
-                send(ClientMsg::FrameAck(seq))?;
-                complete_at = complete.then(Instant::now);
-            }
-            Ok(Some(ServerMsg::Exit(reason))) => bail!("session {name:?} ended the connection: {reason:?}"),
-            Ok(Some(_)) => {}
-            Ok(None) | Err(RecvTimeoutError::Disconnected) => bail!("session {name:?} closed the connection"),
-            Err(RecvTimeoutError::Timeout) if complete_at.is_some() => break,
-            Err(RecvTimeoutError::Timeout) => bail!("no complete frame from session {name:?} within {TIMEOUT:?}"),
-        }
-    }
+    temzdf_client::settle(name, &rx, |msg| {
+        let ServerMsg::Frame { seq, updates, frame, complete, .. } = msg else { return Ok(Settling::Other) };
+        presenter.apply(&mut comp, updates);
+        latest = Some(frame);
+        send(ClientMsg::FrameAck(seq))?;
+        Ok(Settling::Frame { complete })
+    })?;
     let _ = send(ClientMsg::Detach);
     let frame = latest.context("no frame")?;
     let mut screen = Screen::new();

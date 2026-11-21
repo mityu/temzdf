@@ -100,13 +100,3 @@ impl View {
 pub fn grid(g: Geometry) -> Grid {
     Grid { cols: g.cols, rows: g.rows, cell_w: g.cell.width, cell_h: g.cell.height }
 }
-
-/// What to tell the user when the session ends the connection.
-pub fn exit_message(reason: &ExitReason, name: &str) -> String {
-    match reason {
-        ExitReason::Detached => format!("[detached from session {name}]"),
-        ExitReason::SessionEnded => format!("[session {name} ended]"),
-        ExitReason::Killed => format!("[session {name} was killed]"),
-        ExitReason::Error(e) => format!("[session {name}: {e}]"),
-    }
-}
