@@ -19,7 +19,7 @@ const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The font lists of session `name`.
 pub fn from_session(name: &str) -> Result<Appearance> {
-    match crate::client::request(name, ClientMsg::GetAppearance, Duration::from_secs(10))? {
+    match crate::client::request(name, ClientMsg::GetAppearance, temzdf_client::REQUEST_TIMEOUT)? {
         ServerMsg::Appearance(a) => Ok(a),
         other => bail!("unexpected answer {other:?}"),
     }

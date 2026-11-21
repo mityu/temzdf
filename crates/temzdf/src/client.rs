@@ -1,10 +1,9 @@
 //! Session commands: start a session server, attach this terminal to a
 //! session, list and end sessions, run actions (see doc/design/session-server.md).
 
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -21,8 +20,17 @@ enum Event {
     Gone,
 }
 
-use temzdf_client::utf8;
-pub use temzdf_client::{auto_name, first_pane, name_for, resolve};
+impl Event {
+    fn from_server(msg: FromServer) -> Self {
+        match msg {
+            FromServer::Msg(m) => Event::Server(*m),
+            FromServer::Gone => Event::Gone,
+        }
+    }
+}
+
+use temzdf_client::{Connection, FromServer, REQUEST_TIMEOUT, utf8};
+pub use temzdf_client::{auto_name, first_pane, name_for, request, resolve};
 
 /// Start a server for session `name` (see [`temzdf_client::spawn_server`])
 /// with this executable.
@@ -83,40 +91,13 @@ pub fn attach(name: &str) -> Result<String> {
     {
         bail!("this terminal is in session {own:?}, which {name:?} shows: attaching would show it inside itself");
     }
-    let socket = proto::socket_path(name)?;
-    let stream = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
     let _stdio = crate::app::log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
     let mut front = crate::app::open_frontend()?;
     let (tx, rx) = mpsc::channel::<Event>();
     front.spawn_input(tx.clone(), Event::Term)?;
-    let mut reader = proto::shared::FdReader::new(stream.try_clone()?);
-    std::thread::Builder::new().name("temzdf-server-in".into()).spawn(move || {
-        while let Ok(Some((msg, took))) = proto::recv_server(&mut reader) {
-            if proto::timing()
-                && let Some((seq, images, bytes)) = proto::frame_size(&msg)
-            {
-                eprintln!(
-                    "timing: received frame {seq} ({images} images, {bytes} bytes of pixels) in {:.2} ms",
-                    proto::ms(took)
-                );
-            }
-            if tx.send(Event::Server(msg)).is_err() {
-                return;
-            }
-        }
-        let _ = tx.send(Event::Gone);
-    })?;
-    let writer = Arc::new(Mutex::new(stream));
-    let send = |msg: ClientMsg| -> Result<()> {
-        proto::send(&mut *writer.lock().unwrap_or_else(|p| p.into_inner()), &msg).context("lost the session")
-    };
-    send(ClientMsg::Hello {
-        version: proto::VERSION,
-        geometry: front.geometry(),
-        hints: front.hints(),
-        inside,
-        shared_memory: proto::shared_memory_wanted(),
-    })?;
+    let conn = Connection::open(name, tx, Event::from_server, || {})?;
+    let send = |msg: ClientMsg| conn.send(&msg);
+    conn.hello(front.geometry(), front.hints(), inside).context("lost the session")?;
     // The latest frame received and not shown yet (its sequence number is
     // acknowledged once it is), and the last one shown (shown again when the
     // terminal lost images).
@@ -195,9 +176,9 @@ pub fn attach(name: &str) -> Result<String> {
                 pending = Some((seq, frame, complete));
             }
             Event::Server(ServerMsg::Effect(effect)) => {
-                let w = writer.clone();
+                let c = conn.clone();
                 front.perform(effect, move |m| {
-                    let _ = proto::send(&mut *w.lock().unwrap_or_else(|p| p.into_inner()), &ClientMsg::Report(m));
+                    let _ = c.send(&ClientMsg::Report(m));
                 })?;
             }
             Event::Server(ServerMsg::Exit(reason)) => break Some(reason),
@@ -227,27 +208,6 @@ fn ended(rx: &mpsc::Receiver<Event>) -> Option<ExitReason> {
             Ok(Event::Gone) | Err(_) => return None,
             Ok(_) => {}
         }
-    }
-}
-
-/// Send a one-shot request and wait for the answer.
-/// How long one-shot requests wait for the session by default.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-
-pub fn request(name: &str, msg: ClientMsg, timeout: Duration) -> Result<ServerMsg> {
-    let socket = proto::socket_path(name)?;
-    let mut s = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
-    s.set_read_timeout(Some(timeout))?;
-    proto::send(&mut s, &msg)?;
-    match proto::recv(&mut s) {
-        Ok(answer) => answer.context("no answer from the session"),
-        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
-            bail!(
-                "no answer from session {name:?} within {:.1} s (a script may be running there)",
-                timeout.as_secs_f64()
-            )
-        }
-        Err(e) => Err(e.into()),
     }
 }
 

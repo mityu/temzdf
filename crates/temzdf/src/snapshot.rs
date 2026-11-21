@@ -6,14 +6,14 @@
 //! session).
 
 use std::fmt::Write as _;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use temzdf_protocol::{self as proto, ClientMsg, ServerMsg};
+use temzdf_client::{Connection, FromServer};
+use temzdf_protocol::{ClientMsg, ServerMsg};
 use temzdf_scene::{Attrs, Cell, Color, Frame, Hints};
 use temzdf_tty::{Presenter, Screen};
 use termpix::compositor::{Backend, Compositor};
@@ -43,25 +43,10 @@ pub struct SnapshotOptions {
 
 /// Render session `name`'s frame into `out` (see the module).
 pub fn render_session(name: &str, out: &Path, opts: &SnapshotOptions) -> Result<()> {
-    let stream = UnixStream::connect(proto::socket_path(name)?).with_context(|| format!("no session {name:?}"))?;
     let (tx, rx) = mpsc::channel();
-    let mut reader = proto::shared::FdReader::new(stream.try_clone()?);
-    std::thread::spawn(move || {
-        while let Ok(Some((msg, _))) = proto::recv_server(&mut reader) {
-            if tx.send(msg).is_err() {
-                return;
-            }
-        }
-    });
-    let mut writer = stream;
-    let mut send = |msg: ClientMsg| proto::send(&mut writer, &msg).context("lost the session");
-    send(ClientMsg::Hello {
-        version: proto::VERSION,
-        geometry: opts.geometry,
-        hints: opts.hints,
-        inside: None,
-        shared_memory: proto::shared_memory_wanted(),
-    })?;
+    let conn = Connection::open(name, tx, std::convert::identity, || {})?;
+    let send = |msg: ClientMsg| conn.send(&msg).context("lost the session");
+    conn.hello(opts.geometry, opts.hints, None).context("lost the session")?;
     // Into the mock terminal, as inline transfers (it reads no shared memory).
     let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, opts.geometry);
     let mut presenter = Presenter::new();
@@ -73,18 +58,21 @@ pub fn render_session(name: &str, out: &Path, opts: &SnapshotOptions) -> Result<
             Some(t) => (t + SETTLE).saturating_duration_since(Instant::now()),
             None => deadline.saturating_duration_since(Instant::now()),
         };
-        match rx.recv_timeout(wait) {
-            Ok(ServerMsg::Frame { seq, updates, frame, complete, .. }) => {
+        match rx.recv_timeout(wait).map(|m| match m {
+            FromServer::Msg(m) => Some(*m),
+            FromServer::Gone => None,
+        }) {
+            Ok(Some(ServerMsg::Frame { seq, updates, frame, complete, .. })) => {
                 presenter.apply(&mut comp, updates);
                 latest = Some(frame);
                 send(ClientMsg::FrameAck(seq))?;
                 complete_at = complete.then(Instant::now);
             }
-            Ok(ServerMsg::Exit(reason)) => bail!("session {name:?} ended the connection: {reason:?}"),
-            Ok(_) => {}
+            Ok(Some(ServerMsg::Exit(reason))) => bail!("session {name:?} ended the connection: {reason:?}"),
+            Ok(Some(_)) => {}
+            Ok(None) | Err(RecvTimeoutError::Disconnected) => bail!("session {name:?} closed the connection"),
             Err(RecvTimeoutError::Timeout) if complete_at.is_some() => break,
             Err(RecvTimeoutError::Timeout) => bail!("no complete frame from session {name:?} within {TIMEOUT:?}"),
-            Err(RecvTimeoutError::Disconnected) => bail!("session {name:?} closed the connection"),
         }
     }
     let _ = send(ClientMsg::Detach);

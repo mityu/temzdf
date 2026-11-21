@@ -27,7 +27,7 @@ fn main() -> Result<()> {
         let result = temzdf_gui::headless::render_frame(&name, out, size, cli.scale);
         // A session started only to be drawn goes again.
         if started {
-            let _ = temzdf_gui::connection::kill(&name);
+            let _ = temzdf_client::request(&name, temzdf_protocol::ClientMsg::Kill, temzdf_client::REQUEST_TIMEOUT);
         }
         return result;
     }

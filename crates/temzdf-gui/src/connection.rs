@@ -1,83 +1,14 @@
-//! The session's socket: messages from the server arrive on a reader thread
-//! (and wake the event loop through `wake`), messages to it are written
-//! from any thread.
+//! Which session the window shows, and the `temzdf` that starts it; the
+//! connection itself is `temzdf_client::Connection`.
 
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result, bail};
-use temzdf_protocol::{self as proto, ClientMsg, ServerMsg};
+use anyhow::{Result, bail};
+use temzdf_protocol as proto;
+use temzdf_scene::Hints;
 
-/// What the reader thread passes on.
-pub enum FromServer {
-    Msg(Box<ServerMsg>),
-    /// The server closed the connection.
-    Gone,
-}
-
-#[derive(Clone)]
-pub struct Connection {
-    writer: Arc<Mutex<UnixStream>>,
-}
-
-impl Connection {
-    /// Connect to session `name`; `wake` is called after each message is
-    /// queued on the returned receiver.
-    pub fn open(name: &str, wake: impl Fn() + Send + 'static) -> Result<(Self, Receiver<FromServer>)> {
-        let socket = proto::socket_path(name)?;
-        let stream = UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))?;
-        let mut reader = proto::shared::FdReader::new(stream.try_clone()?);
-        let (tx, rx) = mpsc::channel();
-        std::thread::Builder::new().name("temzdf-gui-server".into()).spawn(move || {
-            loop {
-                let msg = match proto::recv_server(&mut reader) {
-                    Ok(Some((m, took))) => {
-                        log_received(&m, took);
-                        FromServer::Msg(Box::new(m))
-                    }
-                    _ => FromServer::Gone,
-                };
-                let gone = matches!(msg, FromServer::Gone);
-                if tx.send(msg).is_err() {
-                    return;
-                }
-                wake();
-                if gone {
-                    return;
-                }
-            }
-        })?;
-        Ok((Self { writer: Arc::new(Mutex::new(stream)) }, rx))
-    }
-
-    pub fn send(&self, msg: &ClientMsg) -> std::io::Result<()> {
-        let mut w = self.writer.lock().unwrap_or_else(|p| p.into_inner());
-        proto::send(&mut *w, msg)
-    }
-}
-
-/// With `TEMZDF_TIMING`: how long a frame took to read and decode.
-fn log_received(msg: &ServerMsg, took: std::time::Duration) {
-    if proto::timing()
-        && let Some((seq, images, bytes)) = proto::frame_size(msg)
-    {
-        eprintln!(
-            "timing: received frame {seq} ({images} images, {bytes} bytes of pixels) in {:.2} ms",
-            proto::ms(took)
-        );
-    }
-}
-
-/// End session `name`.
-pub fn kill(name: &str) -> Result<()> {
-    let mut s = UnixStream::connect(proto::socket_path(name)?)?;
-    s.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
-    proto::send(&mut s, &ClientMsg::Kill)?;
-    let _ = proto::recv::<ServerMsg>(&mut s)?;
-    Ok(())
-}
+/// The window's frontend hints, sent in its `Hello`.
+pub const HINTS: Hints = Hints { exact_scaling: true, fast_uploads: true };
 
 /// The `temzdf` executable that runs session servers: next to this one,
 /// else on `PATH`.

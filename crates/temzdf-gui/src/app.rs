@@ -6,8 +6,8 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use temzdf_protocol::{ClientMsg, ExitReason, VERSION};
-use temzdf_scene::{Effect, Hints, Pointer};
+use temzdf_protocol::{ClientMsg, ExitReason};
+use temzdf_scene::{Effect, Pointer};
 use termpix_core::geom::Geometry;
 use winit::application::ApplicationHandler;
 use winit::cursor::CursorIcon;
@@ -16,9 +16,9 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::connection::{Connection, FromServer};
 use crate::render::Renderer;
 use crate::view::{Applied, View, exit_message};
+use temzdf_client::{Connection, FromServer};
 
 /// The window's size before the system says otherwise (logical pixels).
 const INITIAL_SIZE: (u32, u32) = (900, 600);
@@ -187,9 +187,9 @@ impl App {
         let geometry = view.geometry((config.width, config.height));
         crate::input::enable_ime(window.as_ref());
         self.gpu = Some(Gpu { window, instance, surface, config, view, geometry });
-        let hints = Hints { exact_scaling: true, fast_uploads: true };
-        let shared_memory = temzdf_protocol::shared_memory_wanted();
-        self.send(ClientMsg::Hello { version: VERSION, geometry, hints, inside: None, shared_memory });
+        if self.conn.hello(geometry, crate::connection::HINTS, None).is_err() {
+            self.end(format!("[lost the connection to session {}]", self.name));
+        }
         Ok(())
     }
 
@@ -434,7 +434,8 @@ impl ApplicationHandler for App {
 pub fn run(name: String) -> Result<String> {
     let event_loop = EventLoop::new()?;
     let proxy = event_loop.create_proxy();
-    let (conn, rx) = Connection::open(&name, move || proxy.wake_up())?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let conn = Connection::open(&name, tx, std::convert::identity, move || proxy.wake_up())?;
     let input = crate::input::Input::new();
     // The event loop owns the app; the closing message comes back here.
     let ended = std::sync::Arc::new(std::sync::Mutex::new(None));

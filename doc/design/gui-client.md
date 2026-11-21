@@ -134,8 +134,10 @@ What the TTY client does and what the GUI does instead:
 The GUI reuses: the protocol, session discovery and server spawning,
 `temzdf-scene` and `termpix-core`'s event types. It needs no `termpix`.
 Discovery and spawning (`name_for`, `first_pane`, `spawn_server`,
-`resolve`) moved from the binary crate into `crates/temzdf-client` for it
-(the attach loop itself is TTY-specific).
+`resolve`) moved from the binary crate into `crates/temzdf-client` for it,
+and so did the connection (`Connection`: the reader thread, `Hello`;
+`request`) both clients and `render-session` open (the attach loop itself
+is TTY-specific).
 
 Tab pages came while this was planned: the current tab is the session's,
 the same for every client, and the session composes the tab line (a text

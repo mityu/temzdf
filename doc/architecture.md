@@ -18,7 +18,7 @@
 | `termpix-ui` | - |
 | `temzdf-scene` | `termpix-core` |
 | `temzdf-protocol` | `temzdf-scene`, `termpix-core` |
-| `temzdf-client` | `temzdf-protocol`, `temzdf-scene` |
+| `temzdf-client` | `temzdf-protocol`, `temzdf-scene`, `termpix-core` |
 | `temzdf-pdfcore` | `temzdf-scene` |
 | `temzdf-pdfview` | `temzdf-pdfcore`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf-term` | `temzdf-scene`, `termpix-core` (and `libghostty-vt`, `portable-pty`) |
@@ -54,7 +54,8 @@
 - `temzdf-protocol`: the session protocol (client/server messages,
   framing, socket locations, finding sessions in `discovery`).
 - `temzdf-client`: what every client shares: naming, resolving and
-  starting sessions (`spawn_server`), log locations, carrying out effects
+  starting sessions (`spawn_server`), the connection to a session
+  (`Connection`, one-shot `request`s), log locations, carrying out effects
   (links, inverse search).
 - `temzdf-pdfcore`: the PDF backend: MuPDF wrapper, `DocCache` (display lists
   and tiles), page text and selection, SyncTeX, background workers.

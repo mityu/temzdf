@@ -5657,6 +5657,7 @@ dependencies = [
  "anyhow",
  "temzdf-protocol",
  "temzdf-scene",
+ "termpix-core",
 ]
 
 [[package]]

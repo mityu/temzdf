@@ -7,11 +7,10 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use temzdf_protocol::{ClientMsg, VERSION};
-use temzdf_scene::Hints;
+use temzdf_client::{Connection, FromServer};
+use temzdf_protocol::ClientMsg;
 use termpix_core::raster::RgbaImage;
 
-use crate::connection::{Connection, FromServer};
 use crate::render::{Renderer, offscreen_device};
 use crate::view::{Applied, View, grid};
 
@@ -26,15 +25,10 @@ pub fn render_frame(name: &str, out: &Path, size: (u32, u32), scale: f64) -> Res
     let (device, queue) = offscreen_device()?;
     let renderer = Renderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm, crate::fonts::system(), scale);
     let mut view = View::new(renderer, scale);
-    let (conn, rx) = Connection::open(name, || {})?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let conn = Connection::open(name, tx, std::convert::identity, || {})?;
     let mut geometry = view.geometry(size);
-    conn.send(&ClientMsg::Hello {
-        version: VERSION,
-        geometry,
-        hints: Hints { exact_scaling: true, fast_uploads: true },
-        inside: None,
-        shared_memory: temzdf_protocol::shared_memory_wanted(),
-    })?;
+    conn.hello(geometry, crate::connection::HINTS, None)?;
     let deadline = Instant::now() + TIMEOUT;
     // When the latest frame was complete: settle from there.
     let mut complete_at: Option<Instant> = None;

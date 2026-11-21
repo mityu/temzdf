@@ -1,8 +1,12 @@
 //! What every temzdf client shares (the terminal client in `crates/temzdf`,
 //! the GUI in `crates/temzdf-gui`): finding sessions and starting their
-//! servers, where logs go, and carrying out effects the session asks for in
-//! the client's environment (links, inverse search). No terminal and no
-//! window code.
+//! servers, the connection to a session, where logs go, and carrying out
+//! effects the session asks for in the client's environment (links, inverse
+//! search). No terminal and no window code.
+
+mod connection;
+
+pub use connection::{Connection, FromServer, REQUEST_TIMEOUT, connect, request};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

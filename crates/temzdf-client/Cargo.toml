@@ -1,6 +1,6 @@
 [package]
 name = "temzdf-client"
-description = "What every temzdf client shares: finding and starting sessions, log locations, and carrying out effects (links, inverse search)."
+description = "What every temzdf client shares: finding, starting and connecting to sessions, log locations, and carrying out effects (links, inverse search)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,7 @@ repository.workspace = true
 anyhow.workspace = true
 temzdf-protocol = { workspace = true, features = ["session"] }
 temzdf-scene.workspace = true
+termpix-core.workspace = true
 
 [lints]
 workspace = true
