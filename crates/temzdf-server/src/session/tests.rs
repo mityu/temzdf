@@ -1,5 +1,6 @@
 use super::*;
 use crate::keymap::{Act, notation};
+use std::time::Duration;
 
 /// Mappings of commands (the data form, tests only) for the tests of
 /// the matcher and the modes, in sessions without a script host: the

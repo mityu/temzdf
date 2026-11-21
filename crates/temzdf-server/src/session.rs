@@ -6,13 +6,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{Result, bail};
 use temzdf_pdfcore::doc_cache::Need;
 use temzdf_pdfcore::workers::DocEvent;
 use temzdf_pdfview::document::Document;
-use temzdf_pdfview::host::{DocumentHost, Forward, HostOptions, Opening};
+use temzdf_pdfview::host::{DocumentHost, Forward, Opening};
 use temzdf_pdfview::pane::{self, PdfPane};
 use temzdf_pdfview::viewer::{StandIn, ViewState};
 use temzdf_scene::{CursorShape, Effect, Frame, Hints, Images, Layer, Pointer, Rect, Region, RegionKind, TextGrid};
@@ -21,7 +21,6 @@ use termpix_core::geom::Geometry;
 use termpix_core::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use termpix_core::scroll::ScrollConfig;
 
 use crate::action::PaneSpec;
 use crate::clip;
@@ -38,6 +37,7 @@ mod host_tests;
 mod images;
 mod markdown;
 mod notices;
+mod options;
 mod registers;
 mod script;
 mod statusline;
@@ -50,6 +50,7 @@ mod text;
 mod vim_tests;
 
 pub use commands::action_names;
+pub use options::{Options, ShowTabline, TextOptions};
 
 pub use script::{EVENTS as SCRIPT_EVENTS, ScriptSettings};
 
@@ -127,159 +128,6 @@ impl Outcome {
     }
 }
 
-/// When the tab line shows (the option `showtabline`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShowTabline {
-    Never,
-    /// With two tab pages or more.
-    Auto,
-    Always,
-}
-
-/// Options scripts set with `o.<name> = ...` (global for now).
-#[derive(Clone, Debug)]
-pub struct Options {
-    /// How long a key that starts a longer mapping waits (Vim's `timeoutlen`).
-    pub timeoutlen: Duration,
-    /// Where `split()` without a side puts the new pane: right (else left).
-    pub splitright: bool,
-    /// Below (else above), for splits towards the bottom.
-    pub splitbelow: bool,
-    /// How many modes the history keeps.
-    pub modehistory: usize,
-    /// Keep text buffers' undo trees in files (Vim's undofile): written
-    /// with the file, read back when it is opened.
-    pub undofile: bool,
-    /// Keep text buffers' text in swap files while they are edited.
-    pub swapfile: bool,
-    /// The mode Markdown viewers open in: "text" or "graphics".
-    pub markdownmode: String,
-    /// How long after the last change a swap file is written.
-    pub updatetime: Duration,
-    /// Pixels per wheel step, and the easing's time constant.
-    pub scrollstep: f64,
-    pub scrollsmoothness: Duration,
-    /// The command opening external links (the URI appended); the system
-    /// handler when `None`.
-    pub linkopener: Option<Vec<String>>,
-    /// Preview internal links after the pointer rests on one this long.
-    pub linkpreview: bool,
-    pub linkpreviewdelay: Duration,
-    /// Wait this long after the PDF changed before reloading.
-    pub reloaddebounce: Duration,
-    /// Keep the line being read across reloads (else the position).
-    pub reloadanchor_text: bool,
-    /// The inverse-search command (`%{input}`, `%{line}`, `%{column}`).
-    pub synctexeditor: Option<String>,
-    /// A shown terminal whose program ended keeps its panes (tmux's
-    /// `remain-on-exit`).
-    pub remainonexit: bool,
-    /// When the tab line shows (Vim's `showtabline`).
-    pub showtabline: ShowTabline,
-    /// The window's status line shows (its bottom row; Vim's `laststatus`
-    /// 3, Neovim's global status line).
-    pub showstatusline: bool,
-    /// Colours for clients and terminal panes (`None`: the client's own),
-    /// and the first palette entries.
-    pub foreground: Option<[u8; 3]>,
-    pub background: Option<[u8; 3]>,
-    pub palette: Vec<[u8; 3]>,
-    /// The GUI fonts, first choice first, and those tried first for wide
-    /// characters.
-    pub guifont: Vec<temzdf_scene::FontEntry>,
-    pub guifontwide: Vec<temzdf_scene::FontEntry>,
-    /// Text panes: wrapping, tabs, line numbers, the cursor line,
-    /// `scrolloff`.
-    pub text: TextOptions,
-    /// The mode at the bottom of the history in a pane of each kind (by
-    /// the kind's name; its own mode when left out). Set only while the
-    /// configuration loads.
-    pub basemode: std::collections::BTreeMap<String, String>,
-    /// How many entries the copy history keeps.
-    pub copyhistory: usize,
-    /// What goes to the client's clipboard (doc/design/registers.md).
-    pub clipboard: registers::ClipboardSync,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct TextOptions {
-    pub layout: temzdf_texteditor::LayoutOptions,
-    pub number: temzdf_texteditor::NumberMode,
-    pub cursorline: bool,
-    pub scrolloff: usize,
-}
-
-impl Options {
-    /// The colours terminal panes report (OSC 10, 11, 4): the options', else
-    /// what GUI clients draw (`temzdf_scene::theme`), so the two agree.
-    fn foreground_or_default(&self) -> Option<[u8; 3]> {
-        Some(self.foreground.unwrap_or(temzdf_scene::theme::FOREGROUND))
-    }
-
-    fn background_or_default(&self) -> Option<[u8; 3]> {
-        Some(self.background.unwrap_or(temzdf_scene::theme::BACKGROUND))
-    }
-
-    fn full_palette(&self) -> Vec<[u8; 3]> {
-        temzdf_scene::theme::palette(&self.palette)
-    }
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        let scroll = ScrollConfig::default();
-        Self {
-            timeoutlen: Duration::from_millis(1000),
-            splitright: true,
-            swapfile: true,
-            markdownmode: "text".into(),
-            updatetime: Duration::from_millis(4000),
-            undofile: false,
-            splitbelow: true,
-            modehistory: 100,
-            scrollstep: scroll.step,
-            scrollsmoothness: scroll.tau,
-            linkopener: None,
-            linkpreview: true,
-            linkpreviewdelay: temzdf_pdfview::pane::DEFAULT_PREVIEW_DELAY,
-            reloaddebounce: Duration::from_millis(200),
-            reloadanchor_text: false,
-            synctexeditor: None,
-            remainonexit: false,
-            showtabline: ShowTabline::Auto,
-            // Off in this crate's tests, which count panes' rows; the window
-            // status line's own tests turn it on.
-            showstatusline: !cfg!(test),
-            foreground: None,
-            background: None,
-            palette: Vec::new(),
-            guifont: vec![temzdf_scene::FontEntry { family: "JetBrains Mono".into(), size: Some(14.0) }],
-            guifontwide: Vec::new(),
-            text: TextOptions::default(),
-            basemode: std::collections::BTreeMap::new(),
-            copyhistory: 30,
-            clipboard: registers::ClipboardSync::All,
-        }
-    }
-}
-
-impl Options {
-    fn scroll(&self) -> ScrollConfig {
-        ScrollConfig {
-            step: self.scrollstep.max(1.0),
-            tau: self.scrollsmoothness.max(Duration::from_millis(1)),
-            ..Default::default()
-        }
-    }
-
-    fn preview_delay(&self) -> Option<Duration> {
-        self.linkpreview.then_some(self.linkpreviewdelay)
-    }
-
-    fn host(&self) -> HostOptions {
-        HostOptions { debounce: self.reloaddebounce, editor: self.synctexeditor.clone() }
-    }
-}
 /// The lowest z of programs' images in terminal panes: never under the cell
 /// backgrounds (the GUI draws layers below -2^30 under them).
 const Z_PROGRAMS_MIN: i32 = -1_073_741_698;
