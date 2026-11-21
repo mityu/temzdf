@@ -357,7 +357,11 @@ with the plan.
 - (u) With the script host down or the configuration failed, a fixed Rust
   keymap works: `<C-b>d` detach, `<C-b>q` end the session (quit when
   standalone), `<C-b>r` restart the host and reload; every other key goes to
-  the pane; the notice lists these three.
+  a terminal pane and does nothing in other panes; the notice lists these
+  three. (u, 2026-11-22) PDF panes no longer keep a fallback table of their
+  page-view keys meanwhile: every pane's keys are the scripts' mappings, so
+  with the host down only a terminal takes keys; the mouse still works, and
+  `<C-b>q` ends the session (no separate way to close a PDF pane).
 - (u) The floating message window: errors stay until the next key (which is
   still handled), information fades after a few seconds, the host-down
   notice stays until the host is back.

@@ -77,7 +77,7 @@ impl Session {
     fn key_inner(&mut self, k: &KeyEvent, now: Instant) -> Outcome {
         // The script host should run but does not: the fixed escape keys.
         if self.settings.script.is_some() && !self.script.running() {
-            return self.escape_key(k, now);
+            return self.escape_key(k);
         }
         // <C-c> cancels pending keys and the count; otherwise it is an
         // ordinary (unmappable) key.
@@ -110,8 +110,9 @@ impl Session {
 
     /// Keys while the script host is down (no configured mappings work):
     /// `<C-b>d` detaches, `<C-b>q` ends the session, `<C-b>r` restarts the
-    /// host; everything else goes to the focused pane as typed.
-    fn escape_key(&mut self, k: &KeyEvent, now: Instant) -> Outcome {
+    /// host; other keys go to a focused terminal pane as typed and do
+    /// nothing in other panes.
+    fn escape_key(&mut self, k: &KeyEvent) -> Outcome {
         let stroke = Stroke::of(k);
         let is = |s: &str| notation::parse(s).is_ok_and(|v| v[0] == stroke);
         if std::mem::take(&mut self.escape_prefix) {
@@ -138,17 +139,9 @@ impl Session {
         if let Some(t) = self.focused_term() {
             return Outcome::None.or(t.key(k));
         }
-        let focus = self.focus;
-        match self.panes.get_mut(&focus).map(|e| &mut e.kind) {
-            Some(Kind::Term { .. } | Kind::Text { .. } | Kind::Markdown { .. }) => Outcome::None,
-            // The pane's own page-view keys still work.
-            Some(Kind::Pdf { pane, .. }) => match pane.key(k, now) {
-                pane::Action::Quit => self.close(focus),
-                pane::Action::Redraw => Outcome::Redraw,
-                pane::Action::None => Outcome::None,
-            },
-            None => Outcome::None,
-        }
+        // Other panes' keys do nothing while the host is down (decided with
+        // the user on 2026-11-22): their keys are all mapped by the scripts.
+        Outcome::None
     }
 
     /// Let the matcher decide what queued keys do, until it waits (for more

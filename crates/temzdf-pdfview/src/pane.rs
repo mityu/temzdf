@@ -17,7 +17,7 @@ use termpix_core::viewport::Input;
 use termpix_ui::{Canvas, Color, ListView, StatusBar, Text, Theme};
 
 use crate::document::{self, Document, SharedDocument};
-use crate::keys::{Command, Key, Keymap};
+use crate::keys::Command;
 use crate::outline::{self, OutlinePanel};
 use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, SearchHit, Target};
 use crate::search::SearchState;
@@ -175,8 +175,6 @@ pub struct PdfPane {
     autoscroll_at: Option<Instant>,
     /// `o.reloadanchor = "text"`: keep the line being read in place on reload.
     pub anchor_by_text: bool,
-    /// Page-view key bindings (`[keys]` in the config).
-    pub keymap: Keymap,
     /// A line from before the last reload, still to be found in the new text.
     text_anchor: Option<TextAnchor>,
     /// Search hit to re-select once a re-run search (after reload) reaches it.
@@ -201,7 +199,6 @@ pub struct PdfPane {
     back: Vec<(Target, f32)>,
     forward: Vec<(Target, f32)>,
     // Input state
-    count: Option<usize>,
     pointer: (f32, f32),
     drag: Option<((f32, f32), (f32, f32))>,
 }
@@ -232,7 +229,6 @@ impl PdfPane {
             autoscroll: 0.0,
             autoscroll_at: None,
             anchor_by_text: false,
-            keymap: Keymap::default(),
             text_anchor: None,
             restore_hit: None,
             reloading: false,
@@ -255,7 +251,6 @@ impl PdfPane {
             widgets: HashMap::new(),
             message: None,
             notice: None,
-            count: None,
             pointer: (0.0, 0.0),
             drag: None,
         }
@@ -1250,46 +1245,6 @@ impl PdfPane {
         None
     }
 
-    pub fn key(&mut self, k: &KeyEvent, now: Instant) -> Action {
-        if k.kind == KeyEventKind::Release || matches!(k.code, KeyCode::Modifier(_)) {
-            return Action::None;
-        }
-        // Any key closes a link preview; Esc does nothing else then.
-        if self.close_preview() {
-            if k.code == KeyCode::Escape {
-                return Action::Redraw;
-            }
-            return match self.key_inner(k, now) {
-                Action::None => Action::Redraw,
-                a => a,
-            };
-        }
-        self.key_inner(k, now)
-    }
-
-    fn key_inner(&mut self, k: &KeyEvent, now: Instant) -> Action {
-        self.message = None;
-        // The reader moved on; a pending reload anchor would pull them back.
-        self.text_anchor = None;
-        self.notice = None;
-        if self.sidebar_open
-            && let Some(action) = self.sidebar_key(k, now)
-        {
-            return action;
-        }
-        let count = self.count.take();
-        // Digits are counts (`3G`); 0 only after another digit (alone it is a key).
-        if let KeyCode::Char(c @ '0'..='9') = k.code
-            && Key::of(k).mods.is_empty()
-            && (c != '0' || count.is_some())
-        {
-            self.count = Some(count.unwrap_or(0).saturating_mul(10).saturating_add(c as usize - '0' as usize));
-            return Action::None;
-        }
-        let Some(cmd) = self.keymap.get(k) else { return Action::None };
-        self.command(cmd, count, now)
-    }
-
     /// Run a page-view command (see `keys::Command`), with an optional count.
     pub fn command(&mut self, cmd: Command, count: Option<usize>, now: Instant) -> Action {
         // How many times (counts saturate; more than 100 is never meant).
@@ -1629,7 +1584,7 @@ mod tests {
             other => panic!("{other:?}"),
         };
         s.pending_first_hit = None;
-        s.key(&KeyEvent::new(KeyCode::Char('n'), Modifiers::NONE), now);
+        s.command(Command::NextMatch, None, now);
         assert!(s.message.as_deref().is_some_and(|m| m.starts_with("Searching")), "{:?}", s.message);
         let rect = PageRect { x0: 10.0, y0: 100.0, x1: 50.0, y1: 110.0 };
         s.search_hits(generation, 0, vec![rect.into()], now);
@@ -1653,7 +1608,7 @@ mod tests {
         let rect = PageRect { x0: 10.0, y0: 100.0, x1: 50.0, y1: 110.0 };
         s.search_hits(generation, 0, vec![rect.into()], now);
         s.viewer.goto(Target { page: 1, y: None }, false, now);
-        s.key(&KeyEvent::new(KeyCode::Char('n'), Modifiers::NONE), now);
+        s.command(Command::NextMatch, None, now);
         assert_eq!(s.search.current, None, "no jump back to page 0");
         assert!(s.message.as_deref().is_some_and(|m| m.starts_with("Searching")), "{:?}", s.message);
         // The later pages have nothing: then it wraps.
@@ -1666,8 +1621,8 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn a_search_that_finished_empty_says_so() {
-        // Right after searching, after `n`, and after `N`.
-        for step in [None, Some('n'), Some('N')] {
+        // Right after searching, after next-match, and after prev-match.
+        for step in [None, Some(Command::NextMatch), Some(Command::PrevMatch)] {
             let mut s = session();
             let now = Instant::now();
             s.search_for("x");
@@ -1675,10 +1630,10 @@ mod tests {
                 Some(Request::Search { generation, .. }) => *generation,
                 other => panic!("{other:?}"),
             };
-            if let Some(ch) = step {
+            if let Some(cmd) = step {
                 // (No first hit awaited from Enter, as after a reload.)
                 s.pending_first_hit = None;
-                s.key(&KeyEvent::new(KeyCode::Char(ch), Modifiers::NONE), now);
+                s.command(cmd, None, now);
             }
             for p in 0..s.viewer.page_count() {
                 s.search_hits(generation, p, Vec::new(), now);
@@ -1917,7 +1872,7 @@ mod tests {
         let mut s = session();
         let mut c = comp();
         let now = Instant::now();
-        s.key(&KeyEvent::new(KeyCode::Tab, Modifiers::NONE), now);
+        s.command(Command::ToggleSidebar, None, now);
         s.search_for("needle");
         let first = match s.take_requests().last() {
             Some(Request::Search { generation, .. }) => *generation,
@@ -2371,7 +2326,7 @@ mod tests {
         let mut s = session();
         open_back_link_preview(&mut s, 0.33);
         let esc = KeyEvent::new(KeyCode::Escape, Modifiers::NONE);
-        assert_eq!(s.key(&esc, Instant::now()), Action::Redraw, "closes, does not quit");
+        assert_eq!(s.key_first(&esc, Instant::now(), &mut false), Some(Action::Redraw), "closes, does not quit");
         assert!(s.preview.is_none());
     }
 

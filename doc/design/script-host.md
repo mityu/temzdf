@@ -22,7 +22,7 @@ configuration); how to write a configuration is in `doc/config.md`.
 | `crates/temzdf-server/src/session/script.rs` | The session's side: starting the host, holding input while scripts run, the frame stack that runs hooks nested, options, mapping and mode operations. |
 | `crates/temzdf-server/src/session/commands.rs` | The command registry (`action.*`, `temzdf action`). |
 | `crates/temzdf-server/src/keymap/` | Key notation (Neovim's, with fallbacks for keys legacy terminals cannot tell apart), modes, the sequence matcher, the mode history. |
-| `crates/temzdf-server/src/session/notices.rs` | Floating messages; `session.rs` has the escape keymap used while the host is down. |
+| `crates/temzdf-server/src/session/notices.rs` | Floating messages; `input.rs` has the escape keys used while the host is down (`<C-b>d`/`q`/`r`; other keys reach terminal panes only). |
 | `crates/temzdf` | `temzdf print-types` (hidden), `--clean`, `--config`, finding `config.ts`/`config.js`. |
 
 ## The sandbox

@@ -313,8 +313,9 @@ view. `switchMode("visual")` refuses panes that are not terminals.
 
 When the script host is down (it exited, or the configuration never finished
 loading), mappings are off and a fixed keymap works: `<C-b>d` detaches,
-`<C-b>q` ends the session, `<C-b>r` restarts the host; other keys go to the
-pane. A floating message says so.
+`<C-b>q` ends the session, `<C-b>r` restarts the host. Other keys go to a
+terminal pane as typed and do nothing in other panes (a PDF pane's keys too:
+they are all mappings); the mouse works as usual. A floating message says so.
 
 ## Options
 

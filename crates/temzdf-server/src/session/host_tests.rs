@@ -263,6 +263,35 @@ fn the_shipped_keys_take_counts_as_presses() {
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
+/// While the script host is down a PDF pane's keys do nothing (there is
+/// no fallback keymap, decided with the user on 2026-11-22), and the
+/// escape keys still work.
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn with_the_host_down_pdf_keys_do_nothing_but_the_escape_keys_work() {
+    let dir = TempDir::new("host-down-pdf");
+    let (mut s, rx) = open(Open::Pdf, &dir.0);
+    s.run_command("debug-stop-script-host", &[], Instant::now()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while s.script.running() {
+        assert!(Instant::now() < deadline, "the host did not stop");
+        if let Ok(ev) = rx.recv_timeout(Duration::from_millis(20)) {
+            s.handle(ev, Instant::now());
+        }
+    }
+    let press = |s: &mut Session, keys: &str| {
+        let mut out = Outcome::None;
+        for k in notation::parse(keys).unwrap() {
+            out = out.merge(s.key(&k.event(), Instant::now()));
+        }
+        out
+    };
+    let start = pdf_state(&mut s);
+    assert_eq!(press(&mut s, "jjj<C-f>"), Outcome::None);
+    assert_eq!(pdf_state(&mut s), start, "the PDF pane did not move");
+    assert_eq!(press(&mut s, "<C-b>q"), Outcome::Quit);
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn counts_choose_the_tab_page_and_the_pdf_page() {

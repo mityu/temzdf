@@ -146,7 +146,8 @@ configurations are written with the same system.
 ## Unchanged
 
 - The script host down: mappings are off and the fixed keymap works
-  (`<C-b>d` detach, `<C-b>q` end the session, `<C-b>r` restart the host).
+  (`<C-b>d` detach, `<C-b>q` end the session, `<C-b>r` restart the host;
+  other keys reach terminal panes only, 2026-11-22).
 - Escape hatches of `doc/design/scripting.md` (decision 10).
 
 ## Decisions on the former open questions (2026-10-28)
