@@ -30,8 +30,8 @@ export function check<T>(what: string, schema: z.ZodMiniType<T>, value: unknown,
   if (!r.success) fail(what, name, r.error);
 }
 
-/** `value` as `schema` makes it (its defaults filled in, keys it does
- * not know dropped), or a TypeError as `check` throws. */
+/** `value` as `schema` makes it (its defaults filled in, keys a plain
+ * object schema does not know dropped), or a TypeError as `check` throws. */
 export function parse<S extends z.ZodMiniType>(what: string, schema: S, value: unknown, name = ""): z.output<S> {
   messages();
   const r = z.safeParse(schema, value);
@@ -62,11 +62,22 @@ export function func<F extends (...args: any[]) => unknown = (...args: any[]) =>
   return z.custom<F>((v) => typeof v === "function", { error: "expected a function" });
 }
 
-/** Options: `shape`, `{}` when left out (its defaults then). */
-export function options<S extends z.core.$ZodLooseShape>(shape: S) {
+/** Options: `shape`, `{}` when left out (its defaults then); a key it
+ * does not have is an error (a misspelling is not dropped silently).
+ * `hints` add a word to that error for keys of their own (a name that
+ * was renamed or removed: what to use instead). */
+export function options<S extends z.core.$ZodLooseShape>(shape: S, hints: Record<string, string> = {}) {
+  const error = (issue: z.core.$ZodRawIssue) => {
+    if (issue.code !== "unrecognized_keys") return undefined;
+    const keys = issue.keys as string[];
+    const told = keys.filter((k) => Object.hasOwn(hints, k));
+    if (told.length === 0) return undefined;
+    const names = keys.map((k) => JSON.stringify(k)).join(", ");
+    return `Unrecognized key${keys.length > 1 ? "s" : ""}: ${names} (${told.map((k) => hints[k]).join("; ")})`;
+  };
   // `{}` is a valid input when every key has a default or is optional,
   // which zod's types cannot see for a generic shape.
-  return z.prefault(z.object(shape), {} as never);
+  return z.prefault(z.strictObject(shape, { error }), {} as never);
 }
 
 /** Schema `S` takes every value of `T` and no key `T` does not have:

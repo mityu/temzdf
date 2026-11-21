@@ -213,13 +213,20 @@ const mapOptions = options({
 const namespaceOption = options({ namespace: nullable(z.string()) });
 const clearFilter = options({ mode: nullable(z.string()), namespace: nullable(z.string()) });
 const getFilter = options({ mode: nullable(z.string()), namespace: nullable(z.string()), lhs: nullable(z.string()) });
-const modeProperties = options({
-  fallback: nullable(z.union([z.enum(["drop", "passthrough"]), func<(ctx: KeyContext, key: KeyInfo) => void>()])),
-  count: nullable(z.boolean()),
-  transient: nullable(z.boolean()),
-  keepalive: nullable(z.union([z.enum(["mapped", "always"]), func<Condition>()])),
-  timeout: nullable(z.number()),
-});
+const modeProperties = options(
+  {
+    fallback: nullable(z.union([z.enum(["drop", "passthrough"]), func<(ctx: KeyContext, key: KeyInfo) => void>()])),
+    count: nullable(z.boolean()),
+    transient: nullable(z.boolean()),
+    keepalive: nullable(z.union([z.enum(["mapped", "always"]), func<Condition>()])),
+    timeout: nullable(z.number()),
+  },
+  // Removed names (2026-10-28, 2026-11-07).
+  {
+    inherit: "inherit is gone; a transient mode with keepalive takes the keys of the mode below",
+    unmapped: "unmapped is now fallback",
+  },
+);
 const feedOptions = options({ remap: z._default(z.boolean(), true) });
 const hookOptions = options({ nested: z._default(z.boolean(), false) });
 const promptOptions = options({
@@ -260,7 +267,6 @@ const mappingAnswers = z.array(
     priority: z.number(),
   }),
 );
-const isObject = guard(z.object({}));
 
 const temzdf: Temzdf = {
   action: globalAction,
@@ -309,14 +315,6 @@ const temzdf: Temzdf = {
   defineMode(name, props) {
     const what = `defineMode(${String(name)})`;
     check(what, z.string(), name, "name");
-    if (isObject(props) && "inherit" in props) {
-      throw new TypeError(
-        "defineMode: inherit is gone; a transient mode with keepalive takes the keys of the mode below",
-      );
-    }
-    if (isObject(props) && "unmapped" in props) {
-      throw new TypeError("defineMode: unmapped is now fallback");
-    }
     const p = parse(what, modeProperties, props, "properties");
     request(current(), "defineMode", {
       name,

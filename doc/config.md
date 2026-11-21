@@ -81,6 +81,13 @@ log, as do promise rejections nothing handled.
 A value the API may leave out (no count typed, no focused pane, an unset
 option) is `undefined`, never `null`; `x == null` checks for either.
 
+What the API is passed is checked when it is called: a wrong value throws a
+`TypeError` naming the call and the argument. Option objects (`keymap.add`'s,
+`defineMode`'s, `on`'s, `openPrompt`'s, `command.add`'s, ...) take only the
+keys they have: a misspelled one (`{ nowiat: true }`) throws
+(`keymap.add(x): options: Unrecognized key: "nowiat"`) instead of being
+dropped.
+
 ## Modes and keys
 
 Like Vim, temzdf is always in a mode; the window's status line (the bottom

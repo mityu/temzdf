@@ -741,6 +741,53 @@ action.message(refused(() => keymap.add(["normal", 1 as never], "z", () => {})))
 }
 
 #[test]
+fn misspelled_option_keys_are_refused_naming_them() {
+    // Options are strict objects (options() in runtime/lib/validate.ts): a
+    // key the API does not have throws instead of being dropped, and a
+    // removed name says what replaced it.
+    let config = r#"import { action, defineMode, keymap, on } from "temzdf";
+import { command } from "temzdf/command";
+const refused = (f: () => void) => { try { f(); return "accepted"; } catch (e) { return (e as Error).message; } };
+action.message(refused(() => keymap.add("normal", "y", () => {}, { nowiat: true } as never)));
+action.message(refused(() => on("ModeChanged", () => {}, { nestd: true } as never)));
+action.message(refused(() => command.add("w", () => {}, { namspace: "x" } as never)));
+action.message(refused(() => defineMode("n", { inherit: "normal" } as never)));
+action.message(refused(() => defineMode("n", { unmapped: "drop", count: true } as never)));
+"#;
+    let mut s = Session::start(&[("config.ts", config)]);
+    s.load("config.ts");
+    let mut messages = Vec::new();
+    let ready = loop {
+        match s.recv() {
+            FromHost::Request { req, op, .. } => {
+                if let HostOp::Command { name, args } = op
+                    && name == "message"
+                {
+                    messages.push(args[0].clone());
+                }
+                s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
+            }
+            other => break other,
+        }
+    };
+    ready_ok(ready);
+    let str = |s: &str| ScriptValue::Str(s.into());
+    assert_eq!(
+        messages,
+        [
+            str(r#"keymap.add(y): options: Unrecognized key: "nowiat""#),
+            str(r#"on(ModeChanged): options: Unrecognized key: "nestd""#),
+            str(r#"command.add(w): opts: Unrecognized key: "namspace""#),
+            str(concat!(
+                r#"defineMode(n): properties: Unrecognized key: "inherit" (inherit is gone; "#,
+                "a transient mode with keepalive takes the keys of the mode below)"
+            )),
+            str(r#"defineMode(n): properties: Unrecognized key: "unmapped" (unmapped is now fallback)"#),
+        ]
+    );
+}
+
+#[test]
 fn conditions_answer_booleans_and_get_mappings_gives_the_functions_back() {
     let config = r#"
 import { action, keymap } from "temzdf";

@@ -121,7 +121,10 @@ dependencies are cached apart from the server.
   was made, with its stack, and the other mappings and hooks live on.
   What scripts get wrong the prelude refuses before, by its zod schemas,
   with messages naming the call and the option (`keymap.add`'s
-  `priority` is a 32-bit integer there).
+  `priority` is a 32-bit integer there); option objects are strict
+  (`options()` in `runtime/lib/validate.ts`): a key they do not have is
+  refused, and a removed name (`defineMode`'s `inherit`, `unmapped`) says
+  what replaced it.
 - **Context tokens**: every command carries the call or task it belongs to;
   the session refuses commands of calls that have finished and of tasks that
   ended. Global functions (`action.split()`) only work inside a mapped or hook
