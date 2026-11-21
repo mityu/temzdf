@@ -405,7 +405,7 @@ fn main() -> Result<()> {
         None => {}
     }
     if let Some(spec) = &cli.forward {
-        let req = ipc::ForwardRequest::parse_spec(spec).with_context(|| format!("bad --forward {spec:?}"))?;
+        let req = ipc::parse_spec(spec).with_context(|| format!("bad --forward {spec:?}"))?;
         let file = cli.file.as_deref().expect("clap requires FILE with --forward");
         // A viewer or a session's pane has the file open: hand it over.
         if ipc::send_forward(file, &req)? {
@@ -505,7 +505,7 @@ fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
         return headless::render_frame(&file, out, &opts);
     }
     let forward = match &args.forward {
-        Some(spec) => Some(ipc::ForwardRequest::parse_spec(spec).with_context(|| format!("bad --forward {spec:?}"))?),
+        Some(spec) => Some(ipc::parse_spec(spec).with_context(|| format!("bad --forward {spec:?}"))?),
         None => None,
     };
     // A viewer of this file is already running: hand the request over and exit.

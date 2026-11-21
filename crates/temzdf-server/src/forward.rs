@@ -15,44 +15,36 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-/// A forward-search request: show what `line` of `file` produced.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ForwardRequest {
-    pub file: PathBuf,
-    pub line: u32,
-    pub column: u32,
+pub use temzdf_pdfview::host::Forward;
+
+/// Parse `LINE[:COLUMN]:FILE` (the file may itself contain colons, not
+/// a line break: the request is one line).
+pub fn parse_spec(spec: &str) -> Option<Forward> {
+    if spec.contains(['\n', '\r']) {
+        return None;
+    }
+    let (line, rest) = spec.split_once(':')?;
+    let line = line.parse().ok()?;
+    let (column, file) = match rest.split_once(':') {
+        Some((c, f)) if c.parse::<u32>().is_ok() && !f.is_empty() => (c.parse().ok()?, f),
+        _ => (0, rest),
+    };
+    (!file.is_empty()).then(|| Forward { file: PathBuf::from(file), line, column })
 }
 
-impl ForwardRequest {
-    /// Parse `LINE[:COLUMN]:FILE` (the file may itself contain colons, not
-    /// a line break: the request is one line).
-    pub fn parse_spec(spec: &str) -> Option<Self> {
-        if spec.contains(['\n', '\r']) {
-            return None;
-        }
-        let (line, rest) = spec.split_once(':')?;
-        let line = line.parse().ok()?;
-        let (column, file) = match rest.split_once(':') {
-            Some((c, f)) if c.parse::<u32>().is_ok() && !f.is_empty() => (c.parse().ok()?, f),
-            _ => (0, rest),
-        };
-        (!file.is_empty()).then(|| Self { file: PathBuf::from(file), line, column })
-    }
+fn encode(req: &Forward) -> String {
+    format!("forward\t{}\t{}\t{}\n", req.line, req.column, req.file.display())
+}
 
-    fn encode(&self) -> String {
-        format!("forward\t{}\t{}\t{}\n", self.line, self.column, self.file.display())
+fn decode(line: &str) -> Option<Forward> {
+    let mut it = line.trim_end_matches('\n').splitn(4, '\t');
+    if it.next()? != "forward" {
+        return None;
     }
-
-    fn decode(line: &str) -> Option<Self> {
-        let mut it = line.trim_end_matches('\n').splitn(4, '\t');
-        if it.next()? != "forward" {
-            return None;
-        }
-        let line = it.next()?.parse().ok()?;
-        let column = it.next()?.parse().ok()?;
-        let file = PathBuf::from(it.next()?);
-        Some(Self { file, line, column })
-    }
+    let line = it.next()?.parse().ok()?;
+    let column = it.next()?.parse().ok()?;
+    let file = PathBuf::from(it.next()?);
+    Some(Forward { file, line, column })
 }
 
 /// The socket a viewer of `pdf` listens on.
@@ -63,14 +55,14 @@ pub fn socket_path(pdf: &Path) -> PathBuf {
 }
 
 /// Send a request to the viewer of `pdf`. `Ok(false)` when no viewer is running.
-pub fn send_forward(pdf: &Path, req: &ForwardRequest) -> std::io::Result<bool> {
+pub fn send_forward(pdf: &Path, req: &Forward) -> std::io::Result<bool> {
     send_to(&socket_path(pdf), req)
 }
 
-fn send_to(socket: &Path, req: &ForwardRequest) -> std::io::Result<bool> {
+fn send_to(socket: &Path, req: &Forward) -> std::io::Result<bool> {
     let Ok(mut stream) = UnixStream::connect(socket) else { return Ok(false) };
     stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
-    stream.write_all(req.encode().as_bytes())?;
+    stream.write_all(encode(req).as_bytes())?;
     let mut reply = String::new();
     BufReader::new(stream).read_line(&mut reply)?;
     Ok(reply.trim() == "ok")
@@ -101,7 +93,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 /// false once nobody listens any more). Another live viewer of the same file
 /// keeps its socket (an error here); a stale socket left by a crashed viewer is
 /// replaced.
-pub fn serve(pdf: &Path, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> std::io::Result<Server> {
+pub fn serve(pdf: &Path, deliver: impl Fn(Forward) -> bool + Send + 'static) -> std::io::Result<Server> {
     serve_at(socket_path(pdf), deliver)
 }
 
@@ -109,18 +101,18 @@ pub fn serve(pdf: &Path, deliver: impl Fn(ForwardRequest) -> bool + Send + 'stat
 /// closed the file): `None` while one is. Cheap enough to ask every few
 /// seconds; never connects to a live viewer (that would hold its listener
 /// up for a request timeout).
-pub fn serve_if_free(pdf: &Path, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> Option<Server> {
+pub fn serve_if_free(pdf: &Path, deliver: impl Fn(Forward) -> bool + Send + 'static) -> Option<Server> {
     serve_if_free_at(socket_path(pdf), deliver)
 }
 
-fn serve_if_free_at(path: PathBuf, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> Option<Server> {
+fn serve_if_free_at(path: PathBuf, deliver: impl Fn(Forward) -> bool + Send + 'static) -> Option<Server> {
     if path.symlink_metadata().is_ok() {
         return None;
     }
     serve_at(path, deliver).ok()
 }
 
-fn serve_at(path: PathBuf, deliver: impl Fn(ForwardRequest) -> bool + Send + 'static) -> std::io::Result<Server> {
+fn serve_at(path: PathBuf, deliver: impl Fn(Forward) -> bool + Send + 'static) -> std::io::Result<Server> {
     if let Some(dir) = path.parent() {
         temzdf_protocol::private_dir(dir)?;
     }
@@ -142,7 +134,7 @@ fn serve_at(path: PathBuf, deliver: impl Fn(ForwardRequest) -> bool + Send + 'st
             let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
             let mut line = String::new();
             let ok = BufReader::new(&stream).read_line(&mut line).is_ok();
-            let reply = match ForwardRequest::decode(&line).filter(|_| ok) {
+            let reply = match decode(&line).filter(|_| ok) {
                 Some(req) => {
                     if !deliver(req) {
                         return;
@@ -163,15 +155,15 @@ mod tests {
 
     #[test]
     fn parse_specs() {
-        let r = ForwardRequest::parse_spec("12:main.tex").unwrap();
+        let r = parse_spec("12:main.tex").unwrap();
         assert_eq!((r.line, r.column, r.file.to_str().unwrap()), (12, 0, "main.tex"));
-        let r = ForwardRequest::parse_spec("12:5:/a/b:c.tex").unwrap();
+        let r = parse_spec("12:5:/a/b:c.tex").unwrap();
         assert_eq!((r.line, r.column, r.file.to_str().unwrap()), (12, 5, "/a/b:c.tex"));
-        assert!(ForwardRequest::parse_spec("x:main.tex").is_none());
-        assert!(ForwardRequest::parse_spec("3:").is_none());
-        assert!(ForwardRequest::parse_spec("3:a\nb.tex").is_none(), "a line break would cut the request");
-        let req = ForwardRequest { file: "a b.tex".into(), line: 3, column: 1 };
-        assert_eq!(ForwardRequest::decode(&req.encode()), Some(req));
+        assert!(parse_spec("x:main.tex").is_none());
+        assert!(parse_spec("3:").is_none());
+        assert!(parse_spec("3:a\nb.tex").is_none(), "a line break would cut the request");
+        let req = Forward { file: "a b.tex".into(), line: 3, column: 1 };
+        assert_eq!(decode(&encode(&req)), Some(req));
     }
 
     #[test]
@@ -194,7 +186,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let server = serve_at(socket.clone(), move |r| tx.send(r).is_ok()).unwrap();
         assert!(serve_at(socket.clone(), |_| true).is_err(), "second viewer");
-        let req = ForwardRequest { file: "main.tex".into(), line: 42, column: 0 };
+        let req = Forward { file: "main.tex".into(), line: 42, column: 0 };
         assert!(send_to(&socket, &req).unwrap());
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);
         // A client that connects and sends nothing does not hold others up:
@@ -227,7 +219,7 @@ mod tests {
         assert!(second().is_none(), "the first has it");
         drop(first);
         let server = second().expect("free now");
-        let req = ForwardRequest { file: "main.tex".into(), line: 7, column: 0 };
+        let req = Forward { file: "main.tex".into(), line: 7, column: 0 };
         assert!(send_to(&dir.join("temzdf").join("doc.sock"), &req).unwrap());
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);
         drop(server);
@@ -235,10 +227,10 @@ mod tests {
     }
 
     /// send_to, waiting longer for the reply than it does.
-    fn send_to_patiently(socket: &Path, req: &ForwardRequest) -> bool {
+    fn send_to_patiently(socket: &Path, req: &Forward) -> bool {
         let mut stream = UnixStream::connect(socket).unwrap();
         stream.set_read_timeout(Some(REQUEST_TIMEOUT * 15)).unwrap();
-        stream.write_all(req.encode().as_bytes()).unwrap();
+        stream.write_all(encode(req).as_bytes()).unwrap();
         let mut reply = String::new();
         BufReader::new(stream).read_line(&mut reply).unwrap();
         reply.trim() == "ok"

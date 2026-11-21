@@ -24,7 +24,7 @@ use termpix_core::input::{
 
 use crate::action::PaneSpec;
 use crate::clip;
-use crate::forward::{self, ForwardRequest};
+use crate::forward;
 use crate::keymap::{Fallback, History, Keepalive, Layers, Matcher, Modes, Step, Stroke, Target, notation};
 use crate::layout::{BorderId, Layout, PaneId, Split};
 use temzdf_protocol::script::{FromHost, ScriptValue};
@@ -72,7 +72,7 @@ pub type BufferId = u32;
 /// from other processes (forward search).
 pub enum SessionEvent {
     Doc(DocId, DocEvent),
-    Forward(DocId, ForwardRequest),
+    Forward(DocId, Forward),
     Term(BufferId, TermEvent),
     /// A message from the script host (of this generation: hosts are
     /// replaced on reload, and an old one's last words must not count).
@@ -1255,7 +1255,7 @@ impl Session {
                 };
                 let panes = Self::panes_of(&mut self.panes, id, self.focus, &here);
                 if let Some(pane) = panes.first() {
-                    host.forward(Forward { file: req.file, line: req.line, column: req.column }, pane);
+                    host.forward(req, pane);
                 }
                 Outcome::None
             }

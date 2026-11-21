@@ -13,7 +13,7 @@ pub(super) struct DocEntry {
     forward: Option<forward::Server>,
     /// A forward search that came while it opened (its socket listens from
     /// the start: `temzdf --forward` sends one to the session it started).
-    pub(super) forward_waiting: Option<ForwardRequest>,
+    pub(super) forward_waiting: Option<Forward>,
     /// How the last pane showed it, for the next one.
     pub(super) view: Option<ViewState>,
 }
@@ -147,7 +147,7 @@ impl Session {
     }
 
     /// Ask for a forward search in the focused pane's document.
-    pub fn forward(&mut self, req: ForwardRequest) {
+    pub fn forward(&mut self, req: Forward) {
         if let Some(doc) = self.panes.get(&self.focus).and_then(PaneEntry::doc) {
             self.handle(SessionEvent::Forward(doc, req), Instant::now());
         }

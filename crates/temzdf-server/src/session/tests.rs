@@ -281,7 +281,7 @@ fn a_forward_search_sent_while_the_document_opens_is_kept() {
     s.open(&pdf::fixture("sample.pdf")).unwrap();
     // Before it has opened (line 44 is on the last page).
     let doc = *s.docs.keys().next().unwrap();
-    let req = ForwardRequest { file: "sample.tex".into(), line: 44, column: 0 };
+    let req = Forward { file: "sample.tex".into(), line: 44, column: 0 };
     s.handle(SessionEvent::Forward(doc, req), Instant::now());
     while s.is_starting() {
         let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();

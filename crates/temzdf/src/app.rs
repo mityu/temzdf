@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use temzdf_server::action::PaneSpec;
-use temzdf_server::forward::ForwardRequest;
+use temzdf_server::forward::Forward;
 use temzdf_server::session::{EventSink, Outcome, ScriptSettings, Session, SessionEvent, Settings};
 use temzdf_tty::{Input, Presented, TtyFrontend};
 use termpix::tty::TermEvent;
@@ -25,7 +25,7 @@ pub struct Options {
     /// The configuration script given with `--config`.
     pub config: Option<PathBuf>,
     /// Forward search to perform once the document is shown.
-    pub forward: Option<ForwardRequest>,
+    pub forward: Option<Forward>,
     /// Inverse search command (overrides the config file).
     pub editor: Option<String>,
     /// Do not run the configuration script.
