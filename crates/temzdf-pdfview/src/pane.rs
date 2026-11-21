@@ -1152,6 +1152,13 @@ impl PdfPane {
 
     /// Overlay layers on visible pages: search hits and the text selection.
     fn overlay_layers(&mut self, images: &mut Images, layers: &mut Vec<Layer>) {
+        // Bound the overlay image cache (sizes change with zoom), before
+        // the layers name its images, so none this frame shows goes.
+        if self.overlay_images.len() > 256 {
+            for (_, id) in self.overlay_images.drain() {
+                images.remove(id);
+            }
+        }
         let mut rects: Vec<(usize, PageRect, Color)> = Vec::new();
         for page in self.viewer.visible_pages() {
             if self.search.is_active() {
@@ -1186,12 +1193,6 @@ impl PdfPane {
             });
             let src = Rect::new(vis.x - dst.x, vis.y - dst.y, vis.w, vis.h);
             layers.push(Layer { key, image, src, dst: vis, z: Z_OVERLAY });
-        }
-        // Bound the overlay image cache (sizes change with zoom).
-        if self.overlay_images.len() > 256 {
-            for (_, id) in self.overlay_images.drain() {
-                images.remove(id);
-            }
         }
     }
 
@@ -1709,6 +1710,26 @@ mod tests {
         assert!(s.outline.list.hover.is_some(), "the first outline row is hovered");
         mouse(&mut s, MouseEventKind::Move, (x, y));
         assert!(s.outline.list.hover.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn frames_name_no_overlay_image_trimmed_from_the_cache() {
+        let mut s = session();
+        assert!(s.text_of_page(0).is_some(), "text the selection covers");
+        s.selection = Some(crate::selection::Selection { anchor: (0, 0), head: (0, 40) });
+        let mut images = temzdf_scene::Images::new();
+        // A cache full of sizes from other zoom levels, about to be trimmed.
+        for i in 0..=256 {
+            let key = images.add(1, 1, vec![0u8; 4]);
+            s.overlay_images.insert((1000 + i, 1, [0; 4]), key);
+        }
+        let (frame, _) = s.frame(&mut images);
+        let overlays: Vec<_> = frame.layers.iter().filter(|l| l.z == Z_OVERLAY).collect();
+        assert!(!overlays.is_empty(), "the selection is drawn");
+        for l in overlays {
+            assert!(images.get(l.image).is_some(), "overlay layer {} names a removed image", l.key);
+        }
     }
 
     #[test]
