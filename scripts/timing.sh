@@ -18,10 +18,8 @@
 set -euo pipefail
 [[ $# -eq 1 && -d "$1" ]] || { sed -n '2,${ /^set -euo/q; p; }' "${BASH_SOURCE[0]}"; exit 2; }
 out=$(realpath "$1")
-self=$(realpath "${BASH_SOURCE[0]}")
-if [[ -z "${IN_NIX_SHELL:-}" ]]; then
-  NIX_CONFIG="warn-dirty = false${NIX_CONFIG:+$'\n'$NIX_CONFIG}" exec nix develop --quiet -c "$self" "$out"
-fi
+# shellcheck source=SCRIPTDIR/lib/devshell.sh
+source "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/lib/devshell.sh" . "$out"
 server=$(find "$out/state/temzdf" -maxdepth 1 -name '*.log' ! -name temzdf.log | head -1)
 client="$out/state/temzdf/temzdf.log"
 grep -q 'timing: received' "$client" 2>/dev/null || client="$out/terminal.log"

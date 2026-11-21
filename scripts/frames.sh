@@ -17,16 +17,9 @@
 # Fixtures must exist (scripts/build-fixtures.sh). Re-executes itself inside the
 # Nix dev shell when needed (ImageMagick for `compare`).
 set -euo pipefail
-# Absolute: it re-executes itself after the cd.
-self=$(realpath "${BASH_SOURCE[0]}")
-cd "$(dirname "$(dirname "$self")")"
 
-if [[ -z "${IN_NIX_SHELL:-}" ]]; then
-  # The dirty-tree warning off through nix itself: a process substitution
-  # filtering it would leave its pipe open in every child, and a daemon that
-  # outlives the run (mozc_server) kept whatever reads our output waiting.
-  NIX_CONFIG="warn-dirty = false${NIX_CONFIG:+$'\n'$NIX_CONFIG}" exec nix develop --quiet -c "$self" "$@"
-fi
+# shellcheck source=SCRIPTDIR/lib/devshell.sh
+source "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/lib/devshell.sh" . "$@"
 
 # name | options after the PDF | keys pressed first (Vim feedkeys notation)
 scenarios=(

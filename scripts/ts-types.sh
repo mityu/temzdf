@@ -19,12 +19,9 @@
 # `temzdf/NAME` resolves there, while the entries are read where they are
 # (a library's files would be read as sources, not as declarations).
 set -euo pipefail
-self=$(realpath "${BASH_SOURCE[0]}")
-cd "$(dirname "$(dirname "$self")")"
 
-if [[ -z "${IN_NIX_SHELL:-}" ]]; then
-  NIX_CONFIG="warn-dirty = false${NIX_CONFIG:+$'\n'$NIX_CONFIG}" exec nix develop --quiet -c "$self" "$@"
-fi
+# shellcheck source=SCRIPTDIR/lib/devshell.sh
+source "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/lib/devshell.sh" . "$@"
 
 types=crates/temzdf-script/ts-types
 out=${1:-$types/temzdf-all.d.ts}

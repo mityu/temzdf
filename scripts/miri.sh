@@ -15,16 +15,9 @@
 # (default 900) is stopped and fails. Exits 2 when `cargo miri` is not
 # available.
 set -euo pipefail
-# Absolute: it re-executes itself after the cd.
-self=$(realpath "${BASH_SOURCE[0]}")
-cd "$(dirname "$(dirname "$self")")"
 
-if [[ -z "${IN_NIX_SHELL:-}" ]]; then
-  # The dirty-tree warning off through nix itself: a process substitution
-  # filtering it would leave its pipe open in every child, and a daemon that
-  # outlives the run (mozc_server) kept whatever reads our output waiting.
-  NIX_CONFIG="warn-dirty = false${NIX_CONFIG:+$'\n'$NIX_CONFIG}" exec nix develop --quiet -c "$self" "$@"
-fi
+# shellcheck source=SCRIPTDIR/lib/devshell.sh
+source "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/lib/devshell.sh" .#enable-miri "$@"
 
 if ! cargo miri --version >/dev/null 2>&1; then
   echo "SKIP miri (cargo miri not available)"

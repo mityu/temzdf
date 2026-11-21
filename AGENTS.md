@@ -101,10 +101,10 @@ devDependencies of `runtime/package.json` (dts-bundle-generator,
 TypeScript 6, type-fest's types) are tools, never bundled. A value the API may leave out is `undefined`; the scripts check one with
 `isNullish` (`runtime/lib/validate.ts`). The default dev shell has no Miri (check.sh
 says it skipped it); `nix develop .#enable-miri` has it, and the user runs
-it from time to time. To run Miri yourself, `nix develop .#alldeps -c
-scripts/check.sh` (or `-c scripts/miri.sh`) is the one allowed use of
-`nix develop -c`; its toolchain is nightly. The scripts enter the dev shell by
-themselves when started outside it. A unit test Miri cannot run (foreign
+it from time to time. To run Miri yourself, `scripts/miri.sh` (it enters
+`.#enable-miri` by itself; its toolchain is nightly). The scripts enter their
+dev shell by themselves when started outside it (`scripts/lib/devshell.sh`), so
+never use `nix develop -c` to run them. A unit test Miri cannot run (foreign
 code, ptys, processes, sockets) gets `#[cfg_attr(miri, ignore = "why")]`;
 see "Miri" in `doc/dev/testing.md`.
 
