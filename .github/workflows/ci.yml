@@ -72,6 +72,8 @@ jobs:
       # Built dependencies and the crates downloaded, not our own crates.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          # Keys are `v0-rust-check-Linux-X64-...`; `prune-cache-check-with-nix` matches `v0-rust-check-`.
+          shared-key: check
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
       # The shipped scripts' npm packages (tsc reads their types).
       - run: nix develop .#ci --command npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund
@@ -101,6 +103,8 @@ jobs:
       # Also Miri's standard library, built by `cargo miri setup`.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          # Keys are `v0-rust-miri-Linux-X64-...`; `prune-cache-miri-with-nix` matches `v0-rust-miri-`.
+          shared-key: miri
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
           cache-directories: ~/.cache/miri
       - run: nix develop .#ci-miri --command scripts/miri.sh
