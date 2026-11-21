@@ -18,9 +18,7 @@ use temzdf_pdfview::viewer::{StandIn, ViewState};
 use temzdf_scene::{CursorShape, Effect, Frame, Hints, Images, Layer, Pointer, Rect, Region, RegionKind, TextGrid};
 use temzdf_term::{Spawn, TermBuffer, TermEvent, TermView};
 use termpix_core::geom::Geometry;
-use termpix_core::input::{
-    CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use termpix_core::input::{KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::action::PaneSpec;
 use crate::clip;

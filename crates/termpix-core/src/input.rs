@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+use crate::geom::CellSize;
+
 /// Keyboard modifiers, using the kitty keyboard protocol bit layout.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -238,10 +240,45 @@ pub enum PinchPhase {
     End,
 }
 
+/// Rows a wheel notch scrolls in panes of text (terminals, text panes).
+pub const WHEEL_ROWS: u32 = 3;
+
 impl MouseEventKind {
     /// Any kind of scrolling.
     pub fn is_scroll(&self) -> bool {
         matches!(self, Self::Scroll(_) | Self::ScrollBy { .. })
+    }
+
+    /// Vertical scrolling in rows of `cell_height` pixels: a notch is
+    /// [`WHEEL_ROWS`], pixels are the cell height's share (a fraction).
+    /// `None` for other events and sideways scrolling.
+    pub fn wheel_rows(&self, cell_height: u32) -> Option<f32> {
+        match *self {
+            Self::Scroll(ScrollDirection::Up) => Some(-(WHEEL_ROWS as f32)),
+            Self::Scroll(ScrollDirection::Down) => Some(WHEEL_ROWS as f32),
+            Self::ScrollBy { dy, unit: ScrollUnit::Line, .. } => Some(dy as f32 / 100.0 * WHEEL_ROWS as f32),
+            Self::ScrollBy { dy, unit: ScrollUnit::Pixel, .. } => Some(dy as f32 / 100.0 / cell_height.max(1) as f32),
+            _ => None,
+        }
+    }
+}
+
+/// Fractional scroll amounts adding up until they make whole steps (rows,
+/// or notches of several rows), as a touchpad's small deltas do.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WheelAccumulator(f32);
+
+impl WheelAccumulator {
+    pub fn add(&mut self, rows: f32) {
+        self.0 += rows;
+    }
+
+    /// The whole steps of `per` rows gathered so far (negative upwards),
+    /// taken out; the rest stays.
+    pub fn take(&mut self, per: f32) -> i32 {
+        let steps = (self.0 / per).trunc();
+        self.0 -= steps * per;
+        steps as i32
     }
 }
 
@@ -264,4 +301,87 @@ pub struct MouseEvent {
     pub y: i32,
     pub unit: CoordUnit,
     pub modifiers: Modifiers,
+}
+
+impl MouseEvent {
+    /// The position in pixels; an event in cells is at its cell's centre.
+    pub fn pixel_pos(&self, cell: CellSize) -> (f32, f32) {
+        match self.unit {
+            CoordUnit::Pixel => (self.x as f32, self.y as f32),
+            CoordUnit::Cell => ((self.x as f32 + 0.5) * cell.width as f32, (self.y as f32 + 0.5) * cell.height as f32),
+        }
+    }
+
+    /// The cell (column, row) under the event.
+    pub fn cell_pos(&self, cell: CellSize) -> (i32, i32) {
+        match self.unit {
+            CoordUnit::Pixel => {
+                (self.x.div_euclid(cell.width.max(1) as i32), self.y.div_euclid(cell.height.max(1) as i32))
+            }
+            CoordUnit::Cell => (self.x, self.y),
+        }
+    }
+
+    /// The event relative to the cell (`col`, `row`) as the origin, in its
+    /// own unit.
+    pub fn offset(&self, col: i32, row: i32, cell: CellSize) -> Self {
+        let (dx, dy) = match self.unit {
+            CoordUnit::Pixel => (col * cell.width as i32, row * cell.height as i32),
+            CoordUnit::Cell => (col, row),
+        };
+        Self { x: self.x - dx, y: self.y - dy, ..*self }
+    }
+
+    /// The event in pixels; an event in cells is at its cell's top left.
+    pub fn in_pixels(&self, cell: CellSize) -> Self {
+        match self.unit {
+            CoordUnit::Pixel => *self,
+            CoordUnit::Cell => {
+                Self { x: self.x * cell.width as i32, y: self.y * cell.height as i32, unit: CoordUnit::Pixel, ..*self }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CELL: CellSize = CellSize { width: 10, height: 20 };
+
+    fn at(x: i32, y: i32, unit: CoordUnit) -> MouseEvent {
+        MouseEvent { kind: MouseEventKind::Move, x, y, unit, modifiers: Modifiers::NONE }
+    }
+
+    #[test]
+    fn positions_in_cells_and_pixels() {
+        assert_eq!(at(2, 1, CoordUnit::Cell).pixel_pos(CELL), (25.0, 30.0));
+        assert_eq!(at(25, 30, CoordUnit::Pixel).pixel_pos(CELL), (25.0, 30.0));
+        assert_eq!(at(25, 30, CoordUnit::Pixel).cell_pos(CELL), (2, 1));
+        assert_eq!(at(-1, -1, CoordUnit::Pixel).cell_pos(CELL), (-1, -1));
+        assert_eq!(at(2, 1, CoordUnit::Cell).cell_pos(CELL), (2, 1));
+        let m = at(25, 30, CoordUnit::Pixel).offset(1, 1, CELL);
+        assert_eq!((m.x, m.y), (15, 10));
+        let m = at(2, 1, CoordUnit::Cell).offset(1, 1, CELL);
+        assert_eq!((m.x, m.y), (1, 0));
+        let m = at(2, 1, CoordUnit::Cell).in_pixels(CELL);
+        assert_eq!((m.x, m.y, m.unit), (20, 20, CoordUnit::Pixel));
+    }
+
+    #[test]
+    fn small_wheel_deltas_add_up_to_whole_rows() {
+        let by = |dy| MouseEventKind::ScrollBy { dx: 0, dy, unit: ScrollUnit::Pixel, phase: ScrollPhase::Touch };
+        let mut acc = WheelAccumulator::default();
+        // 6 pixels (600 hundredths) of 20-pixel rows: 0.3 a time.
+        let mut rows = Vec::new();
+        for _ in 0..5 {
+            acc.add(by(600).wheel_rows(CELL.height).unwrap());
+            rows.push(acc.take(1.0));
+        }
+        assert_eq!(rows, [0, 0, 0, 1, 0]);
+        acc.add(-2.5);
+        assert_eq!(acc.take(1.0), -2);
+        assert_eq!(MouseEventKind::Scroll(ScrollDirection::Up).wheel_rows(20), Some(-3.0));
+        assert_eq!(MouseEventKind::Move.wheel_rows(20), None);
+    }
 }

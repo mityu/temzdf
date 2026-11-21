@@ -2,6 +2,7 @@ use super::*;
 use crate::keymap::{Act, notation};
 use std::time::Duration;
 use temzdf_scene::sink::channel_sink;
+use termpix_core::input::{CoordUnit, ScrollPhase, ScrollUnit};
 
 /// Mappings of commands (the data form, tests only) for the tests of
 /// the matcher and the modes, in sessions without a script host: the
@@ -2518,6 +2519,30 @@ fn text_session(name: &str, content: &str) -> (Session, PathBuf) {
     (s, path)
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "the file system")]
+fn a_text_pane_scrolls_by_small_wheel_deltas_once_they_make_a_row() {
+    let content: String = (0..100).map(|i| format!("line {i}\n")).collect();
+    let (mut s, path) = text_session("wheel.txt", &content);
+    let top = |s: &mut Session| screen_text(&s.frame(), GEOMETRY)[0].trim().to_owned();
+    assert!(top(&mut s).ends_with("line 0"), "{}", top(&mut s));
+    // A touchpad's 6 pixels at a time: 0.3 of a 20-pixel row.
+    let kind = MouseEventKind::ScrollBy { dx: 0, dy: 600, unit: ScrollUnit::Pixel, phase: ScrollPhase::Touch };
+    let swipe = |s: &mut Session| {
+        s.mouse(
+            &MouseEvent { kind, x: 100, y: 100, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE },
+            Instant::now(),
+        )
+    };
+    for _ in 0..3 {
+        swipe(&mut s);
+        assert!(top(&mut s).ends_with("line 0"), "less than a row: {}", top(&mut s));
+    }
+    swipe(&mut s);
+    assert!(top(&mut s).ends_with("line 1"), "a row gathered: {}", top(&mut s));
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// A session whose pane shows `name` (Markdown, in a fresh directory
 /// with `others` beside it) in the viewer.
 fn markdown_session(name: &str, content: &str, others: &[(&str, &str)]) -> (Session, PathBuf) {
@@ -2731,7 +2756,7 @@ fn fetched_images_lay_the_markdown_page_out_again_from_the_same_html() {
 #[test]
 #[cfg_attr(miri, ignore = "the file system, Blitz")]
 fn a_pinch_magnifies_the_markdown_page_without_laying_it_out_again() {
-    use termpix_core::input::{PinchPhase, ScrollPhase, ScrollUnit};
+    use termpix_core::input::PinchPhase;
     let words = "word ".repeat(30);
     let mut src = String::from("[jump](#section-12)\n\n");
     for i in 0..20 {

@@ -38,7 +38,7 @@ use temzdf_scene::{
 };
 use termpix_core::geom::Geometry;
 use termpix_core::input::{
-    CoordUnit, KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection, ScrollUnit,
+    KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection, WheelAccumulator,
 };
 
 /// What the pty's reader thread reports.
@@ -106,7 +106,7 @@ fn options(geometry: Geometry) -> TerminalOptions {
 }
 
 /// Rows the wheel scrolls through history per step.
-const WHEEL_ROWS: isize = 3;
+const WHEEL_ROWS: isize = termpix_core::input::WHEEL_ROWS as isize;
 /// Clicks closer together than this count as double and triple clicks.
 const MULTI_CLICK: Duration = Duration::from_millis(500);
 /// How often a selection dragged past the top or bottom scrolls a row.
@@ -157,7 +157,7 @@ pub struct TermBuffer {
     /// The pointer is over an OSC 8 link.
     hover_link: bool,
     /// Rows of `ScrollBy` not yet scrolled (or sent as a wheel notch).
-    scroll_rows: f32,
+    wheel: WheelAccumulator,
     graphics: graphics::Graphics,
     born: Instant,
     /// The visual mode's cursor and selection (see [`visual`]).
@@ -260,7 +260,7 @@ impl TermBuffer {
                 link: None,
             },
             hover_link: false,
-            scroll_rows: 0.0,
+            wheel: WheelAccumulator::default(),
             graphics: graphics::Graphics::new().map_err(ghostty_err)?,
             born: Instant::now(),
             visual: None,
@@ -423,14 +423,11 @@ impl TermBuffer {
     /// left button alone for other programs, or with `select`: the session's
     /// operating mode); otherwise the wheel scrolls through history.
     pub fn mouse(&mut self, m: &MouseEvent, select: bool) -> bool {
-        if let MouseEventKind::ScrollBy { dy, unit, .. } = m.kind {
-            return self.scroll_by(m, dy, unit, select);
+        if let MouseEventKind::ScrollBy { .. } = m.kind {
+            return self.scroll_by(m, select);
         }
         let cell = self.geometry.cell;
-        let (x, y) = match m.unit {
-            CoordUnit::Pixel => (m.x as f32, m.y as f32),
-            CoordUnit::Cell => ((m.x as f32 + 0.5) * cell.width as f32, (m.y as f32 + 0.5) * cell.height as f32),
-        };
+        let (x, y) = m.pixel_pos(cell);
         let tracking = self.terminal.is_mouse_tracking().unwrap_or(false);
         let mut redraw = false;
         if matches!(m.kind, MouseEventKind::Move | MouseEventKind::Drag(_)) {
@@ -526,32 +523,26 @@ impl TermBuffer {
     /// share; fractions add up. History scrolls by rows; programs that take
     /// the wheel (tracking the mouse, or alternate scroll) get a notch per
     /// [`WHEEL_ROWS`] rows, as from a wheel. Sideways amounts are not used.
-    fn scroll_by(&mut self, m: &MouseEvent, dy: i32, unit: ScrollUnit, select: bool) -> bool {
-        let rows = match unit {
-            ScrollUnit::Line => dy as f32 / 100.0 * WHEEL_ROWS as f32,
-            ScrollUnit::Pixel => dy as f32 / 100.0 / self.geometry.cell.height.max(1) as f32,
-        };
-        self.scroll_rows += rows;
+    fn scroll_by(&mut self, m: &MouseEvent, select: bool) -> bool {
+        self.wheel.add(m.kind.wheel_rows(self.geometry.cell.height).unwrap_or(0.0));
         let tracking = self.terminal.is_mouse_tracking().unwrap_or(false);
         let alternate = self.terminal.active_screen().is_ok_and(|s| s == libghostty_vt::screen::Screen::Alternate)
             && self.terminal.mode(Mode::ALT_SCROLL).unwrap_or(false);
         if tracking || alternate {
-            let notches = (self.scroll_rows / WHEEL_ROWS as f32).trunc();
-            self.scroll_rows -= notches * WHEEL_ROWS as f32;
-            let dir = if notches > 0.0 { ScrollDirection::Down } else { ScrollDirection::Up };
+            let notches = self.wheel.take(WHEEL_ROWS as f32);
+            let dir = if notches > 0 { ScrollDirection::Down } else { ScrollDirection::Up };
             let mut redraw = false;
-            for _ in 0..notches.abs() as u32 {
+            for _ in 0..notches.unsigned_abs() {
                 redraw |= self.mouse(&MouseEvent { kind: MouseEventKind::Scroll(dir), ..*m }, select);
             }
             return redraw;
         }
-        let whole = self.scroll_rows.trunc();
-        self.scroll_rows -= whole;
-        if whole == 0.0 {
+        let whole = self.wheel.take(1.0);
+        if whole == 0 {
             return false;
         }
         self.terminal.scroll_viewport(ScrollViewport::Delta(whole as isize));
-        if whole < 0.0 {
+        if whole < 0 {
             self.scrolled = true;
         }
         true
@@ -892,12 +883,7 @@ impl TermView {
     }
 
     fn in_terminal(&self, term: &TermBuffer, m: &MouseEvent) -> MouseEvent {
-        let top = self.top(term) as i32;
-        let dy = match m.unit {
-            CoordUnit::Pixel => top * term.geometry.cell.height as i32,
-            CoordUnit::Cell => top,
-        };
-        MouseEvent { y: m.y + dy, ..*m }
+        m.offset(0, -(self.top(term) as i32), term.geometry.cell)
     }
 }
 
@@ -984,7 +970,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
     use termpix_core::geom::CellSize;
-    use termpix_core::input::{KeyCode, Modifiers};
+    use termpix_core::input::{CoordUnit, KeyCode, Modifiers, ScrollUnit};
 
     const GEOMETRY: Geometry = Geometry { cols: 40, rows: 6, cell: CellSize { width: 10, height: 20 } };
 

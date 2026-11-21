@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer, Swatches, theme};
 use termpix_core::geom::{Geometry, Rect};
 use termpix_core::input::{
-    CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
-    ScrollPhase, ScrollUnit,
+    KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection, ScrollPhase,
+    ScrollUnit,
 };
 use termpix_core::viewport::Input;
 use termpix_ui::{Canvas, ListView, StatusBar, Text, Theme};
@@ -1284,12 +1284,7 @@ impl PdfPane {
 
     /// Returns true when the view changed.
     pub fn mouse(&mut self, m: &MouseEvent, now: Instant) -> bool {
-        let cell = self.geometry.cell;
-        let to_px = |c: i32, size: u32| match m.unit {
-            CoordUnit::Pixel => c as f32,
-            CoordUnit::Cell => (c as f32 + 0.5) * size as f32,
-        };
-        self.pointer = (to_px(m.x, cell.width), to_px(m.y, cell.height));
+        self.pointer = m.pixel_pos(self.geometry.cell);
         if matches!(m.kind, MouseEventKind::Press(_)) || m.kind.is_scroll() {
             self.text_anchor = None;
         }

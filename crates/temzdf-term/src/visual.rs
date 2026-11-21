@@ -14,9 +14,9 @@ use libghostty_vt::screen::{CellWide, RowSemanticPrompt, TrackedGridRef};
 use libghostty_vt::selection::{FormatOptions, Order, SelectWordOptions, Selection};
 use libghostty_vt::terminal::{Point, PointCoordinate, PointSpace, ScrollViewport};
 use temzdf_scene::{Cell, Color, CopyKind, Effect};
-use termpix_core::input::{CoordUnit, MouseButton, MouseEvent, MouseEventKind, ScrollDirection, ScrollUnit};
+use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
 
-use super::{MULTI_CLICK, TermBuffer, WHEEL_ROWS};
+use super::{MULTI_CLICK, TermBuffer};
 
 /// What a key does in visual mode (`visual.*` commands).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -513,27 +513,17 @@ impl TermBuffer {
         }
         self.visual_repair();
         let cell = self.geometry.cell;
-        let (x, y) = match m.unit {
-            CoordUnit::Pixel => (m.x as f32, m.y as f32),
-            CoordUnit::Cell => ((m.x as f32 + 0.5) * cell.width as f32, (m.y as f32 + 0.5) * cell.height as f32),
-        };
-        let rows = match m.kind {
-            MouseEventKind::Scroll(ScrollDirection::Up) => -WHEEL_ROWS as f32,
-            MouseEventKind::Scroll(ScrollDirection::Down) => WHEEL_ROWS as f32,
-            MouseEventKind::ScrollBy { dy, unit: ScrollUnit::Line, .. } => dy as f32 / 100.0 * WHEEL_ROWS as f32,
-            MouseEventKind::ScrollBy { dy, unit: ScrollUnit::Pixel, .. } => {
-                dy as f32 / 100.0 / cell.height.max(1) as f32
-            }
-            _ => 0.0,
-        };
-        if rows != 0.0 {
-            self.scroll_rows += rows;
-            let whole = self.scroll_rows.trunc();
-            self.scroll_rows -= whole;
-            if whole == 0.0 {
+        let (x, y) = m.pixel_pos(cell);
+        if let Some(rows) = m.kind.wheel_rows(cell.height)
+            && rows != 0.0
+        {
+            self.wheel.add(rows);
+            let whole = self.wheel.take(1.0);
+            if whole == 0 {
                 return false;
             }
-            return self.visual(if whole < 0.0 { Op::ScrollUp } else { Op::ScrollDown }, Some(whole.abs() as usize))
+            return self
+                .visual(if whole < 0 { Op::ScrollUp } else { Op::ScrollDown }, Some(whole.unsigned_abs() as usize))
                 != Outcome::Stay(false);
         }
         let at = self.cell_at(x, y);
@@ -1018,7 +1008,7 @@ mod tests {
     use std::sync::Arc;
     use temzdf_scene::Images;
     use termpix_core::geom::{CellSize, Geometry};
-    use termpix_core::input::{KeyCode, KeyEvent, Modifiers};
+    use termpix_core::input::{CoordUnit, KeyCode, KeyEvent, Modifiers};
 
     const GEOMETRY: Geometry = Geometry { cols: 40, rows: 6, cell: CellSize { width: 10, height: 20 } };
 

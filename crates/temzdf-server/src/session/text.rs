@@ -96,6 +96,8 @@ pub(super) struct TextView {
     pub local: LocalOptions,
     /// Where the left button went down (a Markdown viewer's link click).
     pub press: Option<usize>,
+    /// Wheel rows not yet scrolled.
+    pub wheel: termpix_core::input::WheelAccumulator,
 }
 
 /// Options a pane sets for itself over the session's (Vim's window-local
@@ -321,7 +323,13 @@ impl Session {
     fn text_view(&self, pane: PaneId) -> TextView {
         // Decorations shown only in it count there (inline virtual text).
         let view = View { pane: Some(pane), ..View::default() };
-        let mut tv = TextView { view, shape: CursorShape::Default, local: LocalOptions::default(), press: None };
+        let mut tv = TextView {
+            view,
+            shape: CursorShape::Default,
+            local: LocalOptions::default(),
+            press: None,
+            wheel: Default::default(),
+        };
         tv.apply(&self.options.text);
         tv
     }
@@ -1410,11 +1418,8 @@ pub(super) fn mouse(
     m: &termpix_core::input::MouseEvent,
     cell: termpix_core::geom::CellSize,
 ) -> Outcome {
-    use termpix_core::input::{CoordUnit, MouseButton, MouseEventKind, ScrollDirection, ScrollUnit};
-    let (col, row) = match m.unit {
-        CoordUnit::Pixel => (m.x.div_euclid(cell.width.max(1) as i32), m.y.div_euclid(cell.height.max(1) as i32)),
-        CoordUnit::Cell => (m.x, m.y),
-    };
+    use termpix_core::input::{MouseButton, MouseEventKind, ScrollDirection, WHEEL_ROWS};
+    let (col, row) = m.cell_pos(cell);
     let (col, row) = (col.max(0) as usize, row.max(0) as usize);
     match m.kind {
         MouseEventKind::Press(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
@@ -1425,17 +1430,20 @@ pub(super) fn mouse(
             Outcome::Redraw
         }
         MouseEventKind::Scroll(d @ (ScrollDirection::Up | ScrollDirection::Down)) => {
-            tv.view.scroll(&t.buf, if d == ScrollDirection::Up { -3 } else { 3 });
+            let rows = WHEEL_ROWS as i64;
+            tv.view.scroll(&t.buf, if d == ScrollDirection::Up { -rows } else { rows });
             Outcome::Redraw
         }
-        MouseEventKind::ScrollBy { dy, unit, .. } if dy != 0 => {
-            let rows = match unit {
-                ScrollUnit::Line => dy as f64 / 100.0 * 3.0,
-                ScrollUnit::Pixel => dy as f64 / 100.0 / cell.height.max(1) as f64,
-            };
-            let rows = if rows.abs() < 1.0 { rows.signum() } else { rows.round() };
-            tv.view.scroll(&t.buf, rows as i64);
-            Outcome::Redraw
+        // Fractions add up (a touchpad's small deltas), as in a terminal.
+        MouseEventKind::ScrollBy { .. } => {
+            tv.wheel.add(m.kind.wheel_rows(cell.height).unwrap_or(0.0));
+            match tv.wheel.take(1.0) {
+                0 => Outcome::None,
+                rows => {
+                    tv.view.scroll(&t.buf, rows as i64);
+                    Outcome::Redraw
+                }
+            }
         }
         _ => Outcome::None,
     }
@@ -1449,11 +1457,8 @@ pub(super) fn click(
     m: &termpix_core::input::MouseEvent,
     cell: termpix_core::geom::CellSize,
 ) -> Option<usize> {
-    use termpix_core::input::{CoordUnit, MouseButton, MouseEventKind};
-    let (col, row) = match m.unit {
-        CoordUnit::Pixel => (m.x.div_euclid(cell.width.max(1) as i32), m.y.div_euclid(cell.height.max(1) as i32)),
-        CoordUnit::Cell => (m.x, m.y),
-    };
+    use termpix_core::input::{MouseButton, MouseEventKind};
+    let (col, row) = m.cell_pos(cell);
     let at = tv.view.offset_at_cell(&t.buf, col.max(0) as usize, row.max(0) as usize);
     match m.kind {
         MouseEventKind::Press(MouseButton::Left) => {

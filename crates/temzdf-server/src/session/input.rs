@@ -595,10 +595,7 @@ impl Session {
 
     fn mouse_inner(&mut self, m: &MouseEvent, now: Instant) -> Outcome {
         let cell = self.geometry.cell;
-        let (px, py) = match m.unit {
-            CoordUnit::Pixel => (m.x as f32, m.y as f32),
-            CoordUnit::Cell => ((m.x as f32 + 0.5) * cell.width as f32, (m.y as f32 + 0.5) * cell.height as f32),
-        };
+        let (px, py) = m.pixel_pos(cell);
         let under = self.pane_at(px, py);
         let target = self.captured.or(under);
         let mut out = Outcome::None;
@@ -612,7 +609,7 @@ impl Session {
             }
             self.hovered = under;
         }
-        let (col, row) = ((px / cell.width as f32).floor() as i32, (py / cell.height as f32).floor() as i32);
+        let (col, row) = m.cell_pos(cell);
         if let Some(tabs) = self.tabline_mouse(m, col, row) {
             return out.merge(tabs);
         }
@@ -622,7 +619,7 @@ impl Session {
         {
             return out.merge(frame);
         }
-        if let Some(border) = self.border_mouse(m, under, px, py) {
+        if let Some(border) = self.border_mouse(m, under, col, row) {
             return out.merge(border);
         }
         // (A release ends the capture, and still belongs to it.)
@@ -663,22 +660,10 @@ impl Session {
         if !captured && row >= content.y + content.h as i32 {
             return out;
         }
-        let (dx, dy) = match m.unit {
-            CoordUnit::Pixel => ((content.x * cell.width as i32), (content.y * cell.height as i32)),
-            CoordUnit::Cell => (content.x, content.y),
-        };
-        let local = MouseEvent { x: m.x - dx, y: m.y - dy, ..*m };
+        let local = m.offset(content.x, content.y, cell);
         match &mut e.kind {
             Kind::Markdown { pane, doc } => {
-                let px = match local.unit {
-                    CoordUnit::Pixel => local,
-                    CoordUnit::Cell => MouseEvent {
-                        x: local.x * cell.width as i32,
-                        y: local.y * cell.height as i32,
-                        unit: CoordUnit::Pixel,
-                        ..local
-                    },
-                };
+                let px = local.in_pixels(cell);
                 let page = self.md_docs.get(doc).and_then(|d| d.page(pane.page_key()));
                 let changed = page.is_some_and(|page| pane.mouse(page, &px, cell.height, now));
                 let out = if changed { out.merge(Outcome::Redraw) } else { out };
@@ -714,9 +699,7 @@ impl Session {
 
     /// Borders: the pointer shape over them, and dragging them with the left
     /// button. `Some` when the event was the border's.
-    fn border_mouse(&mut self, m: &MouseEvent, under: Option<PaneId>, px: f32, py: f32) -> Option<Outcome> {
-        let cell = self.geometry.cell;
-        let (col, row) = ((px / cell.width as f32).floor() as i32, (py / cell.height as f32).floor() as i32);
+    fn border_mouse(&mut self, m: &MouseEvent, under: Option<PaneId>, col: i32, row: i32) -> Option<Outcome> {
         let area = self.area();
         let layout = self.layout.as_mut()?;
         if let Some(id) = &self.dragging {
