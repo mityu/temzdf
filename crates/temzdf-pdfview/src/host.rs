@@ -277,7 +277,7 @@ impl DocumentHost {
             let _ = self.cmd.send(DocCmd::LoadPage(p));
         }
         for key in self.pool.replace_wanted(wants) {
-            d.cache.render_cancelled(key);
+            d.cache.tiles.cancelled(key);
         }
     }
 
@@ -489,7 +489,8 @@ mod tests {
         host.dispatch(needs);
         host.forget(&mut images);
         // Only what the (at most four) threads had started is still coming.
-        let in_flight = |host: &DocumentHost| keys.iter().filter(|k| host.doc.borrow().cache.is_in_flight(**k)).count();
+        let in_flight =
+            |host: &DocumentHost| keys.iter().filter(|k| host.doc.borrow().cache.tiles.is_in_flight(**k)).count();
         assert!(in_flight(&host) <= 4, "{} of {} tiles still to be rendered", in_flight(&host), keys.len());
         let deadline = Instant::now() + Duration::from_secs(30);
         while !host.doc.borrow().cache.is_idle() {

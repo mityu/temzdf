@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use mupdf::DisplayList;
+use temzdf_scene::Images;
 use temzdf_scene::tiles::TileCache;
-use temzdf_scene::{ImageKey, Images};
 
 use crate::pdf::{PageBounds, PixelRect};
 
@@ -215,18 +215,9 @@ impl DocCache {
         }
     }
 
-    /// A render job was dropped before it ran.
-    pub fn render_cancelled(&mut self, key: TileKey) {
-        self.tiles.cancelled(key);
-    }
-
     /// Nothing asked for is still being loaded or rendered.
     pub fn is_idle(&self) -> bool {
         self.tiles.is_idle() && self.lists_requested.is_empty()
-    }
-
-    pub fn is_in_flight(&self, key: TileKey) -> bool {
-        self.tiles.is_in_flight(key)
     }
 
     /// A tile arrived (dropped when of an older version of the file).
@@ -236,16 +227,6 @@ impl DocCache {
             return;
         }
         self.tiles.rendered(images, r.key, r.width, r.height, r.pixels);
-    }
-
-    /// View `view` starts drawing (see [`TileCache::begin_frame`]).
-    pub fn begin_frame(&mut self, view: u64) {
-        self.tiles.begin_frame(view);
-    }
-
-    /// A cached tile's image and placement key, marking it used this frame.
-    pub fn touch(&mut self, key: TileKey) -> Option<(ImageKey, u32)> {
-        self.tiles.touch(key)
     }
 
     /// The other scale a page's tiles were used at most recently, if any.
@@ -263,16 +244,5 @@ impl DocCache {
             })
             .max()
             .map(|(_, q)| q)
-    }
-
-    /// A placement key for an image shown in a view (tiles get theirs when
-    /// they arrive).
-    pub fn alloc_layer(&mut self) -> u32 {
-        self.tiles.alloc_layer()
-    }
-
-    /// Drop least recently used tiles over budget (see [`TileCache::evict`]).
-    pub fn evict(&mut self, images: &mut Images) {
-        self.tiles.evict(images);
     }
 }

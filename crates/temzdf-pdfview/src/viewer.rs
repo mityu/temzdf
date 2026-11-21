@@ -76,7 +76,7 @@ pub struct Peek {
 }
 
 pub struct Viewer {
-    /// Tells views of one document apart (see `DocCache::begin_frame`).
+    /// Tells views of one document apart (see `TileCache::begin_frame`).
     id: u64,
     /// Display lists and tiles (shareable between views of one document).
     pub doc: SharedDocument,
@@ -472,7 +472,7 @@ impl Viewer {
 
     /// A render job was dropped before it ran.
     pub fn render_cancelled(&mut self, key: TileKey) {
-        self.cache().render_cancelled(key);
+        self.cache().tiles.cancelled(key);
     }
 
     pub fn rendered(&mut self, images: &mut Images, r: Rendered) {
@@ -483,7 +483,7 @@ impl Viewer {
     pub fn frame(&mut self, images: &mut Images) -> (Vec<Layer>, Vec<Need>) {
         self.frame_no += 1;
         let id = self.id;
-        self.cache().begin_frame(id);
+        self.cache().tiles.begin_frame(id);
         self.sync_view();
         let view = self.view;
         let ox = self.origin_x;
@@ -543,9 +543,9 @@ impl Viewer {
             // Thumbnail first: it is cheap and covers the page while tiles render.
             let thumb_key = TileKey { generation: self.cache().generation(), page: page as u32, kind: TileKind::Thumb };
             let thumb_scale = thumb_scale(bounds);
-            let thumb_cached = self.cache().touch(thumb_key);
+            let thumb_cached = self.cache().tiles.touch(thumb_key);
             if thumb_cached.is_none() && !self.cache().tile_has_failed(thumb_key) {
-                let need = if self.cache().is_in_flight(thumb_key) {
+                let need = if self.cache().tiles.is_in_flight(thumb_key) {
                     Need::Queued(thumb_key)
                 } else {
                     let (tw, th) = bounds.pixel_size(thumb_scale);
@@ -566,7 +566,7 @@ impl Viewer {
                     page: page as u32,
                     kind: TileKind::Tile { scale_q, tx: cell.tx, ty: cell.ty },
                 };
-                let cached = self.cache().touch(key);
+                let cached = self.cache().tiles.touch(key);
                 match cached {
                     Some((image, layer)) => {
                         if on_screen {
@@ -584,7 +584,7 @@ impl Viewer {
                         missing_on_screen |= on_screen;
                         let cx = dst.x as f32 + dst.w as f32 / 2.0 - centre.0;
                         let cy = dst.y as f32 + dst.h as f32 / 2.0 - centre.1;
-                        let need = if self.cache().is_in_flight(key) {
+                        let need = if self.cache().tiles.is_in_flight(key) {
                             Need::Queued(key)
                         } else {
                             Need::Render(RenderJob { key, list: list.clone(), bounds, scale, area })
@@ -628,7 +628,7 @@ impl Viewer {
             }
             keep
         });
-        self.cache().evict(images);
+        self.cache().tiles.evict(images);
         (layers, needs)
     }
 
@@ -701,14 +701,14 @@ impl Viewer {
                         page: page as u32,
                         kind: TileKind::Tile { scale_q, tx, ty },
                     };
-                    let cached = self.cache().touch(tile);
+                    let cached = self.cache().tiles.touch(tile);
                     match cached {
                         Some((image, _)) => {
                             let src = Rect::new(vis.x - dst.x, vis.y - dst.y, vis.w, vis.h);
                             layers.push(Layer { key, image, src, dst: vis, z: p.z + 1 });
                             key += 1;
                         }
-                        None if self.cache().is_in_flight(tile) => needs.push(Need::Queued(tile)),
+                        None if self.cache().tiles.is_in_flight(tile) => needs.push(Need::Queued(tile)),
                         None => {
                             needs.push(Need::Render(RenderJob { key: tile, list: list.clone(), bounds, scale, area }));
                         }
@@ -760,7 +760,7 @@ impl Viewer {
                     continue;
                 }
                 let key = TileKey { generation, page: page as u32, kind: TileKind::Tile { scale_q: old_q, tx, ty } };
-                let cached = self.cache().touch(key);
+                let cached = self.cache().tiles.touch(key);
                 if let Some((image, layer)) = cached {
                     parts.push((image, layer, Rect::new(0, 0, x1 - x0, y1 - y0), dst));
                 }
@@ -805,7 +805,7 @@ impl Viewer {
                     }
                 }
                 let image = images.add(vis.w, vis.h, img.data);
-                let layer = self.cache().alloc_layer();
+                let layer = self.cache().tiles.alloc_layer();
                 if let Some(old) = self.composed.insert(page, Composed { id, image, layer, used: frame }) {
                     images.remove(old.image);
                 }
