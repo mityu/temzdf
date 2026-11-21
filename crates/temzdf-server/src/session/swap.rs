@@ -58,14 +58,10 @@ pub(super) struct Found {
     pub newer: bool,
 }
 
-/// Where swap files go: `$XDG_STATE_HOME/temzdf/swap`, else
-/// `~/.local/state/temzdf/swap` (the clients' state directory).
+/// Where swap files go: `swap` in the state directory
+/// ([`temzdf_protocol::state_dir`]).
 pub(super) fn swap_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("temzdf").join("swap"))
+    temzdf_protocol::state_dir().map(|d| d.join("swap"))
 }
 
 /// The names a swap file of `file` may have in `dir`, in the order taken:
@@ -102,6 +98,14 @@ pub(super) fn read(path: &Path) -> Result<SwapFile, String> {
 /// Write `f` to `path`: readable by the user only (unsaved text is in it),
 /// replaced whole.
 pub(super) fn write(path: &Path, f: &SwapFile) -> Result<(), String> {
+    let json = serde_json::to_string(f).map_err(|e| e.to_string())?;
+    write_private(path, json.as_bytes())
+}
+
+/// Write `bytes` to `path` for the user's eyes only, replaced whole: its
+/// directory made (0700) if missing, the bytes written to `PATH.tmp` (0600)
+/// and renamed over `path`.
+pub(super) fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
     let dir = path.parent().expect("in a directory");
     let mut builder = std::fs::DirBuilder::new();
@@ -109,7 +113,6 @@ pub(super) fn write(path: &Path, f: &SwapFile) -> Result<(), String> {
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
     builder.create(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let json = serde_json::to_string(f).map_err(|e| e.to_string())?;
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
@@ -117,7 +120,7 @@ pub(super) fn write(path: &Path, f: &SwapFile) -> Result<(), String> {
     open.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
-    let written = open.open(&tmp).and_then(|mut w| w.write_all(json.as_bytes()).and_then(|()| w.sync_all()));
+    let written = open.open(&tmp).and_then(|mut w| w.write_all(bytes).and_then(|()| w.sync_all()));
     written.and_then(|()| std::fs::rename(&tmp, path)).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("{}: {e}", path.display())

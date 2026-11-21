@@ -120,15 +120,10 @@ impl TextView {
     }
 }
 
-/// Where text buffers' undo files go (o.undofile):
-/// `$XDG_STATE_HOME/temzdf/undo`, else `~/.local/state/temzdf/undo` (the
-/// clients' state directory).
+/// Where text buffers' undo files go (o.undofile): `undo` in the state
+/// directory ([`temzdf_protocol::state_dir`]).
 pub(super) fn undo_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("temzdf").join("undo"))
+    temzdf_protocol::state_dir().map(|d| d.join("undo"))
 }
 
 /// A directory option's value (`o.undodir`, `o.directory`): null or ""
@@ -156,25 +151,9 @@ pub(super) fn undo_file_of(dir: &Path, file: &Path) -> PathBuf {
 /// Write `buf`'s undo tree as the undo file of `file` (just saved): only the
 /// user may read it (deleted text is in it), and it is replaced whole.
 fn write_undo_file(dir: Option<&Path>, buf: &Buffer, file: &Path) -> Result<(), String> {
-    use std::io::Write;
     let dir = dir.ok_or("no state directory (HOME and XDG_STATE_HOME unset)")?;
-    let path = undo_file_of(dir, file);
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let json = buf.undo_tree().to_file(buf.text(), file);
-    let tmp = path.with_extension("json.tmp");
-    let mut open = std::fs::OpenOptions::new();
-    open.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
-    let written = open.open(&tmp).and_then(|mut f| f.write_all(json.as_bytes()).and_then(|()| f.sync_all()));
-    written.and_then(|()| std::fs::rename(&tmp, &path)).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("{}: {e}", path.display())
-    })
+    super::swap::write_private(&undo_file_of(dir, file), json.as_bytes())
 }
 
 /// The undo tree kept for `file`, read as `text`; none when there is none,

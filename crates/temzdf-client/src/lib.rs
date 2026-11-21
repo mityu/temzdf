@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use temzdf_protocol as proto;
+pub use temzdf_protocol::state_dir;
 
 /// Names given to sessions started without one, in order (the NATO phonetic
 /// alphabet, ICAO spellings).
@@ -300,15 +301,6 @@ pub fn resolve(name: Option<&str>) -> Result<String> {
 /// as another path, so it is an error.
 pub fn utf8(p: &Path) -> Result<String> {
     p.to_str().map(str::to_owned).with_context(|| format!("{}: paths must be UTF-8 for sessions", p.display()))
-}
-
-/// `$XDG_STATE_HOME/temzdf` (falling back to `~/.local/state/temzdf`).
-pub fn state_dir() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .filter(|v| !v.is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("temzdf"))
 }
 
 /// Where logs go: `$TEMZDF_LOG_DIR`, else the state directory.

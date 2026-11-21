@@ -264,6 +264,17 @@ pub fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1e3
 }
 
+/// The per-user directory for state kept between runs (logs, swap and undo
+/// files): `$XDG_STATE_HOME/temzdf`, else `~/.local/state/temzdf`; none
+/// when neither variable is set.
+pub fn state_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+    Some(base.join("temzdf"))
+}
+
 /// The per-user directory for sockets: `$XDG_RUNTIME_DIR`, else the per-user
 /// temporary directory on macOS, else `<temp dir>/temzdf-<uid>`.
 pub fn runtime_dir() -> PathBuf {
