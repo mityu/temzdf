@@ -13,7 +13,7 @@ use termpix_core::input::{
     KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection, ScrollPhase,
     ScrollUnit,
 };
-use termpix_core::viewport::Input;
+use termpix_core::viewport::{EdgeScroll, Input, is_click};
 use termpix_ui::{Canvas, ListView, StatusBar, Text, Theme};
 
 #[cfg(test)]
@@ -49,9 +49,6 @@ const Z_OVERLAY: i32 = -1_073_741_850;
 /// Forward-search target, shown briefly.
 const FLASH_COLOR: [u8; 4] = [255, 70, 70, 80];
 const FLASH_DURATION: std::time::Duration = std::time::Duration::from_millis(1500);
-/// Selection auto-scroll: pixels per second per pixel of pointer depth into the
-/// edge zone (or beyond the edge).
-const AUTOSCROLL_GAIN: f32 = 25.0;
 /// How long a text reload anchor waits for the pages around it to load.
 const TEXT_ANCHOR_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -115,8 +112,6 @@ pub enum Request {
     },
 }
 
-/// Movement (pixels) below which a press and release count as a click.
-const CLICK_SLOP: f32 = 4.0;
 const HISTORY_LIMIT: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,9 +168,8 @@ pub struct PdfPane {
     selection: Option<Selection>,
     /// A left drag is extending the selection.
     selecting: bool,
-    /// Selection auto-scroll speed in pixels per second (0 when off).
-    autoscroll: f32,
-    autoscroll_at: Option<Instant>,
+    /// A selecting drag past the top or bottom edge scrolls on by itself.
+    autoscroll: EdgeScroll,
     /// `o.reloadanchor = "text"`: keep the line being read in place on reload.
     pub anchor_by_text: bool,
     /// A line from before the last reload, still to be found in the new text.
@@ -230,8 +224,7 @@ impl PdfPane {
             swatches: Swatches::default(),
             selection: None,
             selecting: false,
-            autoscroll: 0.0,
-            autoscroll_at: None,
+            autoscroll: EdgeScroll::default(),
             anchor_by_text: false,
             text_anchor: None,
             restore_hit: None,
@@ -715,7 +708,8 @@ impl PdfPane {
             }
             MouseEventKind::Press(MouseButton::Left) => self.press = Some((x, y)),
             MouseEventKind::Release(MouseButton::Left) => {
-                let clicked = self.press.take().is_some_and(|(px, py)| (px - x).hypot(py - y) < CLICK_SLOP);
+                let clicked =
+                    self.press.take().is_some_and(|(px, py)| is_click((px.into(), py.into()), (x.into(), y.into())));
                 if clicked && !ctrl {
                     match link {
                         Some(uri @ LinkTarget::External(_)) => self.follow(uri, now),
@@ -933,7 +927,7 @@ impl PdfPane {
     /// Whether anything is moving on its own (scroll animation, selection
     /// auto-scroll), so the caller should keep ticking.
     pub fn is_animating(&self) -> bool {
-        self.viewer.is_animating() || self.autoscroll != 0.0
+        self.viewer.is_animating() || self.autoscroll.is_active()
     }
 
     /// Advance animations to `now`. Returns true when the view changed.
@@ -960,16 +954,13 @@ impl PdfPane {
             self.flash = None;
             changed = true;
         }
-        if self.autoscroll != 0.0 {
-            let dt = self.autoscroll_at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
+        if self.autoscroll.is_active() {
+            let by = self.autoscroll.step(now) as f32;
             let v = &mut self.viewer;
             let before = v.view.scroll_y;
-            v.jump_to(v.view.scroll_x, before + self.autoscroll * dt);
+            v.jump_to(v.view.scroll_x, before + by);
             changed |= self.viewer.view.scroll_y != before;
             changed |= self.extend_selection();
-            self.autoscroll_at = Some(now);
-        } else {
-            self.autoscroll_at = None;
         }
         changed
     }
@@ -1343,7 +1334,8 @@ impl PdfPane {
         match m.kind {
             MouseEventKind::Press(MouseButton::Left) => self.press = Some((x, y)),
             MouseEventKind::Release(MouseButton::Left) => {
-                let clicked = self.press.take().is_some_and(|(px, py)| (px - x).hypot(py - y) < CLICK_SLOP);
+                let clicked =
+                    self.press.take().is_some_and(|(px, py)| is_click((px.into(), py.into()), (x.into(), y.into())));
                 if clicked
                     && !m.modifiers.contains(Modifiers::CTRL)
                     && let Some(target) = self.link_at(x, y).map(|(_, l)| l.target.clone())
@@ -1452,18 +1444,8 @@ impl PdfPane {
                 return false;
             }
             MouseEventKind::Drag(MouseButton::Left) if self.selecting => {
-                // Near (or past) the top or bottom edge, keep scrolling while the
-                // button is held; the speed grows with the distance into the zone.
-                let h = self.viewer.view.screen_h;
-                let zone = self.geometry.cell.height as f32 * 1.5;
-                let y = self.pointer.1;
-                self.autoscroll = if y < zone {
-                    -(zone - y) * AUTOSCROLL_GAIN
-                } else if y > h - zone {
-                    (y - (h - zone)) * AUTOSCROLL_GAIN
-                } else {
-                    0.0
-                };
+                let (y, h) = (self.pointer.1.into(), self.viewer.view.screen_h.into());
+                self.autoscroll.drag(y, h, self.geometry.cell.height, now);
                 return self.extend_selection();
             }
             MouseEventKind::Drag(_) => {
@@ -1472,7 +1454,7 @@ impl PdfPane {
             }
             MouseEventKind::Release(_) => {
                 self.drag = None;
-                self.autoscroll = 0.0;
+                self.autoscroll.stop();
                 if std::mem::take(&mut self.selecting) {
                     if self.selection.is_some_and(|s| s.is_empty()) {
                         self.selection = None;

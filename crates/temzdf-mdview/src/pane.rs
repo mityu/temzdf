@@ -9,7 +9,7 @@ use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer, Rect as SceneRect, S
 
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind, PinchPhase};
 use termpix_core::scroll::ScrollConfig;
-use termpix_core::viewport::{Input, Viewport};
+use termpix_core::viewport::{EdgeScroll, Input, Viewport, is_click};
 
 use crate::page::{BACKGROUND, Caret, Page, PageId, Rect, STRIP, StripJob, StripKey, TILE};
 
@@ -21,18 +21,12 @@ const PLACEHOLDER_LAYERS: u32 = 0x7000_0000;
 const MARK_LAYERS: u32 = 0x8000_0000;
 /// Placement keys of the selection's boxes (by box).
 const SELECTION_LAYERS: u32 = 0xC000_0000;
-/// Pixels a second a drag past the pane's edge scrolls, per pixel past
-/// where the edge's zone begins (as the PDF pane's).
-const AUTOSCROLL_GAIN: f64 = 25.0;
 
 /// Zoom steps (`zoom-in`, `zoom-out`).
 pub const ZOOMS: &[f32] = &[0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
 /// The most a pinch magnifies.
 pub const MAX_MAGNIFY: f64 = 5.0;
-
-/// A click: press and release this close (device pixels).
-const CLICK_SLOP: f64 = 4.0;
 
 /// What a pane asks the session for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,8 +87,7 @@ pub struct MdPane {
     pointer: (f64, f64),
     /// Pixels a second the selecting drag scrolls (pointer past an edge),
     /// and when it last did.
-    autoscroll: f64,
-    autoscroll_at: Option<Instant>,
+    autoscroll: EdgeScroll,
     /// The selection's boxes for the selection they are of.
     selection_rects: Option<(Selection, Vec<Rect>)>,
     /// The images of the search's marks and the selection's boxes, as
@@ -125,8 +118,7 @@ impl MdPane {
             selection: None,
             selecting: false,
             pointer: (0.0, 0.0),
-            autoscroll: 0.0,
-            autoscroll_at: None,
+            autoscroll: EdgeScroll::default(),
             selection_rects: None,
             swatches: Swatches::default(),
             background: None,
@@ -202,21 +194,20 @@ impl MdPane {
     }
 
     pub fn is_animating(&self) -> bool {
-        self.viewport.is_animating() || self.autoscroll != 0.0
+        self.viewport.is_animating() || self.autoscroll.is_active()
     }
 
     /// Advance the scrolling to `now` (a selecting drag past the edge
     /// scrolls `page` and selects on). Whether the pane moved.
     pub fn tick(&mut self, page: Option<&Page>, now: Instant) -> bool {
         let mut moved = self.viewport.tick(now);
-        if self.autoscroll != 0.0
+        if self.autoscroll.is_active()
             && let Some(page) = page
         {
-            let dt = self.autoscroll_at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f64());
-            self.autoscroll_at = Some(now);
+            let by = self.autoscroll.step(now);
             self.clamp(page);
             let before = self.viewport.y.offset();
-            self.viewport.y.jump_to(before + self.autoscroll * dt);
+            self.viewport.y.jump_to(before + by);
             if self.viewport.y.offset() != before {
                 self.extend_selection(page);
                 moved = true;
@@ -256,7 +247,7 @@ impl MdPane {
     /// Forget the selection (`<Esc>`); whether there was one.
     pub fn clear_selection(&mut self) -> bool {
         self.selecting = false;
-        self.autoscroll = 0.0;
+        self.autoscroll.stop();
         self.selection.take().is_some()
     }
 
@@ -342,7 +333,7 @@ impl MdPane {
             }
             MouseEventKind::Release(MouseButton::Left) => {
                 if std::mem::take(&mut self.selecting) {
-                    self.autoscroll = 0.0;
+                    self.autoscroll.stop();
                     self.press = None;
                     if self.has_selection() {
                         self.copy_selection(page);
@@ -352,8 +343,7 @@ impl MdPane {
                     return true;
                 }
                 if let Some((px, py)) = self.press.take()
-                    && (px - x).abs() <= CLICK_SLOP
-                    && (py - y).abs() <= CLICK_SLOP
+                    && is_click((px, py), (x, y))
                     && let Some(href) = page.link_at(x, y)
                 {
                     self.requests.push(Request::Follow(href));
@@ -363,23 +353,7 @@ impl MdPane {
             }
             MouseEventKind::Drag(MouseButton::Left) if self.selecting => {
                 self.pointer = (f64::from(m.x), f64::from(m.y));
-                // Past the zone along the top or bottom edge, it scrolls on
-                // by itself, the faster the further.
-                let zone = f64::from(cell_h.max(1)) * 1.5;
-                let py = f64::from(m.y);
-                let h = f64::from(self.height);
-                self.autoscroll = if py < zone {
-                    -(zone - py) * AUTOSCROLL_GAIN
-                } else if py > h - zone {
-                    (py - (h - zone)) * AUTOSCROLL_GAIN
-                } else {
-                    0.0
-                };
-                if self.autoscroll == 0.0 {
-                    self.autoscroll_at = None;
-                } else if self.autoscroll_at.is_none() {
-                    self.autoscroll_at = Some(now);
-                }
+                self.autoscroll.drag(f64::from(m.y), f64::from(self.height), cell_h, now);
                 let before = self.selection;
                 self.extend_selection(page);
                 self.selection != before

@@ -222,6 +222,70 @@ impl Viewport {
     }
 }
 
+/// Movement (pixels) a press and release may have between them and still
+/// count as a click.
+pub const CLICK_SLOP: f64 = 4.0;
+
+/// Whether a press at `press` and a release at `release` (pixels) make a
+/// click rather than a drag.
+pub fn is_click(press: (f64, f64), release: (f64, f64)) -> bool {
+    (press.0 - release.0).hypot(press.1 - release.1) < CLICK_SLOP
+}
+
+/// Pixels a second a drag past a pane's edge scrolls, per pixel of the
+/// pointer's depth into the edge's zone (or beyond the edge).
+const EDGE_SCROLL_GAIN: f64 = 25.0;
+
+/// A selecting drag near (or past) the top or bottom edge keeps scrolling
+/// while the button is held, the faster the deeper the pointer is in the
+/// zone along the edge (a cell and a half high).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EdgeScroll {
+    /// Pixels a second (0 when off), negative upwards.
+    speed: f64,
+    /// When it last scrolled.
+    at: Option<Instant>,
+}
+
+impl EdgeScroll {
+    /// The pointer dragged to `y` in a pane `height` pixels high, with
+    /// cells `cell_height` high.
+    pub fn drag(&mut self, y: f64, height: f64, cell_height: u32, now: Instant) {
+        let zone = f64::from(cell_height.max(1)) * 1.5;
+        self.speed = if y < zone {
+            -(zone - y) * EDGE_SCROLL_GAIN
+        } else if y > height - zone {
+            (y - (height - zone)) * EDGE_SCROLL_GAIN
+        } else {
+            0.0
+        };
+        if self.speed == 0.0 {
+            self.at = None;
+        } else if self.at.is_none() {
+            self.at = Some(now);
+        }
+    }
+
+    /// The drag ended.
+    pub fn stop(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.speed != 0.0
+    }
+
+    /// Pixels to scroll by at `now`, since the last step.
+    pub fn step(&mut self, now: Instant) -> f64 {
+        if self.speed == 0.0 {
+            return 0.0;
+        }
+        let dt = self.at.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f64());
+        self.at = Some(now);
+        self.speed * dt
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -329,5 +393,23 @@ mod tests {
         assert!(v.is_animating());
         settle(&mut v, now);
         assert_eq!(v.offset(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_drag_past_the_edge_scrolls_faster_the_deeper() {
+        let t0 = Instant::now();
+        let mut e = EdgeScroll::default();
+        e.drag(300.0, 600.0, 20, t0);
+        assert!(!e.is_active(), "away from the edges");
+        // 10 pixels into the bottom zone (30 pixels high): 250 pixels a second.
+        e.drag(580.0, 600.0, 20, t0);
+        assert_eq!(e.step(t0 + Duration::from_millis(100)), 25.0);
+        e.drag(-10.0, 600.0, 20, t0);
+        assert_eq!(e.step(t0 + Duration::from_millis(200)), -100.0);
+        e.stop();
+        assert!(!e.is_active());
+        assert_eq!(e.step(t0 + Duration::from_secs(1)), 0.0);
+        assert!(is_click((10.0, 10.0), (12.0, 13.0)));
+        assert!(!is_click((10.0, 10.0), (13.0, 13.0)));
     }
 }
