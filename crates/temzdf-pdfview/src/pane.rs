@@ -864,19 +864,27 @@ impl PdfPane {
         self.requests.push(Request::NotFound(self.search.query.clone()));
     }
 
+    /// Search hit `hit` in sight ([`PdfPane::reveal`]).
     fn reveal_hit(&mut self, hit: (usize, usize), now: Instant) {
-        if let Some(t) = self.search.target(hit) {
-            // Only scroll when the hit is not already comfortably on screen.
-            let (_, sy) = self.viewer.page_to_screen(t.page, 0.0, t.y.unwrap_or(0.0));
-            let h = self.viewer.view.screen_h;
-            if sy < h * 0.1 || sy > h * 0.85 {
-                self.viewer.goto(
-                    Target { page: t.page, y: t.y.map(|y| (y - h * 0.3 / self.viewer.view.scale).max(0.0)) },
-                    true,
-                    now,
-                );
-            }
+        if let Some(Target { page, y: Some(y) }) = self.search.target(hit) {
+            self.reveal(page, y, now);
         }
+    }
+
+    /// Show page-space `y` of `page` (a search hit, a forward search's
+    /// place): unless it is already comfortably on screen (10-85 % down),
+    /// scroll to put it 30 % down. Whether it scrolled; the scroll is
+    /// animated, so the view is still where it was for the caller to note
+    /// (the back history).
+    fn reveal(&mut self, page: usize, y: f32, now: Instant) -> bool {
+        let (_, sy) = self.viewer.page_to_screen(page, 0.0, y);
+        let h = self.viewer.view.screen_h;
+        if (h * 0.1..=h * 0.85).contains(&sy) {
+            return false;
+        }
+        let offset = h * 0.3 / self.viewer.view.scale;
+        self.viewer.goto(Target { page, y: Some((y - offset).max(0.0)) }, true, now);
+        true
     }
 
     /// Start a search for `query`: a blank one stops the pane's search in
@@ -903,12 +911,8 @@ impl PdfPane {
         let Some(first) = boxes.first().copied() else { return };
         // The editor's position wins over a reload anchor still waiting for pages.
         self.text_anchor = None;
-        let (_, sy) = self.viewer.page_to_screen(first.page, 0.0, first.rect.y0);
-        let h = self.viewer.view.screen_h;
-        if sy < h * 0.1 || sy > h * 0.8 {
+        if self.reveal(first.page, first.rect.y0, now) {
             self.push_history();
-            let offset = h * 0.3 / self.viewer.view.scale;
-            self.viewer.goto(Target { page: first.page, y: Some((first.rect.y0 - offset).max(0.0)) }, true, now);
         }
         self.flash = Some((boxes, now + FLASH_DURATION));
     }
@@ -1519,6 +1523,27 @@ mod tests {
         let i = all[..all.find(needle).unwrap()].chars().count() + offset;
         let r = text.chars[i].rect;
         s.viewer.page_to_screen(0, (r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn forward_search_scrolls_as_search_does_only_outside_10_to_85_percent() {
+        let mut s = session();
+        let h = s.viewer.view.screen_h;
+        let x = s.viewer.origin_x() as f32 + s.viewer.view.screen_w / 2.0;
+        let place = |s: &PdfPane, at: f32| {
+            let (page, _, y) = s.viewer.screen_to_page(x, h * at).unwrap();
+            PdfBox { page, rect: PageRect { x0: 10.0, y0: y, x1: 50.0, y1: y + 10.0 } }
+        };
+        let top = s.viewer.view_state().top;
+        let b = place(&s, 0.83);
+        s.forward_result(vec![b], Instant::now());
+        assert!(!s.viewer.is_animating() && s.viewer.view_state().top == top, "83 % down: in sight already");
+        assert!(s.back.is_empty(), "no jump, nothing to go back to");
+        let b = place(&s, 0.9);
+        s.forward_result(vec![b], Instant::now());
+        assert!(s.viewer.is_animating(), "90 % down: scrolled");
+        assert_eq!(s.back.len(), 1, "where it was, for going back");
     }
 
     #[test]
