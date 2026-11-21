@@ -88,6 +88,24 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- Absolute paths only (the user's direction, 2026-11-22): actions that
+  take a path accept only absolute ones, as the session's working
+  directory (where it started) is not obvious to anyone; relative paths
+  are resolved by whoever knows what they are relative to. The command
+  line already sends absolute paths. To settle first:
+  - the scripts resolve what users type (the Vim mode's `:e foo.txt`,
+    `~/`), so they need a base to resolve against: the buffer's
+    directory, a terminal pane's working directory (OSC 7), where the
+    session started, or a session-wide one set by `:cd`;
+  - `temzdf action ...` sends words as typed: the client would have to
+    know which arguments are paths (from
+    `crates/temzdf-script/ts-types/temzdf-actions.d.ts`) to make them
+    absolute;
+  - the other paths taken: `newBuffer({ path })`, `write({ path })`,
+    `new-pane`'s cwd, the `directory` option (relative to where the
+    session started today);
+  - an absolute path still does not identify a file (symbolic links,
+    `..`): telling a file opened twice keeps needing canonical paths.
 - Copy notices from the scripts (decided with the user on 2026-11-22):
   every copy raises an event and the shipped scripts show the notice
   (`action.message`), instead of the server. For now (review 6, R10) the
