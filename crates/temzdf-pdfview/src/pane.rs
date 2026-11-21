@@ -16,7 +16,9 @@ use termpix_core::input::{
 use termpix_core::viewport::Input;
 use termpix_ui::{Canvas, ListView, StatusBar, Text, Theme};
 
-use crate::document::{self, Document, SharedDocument};
+#[cfg(test)]
+use crate::document::Document;
+use crate::document::{self, SharedDocument};
 use crate::keys::Command;
 use crate::outline::{self, OutlinePanel};
 use crate::pdf::{DocInfo, Link, LinkTarget, PageRect, SearchHit, Target};
@@ -205,6 +207,7 @@ pub struct PdfPane {
 }
 
 impl PdfPane {
+    #[cfg(test)]
     pub fn new(name: String, info: DocInfo, geometry: Geometry) -> Self {
         let doc = Document::shared(info.bounds.clone());
         Self::with_document(name, info, doc, geometry)
@@ -572,6 +575,7 @@ impl PdfPane {
         self.resolve_text_anchor(false)
     }
 
+    #[cfg(test)]
     pub fn page_links(&mut self, page: usize, links: Vec<Link>) {
         self.viewer.doc.borrow_mut().set_links(page, links);
     }
@@ -983,6 +987,7 @@ impl PdfPane {
     /// expansion and the search query (re-run on the new text); drop the text
     /// selection and per-page caches. History entries are clamped to the new
     /// page count. See doc/design/reload.md.
+    #[cfg(test)]
     pub fn reload(&mut self, images: &mut Images, info: DocInfo) {
         self.before_reload();
         self.viewer.doc.borrow_mut().replace(images, info.bounds.clone());

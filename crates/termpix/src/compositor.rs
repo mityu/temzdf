@@ -266,15 +266,6 @@ impl Compositor {
         self.placed.retain(|_, p| p.image != id.0);
     }
 
-    /// The pixels of an image (e.g. to compose a new one from it).
-    pub fn image_pixels(&self, id: ImageId) -> Option<crate::raster::RgbaRef<'_>> {
-        self.images.get(&id.0).map(|i| crate::raster::RgbaRef { width: i.width, height: i.height, data: &i.data })
-    }
-
-    pub fn image_size(&self, id: ImageId) -> Option<(u32, u32)> {
-        self.images.get(&id.0).map(|i| (i.width, i.height))
-    }
-
     fn insert_image(&mut self, id: u32, width: u32, height: u32, data: raster::Pixels) {
         assert_eq!(data.len(), width as usize * height as usize * 4, "image data must be RGBA8");
         self.images.insert(id, StoredImage { width, height, data, uploaded: false });

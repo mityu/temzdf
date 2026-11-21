@@ -188,14 +188,6 @@ impl UndoTree {
         self.saved != Some(self.current)
     }
 
-    pub fn can_undo(&self) -> bool {
-        self.current != 0
-    }
-
-    pub fn can_redo(&self) -> bool {
-        self.nodes[self.current].redo.is_some()
-    }
-
     /// States reachable (the starting one included).
     pub fn len(&self) -> usize {
         self.nodes.len()

@@ -3,7 +3,7 @@
 //! works out of the box).
 
 use parley::{Alignment, AlignmentOptions, FontContext, FontWeight, Layout, LayoutContext, PositionedLayoutItem};
-use vello_cpu::kurbo::{Affine, BezPath, Rect, RoundedRect, Shape};
+use vello_cpu::kurbo::{Affine, BezPath, Rect};
 use vello_cpu::peniko::color::{AlphaColor, Srgb};
 use vello_cpu::{Glyph, Pixmap, RenderContext, Resources};
 
@@ -104,11 +104,6 @@ impl TextLayout {
     pub fn height(&self) -> f32 {
         self.layout.height()
     }
-
-    /// Baseline of the first line, from the top of the layout.
-    pub fn first_baseline(&self) -> f32 {
-        self.layout.lines().next().map_or(0.0, |l| l.metrics().baseline)
-    }
 }
 
 /// A fixed-size RGBA drawing surface.
@@ -136,12 +131,6 @@ impl Canvas {
     pub fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
         self.ctx.set_paint(color.to_vello());
         self.ctx.fill_rect(&Rect::new(x as f64, y as f64, (x + w) as f64, (y + h) as f64));
-    }
-
-    pub fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: Color) {
-        self.ctx.set_paint(color.to_vello());
-        let r = RoundedRect::new(x as f64, y as f64, (x + w) as f64, (y + h) as f64, radius as f64);
-        self.ctx.fill_path(&r.to_path(0.1));
     }
 
     /// Fill the closed polygon through `points`.

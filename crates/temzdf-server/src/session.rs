@@ -59,7 +59,7 @@ use pdf::DocEntry;
 pub use commands::action_names;
 pub use options::{Options, ShowTabline, TextOptions};
 
-pub use script::{EVENTS as SCRIPT_EVENTS, ScriptSettings};
+pub use script::ScriptSettings;
 
 pub type DocId = u32;
 /// A buffer is what a pane shows, as in Vim: a document (its id is the
@@ -501,10 +501,8 @@ impl Session {
         } else if self.is_float(self.focus) {
             // Beside a focused float: another float (zellij).
             Spot::Float(self.cascade())
-        } else if self.layout.is_some() {
-            Spot::Split { target: Some(self.focus), split: Split::Horizontal, before: false, size: None }
         } else {
-            Spot::First
+            Spot::Split { target: Some(self.focus), split: Split::Horizontal, before: false, size: None }
         }
     }
 
@@ -1059,9 +1057,7 @@ impl Session {
         self.reset_mode(id);
     }
 
-    /// Show a message in the focused pane's status bar (or another PDF pane's:
-    /// terminal panes have none).
-    /// An error message, in a floating window until the next key.
+    /// An error message, in a floating notice until the next key.
     fn message(&mut self, m: &str) {
         self.notify(notices::Kind::Error, m);
     }
@@ -1323,6 +1319,7 @@ impl Session {
     }
 
     /// The current mode's name.
+    #[cfg(test)]
     pub fn current_mode(&self) -> &str {
         self.history.current()
     }
@@ -1643,11 +1640,6 @@ impl Session {
     }
 }
 
-/// The built-in modes, without mappings (the shipped JavaScript defaults,
-/// `crates/temzdf-script/runtime/defaults.ts`, map them): `normal`
-/// (operating), `terminal` (pass-through), `pdf`, `input` and `edit`
-/// (pass-through: typed characters go in) and `visual` (a terminal's visual mode, entered
-/// from the others; see [`Session::mode_changed`]).
 /// Who a variable belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum VarOwner {
@@ -1656,6 +1648,11 @@ pub(super) enum VarOwner {
     Tab(tabs::TabId),
 }
 
+/// The built-in modes, without mappings (the shipped JavaScript defaults,
+/// `crates/temzdf-script/runtime/defaults.ts`, map them): `normal`
+/// (operating), `terminal` (pass-through), `pdf`, `input` and `edit`
+/// (pass-through: typed characters go in) and `visual` (a terminal's visual mode, entered
+/// from the others; see [`Session::mode_changed`]).
 fn builtin_modes() -> Modes<Target> {
     let mut m = Modes::default();
     for (name, fallback, count) in [

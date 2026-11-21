@@ -154,10 +154,6 @@ impl Encoder {
         self.medium
     }
 
-    pub fn set_medium(&mut self, medium: Medium) {
-        self.medium = medium;
-    }
-
     pub fn zlib_level(&self) -> u32 {
         self.zlib_level
     }

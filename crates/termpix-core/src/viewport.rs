@@ -61,14 +61,6 @@ impl Viewport {
         self.y.config
     }
 
-    pub fn view_size(&self) -> (f64, f64) {
-        self.view
-    }
-
-    pub fn content_size(&self) -> (f64, f64) {
-        self.content
-    }
-
     /// The view's size: the scrolling limits follow, a scroll on its way
     /// goes on (clamped).
     pub fn set_view(&mut self, w: f64, h: f64) {

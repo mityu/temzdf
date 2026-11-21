@@ -61,6 +61,7 @@ impl Layout {
     }
 
     /// `pane`'s fixed size, if it has one.
+    #[cfg(test)]
     pub fn fixed(&self, pane: PaneId) -> Option<(Split, u32)> {
         self.fixed.get(&pane).copied()
     }
@@ -101,6 +102,7 @@ impl Layout {
 
     /// Split `pane`'s area in two, `new` going right of or below it. Refused
     /// (false) when a half would be too small.
+    #[cfg(test)]
     pub fn split(&mut self, pane: PaneId, new: PaneId, split: Split, area: Rect) -> bool {
         self.split_at(Some(pane), new, split, false, area)
     }

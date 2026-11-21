@@ -520,4 +520,3 @@ const logs: typeof console = Object.freeze({
   debug: print("debug"),
 });
 g.console = logs;
-g.__temzdfErrorJson = errorJson;

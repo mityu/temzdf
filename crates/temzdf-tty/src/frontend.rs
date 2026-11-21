@@ -460,13 +460,13 @@ fn no_graphics_reason(caps: &Capabilities) -> String {
     }
 }
 
-/// "geometry COLSxROWS cells of WxH px" (the format scripts/e2e.sh parses).
 /// Whether this process runs in an SSH session (sshd sets these for the
 /// login shell; children inherit them, so do tmux panes started there).
 fn over_ssh() -> bool {
     ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].iter().any(|v| std::env::var_os(v).is_some())
 }
 
+/// "geometry COLSxROWS cells of WxH px" (the format scripts/e2e.sh parses).
 fn geometry_line(g: Geometry) -> String {
     format!("geometry {}x{} cells of {}x{} px", g.cols, g.rows, g.cell.width, g.cell.height)
 }
