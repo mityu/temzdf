@@ -120,7 +120,8 @@ mode keys that time out go to the pane.
 - **`when`**: a condition, `(ctx) => boolean`: the mapping exists only
   while it holds; otherwise the key is looked up as if it were not there
   (another mapping, else the mode's `fallback`). `ctx` is the context of
-  the sequence's first key: `pane`, `paneKind` (`"terminal"`, `"pdf"`, `"edit"`, `"markdown"`),
+  the sequence's first key: `pane`, `paneKind` (`"terminal"`, `"pdf"`, `"edit"`, `"markdown"`: a
+  Markdown viewer in either mode),
   `floating`, `mode`, `keys` (typed before). Conditions run in the script
   host, synchronously, and may only read (`action.panes()`, `o.x`, ...); one
   that throws counts as false. Only keys some conditional mapping could
@@ -344,7 +345,7 @@ unsets it.
 | `palette` | `[]` | the first colours of the 256-colour palette (`["#000000", "#cd0000", ...]`), for GUI clients and terminal panes (OSC 4); the rest stay the default |
 | `guifont` | `[{ font: "JetBrains Mono", size: 14 }]` | the GUI client's fonts, `{ font, size? }` (size in points, 4 to 200; left out: the first font's, else 14). The first installed one sets the cell size; a character goes to the first font of the list that has it, at that font's size, then (as WezTerm) to the built-in JetBrains Mono, Noto Color Emoji and Symbols Nerd Font Mono, then the system's fonts for its script. A font that is not installed is skipped: `temzdf ls-fonts` shows what the list resolves to |
 | `guifontwide` | `[]` | fonts tried first for wide (CJK) characters, as `guifont` |
-| `basemode` | `{}` | the base mode (the bottom of the mode history) of panes of each kind by its name, e.g. `{ edit: "vim/normal" }`; a kind left out (or a mode not defined) has its own mode. Set any time (editors' `enable()` do): the focused pane takes its new base at once, the others when focused. A text buffer made with `newBuffer({ basemode })` or `openFile(path, { basemode })` uses its own |
+| `basemode` | `{}` | the base mode (the bottom of the mode history) of panes of each kind by its name, e.g. `{ edit: "vim/normal" }` (a Markdown viewer in its text mode is an `edit` pane here, a `markdown` one in its graphics mode); a kind left out (or a mode not defined) has its own mode. Set any time (editors' `enable()` do): the focused pane takes its new base at once, the others when focused. A text buffer made with `newBuffer({ basemode })` or `openFile(path, { basemode })` uses its own |
 | `wrap` | `true` | text panes wrap long lines (else they scroll sideways) |
 | `linebreak` | `false` | wrap after a blank rather than anywhere |
 | `breakindent` | `false` | continuation rows start at the line's indent |
@@ -386,8 +387,10 @@ cursor and scroll.
   extension, anything else as text); `deleteBuffer(id?)`
   ends a terminal's program or closes a document and closes its panes.
   A Markdown viewer's buffer is its document (kind `markdown`) in either
-  mode: switching modes keeps it, `deleteBuffer` closes its panes in both
-  modes, and `showBuffer` opens it in the viewer.
+  mode, and its panes are of kind `markdown` in either mode: switching
+  modes keeps it, `deleteBuffer` closes its panes in both modes, and
+  `showBuffer` opens it in the viewer. Like a PDF, a document whose last
+  pane closed stays, hidden, and shows again at the line it was at.
 - A terminal shown in several panes is as large as the largest (as in
   Neovim); smaller panes show its bottom left part.
 

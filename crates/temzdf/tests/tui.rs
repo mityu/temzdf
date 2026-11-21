@@ -2089,6 +2089,10 @@ fn the_markdown_viewer_copies_follows_links_and_lists_its_headings() {
     t.wait_text("Outline");
     t.key("Enter");
     t.wait_for("the first heading", |s| s.cursor.is_some_and(|c| c.1 == 0) && !s.text().contains("Outline"));
+    // A text pane to the Ex commands on text (its kind is markdown).
+    t.type_text(":4");
+    t.key("Enter");
+    t.wait_for("line 4", |s| s.cursor.is_some_and(|c| c.1 == 3));
 }
 
 #[test]

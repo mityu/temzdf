@@ -2,9 +2,14 @@
 // (doc/design/text-editor.md). Vim's cursor is *on* a character: here, the
 // character after the framework's cursor (which sits between characters).
 import { action } from "temzdf";
-import type { Position, Range } from "temzdf";
+import type { PaneKind, Position, Range } from "temzdf";
 
 export const t = action.text;
+
+/** Pane `pane` (of kind `kind`) shows text: a text buffer, or a Markdown viewer in its text mode. */
+export function isTextPane(pane: number, kind: PaneKind | undefined): boolean {
+  return kind === "edit" || (kind === "markdown" && action.markdown.mode(pane) === "text");
+}
 
 export const pos = (line: number, character: number): Position => ({ line, character });
 

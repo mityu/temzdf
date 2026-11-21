@@ -340,7 +340,7 @@ declare module "temzdf" {
   }
   /** Run `fn` at the safe point: after the current invocation and its hooks, before the next key, in the order scheduled. Hooks change things this way (only InvokePost and SessionReady hooks may act themselves). */
   export function schedule(fn: () => void): void;
-  /** The kinds of panes and buffers. */
+  /** The kinds of panes and buffers (a Markdown viewer's pane and its document are `markdown` in either mode; `markdown.mode()` tells which). */
   export type PaneKind = "pdf" | "terminal" | "edit" | "markdown";
   /** A text buffer's attributes (Vim's buftype, several at once): `nofile` never modified, written only to a path given; `unlisted` left out of buffers(). */
   export type BufferAttr = "nofile" | "unlisted" | "readonly" | "nomodifiable";

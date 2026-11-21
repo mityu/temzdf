@@ -432,8 +432,11 @@ impl Session {
     /// Pane `id`, placed at `rect`, shows text `buf`.
     pub(super) fn text_pane(&mut self, id: PaneId, buf: BufferId, rect: Rect, focus: bool) {
         let tv = self.text_view_for(buf, id);
-        self.panes.insert(id, PaneEntry::new(Kind::Text { buf, view: Box::new(tv) }, rect));
-        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("edit".into())]);
+        let kind = Kind::Text { buf, view: Box::new(tv) };
+        // A Markdown viewer's drawing: a `markdown` pane to scripts.
+        let name = self.kind_buffer(&kind).1;
+        self.panes.insert(id, PaneEntry::new(kind, rect));
+        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str(name.into())]);
         if focus {
             self.set_focus(id);
         }

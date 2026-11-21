@@ -40,7 +40,7 @@ import { command } from "temzdf/command";
 import { confirmKey, exCommands } from "./ex";
 import { isRecording, runMacro, startRecording, stopRecording } from "./macros";
 import { isMarkName, jump, markPos, setMark } from "./marks";
-import { cursor, firstNonBlank, t } from "./util";
+import { cursor, firstNonBlank, isTextPane, t } from "./util";
 import { draw, enterVisual, exitVisual, reselect, swapEnds } from "./visual";
 import { isNullish } from "../lib/validate";
 
@@ -317,7 +317,7 @@ function define(d: Define): void {
     schedule(() => {
       const focused = action.panes().find((p) => p.focused);
       // Not a text pane, or a prompt (the command line): not the Vim mode's.
-      if (focused === undefined || focused.kind !== "edit" || isPrompt(focused.buffer)) return;
+      if (focused === undefined || !isTextPane(focused.id, focused.kind) || isPrompt(focused.buffer)) return;
       // vim/insreg (<C-r>) is a key read inside the insert mode.
       const inserting = (m: string) => m === I || m === "vim/insreg";
       const style = inserting(now) ? "bar" : now === P ? "underline" : "block";
@@ -340,7 +340,9 @@ function teardown(): void {
   state.pending = null;
   try {
     const focused = action.panes().find((p) => p.focused);
-    if (focused !== undefined && focused.kind === "edit" && !isPrompt(focused.buffer)) t.clearNamespace("vim-visual");
+    if (focused !== undefined && isTextPane(focused.id, focused.kind) && !isPrompt(focused.buffer)) {
+      t.clearNamespace("vim-visual");
+    }
   } catch {
     // Nothing to clear.
   }

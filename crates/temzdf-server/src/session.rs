@@ -426,7 +426,9 @@ impl PaneEntry {
         }
     }
 
-    /// The kind's name, as scripts see it.
+    /// The kind's own name, which picks its base mode: a text-mode
+    /// Markdown viewer is a text pane here (`edit`). Scripts see the
+    /// buffer's kind (`Session::kind_buffer`).
     fn kind_name(&self) -> &'static str {
         match &self.kind {
             Kind::Pdf { .. } => "pdf",
@@ -1060,13 +1062,18 @@ impl Session {
                 }
             }
             Kind::Text { buf, .. } => {
-                // A viewer's drawing no pane shows any more goes.
+                // A viewer's drawing no pane shows any more goes; its
+                // document stays, at the line its last pane showed.
                 if let Some(md) = self.texts.get(&buf).and_then(|t| t.markdown) {
+                    self.md_hidden(md, &kind);
                     self.md_collect(md);
                 }
             }
-            Kind::Markdown { mut pane, doc } => {
-                pane.release(&mut self.images);
+            Kind::Markdown { doc, .. } => {
+                self.md_hidden(doc, &kind);
+                if let Kind::Markdown { mut pane, .. } = kind {
+                    pane.release(&mut self.images);
+                }
                 self.md_collect(doc);
             }
         }
@@ -1133,8 +1140,7 @@ impl Session {
     /// without `BufferDeleted` (scripts never saw it), its document with.
     fn remove_buffer(&mut self, buf: BufferId) {
         if self.md_docs.contains_key(&buf) {
-            // No pane shows it: it goes, and its drawings.
-            self.md_collect(buf);
+            self.md_remove(buf);
             return;
         }
         if let Some(d) = self.docs.remove(&buf) {
@@ -1826,7 +1832,7 @@ impl Session {
     /// them), and (mapped functions) the count.
     fn key_context(&self, count: Option<Option<usize>>, keys: String) -> ScriptValue {
         let kind = match self.panes.get(&self.focus) {
-            Some(e) => ScriptValue::Str(e.kind_name().into()),
+            Some(e) => ScriptValue::Str(self.kind_buffer(&e.kind).1.into()),
             None => ScriptValue::Null,
         };
         let mut fields = vec![
@@ -4945,10 +4951,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "the file system, libtexprintf")]
-    fn a_markdown_document_is_shown_by_its_buffer_and_hidden_with_its_last_pane() {
-        let (mut s, path) = markdown_session("show.md", "# Title\n\nText.\n", &[]);
+    #[cfg_attr(miri, ignore = "the file system, libtexprintf, Blitz")]
+    fn a_markdown_document_stays_hidden_with_its_last_pane_and_shows_again_where_it_was() {
+        let words = "word ".repeat(40);
+        let src: String = (0..30).map(|i| format!("## Section {i}\n\n{words}\n\n")).collect();
+        let (mut s, path) = markdown_session("show.md", &src, &[]);
         let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
+        let str = |v: &str| ScriptValue::Str(v.into());
         let md = *s.md_docs.keys().next().unwrap();
         let viewer = s.focus;
         let other = run(&mut s, "new-buffer", &[]).unwrap().0;
@@ -4956,22 +4965,87 @@ mod tests {
         let pane = pane.as_num().unwrap() as PaneId;
         // showBuffer: the viewer, at the pane's width, in the mode the
         // option says.
-        s.set_option("markdownmode", &ScriptValue::Str("graphics".into())).unwrap();
+        s.set_option("markdownmode", &str("graphics")).unwrap();
         run(&mut s, "show-buffer", &[ScriptValue::Num(f64::from(md)), ScriptValue::Num(f64::from(pane))]).unwrap();
         assert_eq!((s.md_mode(pane), pane_buffer_of(&mut s, pane)), (Some("graphics"), md));
         // A drawing is no buffer to scripts.
         let drawing = s.md_docs[&md].renders[0].buf;
         assert!(run(&mut s, "show-buffer", &[ScriptValue::Num(f64::from(drawing))]).is_err());
-        // Hidden once, with its last pane (then gone: nothing keeps it).
+        s.set_focus(pane);
+        run(&mut s, "markdown.goto", &[str("section-12")]).unwrap();
+        let line = s.md_top_line(pane).unwrap();
+        assert!(line > 0);
+        // Hidden with its last pane, not deleted: kept (and listed), its
+        // drawings and pages gone.
         s.listen(&["BufferHidden", "BufferDeleted"]);
         s.script_events.clear();
         s.close(viewer);
         assert!(s.script_events.is_empty(), "{:?}", s.script_events);
         let o = other.as_num().unwrap() as BufferId;
         s.show_in(pane, o).unwrap();
-        let names: Vec<&str> = s.script_events.iter().map(|(e, _)| e.as_str()).collect();
-        assert_eq!(names, ["BufferHidden", "BufferDeleted"]);
-        assert_eq!(s.script_events[0].1, [ScriptValue::Num(f64::from(md)), ScriptValue::Str("markdown".into())]);
+        let m = ScriptValue::Num(f64::from(md));
+        assert_eq!(s.script_events, [("BufferHidden".to_owned(), vec![m.clone(), str("markdown")])]);
+        assert!(s.md_docs.contains_key(&md), "kept");
+        assert!(listed_buffers(&mut s).contains(&(md, "markdown".to_owned())));
+        assert!(s.md_docs[&md].renders.is_empty() && s.md_docs[&md].pages.is_empty(), "drawings and pages gone");
+        assert!(s.texts.values().all(|t| t.markdown.is_none()), "no drawing left");
+        // Read again while hidden (no pane to touch), a fetch arriving: the
+        // line follows the text.
+        std::fs::write(&path, format!("# New top\n\nMore.\n\n{src}")).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+        assert_eq!(s.md_file_changed(md), Outcome::Redraw);
+        let _ = s.md_image_fetched(md, "http://127.0.0.1:9/x.png".into(), Err("refused".into()));
+        let line = line + 4;
+        // Opening the file again finds it.
+        let p = str(path.to_str().unwrap());
+        let at = ScriptValue::map([("pane", ScriptValue::Num(f64::from(pane)))]);
+        run(&mut s, "markdown.open", &[p, at]).unwrap();
+        assert_eq!(s.md_docs.keys().copied().collect::<Vec<_>>(), [md], "the same document");
+        // Shown again where it was (in the mode the option says).
+        assert_eq!((s.md_mode(pane), s.md_top_line(pane)), (Some("graphics"), Some(line)));
+        s.show_in(pane, o).unwrap();
+        s.set_option("markdownmode", &str("text")).unwrap();
+        run(&mut s, "show-buffer", &[m.clone(), ScriptValue::Num(f64::from(pane))]).unwrap();
+        assert_eq!((s.md_mode(pane), s.md_top_line(pane)), (Some("text"), Some(line)));
+        // Only deleteBuffer deletes it.
+        s.show_in(pane, o).unwrap();
+        s.script_events.clear();
+        run(&mut s, "delete-buffer", std::slice::from_ref(&m)).unwrap();
+        assert_eq!(s.script_events, [("BufferDeleted".to_owned(), vec![m])]);
+        assert!(s.md_docs.is_empty());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system, libtexprintf")]
+    fn a_markdown_viewer_s_pane_kind_is_markdown_in_either_mode() {
+        let (mut s, path) = markdown_session("kind.md", "# Title\n\nText.\n", &[]);
+        let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
+        let kind =
+            |s: &mut Session, p: PaneId| pane_info(s, p).get("kind").and_then(ScriptValue::as_str).map(str::to_owned);
+        let pane_kind = |s: &Session| s.key_context(None, String::new()).get("paneKind").cloned();
+        let text = s.focus;
+        assert_eq!(s.md_mode(text), Some("text"));
+        assert_eq!(kind(&mut s, text).as_deref(), Some("markdown"));
+        assert_eq!(pane_kind(&s), Some(ScriptValue::Str("markdown".into())));
+        // Still a text pane for its base mode (Vim's keys).
+        assert_eq!(s.pane_mode(text), "edit");
+        s.listen(&["PaneOpened"]);
+        s.script_events.clear();
+        let new = split_focused(&mut s, "right");
+        assert_eq!(s.md_mode(new), Some("text"));
+        assert_eq!(
+            s.script_events,
+            [("PaneOpened".to_owned(), vec![ScriptValue::Num(f64::from(new)), ScriptValue::Str("markdown".into())])]
+        );
+        run(&mut s, "markdown.set-mode", &[ScriptValue::Str("graphics".into())]).unwrap();
+        assert_eq!(kind(&mut s, new).as_deref(), Some("markdown"));
+        assert_eq!(pane_kind(&s), Some(ScriptValue::Str("markdown".into())));
+        // A text buffer's pane is an edit one.
+        let other = run(&mut s, "new-buffer", &[]).unwrap().0;
+        let (p, _) = run(&mut s, "split", &[ScriptValue::map([("buffer", other)])]).unwrap();
+        assert_eq!(kind(&mut s, p.as_num().unwrap() as PaneId).as_deref(), Some("edit"));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -5373,8 +5447,9 @@ mod tests {
         assert_eq!(run(&mut s, "markdown.back", &[]).unwrap().0, ScriptValue::Bool(true));
         assert!(screen_text(&s.frame(), GEOMETRY)[0].starts_with("down web other"));
         assert_eq!(run(&mut s, "markdown.back", &[]).unwrap().0, ScriptValue::Bool(false));
-        // Only one document stays open: the other went with its pane.
-        assert_eq!(s.md_docs.len(), 1);
+        // The other document stays, hidden: drawn no more.
+        assert_eq!(s.md_docs.len(), 2);
+        assert_eq!(s.md_docs.values().filter(|d| d.renders.is_empty()).count(), 1, "the other");
         let outline = run(&mut s, "markdown.outline", &[]).unwrap().0;
         assert_eq!(
             outline,

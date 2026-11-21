@@ -14,7 +14,7 @@ import { convert } from "./pattern";
 import { deleteMarks, listMarks, markLine, recordJump, setMark } from "./marks";
 import { find, noHighlight } from "./search";
 import { options, state } from "./state";
-import { cursor, firstNonBlank, lastLine, lineEnd, pos, t, text } from "./util";
+import { cursor, firstNonBlank, isTextPane, lastLine, lineEnd, pos, t, text } from "./util";
 import { isNullish } from "../lib/validate";
 
 type Range = { first: number; last: number };
@@ -425,7 +425,7 @@ function substituteLines(range: Range, pat: string, rep: string, flags: string, 
 }
 
 /** Whether the focused pane is a text pane (the commands on text). */
-const inText = (c: KeyContext) => c.paneKind === "edit";
+const inText = (c: KeyContext) => isTextPane(c.pane, c.paneKind);
 
 /** `!` and the argument (trimmed), as :w! FILE has them. */
 function bangArg(args: string): [boolean, string] {

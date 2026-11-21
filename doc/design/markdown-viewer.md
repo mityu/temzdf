@@ -77,20 +77,30 @@ would fail the link rather than go unnoticed.
   copy history work unchanged. One buffer per (document, width): panes of
   one width share it; a pane that changes width moves to the drawing for
   it (made if needed) at the same source lines, and drawings no pane shows
-  go (the document too, once no pane shows it).
+  go.
 - Drawings are internal. A viewer pane shows the same document in either
   mode (the mode only changes how), so the buffer scripts see is the
   document, in both modes: `panes()`, `text.info()`, the focused pane's
   buffer (`deleteBuffer()`, `getVar("buffer", ...)`), `buffers()` (kind
   `markdown`; drawings are never listed, not even with `all`) and the
   buffer events (`BufferCreated` when the document is read,
-  `BufferHidden` when its last pane goes, in whichever mode, then
-  `BufferDeleted`, as nothing keeps a document no pane shows). Switching
-  modes or moving to another drawing for a new width keeps the number
-  and sends nothing. `deleteBuffer` closes the document's panes in both
-  modes (Vim's `:bwipeout`); `showBuffer` opens it in the viewer at the
-  pane's width (a viewer pane keeps its mode, another takes
-  `markdownmode`).
+  `BufferHidden` when its last pane goes, in whichever mode,
+  `BufferDeleted` only when `deleteBuffer` deletes it). Its panes are of
+  kind `markdown` in either mode too (`panes()`, `PaneOpened`, a
+  condition's `paneKind`; `markdown.mode()` tells the modes apart), but a
+  text-mode one is still a text pane for its base mode (`o.basemode.edit`:
+  Vim's keys). Switching modes or moving to another drawing for a new
+  width keeps the number and sends nothing. `deleteBuffer` closes the
+  document's panes in both modes (Vim's `:bwipeout`); `showBuffer` opens
+  it in the viewer at the pane's width (a viewer pane keeps its mode,
+  another takes `markdownmode`).
+- A document no pane shows stays, hidden, as a PDF does: the parsed text,
+  its images and its file watcher (it is read again on a change) stay, and
+  the source line at the top of its last pane (mapped through a reload);
+  its drawings, pages and strips go. Shown again (`showBuffer`, a split
+  or float of it, opening its file again: documents are found by path),
+  it starts at that line, in the mode the pane or `markdownmode` says (the
+  mode and zoom are not kept).
 - A changed file is read and drawn again, each pane at the same place:
   source lines map from the old text to the new through a line diff
   (`map_line`), then to drawn lines.

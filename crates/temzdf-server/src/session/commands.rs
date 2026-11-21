@@ -557,8 +557,7 @@ impl Session {
                     .into_iter()
                     .map(|id| {
                         let e = &self.panes[&id];
-                        let kind = e.kind_name();
-                        let buffer = self.kind_buffer(&e.kind).0;
+                        let (buffer, kind) = self.kind_buffer(&e.kind);
                         let r = e.rect;
                         ScriptValue::map([
                             ("id", ScriptValue::Num(id as f64)),

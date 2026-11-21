@@ -57,6 +57,9 @@ pub(super) struct MdDoc {
     /// The pages' painted strips (and those being painted), shared by the
     /// panes on them.
     pub strips: TileCache<StripKey>,
+    /// The source line at the top of its last pane when no pane showed it
+    /// any more: where it shows again (`md_open_doc`).
+    pub hidden_line: Option<usize>,
     _watcher: Option<Box<dyn std::any::Any + Send>>,
 }
 
@@ -328,8 +331,9 @@ impl Session {
     }
 
     /// Open document `md` in the viewer at `spot` (`showBuffer` too);
-    /// returns the pane.
+    /// returns the pane. A hidden document shows where its last pane was.
     pub(super) fn md_open_doc(&mut self, md: MdId, spot: Spot) -> Result<PaneId, String> {
+        let hidden_line = if self.shown(md) { None } else { self.md_docs.get(&md).and_then(|d| d.hidden_line) };
         // A width to start with; the pane's own once it is laid out
         // (`md_fit`).
         let width = match spot {
@@ -353,6 +357,10 @@ impl Session {
             self.text_pane(id, buf, rect, focus);
             id
         };
+        // (The graphics mode takes the text mode's line.)
+        if let Some(line) = hidden_line {
+            self.md_place_text(pane, line);
+        }
         if graphics {
             self.md_set_mode(pane, "graphics")?;
         }
@@ -550,10 +558,33 @@ impl Session {
 
     /// The source line at the top of viewer `pane`, in either mode.
     pub(super) fn md_top_line(&self, pane: PaneId) -> Option<usize> {
-        match &self.panes.get(&pane)?.kind {
+        self.md_kind_top_line(&self.panes.get(&pane)?.kind)
+    }
+
+    /// The source line at the top of a viewer showing `kind`, in either
+    /// mode.
+    fn md_kind_top_line(&self, kind: &Kind) -> Option<usize> {
+        match kind {
             Kind::Markdown { pane: p, doc } => self.md_docs.get(doc)?.page(p.page_key()).map(|page| p.top_line(page)),
-            Kind::Text { .. } => self.md_source_line(pane),
+            Kind::Text { buf, view } => {
+                let r = self.md_render_of(*buf)?;
+                let t = self.texts.get(buf)?;
+                r.drawn.sources.get(t.buf.text().line_of(view.view.top)).copied()
+            }
             _ => None,
+        }
+    }
+
+    /// A viewer showing `kind` of document `md` closed or shows something
+    /// else: when no pane shows `md` any more, it keeps the line that one
+    /// showed (call before `md_collect` drops its drawings and pages).
+    pub(super) fn md_hidden(&mut self, md: MdId, kind: &Kind) {
+        if self.shown(md) {
+            return;
+        }
+        let line = self.md_kind_top_line(kind);
+        if let Some(d) = self.md_docs.get_mut(&md) {
+            d.hidden_line = line;
         }
     }
 
@@ -610,6 +641,7 @@ impl Session {
                 #[cfg(test)]
                 layouts: 0,
                 strips: TileCache::new(STRIP_BUDGET, temzdf_mdview::pane::STRIP_LAYERS),
+                hidden_line: None,
                 _watcher: watcher,
             },
         );
@@ -782,8 +814,9 @@ impl Session {
         view.view.relayout(&t.buf);
     }
 
-    /// Forget the drawings of `md` no pane shows (one stays while any pane
-    /// shows the document... or none, once no pane does).
+    /// Forget the drawings and pages of `md` no pane shows (all of them
+    /// once no pane shows the document, which stays, hidden, till
+    /// `md_remove`).
     pub(super) fn md_collect(&mut self, md: MdId) {
         let shown: Vec<BufferId> = self
             .panes
@@ -810,9 +843,13 @@ impl Session {
         for r in gone {
             self.remove_buffer(r.buf);
         }
-        if self.md_docs.get(&md).is_some_and(|d| d.renders.is_empty() && keys.is_empty())
-            && let Some(mut d) = self.md_docs.remove(&md)
-        {
+    }
+
+    /// Document `md`, which no pane shows, goes (`deleteBuffer`), with its
+    /// drawings, strips and images.
+    pub(super) fn md_remove(&mut self, md: MdId) {
+        self.md_collect(md);
+        if let Some(mut d) = self.md_docs.remove(&md) {
             d.strips.clear(&mut self.images);
             // Its images, unless another document shows them.
             for id in d.images.into_values() {
@@ -843,6 +880,8 @@ impl Session {
         let moved = |line: usize| temzdf_markdown::map_line(&old_source, &new_source, line);
         d.mtime = mtime;
         d.doc = doc;
+        // A hidden one shows again at the same source line.
+        d.hidden_line = d.hidden_line.map(moved);
         let renders: Vec<(usize, BufferId, Vec<usize>)> =
             d.renders.iter().map(|r| (r.width, r.buf, r.drawn.sources.clone())).collect();
         // Graphics panes: where they are, then laid out again.
@@ -950,14 +989,6 @@ impl Session {
         self.md_history.entry(pane).or_default().push((here, line));
         self.md_collect(md);
         Ok(())
-    }
-
-    /// The source line at the top of a text-mode viewer `pane`.
-    fn md_source_line(&self, pane: PaneId) -> Option<usize> {
-        let Kind::Text { buf, view } = &self.panes.get(&pane)?.kind else { return None };
-        let r = self.md_render_of(*buf)?;
-        let t = self.texts.get(buf)?;
-        r.drawn.sources.get(t.buf.text().line_of(view.view.top)).copied()
     }
 
     /// Back to the file pane `pane` showed before following a link.
