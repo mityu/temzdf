@@ -4,7 +4,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
@@ -77,8 +76,7 @@ pub fn open_frontend() -> Result<TtyFrontend> {
 
 /// An event sink feeding `tx`.
 pub fn sink<E: Send + 'static>(tx: &Sender<E>, wrap: fn(SessionEvent) -> E) -> EventSink {
-    let tx = Mutex::new(tx.clone());
-    Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(wrap(e)).is_ok())
+    temzdf_scene::sink::channel_sink(tx.clone(), wrap)
 }
 
 /// The session name for a file: its file name.

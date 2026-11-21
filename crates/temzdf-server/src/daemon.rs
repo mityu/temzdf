@@ -9,13 +9,14 @@ use std::collections::{HashMap, VecDeque};
 use std::io::BufReader;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use temzdf_protocol::{self as proto, ClientMsg, ExitReason, ServerMsg, SessionInfo};
+use temzdf_scene::sink::channel_sink;
 use temzdf_scene::{Frame, Hints, ImageKey, ImageUpdate, Pointer};
 use termpix_core::geom::{CellSize, Geometry};
 use termpix_core::input::MouseEventKind;
@@ -87,10 +88,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     eprintln!("temzdf server: session {name} on {} (pid {})", socket.display(), std::process::id());
 
     let (tx, rx) = mpsc::channel::<Event>();
-    let events: EventSink = {
-        let tx = Mutex::new(tx.clone());
-        Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(Event::Session(e)).is_ok())
-    };
+    let events: EventSink = channel_sink(tx.clone(), Event::Session);
     accept(listener, tx.clone())?;
     let mut session = Session::new(name.to_owned(), DEFAULT_GEOMETRY, Hints::default(), settings, events);
     session.start(first.clone(), None)?;

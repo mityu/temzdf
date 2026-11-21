@@ -17,13 +17,7 @@ use crate::synctex::{PdfBox, Scanner, SourceLocation};
 
 /// Where worker threads send their results. Returns false once nobody listens
 /// any more (the thread then stops).
-pub type Sink = Arc<dyn Fn(DocEvent) -> bool + Send + Sync>;
-
-/// A sink feeding a channel, converting events on the way.
-pub fn channel_sink<E: Send + 'static>(tx: Sender<E>, wrap: impl Fn(DocEvent) -> E + Send + Sync + 'static) -> Sink {
-    let tx = std::sync::Mutex::new(tx);
-    Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(wrap(e)).is_ok())
-}
+pub type Sink = temzdf_scene::sink::Sink<DocEvent>;
 
 pub enum DocEvent {
     Opened(Result<DocInfo, String>),
@@ -476,6 +470,7 @@ mod tests {
     use super::*;
     use crate::doc_cache::{TILE, TileKind};
     use crate::pdf::PixelRect;
+    use temzdf_scene::sink::channel_sink;
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
@@ -544,8 +539,7 @@ mod tests {
         assert!(pages >= 3, "too few pages to tell: {pages}");
         // Each page's hits wait until taken: the thread cannot run ahead.
         let (stx, srx) = mpsc::sync_channel::<DocEvent>(0);
-        let stx = std::sync::Mutex::new(stx);
-        let search = spawn_search(snapshot, Arc::new(move |e| stx.lock().unwrap().send(e).is_ok())).unwrap();
+        let search = spawn_search(snapshot, Arc::new(move |e| stx.send(e).is_ok())).unwrap();
         let cmd = |generation: u64, query: &str| SearchCmd {
             generation,
             query: query.into(),

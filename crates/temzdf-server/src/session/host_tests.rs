@@ -7,7 +7,6 @@
 //! doc/dev/testing.md.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -16,6 +15,7 @@ use termpix_core::geom::{CellSize, Geometry};
 
 use super::*;
 use crate::keymap::notation;
+use temzdf_scene::sink::channel_sink;
 
 pub(super) const GEOMETRY: Geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
 
@@ -71,8 +71,7 @@ pub(super) fn host_session(
     config: Option<PathBuf>,
 ) -> Result<(Session, Receiver<SessionEvent>), String> {
     let (tx, rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: Some(ScriptSettings { config }), overrides: Vec::new() };
     let mut s = Session::new("host".into(), GEOMETRY, Hints::default(), settings, sink);
     s.shell = Some(vec!["/bin/sh".into()]);

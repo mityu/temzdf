@@ -443,7 +443,7 @@ mod tests {
             pane.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
         }
         let (tx, rx) = mpsc::channel();
-        let sink = workers::channel_sink(tx, |e| e);
+        let sink = temzdf_scene::sink::channel_sink(tx, |e| e);
         let mut host =
             Opening::start(&path, sink).unwrap().finish(info, pane.viewer.doc.clone(), HostOptions::default());
         let mut images = Images::new();
@@ -482,7 +482,7 @@ mod tests {
             pane.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
         }
         let (tx, rx) = mpsc::channel();
-        let sink = workers::channel_sink(tx, |e| e);
+        let sink = temzdf_scene::sink::channel_sink(tx, |e| e);
         let mut host =
             Opening::start(&path, sink).unwrap().finish(info, pane.viewer.doc.clone(), HostOptions::default());
         let mut images = Images::new();

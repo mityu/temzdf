@@ -23,7 +23,6 @@
 //! expectation end with a line break (as files do), which is not written.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -32,6 +31,7 @@ use temzdf_protocol::script::ScriptValue;
 use super::host_tests::{GEOMETRY, config_file_session, config_session, errors, settle, type_keys};
 use super::*;
 use crate::keymap::notation;
+use temzdf_scene::sink::channel_sink;
 
 struct Case {
     name: String,
@@ -520,8 +520,7 @@ fn a_gone_sessions_swap_file_is_asked_about_as_neovim_does() {
     };
     super::swap::write(&names[0], &gone).unwrap();
     let (tx, rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings =
         Settings { serve_forward: false, script: Some(ScriptSettings { config: None }), overrides: Vec::new() };
     let mut s = Session::new("asks".into(), GEOMETRY, Hints::default(), settings, sink);

@@ -22,7 +22,6 @@ use std::cell::RefCell;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use libghostty_vt::render::{CellIterator, CursorVisualStyle, Dirty, RowIterator};
@@ -50,7 +49,7 @@ pub enum TermEvent {
 }
 
 /// Where the reader thread sends events (returns false once nobody listens).
-pub type Sink = Arc<dyn Fn(TermEvent) -> bool + Send + Sync>;
+pub type Sink = temzdf_scene::sink::Sink<TermEvent>;
 
 /// What to run in a pane.
 #[derive(Clone, Debug, Default)]
@@ -994,8 +993,7 @@ mod tests {
     /// Run `argv` in a pane; its output comes on the receiver ([`wait`]).
     fn start(argv: &[&str]) -> (TermBuffer, mpsc::Receiver<TermEvent>) {
         let (tx, rx) = mpsc::channel();
-        let tx = std::sync::Mutex::new(tx);
-        let sink: Sink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+        let sink: Sink = temzdf_scene::sink::channel_sink(tx, |e| e);
         let spawn = Spawn { argv: Some(argv.iter().map(|s| s.to_string()).collect()), ..Default::default() };
         (TermBuffer::spawn(&spawn, GEOMETRY, sink).unwrap(), rx)
     }

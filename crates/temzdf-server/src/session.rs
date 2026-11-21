@@ -91,7 +91,7 @@ pub enum SessionEvent {
 }
 
 /// Where a session's events go (returns false once nobody listens).
-pub type EventSink = Arc<dyn Fn(SessionEvent) -> bool + Send + Sync>;
+pub type EventSink = temzdf_scene::sink::Sink<SessionEvent>;
 
 /// How new panes and documents are set up (from the configuration).
 #[derive(Clone)]

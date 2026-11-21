@@ -10,6 +10,7 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
+use crate::sink::Sink;
 use crate::{ImageKey, Images, Rect};
 
 struct Cached {
@@ -280,10 +281,6 @@ pub enum Want<J: Job> {
     Queued(J::Key),
 }
 
-/// Where a pool's results go; false when nobody listens any more (the
-/// thread ends).
-pub type JobSink<O> = Arc<dyn Fn(O) -> bool + Send + Sync>;
-
 type Queue<J> = Arc<(Mutex<VecDeque<J>>, Condvar)>;
 
 /// Worker threads with a replaceable queue: each frame the views' whole
@@ -307,7 +304,7 @@ impl<J: Job> Drop for WorkPool<J> {
 
 impl<J: Job> WorkPool<J> {
     /// `threads` threads named `name-N`, results to `sink`.
-    pub fn new(name: &str, threads: usize, sink: JobSink<J::Output>) -> std::io::Result<Self> {
+    pub fn new(name: &str, threads: usize, sink: Sink<J::Output>) -> std::io::Result<Self> {
         let shared: Queue<J> = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
         let stop = Arc::new(AtomicBool::new(false));
         for i in 0..threads.max(1) {
@@ -381,6 +378,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::sink::channel_sink;
 
     fn tile(cache: &mut TileCache<u32>, images: &mut Images, key: u32) {
         cache.mark_in_flight(key);
@@ -495,8 +493,7 @@ mod tests {
     fn replacing_the_queue_drops_the_jobs_not_started() {
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let (tx, rx) = mpsc::channel();
-        let tx = Mutex::new(tx);
-        let pool = WorkPool::new("test-pool", 1, Arc::new(move |n| tx.lock().unwrap().send(n).is_ok())).unwrap();
+        let pool = WorkPool::new("test-pool", 1, channel_sink(tx, |n| n)).unwrap();
         pool.replace(vec![Wait(1, gate.clone())]);
         // Job 1 is running (or about to): wait until the queue is empty.
         while !pool.shared.0.lock().unwrap().is_empty() {
@@ -514,8 +511,7 @@ mod tests {
     fn wanted_work_already_queued_stays_in_the_new_order() {
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let (tx, rx) = mpsc::channel();
-        let tx = Mutex::new(tx);
-        let pool = WorkPool::new("test-pool", 1, Arc::new(move |n| tx.lock().unwrap().send(n).is_ok())).unwrap();
+        let pool = WorkPool::new("test-pool", 1, channel_sink(tx, |n| n)).unwrap();
         pool.replace(vec![Wait(1, gate.clone())]);
         while !pool.shared.0.lock().unwrap().is_empty() {
             std::thread::yield_now();

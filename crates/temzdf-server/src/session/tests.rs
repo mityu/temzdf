@@ -1,6 +1,7 @@
 use super::*;
 use crate::keymap::{Act, notation};
 use std::time::Duration;
+use temzdf_scene::sink::channel_sink;
 
 /// Mappings of commands (the data form, tests only) for the tests of
 /// the matcher and the modes, in sessions without a script host: the
@@ -111,8 +112,7 @@ fn font_size_changes_guifont_and_goes_back_to_the_configured_one() {
 
 fn session() -> (Session, Receiver<SessionEvent>) {
     let (tx, rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
     default_mappings(&mut s.modes);
@@ -251,8 +251,7 @@ fn a_float_for_another_tab_page_does_not_take_the_focus_here() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 fn a_tab_opened_while_the_configuration_loads_leaves_no_tab_page_empty() {
     let (tx, _rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     s.shell = Some(vec!["/bin/sh".into()]);
@@ -274,8 +273,7 @@ fn a_tab_opened_while_the_configuration_loads_leaves_no_tab_page_empty() {
 #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
 fn a_forward_search_sent_while_the_document_opens_is_kept() {
     let (tx, rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
     s.open(&pdf::fixture("sample.pdf")).unwrap();
@@ -452,8 +450,7 @@ fn closing_a_pane_hides_its_document_until_it_is_shown_again() {
 #[cfg_attr(miri, ignore = "Miri has no inotify")]
 fn opening_a_missing_file_fails_the_session() {
     let (tx, rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     s.open(Path::new("/nonexistent/x.pdf")).unwrap();
@@ -522,8 +519,7 @@ fn resizing_split_panes_redraws_like_a_fresh_start() {
 
 fn terminal_session(argv: &[&str]) -> (Session, Receiver<SessionEvent>) {
     let (tx, rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("term".into(), GEOMETRY, Hints::default(), settings, sink);
     // Splits start this instead of the user's $SHELL.
@@ -821,8 +817,7 @@ fn float(s: &mut Session, argv: &[&str], opts: &[(&str, ScriptValue)]) -> PaneId
 #[cfg_attr(miri, ignore = "Miri cannot spawn the document's workers")]
 fn a_pdf_opened_by_a_relative_path_that_does_not_resolve_is_known_by_its_absolute_one() {
     let (tx, _rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     // Not there (yet): canonicalize fails, the path is made absolute.
@@ -839,8 +834,7 @@ fn a_pdf_opened_by_a_relative_path_that_does_not_resolve_is_known_by_its_absolut
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 fn a_float_opened_while_the_first_document_fails_leaves_a_session_that_shows() {
     let (tx, rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     // The configuration opens a float; then the first pane's PDF fails.
@@ -1189,8 +1183,7 @@ fn deleting_a_terminal_ends_a_program_that_ignores_hangups_without_waiting() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 fn a_float_opened_while_the_configuration_loads_leaves_the_first_pane_tiled() {
     let (tx, _rx) = mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     s.shell = Some(vec!["/bin/sh".into()]);
@@ -2681,8 +2674,7 @@ fn markdown_remote_images_come_when_asked_for() {
     let md = dir.join("r.md");
     std::fs::write(&md, src).unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     s.start(PaneSpec::File(md.clone()), None).unwrap();
@@ -2749,8 +2741,7 @@ fn a_pinch_magnifies_the_markdown_page_without_laying_it_out_again() {
     let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now());
     let str = |v: &str| ScriptValue::Str(v.into());
     let (tx, rx) = std::sync::mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    s.events = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    s.events = channel_sink(tx, |e| e);
     let painted = move |s: &mut Session| {
         let mut frame = s.frame();
         while !s.is_complete() || !s.is_idle() {
@@ -2911,8 +2902,7 @@ fn the_markdown_graphics_mode_scrolls_zooms_searches_and_switches_back_in_place(
     s.apply_options();
     // Strips come from worker threads.
     let (tx, rx) = std::sync::mpsc::channel();
-    let tx = std::sync::Mutex::new(tx);
-    s.events = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    s.events = channel_sink(tx, |e| e);
     let painted = move |s: &mut Session| {
         // (As headless renders wait: until idle, the strips around too.)
         let mut frame = s.frame();
