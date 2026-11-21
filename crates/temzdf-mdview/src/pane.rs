@@ -10,6 +10,7 @@ use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer, Rect as SceneRect, S
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind, PinchPhase};
 use termpix_core::scroll::ScrollConfig;
 use termpix_core::viewport::{EdgeScroll, Input, Viewport, is_click};
+use termpix_ui::StatusBar;
 
 use crate::page::{BACKGROUND, Caret, Page, PageId, Rect, STRIP, StripJob, StripKey, TILE};
 
@@ -49,11 +50,11 @@ struct Selection {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Search {
-    pub query: String,
+struct Search {
+    query: String,
     /// Where the hits are, on the page searched (`page`).
-    pub hits: Vec<Rect>,
-    pub current: Option<usize>,
+    hits: Vec<Rect>,
+    current: Option<usize>,
     /// The page the hits are on: one laid out since (a zoom, a new width,
     /// the file changed) is searched again.
     page: Option<PageId>,
@@ -75,7 +76,7 @@ pub struct MdPane {
     /// Fingers are pinching: the strips are shown stretched, nothing is
     /// painted at the magnification until they stop.
     pinching: bool,
-    pub search: Search,
+    search: Search,
     hover: Option<String>,
     press: Option<(f64, f64)>,
     requests: Vec<Request>,
@@ -289,11 +290,6 @@ impl MdPane {
     /// The pointer over the pane: a link's shape over a link.
     pub fn pointer(&self) -> Pointer {
         if self.hover.is_some() { Pointer::Link } else { Pointer::Default }
-    }
-
-    /// The link under the pointer, for the status line.
-    pub fn hovered(&self) -> Option<&str> {
-        self.hover.as_deref()
     }
 
     /// A mouse event in pane pixels: the wheel scrolls (Ctrl asks to
@@ -689,6 +685,25 @@ impl MdPane {
     pub fn percent(&self, page: &Page) -> u32 {
         let most = f64::from(page.height()) * self.magnify - f64::from(self.height);
         if most <= 0.0 { 100 } else { (self.viewport.y.offset() / most * 100.0).round() as u32 }
+    }
+
+    /// What the pane's status line (drawn by the session below it) says:
+    /// the file's `name` (or the link under the pointer); on the right the
+    /// search, the zoom and how far down `page` (the one it shows, when
+    /// laid out) it is.
+    pub fn status(&self, page: Option<&Page>, name: &str) -> StatusBar {
+        let percent = page.map_or(0, |p| self.percent(p));
+        let zoom = if (self.zoom - 1.0).abs() > 1e-3 { format!("  {:.0}%z", self.zoom * 100.0) } else { String::new() };
+        let search = match (self.search.current, self.search.hits.len()) {
+            (Some(i), n) if n > 0 => format!("  [{}/{n}]", i + 1),
+            (_, 0) if !self.search.query.is_empty() => "  [no match]".to_owned(),
+            _ => String::new(),
+        };
+        StatusBar {
+            left: format!(" {}", self.hover.as_deref().unwrap_or(name)),
+            right: format!("markdown{search}{zoom}  {percent}% "),
+            ..Default::default()
+        }
     }
 
     /// The pane's own images leave the store.

@@ -25,7 +25,7 @@
 | `temzdf-term` | `temzdf-scene`, `termpix-core` (and `libghostty-vt`, `portable-pty`) |
 | `temzdf-texteditor` | `temzdf-scene` (and `ropey`) |
 | `temzdf-markdown` | `temzdf-texteditor` (and `comrak`, `syntect`) |
-| `temzdf-mdview` | `temzdf-scene`, `termpix-core` (and Blitz, RaTeX) |
+| `temzdf-mdview` | `temzdf-scene`, `termpix-core`, `termpix-ui` (and Blitz, RaTeX) |
 | `texprintf` | - (libtexprintf, C) |
 | `temzdf-script` | `temzdf-protocol` (and `rquickjs`, `swc_ts_fast_strip`) |
 | `temzdf-script-guest` | `temzdf-script`, `temzdf-protocol` (on `wasm32-wasip1` only) |
@@ -82,7 +82,7 @@
   and the graphics mode's HTML.
 - `temzdf-mdview`: the viewer's graphics mode: pages laid out and painted
   by Blitz in shared strips, panes scrolled, zoomed and searched over
-  them; math by RaTeX.
+  them, their status line; math by RaTeX.
 - `texprintf`: TeX math as Unicode text, wrapping libtexprintf (utftex's
   library, `nix/libtexprintf.nix`).
 - `temzdf-script`: the script host (QuickJS, TypeScript stripped with

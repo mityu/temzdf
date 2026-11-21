@@ -5712,6 +5712,7 @@ dependencies = [
  "temzdf-markdown",
  "temzdf-scene",
  "termpix-core",
+ "termpix-ui",
  "url",
 ]
 

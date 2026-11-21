@@ -556,22 +556,10 @@ impl Session {
         }
     }
 
-    /// The status line of a graphics pane: its file (or the link under the
-    /// pointer), how far down it is and its zoom.
+    /// The status line of a graphics pane ([`temzdf_mdview::MdPane::status`]).
     pub(super) fn md_status(&self, pane: &temzdf_mdview::MdPane, doc: MdId) -> termpix_ui::StatusBar {
         let Some(d) = self.md_docs.get(&doc) else { return termpix_ui::StatusBar::default() };
-        let percent = d.page(pane.page_key()).map_or(0, |p| pane.percent(p));
-        let zoom = if (pane.zoom - 1.0).abs() > 1e-3 { format!("  {:.0}%z", pane.zoom * 100.0) } else { String::new() };
-        let search = match (&pane.search.current, pane.search.hits.len()) {
-            (Some(i), n) if n > 0 => format!("  [{}/{n}]", i + 1),
-            (_, 0) if !pane.search.query.is_empty() => "  [no match]".to_owned(),
-            _ => String::new(),
-        };
-        termpix_ui::StatusBar {
-            left: pane.hovered().map_or_else(|| format!(" {}", d.name), |l| format!(" {l}")),
-            right: format!("markdown{search}{zoom}  {percent}% "),
-            ..Default::default()
-        }
+        pane.status(d.page(pane.page_key()), &d.name)
     }
 
     /// The document of `path`: the one open, or read now.

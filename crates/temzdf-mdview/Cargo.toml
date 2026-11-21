@@ -25,6 +25,7 @@ ratex-layout = "0.1.15"
 ratex-types = "0.1.15"
 temzdf-scene.workspace = true
 termpix-core.workspace = true
+termpix-ui.workspace = true
 
 [dev-dependencies]
 temzdf-markdown.workspace = true
