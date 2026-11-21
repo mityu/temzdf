@@ -82,7 +82,7 @@ fn shows_itself(target: &str, own: &str, shown_in: impl Fn(&str) -> Vec<String>)
 pub fn attach(name: &str) -> Result<String> {
     // From one of the session's own panes, or from a session it shows: it
     // would show itself inside itself, each frame feeding the next.
-    let inside = std::env::var("TEMZDF_SESSION_NAME").ok();
+    let inside = temzdf_client::current_session();
     let shown_in = |s: &str| {
         proto::socket_path(s).ok().and_then(|p| proto::discovery::probe(&p)).map(|i| i.shown_in).unwrap_or_default()
     };
@@ -141,36 +141,32 @@ pub fn attach(name: &str) -> Result<String> {
             Err(RecvTimeoutError::Disconnected) => break None,
         };
         match event {
-            Event::Term(ev) => match front.handle(ev)? {
-                Input::Terminate => {
-                    let _ = send(ClientMsg::Detach);
-                    break Some(ExitReason::Detached);
-                }
-                input @ (Input::Resized(_) | Input::Key(_) | Input::Mouse(_) | Input::Paste(_) | Input::Focus(_)) => {
-                    let msg = match input {
-                        Input::Resized(g) => ClientMsg::Resize(g),
-                        Input::Key(k) => ClientMsg::Key(k),
-                        Input::Mouse(m) => ClientMsg::Mouse(m),
-                        Input::Paste(text) => ClientMsg::Paste(text),
-                        Input::Focus(gained) => ClientMsg::Focus(gained),
-                        _ => unreachable!(),
-                    };
-                    if send(msg).is_err() {
-                        break ended(&rx);
+            // One arm per input: a new variant must say what it does here.
+            Event::Term(ev) => {
+                let msg = match front.handle(ev)? {
+                    Input::Terminate => {
+                        let _ = send(ClientMsg::Detach);
+                        break Some(ExitReason::Detached);
                     }
-                }
-                Input::Clipboard { ticket, result } => {
-                    if send(ClientMsg::Clipboard { ticket, result }).is_err() {
-                        break ended(&rx);
+                    Input::Resized(g) => Some(ClientMsg::Resize(g)),
+                    Input::Key(k) => Some(ClientMsg::Key(k)),
+                    Input::Mouse(m) => Some(ClientMsg::Mouse(m)),
+                    Input::Paste(text) => Some(ClientMsg::Paste(text)),
+                    Input::Focus(gained) => Some(ClientMsg::Focus(gained)),
+                    Input::Clipboard { ticket, result } => Some(ClientMsg::Clipboard { ticket, result }),
+                    Input::Handled(redraw) => {
+                        if redraw && pending.is_none() {
+                            pending = last.clone().map(|f| (0, f, true));
+                        }
+                        None
                     }
+                };
+                if let Some(msg) = msg
+                    && send(msg).is_err()
+                {
+                    break ended(&rx);
                 }
-                Input::Handled(true) => {
-                    if pending.is_none() {
-                        pending = last.clone().map(|f| (0, f, true));
-                    }
-                }
-                Input::Handled(false) => {}
-            },
+            }
             Event::Server(ServerMsg::Frame { seq, updates, frame, complete, .. }) => {
                 front.apply(updates);
                 pending = Some((seq, frame, complete));
@@ -215,7 +211,7 @@ pub fn list_sessions(verbose: bool) -> Result<()> {
         println!("no sessions");
     }
     // The session whose pane this runs in, marked as zellij does.
-    let current = std::env::var("TEMZDF_SESSION_NAME").ok();
+    let current = temzdf_client::current_session();
     for s in sessions {
         let files: Vec<String> = s.files.iter().map(|f| f.display().to_string()).collect();
         let clients = if s.clients == 0 { "detached".to_owned() } else { format!("{} attached", s.clients) };

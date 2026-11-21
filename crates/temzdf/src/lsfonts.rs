@@ -57,11 +57,7 @@ fn gui_binary() -> PathBuf {
     if let Some(p) = std::env::var_os("TEMZDF_GUI") {
         return p.into();
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|d| d.join("temzdf-gui")))
-        .filter(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from("temzdf-gui"))
+    temzdf_client::sibling_exe("temzdf-gui").unwrap_or_else(|| PathBuf::from("temzdf-gui"))
 }
 
 /// Run `temzdf-gui ls-fonts` for `looks`' fonts, with `rest` (its other

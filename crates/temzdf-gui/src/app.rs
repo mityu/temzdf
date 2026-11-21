@@ -245,8 +245,7 @@ impl App {
         };
         match e {
             Effect::OpenUri { uri, command } => {
-                let command = command.filter(|c| !c.is_empty()).unwrap_or_else(temzdf_client::default_opener);
-                temzdf_client::open_uri(&command, &uri, report);
+                temzdf_client::open_uri(command, &uri, report);
             }
             Effect::RunShell(cmd) => temzdf_client::run_shell(&cmd),
             Effect::Copy(text) | Effect::Copied { text, .. } => {

@@ -282,6 +282,23 @@ pub fn last_lines(path: &Path, start: u64, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
+/// The session whose pane this process runs in (`TEMZDF_SESSION_NAME`).
+pub fn current_session() -> Option<String> {
+    std::env::var("TEMZDF_SESSION_NAME").ok()
+}
+
+/// `resolve` for a command: `name`, else the session this runs in, else the
+/// only one.
+pub fn resolve_here(name: Option<String>) -> Result<String> {
+    resolve(name.or_else(current_session).as_deref())
+}
+
+/// The message for several sessions and no name (`hint`: how to name one).
+pub fn several_sessions(hint: &str, names: impl IntoIterator<Item = impl AsRef<str>>) -> String {
+    let names: Vec<String> = names.into_iter().map(|n| n.as_ref().to_owned()).collect();
+    format!("several sessions, {hint}: {}", names.join(", "))
+}
+
 /// The session to attach to: `name`, or the only one.
 pub fn resolve(name: Option<&str>) -> Result<String> {
     if let Some(n) = name {
@@ -291,10 +308,13 @@ pub fn resolve(name: Option<&str>) -> Result<String> {
     match sessions.as_slice() {
         [one] => Ok(one.name.clone()),
         [] => bail!("no sessions (start one with `temzdf [FILE]`)"),
-        many => {
-            bail!("several sessions, name one: {}", many.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "))
-        }
+        many => bail!("{}", several_sessions("name one", many.iter().map(|i| &i.name))),
     }
+}
+
+/// The executable `name` next to the running one, if there is a file.
+pub fn sibling_exe(name: &str) -> Option<PathBuf> {
+    std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(name))).filter(|p| p.is_file())
 }
 
 /// A path as the protocol carries it (UTF-8): one that is not would arrive
@@ -320,7 +340,7 @@ pub fn log_path() -> Option<PathBuf> {
 }
 
 /// The system's handler for links (`OpenUri` without a command).
-pub fn default_opener() -> Vec<String> {
+fn default_opener() -> Vec<String> {
     vec![if cfg!(target_os = "macos") { "open" } else { "xdg-open" }.to_owned()]
 }
 
@@ -396,14 +416,15 @@ fn viewable_file(path: &Path) -> bool {
     meta.is_file() && meta.permissions().mode() & 0o111 == 0 && ext.is_none_or(|e| !LAUNCHED.contains(&e.as_str()))
 }
 
-/// Open a URI with the configured handler, detached from the terminal. A
+/// Open a URI with the configured handler (none or empty: the system's), detached from the terminal. A
 /// handler that cannot start or exits with an error (e.g. `xdg-open` over SSH
 /// without a display) is reported through `on_failure`.
-pub fn open_uri(command: &[String], uri: &str, on_failure: impl Fn(String) + Send + 'static) {
+pub fn open_uri(command: Option<Vec<String>>, uri: &str, on_failure: impl Fn(String) + Send + 'static) {
     if !openable(uri) {
         on_failure(format!("not opening {uri}: only http, https, mailto, ftp links and file links to documents open"));
         return;
     }
+    let command = command.filter(|c| !c.is_empty()).unwrap_or_else(default_opener);
     let Some((program, args)) = command.split_first() else { return };
     let child = std::process::Command::new(program)
         .args(args)

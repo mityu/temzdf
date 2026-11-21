@@ -244,6 +244,17 @@ enum Cmd {
     },
 }
 
+/// `COLSxROWS` and `WIDTHxHEIGHT` (a cell, in pixels) as a geometry; a count
+/// that does not fit is an error.
+fn parse_geometry(size: &str, cell: &str) -> Result<Geometry> {
+    let (cols, rows) = parse_pair(size)?;
+    let (width, height) = parse_pair(cell)?;
+    let fit = |n: u32, what: &str| {
+        u16::try_from(n).with_context(|| format!("{what} {n} is out of range (at most {})", u16::MAX))
+    };
+    Ok(Geometry { cols: fit(cols, "columns")?, rows: fit(rows, "rows")?, cell: CellSize { width, height } })
+}
+
 fn parse_pair(s: &str) -> Result<(u32, u32)> {
     let (a, b) = s.split_once('x').with_context(|| format!("expected AxB, got {s:?}"))?;
     Ok((a.parse()?, b.parse()?))
@@ -295,28 +306,24 @@ fn main() -> Result<()> {
             warn_unused(&start_flags, "action");
             let timeout = std::time::Duration::try_from_secs_f64(timeout.max(0.001))
                 .map_err(|_| anyhow::anyhow!("--timeout {timeout}: not a number of seconds"))?;
-            // In a session's pane, that session (as zellij does).
-            let session = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok());
-            return client::action(&client::resolve(session.as_deref())?, action, timeout);
+            return client::action(&temzdf_client::resolve_here(session)?, action, timeout);
         }
         Some(Cmd::Copy { session, register, line }) => {
             warn_unused(&start_flags, "copy");
-            let session = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok());
             let mut text = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
-            return client::copy(&client::resolve(session.as_deref())?, text, register, line);
+            return client::copy(&temzdf_client::resolve_here(session)?, text, register, line);
         }
         Some(Cmd::Paste { session, register, index }) => {
             warn_unused(&start_flags, "paste");
-            let session = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok());
-            let text = client::paste(&client::resolve(session.as_deref())?, register, index)?;
+            let text = client::paste(&temzdf_client::resolve_here(session)?, register, index)?;
             std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes())?;
             return Ok(());
         }
         Some(Cmd::LsFonts { session, font, font_wide, text, list_system }) => {
             let looks = if !font.is_empty() || !font_wide.is_empty() {
                 temzdf_scene::Appearance::default()
-            } else if let Some(name) = session.or_else(|| std::env::var("TEMZDF_SESSION_NAME").ok()) {
+            } else if let Some(name) = session.or_else(temzdf_client::current_session) {
                 lsfonts::from_session(&name)?
             } else {
                 lsfonts::from_configuration(cli.clean, cli.config.as_deref())?
@@ -351,10 +358,8 @@ fn main() -> Result<()> {
             text,
             mask,
         }) => {
-            let (cols, rows) = parse_pair(&size)?;
-            let (cw, ch) = parse_pair(&cell)?;
             let opts = snapshot::SnapshotOptions {
-                geometry: Geometry { cols: cols as u16, rows: rows as u16, cell: CellSize { width: cw, height: ch } },
+                geometry: parse_geometry(&size, &cell)?,
                 hints: temzdf_scene::Hints { exact_scaling, fast_uploads },
                 linear_blending,
                 text,
@@ -484,9 +489,7 @@ fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
     let page = args.page.map(|p| p.saturating_sub(1));
     let file = args.file;
     if let Some(out) = &args.render_frame {
-        let (cols, rows) = parse_pair(&args.size)?;
-        let (cw, ch) = parse_pair(&args.cell)?;
-        let geometry = Geometry { cols: cols as u16, rows: rows as u16, cell: CellSize { width: cw, height: ch } };
+        let geometry = parse_geometry(&args.size, &args.cell)?;
         let opts = headless::FrameOptions {
             geometry,
             page,
@@ -530,6 +533,15 @@ fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geometry_must_fit() {
+        let g = parse_geometry("80x24", "8x16").unwrap();
+        assert_eq!((g.cols, g.rows), (80, 24));
+        assert!(parse_geometry("65536x24", "8x16").is_err());
+        assert!(parse_geometry("80x70000", "8x16").is_err());
+        assert!(parse_geometry("80", "8x16").is_err());
+    }
 
     #[test]
     fn options_that_do_not_apply_are_named() {

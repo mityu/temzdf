@@ -13,11 +13,7 @@ pub const HINTS: Hints = Hints { exact_scaling: true, fast_uploads: true };
 /// The `temzdf` executable that runs session servers: next to this one,
 /// else on `PATH`.
 pub fn temzdf_exe() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|d| d.join("temzdf")))
-        .filter(|p| p.exists())
-        .unwrap_or_else(|| PathBuf::from("temzdf"))
+    temzdf_client::sibling_exe("temzdf").unwrap_or_else(|| PathBuf::from("temzdf"))
 }
 
 /// The session to show: `name` (started with `file` if it does not
@@ -41,10 +37,7 @@ pub fn session_for(name: Option<&str>, file: Option<&Path>, clean: bool) -> Resu
         (None, None) => match proto::discovery::list()?.as_slice() {
             [one] => Ok((one.name.clone(), false)),
             [] => start(&temzdf_client::auto_name, true),
-            many => bail!(
-                "several sessions, name one with -s: {}",
-                many.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
-            ),
+            many => bail!("{}", temzdf_client::several_sessions("name one with -s", many.iter().map(|s| &s.name))),
         },
     }
 }
