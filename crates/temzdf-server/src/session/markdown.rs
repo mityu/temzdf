@@ -601,8 +601,7 @@ impl Session {
         })
         .ok()
         .map(|w| Box::new(w) as Box<dyn std::any::Any + Send>);
-        let name =
-            canonical.file_name().map_or_else(|| canonical.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let name = crate::paths::display_name(&canonical);
         self.md_docs.insert(
             id,
             MdDoc {

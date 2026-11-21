@@ -818,6 +818,24 @@ fn float(s: &mut Session, argv: &[&str], opts: &[(&str, ScriptValue)]) -> PaneId
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "Miri cannot spawn the document's workers")]
+fn a_pdf_opened_by_a_relative_path_that_does_not_resolve_is_known_by_its_absolute_one() {
+    let (tx, _rx) = mpsc::channel();
+    let tx = std::sync::Mutex::new(tx);
+    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap().send(e).is_ok());
+    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
+    // Not there (yet): canonicalize fails, the path is made absolute.
+    let relative = Path::new("temzdf-no-such-dir").join(format!("missing-{}.pdf", std::process::id()));
+    let absolute = std::env::current_dir().unwrap().join(&relative);
+    s.open(&relative).unwrap();
+    assert_eq!(s.docs.values().map(|d| &d.path).collect::<Vec<_>>(), [&absolute]);
+    // So the same file by its absolute path is the same document.
+    s.open(&absolute).unwrap();
+    assert_eq!(s.docs.len(), 1, "one document, shared");
+}
+
+#[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 fn a_float_opened_while_the_first_document_fails_leaves_a_session_that_shows() {
     let (tx, rx) = mpsc::channel();

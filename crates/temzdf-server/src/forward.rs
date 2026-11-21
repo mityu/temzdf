@@ -55,16 +55,11 @@ impl ForwardRequest {
     }
 }
 
-/// FNV-1a: a stable hash, so every build of temzdf agrees on socket names.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
-}
-
 /// The socket a viewer of `pdf` listens on.
 pub fn socket_path(pdf: &Path) -> PathBuf {
-    let canonical = std::fs::canonicalize(pdf).unwrap_or_else(|_| std::path::absolute(pdf).unwrap_or(pdf.into()));
-    let hash = fnv1a(canonical.as_os_str().as_encoded_bytes());
-    temzdf_protocol::runtime_dir().join("temzdf").join(format!("{hash:016x}.sock"))
+    // FNV-1a: a stable hash, so every build of temzdf agrees on socket names.
+    let hash = temzdf_texteditor::fnv1a(crate::paths::canonical(pdf).as_os_str().as_encoded_bytes().iter().copied());
+    temzdf_protocol::runtime_dir().join("temzdf").join(format!("{hash}.sock"))
 }
 
 /// Send a request to the viewer of `pdf`. `Ok(false)` when no viewer is running.
@@ -74,7 +69,7 @@ pub fn send_forward(pdf: &Path, req: &ForwardRequest) -> std::io::Result<bool> {
 
 fn send_to(socket: &Path, req: &ForwardRequest) -> std::io::Result<bool> {
     let Ok(mut stream) = UnixStream::connect(socket) else { return Ok(false) };
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
     stream.write_all(req.encode().as_bytes())?;
     let mut reply = String::new();
     BufReader::new(stream).read_line(&mut reply)?;
@@ -95,6 +90,9 @@ impl Drop for Server {
         let _ = std::fs::remove_file(&self.path);
     }
 }
+
+/// How long a request waits for the viewer's answer.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How long one connection may take to send its request (others wait).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -174,6 +172,16 @@ mod tests {
         assert!(ForwardRequest::parse_spec("3:a\nb.tex").is_none(), "a line break would cut the request");
         let req = ForwardRequest { file: "a b.tex".into(), line: 3, column: 1 };
         assert_eq!(ForwardRequest::decode(&req.encode()), Some(req));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri isolates the file system (canonicalize, the runtime directory)")]
+    fn socket_names_stay_as_they_were() {
+        // Viewers of other builds must find each other: the name is the
+        // FNV-1a of the canonical (here: absolute, missing) path.
+        let socket = socket_path(Path::new("/nonexistent-temzdf/doc.pdf"));
+        assert_eq!(socket.file_name().unwrap(), "3af4a6028ebd1343.sock");
+        assert_eq!(socket.parent().unwrap(), temzdf_protocol::runtime_dir().join("temzdf"));
     }
 
     #[test]

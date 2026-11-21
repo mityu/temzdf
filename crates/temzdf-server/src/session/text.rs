@@ -201,8 +201,9 @@ pub(super) fn number_mode(name: Option<&str>) -> Option<temzdf_texteditor::Numbe
     super::options::by_name(NUMBER_MODES, name)
 }
 
+/// A text buffer's name: its file's, or `[No Name]` without one (as Vim's).
 fn name_of(path: Option<&Path>) -> String {
-    path.and_then(|p| p.file_name()).map_or_else(|| "[No Name]".into(), |n| n.to_string_lossy().into_owned())
+    path.map_or_else(|| "[No Name]".into(), crate::paths::display_name)
 }
 
 /// `{ line, character }` from a script.
@@ -340,7 +341,7 @@ impl Session {
         create: bool,
         encoding: Option<&str>,
     ) -> anyhow::Result<PaneId> {
-        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::absolute(path).unwrap_or_default());
+        let canonical = crate::paths::canonical(path);
         let existing = self.texts.iter().find(|(_, t)| t.file.as_ref().is_some_and(|f| f.path == canonical));
         let buf = match existing {
             Some((&id, _)) => id,

@@ -9,4 +9,5 @@ pub mod daemon;
 pub mod forward;
 pub mod keymap;
 pub mod layout;
+mod paths;
 pub mod session;

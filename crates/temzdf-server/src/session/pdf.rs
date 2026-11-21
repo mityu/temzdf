@@ -34,7 +34,7 @@ impl Session {
         if !is_pdf(path) {
             return self.open_text(path, spot, true).map(drop);
         }
-        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        let canonical = crate::paths::canonical(path);
         if let Some((&id, entry)) = self.docs.iter_mut().find(|(_, d)| d.path == canonical) {
             if entry.host.is_some() {
                 self.add_pdf_pane(id, spot);
@@ -56,7 +56,7 @@ impl Session {
         } else {
             None
         };
-        let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let name = crate::paths::display_name(path);
         let spot = self.pin_spot(spot);
         self.docs.insert(
             id,
