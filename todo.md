@@ -88,6 +88,16 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- Copy notices from the scripts (decided with the user on 2026-11-22):
+  every copy raises an event and the shipped scripts show the notice
+  (`action.message`), instead of the server. For now (review 6, R10) the
+  server shows one floating notice for every pane's copy. `Copied` would
+  need what copied it (its buffer; a Vim yank raises it too) and, for a
+  PDF pane, how many pages were left out (next item).
+- Copying a PDF selection leaves out the pages that are not loaded (far
+  or evicted pages have no text; `PdfPane::copy_selection` in
+  `crates/temzdf-pdfview/src/pane.rs` only says how many). Load their text
+  for the copy instead.
 - Actions handled but not declared in
   `crates/temzdf-script/ts-types/temzdf-actions.d.ts` (an arm of
   `run_command`'s `match` with no declaration) are not found by any test;
