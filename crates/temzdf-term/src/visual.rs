@@ -864,7 +864,7 @@ impl TermBuffer {
     }
 
     /// Copy the installed selection (or `sel`), as `kind`.
-    fn copy_selection(&mut self, sel: Option<&Selection<'_>>, kind: CopyKind) {
+    pub(super) fn copy_selection(&self, sel: Option<&Selection<'_>>, kind: CopyKind) {
         let mut options =
             FormatOptions::new().with_emit_format(libghostty_vt::fmt::Format::Plain).with_unwrap(true).with_trim(true);
         if let Some(s) = sel {
@@ -879,7 +879,7 @@ impl TermBuffer {
     }
 
     /// Copy rows `a` to `b` whole.
-    fn copy_rows(&mut self, a: u32, b: u32) {
+    fn copy_rows(&self, a: u32, b: u32) {
         let cols = self.geometry.cols.max(1);
         let t = &self.terminal;
         let (Ok(ga), Ok(gb)) = (
@@ -888,18 +888,7 @@ impl TermBuffer {
         ) else {
             return;
         };
-        let sel = Selection::new(ga, gb, false);
-        let options = FormatOptions::new()
-            .with_emit_format(libghostty_vt::fmt::Format::Plain)
-            .with_unwrap(true)
-            .with_trim(true)
-            .with_selection(&sel);
-        if let Ok(Some(bytes)) = t.format_selection_alloc(None, options) {
-            let text = String::from_utf8_lossy(&bytes).into_owned();
-            if !text.is_empty() {
-                self.effects.borrow_mut().push(Effect::Copied { text, kind: CopyKind::Line });
-            }
-        }
+        self.copy_selection(Some(&Selection::new(ga, gb, false)), CopyKind::Line);
     }
 
     // --- Search.

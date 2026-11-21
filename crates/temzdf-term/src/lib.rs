@@ -25,10 +25,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use libghostty_vt::fmt::Format;
 use libghostty_vt::render::{CellIterator, CursorVisualStyle, Dirty, RowIterator};
 use libghostty_vt::screen::CellWide;
-use libghostty_vt::selection::FormatOptions;
 use libghostty_vt::selection::gesture::{
     Autoscroll, AutoscrollTickEvent, DragEvent, Geometry as GestureGeometry, Gesture, PressEvent, ReleaseEvent,
 };
@@ -668,13 +666,7 @@ impl TermBuffer {
         if !sel.shown {
             return false;
         }
-        let options = FormatOptions::new().with_emit_format(Format::Plain).with_unwrap(true).with_trim(true);
-        if let Ok(Some(bytes)) = t.format_selection_alloc(None, options) {
-            let text = String::from_utf8_lossy(&bytes).into_owned();
-            if !text.is_empty() {
-                self.effects.borrow_mut().push(Effect::Copied { text, kind: CopyKind::Char });
-            }
-        }
+        self.copy_selection(None, CopyKind::Char);
         false
     }
 
