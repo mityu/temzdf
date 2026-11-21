@@ -203,8 +203,9 @@ declarations. In short, `import { ... } from "temzdf"`:
   yet matched (typed keys stay), as Vim flushes typeahead; `beep()` does
   the same without a message (a failed motion stops a macro).
 - **Hooks only read** (doc/design/text-editor.md section 10): a hook's
-  commands may read (queries, options, mappings), show a `message`,
-  subscribe (`on`) and `schedule(fn)`; anything else fails ("change
+  commands may read (queries, options, mappings: `read_only` in
+  `crates/temzdf-server/src/session/script.rs`, what conditions may do
+  too), show a `message`, subscribe (`on`) and `schedule(fn)`; anything else fails ("change
   things in schedule(fn)"). `schedule(fn)` runs `fn` at the **safe
   point**: after the current invocation and its hooks, before the next
   key, in the order scheduled (named so, not `defer`, by the user: Go's

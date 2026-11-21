@@ -130,7 +130,12 @@ mode keys that time out go to the pane.
   the sequence's first key: `pane`, `paneKind` (`"terminal"`, `"pdf"`, `"edit"`, `"markdown"`: a
   Markdown viewer in either mode),
   `floating`, `mode`, `keys` (typed before). Conditions run in the script
-  host, synchronously, and may only read (`action.panes()`, `o.x`, ...); one
+  host, synchronously, and may only read: options (`o.x`), mappings
+  (`keymap.get`) and the commands that change nothing (`action.panes()`,
+  `action.buffers()`, `action.tabs()`, `action.registers()`,
+  `action.text.line()`, `action.text.cursor()`, `action.text.search()`,
+  `action.getVar()`, `action.markdown.outline()`, ...; hooks may call the
+  same, and `action.message()` besides); anything else throws. One
   that throws counts as false. Only keys some conditional mapping could
   take ask the host. Use conditions for what happens to you (a pane's
   kind, a state of the program), modes for what you enter on purpose.

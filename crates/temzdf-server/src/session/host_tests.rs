@@ -402,3 +402,36 @@ fn the_normal_mode_stays_for_sizes_and_goes_with_the_focus() {
     type_keys(&mut s, &rx, "<C-b>gt", None).unwrap();
     assert_eq!((s.tab, s.current_mode()), (0, "terminal"));
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn conditions_may_read_and_hooks_may_also_show_messages() {
+    // Conditions (when) may call every command that only reads; message
+    // shows something, which only hooks may (session/script.rs: read_only,
+    // hook_may).
+    let config = r#"import { action, keymap, on } from "temzdf";
+const tried = (f: () => unknown) => { try { f(); return "ok"; } catch (e) { return (e as Error).message; } };
+let cond = "";
+let hook = "";
+keymap.add("vim/normal", "<F6>", () => { action.setVar("pane", "cond", cond); action.setVar("pane", "hook", hook); }, {
+  when: () => {
+    cond = [tried(() => action.buffers()), tried(() => action.text.line(0)), tried(() => action.message("c"))].join(" | ");
+    return true;
+  },
+});
+on("ModeChanged", () => { hook = [tried(() => action.buffers()), tried(() => action.message("h"))].join(" | "); });
+keymap.add("vim/normal", "<F7>", () => action.switchMode("normal"));
+"#;
+    let dir = TempDir::new("cond-reads");
+    let (mut s, rx) = config_session(&dir.0, "x\n", Some(config)).unwrap();
+    type_keys(&mut s, &rx, "<F7><Esc><F6>", None).unwrap();
+    let var = |s: &mut Session, name: &str| {
+        let args = [ScriptValue::Str("pane".into()), ScriptValue::Str(name.into())];
+        s.run_command("get-var", &args, Instant::now()).unwrap().0
+    };
+    assert_eq!(
+        var(&mut s, "cond"),
+        ScriptValue::Str("ok | ok | a condition (when, keepalive) cannot change anything; it may only read".into())
+    );
+    assert_eq!(var(&mut s, "hook"), ScriptValue::Str("ok | ok".into()));
+}

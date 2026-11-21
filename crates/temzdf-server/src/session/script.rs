@@ -1041,22 +1041,34 @@ struct MapSpec {
     priority: i32,
 }
 
-/// Whether `op` only reads (what conditions may do).
 /// What a hook may do: read, subscribe, schedule, and show messages.
 fn hook_may(op: &HostOp) -> bool {
     read_only(op)
         || matches!(op, HostOp::On { .. } | HostOp::Off { .. } | HostOp::Schedule { .. })
-        || matches!(op, HostOp::Command { name, .. } if QUERIES.contains(&name.as_str()))
+        || matches!(op, HostOp::Command { name, .. } if name == "message")
 }
 
-/// Commands that change nothing (or only show something), for hooks.
-const QUERIES: &[&str] = &[
+/// Whether `op` only reads (what conditions may do, and hooks).
+fn read_only(op: &HostOp) -> bool {
+    match op {
+        HostOp::GetOption { .. } | HostOp::GetMappings { .. } => true,
+        HostOp::Command { name, .. } => READS.contains(&name.as_str()),
+        _ => false,
+    }
+}
+
+/// The commands that change nothing.
+const READS: &[&str] = &[
+    "current-mode",
+    "panes",
+    "focused-pane",
+    "session-name",
+    "markdown.mode",
     "buffers",
     "history",
     "register",
     "registers",
     "tabs",
-    "message",
     "text.line-count",
     "text.line",
     "text.get-text",
@@ -1076,16 +1088,6 @@ const QUERIES: &[&str] = &[
     "get-var",
     "markdown.outline",
 ];
-
-fn read_only(op: &HostOp) -> bool {
-    match op {
-        HostOp::GetOption { .. } | HostOp::GetMappings { .. } => true,
-        HostOp::Command { name, .. } => {
-            matches!(name.as_str(), "current-mode" | "panes" | "focused-pane" | "session-name" | "markdown.mode")
-        }
-        _ => false,
-    }
-}
 
 /// A mapping as `keymap.get` gives it: functions as `{ func: id }`, which
 /// the host turns back into the functions.
