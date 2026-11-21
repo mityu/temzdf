@@ -7,14 +7,14 @@ use std::cell::Ref;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer};
+use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer, Swatches, theme};
 use termpix_core::geom::{Geometry, Rect};
 use termpix_core::input::{
     CoordUnit, KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
     ScrollPhase, ScrollUnit,
 };
 use termpix_core::viewport::Input;
-use termpix_ui::{Canvas, Color, ListView, StatusBar, Text, Theme};
+use termpix_ui::{Canvas, ListView, StatusBar, Text, Theme};
 
 use crate::document::{self, Document, SharedDocument};
 use crate::keys::Command;
@@ -44,11 +44,8 @@ pub const DEFAULT_PREVIEW_DELAY: Duration = Duration::from_millis(300);
 const KEY_OVERLAYS: u32 = LAYER_KEYS_END + 0x1000;
 /// Overlays: above page tiles, below UI.
 const Z_OVERLAY: i32 = -1_073_741_850;
-const HIT_COLOR: Color = Color::rgba(255, 210, 0, 96);
-const CURRENT_HIT_COLOR: Color = Color::rgba(255, 120, 0, 150);
-const SELECTION_COLOR: Color = Color::rgba(70, 130, 255, 90);
 /// Forward-search target, shown briefly.
-const FLASH_COLOR: Color = Color::rgba(255, 70, 70, 80);
+const FLASH_COLOR: [u8; 4] = [255, 70, 70, 80];
 const FLASH_DURATION: std::time::Duration = std::time::Duration::from_millis(1500);
 /// Selection auto-scroll: pixels per second per pixel of pointer depth into the
 /// edge zone (or beyond the edge).
@@ -165,8 +162,8 @@ pub struct PdfPane {
     /// worker): select the first one after this position once it is found.
     pending_first_hit: Option<Target>,
     requests: Vec<Request>,
-    /// Solid overlay images by (width, height, colour).
-    overlay_images: HashMap<(u32, u32, [u8; 4]), ImageKey>,
+    /// The overlays' solid images.
+    swatches: Swatches,
     selection: Option<Selection>,
     /// A left drag is extending the selection.
     selecting: bool,
@@ -223,7 +220,7 @@ impl PdfPane {
             previewing: false,
             pending_first_hit: None,
             requests: Vec::new(),
-            overlay_images: HashMap::new(),
+            swatches: Swatches::default(),
             selection: None,
             selecting: false,
             autoscroll: 0.0,
@@ -268,9 +265,7 @@ impl PdfPane {
         for (_, w) in self.widgets.drain() {
             images.remove(w.image);
         }
-        for (_, id) in self.overlay_images.drain() {
-            images.remove(id);
-        }
+        self.swatches.release(images);
         self.viewer.release(images);
     }
 
@@ -1149,23 +1144,19 @@ impl PdfPane {
     fn overlay_layers(&mut self, images: &mut Images, layers: &mut Vec<Layer>) {
         // Bound the overlay image cache (sizes change with zoom), before
         // the layers name its images, so none this frame shows goes.
-        if self.overlay_images.len() > 256 {
-            for (_, id) in self.overlay_images.drain() {
-                images.remove(id);
-            }
-        }
-        let mut rects: Vec<(usize, PageRect, Color)> = Vec::new();
+        self.swatches.trim(images);
+        let mut rects: Vec<(usize, PageRect, [u8; 4])> = Vec::new();
         for page in self.viewer.visible_pages() {
             if self.search.is_active() {
                 for (i, hit) in self.search.hits[page].iter().enumerate() {
-                    let color = if self.search.current == Some((page, i)) { CURRENT_HIT_COLOR } else { HIT_COLOR };
+                    let color = if self.search.current == Some((page, i)) { theme::CURRENT_HIT } else { theme::HIT };
                     rects.extend(hit.rects.iter().map(|r| (page, *r, color)));
                 }
             }
             if let Some(sel) = self.selection
                 && let Some(Some(text)) = self.viewer.doc.borrow().texts.get(page)
             {
-                rects.extend(sel.rects(page, text).into_iter().map(|r| (page, r, SELECTION_COLOR)));
+                rects.extend(sel.rects(page, text).into_iter().map(|r| (page, r, theme::SELECTION)));
             }
             if let Some((boxes, _)) = &self.flash {
                 rects.extend(boxes.iter().filter(|b| b.page == page).map(|b| (page, b.rect, FLASH_COLOR)));
@@ -1181,11 +1172,7 @@ impl PdfPane {
             let dst = Rect::new(x0.round() as i32, y0.round() as i32, w, h);
             // Clip to the page area so overlays never cover the UI.
             let Some(vis) = dst.intersect(&area) else { continue };
-            let image = *self.overlay_images.entry((w, h, color.0)).or_insert_with(|| {
-                let mut c = Canvas::new(w, h);
-                c.fill_rect(0.0, 0.0, w as f32, h as f32, color);
-                images.add(w, h, c.finish())
-            });
+            let image = self.swatches.get(images, w, h, color);
             let src = Rect::new(vis.x - dst.x, vis.y - dst.y, vis.w, vis.h);
             layers.push(Layer { key, image, src, dst: vis, z: Z_OVERLAY });
         }
@@ -1676,8 +1663,7 @@ mod tests {
         let mut images = temzdf_scene::Images::new();
         // A cache full of sizes from other zoom levels, about to be trimmed.
         for i in 0..=256 {
-            let key = images.add(1, 1, vec![0u8; 4]);
-            s.overlay_images.insert((1000 + i, 1, [0; 4]), key);
+            s.swatches.get(&mut images, 1000 + i, 1, [0; 4]);
         }
         let (frame, _) = s.frame(&mut images);
         let overlays: Vec<_> = frame.layers.iter().filter(|l| l.z == Z_OVERLAY).collect();

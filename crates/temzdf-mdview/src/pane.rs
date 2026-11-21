@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 use temzdf_scene::tiles::{self, Schedule, TileCache, Want};
-use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer, Rect as SceneRect};
+use temzdf_scene::{Frame, ImageKey, Images, Layer, Pointer, Rect as SceneRect, Swatches, theme};
 
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind, PinchPhase};
 use termpix_core::scroll::ScrollConfig;
@@ -21,8 +21,6 @@ const PLACEHOLDER_LAYERS: u32 = 0x7000_0000;
 const MARK_LAYERS: u32 = 0x8000_0000;
 /// Placement keys of the selection's boxes (by box).
 const SELECTION_LAYERS: u32 = 0xC000_0000;
-/// The selection's colour over the page (as the PDF pane's).
-const SELECTION_COLOR: [u8; 4] = [70, 130, 255, 90];
 /// Pixels a second a drag past the pane's edge scrolls, per pixel past
 /// where the edge's zone begins (as the PDF pane's).
 const AUTOSCROLL_GAIN: f64 = 25.0;
@@ -99,12 +97,9 @@ pub struct MdPane {
     autoscroll_at: Option<Instant>,
     /// The selection's boxes for the selection they are of.
     selection_rects: Option<(Selection, Vec<Rect>)>,
-    /// Images of the selection's boxes by size.
-    selection_images: std::collections::HashMap<(u32, u32), ImageKey>,
-    /// Images of the search's marks by size and whether current: as
-    /// large as they are shown (terminals scale a stretched pixel each
-    /// their own way).
-    marks: std::collections::HashMap<(u32, u32, bool), ImageKey>,
+    /// The images of the search's marks and the selection's boxes, as
+    /// large as they are shown.
+    swatches: Swatches,
     /// A strip of the page's background (its width), under strips not
     /// painted yet: as large as shown, as the marks.
     background: Option<(ImageKey, u32)>,
@@ -133,8 +128,7 @@ impl MdPane {
             autoscroll: 0.0,
             autoscroll_at: None,
             selection_rects: None,
-            selection_images: Default::default(),
-            marks: Default::default(),
+            swatches: Swatches::default(),
             background: None,
             complete: false,
         }
@@ -447,8 +441,7 @@ impl MdPane {
     }
 
     /// Back to where the search began, its marks no longer drawn (their
-    /// images stay cached until `release`, or `trim_images` once more than
-    /// 256 piled up).
+    /// images stay cached until `release`, or until too many piled up).
     pub fn search_cancel(&mut self, page: &Page) {
         if let Some(from) = self.search.from {
             self.scroll_to(page, from);
@@ -464,22 +457,6 @@ impl MdPane {
             self.search.current = self.search.current.filter(|&i| i < hits.len());
             self.search.hits = hits;
             self.search.page = Some(page.id);
-        }
-    }
-
-    /// Drop the marks' and the selection's images when they pile up (a
-    /// pinch makes new sizes each step): before a frame, so none it shows
-    /// goes.
-    fn trim_images(&mut self, images: &mut Images) {
-        if self.marks.len() > 256 {
-            for (_, k) in self.marks.drain() {
-                images.remove(k);
-            }
-        }
-        if self.selection_images.len() > 256 {
-            for (_, k) in self.selection_images.drain() {
-                images.remove(k);
-            }
         }
     }
 
@@ -523,7 +500,8 @@ impl MdPane {
         images: &mut Images,
     ) -> (Frame, Vec<Want<StripJob>>) {
         self.follow_search(page);
-        self.trim_images(images);
+        // A pinch makes new sizes each step.
+        self.swatches.trim(images);
         if self.magnify != 1.0 {
             return self.frame_magnified(view, page, strips, tag, images);
         }
@@ -613,10 +591,7 @@ impl MdPane {
     /// The selection's box `i` at `dst` (pane pixels).
     fn selection_layer(&mut self, i: usize, dst: SceneRect, images: &mut Images) -> Layer {
         let (w, h) = (dst.w, dst.h);
-        let image = *self
-            .selection_images
-            .entry((w, h))
-            .or_insert_with(|| images.add(w, h, SELECTION_COLOR.repeat((w * h) as usize)));
+        let image = self.swatches.get(images, w, h, theme::SELECTION);
         Layer { key: SELECTION_LAYERS | i as u32, image, src: SceneRect::new(0, 0, w, h), dst, z: 1 }
     }
 
@@ -624,10 +599,7 @@ impl MdPane {
     fn mark(&mut self, i: usize, dst: SceneRect, images: &mut Images) -> Layer {
         let current = Some(i) == self.search.current;
         let (w, h) = (dst.w, dst.h);
-        let image = *self.marks.entry((w, h, current)).or_insert_with(|| {
-            let px: [u8; 4] = if current { [255, 140, 0, 160] } else { [255, 214, 0, 110] };
-            images.add(w, h, px.repeat((w * h) as usize))
-        });
+        let image = self.swatches.get(images, w, h, if current { theme::CURRENT_HIT } else { theme::HIT });
         Layer { key: MARK_LAYERS | i as u32, image, src: SceneRect::new(0, 0, w, h), dst, z: 1 }
     }
 
@@ -747,9 +719,7 @@ impl MdPane {
 
     /// The pane's own images leave the store.
     pub fn release(&mut self, images: &mut Images) {
-        for k in self.marks.drain().map(|(_, k)| k).chain(self.selection_images.drain().map(|(_, k)| k)) {
-            images.remove(k);
-        }
+        self.swatches.release(images);
         if let Some((k, _)) = self.background.take() {
             images.remove(k);
         }

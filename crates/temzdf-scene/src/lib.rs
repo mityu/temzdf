@@ -16,8 +16,11 @@ pub use termpix_core::input;
 pub use termpix_core::raster::Pixels;
 
 pub mod notice;
+mod swatches;
 pub mod theme;
 pub mod tiles;
+
+pub use swatches::Swatches;
 
 /// An image in an [`Images`] store.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

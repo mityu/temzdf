@@ -1,10 +1,17 @@
 //! The default colours, where the session's options set none: what GUI
 //! clients draw and what terminal panes tell programs that ask (OSC 4, 10,
-//! 11). One definition, so the two agree.
+//! 11); and the colours document panes (PDF, Markdown) draw over their
+//! pages. One definition, so they agree.
 
 /// The default foreground and background when the session sets none.
 pub const FOREGROUND: [u8; 3] = [0xd8, 0xd8, 0xd8];
 pub const BACKGROUND: [u8; 3] = [0x1e, 0x1e, 0x1e];
+
+/// Over a document's page (straight-alpha RGBA): a search hit, the
+/// current one, and the selected text.
+pub const HIT: [u8; 4] = [255, 210, 0, 96];
+pub const CURRENT_HIT: [u8; 4] = [255, 120, 0, 150];
+pub const SELECTION: [u8; 4] = [70, 130, 255, 90];
 
 /// xterm's 16 base colours.
 const BASE: [[u8; 3]; 16] = [
