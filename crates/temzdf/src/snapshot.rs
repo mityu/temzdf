@@ -60,13 +60,25 @@ pub fn render_session(name: &str, out: &Path, opts: &SnapshotOptions) -> Result<
         term.set_blending(Blending::Linear);
     }
     term.feed(&bytes);
-    term.render().save_png(out).with_context(|| format!("writing {}", out.display()))?;
-    if let Some(path) = &opts.text {
-        std::fs::write(path, screen_text(&frame, opts.geometry))
-            .with_context(|| format!("writing {}", path.display()))?;
+    write_outputs(&term.render(), &frame, opts.geometry, out, opts.text.as_deref(), opts.mask.as_deref())
+}
+
+/// Write the rendered screen to `out`, and the text of the cells and the mask
+/// where asked.
+pub(crate) fn write_outputs(
+    image: &RgbaImage,
+    frame: &Frame,
+    g: Geometry,
+    out: &Path,
+    text: Option<&Path>,
+    mask: Option<&Path>,
+) -> Result<()> {
+    image.save_png(out).with_context(|| format!("writing {}", out.display()))?;
+    if let Some(path) = text {
+        std::fs::write(path, screen_text(frame, g)).with_context(|| format!("writing {}", path.display()))?;
     }
-    if let Some(path) = &opts.mask {
-        cell_mask(&frame, opts.geometry).save_png(path).with_context(|| format!("writing {}", path.display()))?;
+    if let Some(path) = mask {
+        cell_mask(frame, g).save_png(path).with_context(|| format!("writing {}", path.display()))?;
     }
     Ok(())
 }

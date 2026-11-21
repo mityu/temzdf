@@ -4,14 +4,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use temzdf_protocol::{ClientMsg, ServerMsg};
 use temzdf_scene::{Appearance, FontEntry, Hints};
 use temzdf_server::action::PaneSpec;
-use temzdf_server::session::{EventSink, Session};
+use temzdf_server::session::Session;
 use termpix::geom::{CellSize, Geometry};
 
 /// How long loading the configuration may take.
@@ -29,8 +28,7 @@ pub fn from_session(name: &str) -> Result<Appearance> {
 /// session of this process, as `temzdf` would start one.
 pub fn from_configuration(clean: bool, config: Option<&Path>) -> Result<Appearance> {
     let (tx, rx) = mpsc::channel();
-    let tx = Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(e).is_ok());
+    let sink = crate::app::sink(&tx, |e| e);
     let settings = crate::app::settings(false, crate::app::script_settings(clean, config)?, None);
     let geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
     let mut session = Session::new("ls-fonts".into(), geometry, Hints::default(), settings, sink);

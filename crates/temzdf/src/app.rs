@@ -81,6 +81,23 @@ pub fn sink<E: Send + 'static>(tx: &Sender<E>, wrap: fn(SessionEvent) -> E) -> E
     Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(wrap(e)).is_ok())
 }
 
+/// The session name for a file: its file name.
+pub fn session_name(path: &Path) -> String {
+    path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// Show `page` and `scale` (as given on the command line) in the focused pane.
+pub fn apply_view(session: &mut Session, page: Option<usize>, scale: Option<f32>, now: Instant) {
+    if let Some(pane) = session.focused_pane() {
+        if let Some(scale) = scale {
+            pane.viewer.set_scale(scale, (0.0, 0.0));
+        }
+        if let Some(page) = page {
+            pane.viewer.goto_page(page, false, now);
+        }
+    }
+}
+
 pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     // Libraries (MuPDF, SyncTeX) print warnings to stdout/stderr, which would
     // scribble over the screen; send them to a log file while the UI runs.
@@ -88,7 +105,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let mut front = open_frontend()?;
     let (tx, rx) = mpsc::channel::<AppEvent>();
     front.spawn_input(tx.clone(), AppEvent::Term)?;
-    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let name = session_name(path);
     let settings = settings(true, script_settings(opts.clean, opts.config.as_deref())?, opts.editor.as_deref());
     let mut session = Session::new(name, front.geometry(), front.hints(), settings, sink(&tx, AppEvent::Session));
     session.start(PaneSpec::File(path.to_owned()), None)?;
@@ -114,14 +131,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         drop(front);
         bail!("{e}");
     }
-    if let Some(pane) = session.focused_pane() {
-        if let Some(scale) = opts.scale {
-            pane.viewer.set_scale(scale, (0.0, 0.0));
-        }
-        if let Some(page) = opts.page {
-            pane.viewer.goto_page(page, false, Instant::now());
-        }
-    }
+    apply_view(&mut session, opts.page, opts.scale, Instant::now());
     if let Some(req) = opts.forward.take() {
         session.forward(req);
     }

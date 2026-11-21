@@ -11,12 +11,11 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use temzdf_scene::Hints;
-use temzdf_server::session::{EventSink, Session, SessionEvent};
+use temzdf_server::session::{Session, SessionEvent};
 use temzdf_tty::Presenter;
 use termpix::compositor::{Backend, Compositor};
 use termpix::geom::Geometry;
@@ -260,11 +259,9 @@ fn run_out(session: &mut Session, now: &mut Instant) {
 const WORK_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<()> {
-    let name =
-        pdf_path.file_name().map_or_else(|| pdf_path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let name = crate::app::session_name(pdf_path);
     let (tx, rx) = mpsc::channel::<SessionEvent>();
-    let tx = Mutex::new(tx);
-    let sink: EventSink = Arc::new(move |e| tx.lock().unwrap_or_else(|p| p.into_inner()).send(e).is_ok());
+    let sink = crate::app::sink(&tx, |e| e);
     // The shipped default configuration maps the keys (no user configuration).
     let script = crate::app::script_settings(true, None)?;
     let settings = crate::app::settings(false, script, None);
@@ -280,14 +277,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     if let Some(e) = session.error() {
         bail!("{e}");
     }
-    if let Some(pane) = session.focused_pane() {
-        if let Some(scale) = opts.scale {
-            pane.viewer.set_scale(scale, (0.0, 0.0));
-        }
-        if let Some(page) = opts.page {
-            pane.viewer.goto_page(page, false, now);
-        }
-    }
+    crate::app::apply_view(&mut session, opts.page, opts.scale, now);
     let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, opts.geometry);
     let mut presenter = Presenter::new();
     // The first screen is up (its pages and links loaded, the
@@ -335,17 +325,14 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         term.set_blending(termpix::raster::Blending::Linear);
     }
     term.feed(&bytes);
-    term.render().save_png(out)?;
-    if let Some(path) = &opts.text {
-        std::fs::write(path, crate::snapshot::screen_text(&frame, opts.geometry))
-            .with_context(|| format!("writing {}", path.display()))?;
-    }
-    if let Some(path) = &opts.mask {
-        crate::snapshot::cell_mask(&frame, opts.geometry)
-            .save_png(path)
-            .with_context(|| format!("writing {}", path.display()))?;
-    }
-    Ok(())
+    crate::snapshot::write_outputs(
+        &term.render(),
+        &frame,
+        opts.geometry,
+        out,
+        opts.text.as_deref(),
+        opts.mask.as_deref(),
+    )
 }
 
 /// Build frames and handle the workers' results until nothing is left to do;
