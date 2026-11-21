@@ -51,8 +51,8 @@ pub enum ClientMsg {
     },
     Detach,
     /// Requests answered once (no Hello): describe the session, end it, run
-    /// an action (its text form, see `temzdf-server`'s `Action`), or tell
-    /// how GUI clients should look (`ServerMsg::Appearance`).
+    /// a command (`temzdf action`'s words: a name in the session's command
+    /// registry and its arguments), or tell how GUI clients should look (`ServerMsg::Appearance`).
     Info {
         version: u32,
     },

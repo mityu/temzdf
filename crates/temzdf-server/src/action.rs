@@ -1,12 +1,12 @@
-//! Session actions: what prefix keys, `temzdf action ...` and (later) a
-//! command line ask the session to do. Their text form follows zellij's action
-//! names where one exists.
+//! The text forms of commands that more than the command registry reads:
+//! what `new-pane` opens (also `temzdf server`'s pane and floats' words)
+//! and the side of a split. Their names follow zellij's actions.
 
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 
-use crate::layout::{Direction, Split};
+use crate::layout::Split;
 
 /// What a new pane shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,119 +19,69 @@ pub enum PaneSpec {
     File(PathBuf),
 }
 
+/// A new pane beside the focused one. Terminals start in `cwd` (the
+/// server's directory when `None`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Action {
-    /// Another pane like the focused one: the same document again, or a new
-    /// shell. `before`: left of or above it; `root`: at that edge of the
-    /// whole screen (Vim's `:topleft`/`:botright`) instead of the pane's.
-    Split {
-        split: Split,
-        before: bool,
-        root: bool,
-    },
-    /// A new pane beside the focused one. Terminals start in `cwd` (the
-    /// server's directory when `None`).
-    NewPane {
-        spec: PaneSpec,
-        cwd: Option<PathBuf>,
-    },
-    MoveFocus(Direction),
-    FocusNextPane,
-    ClosePane,
-    Detach,
-    /// Restart the script host and load the configuration again.
-    ReloadConfig,
+pub struct NewPane {
+    pub spec: PaneSpec,
+    pub cwd: Option<PathBuf>,
 }
 
-impl Action {
-    /// A split towards `side` (`right`, `left`, `bottom` or `down`, `top` or
-    /// `up`), of the focused pane or (`root`) of the whole screen.
-    pub fn split(side: &str, root: bool) -> Result<Self> {
-        let (split, before) = match side {
-            "right" => (Split::Horizontal, false),
-            "left" => (Split::Horizontal, true),
-            "bottom" | "down" => (Split::Vertical, false),
-            "top" | "up" => (Split::Vertical, true),
-            other => bail!("split: {other:?} is not right, left, bottom or top"),
-        };
-        Ok(Action::Split { split, before, root })
-    }
+/// Parse the words after `new-pane`: `[--cwd DIR] [FILE | -- COMMAND...]`.
+pub fn parse_new_pane(words: &[String]) -> Result<NewPane> {
+    let w: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
+    let (cwd, rest) = match w.as_slice() {
+        ["--cwd", dir, rest @ ..] => (Some(PathBuf::from(dir)), rest),
+        rest => (None, rest),
+    };
+    let spec = match rest {
+        [] => PaneSpec::Shell,
+        ["--", command @ ..] if !command.is_empty() => {
+            PaneSpec::Command(command.iter().map(|s| s.to_string()).collect())
+        }
+        [file] if !file.starts_with('-') => PaneSpec::File(PathBuf::from(file)),
+        _ => bail!("usage: new-pane [--cwd DIR] [FILE | -- COMMAND...]"),
+    };
+    Ok(NewPane { spec, cwd })
+}
 
-    /// Parse `new-pane [--cwd DIR] [FILE | -- COMMAND...]`,
-    /// `split right|left|bottom|top [screen]` (`down`, `up` too),
-    /// `move-focus left|right|up|down`, `focus-next-pane`, `close-pane`,
-    /// `detach` or `reload-config`.
-    pub fn parse(words: &[String]) -> Result<Self> {
-        let w: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
-        Ok(match w.as_slice() {
-            ["new-pane", rest @ ..] => {
-                let (cwd, rest) = match rest {
-                    ["--cwd", dir, rest @ ..] => (Some(PathBuf::from(dir)), rest),
-                    rest => (None, rest),
-                };
-                let spec = match rest {
-                    [] => PaneSpec::Shell,
-                    ["--", command @ ..] if !command.is_empty() => {
-                        PaneSpec::Command(command.iter().map(|s| s.to_string()).collect())
-                    }
-                    [file] if !file.starts_with('-') => PaneSpec::File(PathBuf::from(file)),
-                    _ => bail!("usage: new-pane [--cwd DIR] [FILE | -- COMMAND...]"),
-                };
-                Action::NewPane { spec, cwd }
-            }
-            ["split", side] => Action::split(side, false)?,
-            ["split", side, "screen"] => Action::split(side, true)?,
-            ["move-focus", d] => Action::MoveFocus(match *d {
-                "left" => Direction::Left,
-                "right" => Direction::Right,
-                "up" => Direction::Up,
-                "down" => Direction::Down,
-                other => bail!("unknown direction {other:?} (left, right, up, down)"),
-            }),
-            ["focus-next-pane"] => Action::FocusNextPane,
-            ["close-pane"] => Action::ClosePane,
-            ["detach"] => Action::Detach,
-            ["reload-config"] => Action::ReloadConfig,
-            _ => bail!(
-                "unknown action {:?}; known: new-pane [--cwd DIR] [FILE | -- COMMAND...], \
-                 split right|left|bottom|top [screen], \
-                 move-focus DIRECTION, focus-next-pane, close-pane, detach, reload-config",
-                words.join(" ")
-            ),
-        })
-    }
+/// A split towards `side` (`right`, `left`, `bottom` or `down`, `top` or
+/// `up`): its direction, and whether the new pane goes before (left of or
+/// above) the one split.
+pub fn split_side(side: &str) -> Result<(Split, bool)> {
+    Ok(match side {
+        "right" => (Split::Horizontal, false),
+        "left" => (Split::Horizontal, true),
+        "bottom" | "down" => (Split::Vertical, false),
+        "top" | "up" => (Split::Vertical, true),
+        other => bail!("split: {other:?} is not right, left, bottom or top"),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn parse(s: &str) -> Result<Action> {
-        Action::parse(&s.split_whitespace().map(String::from).collect::<Vec<_>>())
+    fn parse(s: &str) -> Result<NewPane> {
+        parse_new_pane(&s.split_whitespace().map(String::from).collect::<Vec<_>>())
     }
 
-    fn new_pane(spec: PaneSpec, cwd: Option<&str>) -> Action {
-        Action::NewPane { spec, cwd: cwd.map(PathBuf::from) }
+    fn new_pane(spec: PaneSpec, cwd: Option<&str>) -> NewPane {
+        NewPane { spec, cwd: cwd.map(PathBuf::from) }
     }
 
     #[test]
     fn parses_the_text_form() {
-        assert!(parse("new-pane a b.pdf").is_err(), "one file");
-        assert_eq!(parse("new-pane doc.pdf").unwrap(), new_pane(PaneSpec::File("doc.pdf".into()), None));
-        assert_eq!(parse("new-pane").unwrap(), new_pane(PaneSpec::Shell, None));
+        assert!(parse("a b.pdf").is_err(), "one file");
+        assert_eq!(parse("doc.pdf").unwrap(), new_pane(PaneSpec::File("doc.pdf".into()), None));
+        assert_eq!(parse("").unwrap(), new_pane(PaneSpec::Shell, None));
         assert_eq!(
-            parse("new-pane --cwd /w -- vim -u NONE").unwrap(),
+            parse("--cwd /w -- vim -u NONE").unwrap(),
             new_pane(PaneSpec::Command(vec!["vim".into(), "-u".into(), "NONE".into()]), Some("/w"))
         );
-        assert!(parse("new-pane --").is_err() && parse("new-pane --bogus").is_err());
-        assert_eq!(parse("split down").unwrap(), Action::Split { split: Split::Vertical, before: false, root: false });
-        assert_eq!(
-            parse("split left screen").unwrap(),
-            Action::Split { split: Split::Horizontal, before: true, root: true }
-        );
-        assert_eq!(parse("move-focus up").unwrap(), Action::MoveFocus(Direction::Up));
-        assert!(parse("move-focus sideways").unwrap_err().to_string().contains("sideways"));
-        assert_eq!(parse("detach").unwrap(), Action::Detach);
-        assert!(parse("explode").is_err());
+        assert!(parse("--").is_err() && parse("--bogus").is_err());
+        assert_eq!(split_side("down").unwrap(), (Split::Vertical, false));
+        assert_eq!(split_side("left").unwrap(), (Split::Horizontal, true));
+        assert!(split_side("sideways").unwrap_err().to_string().contains("sideways"));
     }
 }

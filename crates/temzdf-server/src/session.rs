@@ -23,7 +23,7 @@ use termpix_core::input::{
 };
 use termpix_core::scroll::ScrollConfig;
 
-use crate::action::{Action, PaneSpec};
+use crate::action::PaneSpec;
 use crate::clip;
 use crate::forward::{self, ForwardRequest};
 use crate::keymap::{Fallback, History, Keepalive, Layers, Matcher, Modes, Step, Stroke, Target, notation};
@@ -2088,13 +2088,6 @@ impl Session {
         Outcome::None
     }
 
-    /// Run an action. Errors (a file that cannot be opened, no room for a
-    /// pane) are for whoever asked.
-    pub fn action(&mut self, action: Action, now: Instant) -> Result<Outcome> {
-        let out = self.action_inner(action, now)?;
-        Ok(out.merge(self.flush_events()))
-    }
-
     /// Split `target` (the whole layout for `None`): the new pane shows
     /// `buf`, or what `target` shows where it shows it (the same document
     /// again, a Markdown viewer in the same mode, a text buffer with the
@@ -2195,37 +2188,6 @@ impl Session {
             }
         }
         Ok(())
-    }
-
-    fn action_inner(&mut self, action: Action, _now: Instant) -> Result<Outcome> {
-        match action {
-            Action::Split { split, before, root } => {
-                let target = if root { None } else { Some(self.focus) };
-                self.split_pane(target, split, before, None, None).map_err(|e| anyhow::anyhow!(e))?;
-            }
-            Action::NewPane { spec, cwd } => self.new_pane(&spec, cwd.as_deref())?,
-            Action::MoveFocus(dir) => {
-                // Within the floats or within the tiled panes.
-                let next = if self.is_float(self.focus) {
-                    self.float_neighbor(dir)
-                } else {
-                    self.layout.as_ref().and_then(|l| l.neighbor(self.focus, dir, self.area()))
-                };
-                if let Some(p) = next {
-                    self.set_focus(p);
-                }
-            }
-            Action::FocusNextPane => {
-                let order = self.focus_order();
-                if let Some(i) = order.iter().position(|p| *p == self.focus) {
-                    self.set_focus(order[(i + 1) % order.len()]);
-                }
-            }
-            Action::ClosePane => return Ok(self.request_close(self.focus)),
-            Action::Detach => return Ok(Outcome::Detach),
-            Action::ReloadConfig => return self.reload_scripts(),
-        }
-        Ok(Outcome::Redraw)
     }
 
     /// Close a pane; its buffer stays, hidden, if no other pane shows it.
@@ -2870,7 +2832,6 @@ fn builtin_modes() -> Modes<Target> {
 mod tests {
     use super::*;
     use crate::keymap::{Act, notation};
-    use crate::layout::Direction;
 
     /// Mappings of commands (the data form, tests only) for the tests of
     /// the matcher and the modes, in sessions without a script host: the
@@ -3247,7 +3208,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn panes_are_composed_inside_their_rectangles_with_unique_keys() {
         let (mut s, rx) = session();
-        s.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
+        cmd(&mut s, "split", &["right"]).unwrap();
         let (frame, _) = settle(&mut s, &rx);
         let mut keys = HashSet::new();
         for l in &frame.layers {
@@ -3275,7 +3236,7 @@ mod tests {
         // Stacked panes have the same width, so the same zoom and tiles; both
         // ask for them in the first frame. (The deduplication itself is
         // tested deterministically in temzdf-pdfview's host.rs.)
-        s.action(Action::Split { split: Split::Vertical, before: false, root: false }, Instant::now()).unwrap();
+        cmd(&mut s, "split", &["down"]).unwrap();
         let (_, rendered) = settle(&mut s, &rx);
         assert!(!rendered.is_empty());
         let unique: HashSet<_> = rendered.iter().collect();
@@ -3288,8 +3249,7 @@ mod tests {
         let (mut s, rx) = session();
         settle(&mut s, &rx);
         let first = s.panes[&s.focus].buffer();
-        s.action(Action::NewPane { spec: PaneSpec::File(pdf::fixture("sample-short.pdf")), cwd: None }, Instant::now())
-            .unwrap();
+        cmd(&mut s, "new-pane", &[pdf::fixture("sample-short.pdf").to_str().unwrap()]).unwrap();
         while s.pane_count() < 2 {
             let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();
             s.handle(ev, Instant::now());
@@ -3299,7 +3259,7 @@ mod tests {
         let doc = s.panes[&pane].buffer();
         s.panes.get_mut(&pane).unwrap().pdf().unwrap().viewer.jump_to(0.0, 700.0);
         let before = s.panes.get_mut(&pane).unwrap().pdf().unwrap().viewer.view_state();
-        s.action(Action::ClosePane, Instant::now()).unwrap();
+        cmd(&mut s, "close-pane", &[]).unwrap();
         assert_eq!((s.pane_count(), s.buffer_count()), (1, 2), "the document stays, hidden");
         {
             let host = s.docs[&doc].host.as_ref().unwrap();
@@ -3358,8 +3318,8 @@ mod tests {
         use termpix::mock::MockTerminal;
         let big = Geometry { cols: 100, rows: 34, ..GEOMETRY };
         let (mut s, rx) = session();
-        s.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
-        s.action(Action::Split { split: Split::Vertical, before: false, root: false }, Instant::now()).unwrap();
+        cmd(&mut s, "split", &["right"]).unwrap();
+        cmd(&mut s, "split", &["down"]).unwrap();
         let mut comp = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, GEOMETRY);
         let mut presenter = temzdf_tty::Presenter::new();
         let mut out = Vec::new();
@@ -3378,8 +3338,8 @@ mod tests {
         // The same layout (panes keep their sizes when the screen changes),
         // drawn only at the new size.
         let (mut fresh, rx2) = session();
-        fresh.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
-        fresh.action(Action::Split { split: Split::Vertical, before: false, root: false }, Instant::now()).unwrap();
+        cmd(&mut fresh, "split", &["right"]).unwrap();
+        cmd(&mut fresh, "split", &["down"]).unwrap();
         fresh.resize(big);
         let mut comp2 = Compositor::new(Backend::Layered, Medium::Direct { compress: false }, big);
         let (frame2, _) = settle(&mut fresh, &rx2);
@@ -3767,24 +3727,24 @@ mod tests {
         let tiled = s.focus;
         let a = float(&mut s, &["sleep", "30"], &[]);
         // Splitting a float opens another float beside it.
-        s.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
+        cmd(&mut s, "split", &["right"]).unwrap();
         let b = s.focus;
         assert_ne!(b, a);
         assert_eq!(s.pane_count(), 3);
         let (fa, fb) = (s.floats[0].frame, s.floats[1].frame);
         assert_eq!((fb.x, fb.y, fb.w, fb.h), (fa.x + 2, fa.y + 2, fa.w, fa.h), "two cells right and down");
         // Focus moves among the floats, raising them.
-        s.action(Action::MoveFocus(Direction::Left), Instant::now()).unwrap();
+        cmd(&mut s, "move-focus", &["left"]).unwrap();
         assert_eq!((s.focus, s.floats.last().unwrap().pane), (a, a));
         // The cycle: floats from the top, then the tiled panes.
         assert_eq!(s.focus_order(), [a, b, tiled]);
-        s.action(Action::FocusNextPane, Instant::now()).unwrap();
+        cmd(&mut s, "focus-next-pane", &[]).unwrap();
         assert_eq!(s.focus, b);
-        s.action(Action::FocusNextPane, Instant::now()).unwrap();
+        cmd(&mut s, "focus-next-pane", &[]).unwrap();
         assert_eq!(s.focus, tiled, "a tiled pane takes the focus; the floats stay");
         assert_eq!(s.covers(Some(tiled)).len(), 2);
         // Hidden: the focus goes to the tiled pane, nothing covers it.
-        s.action(Action::FocusNextPane, Instant::now()).unwrap();
+        cmd(&mut s, "focus-next-pane", &[]).unwrap();
         s.run_command("toggle-floats", &[], Instant::now()).unwrap();
         assert_eq!((s.focus, s.covers(Some(tiled)).len()), (tiled, 0));
         assert!(s.pane_at(10.0, 10.0) == Some(tiled), "hidden floats take no clicks");
@@ -4265,7 +4225,7 @@ mod tests {
         assert_eq!((s.tabs.len(), s.tab, s.focus), (1, 0, one));
         // One of two panes there: the tab stays, its focus moves on.
         let a = new_tab(&mut s, &["sleep", "30"]);
-        s.action(Action::Split { split: Split::Horizontal, before: false, root: false }, Instant::now()).unwrap();
+        cmd(&mut s, "split", &["right"]).unwrap();
         let b = s.focus;
         assert_ne!(a, b);
         let buf = s.panes[&b].buffer();

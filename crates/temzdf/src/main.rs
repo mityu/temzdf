@@ -398,11 +398,7 @@ fn main() -> Result<()> {
         Some(Cmd::Server { name, log, pane }) => {
             // Leave the terminal's session, so closing it does not end ours.
             let _ = rustix::process::setsid();
-            let words: Vec<String> = std::iter::once("new-pane".to_owned()).chain(pane).collect();
-            let temzdf_server::action::Action::NewPane { spec, .. } = temzdf_server::action::Action::parse(&words)?
-            else {
-                unreachable!("parsed as new-pane")
-            };
+            let spec = temzdf_server::action::parse_new_pane(&pane)?.spec;
             let script = app::script_settings(cli.clean, cli.config.as_deref())?;
             return temzdf_server::daemon::run(&name, &spec, log, app::settings(true, script, cli.editor.as_deref()));
         }

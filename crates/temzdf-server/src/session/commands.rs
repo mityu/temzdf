@@ -12,7 +12,7 @@ use temzdf_term::visual::{Op as VisualOp, Outcome as VisualOutcome};
 
 use super::floats::{self, FloatSpec, FloatWhat};
 use super::{BufferId, Outcome, PaneEntry, Session, Spot};
-use crate::action::{Action, PaneSpec};
+use crate::action::{self, PaneSpec};
 use crate::keymap::notation;
 use crate::layout::{Direction, PaneId, Split};
 
@@ -46,17 +46,12 @@ fn read_what(args: &[ScriptValue]) -> Result<FloatWhat, String> {
             }
         }
         Some(_) => {
-            let mut words = vec!["new-pane".to_owned()];
-            words.extend(args.iter().filter_map(|a| a.as_str().map(str::to_owned)));
-            match Action::parse(&words).map_err(|e| format!("{e:#}"))? {
-                Action::NewPane { spec: PaneSpec::File(p), cwd } => {
-                    FloatWhat::File(cwd.map_or_else(|| p.clone(), |d| d.join(&p)))
-                }
-                Action::NewPane { spec: PaneSpec::Command(argv), cwd } => {
-                    FloatWhat::Spawn(Spawn { argv: Some(argv), cwd, ..Spawn::default() })
-                }
-                Action::NewPane { cwd, .. } => FloatWhat::Spawn(Spawn { cwd, ..Spawn::default() }),
-                _ => return Err("what to open?".into()),
+            let words: Vec<String> = args.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect();
+            let action::NewPane { spec, cwd } = action::parse_new_pane(&words).map_err(|e| format!("{e:#}"))?;
+            match spec {
+                PaneSpec::File(p) => FloatWhat::File(cwd.map_or_else(|| p.clone(), |d| d.join(&p))),
+                PaneSpec::Command(argv) => FloatWhat::Spawn(Spawn { argv: Some(argv), cwd, ..Spawn::default() }),
+                PaneSpec::Shell => FloatWhat::Spawn(Spawn { cwd, ..Spawn::default() }),
             }
         }
     })
@@ -114,9 +109,6 @@ impl Session {
             _ => None,
         };
         let ok = |o: Outcome| Ok((ScriptValue::Null, o));
-        let act = |s: &mut Self, a: Action| {
-            s.action_inner(a, now).map(|o| (ScriptValue::Null, o)).map_err(|e| format!("{e:#}"))
-        };
         if let Some(result) = self.text_command(name, args) {
             return result;
         }
@@ -227,10 +219,7 @@ impl Session {
                     "bottom" | "down" if !self.options.splitbelow => "top",
                     s => s,
                 };
-                let Action::Split { split, before, .. } = Action::split(side, root).map_err(|e| format!("{e:#}"))?
-                else {
-                    unreachable!("a split")
-                };
+                let (split, before) = action::split_side(side).map_err(|e| format!("{e:#}"))?;
                 let num = |k: &str| o.get(k).filter(|v| !matches!(v, ScriptValue::Null));
                 let target = match num("pane") {
                     Some(p) => {
@@ -345,10 +334,10 @@ impl Session {
                 ok(Outcome::Redraw)
             }
             "new-pane" => {
-                let mut words = vec!["new-pane".to_owned()];
-                words.extend(args.iter().filter_map(|a| a.as_str().map(str::to_owned)));
-                let a = Action::parse(&words).map_err(|e| format!("{e:#}"))?;
-                act(self, a)
+                let words: Vec<String> = args.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect();
+                let action::NewPane { spec, cwd } = action::parse_new_pane(&words).map_err(|e| format!("{e:#}"))?;
+                self.new_pane(&spec, cwd.as_deref()).map_err(|e| format!("{e:#}"))?;
+                ok(Outcome::Redraw)
             }
             "move-focus" => {
                 let dir = match text(0).as_deref() {
@@ -358,9 +347,24 @@ impl Session {
                     Some("down") => Direction::Down,
                     other => return Err(format!("moveFocus: {other:?} is not left, right, up or down")),
                 };
-                act(self, Action::MoveFocus(dir))
+                // Within the floats or within the tiled panes.
+                let next = if self.is_float(self.focus) {
+                    self.float_neighbor(dir)
+                } else {
+                    self.layout.as_ref().and_then(|l| l.neighbor(self.focus, dir, self.area()))
+                };
+                if let Some(p) = next {
+                    self.set_focus(p);
+                }
+                ok(Outcome::Redraw)
             }
-            "focus-next-pane" => act(self, Action::FocusNextPane),
+            "focus-next-pane" => {
+                let order = self.focus_order();
+                if let Some(i) = order.iter().position(|p| *p == self.focus) {
+                    self.set_focus(order[(i + 1) % order.len()]);
+                }
+                ok(Outcome::Redraw)
+            }
             "focus-pane" => {
                 let pane = id(0).ok_or("focusPane: which pane?")?;
                 let tab = self.tab_of(pane).ok_or_else(|| format!("focusPane: no pane {pane}"))?;
@@ -450,7 +454,7 @@ impl Session {
                 ok(self.request_end(force))
             }
             "detach" => ok(Outcome::Detach),
-            "reload-config" => act(self, Action::ReloadConfig),
+            "reload-config" => self.reload_scripts().map(|o| (ScriptValue::Null, o)).map_err(|e| format!("{e:#}")),
             // Not in the registry (no type, no documentation): for tests.
             "debug-stop-script-host" => {
                 self.script.stop_host();
