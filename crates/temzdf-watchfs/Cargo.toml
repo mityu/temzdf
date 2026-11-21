@@ -1,0 +1,13 @@
+[package]
+name = "temzdf-watchfs"
+description = "temzdf's file watcher: hears a file change, also when a tool replaces it or it is a symlink."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+notify = "8.2.0"
+
+[lints]
+workspace = true

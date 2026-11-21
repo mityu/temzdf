@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 mupdf.workspace = true
-notify = "8.2.0"
+temzdf-watchfs.workspace = true
 temzdf-pdfcore.workspace = true
 temzdf-scene.workspace = true
 termpix-core.workspace = true

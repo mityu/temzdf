@@ -5724,9 +5724,9 @@ dependencies = [
  "flate2",
  "libz-sys",
  "mupdf",
- "notify",
  "pdf-writer",
  "temzdf-scene",
+ "temzdf-watchfs",
 ]
 
 [[package]]
@@ -5734,10 +5734,10 @@ name = "temzdf-pdfview"
 version = "0.1.0"
 dependencies = [
  "mupdf",
- "notify",
  "temzdf-pdfcore",
  "temzdf-scene",
  "temzdf-tty",
+ "temzdf-watchfs",
  "termpix",
  "termpix-core",
  "termpix-ui",
@@ -5820,6 +5820,7 @@ dependencies = [
  "temzdf-term",
  "temzdf-texteditor",
  "temzdf-tty",
+ "temzdf-watchfs",
  "termpix",
  "termpix-core",
  "termpix-ui",
@@ -5867,6 +5868,13 @@ dependencies = [
  "temzdf-client",
  "temzdf-scene",
  "termpix",
+]
+
+[[package]]
+name = "temzdf-watchfs"
+version = "0.1.0"
+dependencies = [
+ "notify",
 ]
 
 [[package]]

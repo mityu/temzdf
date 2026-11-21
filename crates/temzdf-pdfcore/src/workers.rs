@@ -435,45 +435,12 @@ fn spawn_document_waiting(
     Ok(tx)
 }
 
-/// Watch `path` for changes. LaTeX tools rewrite the file in place or replace it
-/// (write a new file, rename over the old one), so the parent directory is
-/// watched too and events are filtered by file name; that survives the inode
-/// changing. Symlinks are resolved and their target is watched as well. Keep
-/// the returned watcher alive.
-pub fn spawn_watcher(path: &Path, events: Sink) -> notify::Result<notify::RecommendedWatcher> {
-    watch_file(path, move || {
+/// Watch the document at `path` for changes ([`temzdf_watchfs::watch_file`]):
+/// each comes as [`DocEvent::FileChanged`]. Keep the returned watcher alive.
+pub fn spawn_watcher(path: &Path, events: Sink) -> temzdf_watchfs::Result<temzdf_watchfs::FileWatcher> {
+    temzdf_watchfs::watch_file(path, move || {
         events(DocEvent::FileChanged);
     })
-}
-
-/// [`spawn_watcher`] for any file: `on_change` hears each change (not
-/// accesses), several for one write.
-pub fn watch_file(path: &Path, on_change: impl Fn() + Send + 'static) -> notify::Result<notify::RecommendedWatcher> {
-    use notify::{RecursiveMode, Watcher};
-
-    let abs = std::path::absolute(path)?;
-    let mut targets = vec![abs.clone()];
-    if let Ok(real) = std::fs::canonicalize(&abs)
-        && real != abs
-    {
-        targets.push(real);
-    }
-    let names: Vec<_> = targets.iter().filter_map(|t| t.file_name().map(|n| n.to_owned())).collect();
-    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        let Ok(ev) = res else { return };
-        if ev.kind.is_access() {
-            return;
-        }
-        if ev.paths.iter().any(|p| p.file_name().is_some_and(|n| names.iter().any(|m| m == n))) {
-            on_change();
-        }
-    })?;
-    for t in &targets {
-        if let Some(dir) = t.parent() {
-            watcher.watch(dir, RecursiveMode::NonRecursive)?;
-        }
-    }
-    Ok(watcher)
 }
 
 /// Raster worker pool with a replaceable queue: each frame the main loop submits

@@ -27,7 +27,7 @@ pub(super) struct TextEntry {
     /// The base mode of panes showing it, chosen when it was made.
     pub basemode: Option<String>,
     /// Watches its file (kept alive here).
-    watcher: Option<Box<dyn std::any::Any + Send>>,
+    watcher: Option<temzdf_watchfs::FileWatcher>,
     /// The modification time last told in FileChangedOnDisk (once per
     /// change, however many events it makes).
     disk_seen: Option<std::time::SystemTime>,
@@ -629,11 +629,10 @@ impl Session {
         let events = self.events.clone();
         let Some(t) = self.texts.get_mut(&buf) else { return };
         t.watcher = t.file.as_ref().and_then(|f| {
-            temzdf_pdfcore::workers::watch_file(&f.path, move || {
+            temzdf_watchfs::watch_file(&f.path, move || {
                 events(super::SessionEvent::TextFile(buf));
             })
             .ok()
-            .map(|w| Box::new(w) as Box<dyn std::any::Any + Send>)
         });
     }
 

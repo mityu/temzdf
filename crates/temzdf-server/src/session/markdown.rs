@@ -60,7 +60,7 @@ pub(super) struct MdDoc {
     /// The source line at the top of its last pane when no pane showed it
     /// any more: where it shows again (`md_open_doc`).
     pub hidden_line: Option<usize>,
-    _watcher: Option<Box<dyn std::any::Any + Send>>,
+    _watcher: Option<temzdf_watchfs::FileWatcher>,
 }
 
 impl MdDoc {
@@ -596,11 +596,10 @@ impl Session {
         let mtime = std::fs::metadata(&canonical).and_then(|m| m.modified()).ok();
         let id = self.alloc_id();
         let events = self.events.clone();
-        let watcher = temzdf_pdfcore::workers::watch_file(&canonical, move || {
+        let watcher = temzdf_watchfs::watch_file(&canonical, move || {
             events(SessionEvent::Markdown(id));
         })
-        .ok()
-        .map(|w| Box::new(w) as Box<dyn std::any::Any + Send>);
+        .ok();
         let name = crate::paths::display_name(&canonical);
         self.md_docs.insert(
             id,

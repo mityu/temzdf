@@ -13,6 +13,7 @@ temzdf-pdfview.workspace = true
 temzdf-protocol = { workspace = true, features = ["session"] }
 temzdf-script-runner.workspace = true
 temzdf-texteditor.workspace = true
+temzdf-watchfs.workspace = true
 temzdf-markdown.workspace = true
 temzdf-mdview.workspace = true
 texprintf.workspace = true

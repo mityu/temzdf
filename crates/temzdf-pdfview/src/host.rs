@@ -49,7 +49,7 @@ pub struct Opening {
     pool: RasterPool,
     search: Sender<SearchCmd>,
     synctex: Sender<SynctexCmd>,
-    watcher: notify::Result<notify::RecommendedWatcher>,
+    watcher: temzdf_watchfs::Result<temzdf_watchfs::FileWatcher>,
 }
 
 impl Opening {
@@ -97,7 +97,7 @@ pub struct DocumentHost {
     pool: RasterPool,
     search: Sender<SearchCmd>,
     synctex: Sender<SynctexCmd>,
-    _watcher: Option<notify::RecommendedWatcher>,
+    _watcher: Option<temzdf_watchfs::FileWatcher>,
     /// Why auto-reload is off, shown once.
     pub watcher_error: Option<String>,
     reload: ReloadState,

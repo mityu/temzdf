@@ -19,8 +19,9 @@
 | `temzdf-scene` | `termpix-core` |
 | `temzdf-protocol` | `temzdf-scene`, `termpix-core` |
 | `temzdf-client` | `temzdf-protocol`, `temzdf-scene`, `termpix-core` |
-| `temzdf-pdfcore` | `temzdf-scene` |
-| `temzdf-pdfview` | `temzdf-pdfcore`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
+| `temzdf-watchfs` | - (`notify`) |
+| `temzdf-pdfcore` | `temzdf-scene`, `temzdf-watchfs` |
+| `temzdf-pdfview` | `temzdf-pdfcore`, `temzdf-watchfs`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf-term` | `temzdf-scene`, `termpix-core` (and `libghostty-vt`, `portable-pty`) |
 | `temzdf-texteditor` | `temzdf-scene` (and `ropey`) |
 | `temzdf-markdown` | `temzdf-texteditor` (and `comrak`, `syntect`) |
@@ -29,7 +30,7 @@
 | `temzdf-script` | `temzdf-protocol` (and `rquickjs`, `swc_ts_fast_strip`) |
 | `temzdf-script-guest` | `temzdf-script`, `temzdf-protocol` (on `wasm32-wasip1` only) |
 | `temzdf-script-runner` | `temzdf-protocol`, `temzdf-script` (and wasmtime; builds the guest) |
-| `temzdf-server` | `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-texteditor`, `temzdf-markdown`, `temzdf-mdview`, `texprintf`, `temzdf-script-runner`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
+| `temzdf-server` | `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-texteditor`, `temzdf-markdown`, `temzdf-mdview`, `temzdf-watchfs`, `texprintf`, `temzdf-script-runner`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf-tty` | `temzdf-client`, `temzdf-scene`, `termpix` |
 | `temzdf` (bin) | `temzdf-server`, `temzdf-client`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-script`, `temzdf-tty`, `temzdf-scene`, `termpix` |
 | `temzdf-gui` (bin) | `temzdf-client`, `temzdf-protocol`, `temzdf-scene`, `termpix-core` (and winit, wgpu, glyphon) |
@@ -57,6 +58,10 @@
   starting sessions (`spawn_server`), the connection to a session
   (`Connection`, one-shot `request`s), log locations, carrying out effects
   (links, inverse search).
+- `temzdf-watchfs`: watching a file for changes made elsewhere
+  (`watch_file`, a `FileWatcher` kept alive), also when a tool replaces
+  it or it is a symlink: the PDF a typesetter writes (auto-reload), the
+  files of text and Markdown buffers.
 - `temzdf-pdfcore`: the PDF backend: MuPDF wrapper, `DocCache` (display lists
   and tiles), page text and selection, SyncTeX, background workers.
 - `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys)
