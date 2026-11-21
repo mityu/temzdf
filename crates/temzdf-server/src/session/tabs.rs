@@ -5,7 +5,7 @@
 //! the other tabs keep theirs in [`Tab::saved`]; switching swaps them.
 
 use temzdf_protocol::script::ScriptValue;
-use temzdf_scene::{Attrs, Cell, Color, TextGrid};
+use temzdf_scene::{Attrs, Cell, Color, TextGrid, grapheme_width, graphemes, str_width};
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
 
 use super::{BACKGROUND, Outcome, PaneEntry, Session, ShowTabline};
@@ -449,13 +449,12 @@ impl Session {
 /// `cols` wide, and the columns each tab takes. Labels shrink to fit, as
 /// far as the numbers still do.
 fn tabline_cells(tabs: &[(String, String)], current: usize, cols: usize) -> (Vec<Cell>, Vec<(usize, usize)>) {
-    let width = |s: &str| s.chars().map(super::notices::width).sum::<usize>();
-    let full: usize = tabs.iter().map(|(n, l)| width(n) + width(l) + 1).sum();
+    let full: usize = tabs.iter().map(|(n, l)| str_width(n) + str_width(l) + 1).sum();
     // Room per label when they do not all fit.
     let room = if full <= cols {
         usize::MAX
     } else {
-        let numbers: usize = tabs.iter().map(|(n, _)| width(n) + 1).sum();
+        let numbers: usize = tabs.iter().map(|(n, _)| str_width(n) + 1).sum();
         cols.saturating_sub(numbers) / tabs.len().max(1)
     };
     let bg = Color::Rgb([BACKGROUND[0], BACKGROUND[1], BACKGROUND[2]]);
@@ -468,15 +467,17 @@ fn tabline_cells(tabs: &[(String, String)], current: usize, cols: usize) -> (Vec
         let attrs = Attrs { bold: on, ..Attrs::default() };
         let start = row.len();
         let mut used = 0;
-        for (j, c) in number.chars().chain(label.chars().filter(|c| !c.is_control())).enumerate() {
-            let w = super::notices::width(c);
-            if j >= number.chars().count() && used + w > room {
+        let label: String = label.chars().filter(|c| !c.is_control()).collect();
+        let numbers = graphemes(number).count();
+        for (j, g) in graphemes(number).chain(graphemes(&label)).enumerate() {
+            let w = grapheme_width(g);
+            if j >= numbers && used + w > room {
                 break;
             }
-            if j >= number.chars().count() {
+            if j >= numbers {
                 used += w;
             }
-            row.push(Cell { text: c.to_string(), width: w as u8, fg, bg, attrs });
+            row.push(Cell { text: g.to_owned(), width: w as u8, fg, bg, attrs });
             if w == 2 {
                 row.push(Cell { text: String::new(), width: 0, fg, bg, attrs });
             }

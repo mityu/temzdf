@@ -5,6 +5,7 @@
 //! Paragraphs are wrapped here (so quote bars and list indents continue
 //! on their wrapped lines); code blocks are left to the pane's wrapping.
 
+use temzdf_texteditor::{grapheme_width, str_width};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::doc::{Align, Block, Document, Inline, Item, Lines};
@@ -98,11 +99,7 @@ pub fn render(doc: &Document, width: usize, math: MathFn<'_>) -> Rendered {
 type Prefix = Vec<(String, Option<&'static str>)>;
 
 fn prefix_width(p: &Prefix) -> usize {
-    p.iter().map(|(s, _)| width(s)).sum()
-}
-
-fn width(s: &str) -> usize {
-    s.graphemes(true).map(temzdf_texteditor::grapheme_width).sum()
+    p.iter().map(|(s, _)| str_width(s)).sum()
 }
 
 /// One line being drawn: its text and decorations (offsets in it).
@@ -156,7 +153,7 @@ impl Line {
         }
         self.text.push_str(s);
         self.chars = end;
-        self.cols += width(s);
+        self.cols += str_width(s);
     }
 
     fn append(&mut self, other: Line) {
@@ -315,7 +312,7 @@ impl Renderer<'_> {
                         item_first.push((task.to_owned(), Some("MarkdownTask")));
                     }
                     let mut item_rest = rest.clone();
-                    item_rest.push((" ".repeat(width(&marker) + width(task)), None));
+                    item_rest.push((" ".repeat(str_width(&marker) + str_width(task)), None));
                     self.item(item, &item_first, &item_rest, *tight, *lines);
                 }
                 self.list_depth -= 1;
@@ -385,7 +382,7 @@ impl Renderer<'_> {
                 let mut f = first.clone();
                 f.push((marker.clone(), Some("MarkdownFootnote")));
                 let mut r = rest.clone();
-                r.push((" ".repeat(width(&marker)), None));
+                r.push((" ".repeat(str_width(&marker)), None));
                 self.item(&Item { task: None, blocks: blocks.clone() }, &f, &r, true, *lines);
             }
         }
@@ -599,8 +596,8 @@ impl Renderer<'_> {
                         group.extend(pieces);
                         j += 1;
                     }
-                    let w: usize = group.iter().map(|p| width_of(&p.text)).sum();
-                    let sw = space.map_or(0, |p| width_of(&p.text));
+                    let w: usize = group.iter().map(|p| str_width(&p.text)).sum();
+                    let sw = space.map_or(0, |p| str_width(&p.text));
                     if line.cols > 0 && line.cols + sw + w > width {
                         lines.push(std::mem::take(&mut line));
                         space = None;
@@ -609,13 +606,13 @@ impl Renderer<'_> {
                         put(&mut line, p, &p.text);
                     }
                     for p in group {
-                        if line.cols + width_of(&p.text) <= width {
+                        if line.cols + str_width(&p.text) <= width {
                             put(&mut line, p, &p.text);
                             continue;
                         }
                         // Too wide for a line: cut by graphemes.
                         for g in p.text.graphemes(true) {
-                            if line.cols > 0 && line.cols + width_of(g) > width {
+                            if line.cols > 0 && line.cols + str_width(g) > width {
                                 lines.push(std::mem::take(&mut line));
                             }
                             put(&mut line, p, g);
@@ -630,10 +627,6 @@ impl Renderer<'_> {
         }
         lines
     }
-}
-
-fn width_of(s: &str) -> usize {
-    width(s)
 }
 
 /// A prefix for an empty line: without trailing blanks.
@@ -673,13 +666,13 @@ fn words(text: &str, like: &Piece, out: &mut Vec<Atom>) {
                 out.push(Atom::Space(with(" ")));
             }
             brk = true;
-        } else if temzdf_texteditor::grapheme_width(g) == 2 {
+        } else if grapheme_width(g) == 2 {
             flush(&mut word, &mut brk, out);
             out.push(Atom::Word { pieces: vec![with(g)], brk: true });
             brk = true;
         } else {
             if word.is_empty()
-                && matches!(out.last(), Some(Atom::Word { pieces, .. }) if pieces.last().is_some_and(|p| width_of(&p.text) == 2 && p.text.graphemes(true).count() == 1))
+                && matches!(out.last(), Some(Atom::Word { pieces, .. }) if pieces.last().is_some_and(|p| str_width(&p.text) == 2 && p.text.graphemes(true).count() == 1))
             {
                 brk = true;
             }

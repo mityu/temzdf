@@ -19,8 +19,10 @@ pub mod notice;
 mod swatches;
 pub mod theme;
 pub mod tiles;
+mod width;
 
 pub use swatches::Swatches;
+pub use width::{grapheme_width, graphemes, str_width};
 
 /// An image in an [`Images`] store.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -3,10 +3,8 @@
 //! file, page, zoom, search and messages; a terminal: nothing yet). How to
 //! change what they say is for later (`doc/design/floating-panes.md`).
 
-use temzdf_scene::{Attrs, Cell, Color, TextGrid};
+use temzdf_scene::{Attrs, Cell, Color, TextGrid, grapheme_width, graphemes, str_width};
 use termpix_ui::{StatusBar, Theme};
-
-use super::notices::width;
 
 /// The status line of a pane whose rectangle (cells) is `rect`, saying
 /// `bar`: the left text (or an error, or a notice, in their colours) from
@@ -71,19 +69,20 @@ pub(super) fn centred(text: &str, rect: temzdf_scene::Rect) -> TextGrid {
 }
 
 fn text_width(s: &str) -> usize {
-    s.chars().filter(|c| !c.is_control()).map(width).sum()
+    str_width(&s.chars().filter(|c| !c.is_control()).collect::<String>())
 }
 
 /// Write `text` into `row` from column `at`, at most `room` columns (a wide
 /// character that would not fit is left out).
 fn put(row: &mut [Cell], at: usize, text: &str, room: usize, fg: Color, bg: Color) {
     let mut col = at;
-    for c in text.chars().filter(|c| !c.is_control()) {
-        let w = width(c);
+    let text: String = text.chars().filter(|c| !c.is_control()).collect();
+    for g in graphemes(&text) {
+        let w = grapheme_width(g);
         if col + w > at + room || col + w > row.len() {
             break;
         }
-        row[col] = Cell { text: c.to_string(), width: w as u8, fg, bg, attrs: Attrs::default() };
+        row[col] = Cell { text: g.to_owned(), width: w as u8, fg, bg, attrs: Attrs::default() };
         if w == 2 {
             row[col + 1] = Cell { text: String::new(), width: 0, fg, bg, attrs: Attrs::default() };
         }

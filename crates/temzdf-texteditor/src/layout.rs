@@ -6,7 +6,6 @@
 //! inside it).
 
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 use crate::marks::{Marks, VirtChunk, VirtImage, VirtPos};
 use crate::text::Text;
@@ -301,11 +300,7 @@ impl Row {
     }
 }
 
-/// The display width of a grapheme: as the GUI and terminals draw it, 1 or
-/// 2.
-pub fn grapheme_width(g: &str) -> usize {
-    UnicodeWidthStr::width(g).clamp(1, 2)
-}
+pub use temzdf_scene::{grapheme_width, str_width};
 
 fn control(c: char) -> bool {
     (c as u32) < 0x20 || c == '\x7f'

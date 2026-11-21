@@ -21,7 +21,6 @@ similar = "2.7.0"
 temzdf-scene.workspace = true
 unicode-script = "0.5.8"
 unicode-segmentation = "1.13.3"
-unicode-width = "0.2.2"
 
 [lints]
 workspace = true

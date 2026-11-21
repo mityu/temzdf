@@ -28,8 +28,6 @@ pub struct Notice {
     pub until: Option<Instant>,
 }
 
-pub(super) use temzdf_scene::notice::width;
-
 impl Session {
     /// Show a floating message.
     pub(super) fn notify(&mut self, kind: Kind, text: &str) {

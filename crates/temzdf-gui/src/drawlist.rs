@@ -277,8 +277,8 @@ pub fn preedit(list: &mut DrawList, text: &str, at: (u16, u16), grid: Grid, colo
     }
     let (fg, bg) = (colors.background, colors.foreground);
     // A cell per character as seen (a combining mark goes with its base).
-    for c in unicode_segmentation::UnicodeSegmentation::graphemes(text, true) {
-        let w = unicode_width::UnicodeWidthStr::width(c).clamp(1, 2) as u16;
+    for c in temzdf_scene::graphemes(text) {
+        let w = temzdf_scene::grapheme_width(c) as u16;
         if col + w > grid.cols {
             break;
         }

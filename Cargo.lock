@@ -5677,8 +5677,6 @@ dependencies = [
  "termpix-core",
  "toml",
  "unicode-script",
- "unicode-segmentation",
- "unicode-width",
  "wgpu",
  "winit",
  "x11rb 0.14.0",
@@ -5765,6 +5763,8 @@ dependencies = [
  "serde",
  "serde_bytes",
  "termpix-core",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
@@ -5856,7 +5856,6 @@ dependencies = [
  "temzdf-scene",
  "unicode-script",
  "unicode-segmentation",
- "unicode-width",
 ]
 
 [[package]]

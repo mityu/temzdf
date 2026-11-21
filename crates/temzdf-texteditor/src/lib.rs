@@ -27,7 +27,7 @@ pub use cursor::{Cursor, SelectionKind};
 pub use edit::{Change, Gravity, TextEdit, map_offset};
 pub use layout::{
     Concealed, Glyph, GlyphKind, Inline, Layout, LayoutOptions, Row, VirtLine, VirtRow, grapheme_width, image_cells,
-    image_cols,
+    image_cols, str_width,
 };
 pub use marks::{Conceal, Mark, MarkId, MarkSpec, Marks, VirtChunk, VirtImage, VirtLines, VirtPos};
 pub use motion::{Class, Unit, WordChars, char_class, find_pair, next_grapheme, position_of, prev_grapheme};

@@ -554,12 +554,13 @@ fn title_grid(title: &str, frame: Rect, focus: bool) -> Option<TextGrid> {
     let cell = |text: String, width: u8| Cell { text, width, fg, bg, attrs };
     let mut row = vec![cell(" ".into(), 1)];
     let mut used = 0;
-    for c in title.chars().filter(|c| !c.is_control()) {
-        let w = super::notices::width(c);
+    let title: String = title.chars().filter(|c| !c.is_control()).collect();
+    for g in temzdf_scene::graphemes(&title) {
+        let w = temzdf_scene::grapheme_width(g);
         if used + w > room {
             break;
         }
-        row.push(cell(c.to_string(), w as u8));
+        row.push(cell(g.to_owned(), w as u8));
         if w == 2 {
             row.push(cell(String::new(), 0));
         }

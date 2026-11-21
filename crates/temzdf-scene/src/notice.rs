@@ -2,49 +2,33 @@
 //! of the screen (as WezTerm's): the session's notices, and a terminal
 //! client's own (`temzdf-tty`).
 
-use crate::{Attrs, Cell, Color, TextGrid};
-
-/// Terminal cells a character takes (CJK and other wide characters two).
-pub fn width(c: char) -> usize {
-    let u = c as u32;
-    let wide = (0x1100..=0x115f).contains(&u)
-        || (0x2e80..=0xa4cf).contains(&u)
-        || (0xac00..=0xd7a3).contains(&u)
-        || (0xf900..=0xfaff).contains(&u)
-        || (0xfe30..=0xfe4f).contains(&u)
-        || (0xff00..=0xff60).contains(&u)
-        || (0xffe0..=0xffe6).contains(&u)
-        || (0x1f300..=0x1faff).contains(&u)
-        || (0x20000..=0x3fffd).contains(&u);
-    if wide { 2 } else { 1 }
-}
+use crate::{Attrs, Cell, Color, TextGrid, grapheme_width, graphemes, str_width};
 
 /// `text` broken into lines of at most `max` cells, at a space where the
 /// line has one (the space goes), else anywhere.
 pub fn wrap(text: &str, max: usize) -> Vec<String> {
-    let w = |s: &str| s.chars().map(width).sum::<usize>();
     let mut out = Vec::new();
     for para in text.lines() {
         let mut line = String::new();
         // Control characters would reach a terminal client as such: tabs
         // become spaces, the rest go.
-        let chars = para.chars().map(|c| if c == '\t' { ' ' } else { c }).filter(|c| !c.is_control());
-        for c in chars {
-            if w(&line) + width(c) > max && !line.is_empty() {
+        let para: String = para.chars().map(|c| if c == '\t' { ' ' } else { c }).filter(|c| !c.is_control()).collect();
+        for g in graphemes(&para) {
+            if str_width(&line) + grapheme_width(g) > max && !line.is_empty() {
                 match line.rfind(' ').filter(|&i| i > 0) {
                     // The word typed so far goes on.
-                    Some(i) if c != ' ' => {
+                    Some(i) if g != " " => {
                         let rest = line.split_off(i + 1);
                         line.pop();
                         out.push(std::mem::replace(&mut line, rest));
                     }
                     _ => out.push(std::mem::take(&mut line)),
                 }
-                if c == ' ' && line.is_empty() {
+                if g == " " && line.is_empty() {
                     continue;
                 }
             }
-            line.push(c);
+            line.push_str(g);
         }
         out.push(line);
     }
@@ -78,7 +62,7 @@ pub fn boxes(messages: &[(&str, Color)], cols: usize, rows: usize, top: usize) -
             }
             lines.drain(..lines.len() - keep);
         }
-        let inner = lines.iter().map(|l| l.chars().map(width).sum::<usize>()).max().unwrap_or(0).max(1);
+        let inner = lines.iter().map(|l| str_width(l)).max().unwrap_or(0).max(1);
         let w = inner + 4;
         if row + lines.len() + 2 > rows {
             break;
@@ -94,9 +78,9 @@ pub fn boxes(messages: &[(&str, Color)], cols: usize, rows: usize, top: usize) -
         for l in &lines {
             let mut v = vec![cell("│", border), cell(" ", fg)];
             let mut used = 0;
-            for c in l.chars() {
-                let cw = width(c);
-                v.push(Cell { text: c.to_string(), width: cw as u8, fg, bg, attrs: Attrs::default() });
+            for g in graphemes(l) {
+                let cw = grapheme_width(g);
+                v.push(Cell { text: g.to_owned(), width: cw as u8, fg, bg, attrs: Attrs::default() });
                 if cw == 2 {
                     v.push(Cell { text: String::new(), width: 0, fg, bg, attrs: Attrs::default() });
                 }
@@ -123,6 +107,9 @@ mod tests {
         assert_eq!(wrap("abcdef", 4), ["abcd", "ef"]);
         assert_eq!(wrap("数式数式", 5), ["数式", "数式"]);
         assert_eq!(wrap("a\nb", 10), ["a", "b"]);
+        assert_eq!(wrap("\u{2614}\u{2614}\u{2614}", 5), ["\u{2614}\u{2614}", "\u{2614}"]);
+        // A combining mark stays with its base and takes no cell.
+        assert_eq!(wrap("e\u{301}e\u{301}e\u{301}", 2), ["e\u{301}e\u{301}", "e\u{301}"]);
         // At spaces where the line has them.
         assert_eq!(wrap("one two three", 8), ["one two", "three"]);
         assert_eq!(wrap("one two three", 7), ["one two", "three"]);

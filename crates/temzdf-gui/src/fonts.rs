@@ -253,7 +253,7 @@ pub fn fonts_used(
 ) -> Vec<(String, String, Option<std::path::PathBuf>)> {
     let mut out = Vec::new();
     for g in unicode_segmentation_free(text) {
-        let wide = unicode_width::UnicodeWidthStr::width(g.as_str()) > 1;
+        let wide = temzdf_scene::grapheme_width(&g) == 2;
         let (attrs, px) = chain.attrs_for(fonts, &g, wide, 1.0);
         let attrs = attrs.clone();
         let mut buffer = Buffer::new(fonts, Metrics::new(px.max(1.0), px.max(1.0) * 2.0));
