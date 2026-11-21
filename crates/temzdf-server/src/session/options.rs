@@ -282,9 +282,7 @@ impl Session {
                 // focused; other panes take theirs when focused.
                 let mode = self.pane_mode(self.focus);
                 if self.history.modes().last() != Some(mode.as_str()) {
-                    let old = self.history.current().to_owned();
-                    self.history.reset(&mode);
-                    self.mode_changed(&old);
+                    self.reset_mode(self.focus);
                 }
             }
             "wrap" => o.text.layout.wrap = flag()?,

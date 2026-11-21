@@ -426,11 +426,19 @@ impl Session {
         id
     }
 
-    /// The focused pane's base mode changed: the history starts from it.
-    pub(super) fn refocus_mode(&mut self) {
+    /// The history starts again from `pane`'s base mode (it gained the focus,
+    /// or its base changed).
+    pub(super) fn reset_mode(&mut self, pane: PaneId) {
         let old = self.history.current().to_owned();
-        let mode = self.pane_mode(self.focus);
+        let mode = self.pane_mode(pane);
         self.history.reset(&mode);
+        self.mode_changed(&old);
+    }
+
+    /// Leave the current mode, back to the one below it.
+    pub(super) fn leave_mode(&mut self) {
+        let old = self.history.current().to_owned();
+        self.history.pop();
         self.mode_changed(&old);
     }
 
@@ -906,7 +914,7 @@ impl Session {
                 {
                     let buf = *buf;
                     self.texts.get_mut(&buf).expect("made").basemode = Some(mode);
-                    self.refocus_mode();
+                    self.reset_mode(self.focus);
                 }
                 Ok((ScriptValue::Num(id as f64), Outcome::Redraw))
             }

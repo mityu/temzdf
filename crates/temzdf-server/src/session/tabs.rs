@@ -185,10 +185,7 @@ impl Session {
         if self.panes.contains_key(&focus) && focus != old {
             self.event("PaneFocused", vec![ScriptValue::Num(focus as f64)]);
         }
-        let old_mode = self.history.current().to_owned();
-        let mode = self.pane_mode(focus);
-        self.history.reset(&mode);
-        self.mode_changed(&old_mode);
+        self.reset_mode(focus);
         self.relayout();
     }
 

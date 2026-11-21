@@ -810,9 +810,8 @@ impl Session {
         let kind = self.kind_for(buf, pane, g)?;
         let restore = matches!(kind, Kind::Pdf { .. }) && !self.shown(buf);
         let focused = pane == self.focus;
-        if focused && let Some(t) = self.panes.get(&pane).and_then(PaneEntry::term).and_then(|b| self.terms.get_mut(&b))
-        {
-            t.term.focus(false);
+        if focused {
+            self.term_focus(pane, false);
         }
         let old = std::mem::replace(&mut self.panes.get_mut(&pane).expect("checked").kind, kind);
         self.hide(old);
@@ -821,13 +820,8 @@ impl Session {
             self.restore_view(pane);
         }
         if focused {
-            if let Some(t) = self.terms.get_mut(&buf) {
-                t.term.focus(true);
-            }
-            let old = self.history.current().to_owned();
-            let mode = self.pane_mode(pane);
-            self.history.reset(&mode);
-            self.mode_changed(&old);
+            self.term_focus(pane, true);
+            self.reset_mode(pane);
         }
         Ok(Outcome::Redraw)
     }
@@ -1057,17 +1051,12 @@ impl Session {
             return;
         }
         for (p, gained) in [(self.focus, false), (id, true)] {
-            if let Some(t) = self.panes.get(&p).and_then(PaneEntry::term).and_then(|b| self.terms.get_mut(&b)) {
-                t.term.focus(gained);
-            }
+            self.term_focus(p, gained);
         }
         self.focus = id;
         self.event("PaneFocused", vec![ScriptValue::Num(id as f64)]);
         // The history starts again from the pane's own mode.
-        let old = self.history.current().to_owned();
-        let mode = self.pane_mode(id);
-        self.history.reset(&mode);
-        self.mode_changed(&old);
+        self.reset_mode(id);
     }
 
     /// Show a message in the focused pane's status bar (or another PDF pane's:
@@ -1599,10 +1588,8 @@ impl Session {
         }
         // A submode left alone for its timeout goes.
         if self.submode_deadline().is_some_and(|d| now >= d) && !self.script.busy() {
-            let old = self.history.current().to_owned();
-            self.history.pop();
+            self.leave_mode();
             self.last_key = now;
-            self.mode_changed(&old);
             out = out.merge(Outcome::Redraw);
         }
         out.merge(self.flush_events())

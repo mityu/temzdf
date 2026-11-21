@@ -96,11 +96,7 @@ impl Session {
         {
             let mut redraw = false;
             if let Some(action) = pane.key_first(k, now, &mut redraw) {
-                return match action {
-                    pane::Action::Quit => self.request_close(focus),
-                    pane::Action::Redraw => Outcome::Redraw,
-                    pane::Action::None => Outcome::None,
-                };
+                return self.pdf_outcome(action);
             }
             out = out.or(redraw);
         }
@@ -165,9 +161,7 @@ impl Session {
                     self.eval(funcs, vec![ctx]);
                 }
                 Step::Leave => {
-                    let old = self.history.current().to_owned();
-                    self.history.pop();
-                    self.mode_changed(&old);
+                    self.leave_mode();
                     out = out.merge(Outcome::Redraw);
                 }
                 Step::Run { target, count, keys } => {
@@ -300,6 +294,15 @@ impl Session {
         let held = [Modifiers::ALT, Modifiers::CTRL, Modifiers::SUPER, Modifiers::HYPER, Modifiers::META];
         let plain = !held.iter().any(|m| k.modifiers.contains(*m));
         typed.filter(|t| plain && !t.chars().any(char::is_control))
+    }
+
+    /// What a PDF pane's action asks of the session (the focused pane's).
+    pub(super) fn pdf_outcome(&mut self, action: pane::Action) -> Outcome {
+        match action {
+            pane::Action::Quit => self.request_close(self.focus),
+            pane::Action::Redraw => Outcome::Redraw,
+            pane::Action::None => Outcome::None,
+        }
     }
 
     /// The focused pane takes typed text (a text or input pane).
@@ -442,13 +445,7 @@ impl Session {
         if let Some(t) = self.focused_term() {
             return Outcome::None.or(t.key(k));
         }
-        let typed = k.text.clone().or_else(|| match k.code {
-            KeyCode::Char(c) => Some(c.to_string()),
-            _ => None,
-        });
-        let held = [Modifiers::ALT, Modifiers::CTRL, Modifiers::SUPER, Modifiers::HYPER, Modifiers::META];
-        let plain = !held.iter().any(|m| k.modifiers.contains(*m));
-        match typed.filter(|t| plain && !t.chars().any(char::is_control)) {
+        match self.typed_text(k) {
             Some(t) if self.text_type(&t).is_ok() => Outcome::Redraw,
             _ => Outcome::None,
         }

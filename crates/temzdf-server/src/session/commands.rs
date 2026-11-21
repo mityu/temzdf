@@ -147,11 +147,8 @@ impl Session {
             let Some(pane) = self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf) else {
                 return Err(format!("{name}: the focused pane is not a PDF"));
             };
-            return match pane.command(cmd, count_arg(args.first()), now) {
-                temzdf_pdfview::pane::Action::Quit => ok(self.request_close(self.focus)),
-                temzdf_pdfview::pane::Action::Redraw => ok(Outcome::Redraw),
-                temzdf_pdfview::pane::Action::None => ok(Outcome::None),
-            };
+            let action = pane.command(cmd, count_arg(args.first()), now);
+            return ok(self.pdf_outcome(action));
         }
         if let "visual.search-for" | "visual.search-preview" | "visual.search-cancel" = name {
             let cancel = name == "visual.search-cancel";
@@ -189,9 +186,7 @@ impl Session {
             };
             return match t.visual(op, count_arg(args.first())) {
                 VisualOutcome::Leave => {
-                    let old = self.history.current().to_owned();
-                    self.history.pop();
-                    self.mode_changed(&old);
+                    self.leave_mode();
                     ok(Outcome::Redraw)
                 }
                 VisualOutcome::Stay(true) => ok(Outcome::Redraw),
@@ -548,9 +543,7 @@ impl Session {
                 ok(Outcome::Redraw)
             }
             "exit-mode" => {
-                let old = self.history.current().to_owned();
-                self.history.pop();
-                self.mode_changed(&old);
+                self.leave_mode();
                 ok(Outcome::Redraw)
             }
             "current-mode" => Ok((ScriptValue::Str(self.history.current().to_owned()), Outcome::None)),

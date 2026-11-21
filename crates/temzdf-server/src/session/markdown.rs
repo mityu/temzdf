@@ -482,7 +482,7 @@ impl Session {
             }
             self.hide(old);
             if pane == self.focus {
-                self.refocus_mode();
+                self.reset_mode(self.focus);
             }
         } else {
             let width = self.panes.get(&pane).map_or(80, |e| e.content().w as usize);
