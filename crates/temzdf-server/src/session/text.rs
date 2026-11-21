@@ -14,8 +14,7 @@ use temzdf_texteditor::{
     SelectionKind, StepKind, Text, TextEdit, View, ViewUnit,
 };
 
-use super::{BufferId, Kind, Outcome, PaneEntry, PaneId, Session, Spot};
-use termpix_core::geom::Rect;
+use super::{BufferId, Kind, Outcome, PaneId, Session, Spot};
 
 /// A text buffer and its file.
 pub(super) struct TextEntry {
@@ -384,16 +383,9 @@ impl Session {
                 buf
             }
         };
-        // Into an existing pane (`:e`): it shows the buffer instead.
-        if let Spot::Replace(pane) = spot {
-            self.show_in(pane, buf).map_err(anyhow::Error::msg)?;
-            return Ok(pane);
-        }
-        let id = self.alloc_id();
-        let focus = self.takes_focus(&spot);
-        let rect = self.place(id, spot)?;
-        self.text_pane(id, buf, rect, focus);
-        Ok(id)
+        // Into an existing pane (`:e`) it shows the buffer instead.
+        let pane = self.add_pane(buf, spot).map_err(anyhow::Error::msg)?;
+        Ok(pane.expect("a text shows at once"))
     }
 
     /// A new text buffer (no pane), with its file if any.
@@ -427,21 +419,6 @@ impl Session {
         );
         self.watch_text(id);
         id
-    }
-
-    /// Pane `id`, placed at `rect`, shows text `buf`.
-    pub(super) fn text_pane(&mut self, id: PaneId, buf: BufferId, rect: Rect, focus: bool) {
-        let tv = self.text_view_for(buf, id);
-        let kind = Kind::Text { buf, view: Box::new(tv) };
-        // A Markdown viewer's drawing: a `markdown` pane to scripts.
-        let name = self.kind_buffer(&kind).1;
-        self.panes.insert(id, PaneEntry::new(kind, rect));
-        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str(name.into())]);
-        if focus {
-            self.set_focus(id);
-        }
-        self.relayout();
-        self.fit_text_view(id);
     }
 
     /// The focused pane's base mode changed: the history starts from it.

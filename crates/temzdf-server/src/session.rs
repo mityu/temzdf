@@ -887,7 +887,9 @@ impl Session {
         self.add_pdf_pane_focused(doc, spot, focus)
     }
 
-    /// `add_pdf_pane`, the new pane focused if `focus`.
+    /// `add_pdf_pane`, the new pane focused if `focus`. Unlike `add_pane`,
+    /// what goes wrong is a message (the document opened in the
+    /// background, nobody waits for an answer).
     fn add_pdf_pane_focused(&mut self, doc: DocId, spot: Spot, focus: bool) -> Option<PaneId> {
         self.docs.get(&doc)?.host.as_ref()?;
         if let Spot::Replace(p) = spot {
@@ -896,15 +898,66 @@ impl Session {
             }
             return Some(p);
         }
-        let id = self.alloc_id();
-        if let Err(e) = self.place(id, spot) {
-            self.message(&e.to_string());
-            return None;
+        match self.open_pane(doc, spot, focus) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                self.message(&e);
+                None
+            }
         }
-        let restore = !self.shown(doc);
-        let kind = self.pdf_kind(id, doc)?;
-        self.panes.insert(id, PaneEntry::new(kind, self.area()));
-        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("pdf".into())]);
+    }
+
+    /// Show buffer `buf` at `spot`: in pane `p` instead of what it shows
+    /// for `Spot::Replace(p)` (see `show_in`), else in a new pane, focused
+    /// as `takes_focus` says. Returns the pane; a document still opening
+    /// has none yet (`None`: the spot waits with it). A Markdown document
+    /// shows in the viewer (`md_open_doc`).
+    fn add_pane(&mut self, buf: BufferId, spot: Spot) -> Result<Option<PaneId>, String> {
+        if let Spot::Replace(p) = spot {
+            self.show_in(p, buf)?;
+            return Ok(Some(p));
+        }
+        if self.md_docs.contains_key(&buf) {
+            return self.md_open_doc(buf, spot).map(Some);
+        }
+        if self.docs.get(&buf).is_some_and(|d| d.host.is_none()) {
+            let spot = self.pin_spot(spot);
+            self.docs.get_mut(&buf).expect("found").waiting.push(spot);
+            return Ok(None);
+        }
+        if !self.terms.contains_key(&buf) && !self.texts.contains_key(&buf) && !self.docs.contains_key(&buf) {
+            return Err(format!("no buffer {buf}"));
+        }
+        let focus = self.takes_focus(&spot);
+        self.open_pane(buf, spot, focus).map(Some)
+    }
+
+    /// A new pane at `spot` (not `Spot::Replace`) showing buffer `buf`
+    /// (a terminal, a text or an open document), focused if `focus`.
+    fn open_pane(&mut self, buf: BufferId, spot: Spot, focus: bool) -> Result<PaneId, String> {
+        let id = self.alloc_id();
+        let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
+        self.insert_pane(id, rect, buf, focus)?;
+        Ok(id)
+    }
+
+    /// Pane `id`, placed at `rect`, shows buffer `buf`: hooks hear
+    /// `PaneOpened` (then `PaneFocused` if `focus`). A document no other
+    /// pane shows is shown the way its last pane did.
+    fn insert_pane(&mut self, id: PaneId, rect: Rect, buf: BufferId, focus: bool) -> Result<(), String> {
+        // The size its pane gives it (a status line shows by default).
+        let g = content_geometry(content_rect(rect, true), self.geometry.cell, None);
+        let kind = match self.kind_for(buf, id, g) {
+            Ok(kind) => kind,
+            Err(e) => {
+                self.unplace(id);
+                return Err(e);
+            }
+        };
+        let restore = matches!(kind, Kind::Pdf { .. }) && !self.shown(buf);
+        let name = self.kind_buffer(&kind).1;
+        self.panes.insert(id, PaneEntry::new(kind, rect));
+        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str(name.into())]);
         if focus {
             self.set_focus(id);
         }
@@ -912,26 +965,35 @@ impl Session {
         if restore {
             self.restore_view(id);
         }
-        Some(id)
+        Ok(())
     }
 
-    /// A page view of `doc` for pane `id`.
-    fn pdf_kind(&mut self, id: PaneId, doc: DocId) -> Option<Kind> {
-        // The size its pane gives it (a status line shows by default); the
-        // layout places it right after.
-        let geometry = content_geometry(content_rect(self.area(), true), self.geometry.cell, None);
-        let entry = self.docs.get_mut(&doc)?;
-        let host = entry.host.as_mut()?;
-        let mut pane = PdfPane::with_document(entry.name.clone(), host.info.clone(), host.doc.clone(), geometry);
-        pane.preview_delay = self.options.preview_delay();
-        pane.anchor_by_text = self.options.reloadanchor_text;
-        pane.viewer.viewport.set_config(self.options.scroll());
-        pane.viewer.stand_in_mode = StandIn::for_hints(self.hints);
-        pane.set_search_base((id as u64) << 32);
-        if let Some(e) = host.watcher_error.take() {
-            pane.message = Some(e);
+    /// The view pane `pane` starts with on buffer `buf`, its content `g`
+    /// large. A text view takes its size from the pane when laid out
+    /// (`fit_text_view`); a page view starts at the size of the whole
+    /// area and the layout resizes it right after. A Markdown document
+    /// is shown through `md_open_doc` (a drawing, or the graphics mode),
+    /// and a document still opening has no view yet.
+    fn kind_for(&mut self, buf: BufferId, pane: PaneId, g: Geometry) -> Result<Kind, String> {
+        if self.terms.contains_key(&buf) {
+            return Ok(Kind::Term { buf, view: TermView::new(g) });
         }
-        Some(Kind::Pdf { pane: Box::new(pane), doc })
+        if self.texts.contains_key(&buf) {
+            return Ok(Kind::Text { buf, view: Box::new(self.text_view_for(buf, pane)) });
+        }
+        let geometry = content_geometry(content_rect(self.area(), true), self.geometry.cell, None);
+        let Some(entry) = self.docs.get_mut(&buf) else { return Err(format!("no buffer {buf}")) };
+        let host = entry.host.as_mut().ok_or("the document is not open")?;
+        let mut view = PdfPane::with_document(entry.name.clone(), host.info.clone(), host.doc.clone(), geometry);
+        view.preview_delay = self.options.preview_delay();
+        view.anchor_by_text = self.options.reloadanchor_text;
+        view.viewer.viewport.set_config(self.options.scroll());
+        view.viewer.stand_in_mode = StandIn::for_hints(self.hints);
+        view.set_search_base((pane as u64) << 32);
+        if let Some(e) = host.watcher_error.take() {
+            view.message = Some(e);
+        }
+        Ok(Kind::Pdf { pane: Box::new(view), doc: buf })
     }
 
     /// Show the document the way its last pane did (it was hidden).
@@ -990,22 +1052,17 @@ impl Session {
             return Ok(Outcome::Redraw);
         }
         let g = content_geometry(e.content(), self.geometry.cell, None);
-        let kind = if let Some(t) = self.terms.get_mut(&buf) {
+        if let Some(d) = self.docs.get_mut(&buf)
+            && d.host.is_none()
+        {
+            d.waiting.push((Spot::Replace(pane), self.tabs[self.tab].id));
+            return Ok(Outcome::None);
+        }
+        // A terminal shown again shows its end.
+        if let Some(t) = self.terms.get_mut(&buf) {
             t.term.scroll_to_bottom();
-            Kind::Term { buf, view: TermView::new(g) }
-        } else if self.texts.contains_key(&buf) {
-            // (It takes its size from the pane when laid out, and is laid
-            // out with it: its cursor, taken from another pane, shows.)
-            Kind::Text { buf, view: Box::new(self.text_view_for(buf, pane)) }
-        } else if let Some(d) = self.docs.get_mut(&buf) {
-            if d.host.is_none() {
-                d.waiting.push((Spot::Replace(pane), self.tabs[self.tab].id));
-                return Ok(Outcome::None);
-            }
-            self.pdf_kind(pane, buf).ok_or("the document is not open")?
-        } else {
-            return Err(format!("no buffer {buf}"));
-        };
+        }
+        let kind = self.kind_for(buf, pane, g)?;
         let restore = matches!(kind, Kind::Pdf { .. }) && !self.shown(buf);
         let focused = pane == self.focus;
         if focused && let Some(t) = self.panes.get(&pane).and_then(PaneEntry::term).and_then(|b| self.terms.get_mut(&b))
@@ -1242,19 +1299,8 @@ impl Session {
         );
         self.terms.insert(buf, TermEntry { term, exited: false });
         self.event("BufferCreated", vec![ScriptValue::Num(buf as f64), ScriptValue::Str("terminal".into())]);
-        self.terminal_pane(id, buf, rect, focus);
+        self.insert_pane(id, rect, buf, focus).map_err(anyhow::Error::msg)?;
         Ok(id)
-    }
-
-    /// Pane `id`, placed at `rect`, shows terminal `buf`.
-    fn terminal_pane(&mut self, id: PaneId, buf: BufferId, rect: Rect, focus: bool) {
-        let geometry = content_geometry(content_rect(rect, true), self.geometry.cell, None);
-        self.panes.insert(id, PaneEntry::new(Kind::Term { buf, view: TermView::new(geometry) }, rect));
-        self.event("PaneOpened", vec![ScriptValue::Num(id as f64), ScriptValue::Str("terminal".into())]);
-        if focus {
-            self.set_focus(id);
-        }
-        self.relayout();
     }
 
     /// Move the focus, telling terminals that asked for focus reports.

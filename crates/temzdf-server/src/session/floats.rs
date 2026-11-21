@@ -402,29 +402,12 @@ impl Session {
                 self.open_at(&path, spot).map_err(|e| format!("{e:#}"))?;
                 (next..self.next_id).find(|p| self.panes.contains_key(p))
             }
-            FloatWhat::Buffer(buf) if self.terms.contains_key(&buf) => {
-                let id = self.alloc_id();
-                let focus = self.takes_focus(&spot);
-                let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
-                self.terminal_pane(id, buf, rect, focus);
-                Some(id)
+            // A document that finds no room says so, as when its file
+            // opens (`add_pdf_pane`).
+            FloatWhat::Buffer(buf) if self.docs.get(&buf).is_some_and(|d| d.host.is_some()) => {
+                self.add_pdf_pane(buf, spot)
             }
-            FloatWhat::Buffer(buf) if self.texts.contains_key(&buf) => {
-                let id = self.alloc_id();
-                let focus = self.takes_focus(&spot);
-                let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
-                self.text_pane(id, buf, rect, focus);
-                Some(id)
-            }
-            FloatWhat::Buffer(buf) if self.docs.get(&buf).is_some_and(|d| d.host.is_none()) => {
-                // Still opening: the pane comes with the file.
-                let spot = self.pin_spot(spot);
-                self.docs.get_mut(&buf).expect("found").waiting.push(spot);
-                None
-            }
-            FloatWhat::Buffer(buf) if self.docs.contains_key(&buf) => self.add_pdf_pane(buf, spot),
-            FloatWhat::Buffer(buf) if self.md_docs.contains_key(&buf) => Some(self.md_open_doc(buf, spot)?),
-            FloatWhat::Buffer(buf) => return Err(format!("no buffer {buf}")),
+            FloatWhat::Buffer(buf) => self.add_pane(buf, spot)?,
         })
     }
 

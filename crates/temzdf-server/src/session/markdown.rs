@@ -346,17 +346,8 @@ impl Session {
             Spot::Replace(p) if self.md_mode(p).is_some() => self.md_mode(p) == Some("graphics"),
             _ => self.options.markdownmode == "graphics",
         };
-        let pane = if let Spot::Replace(pane) = spot {
-            self.show_in(pane, buf)?;
-            self.md_fit(pane);
-            pane
-        } else {
-            let id = self.alloc_id();
-            let focus = self.takes_focus(&spot);
-            let rect = self.place(id, spot).map_err(|e| format!("{e:#}"))?;
-            self.text_pane(id, buf, rect, focus);
-            id
-        };
+        // (Laying the pane out fits the drawing to its width.)
+        let pane = self.add_pane(buf, spot)?.expect("a drawing shows at once");
         // (The graphics mode takes the text mode's line.)
         if let Some(line) = hidden_line {
             self.md_place_text(pane, line);
