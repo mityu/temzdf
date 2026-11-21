@@ -563,24 +563,33 @@ impl MdPane {
                 work.push(cell.on_screen, dx.hypot(dy), want);
             }
         }
-        for i in 0..self.search.hits.len() {
-            let r = self.search.hits[i];
-            if r.y1 < scroll || r.y0 > scroll + f64::from(self.height) {
-                continue;
+        self.overlays(page, 1.0, (0.0, scroll), images, &mut layers);
+        (Frame { layers, pointer: self.pointer(), ..Frame::default() }, work.into_sorted().collect())
+    }
+
+    /// The search's marks and the selection's boxes in sight, onto
+    /// `layers`: page pixels magnified `m` times, less `(ox, oy)`, are
+    /// pane pixels.
+    fn overlays(&mut self, page: &Page, m: f64, (ox, oy): (f64, f64), images: &mut Images, layers: &mut Vec<Layer>) {
+        let height = f64::from(self.height);
+        let place = |r: Rect| {
+            let (y0, y1) = ((r.y0 * m - oy).floor(), (r.y1 * m - oy).ceil());
+            if y1 < 0.0 || y0 > height {
+                return None;
             }
-            let (w, h) = ((r.x1 - r.x0).ceil().max(1.0) as u32, (r.y1 - r.y0).ceil().max(1.0) as u32);
-            let dst = SceneRect::new(r.x0.floor() as i32, (r.y0 - scroll).floor() as i32, w, h);
-            layers.push(self.mark(i, dst, images));
+            let (x0, x1) = ((r.x0 * m - ox).floor(), (r.x1 * m - ox).ceil());
+            Some(SceneRect::new(x0 as i32, y0 as i32, (x1 - x0).max(1.0) as u32, (y1 - y0).max(1.0) as u32))
+        };
+        for i in 0..self.search.hits.len() {
+            if let Some(dst) = place(self.search.hits[i]) {
+                layers.push(self.mark(i, dst, images));
+            }
         }
         for (i, r) in self.selection_boxes(page).into_iter().enumerate() {
-            if r.y1 < scroll || r.y0 > scroll + f64::from(self.height) {
-                continue;
+            if let Some(dst) = place(r) {
+                layers.push(self.selection_layer(i, dst, images));
             }
-            let (w, h) = ((r.x1 - r.x0).ceil().max(1.0) as u32, (r.y1 - r.y0).ceil().max(1.0) as u32);
-            let dst = SceneRect::new(r.x0.floor() as i32, (r.y0 - scroll).floor() as i32, w, h);
-            layers.push(self.selection_layer(i, dst, images));
         }
-        (Frame { layers, pointer: self.pointer(), ..Frame::default() }, work.into_sorted().collect())
     }
 
     /// The boxes (page pixels) of the selection, if it is of `page` (one
@@ -721,25 +730,7 @@ impl MdPane {
             under.append(&mut layers);
             layers = under;
         }
-        for i in 0..self.search.hits.len() {
-            let r = self.search.hits[i];
-            let (y0, y1) = ((r.y0 * m - oy).floor(), (r.y1 * m - oy).ceil());
-            if y1 < 0.0 || y0 > f64::from(self.height) {
-                continue;
-            }
-            let (x0, x1) = ((r.x0 * m - ox).floor(), (r.x1 * m - ox).ceil());
-            let dst = SceneRect::new(x0 as i32, y0 as i32, (x1 - x0).max(1.0) as u32, (y1 - y0).max(1.0) as u32);
-            layers.push(self.mark(i, dst, images));
-        }
-        for (i, r) in self.selection_boxes(page).into_iter().enumerate() {
-            let (y0, y1) = ((r.y0 * m - oy).floor(), (r.y1 * m - oy).ceil());
-            if y1 < 0.0 || y0 > f64::from(self.height) {
-                continue;
-            }
-            let (x0, x1) = ((r.x0 * m - ox).floor(), (r.x1 * m - ox).ceil());
-            let dst = SceneRect::new(x0 as i32, y0 as i32, (x1 - x0).max(1.0) as u32, (y1 - y0).max(1.0) as u32);
-            layers.push(self.selection_layer(i, dst, images));
-        }
+        self.overlays(page, m, (ox, oy), images, &mut layers);
         (Frame { layers, pointer: self.pointer(), ..Frame::default() }, work.into_sorted().collect())
     }
 
