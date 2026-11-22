@@ -88,6 +88,16 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- Whether `temzdf action` goes, now that `temzdf eval` runs the
+  configuration's language from the command line, or shrinks to what a
+  shell needs (opening a file: `new-pane FILE` resolves paths against the
+  caller's directory, which `eval` does not): the user decides
+  (`doc/design/scripting.md`, "temzdf eval").
+- `temzdf eval` whose task the unattended limit stopped outside an atomic
+  section answers only when its `--timeout` runs out (the host cannot tell
+  which task a stopped promise job was; `doc/design/script-host.md`,
+  "temzdf eval").
+
 - Completion and fuzzy finding for scripts (`doc/design/completion.md`,
   a draft; the shared foundation and completion's sources are decided).
   Built: `temzdf/ff`'s types, combinators and engine without a UI, and

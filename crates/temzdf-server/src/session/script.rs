@@ -17,7 +17,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use temzdf_protocol::script::{CallId, FromHost, FuncId, HostOp, ScriptError, ScriptValue, TaskId, ToHost, Token};
+use temzdf_protocol::script::{
+    CallId, Code, CodeResult, FromHost, FuncId, HostOp, ScriptError, ScriptValue, TaskId, ToHost, Token,
+};
 use temzdf_script_runner::{Event, Options, ScriptHost};
 use termpix_core::input::{KeyCode, KeyEvent, Modifiers, MouseEvent, MouseEventKind};
 
@@ -126,6 +128,11 @@ pub struct Bridge {
     load_error: Option<String>,
     /// Why the host ended, if it did (until one starts again).
     exit_reason: Option<String>,
+    /// `temzdf eval`s the host runs, by number, and the last number given.
+    evals: HashSet<u64>,
+    next_eval: u64,
+    /// Those that ended, for the server to answer (`take_evaluated`).
+    evaluated: Vec<(u64, CodeResult)>,
 }
 
 /// `<C-c>`, whatever the lock keys (kitty's keyboard protocol reports Caps
@@ -286,8 +293,35 @@ impl Session {
         Ok(out)
     }
 
+    /// `temzdf eval`: run `code` in the script host as a dispatched task.
+    /// Its number, to find its answer in [`Session::take_evaluated`]; an
+    /// error when no host runs.
+    pub fn start_eval(&mut self, code: Code) -> Result<u64, String> {
+        if !self.script.running() {
+            let why = self.script.exit_reason.as_deref().unwrap_or("it did not start; see the log");
+            return Err(format!("the script host is not running ({why}); <C-b>r restarts it"));
+        }
+        self.script.next_eval += 1;
+        let id = self.script.next_eval;
+        if !self.script.send(&ToHost::RunCode { id, code }) {
+            return Err("the script host is gone".into());
+        }
+        self.script.evals.insert(id);
+        Ok(id)
+    }
+
+    /// The `temzdf eval`s that ended since asked last: number and result.
+    pub fn take_evaluated(&mut self) -> Vec<(u64, CodeResult)> {
+        std::mem::take(&mut self.script.evaluated)
+    }
+
     /// Stop the host; run deferred operations so nothing waits for it.
     fn drop_host(&mut self) -> Outcome {
+        // `temzdf eval`s go with it.
+        for id in std::mem::take(&mut self.script.evals) {
+            let result = Err("the script host stopped before the code finished".into());
+            self.script.evaluated.push((id, CodeResult { printed: Vec::new(), result }));
+        }
         self.script.host = None;
         self.script.loading = None;
         self.script.tasks.clear();
@@ -802,6 +836,12 @@ impl Session {
                 if self.script.atomic == Some(token) {
                     self.script.atomic = None;
                     return self.pump();
+                }
+                Outcome::None
+            }
+            FromHost::CodeDone { id, result } => {
+                if self.script.evals.remove(&id) {
+                    self.script.evaluated.push((id, result));
                 }
                 Outcome::None
             }

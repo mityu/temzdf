@@ -41,6 +41,13 @@ type Host = {
   awaitPromise(id: number, settle: (ok: boolean, json: string) => void): void;
   /** Write a line to the log. */
   print(level: string, text: string): void;
+  /** A line `temzdf eval`'s code printed (task `task`), to stderr when `err`. */
+  evalPrint(task: number, err: boolean, text: string): void;
+  /** A step of `temzdf eval` as a function of its scope and its view of
+   * `temzdf` (src/eval.rs); throws a SyntaxError saying where. */
+  compile(task: number, name: string, code: string): (scope: object, view: object) => () => Promise<unknown>;
+  /** `temzdf eval`'s code ended: `{ value }` or `{ error }` (JSON). */
+  evalDone(task: number, outcome: string): void;
 };
 type Temzdf = typeof import("temzdf");
 type Actions = Temzdf["action"];
@@ -188,6 +195,17 @@ function atomicWith<T>(token: Token, fn: () => T): T {
     atomicToken = outer;
     host.atomicEnd(t);
   }
+}
+
+// A new dispatched task: its number and its `ctx`.
+function taskContext() {
+  const task = host.taskStart();
+  const token = { Task: task };
+  const ctx = Object.freeze({
+    action: commands(() => token),
+    atomic: <T>(f: () => T) => atomicWith(token, f),
+  });
+  return { task, ctx };
 }
 
 /** An open prompt (openPrompt), by its buffer. */
@@ -361,12 +379,7 @@ const temzdf: Temzdf = {
   // through its `ctx`.
   dispatch(fn) {
     check("dispatch", func(), fn);
-    const task = host.taskStart();
-    const token = { Task: task };
-    const ctx = Object.freeze({
-      action: commands(() => token),
-      atomic: <T>(f: () => T) => atomicWith(token, f),
-    });
+    const { task, ctx } = taskContext();
     Promise.resolve()
       .then(() => fn(ctx))
       .then(
@@ -525,3 +538,52 @@ const logs: typeof console = Object.freeze({
   debug: print("debug"),
 });
 g.console = logs;
+
+// `temzdf eval` (host.rs `run_code`): its steps, in order, as a dispatched
+// task, stopping at the first that fails. The code sees `temzdf` (the
+// module, its `action` and `atomic` the task's) and a `console` printing
+// to the caller, both in the steps' shared scope, not globals: other
+// code goes on logging to the session log. Returns the task's number.
+g.__temzdfEval = (stepsJson: string, print: boolean): number => {
+  const steps = JSON.parse(stepsJson) as { name: string; code: string }[];
+  const { task, ctx } = taskContext();
+  const view = Object.freeze({ ...temzdf, action: ctx.action, atomic: ctx.atomic });
+  const printTo =
+    (err: boolean) =>
+    (...args: unknown[]) =>
+      host.evalPrint(task, err, args.map(show).join(" "));
+  const evalConsole: typeof console = Object.freeze({
+    log: printTo(false),
+    info: printTo(false),
+    debug: printTo(false),
+    warn: printTo(true),
+    error: printTo(true),
+  });
+  const scope: Record<string, unknown> = Object.create(null);
+  scope.temzdf = view;
+  scope.console = evalConsole;
+  let step = "";
+  const run = async (): Promise<unknown> => {
+    let value: unknown;
+    for (const s of steps) {
+      step = s.name;
+      value = await host.compile(task, s.name, s.code)(scope, view)();
+    }
+    return value;
+  };
+  // undefined (and functions) as Node's -p shows it.
+  const asJson = (v: unknown): string => JSON.stringify(v) ?? "undefined";
+  Promise.resolve()
+    .then(run)
+    .then((v) => {
+      step = "the value";
+      return { value: print ? asJson(v) : null };
+    })
+    .catch((e: unknown) => ({ error: { step, ...(JSON.parse(errorJson(e)) as object) } }))
+    .then((outcome) => {
+      host.evalDone(task, JSON.stringify(outcome));
+      // Its error went to the caller, not to the session.
+      host.taskDone(task, "null");
+    });
+  return task;
+};

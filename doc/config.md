@@ -1098,7 +1098,9 @@ Commands named `ns.name` are in a namespace: `action.ns.name()`
 (`temzdf action ns.name`), the name camelCased as the others
 (`text.get-text` is `action.text.getText`).
 `temzdf action NAME ARGS...` runs the same commands from a shell (`temzdf
-action split right`). `resizePane("left", 5)` moves a border of the focused
+action split right`), as `temzdf eval` does in JavaScript (`temzdf eval -c
+'temzdf.action.split("right")'`, "Running code from the command line"
+below). `resizePane("left", 5)` moves a border of the focused
 pane five cells left (as tmux's `resize-pane -L 5`), `resizePane("wider",
 5)` makes it five cells wider (as Vim's `5<C-w>>`), `resizePane({ width:
 40 })` sets its size.
@@ -1111,6 +1113,47 @@ of the screen, makes the new pane that size and keeps it so (as Vim's
 leave it, `resizePane` and dragging its border change it; it may be smaller
 than other panes can be). `focusPane(id)` focuses a pane, going to its tab
 page.
+
+## Running code from the command line
+
+`temzdf eval` runs JavaScript or TypeScript in a running session's script
+host (as Neovim's `--remote-expr` or `emacsclient --eval`): the way to
+drive a session, or ask it something, from a shell.
+
+```sh
+temzdf eval -p -c 'temzdf.action.panes().length'   # prints 2
+temzdf eval -c 'temzdf.action.split("right")'
+temzdf eval -c 'const p = temzdf.action.panes()' -c 'console.log(p.map((x) => x.kind))'
+temzdf eval script.ts                               # a file
+temzdf eval - < script.ts                           # standard input
+temzdf eval -s NAME ...   # session NAME (else the one this runs in, else the only one)
+```
+
+- The code runs as a dispatched task: `await` works. It sees one name of
+  its own, `temzdf` (what `import * as temzdf from "temzdf"` gives),
+  whose `action` and `atomic` are the task's (`ctx.action`, `ctx.atomic`),
+  so `temzdf.action.*` works after an `await` too; the rest of the API
+  (`o`, `keymap`, `on`, `feedkeys`, ...) wants a context, as in a task:
+  `temzdf.atomic(() => temzdf.o.timeoutlen)`. Other shipped modules come
+  by `await import("temzdf/ff")`; `import` statements work as well (a
+  file's relative ones from its directory, others' from the current
+  one), and `import { action } from "temzdf"` gives the task's too, so a
+  file can be written with the editor's types. TypeScript is stripped of
+  its types, as the configuration is.
+- Each `-c` runs in turn, stopping at the first that fails; what one
+  declares at its top level (`const`, `let`, functions, classes, imports)
+  the later ones see, as a browser console's inputs do. A FILE or `-c`,
+  not both. Declarations last for that one `temzdf eval`; globals
+  (`globalThis.x = 1`) stay until the script host restarts.
+- Output as Node's: `console.log`, `info` and `debug` print to stdout,
+  `console.error` and `warn` to stderr (the eval's own: the session's log
+  keeps the configuration's), when the code ends. `-p` prints the last
+  value (of the last statement, when it is an expression; a Promise
+  awaited) as JSON, `undefined` for undefined and functions.
+- An exception: its message and where on stderr (`-c 2: Error: boom` and
+  its stack, `FILE:LINE:COLUMN`), and the exit code is 1.
+- `--timeout SECONDS` (default 10): how long to wait for the session, as
+  `temzdf action`'s.
 
 ## Testing scripts
 

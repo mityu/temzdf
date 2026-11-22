@@ -5,6 +5,8 @@
 //! doc/design/script-host.md.
 
 #[cfg(feature = "host")]
+mod eval;
+#[cfg(feature = "host")]
 mod host;
 #[cfg(feature = "host")]
 pub mod link;

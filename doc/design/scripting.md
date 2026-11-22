@@ -310,6 +310,19 @@ Decided (the whole model was settled with the user on 2026-10-26):
 - **CLI requests always time out on the client side**: `temzdf action` (and
   other requests) give up after 10 s by default, adjustable with an option;
   the server's work is not interrupted, the command just fails.
+- **`temzdf eval` runs the configuration's language from the command
+  line** (decided 2026-11-22, as Neovim's `--remote-expr` and
+  `emacsclient --eval`): a file, standard input or `-c CODE`s, run as a
+  dispatched task in the session's host, `await` allowed; `console.log`
+  prints to the caller's stdout, `console.error` to its stderr, `-p` prints
+  the last value as JSON, an exception exits with 1. The only name it adds
+  is `temzdf` (the module, its `action` and `atomic` the task's), not a
+  global: nothing it declares outlives it. It is the way to drive a session
+  and ask about it from a shell (what `temzdf ls` no longer shows: panes,
+  tabs, buffers, files). `temzdf action` stays for now; whether it goes or
+  shrinks to what a shell needs (opening a file) is to be decided
+  (`todo.md`). How it is built: `doc/design/script-host.md`, "temzdf
+  eval".
 - **Context tokens** (decided 2026-10-26, cheap enough to have from the
   start): each call of a mapped or hook function, and each dispatched task,
   has an id; every command carries the id it was issued under, and the

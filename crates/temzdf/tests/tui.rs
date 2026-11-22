@@ -188,6 +188,31 @@ impl Env {
         cmd
     }
 
+    /// `temzdf eval ARGS...` with `stdin`: its stdout, stderr and exit code.
+    fn eval(&self, args: &[&str], stdin: &str) -> (String, String, i32) {
+        use std::io::Write;
+        let mut child = self
+            .command()
+            .arg("eval")
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        (text(&out.stdout), text(&out.stderr), out.status.code().unwrap_or(-1))
+    }
+
+    /// The value of `code` in session `session` (`temzdf eval -p`), as JSON.
+    fn query(&self, session: &str, code: &str) -> String {
+        let (out, err, status) = self.eval(&["-s", session, "-p", "-c", code], "");
+        assert_eq!(status, 0, "temzdf eval -c {code:?} failed: {err}");
+        out.trim_end().to_owned()
+    }
+
     /// Run a temzdf command (not attached to a terminal) and return its output.
     fn run(&self, args: &[&str]) -> String {
         let out = self.command().args(args).output().unwrap();
@@ -288,6 +313,83 @@ fn the_cursor_stays_at_the_prompt_while_a_program_rewrites_the_line_above() {
     assert_eq!(&shown[from..], [(0, 1)], "the cursor showed elsewhere: {shown:?}");
     env.run(&["kill-session", "c"]);
     t.wait_exit();
+}
+
+#[test]
+fn eval_runs_code_in_the_session_and_prints_as_node_does() {
+    let env = Env::new("eval");
+    let mut t = Term::spawn(&[BIN, "-s", "e"], &env.options());
+    t.wait_for("the prompt", prompt);
+    // A file: TypeScript, imports (relative, "temzdf", a shipped module),
+    // top-level await, and its last value with -p.
+    std::fs::write(env.path("lib.ts"), "export const twice = (n: number): number => 2 * n;\n").unwrap();
+    let code = r#"import { twice } from "./lib.ts";
+import { action } from "temzdf";
+import * as ff from "temzdf/ff";
+const n: number = twice(21);
+await new Promise((r) => setTimeout(r, 20));
+console.log("panes", action.panes().length, typeof ff.defineSource);
+n
+"#;
+    std::fs::write(env.path("code.ts"), code).unwrap();
+    let file = env.path("code.ts").display().to_string();
+    let (out, err, status) = env.eval(&["-s", "e", "-p", &file], "");
+    assert_eq!((out.as_str(), err.as_str(), status), ("panes 1 function\n42\n", "", 0));
+    // Standard input.
+    let (out, err, status) = env.eval(&["-p", "-"], "const s: string = 'in';\ns + 'put'\n");
+    assert_eq!((out.as_str(), status), ("\"input\"\n", 0), "{err}");
+    // Each -c in turn, seeing the declarations before it; a shipped module
+    // by `await import`.
+    let steps = [
+        "const a = 20",
+        "let b: number = a + 1",
+        "const ff = await import('temzdf/ff'); [b * 2, typeof ff.createList]",
+    ];
+    let (out, err, status) = env.eval(&["-p", "-c", steps[0], "-c", steps[1], "-c", steps[2]], "");
+    assert_eq!((out.as_str(), status), ("[42,\"function\"]\n", 0), "{err}");
+    // As Node: console.log and info to stdout, error and warn to stderr;
+    // no value without -p. Nothing in the session's log.
+    let code = "console.log('o1'); console.error('e1'); console.info('o2', {x: 1}); console.warn('e2'); 7";
+    let (out, err, status) = env.eval(&["-c", code], "");
+    assert_eq!((out.as_str(), err.as_str(), status), ("o1\no2 {\"x\":1}\n", "e1\ne2\n", 0));
+    let log = env.log("e");
+    assert!(!log.contains("o1") && !log.contains("e1"), "in the session's log:\n{log}");
+    // `temzdf.action` is the task's: it works after an await.
+    let code =
+        "await new Promise((r) => setTimeout(r, 20)); temzdf.action.split('right'); temzdf.action.panes().length";
+    assert_eq!(env.query("e", code), "2");
+    t.wait_for("a prompt in the right pane", |s| is_prompt(&s.row_from(0, 50)));
+    // The rest of the API wants a context: the task's atomic section.
+    assert_eq!(env.query("e", "await null; temzdf.atomic(() => temzdf.o.timeoutlen)"), "1000");
+    // The first -c that fails stops the rest; stderr says which and
+    // where, and the exit code is 1.
+    let steps = ["console.log('one')", "\n  throw new Error('boom')", "console.log('three')"];
+    let (out, err, status) = env.eval(&["-c", steps[0], "-c", steps[1], "-c", steps[2]], "");
+    assert_eq!((out.as_str(), status), ("one\n", 1), "{err}");
+    assert!(err.starts_with("-c 2: Error: boom\n") && err.contains("(-c 2:2:"), "{err}");
+    // And in a file, the line.
+    std::fs::write(env.path("bad.js"), "const a = 1;\nnope(a);\n").unwrap();
+    let (_, err, status) = env.eval(&[&env.path("bad.js").display().to_string()], "");
+    assert_eq!(status, 1);
+    assert!(err.contains("ReferenceError: nope is not defined") && err.contains("bad.js:2:"), "{err}");
+    // A FILE or -c, not both.
+    let (_, err, status) = env.eval(&["-c", "1", &file], "");
+    assert_eq!(status, 2, "a usage error: {err}");
+    assert!(err.contains("cannot be used with"), "{err}");
+}
+
+#[test]
+fn eval_runs_in_the_session_s_names() {
+    let env = Env::new("eval-s");
+    let mut e = Term::spawn(&[BIN, "-s", "e"], &env.options());
+    e.wait_for("the prompt", prompt);
+    let mut f = Term::spawn(&[BIN, "-s", "f"], &env.options());
+    f.wait_for("the prompt", prompt);
+    assert_eq!(env.query("e", "temzdf.action.sessionName()"), "\"e\"");
+    assert_eq!(env.query("f", "temzdf.action.sessionName()"), "\"f\"");
+    // Two sessions: which one?
+    let (_, err, status) = env.eval(&["-c", "1"], "");
+    assert_ne!(status, 0, "{err}");
 }
 
 #[test]

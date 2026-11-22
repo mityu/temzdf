@@ -16,7 +16,7 @@ use termpix_core::input::{KeyEvent, MouseEvent};
 use crate::{MAX_MESSAGE, recv_timed, shared};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 17;
+pub const VERSION: u32 = 18;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// Attach and show the session at this size, with this frontend.
@@ -58,6 +58,9 @@ pub enum ClientMsg {
     },
     Kill,
     Action(Vec<String>),
+    /// `temzdf eval`: run code in the session's script host, answered with
+    /// `Evaluated`.
+    Eval(crate::script::Code),
     GetAppearance,
     /// `temzdf copy`: record `text` in the copy history (to `register`),
     /// answered with `Done`.
@@ -103,6 +106,8 @@ pub enum ServerMsg {
     Done(Result<(), String>),
     /// The answer to `GetCopy`.
     Copied(Result<String, String>),
+    /// The answer to `Eval`.
+    Evaluated(crate::script::CodeResult),
 }
 
 /// An image whose pixels (`width * height * 4` bytes) come apart from the

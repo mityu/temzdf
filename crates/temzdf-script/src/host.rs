@@ -15,11 +15,13 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use rquickjs::context::EvalOptions;
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::promise::PromiseState;
 use rquickjs::{Context, Ctx, Exception, Function, Module, Persistent, Runtime, Value};
 use temzdf_protocol::script::{
-    Fallback, FromHost, FuncId, HostOp, Keepalive, ScriptError, ScriptValue, TaskId, ToHost, Token,
+    Code, CodeResult, Fallback, FromHost, FuncId, HostOp, Keepalive, Printed, ScriptError, ScriptValue, TaskId, ToHost,
+    Token,
 };
 
 use crate::link::{Link, Received, StreamLink};
@@ -126,6 +128,8 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         open_atomic: RefCell::new(Vec::new()),
         running_tasks: RefCell::new(std::collections::BTreeSet::new()),
         commands: RefCell::new(Vec::new()),
+        evals: RefCell::default(),
+        queued_code: RefCell::default(),
         promises: RefCell::default(),
         settled: RefCell::default(),
         replies: RefCell::default(),
@@ -141,8 +145,14 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         // Answers that came while code ran (a nested wait took them) settle
         // before waiting: no message may come to wake the loop for them.
         loop {
+            // `temzdf eval`s that came while code waited.
+            let queued = st.queued_code.borrow_mut().pop_front();
+            if let Some((id, code)) = queued {
+                context.with(|ctx| run_code(&ctx, &st, id, code));
+                continue;
+            }
             context.with(|ctx| run_jobs(&ctx, &st));
-            if st.settled.borrow().is_empty() {
+            if st.settled.borrow().is_empty() && st.queued_code.borrow().is_empty() {
                 break;
             }
             context.with(|ctx| settle_promises(&ctx, &st));
@@ -157,6 +167,7 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
             }
             Ok(ToHost::Call { id, func, args }) => context.with(|ctx| run_call(&ctx, &st, id, func, args)),
             Ok(ToHost::Eval { id, funcs, args }) => context.with(|ctx| run_eval(&ctx, &st, id, &funcs, args)),
+            Ok(ToHost::RunCode { id, code }) => context.with(|ctx| run_code(&ctx, &st, id, code)),
             // Nothing runs: an interrupt or a late answer has nothing to stop.
             Ok(ToHost::Interrupt) => {
                 st.take_interrupt_message();
@@ -226,6 +237,11 @@ struct State {
     open_atomic: RefCell<Vec<Token>>,
     running_tasks: RefCell<std::collections::BTreeSet<TaskId>>,
     commands: RefCell<Vec<String>>,
+    /// The `temzdf eval`s running, by their task.
+    evals: RefCell<std::collections::HashMap<TaskId, EvalRun>>,
+    /// `temzdf eval`s that came while code waited for an answer: started
+    /// once nothing runs.
+    queued_code: RefCell<std::collections::VecDeque<(u64, Code)>>,
     /// Promises commands answered with, by number: the function settling
     /// each (`(ok, json)`), and answers that came while code ran.
     promises: RefCell<std::collections::HashMap<u64, Persistent<Function<'static>>>>,
@@ -241,6 +257,20 @@ struct State {
     stopped: Rc<Cell<Option<Stop>>>,
     /// Where log lines go (stderr, the session's log file, but in tests).
     log: Box<dyn Fn(&str)>,
+}
+
+/// A `temzdf eval` running as a task: its request's number, what it
+/// printed so far, and how its steps' positions moved (`eval::Positions`).
+struct EvalRun {
+    id: u64,
+    printed: Vec<Printed>,
+    positions: Vec<(String, crate::eval::Positions)>,
+}
+
+thread_local! {
+    /// The directories relative imports of `temzdf eval`'s steps start
+    /// from, by step name (`-c 1`, `[stdin]`; a file's is its own).
+    static EVAL_BASES: RefCell<std::collections::HashMap<String, PathBuf>> = RefCell::default();
 }
 
 /// Why the interrupt handler stopped the interpreter.
@@ -392,9 +422,106 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
             s.log(&format!("temzdf script [{level}]: {text}"));
         })?,
     )?;
+    let s = st.clone();
+    host.set(
+        "evalPrint",
+        Function::new(ctx.clone(), move |task: f64, err: bool, text: String| {
+            if let Some(run) = s.evals.borrow_mut().get_mut(&(task as TaskId)) {
+                run.printed.push(if err { Printed::Err(text) } else { Printed::Out(text) });
+            }
+        })?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "compile",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, task: f64, name: String, code: String| {
+            let compiled = crate::eval::compile(&name, &code).map_err(|e| Exception::throw_syntax(&ctx, &e))?;
+            if let Some(run) = s.evals.borrow_mut().get_mut(&(task as TaskId)) {
+                run.positions.push((name.clone(), compiled.positions));
+            }
+            let mut options = EvalOptions::default();
+            options.strict = false;
+            options.filename = Some(name);
+            ctx.eval_with_options::<Function, _>(compiled.source, options)
+        })?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "evalDone",
+        Function::new(ctx.clone(), move |task: f64, outcome: String| {
+            let Some(run) = s.evals.borrow_mut().remove(&(task as TaskId)) else { return };
+            let result = match serde_json::from_str::<EvalOutcome>(&outcome) {
+                Ok(EvalOutcome { error: Some(e), .. }) => Err(eval_error(&run, &e)),
+                Ok(EvalOutcome { value, .. }) => Ok(value),
+                Err(e) => Err(format!("internal: evalDone: {e}")),
+            };
+            s.send(&FromHost::CodeDone { id: run.id, result: CodeResult { printed: run.printed, result } });
+        })?,
+    )?;
     ctx.globals().set("__host", host)?;
     ctx.eval::<(), _>(PRELUDE)?;
     ctx.eval::<(), _>(POLYFILLS)
+}
+
+/// How a `temzdf eval` ended, as the prelude says (`evalDone`): its value
+/// as JSON (with `-p`), or its error.
+#[derive(serde::Deserialize)]
+struct EvalOutcome {
+    #[serde(default)]
+    value: Option<String>,
+    #[serde(default)]
+    error: Option<EvalError>,
+}
+
+#[derive(serde::Deserialize)]
+struct EvalError {
+    /// The step that failed (`-c 2`, the file).
+    step: String,
+    message: String,
+    #[serde(default)]
+    stack: Option<String>,
+}
+
+/// A failed `temzdf eval` as text: the step, the message, where (columns
+/// on a step's first line its own, not its wrapper's).
+fn eval_error(run: &EvalRun, e: &EvalError) -> String {
+    let mut text = e.message.clone();
+    // A syntax error says where already.
+    if !text.contains(&format!("{}:", e.step)) {
+        text = format!("{}: {text}", e.step);
+    }
+    // Not the prelude's frames (evaluated as `eval_script`): the code's.
+    let frames: Vec<&str> = e.stack.as_deref().unwrap_or("").lines().filter(|l| !l.contains("(eval_script:")).collect();
+    let stack = frames.join("\n");
+    if !stack.trim().is_empty() {
+        text = format!("{text}\n{}", stack.trim_end());
+    }
+    run.positions.iter().fold(text, |t, (name, positions)| positions.fix(&t, name))
+}
+
+/// Start `temzdf eval`'s code as a dispatched task (`__temzdfEval` in
+/// `prelude.ts`); it answers with `CodeDone` when it ends.
+fn run_code(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, code: Code) {
+    EVAL_BASES.with(|bases| {
+        let mut bases = bases.borrow_mut();
+        for s in code.steps.iter().filter(|s| !Path::new(&s.name).is_absolute()) {
+            bases.insert(s.name.clone(), code.base.clone());
+        }
+    });
+    let steps = json(&code.steps);
+    st.stopped.set(None);
+    let started = st.unattended(|| {
+        ctx.globals().get::<_, Function>("__temzdfEval").and_then(|f| f.call::<_, f64>((steps, code.print)))
+    });
+    match started {
+        Ok(task) => {
+            st.evals.borrow_mut().insert(task as TaskId, EvalRun { id, printed: Vec::new(), positions: Vec::new() });
+        }
+        Err(e) => {
+            let result = Err(error_of(ctx, e).to_string());
+            st.send(&FromHost::CodeDone { id, result: CodeResult { printed: Vec::new(), result } });
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -659,6 +786,8 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
                 }
                 Ok(ToHost::Call { id, func, args }) => run_call(ctx, st, id, func, args),
                 Ok(ToHost::Eval { id, funcs, args }) => run_eval(ctx, st, id, &funcs, args),
+                // Started once nothing runs.
+                Ok(ToHost::RunCode { id, code }) => st.queued_code.borrow_mut().push_back((id, code)),
                 // Settled once nothing runs (as timers fire).
                 Ok(ToHost::Resolve { promise, result }) => st.settled.borrow_mut().push_back((promise, result)),
                 // One that already stopped a timer is not for this call.
@@ -930,7 +1059,16 @@ impl State {
             if let Token::Task(t) = token
                 && self.running_tasks.borrow_mut().remove(&t)
             {
-                let result = Err(ScriptError::new("interrupted".to_owned()));
+                // An eval's error goes to whoever ran it.
+                let eval = self.evals.borrow_mut().remove(&t);
+                let result = match eval {
+                    Some(run) => {
+                        let result = CodeResult { printed: run.printed, result: Err("interrupted".into()) };
+                        self.send(&FromHost::CodeDone { id: run.id, result });
+                        Ok(())
+                    }
+                    None => Err(ScriptError::new("interrupted".to_owned())),
+                };
                 self.send(&FromHost::TaskDone { task: t, result });
             }
         }
@@ -1078,7 +1216,9 @@ impl Resolver for Resolve {
             return Ok(name.into());
         }
         if name.starts_with("./") || name.starts_with("../") || name.starts_with('/') {
-            let dir = Path::new(base).parent().unwrap_or(Path::new("."));
+            // A `temzdf eval` step not named by a path: the caller's directory.
+            let eval_base = EVAL_BASES.with(|b| b.borrow().get(base).cloned());
+            let dir = eval_base.as_deref().unwrap_or_else(|| Path::new(base).parent().unwrap_or(Path::new(".")));
             return Ok(module_file(&normalize(&dir.join(name))).display().to_string());
         }
         Err(Exception::throw_message(

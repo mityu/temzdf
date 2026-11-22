@@ -103,8 +103,12 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
     let mut seq = 0u64;
     let mut dirty = true;
     let mut shown_pointer = Pointer::Default;
-    // `temzdf action` requests that arrived while a script ran.
-    let mut queued: VecDeque<(ClientId, Vec<String>)> = VecDeque::new();
+    // `temzdf action` and `temzdf eval` requests that arrived while a
+    // script ran.
+    let mut queued: VecDeque<(ClientId, Request)> = VecDeque::new();
+    // `temzdf eval`s running, by the session's number for each: the
+    // client waiting for it.
+    let mut evaluating: HashMap<u64, ClientId> = HashMap::new();
     // An action that started scripts ("before" hooks): answered when they
     // are done, with why one cancelled it if one did.
     let mut answering: Option<ClientId> = None;
@@ -384,9 +388,17 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 ClientMsg::Action(words) => {
                     // Scripts run synchronously: actions wait, like input.
                     if session.holds_input() || answering.is_some() {
-                        queued.push_back((id, words));
+                        queued.push_back((id, Request::Action(words)));
                     } else {
                         outcome = run_action(&mut session, &mut clients, &mut answering, id, &words, now);
+                    }
+                }
+                // As actions, in turn with them.
+                ClientMsg::Eval(code) => {
+                    if session.holds_input() || answering.is_some() {
+                        queued.push_back((id, Request::Eval(code)));
+                    } else {
+                        start_eval(&mut session, &mut clients, &mut evaluating, id, code);
                     }
                 }
             },
@@ -399,9 +411,20 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
         }
         while !session.holds_input()
             && answering.is_none()
-            && let Some((id, words)) = queued.pop_front()
+            && let Some((id, request)) = queued.pop_front()
         {
-            outcome = outcome.merge(run_action(&mut session, &mut clients, &mut answering, id, &words, Instant::now()));
+            match request {
+                Request::Action(words) => {
+                    let o = run_action(&mut session, &mut clients, &mut answering, id, &words, Instant::now());
+                    outcome = outcome.merge(o);
+                }
+                Request::Eval(code) => start_eval(&mut session, &mut clients, &mut evaluating, id, code),
+            }
+        }
+        for (eval, result) in session.take_evaluated() {
+            if let Some(c) = evaluating.remove(&eval).and_then(|id| clients.remove(&id)) {
+                let _ = c.tx.send(ServerMsg::Evaluated(result));
+            }
         }
         outcome = outcome.merge(session.poll(Instant::now()));
         // The latest client left (went, detached): another takes over.
@@ -539,6 +562,35 @@ fn wait_for(
         timeout = timeout.min(due.saturating_duration_since(now));
     }
     timeout
+}
+
+/// A request waiting while scripts run.
+enum Request {
+    Action(Vec<String>),
+    Eval(temzdf_protocol::script::Code),
+}
+
+/// Start `temzdf eval`'s code for client `id`: answered once it ends
+/// (`evaluating` maps the session's number for it to the client), or now
+/// when it cannot start.
+fn start_eval(
+    session: &mut Session,
+    clients: &mut HashMap<ClientId, Client>,
+    evaluating: &mut HashMap<u64, ClientId>,
+    id: ClientId,
+    code: temzdf_protocol::script::Code,
+) {
+    match session.start_eval(code) {
+        Ok(eval) => {
+            evaluating.insert(eval, id);
+        }
+        Err(e) => {
+            if let Some(c) = clients.remove(&id) {
+                let result = temzdf_protocol::script::CodeResult { printed: Vec::new(), result: Err(e) };
+                let _ = c.tx.send(ServerMsg::Evaluated(result));
+            }
+        }
+    }
 }
 
 /// Run `temzdf action` words for client `id` and answer it.
@@ -714,7 +766,8 @@ fn start_reader(id: ClientId, stream: &UnixStream, tx: Sender<Event>) -> Result<
 fn start_writer(stream: UnixStream, rx: mpsc::Receiver<ServerMsg>, shared_memory: Arc<AtomicBool>) -> Result<()> {
     std::thread::Builder::new().name("temzdf-client-out".into()).spawn(move || {
         for msg in rx {
-            let exit = matches!(msg, ServerMsg::Exit(_) | ServerMsg::Info(_) | ServerMsg::Done(_));
+            let exit =
+                matches!(msg, ServerMsg::Exit(_) | ServerMsg::Info(_) | ServerMsg::Done(_) | ServerMsg::Evaluated(_));
             let size = proto::timing().then(|| proto::frame_size(&msg)).flatten();
             let start = Instant::now();
             let sent = proto::send_server(&stream, msg, shared_memory.load(Ordering::Relaxed));

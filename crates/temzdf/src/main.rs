@@ -157,6 +157,29 @@ enum Cmd {
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         action: Vec<String>,
     },
+    /// Run JavaScript or TypeScript in a session's script host, as a
+    /// dispatched task (`await` works): FILE (`-`: standard input), or each
+    /// -c CODE in turn, stopping at the first that fails (top-level
+    /// declarations are seen by the later ones). The code sees `temzdf`,
+    /// the module (its `action` and `atomic` this task's); console.log
+    /// prints to stdout, console.error to stderr. Exits with 1 when it
+    /// throws.
+    Eval {
+        /// The session (the only one when left out).
+        #[arg(short, long, value_name = "NAME")]
+        session: Option<String>,
+        /// Code to run (repeated: one after another).
+        #[arg(short = 'c', long = "code", value_name = "CODE", conflicts_with = "file")]
+        code: Vec<String>,
+        /// Print the last value as JSON.
+        #[arg(short, long)]
+        print: bool,
+        /// Give up waiting for the session after this long.
+        #[arg(long, value_name = "SECONDS", default_value_t = 10.0)]
+        timeout: f64,
+        #[arg(value_name = "FILE", required_unless_present = "code")]
+        file: Option<PathBuf>,
+    },
     /// Record standard input in a session's copy history, as if a pane had
     /// copied it (doc/design/registers.md); it goes to the clipboard as the
     /// session's o.clipboard says.
@@ -329,6 +352,16 @@ fn main() -> Result<()> {
             let timeout = std::time::Duration::try_from_secs_f64(timeout.max(0.001))
                 .map_err(|_| anyhow::anyhow!("--timeout {timeout}: not a number of seconds"))?;
             return client::action(&temzdf_client::resolve_here(session)?, action, timeout);
+        }
+        Some(Cmd::Eval { session, code, print, timeout, file }) => {
+            warn_unused(&start_flags, "eval");
+            let timeout = std::time::Duration::try_from_secs_f64(timeout.max(0.001))
+                .map_err(|_| anyhow::anyhow!("--timeout {timeout}: not a number of seconds"))?;
+            let code = client::eval_code(code, file.as_deref(), print)?;
+            if !client::eval(&temzdf_client::resolve_here(session)?, code, timeout)? {
+                std::process::exit(1);
+            }
+            return Ok(());
         }
         Some(Cmd::Copy { session, register, line }) => {
             warn_unused(&start_flags, "copy");

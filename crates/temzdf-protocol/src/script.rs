@@ -136,9 +136,53 @@ pub enum ToHost {
         promise: u64,
         result: Result<ScriptValue, String>,
     },
+    /// Run code from `temzdf eval` as a dispatched task: its steps in
+    /// order, each `-c` (or the one file) a step, stopping at the first
+    /// that fails; answered by [`FromHost::CodeDone`].
+    RunCode {
+        id: u64,
+        code: Code,
+    },
     /// Stop the running synchronous code (`<C-c>`).
     Interrupt,
     Shutdown,
+}
+
+/// What `temzdf eval` runs (doc/design/script-host.md, "temzdf eval").
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Code {
+    pub steps: Vec<CodeStep>,
+    /// The directory relative imports of steps not named by a path start
+    /// from (the caller's).
+    pub base: PathBuf,
+    /// Answer with the last step's value as JSON (`temzdf eval -p`).
+    pub print: bool,
+}
+
+/// One `-c` of `temzdf eval`, or its file: JavaScript or TypeScript.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CodeStep {
+    /// Its name in messages and stacks: `-c 1`, the file's absolute path,
+    /// `[stdin]`.
+    pub name: String,
+    pub code: String,
+}
+
+/// A line `temzdf eval`'s code printed (`console.log`: `Out`,
+/// `console.error`: `Err`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Printed {
+    Out(String),
+    Err(String),
+}
+
+/// How `temzdf eval`'s code ended: what it printed, then its value as
+/// JSON (with `print`; `None` without), or the error as text (message and
+/// where).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeResult {
+    pub printed: Vec<Printed>,
+    pub result: Result<Option<String>, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -172,6 +216,11 @@ pub enum FromHost {
     /// `atomic(fn)` began or ended: hold everything else meanwhile.
     AtomicBegin(Token),
     AtomicEnd(Token),
+    /// A [`ToHost::RunCode`] ended (its task's `TaskDone` follows).
+    CodeDone {
+        id: u64,
+        result: CodeResult,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -303,6 +352,21 @@ mod tests {
         });
         round_trip(&ToHost::Reply { req: 1, result: Ok(v) });
         round_trip(&ToHost::Eval { id: 8, funcs: vec![3, 4], args: vec![] });
+        round_trip(&ToHost::RunCode {
+            id: 2,
+            code: Code {
+                steps: vec![CodeStep { name: "-c 1".into(), code: "1 + 1".into() }],
+                base: "/tmp".into(),
+                print: true,
+            },
+        });
+        round_trip(&FromHost::CodeDone {
+            id: 2,
+            result: CodeResult {
+                printed: vec![Printed::Out("hi".into()), Printed::Err("oh".into())],
+                result: Ok(Some("2".into())),
+            },
+        });
         round_trip(&FromHost::Values {
             id: 8,
             results: vec![Ok(true), Err(ScriptError { message: "x".into(), stack: None, command: true })],

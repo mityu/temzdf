@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use temzdf_protocol::script::{FromHost, HostOp, ScriptValue, ToHost, Token};
+use temzdf_protocol::script::{Code, CodeResult, CodeStep, FromHost, HostOp, Printed, ScriptValue, ToHost, Token};
 
 pub(crate) struct Session {
     to_host: UnixStream,
@@ -1011,4 +1011,80 @@ keymap.add("normal", "b", () => action.message("inner"));
     assert_eq!(describe(token, &op), "task1 message(got clip)");
     s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
     assert!(matches!(s.recv(), FromHost::TaskDone { result: Ok(()), .. }));
+}
+
+/// Run `temzdf eval`'s steps (named `-c 1`, ...) as request `id`; the
+/// commands it issued and how it ended.
+fn eval_code(s: &mut Session, id: u64, steps: &[&str], print: bool) -> (Vec<String>, CodeResult) {
+    let steps = steps
+        .iter()
+        .enumerate()
+        .map(|(i, code)| CodeStep { name: format!("-c {}", i + 1), code: (*code).to_owned() })
+        .collect();
+    s.send(ToHost::RunCode { id, code: Code { steps, base: s.dir.clone(), print } });
+    let mut log = Vec::new();
+    let mut task = None;
+    let mut done = None;
+    loop {
+        match s.serve(&mut log) {
+            FromHost::TaskStart(t) => task = Some(t),
+            FromHost::CodeDone { id: i, result } => {
+                assert_eq!(i, id);
+                done = Some(result);
+            }
+            FromHost::TaskDone { task: t, result } => {
+                assert_eq!(Some(t), task);
+                // Its errors are the caller's, not the session's.
+                assert!(result.is_ok(), "{result:?}");
+                break;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    (log, done.expect("CodeDone before TaskDone"))
+}
+
+#[test]
+fn eval_steps_share_their_declarations_print_to_the_caller_and_stop_at_a_failure() {
+    let mut s = Session::start(&[("config.js", ""), ("m.ts", "export const twice = (n: number): number => 2 * n;\n")]);
+    s.load("config.js");
+    ready_ok(s.serve(&mut Vec::new()));
+    let steps = [
+        "const a: number = 19; let [b] = [1]; function f() { return a + b; }",
+        "b += 1; console.log('out', {a}); console.error('err');",
+        r#"import { twice } from "./m.ts"; class C { v = twice(f()) }; await null; new C().v"#,
+    ];
+    let (log, r) = eval_code(&mut s, 1, &steps, true);
+    assert!(log.is_empty(), "{log:?}");
+    assert_eq!(r.printed, [Printed::Out(r#"out {"a":19}"#.into()), Printed::Err("err".into())]);
+    assert_eq!(r.result, Ok(Some("42".into())));
+    // Again: nothing was left behind (no redeclaration), and nothing in
+    // the globals.
+    let (_, r) = eval_code(&mut s, 2, &[steps[0], "typeof globalThis.a + typeof a"], true);
+    assert_eq!(r.result, Ok(Some(r#""undefinednumber""#.into())));
+    // `temzdf` is the eval's: its `action` the task's, after an await too;
+    // without -p, no value.
+    let (log, r) = eval_code(&mut s, 3, &["await null; temzdf.action.message('hi'); 5"], false);
+    assert_eq!(log, ["task3 message(hi)"]);
+    assert_eq!(r.result, Ok(None));
+    let (log, _) =
+        eval_code(&mut s, 4, &[r#"import { action } from "temzdf"; await null; action.split("down")"#], false);
+    assert_eq!(log, ["task4 split(down)"]);
+    // The second step fails: the third never runs, and the error says
+    // which step and where (the column its own, not its wrapper's).
+    let (log, r) = eval_code(&mut s, 5, &["console.log(1)", "  nope()", "temzdf.action.message('never')"], true);
+    assert!(log.is_empty(), "{log:?}");
+    assert_eq!(r.printed, [Printed::Out("1".into())]);
+    let e = r.result.unwrap_err();
+    assert!(e.starts_with("-c 2: ReferenceError: nope is not defined"), "{e}");
+    assert!(e.contains("(-c 2:1:3)"), "{e}");
+    assert!(!e.contains("eval_script"), "not the prelude's frames: {e}");
+    // A syntax error says where; the steps before it ran.
+    let (_, r) = eval_code(&mut s, 6, &["console.log('ran')", "let = ;"], false);
+    assert_eq!(r.printed, [Printed::Out("ran".into())]);
+    let e = r.result.unwrap_err();
+    assert!(e.starts_with("SyntaxError: -c 2:1:"), "{e}");
+    // The session's log keeps the rest of the scripts' console.
+    let (_, r) = eval_code(&mut s, 7, &["undefined"], true);
+    assert_eq!(r.result, Ok(Some("undefined".into())));
 }

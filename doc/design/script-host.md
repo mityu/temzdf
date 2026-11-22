@@ -18,6 +18,7 @@ configuration); how to write a configuration is in `doc/config.md`.
 | `crates/temzdf-script-guest` | The host built for `wasm32-wasip1`: a `Link` made of imports, and the export `run`. Empty when built for anything else. |
 | `crates/temzdf-script-runner` | Runs the guest in the server: `build.rs` builds it (nested cargo, profile `script-guest`) and precompiles it with Cranelift; at run time wasmtime's runtime alone loads it (`ScriptHost`). |
 | `crates/temzdf-script/runtime/` | The shipped scripts, an npm package bundled by `crates/temzdf-script/build.rs` with esbuild (npm packages from `package-lock.json`: `runtime/node_modules` by `npm ci`, else built by Nix into `$TEMZDF_NODE_MODULES`): `defaults.ts`, the default configuration (loaded before the user's); `polyfills.ts`, globals QuickJS lacks (`AbortController` from `abortcontroller-polyfill`, `URL` and `URLSearchParams` from `core-js-pure`; quickjs-ng has `atob`, `btoa` and `queueMicrotask` itself), evaluated first; `lib/validate.ts`, checking values with zod (`zod/mini`); modules scripts import as `temzdf/NAME` (`MODULES` in `build.rs`: `edit/vim`, `edit/notepad`, `pane/pdf`, `pane/terminal`, `pane/markdown`, `mode/normal`, `mode/input`, `buffers`, each a keyset (`keyset`, `runtime/lib/keyset.ts`: nothing on import, `enable()`/`disable()`); `command`, the Ex command registry every script shares; `keyset` itself, for scripts' own keysets; and `test`, tests of temzdf's behaviour on QUnit (`doc/dev/testing.md`, "Script tests")), kept as imports in every bundle so that one instance of each is shared; `defaults.ts` only enables them. The user's configuration is not bundled, nor are the tests beside the scripts (`runtime/**/*.test.ts`; `build.rs` asks cargo to run it again only for the files esbuild bundled, so editing a test rebuilds nothing). |
+| `crates/temzdf-script/src/eval.rs` | `temzdf eval`'s code made a function the host runs (below, "temzdf eval"). |
 | `crates/temzdf-script/src/types.rs` | The declarations `temzdf print-types` prints: `ts-types/temzdf-all.d.ts`, embedded as it is (`scripts/ts-types.ts` writes it from the declarations written by hand and the shipped modules). |
 | `crates/temzdf-server/src/session/script.rs` | The session's side: starting the host, holding input while scripts run, the frame stack that runs hooks nested, options, mapping and mode operations. |
 | `crates/temzdf-server/src/session/commands.rs` | The command registry (`action.*`, `temzdf action`). |
@@ -143,7 +144,66 @@ dependencies are cached apart from the server.
   server's, the session log (`temzdf ls -v` shows it). Error positions are those of the source as
   written: type stripping turns types into whitespace.
 - `temzdf action` gives up after `--timeout SECONDS` (default 10), e.g. while
-  a script holds the session.
+  a script holds the session; so does `temzdf eval`.
+
+## temzdf eval
+
+`temzdf eval FILE` (`-`: standard input) or `temzdf eval -c CODE [-c
+CODE ...]` runs code in the session's host (decided with the user on
+2026-11-22, as Neovim's `--remote-expr` and `emacsclient --eval`: the
+configuration's language from the command line rather than `temzdf
+action`'s rules for words; `doc/config.md` has how to use it).
+
+- **The way it travels.** The client reads the file (or standard input)
+  and sends `ClientMsg::Eval(Code)`: the steps (each `-c` named `-c 1`,
+  `-c 2`, ...; the file by its absolute path; standard input `[stdin]`),
+  the caller's directory, and `-p`. The server takes it in turn with
+  `temzdf action` requests (held while a script runs), and the session
+  sends `ToHost::RunCode` with a number of its own; the host answers
+  `FromHost::CodeDone` (what was printed, then the value or the error),
+  and the server answers the client with `ServerMsg::Evaluated`. A host
+  that is not running answers at once; one that stops or is replaced
+  meanwhile (a reload) answers each eval it had with an error.
+- **A dispatched task.** `__temzdfEval` (`prelude.ts`) starts a task as
+  `dispatch` does and runs the steps in turn, each awaited, stopping at the
+  first that throws. The task's `TaskDone` is always a success: an eval's
+  error goes to its caller, not to the session's messages and log. A task
+  cut off by an interrupt in its atomic section answers "interrupted"
+  (`close_cut_off`); one stopped by the unattended limit outside one
+  leaves its caller to its `--timeout` (nothing tells which task a stopped
+  job belonged to).
+- **One scope per eval, not the globals.** Each step is compiled
+  (`host.compile`, `src/eval.rs`) into `(function (scope, view) { with
+  (scope) { return async function () { "use strict"; STEP } } })`, `scope`
+  an object of that eval's alone holding `temzdf` and `console`. Top-level
+  statements of the step are rewritten, text spliced in so that lines
+  stay: `const`/`let`/`var` become assignments (the names put in `scope`
+  first), functions and classes are copied into `scope`, so later steps see
+  them, as a browser console's inputs do; `import` becomes `await
+  import(...)` destructured, and `import ... from "temzdf"` takes the
+  eval's `temzdf` (so `import { action } from "temzdf"` is the task's
+  too); a last expression statement is returned, the value `-p` prints
+  (`JSON.stringify`, `undefined` for what it gives nothing for). Nothing
+  reaches the globals, so running the same `const x` twice is no
+  redeclaration, and the other code's `console` still writes to the
+  session log: only the eval's `console` (in its scope) prints to the
+  caller. A global eval (QuickJS's `JS_EVAL_FLAG_ASYNC`) would have shared
+  declarations too, but in the global lexical scope, for good; a module
+  per step shares none.
+- **`temzdf` is the module with the task's `action` and `atomic`**
+  (`ctx.action`, `ctx.atomic`), so `temzdf.action.*` works after an
+  `await`. The rest of the API asks for the running call's context, as in
+  a dispatched task: inside `temzdf.atomic(() => ...)` it has the task's.
+- **Positions.** Types are stripped first (as the configuration's); a
+  syntax error is swc's, `NAME:LINE:COLUMN`, found when the step's turn
+  comes (the steps before it ran). Errors at run time carry QuickJS's
+  stack; their positions are mapped back through the wrapper on the
+  first line and the text inserted (`eval::Positions`), and the
+  prelude's frames are left out. A step's relative imports start from
+  the caller's directory (`-c`, standard input) or the file's.
+- `temzdf eval` and its tests: `crates/temzdf/tests/tui.rs`
+  (`eval_*`), the host's in `crates/temzdf-script/tests/host/cases.rs`,
+  the rewriting's in `src/eval.rs`.
 
 ## API
 

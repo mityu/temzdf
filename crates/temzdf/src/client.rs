@@ -306,6 +306,67 @@ pub fn action(name: &str, mut words: Vec<String>, timeout: Duration) -> Result<(
     }
 }
 
+/// `temzdf eval`: run `code` in session `name`'s script host, then print
+/// what it printed (`console.log` to stdout, `console.error` to stderr)
+/// and its value (with `-p`) or its error. Whether it succeeded.
+pub fn eval(name: &str, code: proto::script::Code, timeout: Duration) -> Result<bool> {
+    use std::io::Write;
+    use temzdf_protocol::script::{CodeResult, Printed};
+    let CodeResult { printed, result } = match request(name, ClientMsg::Eval(code), timeout)? {
+        ServerMsg::Evaluated(r) => r,
+        ServerMsg::Exit(reason) => bail!("{}", exit_message(&reason, name)),
+        other => bail!("unexpected answer {other:?}"),
+    };
+    let (mut out, mut err) = (std::io::stdout().lock(), std::io::stderr());
+    for p in printed {
+        match p {
+            Printed::Out(text) => writeln!(out, "{text}")?,
+            Printed::Err(text) => {
+                out.flush()?;
+                writeln!(err, "{text}")?;
+            }
+        }
+    }
+    match result {
+        Ok(value) => {
+            if let Some(v) = value {
+                writeln!(out, "{v}")?;
+            }
+            out.flush()?;
+            Ok(true)
+        }
+        Err(e) => {
+            out.flush()?;
+            writeln!(err, "{e}")?;
+            Ok(false)
+        }
+    }
+}
+
+/// What `temzdf eval` runs: each `-c` a step (`-c 1`, ...), or `file` (`-`:
+/// standard input), read here; relative imports start from this
+/// directory (a file's from its own).
+pub fn eval_code(code: Vec<String>, file: Option<&Path>, print: bool) -> Result<proto::script::Code> {
+    use temzdf_protocol::script::{Code, CodeStep};
+    let cwd = std::env::current_dir()?;
+    let steps = match file {
+        Some(f) if f == Path::new("-") => {
+            let mut code = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut code).context("reading standard input")?;
+            vec![CodeStep { name: "[stdin]".into(), code }]
+        }
+        Some(f) => {
+            let path = std::path::absolute(cwd.join(f))?;
+            let code = std::fs::read_to_string(&path).with_context(|| format!("cannot read {}", f.display()))?;
+            vec![CodeStep { name: path.display().to_string(), code }]
+        }
+        None => {
+            code.into_iter().enumerate().map(|(i, code)| CodeStep { name: format!("-c {}", i + 1), code }).collect()
+        }
+    };
+    Ok(Code { steps, base: cwd, print })
+}
+
 /// Paths in `temzdf action` words are the caller's: resolve them against
 /// `cwd` here (the server has its own working directory) and check that
 /// PDFs exist (a missing text file is a new one; opening happens later in
