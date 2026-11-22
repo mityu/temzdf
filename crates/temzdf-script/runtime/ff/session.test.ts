@@ -106,12 +106,13 @@ test("time the source waits is no chunk's: what comes together after a wait is m
   const s = session(t, {
     sources: [fake(first.wait, ["a", "b", "c"], second.wait, ["d", "e"])],
     matcher: m,
-    chunkTime: 10,
+    // Each wait well past it; a stall that long within a burst is rare.
+    chunkTime: 50,
   });
-  await sleep(30);
+  await sleep(120);
   first.open();
   await until(() => s.snapshot().matched === 3);
-  await sleep(30);
+  await sleep(120);
   second.open();
   await s.whenIdle();
   assert.deepEqual(batches, [3, 2]);
@@ -365,8 +366,11 @@ test("changes are heard at once, then at most every throttle milliseconds", asyn
   assert.ok(times.length >= 2, `heard ${times.length} times`);
   assert.ok(times[0]! - asked < 100, `first heard after ${times[0]! - asked} ms`);
   const gaps = times.slice(1).map((x, i) => x - times[i]!);
+  // Not to the millisecond: under load the gaps measured with Date.now()
+  // came out up to ten short of the timers' 200 (unthrottled, they are a
+  // chunk's few milliseconds).
   assert.ok(
-    gaps.every((g) => g >= 195),
+    gaps.every((g) => g >= 150),
     `gaps ${gaps.join(" ")}`,
   );
 });
