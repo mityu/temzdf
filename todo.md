@@ -108,6 +108,9 @@ server on one `Session`). Next and open:
   - There is no LSP client and no fuzzy finder yet: the fuzzy finder and
     completion framework comes first (decided 2026-11-22), an LSP client
     later.
+  - The first use wanted is completing Ex commands on the command line
+    (command names, then arguments per command), so completion's UI
+    comes before the fuzzy finder's (most of it is shared).
 - A Windows port of the tests. The gate is `cargo xtask check` and the
   JavaScript tooling Node TypeScript (`scripts/ts-types.ts`,
   `scripts/check-docs.ts`), neither assuming Nix or bash; what is left:
