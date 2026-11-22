@@ -113,7 +113,14 @@ server on one `Session`). Next and open:
   - Narrowing only the previous matches when the new query extends the
     old one (as fzf does): measured, one query over 100k items takes
     seconds with npm `fzf` in the script host ("Speed" there).
-  - Hiding the list pane's cursor if an unfocused text pane draws one.
+  - Reading directories from scripts (`fs.readDir(path)`, maybe `cwd()`;
+    in the guest only, beside `read_module` in
+    `crates/temzdf-script/src/host.rs`), for path completion and a files
+    finder: left for after the framework (2026-11-22).
+  - Floats with `focusable: false` (popups, the list) are also left out
+    of `toggleFloats` and of its count. If a float ever should not take
+    the focus yet still hide and show with the user's floats (a small
+    always-on info window, say), split that into an option of its own.
 - A Windows port of the tests. The gate is `cargo xtask check` and the
   JavaScript tooling Node TypeScript (`scripts/ts-types.ts`,
   `scripts/check-docs.ts`), neither assuming Nix or bash; what is left:
