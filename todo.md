@@ -238,15 +238,16 @@ server on one `Session`). Next and open:
     golden image) and `check` (the gate on a commit in the guest) too.
     The first `check` (2026-11-23, at 2d734c9): fmt, Biome, the
     declarations and docs pass; clippy and the tests stop at `stylo`'s
-    build script, which needs Python (the CI runner has it, the VM not:
-    not installed, waiting for a decision). `cargo check --workspace`
-    there besides: `termpix`, `temzdf-protocol`, `temzdf-term` (Unix
-    APIs), `temzdf-pdfcore` (MSVC rejects `synctex_parser.c`'s
-    `SYNCTEX_ATTRIBUTE_FORMAT_PRINTF`), `temzdf-script` (no esbuild),
-    `temzdf-script-runner` (no WASI C compiler, `CC_wasm32_wasip1`) fail;
-    `texprintf` builds, but its tests die with `STATUS_HEAP_CORRUPTION`;
-    `tuitest`'s pty tests need `sh`. Still to do: Python or not, fonts,
-    the e2e. The ConPTY
+    build script, which needs Python (the CI runner has it), so clippy
+    has not run on the other crates there either. `cargo check
+    --workspace` there besides: the VM lacks Python and esbuild
+    (`temzdf-script`, and through its nested build
+    `temzdf-script-runner`; not installed, waiting for a decision); the
+    product: `termpix`, `temzdf-protocol`, `temzdf-term` (Unix APIs),
+    `temzdf-pdfcore` (MSVC rejects `synctex_parser.c`'s
+    `SYNCTEX_ATTRIBUTE_FORMAT_PRINTF`) fail; `texprintf` builds, but its
+    tests die with `STATUS_HEAP_CORRUPTION`; `tuitest`'s pty tests need
+    `sh`. Still to do: Python and esbuild or not, fonts, the e2e. The ConPTY
     experiment with the in-box ConPTY is done (`doc/terminals/conpty.md`,
     `experiments/conpty/`): kitty graphics are dropped, the kitty
     keyboard, the SGR-pixel mouse and OSC 52 pass, the pass-through flag
