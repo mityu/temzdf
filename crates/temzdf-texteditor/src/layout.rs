@@ -230,18 +230,19 @@ impl Concealed {
         width: usize,
         cursor_line: usize,
     ) -> Vec<Concealed> {
+        // The fields first, the text's lines (a lookup in the rope) only
+        // for the few that conceal: a buffer may have thousands of marks.
         let mut v: Vec<_> = marks
             .iter()
-            .filter(|m| {
-                m.start < m.end
-                    && !m.deleted
-                    && m.spec.pane.is_none_or(|p| Some(p) == pane)
-                    && text.line_of(m.start) == text.line_of(m.end.saturating_sub(1))
-                    && m.end <= text.line_end(text.line_of(m.start))
-            })
             .filter_map(|m| {
                 let c = m.spec.conceal.as_ref()?;
-                (c.cursor_line || text.line_of(m.start) != cursor_line).then_some((m, c))
+                (m.start < m.end && !m.deleted && m.spec.pane.is_none_or(|p| Some(p) == pane)).then_some((m, c))
+            })
+            .filter(|(m, c)| {
+                let line = text.line_of(m.start);
+                line == text.line_of(m.end.saturating_sub(1))
+                    && m.end <= text.line_end(line)
+                    && (c.cursor_line || line != cursor_line)
             })
             .collect();
         // Of overlapping ones layout shows the first (one inside another
@@ -694,6 +695,24 @@ mod tests {
             marks.add(start, end, crate::marks::MarkSpec { conceal, ..Default::default() });
         }
         Concealed::of(t, &marks, None, (10, 20), 80, cursor)
+    }
+
+    #[test]
+    fn marks_without_virtual_text_cost_no_line_lookups() {
+        // Layout runs for every frame and many commands: thousands of
+        // marks that only style text (a list's matches) must not each
+        // look up their lines in the rope.
+        let t = Text::from("item\n".repeat(2000).as_str());
+        let mut marks = Marks::default();
+        for line in 0..2000 {
+            let style = Some("Search".to_owned());
+            marks.add(line * 5, line * 5 + 4, crate::marks::MarkSpec { style, ..Default::default() });
+        }
+        let before = crate::text::LINE_LOOKUPS.get();
+        assert!(Concealed::of(&t, &marks, None, (10, 20), 80, 0).is_empty());
+        assert!(VirtLine::of(&t, &marks, None, (10, 20), 80).is_empty());
+        assert!(Inline::of(&marks, None, (10, 20), 80).is_empty());
+        assert_eq!(crate::text::LINE_LOOKUPS.get() - before, 0);
     }
 
     fn rows_concealed(text: &str, width: usize, v: &[(usize, usize, &str, bool)], cursor: usize) -> Vec<String> {

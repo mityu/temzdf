@@ -2,6 +2,13 @@
 
 use ropey::Rope;
 
+#[cfg(test)]
+thread_local! {
+    /// [`Text::line_of`]'s lookups in the rope on this thread (tests count
+    /// work with it).
+    pub(crate) static LINE_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A position as scripts see it: a zero-based line and a column in UTF-16
 /// code units within it (JavaScript's string indices, LSP's default),
 /// excluding the line ending.
@@ -100,6 +107,8 @@ impl Text {
 
     /// The line `offset` is on.
     pub fn line_of(&self, offset: usize) -> usize {
+        #[cfg(test)]
+        LINE_LOOKUPS.set(LINE_LOOKUPS.get() + 1);
         self.rope.char_to_line(offset.min(self.len_chars()))
     }
 
