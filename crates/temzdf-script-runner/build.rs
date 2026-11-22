@@ -56,11 +56,17 @@ fn build_guest() -> PathBuf {
         "crates/temzdf-script/Cargo.toml",
         "crates/temzdf-script/build.rs",
         "crates/temzdf-script/src",
-        "crates/temzdf-script/runtime",
+        "crates/temzdf-script/runtime/package-lock.json",
+        "crates/temzdf-script/runtime/node_modules/.package-lock.json",
         "crates/temzdf-protocol/Cargo.toml",
         "crates/temzdf-protocol/src",
     ] {
         println!("cargo::rerun-if-changed={}", root.join(path).display());
+    }
+    // The shipped scripts, but their tests (editing one rebuilds nothing)
+    // and npm's packages (the lock files above stand for them).
+    for file in scripts(&root.join("crates/temzdf-script/runtime")) {
+        println!("cargo::rerun-if-changed={}", file.display());
     }
     // The guest bundles the shipped scripts (crates/temzdf-script/build.rs)
     // with these too.
@@ -121,6 +127,24 @@ fn build_guest() -> PathBuf {
     assert!(status.success(), "building the script host's guest failed (CC_wasm32_wasip1 must name a WASI C compiler)");
 
     target_dir.join("wasm32-wasip1").join(PROFILE).join("temzdf_script_guest.wasm")
+}
+
+/// The files under `dir` but `node_modules` and tests (`*.test.ts`).
+fn scripts(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.unwrap_or_else(|e| panic!("{}: {e}", dir.display())).path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if path.is_dir() {
+            if name != "node_modules" {
+                files.extend(scripts(&path));
+            }
+        } else if !name.ends_with(".test.ts") {
+            files.push(path);
+        }
+    }
+    files
 }
 
 /// The cargo profile the guest is built with (Cargo.toml).

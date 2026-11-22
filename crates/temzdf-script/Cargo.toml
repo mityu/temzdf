@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+# Not part of the crate: editing a test rebuilds nothing (build.rs).
+exclude = ["runtime/**/*.test.ts"]
 
 [features]
 default = ["host"]

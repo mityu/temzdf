@@ -14,7 +14,13 @@
 //! build` needs no network. esbuild comes from `PATH` (`$ESBUILD`
 //! overrides). Only with the feature `host` (the type declarations alone
 //! need none of this).
+//!
+//! Cargo runs this again when a file a bundle was made from changes (as
+//! esbuild's metafile lists them), not for any file under runtime/: the
+//! tests beside the scripts (`*.test.ts`) are not bundled, and editing
+//! them rebuilds nothing.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -40,7 +46,10 @@ fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let runtime = manifest.join("runtime");
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
-    println!("cargo::rerun-if-changed={}", runtime.display());
+    // What esbuild reads besides the sources (the sources: below).
+    for file in ["package.json", "tsconfig.json"] {
+        println!("cargo::rerun-if-changed={}", runtime.join(file).display());
+    }
     let prelude = manifest.join("src/prelude.ts");
     println!("cargo::rerun-if-changed={}", prelude.display());
     let module = manifest.join("src/temzdf.ts");
@@ -58,7 +67,10 @@ fn main() {
         std::env::var_os("TEMZDF_NODE_MODULES").map(PathBuf::from)
     };
     let esbuild = std::env::var_os("ESBUILD").unwrap_or_else(|| "esbuild".into());
-    let bundle = |entry: &Path, out_file: &str, format: &str| {
+    // The files the bundles were made from.
+    let mut inputs = BTreeSet::new();
+    let mut bundle = |entry: &Path, out_file: &str, format: &str| {
+        let meta = out.join(format!("{out_file}.meta.json"));
         let mut cmd = Command::new(&esbuild);
         cmd.arg(entry)
             .arg("--bundle")
@@ -72,6 +84,7 @@ fn main() {
             .arg("--external:temzdf/*")
             .arg("--log-level=warning")
             .arg(format!("--outfile={}", out.join(out_file).display()))
+            .arg(format!("--metafile={}", meta.display()))
             // node_modules from the lock file, wherever it lies.
             .env_remove("NODE_PATH");
         if let Some(m) = &modules {
@@ -85,6 +98,7 @@ fn main() {
             "esbuild failed on {} (npm packages come from runtime/node_modules (`npm ci` there) or $TEMZDF_NODE_MODULES, which the dev shell sets)",
             entry.display()
         );
+        inputs.extend(sources(&manifest, &meta));
     };
     // The host's prelude: a script (a function, called at once), as the
     // polyfills.
@@ -101,6 +115,20 @@ fn main() {
     }
     list.push(']');
     std::fs::write(out.join("bundled.rs"), list).unwrap();
+    for file in inputs {
+        println!("cargo::rerun-if-changed={}", file.display());
+    }
+}
+
+/// The source files esbuild's metafile `meta` lists as a bundle's inputs
+/// (paths relative to the working directory, the manifest's), npm's
+/// packages left out (the lock file and npm's record of them, or
+/// `$TEMZDF_NODE_MODULES`, stand for them).
+fn sources(manifest: &Path, meta: &Path) -> Vec<PathBuf> {
+    let text = std::fs::read_to_string(meta).unwrap_or_else(|e| panic!("{}: {e}", meta.display()));
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", meta.display()));
+    let Some(inputs) = json["inputs"].as_object() else { panic!("{}: no inputs", meta.display()) };
+    inputs.keys().filter(|p| !p.contains("node_modules/")).map(|p| manifest.join(p)).collect()
 }
 
 /// Refuse runtime/node_modules when it is not what runtime/package-lock.json
