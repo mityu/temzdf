@@ -154,7 +154,7 @@ gives tests:
   `*_shot_is_the_same_each_time` checking two runs give the same pixels). Images do not prove a screen
   finished: the Markdown viewer places a blank stand-in for each strip not
   painted yet. The tests wait for the client's log (`temzdf.log`) to say
-  last that a complete frame was written (`wait_complete` in tui.rs), as
+  last that a complete frame was written (`Env::wait_complete` in tui.rs), as
   `scripts/e2e.sh` does.
 
 `crates/temzdf/tests/tui.rs` gives every test its own `XDG_RUNTIME_DIR`,

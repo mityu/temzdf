@@ -134,6 +134,41 @@ impl Env {
         }
     }
 
+    /// The length of the client's log (`temzdf.log`) so far: a mark for
+    /// [`Env::wait_complete`].
+    fn log_mark(&self) -> usize {
+        std::fs::metadata(self.path("log/temzdf.log")).map_or(0, |m| m.len() as usize)
+    }
+
+    /// Wait until the client's latest frame is complete (every page in
+    /// sight painted) and on the screen, and `done` holds: the client's log
+    /// (`temzdf.log`) past `from` bytes (a [`Env::log_mark`]) says so last,
+    /// as scripts/e2e.sh's `wait_complete` reads it. No new line counts
+    /// too: the frontend writes one only when a frame shown was incomplete,
+    /// before its bytes reach the terminal, so with `done` seeing the new
+    /// frame none means it came complete (and frames of text alone never
+    /// write one). Images alone do not tell: the Markdown viewer places a
+    /// blank stand-in where a strip is not painted yet.
+    fn wait_complete(&self, t: &mut Term, from: usize, done: impl Fn(&Screen) -> bool) -> Screen {
+        let log = self.path("log/temzdf.log");
+        t.wait_for("a complete frame", |s| {
+            let text = std::fs::read_to_string(&log).unwrap_or_default();
+            let last =
+                text.get(from..).unwrap_or("").lines().rfind(|l| l.contains("complete frame")).map(str::to_owned);
+            done(s) && last.is_none_or(|l| l.contains("complete frame written"))
+        });
+        // The bytes of the frame logged may still be on their way.
+        t.settle(std::time::Duration::from_millis(300))
+    }
+
+    /// Do `act` (send keys, run an action), then [`Env::wait_complete`] for
+    /// the frames it brings.
+    fn complete_after(&self, t: &mut Term, act: impl FnOnce(&mut Term), done: impl Fn(&Screen) -> bool) -> Screen {
+        let from = self.log_mark();
+        act(t);
+        self.wait_complete(t, from, done)
+    }
+
     /// Script output lines (`console.log`) in the session's log.
     fn script_lines(&self, session: &str) -> Vec<String> {
         self.log(session).lines().filter_map(|l| l.strip_prefix("temzdf script [log]: ")).map(str::to_owned).collect()
@@ -502,37 +537,13 @@ fn a_pdf_shows_its_pages() {
     assert_eq!(t.wait_exit(), 0);
 }
 
-/// Wait until the client's latest frame is complete (every page in sight
-/// painted) and on the screen, and `done` holds: the client's log
-/// (`temzdf.log`) past `from` bytes says so last, as scripts/e2e.sh's
-/// `wait_complete` reads it. No new line counts too: the frontend writes
-/// one only when a frame shown was incomplete, before its bytes reach the
-/// terminal, so with `done` seeing the new frame none means it came
-/// complete. Images alone do not tell: the Markdown viewer places a blank
-/// stand-in where a strip is not painted yet.
-fn wait_complete(env: &Env, t: &mut Term, from: usize, done: impl Fn(&Screen) -> bool) -> Screen {
-    let log = env.path("log/temzdf.log");
-    t.wait_for("a complete frame", |s| {
-        let text = std::fs::read_to_string(&log).unwrap_or_default();
-        let last = text.get(from..).unwrap_or("").lines().rfind(|l| l.contains("complete frame")).map(str::to_owned);
-        done(s) && last.is_none_or(|l| l.contains("complete frame written"))
-    });
-    // The bytes of the frame logged may still be on their way.
-    t.settle(std::time::Duration::from_millis(300))
-}
-
-/// The length of the client's log so far (for [`wait_complete`]).
-fn log_len(env: &Env) -> usize {
-    std::fs::metadata(env.path("log/temzdf.log")).map_or(0, |m| m.len() as usize)
-}
-
 /// The standalone PDF viewer's first screen of sample.pdf, rendered
 /// (written to `target/tuitest/NAME.png`).
 fn pdf_shot(name: &str) -> (Screen, termpix::raster::RgbaImage) {
     let env = Env::new(name);
     let pdf = fixture("sample.pdf");
     let mut t = Term::spawn(&[BIN, "standalone", "pdf", &pdf.display().to_string()], &env.options());
-    let s = wait_complete(&env, &mut t, 0, |s| !s.images.is_empty() && s.title.contains("1 / 3"));
+    let s = env.wait_complete(&mut t, 0, |s| !s.images.is_empty() && s.title.contains("1 / 3"));
     let img = s.save_render(name);
     (s, img)
 }
@@ -548,9 +559,7 @@ fn markdown_shot(name: &str) -> (Screen, termpix::raster::RgbaImage) {
     t.wait_text("# Title");
     t.key("F5");
     t.wait_text("═════");
-    let from = log_len(&env);
-    t.key("Tab");
-    let s = wait_complete(&env, &mut t, from, |s| !s.images.is_empty() && s.text().contains("markdown"));
+    let s = env.complete_after(&mut t, |t| t.key("Tab"), |s| !s.images.is_empty() && s.text().contains("markdown"));
     let img = s.save_render(name);
     (s, img)
 }
@@ -607,9 +616,8 @@ fn a_markdown_text_screen_renders_to_pixels() {
     env.config("config.ts", &markdown_config(&file));
     let mut t = Term::spawn(&[BIN, "-s", "mx", file.to_str().unwrap()], &env.options());
     t.wait_text("# Title");
-    t.key("F5");
-    t.wait_for("the viewer", |s| s.lines()[1].starts_with("═════") && s.contains("A quote."));
-    let s = t.settle(std::time::Duration::from_millis(300));
+    let s =
+        env.complete_after(&mut t, |t| t.key("F5"), |s| s.lines()[1].starts_with("═════") && s.contains("A quote."));
     let img = s.save_render("markdown-text-render");
     // The heading's row has ink of the text's colours; an empty row none.
     let (cw, ch) = s.cell;
