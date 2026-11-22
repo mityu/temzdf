@@ -17,6 +17,7 @@ mod marks;
 mod motion;
 mod render;
 mod search;
+mod stamp;
 mod text;
 mod undo;
 mod undofile;
@@ -33,6 +34,7 @@ pub use marks::{Conceal, Mark, MarkId, MarkSpec, Marks, VirtChunk, VirtImage, Vi
 pub use motion::{Class, Unit, WordChars, char_class, find_pair, next_grapheme, position_of, prev_grapheme};
 pub use render::{Drawn, DrawnImage, Highlights, Style, render};
 pub use search::{Found, Pattern, SearchOptions, find_all, search};
+pub use stamp::Stamped;
 pub use text::{LineEnding, Position, Range, Text};
 pub use undo::{StepKind, UndoTree};
 pub use undofile::fnv1a;

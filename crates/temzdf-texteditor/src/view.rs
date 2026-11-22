@@ -55,7 +55,7 @@ impl ViewUnit {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct View {
     pub cursor: Cursor,
     /// Where the top row starts.

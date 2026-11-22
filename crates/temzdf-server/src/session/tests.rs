@@ -4121,3 +4121,62 @@ fn a_text_pane_draws_highlight_groups_as_others() {
     assert_eq!(cursor_cell(&mut s).attrs.underline, temzdf_scene::Underline::Single);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "the file system")]
+fn text_panes_are_drawn_again_only_when_what_they_show_changed() {
+    // Each frame takes a text pane's last one while nothing it is drawn
+    // from changed; tests draw every cached frame again to check it is the
+    // same (frame::check_text_frames), this one that each change draws.
+    let (mut s, path) = text_session("cached.txt", "one two\nthree two\n");
+    let drawn = || frame::TEXT_FRAMES_DRAWN.get();
+    let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap();
+    let str = |v: &str| ScriptValue::Str(v.into());
+    // One that expires, but not during the test.
+    let hour = ScriptValue::map([("style", str("Search")), ("ttl", ScriptValue::Num(3_600_000.0))]);
+    run(&mut s, "text.add-decoration", &[ScriptValue::map([("start", pos(1, 0)), ("end", pos(1, 1))]), hour]);
+    let first = s.frame();
+    let before = drawn();
+    assert_eq!(s.frame(), first, "the same frame");
+    assert_eq!(drawn(), before, "taken from the cache");
+    let range = ScriptValue::map([("start", pos(0, 0)), ("end", pos(0, 3))]);
+    let style = ScriptValue::map([("style", str("Search"))]);
+    let bold = ScriptValue::map([("bold", ScriptValue::Bool(true))]);
+    let number = ScriptValue::map([("number", str("absolute"))]);
+    let buf = run(&mut s, "text.info", &[]).0.get("buffer").cloned().unwrap();
+    let readonly = ScriptValue::List(vec![str("readonly")]);
+    type Change = Box<dyn Fn(&mut Session)>;
+    let changes: Vec<(&str, Change)> = vec![
+        ("an edit", Box::new(move |s| _ = run(s, "text.insert", &[str("x"), pos(0, 0)]))),
+        ("a decoration", Box::new(move |s| _ = run(s, "text.add-decoration", &[range.clone(), style.clone()]))),
+        ("the cursor", Box::new(move |s| _ = run(s, "text.set-cursor", &[pos(1, 2)]))),
+        ("the view's options", Box::new(move |s| _ = run(s, "text.set-options", std::slice::from_ref(&number)))),
+        ("a highlight group", Box::new(move |s| _ = run(s, "highlight", &[str("Search"), bold.clone()]))),
+        ("a pattern", Box::new(move |s| _ = run(s, "highlight-pattern", &[str("hl"), str("two")]))),
+        ("word characters", Box::new(move |s| _ = run(s, "text.set-wordchars", &[str("[a-z]")]))),
+        ("the buffer's flags", Box::new(move |s| _ = run(s, "set-buffer-attrs", &[buf.clone(), readonly.clone()]))),
+        ("images", Box::new(|s| _ = &mut *s.loaded_images)),
+        (
+            "the cursor's shape",
+            Box::new(|s| {
+                let focus = s.focus;
+                let Kind::Text { view, .. } = &mut s.panes.get_mut(&focus).unwrap().kind else { panic!("a text pane") };
+                view.shape = CursorShape::Bar { blink: true };
+            }),
+        ),
+        ("the cell size", Box::new(|s| s.resize(Geometry { cell: CellSize { width: 12, height: 24 }, ..GEOMETRY }))),
+        ("the focus", Box::new(move |s| _ = run(s, "split", &[]))),
+    ];
+    for (what, change) in changes {
+        let before = drawn();
+        change(&mut s);
+        s.frame();
+        assert!(drawn() > before, "{what}: drawn again");
+        let before = drawn();
+        // Expiry runs on every poll: with nothing due it changes nothing.
+        assert!(!s.expire_decorations(Instant::now()));
+        s.frame();
+        assert_eq!(drawn(), before, "{what}: then taken from the cache");
+    }
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}

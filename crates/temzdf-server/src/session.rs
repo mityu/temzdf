@@ -317,7 +317,9 @@ pub struct Session {
     /// Where undo files go (o.undofile; tests set their own).
     undo_dir: Option<PathBuf>,
     /// Images read for text panes' decorations (loadImage), by id.
-    loaded_images: images::LoadedImages,
+    /// Stamped, as `highlights` and `patterns`: text panes' frames are
+    /// cached on their stamps (`frame::TextFrameKey`).
+    loaded_images: temzdf_texteditor::Stamped<images::LoadedImages>,
     /// Markdown files shown in viewers, by id.
     md_docs: HashMap<markdown::MdId, markdown::MdDoc>,
     /// Where each viewer pane was before it followed a link to another
@@ -328,11 +330,11 @@ pub struct Session {
     /// Where swap files go (o.swapfile; tests set their own).
     swap_dir: Option<PathBuf>,
     /// Highlight groups for text panes (scripts define them).
-    highlights: temzdf_texteditor::Highlights,
+    highlights: temzdf_texteditor::Stamped<temzdf_texteditor::Highlights>,
     /// Buffer, pane and tab page variables (`getVar`, `setVar`).
     vars: HashMap<(VarOwner, String), ScriptValue>,
     /// `highlightPattern`: (namespace, pattern, style), painted in text panes.
-    patterns: Vec<(String, temzdf_texteditor::Pattern, String)>,
+    patterns: temzdf_texteditor::Stamped<Vec<(String, temzdf_texteditor::Pattern, String)>>,
     /// While a `temzdf action` request waits for the scripts it started:
     /// why a "before" hook cancelled what it asked for, if one did.
     cli_cancel: Option<Option<String>>,
@@ -386,6 +388,8 @@ pub struct Session {
     /// it feeds are one deeper (Vim's `maxmapdepth`).
     map_depth: usize,
     keys: Keys,
+    /// Each text pane's last frame and what it was drawn from.
+    text_frames: HashMap<PaneId, (frame::TextFrameKey, Frame)>,
     effects: Vec<Effect>,
     /// The copy history and named registers.
     copies: registers::Copies,
@@ -427,14 +431,14 @@ impl Session {
             terms: HashMap::new(),
             texts: HashMap::new(),
             undo_dir: text::undo_dir(),
-            loaded_images: HashMap::new(),
+            loaded_images: Default::default(),
             md_docs: HashMap::new(),
             md_history: HashMap::new(),
             md_pool: None,
             // (Unit tests set theirs: none in the user's state directory.)
             swap_dir: if cfg!(test) { None } else { swap::swap_dir() },
-            highlights: temzdf_texteditor::Highlights::default(),
-            patterns: Vec::new(),
+            highlights: Default::default(),
+            patterns: Default::default(),
             vars: HashMap::new(),
             invocation: 0,
             cli_cancel: None,
@@ -465,6 +469,7 @@ impl Session {
             visual: None,
             map_depth: 0,
             keys: Keys::default(),
+            text_frames: HashMap::new(),
             effects: Vec::new(),
             copies: registers::Copies::default(),
             hovered: None,

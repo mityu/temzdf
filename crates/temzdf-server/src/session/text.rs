@@ -775,9 +775,14 @@ impl Session {
             text,
             cursor: drawn.cursor,
             cursor_shape: tv.shape,
-            title: format!("{}{}", t.name, flags(t)),
+            title: Self::text_title(t),
             ..Frame::default()
         }
+    }
+
+    /// What a text pane's frame is titled: the buffer's name and flags.
+    pub(super) fn text_title(t: &TextEntry) -> String {
+        format!("{}{}", t.name, flags(t))
     }
 
     pub(super) fn text_status(t: Option<&TextEntry>, tv: &TextView, mode: &str) -> termpix_ui::StatusBar {
@@ -927,7 +932,11 @@ impl Session {
     pub(super) fn expire_decorations(&mut self, now: std::time::Instant) -> bool {
         let mut any = false;
         for t in self.texts.values_mut() {
-            any |= t.buf.marks_mut().expire(now);
+            // Only those with a decoration due (marks_mut takes a new
+            // stamp, so its panes are drawn again).
+            if t.buf.marks().next_expiry().is_some_and(|due| due <= now) {
+                any |= t.buf.marks_mut().expire(now);
+            }
         }
         any
     }

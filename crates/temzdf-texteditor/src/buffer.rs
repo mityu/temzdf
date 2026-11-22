@@ -4,6 +4,7 @@ use crate::cursor::Cursor;
 use crate::edit::{self, Change, TextEdit};
 use crate::marks::Marks;
 use crate::motion::WordChars;
+use crate::stamp::Stamped;
 use crate::text::{LineEnding, Range, Text};
 use crate::undo::{Batch, StepKind, UndoTree};
 
@@ -71,8 +72,10 @@ impl Edited {
 
 #[derive(Clone, Debug, Default)]
 pub struct Buffer {
-    text: Text,
-    marks: Marks,
+    /// Stamped (a mutable access takes a new stamp): caches of what is
+    /// drawn from them key on [`Buffer::stamps`].
+    text: Stamped<Text>,
+    marks: Stamped<Marks>,
     undo: UndoTree,
     /// Bumped on every change.
     version: u64,
@@ -82,7 +85,13 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(text: Text, line_ending: LineEnding) -> Self {
-        Self { text, line_ending, ..Self::default() }
+        Self { text: Stamped::new(text), line_ending, ..Self::default() }
+    }
+
+    /// The stamps of the text and of the marks: equal, they are as they
+    /// were (for caches of what is drawn; [`Stamped`]).
+    pub fn stamps(&self) -> (u64, u64) {
+        (self.text.stamp(), self.marks.stamp())
     }
 
     pub fn text(&self) -> &Text {
@@ -93,7 +102,8 @@ impl Buffer {
         &self.marks
     }
 
-    /// Adding, moving and removing marks is not an edit (no undo).
+    /// Adding, moving and removing marks is not an edit (no undo). It
+    /// takes a new stamp: call it only to change them.
     pub fn marks_mut(&mut self) -> &mut Marks {
         &mut self.marks
     }
@@ -118,7 +128,7 @@ impl Buffer {
     /// Apply a batch, recorded for undo. The cursor given in `origin`
     /// follows it (an insertion at it leaves it after).
     pub fn edit(&mut self, edits: Vec<TextEdit>, origin: Origin) -> Result<Edited, EditError> {
-        let before = self.text.clone();
+        let before = (*self.text).clone();
         let changes = edit::apply(&mut self.text, edits).map_err(EditError::Overlap)?;
         if changes.is_empty() {
             return Ok(Edited::default());
@@ -170,7 +180,7 @@ impl Buffer {
         let node = self.undo.back()?;
         let mut done = Edited::default();
         for batch in node.batches.iter().rev() {
-            let before = self.text.clone();
+            let before = (*self.text).clone();
             let changes = edit::apply(&mut self.text, edit::inverse(&batch.changes)).expect("an undo applies");
             done.reported.extend(report(&before, &changes));
             self.marks.follow(&changes);
@@ -193,7 +203,7 @@ impl Buffer {
                 .iter()
                 .map(|c| TextEdit::new(c.start, c.start + c.removed_chars(), c.inserted.clone()))
                 .collect();
-            let before = self.text.clone();
+            let before = (*self.text).clone();
             let changes = edit::apply(&mut self.text, edits).expect("a redo applies");
             done.reported.extend(report(&before, &changes));
             let marks = self.marks.follow(&changes);

@@ -39,6 +39,43 @@ impl Keys {
     }
 }
 
+/// What a text pane's frame is drawn from ([`Session::text_frame`]): the
+/// frame cached with it is shown again while it is equal. The buffer's
+/// text and marks, the session's highlight groups, patterns and images
+/// by their stamps (`temzdf_texteditor::Stamped`: any mutable access
+/// takes a new one), the rest by value.
+#[derive(PartialEq)]
+pub(super) struct TextFrameKey {
+    buf: BufferId,
+    stamps: (u64, u64),
+    /// The buffer's word characters (patterns' `\b`).
+    wordchars: String,
+    /// The buffer's name and flags.
+    title: String,
+    view: temzdf_texteditor::View,
+    shape: CursorShape,
+    focused: bool,
+    session: (u64, u64, u64),
+    cell: termpix_core::geom::CellSize,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Text panes' frames drawn on this thread, not taken from the cache
+    /// (tests count them).
+    pub(super) static TEXT_FRAMES_DRAWN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether a cached text pane's frame is drawn again to check it is the
+/// same: in tests, and in debug builds with `TEMZDF_CHECK_FRAME_CACHE` set
+/// (`temzdf test`, the simulated terminal's tests).
+fn check_text_frames() -> bool {
+    static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        cfg!(test) || cfg!(debug_assertions) && std::env::var_os("TEMZDF_CHECK_FRAME_CACHE").is_some()
+    });
+    *CHECK
+}
+
 impl Session {
     /// Compose this frame from every pane and hand their work to the documents.
     pub fn frame(&mut self) -> Frame {
@@ -66,16 +103,54 @@ impl Session {
             let covers_px: Vec<Rect> = covers.iter().map(|r| self.pixels(r)).collect();
             let Some(e) = self.panes.get_mut(&id) else { continue };
             let frame = match &mut e.kind {
-                Kind::Text { buf, view } => Self::text_frame(
-                    self.texts.get(buf),
-                    view,
-                    id,
-                    id == self.focus,
-                    &self.highlights,
-                    &self.patterns,
-                    &self.loaded_images,
-                    cell,
-                ),
+                Kind::Text { buf, view } => {
+                    let t = self.texts.get(buf);
+                    let draw = || {
+                        Self::text_frame(
+                            t,
+                            view,
+                            id,
+                            id == self.focus,
+                            &self.highlights,
+                            &self.patterns,
+                            &self.loaded_images,
+                            cell,
+                        )
+                    };
+                    // Drawn again only when something it is drawn from
+                    // changed (most frames change one pane, or none).
+                    let key = t.map(|t| TextFrameKey {
+                        buf: *buf,
+                        stamps: t.buf.stamps(),
+                        wordchars: t.buf.wordchars.class().to_owned(),
+                        title: Self::text_title(t),
+                        view: view.view.clone(),
+                        shape: view.shape,
+                        focused: id == self.focus,
+                        session: (self.highlights.stamp(), self.patterns.stamp(), self.loaded_images.stamp()),
+                        cell,
+                    });
+                    match self.text_frames.get(&id).filter(|(k, _)| Some(k) == key.as_ref()) {
+                        Some((_, cached)) => {
+                            if check_text_frames() {
+                                assert!(
+                                    *cached == draw(),
+                                    "a text pane's cached frame is stale: its key misses something"
+                                );
+                            }
+                            cached.clone()
+                        }
+                        None => {
+                            #[cfg(test)]
+                            TEXT_FRAMES_DRAWN.set(TEXT_FRAMES_DRAWN.get() + 1);
+                            let frame = draw();
+                            if let Some(key) = key {
+                                self.text_frames.insert(id, (key, frame.clone()));
+                            }
+                            frame
+                        }
+                    }
+                }
                 Kind::Markdown { pane, doc } => {
                     match self.md_docs.get_mut(doc).and_then(|d| d.page_and_strips(pane.page_key())) {
                         Some((page, strips)) => {
@@ -151,6 +226,7 @@ impl Session {
             }
         }
         self.complete = complete;
+        self.text_frames.retain(|id, _| order.contains(id));
         // Status lines, under floats over them.
         for id in &order {
             let Some(e) = self.panes.get(id).filter(|e| e.status_line && e.rect.h > 0) else { continue };
