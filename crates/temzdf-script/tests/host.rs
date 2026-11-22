@@ -73,3 +73,35 @@ keymap.add("normal", "x", () => caught("call"));
         "{log:#?}"
     );
 }
+
+#[test]
+fn a_job_the_limit_or_an_interrupt_stops_is_logged() {
+    // Jobs that end with an error of their own (not a rejection): a
+    // microtask that throws, and endless ones, stopped by the limit, then by
+    // the session's interrupt. The jobs after them still run. And an endless
+    // timer.
+    let config = r#"setTimeout(() => {
+  queueMicrotask(() => { throw new Error("thrown-by-a-microtask"); });
+  Promise.resolve().then(() => { for (;;) {} });
+  Promise.resolve().then(() => console.log("ran-after-the-endless-one"));
+}, 0);
+"#;
+    let timer = format!("{config}setTimeout(() => {{ for (;;) {{}} }}, 0);\n");
+    let (mut s, lines) = start_logged(&[("config.js", &timer)], Duration::from_millis(200));
+    s.load("config.js");
+    cases::ready_ok(s.serve(&mut Vec::new()));
+    let log = log_with(&lines, &["ran-after-the-endless-one", "a timer"]);
+    let line = |l: &str| log.iter().any(|x| x == l);
+    let failed = "temzdf script: a job failed: Error: thrown-by-a-microtask\n    at ";
+    assert!(log.iter().any(|l| l.starts_with(failed)), "{log:#?}");
+    assert!(line("temzdf script: a job was stopped: it ran longer than the unattended limit (200 ms)"), "{log:#?}");
+    assert!(line("temzdf script: a timer was stopped: it ran longer than the unattended limit (200 ms)"), "{log:#?}");
+    // The user's <C-c> stops it before the limit.
+    let (mut s, lines) = start_logged(&[("config.js", config)], Duration::from_secs(60));
+    s.load("config.js");
+    cases::ready_ok(s.serve(&mut Vec::new()));
+    std::thread::sleep(Duration::from_millis(100));
+    s.send(ToHost::Interrupt);
+    let log = log_with(&lines, &["ran-after-the-endless-one"]);
+    assert!(log.iter().any(|l| l == "temzdf script: a job was stopped: interrupted"), "{log:#?}");
+}

@@ -87,7 +87,8 @@ dependencies are cached apart from the server.
   ran keep their effect. What the session waits for has no timeout; a
   timer or promise job nobody waits for (so nobody can interrupt it) is
   interrupted after 10 s (`UNATTENDED_LIMIT` in
-  `crates/temzdf-script/src/lib.rs`).
+  `crates/temzdf-script/src/lib.rs`), and the log says so: the interrupt
+  is uncatchable, so whatever awaited that job never goes on.
 - **Hooks run as Vim's autocmds**: synchronously, at the moment the event
   happens, nested inside the command that caused it (the host runs the hook
   while it waits for that command's answer). Events caused inside a hook only

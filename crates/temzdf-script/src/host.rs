@@ -75,9 +75,20 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
     let interrupt = Interrupts { sent: link.interrupts().into(), cleared: Arc::default() };
     let rt = Runtime::new().map_err(|e| e.to_string())?;
     let unattended = Unattended::new(limit);
+    let stopped: Rc<Cell<Option<Stop>>> = Rc::default();
     {
-        let (interrupt, unattended) = (interrupt.clone(), unattended.clone());
-        rt.set_interrupt_handler(Some(Box::new(move || interrupt.raised() || unattended.overdue())));
+        let (interrupt, unattended, stopped) = (interrupt.clone(), unattended.clone(), stopped.clone());
+        rt.set_interrupt_handler(Some(Box::new(move || {
+            let why = if interrupt.raised() {
+                Stop::Interrupt
+            } else if unattended.overdue() {
+                Stop::Limit
+            } else {
+                return false;
+            };
+            stopped.set(Some(why));
+            true
+        })));
     }
     // A promise rejected with nobody to handle it (a timer's async code, a
     // top-level `Promise.reject`) would fail silently: say so in the log,
@@ -120,6 +131,7 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         replies: RefCell::default(),
         gone: Cell::new(false),
         rejections,
+        stopped,
         log,
     });
     context.with(|ctx| install(&ctx, &st)).map_err(|e| format!("cannot start the scripting API: {e}"))?;
@@ -225,8 +237,19 @@ struct State {
     /// The session went away.
     gone: Cell<bool>,
     rejections: Rc<Rejections>,
+    /// Why the interrupt handler last stopped the interpreter.
+    stopped: Rc<Cell<Option<Stop>>>,
     /// Where log lines go (stderr, the session's log file, but in tests).
     log: Box<dyn Fn(&str)>,
+}
+
+/// Why the interrupt handler stopped the interpreter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Stop {
+    /// The session's interrupt (the user's <C-c>).
+    Interrupt,
+    /// Code nobody waits for ran past the [`UNATTENDED_LIMIT`](crate::UNATTENDED_LIMIT).
+    Limit,
 }
 
 /// Promises rejected with no handler: the promise and its reason, in the
@@ -730,11 +753,10 @@ fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {
             }
         };
         let Some(f) = due else { return };
-        st.unattended(|| {
-            if let Err(e) = f.restore(ctx).and_then(|f| f.call::<_, ()>(())) {
-                st.log(&format!("temzdf script: a timer failed: {}", error_of(ctx, e)));
-            }
-        });
+        st.stopped.set(None);
+        if let Err(e) = st.unattended(|| f.restore(ctx).and_then(|f| f.call::<_, ()>(()))) {
+            log_failure(ctx, st, "a timer", e);
+        }
         run_jobs(ctx, st);
     }
 }
@@ -762,8 +784,55 @@ fn settle_promises(ctx: &Ctx<'_>, st: &Rc<State>) {
 /// rejections still without a handler: with no job left, none can come any
 /// more but from code that runs later (a timer, a call).
 fn run_jobs(ctx: &Ctx<'_>, st: &Rc<State>) {
-    while st.unattended(|| ctx.execute_pending_job()) {}
+    loop {
+        st.stopped.set(None);
+        match st.unattended(|| run_job(ctx)) {
+            Ok(true) => {}
+            Ok(false) => break,
+            // A job's own error rejects its promise; this one ended the job
+            // (an interrupt, uncatchable, or a microtask that threw), and
+            // whatever awaited it never goes on.
+            Err(e) => log_failure(ctx, st, "a job", e),
+        }
+    }
     report_rejections(ctx, st);
+}
+
+/// Run one pending promise job: whether there was one, or the error that
+/// ended it (pending on `ctx`, as [`rquickjs::Error::Exception`]).
+/// (`Ctx::execute_pending_job` drops that error.)
+fn run_job(ctx: &Ctx<'_>) -> rquickjs::Result<bool> {
+    let mut job_ctx = std::mem::MaybeUninit::<*mut rquickjs::qjs::JSContext>::uninit();
+    // SAFETY: `ctx` is alive and its runtime locked meanwhile (as in
+    // `Ctx::execute_pending_job`); QuickJS writes `job_ctx` (unread here).
+    let ran = unsafe {
+        let rt = rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr());
+        rquickjs::qjs::JS_ExecutePendingJob(rt, job_ctx.as_mut_ptr())
+    };
+    // The runtime has this one context, which a failed job leaves its
+    // exception on.
+    if ran < 0 { Err(rquickjs::Error::Exception) } else { Ok(ran > 0) }
+}
+
+/// Log that `what` (a timer, a job) ended with `e`: stopped by the
+/// interrupt handler, or failed.
+fn log_failure(ctx: &Ctx<'_>, st: &State, what: &str, e: rquickjs::Error) {
+    let error = error_of(ctx, e);
+    let line = match st.stopped.take() {
+        Some(Stop::Limit) => format!(
+            "temzdf script: {what} was stopped: it ran longer than the unattended limit ({})",
+            duration_text(st.unattended.limit)
+        ),
+        Some(Stop::Interrupt) => format!("temzdf script: {what} was stopped: interrupted"),
+        None => format!("temzdf script: {what} failed: {error}"),
+    };
+    st.log(&line);
+}
+
+/// "10 s", "200 ms".
+fn duration_text(d: Duration) -> String {
+    let ms = d.as_millis();
+    if ms.is_multiple_of(1000) { format!("{} s", ms / 1000) } else { format!("{ms} ms") }
 }
 
 /// Log the rejections nobody handled, unless a configuration loads.
