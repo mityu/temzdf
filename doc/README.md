@@ -106,6 +106,9 @@ branch (design notes and research lived there until it was merged in on
 
 - [survey/research.md](survey/research.md): the library survey and why
   each dependency was chosen.
+- [survey/windows-port.md](survey/windows-port.md): porting to Windows:
+  what does not work there and what could replace it, the tests and
+  tooling, Windows end-to-end tests in a VM (vitro).
 - [survey/multiplexer.md](survey/multiplexer.md): what a terminal
   multiplexer can reuse (tmux, zellij, libraries).
 - [survey/gui-stack.md](survey/gui-stack.md): GUI toolkits for the GUI

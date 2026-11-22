@@ -213,17 +213,31 @@ server on one `Session`). Next and open:
 - A way to turn undo off for a buffer (Vim's `undolevels=-1` for one
   buffer): the ff list's buffer gets an undo step for every write, kept
   for nothing.
-- A Windows port of the tests. The gate is `cargo xtask check` and the
-  JavaScript tooling Node TypeScript (`scripts/ts-types.ts`,
-  `scripts/check-docs.ts`), neither assuming Nix or bash; what is left:
-  `crates/tuitest` runs programs on a Unix pty (ConPTY instead), tests
-  and the terminal pane start `/bin/sh`, the tmux tests need tmux (skip
-  them there), the session protocol uses Unix sockets (named pipes or
-  AF_UNIX on Windows), and Miri runs through `scripts/miri.sh` (bash;
-  the gate says `SKIP miri` elsewhere), as does shellcheck. Never tried
-  on Windows: whether `cargo xtask check` itself builds there, and
-  whether cargo leaves the running `xtask.exe` alone (it did not rebuild
-  `target/debug/xtask` during the gate on Linux).
+- The Windows port (`doc/survey/windows-port.md`, 2026-11-22). Work
+  happens on the branch `windows-port`. On Windows the GUI client is the
+  frontend; the terminal frontend comes last. Order:
+  - First steps, no VM: `.gitattributes` with LF; `cargo check --target
+    x86_64-pc-windows-msvc` of the crates that build, in the Linux CI
+    job; `cfg(unix)` on test code that does not compile there (symlink
+    and mode tests; `mutate.rs`'s pure tests apart from its shell ones);
+    esbuild found as an exe in `crates/temzdf-script/build.rs`;
+    `pdf::fixture` without `scripts/build-fixtures.sh`; a
+    `windows-latest` CI job on those crates.
+  - The VM: vitro with a local Windows 11 ISO (OVMF firmware), then
+    `scripts/windows-vm.sh` as a thin wrapper over it, and the ConPTY
+    experiment (kitty graphics, kitty keyboard, SGR-pixel mouse through
+    portable-pty, also with its pass-through flag and a side-loaded
+    conpty.dll).
+  - The product: compile (gate `rustix`, `signal-hook`, `libc`;
+    libtexprintf built with `cc`; build tooling), the transport
+    (`uds_windows`), directories and processes (the GUI attached to a
+    PDF session), terminal panes, SyncTeX paths, shared memory, the
+    terminal frontend.
+  - The tests: a helper program instead of `sh` in the pty tests; script
+    host tests on `std::io::pipe`; test fonts without fontconfig; the
+    gate's lock test; `cargo xtask miri` (also cross-target from Linux);
+    a Windows backend for `scripts/e2e.sh` (WezTerm, Windows Terminal,
+    the GUI).
 - Absolute paths only (the user's direction, 2026-11-22): actions that
   take a path accept only absolute ones, as the session's working
   directory (where it started) is not obvious to anyone; relative paths
