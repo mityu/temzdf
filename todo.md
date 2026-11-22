@@ -88,6 +88,14 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- Guard the `nested` flag of `ToHost::Call`/`Eval` (d0f9464): nothing
+  checks `Bridge::answering()` (`crates/temzdf-server/src/session/script.rs`).
+  If it always said true, calls typed while a task holds an atomic section
+  would run inside it again (the race d0f9464 fixed), and only stress runs
+  would notice. A session test with a fake host that records what is sent:
+  a hook caused while a request is being answered goes `nested: true`; a
+  key's call while a dispatched task runs and asks nothing goes `nested:
+  false`.
 - Simulated-terminal tests that fail under heavy load (seen 2026-11-23 while
   `cargo test --workspace` and many `temzdf test` runs loaded the machine):
   `the_markdown_viewer_copies_follows_links_and_lists_its_headings`,
