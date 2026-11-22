@@ -88,6 +88,24 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- Completion and fuzzy finding for scripts (`doc/design/completion.md`,
+  a draft). Still to decide:
+  - Candidate (`Item`) fields; removing duplicates across sources; default
+    matcher and sorting across sources (scores, `priority`, `sortText`);
+    whether fuzzy matching many candidates in QuickJS is fast enough (else a
+    matching action in Rust).
+  - Accepting: edits, snippets (none yet), additional edits, undo grouping,
+    `.` repeat.
+  - Keys and the menu: select, accept, cancel; insert on select or not;
+    mappings only while the menu shows (a `when` condition).
+  - Rendering and previewing, resolving details lazily, ghost text.
+  - Events that start a completion, debouncing, per-source time limits,
+    keeping the old candidates while collecting again; when a completion
+    ends.
+  - The adapter: what a pane or editor (Vim, Notepad, prompts, the command
+    line) provides to the engine.
+  - Errors from sources; where the module lives and the registration API.
+  - There is no LSP client and no fuzzy finder yet; which comes first.
 - A Windows port of the tests. The gate is `cargo xtask check` and the
   JavaScript tooling Node TypeScript (`scripts/ts-types.ts`,
   `scripts/check-docs.ts`), neither assuming Nix or bash; what is left:
@@ -229,7 +247,9 @@ server on one `Session`). Next and open:
   (`doc/design/registers.md`): every pane's copies, the Vim mode's
   registers on them, `readClipboard`, `temzdf copy`/`paste`; picking from
   the history and cycling after a put wait for a completion and fuzzy
-  finder framework for scripts (the user's plan). Reading the clipboard
+  finder framework for scripts (the user's plan; the design so far:
+  `doc/design/completion.md`; what is left to decide: "Completion
+  and fuzzy finding" under Deferred). Reading the clipboard
   (OSC 52 queries) is untried in real terminals and inside tmux: check
   kitty, Ghostty, WezTerm, tmux and record it in
   doc/terminals/terminal-compat.md. The Vim mode

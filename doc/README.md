@@ -29,6 +29,10 @@ the way, with the reasons.
   and API.
 - [design/keymaps.md](design/keymaps.md): the key mapping system: modes,
   conditions on mappings (`when`), namespaces, transient modes (submodes).
+- [design/completion.md](design/completion.md): completion and fuzzy
+  finding for scripts, a draft (nothing built): the skeleton shared with
+  fuzzy finders, completion sources (`findContext`, the anchor), how
+  sources mix (groups), what is open.
 - [design/floating-panes.md](design/floating-panes.md): floating panes,
   and bars on panes and the window.
 - [design/tui-panes.md](design/tui-panes.md): script-made TUI panes, a
