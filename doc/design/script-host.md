@@ -105,6 +105,15 @@ dependencies are cached apart from the server.
   the prelude turns the reply into a Promise, settled (as timers fire) when
   nothing runs. Its continuation has no context, so it is awaited in a
   dispatched task (`doc/design/registers.md`).
+- **The event loop keeps JavaScript's order** (the HTML event loop's,
+  Node's): a task is a message from the session that runs code (a call,
+  a condition's evaluation, the configuration's load, an answer settling
+  a Promise) or a timer firing. After each one comes a microtask
+  checkpoint: the promise jobs it queued run, and those they queue, until
+  none is left, before the next task. So a mapped function's
+  `Promise.resolve().then(...)` runs before its `setTimeout(..., 0)`.
+  Calls run nested in a request's wait (hooks) are part of the task
+  waiting; their jobs run after it.
 - **Nested waits**: every request waits for its answer, attending calls
   the session runs meanwhile (hooks, scheduled functions), whose own
   requests wait inside it. An answer for a request further out that comes

@@ -178,8 +178,14 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
             Ok(ToHost::Shutdown) | Err(true) => break,
             Err(false) => {}
         }
-        context.with(|ctx| settle_promises(&ctx, &st));
-        context.with(|ctx| fire_timers(&ctx, &st));
+        // A microtask checkpoint after the task (as in browsers and Node):
+        // the promise jobs it queued, then the answers that came, each with
+        // its jobs, all before a timer fires.
+        context.with(|ctx| {
+            run_jobs(&ctx, &st);
+            settle_promises(&ctx, &st);
+            fire_timers(&ctx, &st);
+        });
     }
     // JavaScript values kept in Rust must go before the runtime does.
     st.funcs.borrow_mut().clear();

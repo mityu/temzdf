@@ -105,3 +105,26 @@ fn a_job_the_limit_or_an_interrupt_stops_is_logged() {
     let log = log_with(&lines, &["ran-after-the-endless-one"]);
     assert!(log.iter().any(|l| l == "temzdf script: a job was stopped: interrupted"), "{log:#?}");
 }
+
+#[test]
+fn promise_jobs_a_call_queued_run_before_its_timers() {
+    // A microtask checkpoint after the call, as in JavaScript: its promise
+    // jobs, and those they queue, before a timer it set for 0 ms.
+    let config = r#"import { keymap } from "temzdf";
+keymap.add("normal", "x", () => {
+  setTimeout(() => console.log("order: timer"), 0);
+  Promise.resolve().then(() => {
+    console.log("order: job");
+    queueMicrotask(() => console.log("order: nested job"));
+  });
+});
+"#;
+    let (mut s, lines) = start_logged(&[("config.js", config)], temzdf_script::UNATTENDED_LIMIT);
+    s.load("config.js");
+    cases::ready_ok(s.serve(&mut Vec::new()));
+    s.send(ToHost::Call { id: 1, func: cases::user(0), args: vec![] });
+    assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 1, result: Ok(ScriptValue::Null) }));
+    let log = log_with(&lines, &["order: timer"]);
+    let order: Vec<&str> = log.iter().filter_map(|l| l.split_once("order: ").map(|(_, o)| o)).collect();
+    assert_eq!(order, ["job", "nested job", "timer"], "{log:#?}");
+}
