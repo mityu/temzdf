@@ -5961,7 +5961,7 @@ dependencies = [
 name = "texprintf"
 version = "0.1.0"
 dependencies = [
- "pkg-config",
+ "cc",
 ]
 
 [[package]]

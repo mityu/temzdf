@@ -98,7 +98,8 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
   by Blitz in shared strips, panes scrolled, zoomed and searched over
   them, their status line; math by RaTeX. No terminal code.
 - `texprintf`: TeX math as Unicode text, wrapping libtexprintf (utftex's
-  library, C, `nix/libtexprintf.nix`).
+  library, C, vendored in `crates/texprintf/vendor/libtexprintf/` and
+  built with `cc`).
 - `temzdf-script`: the script host (QuickJS through `rquickjs`,
   TypeScript stripped with swc), see `doc/design/script-host.md`: it runs
   `config.ts`/`config.js` and talks to the session through a `Link` with

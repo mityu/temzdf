@@ -246,7 +246,7 @@ server on one `Session`). Next and open:
     to try: the probes inside Windows Terminal and WezTerm, and shipping
     `conpty.dll` with temzdf (portable-pty loading it).
   - The product: compile (gate `rustix`, `signal-hook`, `libc`;
-    libtexprintf built with `cc`; build tooling), the transport
+    build tooling), the transport
     (`uds_windows`), directories and processes (the GUI attached to a
     PDF session), terminal panes, SyncTeX paths, shared memory, the
     terminal frontend.
@@ -319,9 +319,6 @@ server on one `Session`). Next and open:
   2026-11-23): Deno the company announced the end of its maintenance of
   Deno next year; a community may carry on, but what becomes of `@std/path`
   is unknown. Path handling is mature, so this may never matter.
-- libtexprintf as a crate of its own (like a `libtexprintf-sys`) compiling
-  its C with `cc`: builds without Nix would need neither autotools nor a
-  pkg-config file of ours (`scripts/deps-without-nix.sh`). Not now.
 - Terminal panes: wait for a program's output to pause before a frame.
   htop writes one screen update as about 150 small writes over 1.5 ms
   (measured with `strace` at 160x50, 6-8 KB, at most 0.05 ms apart), so the
