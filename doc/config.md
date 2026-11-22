@@ -208,6 +208,20 @@ A command that fails throws; uncaught, its message shows as it is
 `on(event, fn)` returns a function that removes the hook; a `KeyTyped`
 hook holds every key until it ran, so hook it only while needed.
 
+`PaneScrolled(pane, { buffer, first, last, previous })` hears a text
+pane (a Markdown viewer's text mode too) show other lines, as Vim's
+`WinScrolled`: `first` and `last` are the buffer lines of its top and
+bottom rows (0-based, as positions'; a wrapped line's rows and virtual
+lines count as their line's; below the text's end, its last line),
+`previous` those of the last event (undefined when the pane is new or
+showed another buffer). Scrolling of any kind (the wheel, `text.scroll`,
+`text.reveal`, the cursor pulling the view along), a new size and lines
+inserted or deleted above fire it, once for all an invocation and its
+hooks did, and only when the lines ended up different; scrolling
+sideways or within a wrapped line and edits that leave the line numbers
+in sight alone do not (`TextChanged` hears edits). PDF and terminal
+panes and the Markdown graphics mode do not fire it.
+
 ### Default mappings
 
 | Mode | Keys | Action |

@@ -295,6 +295,10 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   It reaches hooks **before the editing `action.*` returns**, also for the
   script's own edits, as Emacs' `after-change-functions` (the host serves
   nested hook calls while waiting for a reply).
+- **`PaneScrolled`**: a text pane shows other buffer lines (first and
+  last, with those before), as Vim's `WinScrolled`: scrolling, the cursor
+  pulling the view, a new size, lines inserted above. Once per pane at the
+  safe point, with the lines as they ended up (doc/design/script-host.md).
 - **`KeyTyped`**: when a key arrives, before matching; observe only (it
   cannot drop or change keys, or it would be a second mapping layer); the
   key as typed and its source (typed, `feedkeys`, replay). Macros are

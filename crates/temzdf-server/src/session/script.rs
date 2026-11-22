@@ -623,9 +623,21 @@ impl Session {
         }
         if self.script.scheduled.is_empty() && self.script.pending_post.is_none() {
             self.current_invocation = None;
-            return Outcome::None;
+            return self.scrolled_hooks();
         }
         self.after_scripts()
+    }
+
+    /// `PaneScrolled` hooks for the text panes whose lines in sight changed,
+    /// once nothing else is left at the safe point.
+    fn scrolled_hooks(&mut self) -> Outcome {
+        let events = self.scrolled_events();
+        let queue = self.hooks_for(&events, 0);
+        if queue.is_empty() {
+            return Outcome::None;
+        }
+        self.script.frames.push(Frame::Hooks { queue, depth: 0, pre: false });
+        self.pump()
     }
 
     /// Nothing runs any more: deferred hooks, then held input.
@@ -657,6 +669,12 @@ impl Session {
             }
         }
         self.current_invocation = None;
+        // What the panes show as it all ended up: PaneScrolled (its hooks
+        // come back here).
+        let scrolled = self.scrolled_hooks();
+        if self.script.busy() {
+            return out.merge(scrolled);
+        }
         let now = self.now();
         // Keys the matcher still holds came before the held ones.
         out = out.merge(self.drive(now));
@@ -968,7 +986,11 @@ impl Session {
                 if !EVENTS.contains(&event.as_str()) {
                     return (Err(format!("unknown event {event:?}; known: {}", EVENTS.join(", "))), Outcome::None);
                 }
+                let scrolled = event == "PaneScrolled";
                 self.script.hooks.entry(event).or_default().push(Hook { func, nested });
+                if scrolled {
+                    self.watch_scrolled();
+                }
                 (Ok(ScriptValue::Null), Outcome::None)
             }
             HostOp::Off { event, func } => {

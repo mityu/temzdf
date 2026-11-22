@@ -355,6 +355,16 @@ impl View {
         let rows = self.rows(buf);
         (self.top, rows.last().map_or(self.top, |r| r.end))
     }
+
+    /// The buffer lines shown, first and last (0-based, inclusive): those
+    /// of the top and bottom rows, a row of virtual lines counting as its
+    /// line's and a wrapped line's rows as the line; past the text's end
+    /// the last line.
+    pub fn visible_lines(&self, buf: &Buffer) -> (usize, usize) {
+        let rows = self.rows(buf);
+        let top = buf.text().line_of(self.top);
+        (rows.first().map_or(top, |r| r.line), rows.last().map_or(top, |r| r.line))
+    }
 }
 
 #[cfg(test)]
@@ -388,6 +398,17 @@ mod tests {
         assert_eq!(v.cursor.pos, 10, "into the next line, same column");
         v.move_cursor(&buf, ViewUnit::DisplayLine, -1, false);
         assert_eq!(v.cursor.pos, 7);
+    }
+
+    #[test]
+    fn visible_lines_count_wrapped_rows_as_their_line() {
+        let buf = Buffer::new(Text::from("abcdefgh\nxy\nz\n"), LineEnding::Lf);
+        let mut v = view(3, 2);
+        assert_eq!(v.visible_lines(&buf), (0, 0), "two rows of line 0");
+        v.scroll(&buf, 2);
+        assert_eq!(v.visible_lines(&buf), (0, 1), "its last row, then line 1");
+        v.height = 10;
+        assert_eq!(v.visible_lines(&buf), (0, 3), "past the end: the last (empty) line");
     }
 
     #[test]

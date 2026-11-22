@@ -331,6 +331,7 @@ declare module "temzdf" {
     KeyTyped: [key: { keys: string; text: string | undefined; source: "typed" | "feedkeys" }];
     SwapExists: [buffer: number, info: SwapInfo];
     TextChanged: [buffer: number, change: TextChange];
+    PaneScrolled: [pane: number, lines: ScrollInfo];
     FileChangedOnDisk: [buffer: number];
     Copied: [entry: Copied];
   }
@@ -357,6 +358,13 @@ declare module "temzdf" {
     version: number;
     cause: "typing" | "script" | "undo" | "redo" | "reload";
     invocation: number | undefined;
+  }
+  /** What PaneScrolled gets: the buffer lines a text pane shows now (0-based, inclusive: the top and bottom rows' lines, a wrapped line's rows and virtual lines counting as their line's), and those it showed at the last event (undefined when the pane is new or showed another buffer). */
+  export interface ScrollInfo {
+    buffer: number;
+    first: number;
+    last: number;
+    previous: { first: number; last: number } | undefined;
   }
   /** Run `fn` at the safe point: after the current invocation and its hooks, before the next key, in the order scheduled. Hooks change things this way (only InvokePost and SessionReady hooks may act themselves). */
   export function schedule(fn: () => void): void;

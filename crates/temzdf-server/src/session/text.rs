@@ -4,6 +4,7 @@
 //! `edit`; typed text goes into the buffer in pass-through modes, as an
 //! input pane's does.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use temzdf_protocol::script::ScriptValue;
@@ -15,6 +16,14 @@ use temzdf_texteditor::{
 };
 
 use super::{BufferId, Kind, Outcome, PaneId, Session, Spot};
+
+/// The buffer lines a text pane shows (`PaneScrolled`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Shown {
+    buf: BufferId,
+    first: usize,
+    last: usize,
+}
 
 /// A text buffer and its file.
 pub(super) struct TextEntry {
@@ -527,6 +536,57 @@ impl Session {
             ("invocation", invocation),
         ]);
         self.event("TextChanged", vec![ScriptValue::Num(buf as f64), info]);
+    }
+
+    /// The lines every text pane shows now (those on other tab pages and
+    /// hidden floats too: what they would show).
+    fn lines_in_sight(&self) -> HashMap<PaneId, Shown> {
+        self.panes
+            .iter()
+            .filter_map(|(id, e)| {
+                let Kind::Text { buf, view } = &e.kind else { return None };
+                let (first, last) = view.view.visible_lines(&self.texts.get(buf)?.buf);
+                Some((*id, Shown { buf: *buf, first, last }))
+            })
+            .collect()
+    }
+
+    /// The first `PaneScrolled` hook: what the panes show now is no news.
+    pub(super) fn watch_scrolled(&mut self) {
+        if self.scrolled.is_none() {
+            self.scrolled = Some(self.lines_in_sight());
+        }
+    }
+
+    /// `PaneScrolled(pane, { buffer, first, last, previous })` for each text
+    /// pane whose lines in sight changed since the last look (at the safe
+    /// point, so once for everything an invocation and its hooks did):
+    /// `previous` the lines then, undefined when the pane is new or showed
+    /// another buffer.
+    pub(super) fn scrolled_events(&mut self) -> Vec<(String, Vec<ScriptValue>)> {
+        if !self.script.hooks_on("PaneScrolled") {
+            self.scrolled = None;
+            return Vec::new();
+        }
+        let now = self.lines_in_sight();
+        let before = self.scrolled.replace(now.clone()).unwrap_or_default();
+        let mut changed: Vec<(PaneId, Shown)> = now.into_iter().filter(|(id, s)| before.get(id) != Some(s)).collect();
+        changed.sort_by_key(|(id, _)| *id);
+        let lines =
+            |s: &Shown| [("first", ScriptValue::Num(s.first as f64)), ("last", ScriptValue::Num(s.last as f64))];
+        changed
+            .into_iter()
+            .map(|(id, s)| {
+                let previous = before
+                    .get(&id)
+                    .filter(|p| p.buf == s.buf)
+                    .map_or(ScriptValue::Null, |p| ScriptValue::map(lines(p)));
+                let [first, last] = lines(&s);
+                let info =
+                    ScriptValue::map([("buffer", ScriptValue::Num(s.buf as f64)), first, last, ("previous", previous)]);
+                ("PaneScrolled".to_owned(), vec![ScriptValue::Num(id as f64), info])
+            })
+            .collect()
     }
 
     /// The panes on `buf` follow what changed; the cursor undo or redo

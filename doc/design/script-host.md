@@ -173,7 +173,7 @@ declarations. In short, `import { ... } from "temzdf"`:
   (before `deleteBuffer`), `SessionEndPre()` (before `kill-session` and
   before closing the last pane), `InvokePre(info)` and `InvokePost(info)`
   (around each invocation), `TextChanged(buffer, change)`,
-  `KeyTyped(key)`.
+  `PaneScrolled(pane, lines)`, `KeyTyped(key)`.
 - **Invocations** (doc/design/text-editor.md section 9): a key sequence
   that runs a mapping, text typed into a text pane (keys no
   mapping took, input methods, pastes), a mode's fallback function, a
@@ -190,6 +190,20 @@ declarations. In short, `import { ... } from "temzdf"`:
   (`{ range, rangeLength, text }`, LSP's form), `cause` `"typing"`,
   `"script"`, `"undo"`, `"redo"`; heard before the editing command
   returns (the host serves the hooks while it waits).
+- **`PaneScrolled(pane, { buffer, first, last, previous })`**: a text
+  pane's lines in sight changed (Vim's `WinScrolled`; for lists that grow
+  as they are scrolled, the fuzzy finder's, and highlighting only what
+  shows). The session keeps what each text pane showed
+  (`Session::scrolled`, `View::visible_lines`) while the event is hooked,
+  starting when the first hook comes (what shows then is no news), and
+  compares at the safe point: when nothing else is left there (no
+  scheduled function, no `InvokePost`), before held keys go on, and in
+  every `poll` (a new size). So one event per pane for everything an
+  invocation and its hooks did, none when the lines came back to where
+  they were; each wheel notch is an input of its own. `previous` is
+  undefined for a pane not seen before or showing another buffer.
+  Edits need no check of their own: the view follows them, and the
+  comparison sees lines inserted above.
 - **`FileChangedOnDisk(buffer)`**: a text buffer's file changed elsewhere
   (its modification time differs from what was read or written; once per
   change). `reload(buffer?)` reads it again as one undoable edit (a line

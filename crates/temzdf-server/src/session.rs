@@ -406,6 +406,9 @@ pub struct Session {
     script: script::Bridge,
     /// Events for script hooks, collected while an operation runs.
     script_events: Vec<(String, Vec<ScriptValue>)>,
+    /// The lines text panes showed when `PaneScrolled` last looked (none
+    /// while nothing hooks it).
+    scrolled: Option<HashMap<PaneId, text::Shown>>,
     /// Scripts' tests: their waits and reports (`test.*`).
     test: test_actions::TestState,
 }
@@ -475,6 +478,7 @@ impl Session {
             error: None,
             script: script::Bridge::default(),
             script_events: Vec::new(),
+            scrolled: None,
             test: test_actions::TestState::default(),
         }
     }

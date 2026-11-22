@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use temzdf_protocol::script::ScriptValue;
 use termpix_core::geom::{CellSize, Geometry};
+use termpix_core::input::{CoordUnit, Modifiers, MouseEvent, MouseEventKind, ScrollDirection, ScrollPhase, ScrollUnit};
 
 use super::*;
 use crate::keymap::notation;
@@ -434,4 +435,53 @@ keymap.add("vim/normal", "<F7>", () => action.switchMode("normal"));
         ScriptValue::Str("ok | ok | a condition (when, keepalive) cannot change anything; it may only read".into())
     );
     assert_eq!(var(&mut s, "hook"), ScriptValue::Str("ok | ok".into()));
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn the_mouse_wheel_is_heard_as_pane_scrolled() {
+    // Script tests cannot turn the wheel (runtime/scrolled.test.ts has the
+    // rest): a notch scrolls three rows, heard once; a touchpad's fraction
+    // of a row scrolls nothing and is not heard.
+    let config = r#"import { action, keymap, on } from "temzdf";
+const heard: string[] = [];
+on("PaneScrolled", (pane, i) => { heard.push(`${pane}:${i.first}-${i.last}<${i.previous?.first}-${i.previous?.last}`); });
+keymap.add("vim/normal", "<F6>", () => { action.setVar("pane", "heard", heard.join(" ")); heard.length = 0; });
+keymap.add("vim/normal", "<F7>", () => action.text.scroll(1));
+"#;
+    let dir = TempDir::new("pane-scrolled");
+    let text: String = (0..100).map(|i| format!("{i}\n")).collect();
+    let (mut s, rx) = config_session(&dir.0, &text, Some(config)).unwrap();
+    let pane = s.focus;
+    let rows = s.panes[&pane].content().h as usize;
+    let heard = |s: &mut Session| {
+        // As the server's loop polls after each event.
+        let _ = s.poll(Instant::now());
+        type_keys(s, &rx, "<F6>", None).unwrap();
+        let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("heard".into())];
+        s.run_command("get-var", &args, Instant::now()).unwrap().0
+    };
+    let last = rows - 1;
+    assert_eq!(heard(&mut s), ScriptValue::Str(format!("{pane}:0-{last}<undefined-undefined")), "the first pane");
+    let wheel = |s: &mut Session, kind| {
+        s.mouse(
+            &MouseEvent { kind, x: 100, y: 100, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE },
+            Instant::now(),
+        );
+    };
+    wheel(&mut s, MouseEventKind::Scroll(ScrollDirection::Down));
+    assert_eq!(heard(&mut s), ScriptValue::Str(format!("{pane}:3-{}<0-{last}", last + 3)));
+    let kind = MouseEventKind::ScrollBy { dx: 0, dy: 5, unit: ScrollUnit::Pixel, phase: ScrollPhase::Touch };
+    wheel(&mut s, kind);
+    assert_eq!(heard(&mut s), ScriptValue::Str(String::new()), "a fraction of a row");
+    // A key typed while a mapping runs waits; the mapping's scrolling is
+    // heard before it (at the safe point), not together with its own.
+    let f7 = notation::parse("<F7>").unwrap()[0].event();
+    s.key(&f7, Instant::now());
+    s.key(&f7, Instant::now());
+    settle(&mut s, &rx, true, None);
+    assert_eq!(
+        heard(&mut s),
+        ScriptValue::Str(format!("{pane}:4-{}<3-{} {pane}:5-{}<4-{}", last + 4, last + 3, last + 5, last + 4))
+    );
 }
