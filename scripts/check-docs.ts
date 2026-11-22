@@ -70,11 +70,14 @@ const all = gitFiles(".")
   .sort();
 const md = all.filter((f) => f.endsWith(".md"));
 
-let bad = false;
-function problem(message: string): void {
-  console.log(message);
-  bad = true;
-}
+const { problem, bad } = (() => {
+  let failed = false;
+  function problem(message: string): void {
+    console.log(message);
+    failed = true;
+  }
+  return { problem, bad: () => failed };
+})();
 
 // 1. Paths under doc/ (globs such as doc/** are not paths).
 for (const [file, line, path] of grep(all, /(?<![A-Za-z0-9_./-])doc\/[A-Za-z0-9_./-]*[A-Za-z0-9_/]/g)) {
@@ -98,15 +101,17 @@ for (const [file, line, quoted] of grep(md, /`[A-Za-z0-9_./-]+\.md`/g)) {
 }
 
 // 4. Every document is in the index.
-let index = "";
-try {
-  index = readFileSync("doc/README.md", "utf8");
-} catch {
-  problem("doc/README.md: missing (the index of doc/)");
-}
+const index = (() => {
+  try {
+    return readFileSync("doc/README.md", "utf8");
+  } catch {
+    problem("doc/README.md: missing (the index of doc/)");
+    return "";
+  }
+})();
 for (const doc of gitFiles("doc/*.md")) {
   if (doc === "doc/README.md") continue;
   if (!index.includes(`](${doc.slice("doc/".length)})`)) problem(`doc/README.md: does not link to ${doc}`);
 }
 
-process.exit(bad ? 1 : 0);
+process.exit(bad() ? 1 : 0);
