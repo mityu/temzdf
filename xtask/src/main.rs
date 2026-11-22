@@ -4,12 +4,13 @@
 
 mod check;
 mod fonts;
+mod mutate;
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 
-const USAGE: &str = "\
+pub(crate) const USAGE: &str = "\
 usage: cargo xtask TASK [ARGS]
 
 tasks:
@@ -39,6 +40,21 @@ tasks:
       the Nix dev shell.
   test [--stream] [--verbose] [CARGO TEST ARGS...]
       The workspace's tests and the scripts' alone, as check runs them.
+  mutate [-n] FILE OLD NEW -- COMMAND [ARGS...]
+      Mutation check: replace OLD with NEW in FILE (exactly one occurrence,
+      counted overlapping, else it refuses), run COMMAND from the
+      repository root, and always restore FILE (also on Ctrl-C or failure).
+      Before the mutation COMMAND runs once to see it pass (-n skips that).
+      FILE is relative to the repository root, e.g.
+        cargo xtask mutate crates/termpix/src/input.rs \\
+          \"(sgr && b[i] == b'-')\" false -- cargo test -p termpix --lib input
+      Exit status: 0 caught (COMMAND failed), 1 survived (COMMAND passed:
+      the tests do not notice), 2 usage (OLD not found once, COMMAND failing
+      before the mutation), 3 the mutated code did not compile, 4 no test
+      ran (a filter matching nothing). cargo's output is looked at only for
+      \"could not compile\", \"running N tests\" and \"test result\"; any
+      other command is judged by its exit status alone.
+      scripts/mutate.sh runs this inside the Nix dev shell.
   fetch-fonts [--manifest PATH]
       Download the fonts temzdf-gui embeds (crates/temzdf-gui/fonts.toml)
       into target/fonts/, checking their sha256; files already there and
@@ -66,6 +82,7 @@ fn run() -> Result<i32> {
     match task.as_str() {
         "check" => return check::check(&check::Options::parse(args, false)),
         "test" => return check::test(&check::Options::parse(args, true)),
+        "mutate" => return mutate::mutate(args.map(|a| a.to_string_lossy().into_owned())),
         _ => {}
     }
     let mut args = args.map(|a| a.to_string_lossy().into_owned());

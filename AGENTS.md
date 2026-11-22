@@ -52,6 +52,10 @@ cargo xtask check --all      # the tests even when only Markdown under doc/ chan
 ```
 
 `scripts/check.sh` takes the same options and runs it inside the dev shell.
+A test written for a fix should fail without it: `cargo xtask mutate FILE OLD NEW
+-- COMMAND` puts the bug back for one run and always restores the file
+(`scripts/mutate.sh` is the same inside the dev shell; "Mutation checks" in
+`doc/dev/testing.md`).
 Runs of the gate in one checkout wait for each other by themselves. Never
 wait for a process with `pgrep -f` in a loop (it matches its own command
 line); wait for your own background command's completion notification, or

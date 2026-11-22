@@ -50,7 +50,7 @@ prove the screen is pixel-identical: PDF frames and the `shots` scenes of
 `crates/temzdf/tests/tui.rs` (sessions, Markdown, terminal panes, floats,
 tabs), with an image of each difference in `B/diff/`.
 
-A test written for a fix should fail without it: `scripts/mutate.sh FILE
+A test written for a fix should fail without it: `cargo xtask mutate FILE
 OLD NEW -- cargo test ...` puts the bug back for one run and restores the
 file ("Mutation checks" below).
 
@@ -277,8 +277,9 @@ own.
 
 ## Mutation checks
 
-A test written for a fix should fail without the fix. `scripts/mutate.sh
-FILE OLD NEW -- COMMAND` replaces OLD (exactly one occurrence) with NEW,
+A test written for a fix should fail without the fix. `cargo xtask mutate
+FILE OLD NEW -- COMMAND` (`scripts/mutate.sh` is the same inside the Nix dev
+shell, entered by itself) replaces OLD (exactly one occurrence) with NEW,
 runs COMMAND (after checking it passes unmutated; `-n` skips that) and
 restores FILE whatever happens. It answers CAUGHT (exit 0), SURVIVED (1:
 the tests do not notice), or why it proves nothing: OLD not found once (2),
