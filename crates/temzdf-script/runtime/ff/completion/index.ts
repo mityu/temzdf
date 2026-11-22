@@ -797,6 +797,11 @@ function begin(manual: boolean): boolean {
     session: merged,
     renderer: settings.renderer,
     closePane: true,
+    // Three screens of the largest popup, not of the popup's height of
+    // the moment: it is sized after the lines are written, and three rows
+    // of it (after a query matching one) would write three of the next
+    // query's matches only, in a popup grown to ten rows.
+    initial: 3 * settings.maxHeight,
     onChange: () => {
       layout(c);
       pendingMoves(c);
@@ -811,7 +816,10 @@ function begin(manual: boolean): boolean {
       try {
         ctx.atomic(() => {
           c.queued = false;
-          layout(c);
+          // An open popup is sized when the list wrote the new lines (its
+          // onChange, in the same step): sized here, it would show the
+          // old lines in the new size for a frame. Opened or hidden here.
+          if (c.popup === undefined || c.merged.snapshot({ end: 0 }).matched === 0) layout(c);
         });
       } finally {
         c.pending--;

@@ -480,7 +480,26 @@ export class Session<T extends Detail = DetailUnit> {
     }, wait);
   }
 
+  /** A new query matched nothing yet while matching or collecting goes on:
+   * what was published before stays (a list is not emptied for a moment,
+   * a completion's popup not closed and opened again) until the new
+   * query's first matches, or its end (no match at all). */
+  #holding(): boolean {
+    return (
+      this.#publishedGen >= 0 &&
+      this.#gen !== this.#publishedGen &&
+      this.#current.length === 0 &&
+      (this.#queue.length > 0 ||
+        this.#worker !== undefined ||
+        this.#freshTimer !== undefined ||
+        this.#slots.some((s) => s.state === "collecting"))
+    );
+  }
+
   async #flush(): Promise<void> {
+    // Neither published nor heard, nor counted for the throttle: the
+    // match's next step (or its end) asks again.
+    if (this.#holding()) return;
     this.#flushing = true;
     const gen = this.#gen;
     const version = this.#version;

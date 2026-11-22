@@ -167,6 +167,46 @@ test("while the query stays only new batches are matched; a new query matches ev
   assert.deepEqual(values(s.snapshot()), ["two", "three"]);
 });
 
+test("a new query is published once it has a match or is done: the old matches stay meanwhile", async (assert, t) => {
+  // A matcher waiting before its first match: a publication due meanwhile
+  // (the first after a quiet spell is due at once) must not empty the list.
+  let wait: Promise<void> | undefined;
+  const slow = defineMatcher(async function* (p, o) {
+    if (wait !== undefined) await wait;
+    yield* substring().match(p, o);
+  });
+  const s = session(t, { sources: [fake(["apple", "banana", "cherry"])], matcher: slow });
+  await s.whenIdle();
+  const heard: Snapshot<object>[] = [];
+  s.onChange(() => heard.push(s.snapshot()));
+  await sleep(60);
+  const g = gate();
+  wait = g.wait;
+  s.setQuery("an");
+  await sleep(60);
+  assert.deepEqual(heard, [], "nothing published while the match waits");
+  assert.deepEqual(values(s.snapshot()), ["apple", "banana", "cherry"], "the old matches");
+  assert.equal(s.snapshot().state, "matching");
+  g.open();
+  await s.whenIdle();
+  assert.deepEqual(values(s.snapshot()), ["banana"]);
+  assert.true(
+    heard.every((h) => h.matched > 0),
+    `heard ${heard.map((h) => `${h.query}:${h.matched}`).join(" ")}`,
+  );
+
+  // No match at all: published once the match is done.
+  const g2 = gate();
+  wait = g2.wait;
+  s.setQuery("zz");
+  await sleep(60);
+  assert.deepEqual(values(s.snapshot()), ["banana"]);
+  g2.open();
+  await s.whenIdle();
+  const snap = s.snapshot();
+  assert.deepEqual([snap.query, snap.matched, snap.state], ["zz", 0, "done"]);
+});
+
 test("the matches are sorted, also as batches come", async (assert, t) => {
   const g = gate();
   const s = session(t, {

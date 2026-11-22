@@ -701,9 +701,58 @@ impl Term {
         }
     }
 
+    /// Every frame the program draws until one satisfies `done` (that one
+    /// last): the screen at the end of each synchronized update (`CSI ?
+    /// 2026 l`), to catch states that last a frame only (a popup gone for
+    /// a moment). Panics (with a dump) after [`TIMEOUT`]. Output after the
+    /// last frame's end is interpreted too, without a screen of its own.
+    pub fn frames_until(&mut self, what: &str, done: impl Fn(&Screen) -> bool) -> Vec<Screen> {
+        const END: &[u8] = b"\x1b[?2026l";
+        let mut out = Vec::new();
+        let mut pending: Vec<u8> = Vec::new();
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let why = match self.output.recv_timeout(left) {
+                Ok(bytes) => {
+                    self.received.extend_from_slice(&bytes);
+                    pending.extend_from_slice(&bytes);
+                    while let Some(at) = pending.windows(END.len()).position(|w| w == END) {
+                        let frame: Vec<u8> = pending.drain(..at + END.len()).collect();
+                        self.terminal.vt_write(&frame);
+                        let screen = self.snapshot();
+                        let last = done(&screen);
+                        out.push(screen);
+                        if last {
+                            self.terminal.vt_write(&pending);
+                            return out;
+                        }
+                    }
+                    if Instant::now() < deadline {
+                        continue;
+                    }
+                    "timed out"
+                }
+                Err(RecvTimeoutError::Timeout) => "timed out",
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.eof = true;
+                    "the program exited"
+                }
+            };
+            self.terminal.vt_write(&pending);
+            let screen = self.snapshot();
+            self.fail(&format!("waiting for a frame with {what}: {why} ({} frames)", out.len()), &screen);
+        }
+    }
+
     /// What the terminal shows now (after interpreting what has arrived).
     pub fn screen(&mut self) -> Screen {
         self.pump(Duration::ZERO);
+        self.snapshot()
+    }
+
+    /// The screen as interpreted so far.
+    fn snapshot(&mut self) -> Screen {
         let mut cells = Vec::new();
         let mut cursor = None;
         let mut background = [0, 0, 0];

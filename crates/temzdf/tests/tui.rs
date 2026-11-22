@@ -2775,6 +2775,59 @@ fn ex_commands_complete_in_the_command_line() {
 }
 
 #[test]
+fn cmdline_completion_popup_stays_in_every_frame_while_typing() {
+    // After <Tab> in the <C-b>: command line, typing on narrows the popup
+    // in place: every frame shows either the candidates before the key or
+    // those after it, never no popup (the session published "no match"
+    // for the new query before matching it: the popup closed and opened
+    // again, a flicker on every key) nor a mix of the two (the new size
+    // with the old lines); erased back to nothing, the popup grows to all
+    // its rows again (not three lines written, as many as rows it had).
+    let env = Env::new("cmdline-completion-frames");
+    let file = env.path("c.txt");
+    std::fs::write(&file, "one\ntwo\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "cf", file.to_str().unwrap()], &env.options());
+    t.wait_text("vim/normal");
+    t.keys(&["C-b", ":"]);
+    t.key("Tab");
+    // The popup's names: the word before each "  command" (their kind).
+    let names = |s: &Screen| -> Vec<String> {
+        s.lines()
+            .iter()
+            .filter_map(|l| {
+                let at = l.find("  command")?;
+                let mut words = l[..at].split(|c: char| c.is_whitespace() || c == '~' || c == '\u{2500}');
+                words.rfind(|w| !w.is_empty()).map(str::to_owned)
+            })
+            .collect()
+    };
+    let s = t.wait_for("the popup", |s| names(s).len() == 10);
+    let all = names(&s);
+    let mut before = all.clone();
+    let cmdline = |s: &Screen, typed: &str| s.lines().iter().any(|l| l.trim_end() == format!(":{typed}"));
+    let e = vec!["edit".to_owned(), "enew".into(), "exit".into()];
+    let enew = vec!["enew".to_owned()];
+    // Typed and erased again, a few times: how frames fall is timing.
+    let mut steps = Vec::new();
+    for _ in 0..3 {
+        steps.extend([("e", "e", &e), ("n", "en", &enew), ("e", "ene", &enew), ("w", "enew", &enew)]);
+        steps.extend([("BS", "ene", &enew), ("BS", "en", &enew), ("BS", "e", &e)]);
+        steps.push(("BS", "", &all));
+    }
+    for (key, typed, after) in steps {
+        t.key(key);
+        let frames = t.frames_until(&format!(":{typed} and {after:?}"), |s| cmdline(s, typed) && names(s) == *after);
+        for f in &frames {
+            let n = names(f);
+            if n != before && n != *after {
+                t.fail(&format!("at {typed:?}: a frame with {n:?}, neither {before:?} nor {after:?}"), f);
+            }
+        }
+        before.clone_from(after);
+    }
+}
+
+#[test]
 fn a_fuzzy_finder_shows_its_prompt_above_its_list_in_a_frame() {
     // :FF lines opens a finder centred on the screen: a frame titled with
     // its name and counts, the prompt on its first row, a rule, then the

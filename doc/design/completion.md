@@ -119,7 +119,11 @@ interface Decoration { start: number; length: number; style?: string }
   failed with its error, stopped), the marked items' keys, the errors
   (of sources, the matcher, the sorter, listeners). Until the new query's
   first publication the old one's matches stay, so the list does not
-  flash empty.
+  flash empty; and a new query is first published once it has a match
+  or is done (a publication due while it has matched nothing yet and
+  matching or collecting goes on is skipped, and not counted for the
+  throttle), so a completion's popup is not closed for "no match" and
+  opened again on every key typed.
 - An item's key in a session is its source's index and its id: marks are
   kept by key, so they survive new queries (the matcher returns new
   objects) and a curator collecting again with the same ids.
