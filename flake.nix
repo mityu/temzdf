@@ -171,7 +171,6 @@
             inherit system;
             overlays = [
               (import ./nix/libghostty-vt.nix)
-              (import ./nix/libtexprintf.nix)
               (import rust-overlay)
             ];
             config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "tart" ];
@@ -289,10 +288,9 @@
                       typescript
                     ];
 
-                    # Found through pkg-config (temzdf-term, texprintf).
+                    # Found through pkg-config (temzdf-term).
                     buildInputs = [
                       pkgs.libghostty-vt.dev
-                      pkgs.libtexprintf
                     ];
 
                     # mupdf-sys runs bindgen, which needs libclang.
@@ -404,8 +402,6 @@
                 buildInputs = [
                   pkgs.fontconfig
                   pkgs.libghostty-vt.dev
-                  # libtexprintf: TeX math as text for the Markdown viewer (texprintf).
-                  pkgs.libtexprintf
                 ];
                 # Tests are cargo xtask check's: they need TeX, the
                 # fixtures, tmux and more than the build's sources.

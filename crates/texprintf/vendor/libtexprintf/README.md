@@ -2,8 +2,8 @@
 
 Unmodified copy of the library sources of libtexprintf (the library behind
 `utftex`) version 1.31, tag `v1.31` of https://github.com/bartp5/libtexprintf
-(commit 18977837b20649d56a651eb6bf846f1c914db77a), the same version
-`nix/libtexprintf.nix` built before.
+(commit 18977837b20649d56a651eb6bf846f1c914db77a), the same version the
+Nix overlay that built it before (removed) used.
 
 Files, all from upstream's `src/`: `boxes.c`, `drawbox.c`, `error.c`,
 `lexer.c`, `parser.c`, `stringutils.c`, `texprintf.c` and the headers they
