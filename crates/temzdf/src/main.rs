@@ -98,6 +98,14 @@ struct PdfArgs {
     /// itself here.
     #[arg(long, value_name = "PNG", requires = "render_frame")]
     mask: Option<PathBuf>,
+    /// For --render-frame: write the cells the terminal draws itself here, as
+    /// bytes for a terminal to draw them (cursor positions, SGR, text).
+    #[arg(long, value_name = "FILE", requires = "render_frame")]
+    ansi: Option<PathBuf>,
+    /// For --render-frame: write a mask of the cells to compare with a
+    /// terminal's drawing of --ansi here.
+    #[arg(long, value_name = "PNG", requires = "render_frame")]
+    cells: Option<PathBuf>,
 }
 
 /// Viewers that run in this terminal, without a session.
@@ -272,6 +280,14 @@ enum Cmd {
         /// Write a mask of the cells the terminal draws itself here.
         #[arg(long, value_name = "PNG")]
         mask: Option<PathBuf>,
+        /// Write the cells the terminal draws itself here, as bytes for a
+        /// terminal to draw them (cursor positions, SGR, text).
+        #[arg(long, value_name = "FILE")]
+        ansi: Option<PathBuf>,
+        /// Write a mask of the cells to compare with a terminal's drawing of
+        /// --ansi here.
+        #[arg(long, value_name = "PNG")]
+        cells: Option<PathBuf>,
     },
     /// Print TypeScript declarations of the scripting API (temzdf.d.ts).
     #[command(hide = true)]
@@ -430,6 +446,8 @@ fn main() -> Result<()> {
             linear_blending,
             text,
             mask,
+            ansi,
+            cells,
         }) => {
             let opts = snapshot::SnapshotOptions {
                 geometry: parse_geometry(&size, &cell)?,
@@ -437,6 +455,8 @@ fn main() -> Result<()> {
                 linear_blending,
                 text,
                 mask,
+                ansi,
+                cells,
             };
             return snapshot::render_session(&name, &out, &opts);
         }
@@ -577,6 +597,8 @@ fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
             linear_blending: args.linear_blending,
             text: args.text.clone(),
             mask: args.mask.clone(),
+            ansi: args.ansi.clone(),
+            cells: args.cells.clone(),
             // Never the user's configuration: the shipped one, or --config's.
             config: if cli.clean { None } else { cli.config.clone() },
         };

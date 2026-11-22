@@ -42,6 +42,11 @@ pub struct FrameOptions {
     /// Write a mask of the cells the terminal draws itself here (as
     /// `render-session --mask`).
     pub mask: Option<PathBuf>,
+    /// Write the cells the terminal draws as bytes here, and a mask of those
+    /// to compare with a terminal's drawing of them (as `render-session
+    /// --ansi` and `--cells`).
+    pub ansi: Option<PathBuf>,
+    pub cells: Option<PathBuf>,
     /// This configuration script on top of the shipped defaults (never the
     /// user's own).
     pub config: Option<PathBuf>,
@@ -373,14 +378,13 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         term.set_blending(termpix::raster::Blending::Linear);
     }
     term.feed(&bytes);
-    crate::snapshot::write_outputs(
-        &term.render(),
-        &frame,
-        opts.geometry,
-        out,
-        opts.text.as_deref(),
-        opts.mask.as_deref(),
-    )
+    let outputs = crate::snapshot::Outputs {
+        text: opts.text.as_deref(),
+        mask: opts.mask.as_deref(),
+        ansi: opts.ansi.as_deref(),
+        cells: opts.cells.as_deref(),
+    };
+    crate::snapshot::write_outputs(&term.render(), &frame, opts.geometry, out, outputs)
 }
 
 /// Build frames and handle the workers' results until nothing is left to do;
