@@ -45,6 +45,13 @@ export function stopRecording(): void {
   }
 }
 
+/** Stop recording without keeping what was typed (a test's reset). */
+export function cancelRecording(): void {
+  const r = recording;
+  recording = null;
+  r?.stop();
+}
+
 /** The Ex command line just run, for @:. */
 export function rememberEx(line: string): void {
   lastEx = line;

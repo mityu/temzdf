@@ -30,6 +30,7 @@ const MODULES: &[(&str, &str)] = &[
     ("buffers", "buffers.ts"),
     ("command", "command.ts"),
     ("keyset", "lib/keyset.ts"),
+    ("test", "test/index.ts"),
 ];
 
 fn main() {
@@ -64,6 +65,9 @@ fn main() {
             .arg(format!("--format={format}"))
             .arg("--platform=neutral")
             .arg("--target=es2022")
+            // A package without `exports` (loupe) by its `module` or `main`
+            // field (the neutral platform reads none).
+            .arg("--main-fields=module,main")
             .arg("--external:temzdf")
             .arg("--external:temzdf/*")
             .arg("--log-level=warning")

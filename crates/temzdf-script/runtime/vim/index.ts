@@ -38,7 +38,7 @@ import type { MotionFn, Operator } from "./state";
 import { textObjectKeys } from "./textobjects";
 import { command } from "temzdf/command";
 import { confirmKey, exCommands } from "./ex";
-import { isRecording, runMacro, startRecording, stopRecording } from "./macros";
+import { cancelRecording, isRecording, runMacro, startRecording, stopRecording } from "./macros";
 import { isMarkName, jump, markPos, setMark } from "./marks";
 import { cursor, firstNonBlank, isTextPane, t } from "./util";
 import { draw, enterVisual, exitVisual, reselect, swapEnds } from "./visual";
@@ -332,13 +332,17 @@ function define(d: Define): void {
   });
 }
 
-/** What enable() left beyond mappings and hooks: text panes back to the
- * mode `edit`, what is open closed. */
-function teardown(): void {
-  if (isRecording()) stopRecording();
+/** What is under way closed: an insert, the visual selection, an
+ * operator waiting for its motion, the register chosen for the next
+ * command; a macro being recorded stops (`keep`: into its register; else
+ * it is dropped). */
+function closeAll(keep: boolean): void {
+  if (keep && isRecording()) stopRecording();
+  else cancelRecording();
   if (state.insert !== null) abandonInsert();
   state.visual = null;
   state.pending = null;
+  state.register = null;
   try {
     const focused = focusedPaneInfo(action);
     if (focused !== undefined && isTextPane(focused.id, focused.kind) && !isPrompt(focused.buffer)) {
@@ -347,6 +351,12 @@ function teardown(): void {
   } catch {
     // Nothing to clear.
   }
+}
+
+/** What enable() left beyond mappings and hooks: text panes back to the
+ * mode `edit`, what is open closed. */
+function teardown(): void {
+  closeAll(true);
   const b = { ...o.basemode };
   if (b.edit === N) {
     delete b.edit;
@@ -367,6 +377,11 @@ const vim = {
   get enabled() {
     return keys.enabled;
   },
+  /** Close what is under way (an insert, the visual selection, a pending
+   * operator, a chosen register) and drop a macro being recorded, without
+   * changing the mode (temzdf/test does before each test, after
+   * test.reset()). Inside a mapped function or `atomic`. */
+  reset: () => closeAll(false),
   options,
 };
 export default vim;

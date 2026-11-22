@@ -16,6 +16,22 @@ declare var console: {
 declare function setTimeout(fn: (...args: any[]) => void, ms?: number, ...args: any[]): number;
 declare function clearTimeout(id: number): void;
 
+// AbortController and AbortSignal (runtime/polyfills.ts).
+declare class AbortSignal {
+  readonly aborted: boolean;
+  readonly reason: unknown;
+  onabort: (() => void) | null;
+  throwIfAborted(): void;
+  addEventListener(type: "abort", listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: "abort", listener: () => void): void;
+  static timeout(ms: number): AbortSignal;
+  static any(signals: AbortSignal[]): AbortSignal;
+}
+declare class AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: unknown): void;
+}
+
 // The WHATWG URL Standard's URL and URLSearchParams (runtime/polyfills.ts).
 declare class URL {
   constructor(url: string | URL, base?: string | URL);

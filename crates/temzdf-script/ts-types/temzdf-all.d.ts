@@ -20,6 +20,22 @@ declare var console: {
 declare function setTimeout(fn: (...args: any[]) => void, ms?: number, ...args: any[]): number;
 declare function clearTimeout(id: number): void;
 
+// AbortController and AbortSignal (runtime/polyfills.ts).
+declare class AbortSignal {
+  readonly aborted: boolean;
+  readonly reason: unknown;
+  onabort: (() => void) | null;
+  throwIfAborted(): void;
+  addEventListener(type: "abort", listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: "abort", listener: () => void): void;
+  static timeout(ms: number): AbortSignal;
+  static any(signals: AbortSignal[]): AbortSignal;
+}
+declare class AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: unknown): void;
+}
+
 // The WHATWG URL Standard's URL and URLSearchParams (runtime/polyfills.ts).
 declare class URL {
   constructor(url: string | URL, base?: string | URL);
@@ -968,6 +984,11 @@ const vim: {
 	enable: () => void;
 	disable: () => void;
 	readonly enabled: boolean;
+	/** Close what is under way (an insert, the visual selection, a pending
+	 * operator, a chosen register) and drop a macro being recorded, without
+	 * changing the mode (temzdf/test does before each test, after
+	 * test.reset()). Inside a mapped function or `atomic`. */
+	reset: () => void;
 	options: {
 		shiftwidth: number;
 		expandtab: boolean;
@@ -1314,5 +1335,106 @@ export interface Define {
  * what else it left (state, modes' options) after the mappings and hooks
  * went. */
 export function keyset(namespace: string, setup: (d: Define) => void, teardown?: () => void): Keyset;
+
+}
+
+declare module "temzdf/test" {
+import { Actions, TestSettled } from 'temzdf';
+
+class AbortSignal {
+	readonly aborted: boolean;
+	readonly reason: unknown;
+	onabort: (() => void) | null;
+	throwIfAborted(): void;
+	addEventListener(type: "abort", listener: () => void, options?: {
+		once?: boolean;
+	}): void;
+	removeEventListener(type: "abort", listener: () => void): void;
+	static timeout(ms: number): AbortSignal;
+	static any(signals: AbortSignal[]): AbortSignal;
+}
+/** QUnit's assertions (https://qunitjs.com/api/assert/). */
+export interface Assert {
+	ok(state: unknown, message?: string): void;
+	notOk(state: unknown, message?: string): void;
+	true(state: unknown, message?: string): void;
+	false(state: unknown, message?: string): void;
+	equal(actual: unknown, expected: unknown, message?: string): void;
+	notEqual(actual: unknown, expected: unknown, message?: string): void;
+	strictEqual<T>(actual: T, expected: T, message?: string): void;
+	notStrictEqual(actual: unknown, expected: unknown, message?: string): void;
+	deepEqual<T>(actual: T, expected: T, message?: string): void;
+	notDeepEqual(actual: unknown, expected: unknown, message?: string): void;
+	propEqual(actual: unknown, expected: unknown, message?: string): void;
+	propContains(actual: unknown, expected: unknown, message?: string): void;
+	throws(block: () => void, expected?: unknown, message?: string): void;
+	rejects(promise: Promise<unknown>, expected?: unknown, message?: string): Promise<void>;
+	step(value: string): void;
+	verifySteps(steps: string[], message?: string): void;
+	expect(amount: number): void;
+	pushResult(result: {
+		result: boolean;
+		actual: unknown;
+		expected: unknown;
+		message?: string;
+	}): void;
+}
+/** `t.keys`' options: test.keys' (`flush`, `remap`), and `allowErrors`:
+ * error messages shown meanwhile are returned rather than failing the
+ * test. */
+export interface KeysOptions {
+	flush?: boolean;
+	remap?: boolean;
+	allowErrors?: boolean;
+}
+/** What a test gets besides `assert`. */
+export interface TestContext {
+	/** Aborted when the test timed out: the helpers then throw rather than
+	 * act (and stop waiting). */
+	readonly signal: AbortSignal;
+	/** Run `fn` after the test, whether it passed or not (the last
+	 * registered first). */
+	after(fn: () => void | Promise<void>): void;
+	/** The session's actions (the test runs in a dispatched task: the plain
+	 * `action` works inside `run` only). */
+	readonly action: Actions;
+	/** Run synchronous `fn` with everything else held, where the plain
+	 * `action`, `o` and the modules' functions work (ctx.atomic). */
+	run<T>(fn: () => T): T;
+	/** Type `keys` (key notation) and wait until the session settled
+	 * (test.keys); error messages shown meanwhile fail the test unless
+	 * `allowErrors`. */
+	keys(keys: string, opts?: KeysOptions): Promise<TestSettled>;
+	/** Wait until the session settled (test.settle). */
+	settle(opts?: {
+		flush?: boolean;
+	}): Promise<TestSettled>;
+	/** A new text buffer holding `text` (no file), in a new pane beside the
+	 * focused one, focused; both go after the test. Returns the pane. */
+	openText(text: string, opts?: {
+		basemode?: string;
+	}): number;
+}
+/** `test`'s options. */
+export interface TestOptions {
+	/** Milliseconds before the test is stopped and fails (10 s by default). */
+	timeout?: number;
+}
+/** Run around each test of a module, with its `assert` and `t` (inside
+ * the test's timeout: a failure fails the test). */
+export interface ModuleHooks {
+	beforeEach?(assert: Assert, t: TestContext): void | Promise<void>;
+	afterEach?(assert: Assert, t: TestContext): void | Promise<void>;
+}
+type TestFn = (assert: Assert, t: TestContext) => void | Promise<void>;
+/** Register a test: `fn(assert, t)`, stopped and failed after
+ * `opts.timeout` ms. */
+export function test(name: string, fn: TestFn, opts?: TestOptions): void;
+/** Group the tests registered in `scope` (or, without one, those after it
+ * until the next module) under `name`, with `hooks` around each. */
+export function module(name: string, hooks?: ModuleHooks | (() => void), scope?: () => void): void;
+/** Run the registered tests (once) in a dispatched task. `temzdf test`
+ * starts them itself. */
+export function run(): void;
 
 }
