@@ -37,16 +37,11 @@ const DEFAULTS_NAME: &str = "temzdf:defaults";
 /// `build.rs`).
 const TEMZDF_MODULE: &str = include_str!(concat!(env!("OUT_DIR"), "/temzdf.js"));
 
-use crate::UNATTENDED_LIMIT;
-
 /// Run the host over a byte stream ([`StreamLink`]) until the session goes
-/// away or says [`ToHost::Shutdown`].
-pub fn run(input: impl Read + Send + 'static, output: impl Write + 'static) -> Result<(), String> {
-    run_with_limit(input, output, UNATTENDED_LIMIT)
-}
-
-/// [`run`] with another [`UNATTENDED_LIMIT`] (for tests).
-#[doc(hidden)]
+/// away or says [`ToHost::Shutdown`], with `limit` as the
+/// [`UNATTENDED_LIMIT`](crate::UNATTENDED_LIMIT) (tests pass a shorter one). The server runs the
+/// WebAssembly guest instead; the tests and experiments/script-host-bench
+/// use this.
 pub fn run_with_limit(
     input: impl Read + Send + 'static,
     output: impl Write + 'static,
@@ -57,7 +52,7 @@ pub fn run_with_limit(
 }
 
 /// Run the host over `link` until the session goes away or says
-/// [`ToHost::Shutdown`], with `limit` as the [`UNATTENDED_LIMIT`].
+/// [`ToHost::Shutdown`], with `limit` as the [`UNATTENDED_LIMIT`](crate::UNATTENDED_LIMIT).
 pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
     let interrupt = Interrupts { sent: link.interrupts().into(), cleared: Arc::default() };
     let rt = Runtime::new().map_err(|e| e.to_string())?;
@@ -733,7 +728,7 @@ fn settle_promises(ctx: &Ctx<'_>, st: &Rc<State>) {
 }
 
 /// When code nobody waits for (timers, promise jobs) must stop: see
-/// [`UNATTENDED_LIMIT`].
+/// [`UNATTENDED_LIMIT`](crate::UNATTENDED_LIMIT).
 #[derive(Clone)]
 struct Unattended {
     start: Instant,

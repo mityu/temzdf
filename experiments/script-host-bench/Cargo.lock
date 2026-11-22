@@ -2643,6 +2643,8 @@ dependencies = [
  "serde",
  "serde_bytes",
  "termpix-core",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

@@ -1,8 +1,8 @@
 //! Round trips between a mapped script function and the server, in three
 //! forms (doc/survey/script-host-transport.md):
 //!
-//! - A: the real script host (`temzdf_script::run`, what `temzdf
-//!   script-host` runs) in a child process over pipes, this program playing
+//! - A: the real script host (`temzdf_script::run_with_limit`, what `temzdf
+//!   script-host` ran before the server ran the WebAssembly guest) in a child process over pipes, this program playing
 //!   the server as crates/temzdf-server/src/session/script.rs does (a reader
 //!   thread feeding a channel, replies written from the main thread);
 //! - B: rquickjs in this process, `__host.request` a native function doing
@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use temzdf_protocol::script::{CommandSpec, FromHost, HostOp, MapRhs, ScriptValue, ToHost};
+use temzdf_protocol::script::{FromHost, HostOp, ScriptValue, ToHost};
 
 const KS: [u32; 3] = [1, 10, 50];
 const WARMUP: usize = 200;
@@ -37,7 +37,11 @@ const WARMUP: usize = 200;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
-        Some("host") => temzdf_script::run(std::io::stdin(), std::io::stdout()).unwrap(),
+        Some("host") => temzdf_script::run_with_limit(
+            std::io::stdin(),
+            std::io::stdout(),
+            temzdf_script::UNATTENDED_LIMIT,
+        ).unwrap(),
         Some("run") => {
             let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
             let guest = opt("--guest").expect("--guest GUEST.wasm");
@@ -119,7 +123,7 @@ fn serve_json(token: &str, op: &str, payload: &str) -> String {
 
 /// Every command the shipped defaults use (as crates/temzdf-script/tests/host.rs
 /// finds them), and `current-mode`.
-fn command_specs() -> Vec<CommandSpec> {
+fn command_specs() -> Vec<String> {
     let mut names = vec!["current-mode".to_string()];
     let defaults = include_str!("../../../crates/temzdf-script/runtime/defaults.ts");
     for part in defaults.split("action.").skip(1) {
@@ -133,9 +137,6 @@ fn command_specs() -> Vec<CommandSpec> {
         }
     }
     names
-        .into_iter()
-        .map(|name| CommandSpec { name, doc: String::new(), ts: "(...args: unknown[]): unknown".into() })
-        .collect()
 }
 
 fn form_a(label: &str, keys: usize) {
@@ -144,10 +145,10 @@ fn form_a(label: &str, keys: usize) {
     let config = dir.join("config.js");
     std::fs::write(
         &config,
-        r#"import { keymap, cmd } from "temzdf";
+        r#"import { keymap, action } from "temzdf";
 keymap.add("normal", "<F35>", (ctx) => {
   for (let i = 0; i < ctx.k; i++) {
-    if (cmd.currentMode() !== "normal") throw new Error("unexpected reply");
+    if (action.currentMode() !== "normal") throw new Error("unexpected reply");
   }
 });
 "#,
@@ -181,7 +182,7 @@ keymap.add("normal", "<F35>", (ctx) => {
     loop {
         match rx.recv().unwrap() {
             FromHost::Request { req, op, .. } => {
-                if let HostOp::Map { keys, rhs: MapRhs::Func(f), .. } = &op
+                if let HostOp::Map { keys, func: f, .. } = &op
                     && keys == "<F35>"
                 {
                     func = Some(*f);
