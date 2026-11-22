@@ -4,11 +4,11 @@ Layers of verification, cheapest first. All of them run without a human.
 
 | Layer | How | What it catches |
 |---|---|---|
-| Unit tests | `scripts/check.sh` | Input parsing, kitty command encoding, compositor diffing (replayed through `termpix::mock`), layout maths, tile rendering vs full-page rendering |
-| Miri | `scripts/miri.sh` (part of `scripts/check.sh` when `cargo miri` is there) | Undefined behaviour, data races and leaked threads or memory in the unit tests' Rust code (ours and the Rust dependencies). See "Miri" below. |
+| Unit tests | `cargo xtask check` (the gate; `cargo xtask test` runs the tests alone) | Input parsing, kitty command encoding, compositor diffing (replayed through `termpix::mock`), layout maths, tile rendering vs full-page rendering |
+| Miri | `scripts/miri.sh` (part of `cargo xtask check` when `cargo miri` is there) | Undefined behaviour, data races and leaked threads or memory in the unit tests' Rust code (ours and the Rust dependencies). See "Miri" below. |
 | Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal (images only: `--text FILE` writes the status line's text, `--mask PNG` where it is). Read the PNG to check it. `scripts/frames.sh` renders a fixed set, with the `shots` scenes of `tui.rs` (sessions, Markdown, terminal panes, tabs), and compares two sets pixel by pixel (for refactorings). |
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
-| Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `scripts/check.sh`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
+| Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `cargo xtask check`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
 | Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland\|macos] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
 | Judged e2e | `expect NAME [KEYS]` in an action file (e.g. `tests/e2e/expect.actions`, `viewer.actions`) | The screen matches what `--render-frame` draws after the same input, keys or a replay of the keys and mouse input temzdf handled (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending, wheel, drag, clicks, hover. Not PDF rendering itself (both sides use MuPDF). |
 | GUI client | `crates/temzdf-gui` unit tests and `--test gpu` (offscreen on lavapipe), `scripts/e2e.sh -t gui [-I]` with `tests/e2e/gui*.actions` | The draw list and key translation; layers and text drawn on a GPU; the window under xfwm4 against `temzdf-gui --render-frame` on the same session; Japanese input through fcitx5 and Mozc; the clipboard. |
@@ -19,11 +19,36 @@ Action files live in `tests/e2e/`; each starts with a comment saying how to run 
 and what the screenshots should show. To look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 
+## The gate
+
+`cargo xtask check` (`xtask/src/check.rs`) is the pre-commit gate:
+rustfmt, Biome, the generated declarations (`node scripts/ts-types.ts`
+writes `temzdf-all.d.ts` again into `target/check/` and compares), the
+Node scripts' types (`tsc -p scripts`), shellcheck, references to
+documents (`node scripts/check-docs.ts`), clippy, the tests and Miri. Each
+step's whole output is in `target/check/STEP.log`; a failed step prints
+`FAIL STEP` and its main lines, a passing run one `OK ...` line. When every
+uncommitted change is Markdown under `doc/`, the tests and Miri are
+skipped (`--all` or cargo test arguments run them). `--stream` prints each
+step's output as it comes under a `==> STEP` header, or in a log group of
+its own under GitHub Actions (`GITHUB_ACTIONS=true`), as CI runs it.
+
+It is Rust rather than shell so that it can run on Windows one day: it
+assumes no Nix and finds its tools on PATH (Biome and shellcheck also in
+the npm packages' `.bin`), says what to install when a required one
+(cargo, node, Biome, `runtime/node_modules`) is missing, and prints `SKIP
+shellcheck` or `SKIP miri` where those Unix-only steps cannot run.
+`scripts/check.sh` takes the same options and runs it inside the Nix dev
+shell, entering it from any shell. The JavaScript tooling around it is
+TypeScript run by Node as it is (type stripping, Node 22.18 or later), so
+erasable syntax only and `.ts` in imports; `check-docs.ts` uses Node's
+standard library alone, so the documents' CI runs it without `npm ci`.
+
 ## Fonts
 
 Tests that draw text (the Markdown viewer's pages, `termpix-ui`'s widgets,
 the session's frames) get their fonts from fontconfig on Linux, so a host's
-fonts would change what they draw. `scripts/check.sh` points
+fonts would change what they draw. `cargo xtask check` points
 `FONTCONFIG_FILE` at `TEMZDF_TEST_FONTCONFIG`, a configuration the dev
 shells provide (`testFontConfig` in `flake.nix`): the fonts `temzdf-gui`
 embeds alone (JetBrains Mono, Noto Color Emoji, Symbols Nerd Font Mono),
@@ -78,7 +103,7 @@ embeds nothing (Miri runs no WebAssembly); the guest's tests are in
 
 `scripts/miri.sh [PACKAGE...]` runs the workspace's unit tests (`--lib`,
 `--bins`; not `crates/*/tests` or `tuitest`) under Miri, one process per
-test and all cores at once, in about a minute and a half. `scripts/check.sh`
+test and all cores at once, in about a minute and a half. `cargo xtask check`
 runs it after the normal tests, or skips it with a note when the toolchain
 has no Miri; `--no-miri` skips it on purpose. The default dev shell leaves
 Miri out (it is slow to run on every commit): it is in
@@ -141,7 +166,7 @@ gives tests:
   its cell (both cells for a wide character), at the largest size whose
   advance fits the cell's width and line height its height. Its fonts come
   from fontconfig, so they are the ones of the section "Fonts" only with
-  `FONTCONFIG_FILE=$TEMZDF_TEST_FONTCONFIG` (`scripts/check.sh` sets it):
+  `FONTCONFIG_FILE=$TEMZDF_TEST_FONTCONFIG` (`cargo xtask check` sets it):
   CJK has no font there and shows as `.notdef` boxes, and box drawing
   characters are the font's glyphs, not lines drawn as terminals do. The
   cursor is not drawn, nor images shown through Unicode placeholders
@@ -214,7 +239,7 @@ On one CPU `forward_search_goes_to_the_session_showing_the_pdf_or_starts_one`
 failed every time (the PDF took the forward search before the first client
 attached, and attaching resized the pane mid-scroll; fixed in 02949b7).
 When a wait times out, the screen and the bytes received are in
-`target/tuitest/` (CI uploads them, see `scripts/check.sh --verbose`).
+`target/tuitest/` (CI uploads them with `target/check/`, see `.github/workflows/ci.yml`).
 
 The shell matters too: Ubuntu's `/bin/sh` (CI's) is dash, which has no line
 editing, so input typed before it was ready is echoed before its prompt and
@@ -270,7 +295,7 @@ scenario on both (2026-10-29; Ghostty cannot tell its text, so those checks
 SKIP). `-I` (fcitx5 with Mozc) works on both: over XIM on X11, over
 input-method-v2 (sway) and text-input-v3 (the GUI) on Wayland; the run
 ends the fcitx5 and mozc_server it started (Mozc's server daemonizes; a
-leftover one kept a pipe open, see `scripts/check.sh`'s NIX_CONFIG note).
+leftover one kept a pipe open, see `scripts/lib/devshell.sh`'s NIX_CONFIG note).
 WezTerm on X11 failed `viewer`'s wheel and
 zoom once in a long run and passed the reruns (it delivers wheel steps
 unevenly).

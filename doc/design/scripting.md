@@ -76,7 +76,7 @@ that part follows tmux and zellij (see "Prior art").
   built from, and a test checks that each one runs), and
   `temzdf-all.d.ts`, generated from those and the shipped modules'
   TypeScript (`scripts/ts-types.ts`, dts-bundle-generator; each module
-  shows what it exports) and committed, checked by `scripts/check.sh`.
+  shows what it exports) and committed, checked by `cargo xtask check`.
 - The TOML configuration was removed (there were no outside users); where
   each of its settings went is decision 22.
 - Mouse handling is **built in only** and cannot be remapped; scripts can set

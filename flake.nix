@@ -13,7 +13,7 @@
   # `nix build` / `nix run`: the viewer, and the GUI client (temzdf-gui,
   # which finds temzdf next to it). MuPDF and SyncTeX are vendored C
   # sources compiled by the crates' build scripts; tests are left to
-  # scripts/check.sh because they need TeX to build the fixtures. Built
+  # cargo xtask check because they need TeX to build the fixtures. Built
   # with crane: the dependencies, the script host's guest and its
   # dependencies are derivations of their own, so a change to our crates
   # alone takes them from a cache (CI keeps the store between runs).
@@ -54,7 +54,7 @@
           }) (builtins.fromTOML (builtins.readFile ./crates/temzdf-gui/fonts.toml)).font;
           bundleFontFiles = map (f: "${f.path}") bundleFonts;
           bundleFontPath = pkgs.lib.concatStringsSep ":" bundleFontFiles;
-          # The fonts tests see through fontconfig (scripts/check.sh sets
+          # The fonts tests see through fontconfig (cargo xtask check sets
           # FONTCONFIG_FILE to it): those fonts alone, every generic family
           # JetBrains Mono first, nothing from the host (its font directories,
           # /etc/fonts), so that text is drawn the same on every machine and
@@ -175,7 +175,7 @@
                   withTerminals ? false,
                   enableMiri ? false,
                   skipTart ? false,
-                  # Only what CI runs (scripts/check.sh, scripts/miri.sh): no
+                  # Only what CI runs (cargo xtask check, scripts/miri.sh): no
                   # editor tools, toolchain docs or end-to-end tools, so that
                   # less is downloaded.
                   forCi ? false,
@@ -187,8 +187,8 @@
                       [
                         shellcheck
                         esbuild
-                        biome # Formats and lints the shipped scripts (scripts/check.sh).
-                        # scripts/ts-types.ts (checked by scripts/check.sh), and
+                        biome # Formats and lints the shipped scripts (cargo xtask check).
+                        # scripts/ts-types.ts (checked by cargo xtask check), and
                         # npm install --package-lock-only in
                         # crates/temzdf-script/runtime (adding a package).
                         nodejs
@@ -313,7 +313,7 @@
                 withTeX = true;
                 enableMiri = true;
               };
-              # CI (.github/workflows/ci.yml): scripts/check.sh with the
+              # CI (.github/workflows/ci.yml): cargo xtask check with the
               # toolchain of the default shell, and Miri in a job of its own.
               ci = buildDevShell {
                 withTeX = true;
@@ -397,7 +397,7 @@
                   # libtexprintf: TeX math as text for the Markdown viewer (texprintf).
                   pkgs.libtexprintf
                 ];
-                # Tests are scripts/check.sh's: they need TeX, the
+                # Tests are cargo xtask check's: they need TeX, the
                 # fixtures, tmux and more than the build's sources.
                 doCheck = false;
                 # The dependencies only built, not also checked first (a

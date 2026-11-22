@@ -77,7 +77,8 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
       # The shipped scripts' npm packages (tsc reads their types).
       - run: nix develop .#ci --command npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund
-      - run: nix develop .#ci --command scripts/check.sh --verbose --no-miri
+      # Each step's output as it comes, in a log group of its own.
+      - run: nix develop .#ci --command cargo xtask check --stream --no-miri
       # What a failure leaves: the whole outputs, and the screens of failed
       # simulated-terminal waits.
       - if: failure()

@@ -1,7 +1,8 @@
 //! Repository tasks, run as `cargo xtask TASK` (the alias is in
 //! `.cargo/config.toml`). Portable where shell scripts are not: they need
-//! only Cargo.
+//! only Cargo (and the tools a task runs, never Nix).
 
+mod check;
 mod fonts;
 
 use std::path::PathBuf;
@@ -12,6 +13,29 @@ const USAGE: &str = "\
 usage: cargo xtask TASK [ARGS]
 
 tasks:
+  check [--fix] [--no-miri] [--all] [--verbose] [--stream] [CARGO TEST ARGS...]
+      The pre-commit gate: rustfmt check, Biome (the scripts' formatting
+      and lints), the generated declarations (node scripts/ts-types.ts),
+      the Node scripts' types (tsc -p scripts), shellcheck, references to
+      documents (node scripts/check-docs.ts), clippy (warnings are errors)
+      and the workspace's tests, then the unit tests under Miri
+      (scripts/miri.sh) when `cargo miri` is there, with terse output: a
+      failed step's main lines, its whole output in target/check/.
+      shellcheck and Miri are Unix only (SKIP elsewhere).
+        --fix      apply rustfmt, Biome's safe fixes and temzdf-all.d.ts
+                   instead of only checking
+        --no-miri  skip Miri (about a minute and a half)
+        --all      run the tests even when only Markdown under doc/
+                   changed (then they and Miri are skipped; a clean tree
+                   or cargo test arguments run them)
+        --verbose  print a failed step's whole output
+        --stream   print each step's output as it comes, under a
+                   `==> STEP` header (GitHub Actions: a log group)
+      The tests see only the fonts in TEMZDF_TEST_FONTCONFIG when it is
+      set (the dev shell's, as in CI). scripts/check.sh runs this inside
+      the Nix dev shell.
+  test [--stream] [--verbose] [CARGO TEST ARGS...]
+      The workspace's tests alone, as check runs them.
   fetch-fonts [--manifest PATH]
       Download the fonts temzdf-gui embeds (crates/temzdf-gui/fonts.toml)
       into target/fonts/, checking their sha256; files already there and
@@ -23,15 +47,25 @@ tasks:
 ";
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("error: {e:#}");
-        std::process::exit(1);
+    match run() {
+        Ok(status) => std::process::exit(status),
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            std::process::exit(1);
+        }
     }
 }
 
-fn run() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    let task = args.next().unwrap_or_default();
+/// The exit status.
+fn run() -> Result<i32> {
+    let mut args = std::env::args_os().skip(1);
+    let task = args.next().map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();
+    match task.as_str() {
+        "check" => return check::check(&check::Options::parse(args, false)),
+        "test" => return check::test(&check::Options::parse(args, true)),
+        _ => {}
+    }
+    let mut args = args.map(|a| a.to_string_lossy().into_owned());
     let mut manifest = root().join("crates/temzdf-gui/fonts.toml");
     let mut check = false;
     let mut tags = Vec::new();
@@ -48,14 +82,12 @@ fn run() -> Result<()> {
     }
     let dir = target_dir().join("fonts");
     match task.as_str() {
-        "fetch-fonts" => fonts::fetch(&manifest, &dir),
-        "update-fonts" => fonts::update(&manifest, &dir, &tags, check),
-        "" | "help" | "-h" | "--help" => {
-            print!("{USAGE}");
-            Ok(())
-        }
+        "fetch-fonts" => fonts::fetch(&manifest, &dir)?,
+        "update-fonts" => fonts::update(&manifest, &dir, &tags, check)?,
+        "" | "help" | "-h" | "--help" => print!("{USAGE}"),
         _ => bail!("unknown task {task:?}\n\n{USAGE}"),
     }
+    Ok(0)
 }
 
 /// The workspace root: this crate's parent directory.

@@ -2,7 +2,7 @@
   "$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
   // The scripts written by hand: the shipped ones, the script host's
   // prelude and `temzdf` module, the tests' configurations and the
-  // repository's Node scripts (scripts/check.sh checks them).
+  // repository's Node scripts (cargo xtask check checks them).
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "includes": [

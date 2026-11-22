@@ -88,6 +88,17 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- A Windows port of the tests. The gate is `cargo xtask check` and the
+  JavaScript tooling Node TypeScript (`scripts/ts-types.ts`,
+  `scripts/check-docs.ts`), neither assuming Nix or bash; what is left:
+  `crates/tuitest` runs programs on a Unix pty (ConPTY instead), tests
+  and the terminal pane start `/bin/sh`, the tmux tests need tmux (skip
+  them there), the session protocol uses Unix sockets (named pipes or
+  AF_UNIX on Windows), and Miri runs through `scripts/miri.sh` (bash;
+  the gate says `SKIP miri` elsewhere), as does shellcheck. Never tried
+  on Windows: whether `cargo xtask check` itself builds there, and
+  whether cargo leaves the running `xtask.exe` alone (it did not rebuild
+  `target/debug/xtask` during the gate on Linux).
 - Absolute paths only (the user's direction, 2026-11-22): actions that
   take a path accept only absolute ones, as the session's working
   directory (where it started) is not obvious to anyone; relative paths

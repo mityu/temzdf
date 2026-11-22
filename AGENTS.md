@@ -67,7 +67,7 @@ nixpkgs' WASI clang (for the script host's guest; never put that clang on
 `crates/temzdf-script/build.rs` with esbuild; npm manages their packages
 in `runtime/node_modules`: run `npm ci` in `runtime/` once after cloning and
 whenever `package-lock.json` changes (`build.rs` refuses node_modules that
-no longer match it, `scripts/check.sh` stops without them; tsc and editors
+no longer match it, `cargo xtask check` stops without them; tsc and editors
 read the packages' types there). To add one: `npm install PKG` in
 `runtime/` (widely used, maintained, plain ES code: it runs in QuickJS; its
 install scripts never run, `runtime/.npmrc`). `nix build` has Nix build
@@ -80,15 +80,26 @@ missing, say so instead of working around it. A tool added to `flake.nix`
 needs the shell, and the agent in it, restarted.
 
 ```sh
-scripts/check.sh            # fmt check + Biome (scripts) + clippy -D warnings + tests (+ Miri where available), terse output
-scripts/check.sh --fix      # same, but apply rustfmt and Biome's formatting and safe fixes
-scripts/check.sh --no-miri  # without Miri (it takes about a minute and a half)
-scripts/check.sh --all      # the tests even when only Markdown under doc/ changed (skipped then)
-scripts/check.sh --verbose  # a failed step's whole output (CI); always in target/check/
+cargo xtask check            # fmt check + Biome (scripts) + declarations + docs + clippy -D warnings + tests (+ Miri where available), terse output
+cargo xtask check --fix      # same, but apply rustfmt and Biome's formatting and safe fixes
+cargo xtask check --no-miri  # without Miri (it takes about a minute and a half)
+cargo xtask check --all      # the tests even when only Markdown under doc/ changed (skipped then)
+cargo xtask check --verbose  # a failed step's whole output; always in target/check/
+cargo xtask check --stream   # each step's output as it comes, under a header (CI: log groups)
+cargo xtask test [ARGS...]   # the tests alone, as the gate runs them
 cargo build --workspace
 ```
 
-Run `scripts/check.sh` before every commit. The scripts (TypeScript and
+Run `cargo xtask check` before every commit. It is Rust
+(`xtask/src/check.rs`) and assumes no Nix, for a future Windows port:
+it finds its tools on PATH, and the Unix-only steps (shellcheck, Miri)
+say `SKIP` where they cannot run. `scripts/check.sh` takes the same
+options and runs it inside the dev shell, entering it from any shell.
+The repository's own Node scripts are TypeScript that Node runs as it is
+(type stripping, Node 22.18 or later): `node scripts/ts-types.ts`,
+`node scripts/check-docs.ts`; erasable syntax only, `.ts` in imports,
+type-checked by the gate with `tsc -p scripts` (`scripts/tsconfig.json`;
+`@types/node` is a devDependency of `runtime/`). The scripts (TypeScript and
 the script host's `prelude.ts` and `temzdf.ts`) are formatted and linted by Biome
 (`biome.jsonc`; `biome check --write .` alone fixes what it can). Their
 TypeScript declarations are in `crates/temzdf-script/ts-types/`: Rust's
@@ -99,8 +110,8 @@ come from it, and a test runs each), and the generated
 `temzdf-all.d.ts`; editors use `crates/temzdf-script/runtime/tsconfig.json`
 (the dev shell's `tsc --lsp --stdio` is a language server). The
 devDependencies of `runtime/package.json` (dts-bundle-generator,
-TypeScript 6, type-fest's types) are tools, never bundled. A value the API may leave out is `undefined`; the scripts check one with
-`isNullish` (`runtime/lib/validate.ts`). The default dev shell has no Miri (check.sh
+TypeScript 6, type-fest's and Node's types) are tools, never bundled. A value the API may leave out is `undefined`; the scripts check one with
+`isNullish` (`runtime/lib/validate.ts`). The default dev shell has no Miri (the gate
 says it skipped it); `nix develop .#enable-miri` has it, and the user runs
 it from time to time. To run Miri yourself, `scripts/miri.sh` (it enters
 `.#enable-miri` by itself when started outside a dev shell; its toolchain is
@@ -213,7 +224,7 @@ come from the host profile. `nix develop .#alldeps` provides all of them.
 `nix develop .#ci` is the minimal shell CI uses (toolchain, TeX, no
 end-to-end tools), `.#ci-miri` the same with the nightly toolchain and
 Miri and without TeX (Miri runs no test that needs the fixtures); `nix build` builds the `temzdf` package (`nix run . -- FILE` runs it).
-CI (`.github/workflows/ci.yml`) runs `npm ci` and `scripts/check.sh --no-miri` in the
+CI (`.github/workflows/ci.yml`) runs `npm ci` and `cargo xtask check --stream --no-miri` in the
 first (job `check-with-nix`), `scripts/miri.sh` in the second as a job of
 its own (`miri-with-nix`; both keep built dependencies with
 `Swatinem/rust-cache`), and `nix build` on Linux and macOS
@@ -223,7 +234,8 @@ splits its pane on `<C-b>%`).
 The Rust caches (of `build`, `check-with-nix` and `miri-with-nix`) are saved only by pushes to
 `dev` and `main`, and a job after each (`prune-rust-cache.yml`) deletes
 those of the same branch but the one used last.
-The documents' check (`scripts/check-docs.ts`) runs on every push,
+The documents' check (`node scripts/check-docs.ts`, Node's standard
+library only, so no `npm ci`) runs on every push,
 documentation-only ones included (`.github/workflows/docs.yml`).
 `nix build` uses crane: the Rust dependencies, the script host's guest
 and the guest's dependencies are derivations of their own (`.#deps`,
@@ -243,7 +255,7 @@ made rust-cache's restores fail with it (`todo.md`).
   (`Cargo.lock`, `flake.lock`), which pin dependencies and contain no paths,
   and `crates/temzdf-script/ts-types/temzdf-all.d.ts`, which editors and
   `temzdf print-types` read, written by `scripts/ts-types.ts` and checked
-  by `scripts/check.sh` (`--fix` writes it again).
+  by `cargo xtask check` (`--fix` writes it again).
 - Paths written in docs, comments and commit messages are relative to the
   repository root. Never write absolute paths (home directories, scratch
   directories, `/nix/store/...`).
@@ -281,5 +293,5 @@ made rust-cache's restores fail with it (`todo.md`).
   experiments), as of when it was written.
 
 A new document goes into one of these and into `doc/README.md`;
-`scripts/check-docs.ts` (part of `scripts/check.sh`) fails otherwise, and
+`scripts/check-docs.ts` (part of `cargo xtask check`) fails otherwise, and
 when a path to a document written anywhere no longer exists.

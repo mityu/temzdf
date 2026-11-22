@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Repository tasks run with `cargo xtask` (see .cargo/config.toml): fetching and updating the fonts temzdf-gui embeds."
+description = "Repository tasks run with `cargo xtask` (see .cargo/config.toml): the pre-commit gate and the tests, fetching and updating the fonts temzdf-gui embeds."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
