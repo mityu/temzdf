@@ -113,6 +113,20 @@
 #                      get-text`) with the frame's
 #                      (NAME.expected.txt; NAME.text.diff on a mismatch).
 #                      Not inside multiplexers.
+#                      Both (not the GUI's, not inside multiplexers) also
+#                      write the cells the terminal draws itself as bytes
+#                      (NAME.ansi: positions, SGR, text; --ansi) and which
+#                      of them to judge (NAME.cells.png: not the cursor's,
+#                      nor default-background ones over images; --cells).
+#                      After the actions, temzdf is ended (Esc until the
+#                      viewer quits; a session's killed) and the shell
+#                      COMMAND leaves behind (`sh -c '...; exec sh'`) draws
+#                      each NAME.ansi on a cleared screen: NAME.ref.png,
+#                      once it stands still. NAME.png inside NAME.cells.png
+#                      against it: PASS or FAIL NAME.cells (the attributes
+#                      and colours of those cells, and their text in
+#                      Ghostty too; NAME.cells.diff.png), SKIP without such
+#                      a shell or when the terminal changed size since.
 #   draw_lines NAME LINE...  type `clear; printf` of the LINEs into the shell
 #                      and save OUTDIR/NAME.png: this terminal's own drawing
 #                      of them (rows 0, 1, ...), a reference for screen_restored
@@ -742,6 +756,129 @@ wait_still() {
   # fails the run at its end.)
   echo "FAIL wait_still: the screen did not stand still within ${limit}s" | tee -a "$outdir/expect.txt"
 }
+# The expects whose cells draw_references judges: "NAME COLS ROWS CW CH".
+refs=()
+# Whether temzdf of this run still runs (a viewer or a session server):
+# known by its environment.
+temzdf_alive() {
+  local p
+  if [[ -d /proc/self ]]; then
+    for p in /proc/[0-9]*; do
+      [[ -O $p && $(cat "$p/comm" 2>/dev/null) == temzdf ]] || continue
+      tr '\0' '\n' 2>/dev/null <"$p/environ" | grep -qxF "XDG_STATE_HOME=$outdir/state" && return 0
+    done
+    return 1
+  fi
+  # macOS: ps -E adds the environment to the command line.
+  ps -Eww -U "$(id -u)" -o comm=,command= | awk '$1 ~ /(^|\/)temzdf$/' | grep -qF "XDG_STATE_HOME=$outdir/state"
+}
+# Until a file the shell writes appears (it ran what was typed), at most S
+# seconds.
+wait_file() {
+  local i
+  for ((i = 0; i < $2 * 20; i++)); do
+    [[ -e $1 ]] && return 0
+    sleep 0.05
+  done
+  return 1
+}
+# Judge each expect's cells (refs) once the actions are done: end temzdf,
+# have the shell left behind draw NAME.ansi (the cells the terminal should
+# draw itself, cursor hidden) on a cleared screen, take NAME.ref.png once it
+# stands still, and compare the screenshot taken at the expect inside
+# NAME.cells.png: PASS or FAIL NAME.cells in OUTDIR/expect.txt. The
+# terminal's own drawing, so its fonts and colours are no matter; what
+# counts is that it showed the right cells with the right attributes during
+# the run. Also where the terminal cannot tell its text (Ghostty).
+draw_references() {
+  local ref name cols rows cw ch was dir i k out cells
+  ((${#refs[@]} > 0)) || return 0
+  if [[ -z $has_shell ]]; then
+    for ref in "${refs[@]}"; do
+      echo "SKIP ${ref%% *}.cells: no shell after the command (sh -c '...; exec sh')" | tee -a "$outdir/expect.txt"
+    done
+    return
+  fi
+  phase references
+  if [[ -n $session_mode ]]; then
+    for i in $("$temzdf" ls 2>/dev/null | cut -d' ' -f1); do "$temzdf" kill-session "$i" || true; done
+  else
+    # Esc closes the input line, the sidebar, the selection and the search,
+    # then the pane (the viewer ends).
+    for ((i = 0; i < 6; i++)); do
+      temzdf_alive || break
+      be_key Escape
+      for ((k = 0; k < 10; k++)); do temzdf_alive || break 2; sleep 0.05; done
+    done
+  fi
+  for ((i = 0; i < 100; i++)); do temzdf_alive || break; sleep 0.05; done
+  if temzdf_alive; then
+    for ref in "${refs[@]}"; do
+      echo "FAIL ${ref%% *}.cells: temzdf did not end" | tee -a "$outdir/expect.txt"
+    done
+    return
+  fi
+  # Short names to type: the shell runs in the run's directory, and `r NAME`
+  # draws NAME.ansi on a cleared screen, then says so (NAME.ok), and waits
+  # (`read`: no prompt over the cells until the next one).
+  dir=$outdir
+  [[ $dir == "$PWD"/* ]] && dir=${dir#"$PWD"/}
+  rm -f "$outdir/shell.ok"
+  type "cd $dir && r() { clear; cat \$1.ansi; : >\$1.ok; read x; } && : >shell.ok
+"
+  if ! wait_file "$outdir/shell.ok" 10; then
+    shot no-shell
+    for ref in "${refs[@]}"; do
+      echo "FAIL ${ref%% *}.cells: the shell did not answer" | tee -a "$outdir/expect.txt"
+    done
+    return
+  fi
+  for ref in "${refs[@]}"; do
+    read -r name cols rows cw ch <<<"$ref"
+    # The terminal's grid now: another size cannot draw the same cells.
+    was="$cols $rows $cw $ch"
+    if ! read_geometry || [[ "$cols $rows $cw $ch" != "$was" ]]; then
+      echo "SKIP $name.cells: the terminal changed size since" | tee -a "$outdir/expect.txt"
+      continue
+    fi
+    # Pixels of the cells compared (opaque in the mask).
+    cells=$(magick "$outdir/$name.cells.png" -alpha extract -format '%[fx:round(mean*w*h)]' info:)
+    ((cells > 0)) || continue
+    phase "reference $name"
+    rm -f "$outdir/$name.ok"
+    type "r $name
+"
+    if ! wait_file "$outdir/$name.ok" 10; then
+      echo "FAIL $name.cells: the shell did not draw $name.ansi" | tee -a "$outdir/expect.txt"
+      continue
+    fi
+    wait_still 10
+    shot "$name.ref"
+    phase "referenced $name"
+    be_key Return
+    # Both inside the cells compared (elsewhere black), from the grid's
+    # top-left, as expect crops.
+    for i in "$name" "$name.ref"; do
+      magick "$outdir/$i.png" -crop "$((cols * cw))x$((rows * ch))+$origin_x+$origin_y" +repage \
+        \( "$outdir/$name.cells.png" -alpha extract \) -compose multiply -composite \
+        "$outdir/$i.cells.png.tmp.png"
+      [[ -f $outdir/$name.window-mask.png ]] && magick "$outdir/$i.cells.png.tmp.png" \
+        "$outdir/$name.window-mask.png" -compose over -composite "$outdir/$i.cells.png.tmp.png"
+    done
+    mv "$outdir/$name.cells.png.tmp.png" "$outdir/$name.cells.actual.png"
+    mv "$outdir/$name.ref.cells.png.tmp.png" "$outdir/$name.cells.ref.png"
+    out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.cells.actual.png" "$outdir/$name.cells.ref.png" \
+      "$outdir/$name.cells.diff.png" 2>&1 || true)
+    out=${out%% *}
+    if [[ $out == 0 ]]; then
+      rm -f "$outdir/$name.cells.diff.png"
+      echo "PASS $name.cells ($((cells / (cw * ch))) cells)" | tee -a "$outdir/expect.txt"
+    else
+      echo "FAIL $name.cells: $out pixels differ from this terminal's drawing of $name.ansi (see $name.cells.diff.png)" |
+        tee -a "$outdir/expect.txt"
+    fi
+  done
+}
 # The GUI's form of expect: the window against an offscreen render of the
 # same session at this moment.
 expect_gui() {
@@ -797,11 +934,12 @@ expect_session() {
   phase "expect $name"
   "${E2E_RENDERER:-$temzdf}" render-session "$session" "$outdir/$name.expected.png" --size "${cols}x${rows}" \
     --cell "${cw}x${ch}" --text "$outdir/$name.expected.txt" --mask "$outdir/$name.mask.png" "${flags[@]}" \
-    2>"$outdir/$name.expected.log" || {
+    --ansi "$outdir/$name.ansi" --cells "$outdir/$name.cells.png" 2>"$outdir/$name.expected.log" || {
     echo "FAIL $name: render-session failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
     return
   }
   phase "expected $name"
+  refs+=("$name $cols $rows $cw $ch")
   as_terminal_shows "$outdir/$name.expected.png"
   # Pixels where the images show: the cells the terminal draws go black on
   # both sides.
@@ -1023,11 +1161,16 @@ expect() {
   phase "expect $name"
   "${expect_cmd[@]}" --render-frame "$outdir/$name.expected.png" --size "${cols}x${rows}" \
     --cell "${cw}x${ch}" --text "$outdir/$name.expected.txt" --mask "$outdir/$name.mask.png" \
+    --ansi "$outdir/$name.ansi" --cells "$outdir/$name.cells.png" \
     "${input[@]}" "$expect_file" 2>"$outdir/$name.expected.log" || {
     echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
     return
   }
   phase "expected $name"
+  # Its cells are judged at the end, against this terminal's own drawing of
+  # them (draw_references); not inside a multiplexer, which draws them
+  # itself.
+  [[ -z $mux ]] && refs+=("$name $cols $rows $cw $ch")
   # The terminal may have spare pixels right and below the cell grid. The
   # cells it draws itself (the status line) go black on both sides, as for
   # sessions; their text is compared where the terminal can tell it.
@@ -1068,6 +1211,15 @@ fi
 expect_cmd=() expect_file='' forward_temzdf=temzdf
 args=("$@")
 while [[ ${#args[@]} -gt 0 && ( ${args[0]} == env || ${args[0]} == *=* ) ]]; do args=("${args[@]:1}"); done
+# `sh -c 'CMD...; exec sh'`: CMD's words (quotes as the shell reads them),
+# and a shell is there after it (has_shell: `expect` has the terminal draw
+# its references there).
+has_shell=
+if ((${#args[@]} >= 3)) && [[ ${args[0]} == sh || ${args[0]} == */sh ]] && [[ ${args[1]} == -c ]]; then
+  [[ ${args[2]} =~ \;[[:space:]]*exec\ sh[[:space:]]*$ ]] && has_shell=1
+  mapfile -t args < <(printf '%s' "${args[2]%%;*}" | xargs printf '%s\n')
+  while [[ ${#args[@]} -gt 0 && ( ${args[0]} == env || ${args[0]} == *=* ) ]]; do args=("${args[@]:1}"); done
+fi
 if ((${#args[@]} > 0)); then
   [[ ${args[0]} == */temzdf ]] && forward_temzdf=${args[0]}
   expect_cmd=("${E2E_RENDERER:-${args[0]}}" standalone pdf)
@@ -1490,6 +1642,7 @@ t0=$(usec)
 phase actions
 # shellcheck source=/dev/null
 source "$actions"
+draw_references
 phase quit
 crashed=0
 kill -0 "$term_pid" 2>/dev/null || crashed=1

@@ -6,7 +6,7 @@ Layers of verification, cheapest first. All of them run without a human.
 |---|---|---|
 | Unit tests | `cargo xtask check` (the gate; `cargo xtask test` runs the tests alone) | Input parsing, kitty command encoding, compositor diffing (replayed through `termpix::mock`), layout maths, tile rendering vs full-page rendering |
 | Miri | `scripts/miri.sh` (`cargo xtask check --miri`) | Undefined behaviour, data races and leaked threads or memory in the unit tests' Rust code (ours and the Rust dependencies). See "Miri" below. |
-| Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal (images only: `--text FILE` writes the status line's text, `--mask PNG` where it is). Read the PNG to check it. `scripts/frames.sh` renders a fixed set, with the `shots` scenes of `tui.rs` (sessions, Markdown, terminal panes, tabs), and compares two sets pixel by pixel (for refactorings). |
+| Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal (images only: `--text FILE` writes the status line's text, `--mask PNG` where it is, `--ansi FILE` its cells as bytes for a terminal to draw, `--cells PNG` which of them a terminal's drawing can be compared in). Read the PNG to check it. `scripts/frames.sh` renders a fixed set, with the `shots` scenes of `tui.rs` (sessions, Markdown, terminal panes, tabs), and compares two sets pixel by pixel (for refactorings). |
 | Script tests | `target/debug/temzdf test [-j N] [--timeout SECS] FILE...` (part of `cargo xtask check` for `crates/temzdf-script/runtime/**/*.test.ts`) | temzdf's behaviour driven from TypeScript (`temzdf/test`, QUnit): keys typed into a session and what the scripting API then sees (buffers, modes, registers). Each file runs in a session of its own in a process of its own, its `XDG_*`, `TEMZDF_LOG_DIR` and `TMPDIR` in a temporary directory; TAP out, a file printing nothing for `--timeout` (30 s) stopped and failed. |
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
 | Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `cargo xtask check`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
@@ -574,7 +574,8 @@ may differ). The cells the terminal draws itself (the pane's status line,
 text since 2026-10-31) are left out of that comparison on both sides
 (`--mask`, `NAME.mask.png`); their text is compared with the headless
 frame's (`--text`, `NAME.expected.txt`) where the terminal can tell it
-(kitty, WezTerm), as for sessions. Results go to `OUTDIR/expect.txt`;
+(kitty, WezTerm), as for sessions, and their pixels against the terminal's
+own drawing of them (`NAME.cells`, below). Results go to `OUTDIR/expect.txt`;
 `NAME.actual.png`, `NAME.expected.png`, `NAME.diff.png` and
 `NAME.text.diff` show a mismatch. Two forms:
 
@@ -606,7 +607,8 @@ Rules for scenarios:
   headless side draws with the shipped defaults, so the terminal must
   too; with `--config` both sides load that file on top of them
   (`expect` passes it on to `--render-frame`); `scripts/e2e.sh` refuses a
-  COMMAND running temzdf with neither.
+  COMMAND running temzdf with neither. Inside `sh -c 'COMMAND; exec sh'`
+  for the shell `NAME.cells` needs (the harness reads COMMAND out of it).
 - Forward searches go through the `forward LINE:FILE PDF` helper (`temzdf
   --forward` from another process): temzdf records the search it got, the
   replay sends it at the same time, and the helper's record times the
@@ -643,10 +645,37 @@ wide characters, images of programs in terminal panes, tab lines and
 floats as drawn. Both sides see the same session, so what the session
 decides (layout, focus, what a reload keeps) is not judged by it; that is
 for `crates/temzdf/tests/tui.rs` and unit tests. Not inside multiplexers;
-Ghostty gets the pixels only. `tests/e2e/session.actions`,
+Ghostty's text is judged through `NAME.cells` (below). `tests/e2e/session.actions`,
 `terminal.actions`, `terminal-extras.actions`, `tabs.actions`,
 `floats.actions`, `resize.actions` and `float-wide.actions` (WezTerm's
 wide characters under images, `doc/terminals/terminal-compat.md`) use it.
+
+The cells the terminal draws itself are also judged against the same
+terminal's own drawing of them (`NAME.cells`, since 2026-11-23), for
+both forms of `expect` outside the GUI and multiplexers: their colours and
+attributes (inverse, bold, underline, which the text comparison misses),
+and their text where the terminal cannot report it (Ghostty).
+`--render-frame` and `render-session` write the cells as bytes (`--ansi`,
+`NAME.ansi`: the cursor hidden, then a CUP, SGR and the character per cell,
+written apart from temzdf-tty's own encoding) and which cells to judge
+(`--cells`, `NAME.cells.png`: the mask's, but for the cursor, which the
+drawing hides, and for cells of the default background over images, where
+the image shows through and the drawing has none). After the actions the
+harness ends temzdf (Esc until the viewer quits; it kills the sessions
+left) and, in the shell COMMAND leaves behind (`sh -c '...; exec sh'`;
+`scripts/e2e-all.sh` runs every viewer scenario so), types `r NAME` for
+each expect: a shell function that clears the screen, `cat`s `NAME.ansi`
+and waits in `read` (no prompt over the cells). Once the screen stands
+still (`wait_still`) it takes `NAME.ref.png` and compares the screenshot of
+the expect with it inside `NAME.cells.png` (`-fuzz 3%`, no pixel may
+differ): `PASS NAME.cells (N cells)` or `FAIL NAME.cells` in
+`OUTDIR/expect.txt` (`NAME.cells.actual.png`, `NAME.cells.ref.png`,
+`NAME.cells.diff.png`). SKIP without such a shell, and when the terminal
+changed size since the expect (`resize`). Each expect adds about 1.2 s
+(kitty), each scenario about 3 s more to end temzdf and set up the shell.
+Dropping inverse from `--ansi` fails `terminal-extras`' `selected.cells`
+and `scrolled.cells` (the selection and the scrollback position), which the
+text and the pixels outside the mask pass.
 
 `screen_contains TEXT` (kitty, WezTerm) tells whether the screen shows TEXT, for
 moments outside a session (`check detached screen_contains "[detached from

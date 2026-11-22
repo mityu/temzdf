@@ -1,6 +1,7 @@
 # Used with:
 #   mkdir -p target/e2e-reload && cp target/fixtures/sample.pdf target/e2e-reload/doc.pdf
-#   scripts/e2e.sh tests/e2e/reload.actions -- target/debug/temzdf standalone pdf --clean target/e2e-reload/doc.pdf
+#   scripts/e2e.sh tests/e2e/reload.actions -- sh -c \
+#     'target/debug/temzdf standalone pdf --clean target/e2e-reload/doc.pdf; exec sh'
 # Simulates how LaTeX tools write the PDF. Judged: expect for before, short
 # and recreated, against the file on disk at that moment after "2G" (the
 # reload kept the place); while the file is cut short, the screen is
@@ -11,6 +12,8 @@
 #   short.png      after rename-over with the 2-page version: still page 2 (now
 #                  "3 Conclusion"), status 2 / 2, no "reloading…"
 #   recreated.png  after delete + recreate with the 3-page version: page 2 again, 2 / 3
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 doc=target/e2e-reload/doc.pdf
 keys 2 shift+g
 pause 1.2

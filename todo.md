@@ -417,8 +417,15 @@ server on one `Session`). Next and open:
   (2026-11-23); `synctex` and `synctex-reload` judge the forward search's
   highlight with `expect` (the replay sends the recorded searches;
   `o.forwardflash = "input"` keeps the highlight until the screenshot;
-  2026-11-23). Left unjudged: IME composing, sessions inside
-  multiplexers, and Ghostty's text.
+  2026-11-23). Each expect's cells (colours, attributes, and Ghostty's
+  text) are judged against the terminal's own drawing of them
+  (`NAME.cells`, 2026-11-23). Left unjudged: IME composing, sessions
+  inside multiplexers, and Ghostty's text outside expects
+  (`screen_contains` SKIPs there).
+- `screen_contains TEXT` in Ghostty (it cannot report its text): have the
+  shell draw TEXT (as `draw_lines` does) and look for that row's pixels in
+  the screenshot (an image sub-search, as `screen_restored` compares rows),
+  instead of SKIP.
 - MuPDF's allocation lock makes text rendering slower with more threads (see
   `doc/dev/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the
   allocator itself, and `mupdf-sys` backs every context with the same static

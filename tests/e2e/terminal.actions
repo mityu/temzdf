@@ -18,6 +18,8 @@
 #   detached.png    the outer shell, "[detached from session e2e-term]"
 #   reattached.png  the same three panes as pdf.png (shell text kept)
 #   killed.png      "[session e2e-term was killed]"
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 pause 1
 type "ls tests/e2e | head -3; printf '\033[31mred\033[0m \033[32;44mgreen on blue\033[0m\n'; printf '\\346\\225\\260\\345\\274\\217 wide\\n'
 "

@@ -9,6 +9,8 @@
 #                right one printing "30 29" (`stty size`)
 #   keys.png     after C-b 5 > (five columns wider): the border at column 55, the right pane
 #                printing "30 34"
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 keys ctrl+b percent
 pause 1
 # The border is column 44 (x 440-449).

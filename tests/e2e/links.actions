@@ -1,4 +1,6 @@
-# Used with: scripts/e2e.sh tests/e2e/links.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
+# Used with:
+#   scripts/e2e.sh tests/e2e/links.actions -- sh -c \
+#     'target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf; exec sh'
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
 # Judged (expect): clicking "3 Filler" in the table of contents jumps to
 # section 3 on page 2 (clicked); Backspace (or Ctrl-o) returns to the table of
@@ -6,6 +8,8 @@
 # steps down show the URL in section 1 where the click below expects it (url),
 # and clicking it hands it to the opener (opened; the harness's stand-in notes
 # it in OUTDIR/opened.txt instead of starting a browser).
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 pause 1
 click 160 412
 pause 1

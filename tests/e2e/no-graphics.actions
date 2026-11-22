@@ -1,6 +1,8 @@
 # A terminal without the kitty graphics protocol, as TERMPIX_GRAPHICS=off
 # makes any terminal look: the viewer runs as text only.
-# Used with: scripts/e2e.sh tests/e2e/no-graphics.actions -- env TERMPIX_GRAPHICS=off target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
+# Used with:
+#   scripts/e2e.sh tests/e2e/no-graphics.actions -- env TERMPIX_GRAPHICS=off sh -c \
+#     'target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf; exec sh'
 # Judged (check): no page is drawn (the middle of the screen is the
 # terminal's dark background, not a white page; blank); the PDF pane's line
 # and the message saying why show (line, why; kitty and WezTerm), and a key

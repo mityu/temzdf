@@ -20,6 +20,8 @@
 #                 marked in orange, "[1/2]" in the status line
 #   zoom.png      the page larger (zoomed in twice)
 #   back.png      the text mode again, at the same heading
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 pause 1
 expect source
 keys F5

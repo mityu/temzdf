@@ -103,6 +103,14 @@ Known problems:
   (`tests/e2e/scroll_demo.actions`: six clicks well apart scroll
   scroll_demo 1296 px in Ghostty, each click's three steps arriving
   together and accelerating, 360 px in the others).
+- kitty 0.51.0, WezTerm 0-unstable-2026-11-08 and Ghostty 1.4.0 (Xvfb,
+  2026-11-23) draw temzdf's cells (status lines, the input line, pane
+  borders; in kitty also inverse text in terminal panes) pixel for pixel
+  as they draw the same cells written at once on a cleared screen (`cat`
+  of `--ansi` in a shell): text written among image placements and
+  updated cell by cell comes out the same (`NAME.cells` in
+  `scripts/e2e.sh`; the `expect`, `viewer`, `search` and `session`
+  scenarios, `terminal-extras` in kitty).
 - WezTerm 20260117 (software renderer, Xvfb, 2026-10-28): SGR-pixel
   coordinates are one-based (`xdotool mousemove 450 300` arrives as 451,301;
   kitty reports 450,300), and input arrives in bursts while it renders:

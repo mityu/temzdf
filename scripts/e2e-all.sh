@@ -79,7 +79,9 @@ fi
 
 # A session's command: a shell that starts session NAME and stays after.
 session() { cmd=(sh -c "SHELL=/bin/sh PS1=\"\$ \" target/debug/temzdf --clean -s $1; exec sh"); }
-pdf() { cmd=(target/debug/temzdf standalone pdf --clean "${@:-target/fixtures/sample.pdf}"); }
+# The viewer on a PDF, and a shell after it: there e2e.sh has the terminal
+# draw the cells of each expect, to compare with its screen during the run.
+pdf() { cmd=(sh -c "target/debug/temzdf standalone pdf --clean ${1:-target/fixtures/sample.pdf}; exec sh"); }
 
 # Sets cmd (the COMMAND), opts (more e2e.sh options) and prepares files, for
 # scenario $1 (as its "Used with:" says).
@@ -111,13 +113,14 @@ scenario() {
       mkdir -p target/e2e-sync
       cp target/fixtures/sample.pdf target/fixtures/sample.synctex.gz target/e2e-sync/
       rm -f target/e2e-sync/inverse.txt
-      cmd=(target/debug/temzdf standalone pdf --config tests/e2e/configs/forward.ts
-        --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf)
+      cmd=(sh -c "target/debug/temzdf standalone pdf --config tests/e2e/configs/forward.ts \
+        --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf; exec sh")
       ;;
     synctex-reload)
       mkdir -p target/e2e-sync-reload
       cp target/fixtures/sample.pdf target/fixtures/sample.synctex.gz target/e2e-sync-reload/
-      cmd=(target/debug/temzdf standalone pdf --config tests/e2e/configs/forward.ts target/e2e-sync-reload/sample.pdf)
+      cmd=(sh -c "target/debug/temzdf standalone pdf --config tests/e2e/configs/forward.ts \
+        target/e2e-sync-reload/sample.pdf; exec sh")
       ;;
     reload)
       mkdir -p target/e2e-reload

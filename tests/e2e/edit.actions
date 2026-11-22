@@ -15,6 +15,8 @@
 #                 end; not Shift+Ctrl+Left, kitty's previous_tab)
 #   replaced.png  ">> hello there"
 #   written.png   the same, "[+]" gone
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 pause 1
 expect start
 type ">> "

@@ -1,4 +1,6 @@
-# Used with: scripts/e2e.sh tests/e2e/select-autoscroll.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample-short.pdf
+# Used with:
+#   scripts/e2e.sh tests/e2e/select-autoscroll.actions -- sh -c \
+#     'target/debug/temzdf standalone pdf --clean target/fixtures/sample-short.pdf; exec sh'
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
 # Judged: dragging from the title into the bottom edge and holding scrolls
 # the document by itself while the selection grows, until the end of the
@@ -10,6 +12,8 @@
 # The pointer stays right of the page number (x 480; at x 450 kitty left it
 # out and WezTerm, one pixel to the right, took it in), so where the
 # selection ends is in view at held.
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 pause 1
 down 318 188
 # kitty on macOS reports a press followed at once by motion at the motion's

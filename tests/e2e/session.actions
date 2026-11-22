@@ -13,6 +13,8 @@
 #   reattached.png  the same two panes as split.png (state kept)
 #   new-pane.png    a third pane with sample-short.pdf, added by another process
 #   killed.png      the shell, "[session e2e was killed]"
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 pause 1
 keys ctrl+b percent
 pause 1.5

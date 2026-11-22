@@ -14,6 +14,8 @@
 #              gradient
 #   one.png    after a middle click on the first tab: no tab line, the PDF
 #              page from the top row
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 magick -size 300x300 gradient:red-blue "$outdir/img.png"
 type "clear; for i in \$(seq 12); do printf '%044d\n' 0; done; printf '\033_Ga=T,f=100,t=f,c=30,r=10,q=2;%s\033\\\\' \"\$(printf %s $outdir/img.png | base64 -w0)\"; echo
 "

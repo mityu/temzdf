@@ -11,6 +11,8 @@
 #   selected.png  "select" inverted (dragged)
 #   scrolled.png  the right pane scrolled back one wheel step: "[3/N]" at its
 #                 top right
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 magick -size 160x80 gradient:red-blue "$outdir/img.png"
 keys ctrl+b percent
 pause 1

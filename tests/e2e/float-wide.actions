@@ -10,6 +10,8 @@
 #   float.png   a float over the middle; the poem's first four columns
 #               (two characters) still show left of it, its first three
 #               lines above it whole
+# Also judged: each expect's cells against this terminal's own drawing
+# of them, once temzdf ended (NAME.cells; scripts/e2e.sh).
 printf '%s\n' いろはにほへと ちりぬるをわか よたれそつねな らむうゐのおく やまけふこへて あさきゆめみし ゑひもせす \
   >"$outdir/iroha.txt"
 pause 1
