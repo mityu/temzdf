@@ -130,7 +130,7 @@ test("composeActions: every action runs; any true keeps the session", async (ass
     return true as const;
   });
   const p = { item: undefined, marked: [], matched: [] };
-  const o = { signal, action: {} as Actions };
+  const o = { signal, action: {} as Actions, atomic: <R>(fn: () => R) => fn() };
   assert.equal(await composeActions(b, a).invoke(p, o), true);
   assert.equal(await composeActions(a, a).invoke(p, o), undefined);
   assert.deepEqual(ran, ["b", "a", "a", "a"]);

@@ -22,11 +22,13 @@ import type { Action, Detail, DetailUnit, DisplayItem, InvokeParams, Item, Rende
 
 /** The highlight groups lists use (defined at SessionReady; a user's own
  * `highlight()` after that, in a SessionReady hook of the configuration,
- * wins): matched parts, the selected line, marked candidates. */
+ * wins): matched parts, the selected line, marked candidates, and a fuzzy
+ * finder's rule between its prompt and its list. */
 export const defaultHighlights = {
   FFMatch: { fg: 4, bold: true },
   FFSelection: { bg: 8 },
   FFMarked: { fg: 5, bold: true },
+  FFBorder: { fg: 8 },
 } as const satisfies Record<string, Parameters<Actions["highlight"]>[1]>;
 
 /** Define the default highlight groups (again: over the user's own). */
@@ -137,6 +139,9 @@ export class List<T extends Detail = DetailUnit> {
   #decos: number[][] = [];
   #markDecos: (number | undefined)[] = [];
   #query: string | undefined;
+  /** The query of the lines in the buffer (#query is set before they are
+   * written, while the renderers run). */
+  #shown: string | undefined;
   /** Lines wanted: the pump writes up to this many. */
   #want = 0;
   /** Where the list last put the cursor: another line means the user
@@ -249,7 +254,7 @@ export class List<T extends Detail = DetailUnit> {
   view(): ListView {
     const snap = this.session.snapshot({ end: 0 });
     return {
-      query: this.#query ?? snap.query,
+      query: this.#shown ?? snap.query,
       collected: snap.collected,
       matched: snap.matched,
       written: this.#items.length,
@@ -368,7 +373,7 @@ export class List<T extends Detail = DetailUnit> {
       dispatch(async (ctx) => {
         let keep = true;
         try {
-          keep = (await act.invoke(p, { signal, action: ctx.action })) === true;
+          keep = (await act.invoke(p, { signal, action: ctx.action, atomic: ctx.atomic })) === true;
         } finally {
           if (!keep) ctx.atomic(() => this.dispose());
           resolve(!this.#disposed);
@@ -490,10 +495,17 @@ export class List<T extends Detail = DetailUnit> {
       while (from < common && this.#keys[from] === keys[from]) from++;
     }
     const end = Math.min(items.length, Math.max(written, from + this.#chunk()));
-    if (from === end && end === written) return false;
+    if (from === end && end === written) {
+      // Nothing to write: the lines show this query as they are.
+      this.#shown = snap.query;
+      return false;
+    }
     const display = await this.#render(items.slice(from, end));
     if (this.#disposed) return false;
-    atomic(() => this.#write(from, display, items.slice(from, end), keys.slice(from, end)));
+    atomic(() => {
+      this.#shown = snap.query;
+      this.#write(from, display, items.slice(from, end), keys.slice(from, end));
+    });
     return end < items.length;
   }
 

@@ -17,6 +17,7 @@ import pdf from "temzdf/pane/pdf";
 import markdown from "temzdf/pane/markdown";
 import terminal from "temzdf/pane/terminal";
 import { commandLine as cmdlineCompletion, keys as completionKeys } from "temzdf/ff/completion";
+import { finderCommand, finderKeys } from "temzdf/ff";
 
 pdf.enable();
 terminal.enable();
@@ -33,3 +34,7 @@ markdown.enable();
 completionKeys.enable();
 // Ex command names and arguments completed in the command line.
 cmdlineCompletion.enable();
+// Fuzzy finders: :FF NAME (buffers, lines, commands), and their keys in
+// the finder's prompt.
+finderCommand.enable();
+finderKeys.enable();

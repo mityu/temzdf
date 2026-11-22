@@ -231,3 +231,16 @@ export function byScore(): Sorter<DetailUnit> {
 export function identity(): Renderer<DetailUnit> {
   return { render() {} };
 }
+
+export type { BufferDetail, CommandDetail, LineDetail } from "./finders";
+export {
+  bufferActions,
+  bufferRenderer,
+  bufferSource,
+  commandActions,
+  commandRenderer,
+  commandSource,
+  lineActions,
+  lineNumberRenderer,
+  lineSource,
+} from "./finders";

@@ -2674,6 +2674,41 @@ fn ex_commands_complete_in_the_command_line() {
 }
 
 #[test]
+fn a_fuzzy_finder_shows_its_prompt_above_its_list_in_a_frame() {
+    // :FF lines opens a finder centred on the screen: a frame titled with
+    // its name and counts, the prompt on its first row, a rule, then the
+    // matches; typing narrows them and <CR> jumps to the line (rendered for
+    // people to look at: target/tuitest/ff-finder.png).
+    let env = Env::new("ff-finder");
+    let file = env.path("f.txt");
+    std::fs::write(&file, "apple pie\nbanana bread\ncherry tart\napricot jam\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "ff", file.to_str().unwrap()], &env.options());
+    t.wait_text("vim/normal");
+    t.type_text(":FF lines\n");
+    t.type_text("ap");
+    let s = t.wait_for("the finder narrowed", |s| s.contains("lines  2/4") && !s.contains("2  banana"));
+    let lines = s.lines();
+    let row = |p: &dyn Fn(&str) -> bool| lines.iter().position(|l| p(l)).unwrap_or_else(|| t.fail("a row", &s));
+    let title = row(&|l| l.contains("lines  2/4"));
+    let prompt = row(&|l| l.contains("> ap"));
+    let first = row(&|l| l.contains("1  apple pie"));
+    let second = row(&|l| l.contains("4  apricot jam"));
+    assert_eq!((prompt, first, second), (title + 1, title + 3, title + 4), "{}", s.text());
+    assert!(lines[title + 2].contains("──────────"), "a rule under the prompt:\n{}", s.text());
+    // Inside the frame, one column in from its left edge.
+    let col = |l: &str, word: &str| l.find(word).map(|b| l[..b].chars().count());
+    let edge = col(&lines[title], "\u{256d}").unwrap_or_else(|| t.fail("the frame's corner", &s));
+    assert_eq!(col(&lines[prompt], ">"), Some(edge + 1), "{}", s.text());
+    assert_eq!(col(&lines[first], "1  apple"), Some(edge + 1), "{}", s.text());
+    s.save_render("ff-finder");
+    t.key("Down");
+    t.key("Enter");
+    t.wait_for("closed", |s| !s.contains("lines  2/4"));
+    t.type_text("x");
+    t.wait_for("the cursor on the line jumped to", |s| s.contains("pricot jam") && !s.contains("apricot jam"));
+}
+
+#[test]
 fn a_pdfs_selection_goes_into_the_copy_history() {
     // What a PDF pane copies is in the session's copy history, as a
     // terminal's copy (doc/design/registers.md).

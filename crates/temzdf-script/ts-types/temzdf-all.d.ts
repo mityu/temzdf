@@ -1541,7 +1541,7 @@ export function run(): void;
 }
 
 declare module "temzdf/ff" {
-import { Actions } from 'temzdf';
+import { Actions, KeyContext } from 'temzdf';
 
 class AbortSignal {
 	readonly aborted: boolean;
@@ -1554,6 +1554,13 @@ class AbortSignal {
 	removeEventListener(type: "abort", listener: () => void): void;
 	static timeout(ms: number): AbortSignal;
 	static any(signals: AbortSignal[]): AbortSignal;
+}
+interface Keyset {
+	/** Define the mappings and hooks (again: nothing more). */
+	enable(): void;
+	/** Remove them. */
+	disable(): void;
+	readonly enabled: boolean;
 }
 /** What an item carries for the parts that follow (a source's own data, a
  * refiner's additions, a matcher's score). */
@@ -1654,11 +1661,17 @@ export interface InvokeParams<T extends Detail = DetailUnit> {
 	/** Every matched item. */
 	readonly matched: readonly Item<T>[];
 }
+/** What an action is given besides its parameters: it runs in a
+ * dispatched task, `action` is the task's, and `atomic` runs a synchronous
+ * function with everything else held, where the plain `action` (and what
+ * uses it: `command.execute`, `openPrompt`, `schedule`) works. */
+export interface InvokeOptions extends PartOptions {
+	readonly action: Actions;
+	atomic<R>(fn: () => R): R;
+}
 /** What accepting a candidate does; `true` keeps the session open. */
 export interface Action<T extends Detail = DetailUnit> {
-	invoke(p: InvokeParams<T>, o: PartOptions & {
-		readonly action: Actions;
-	}): void | true | Promise<void | true>;
+	invoke(p: InvokeParams<T>, o: InvokeOptions): void | true | Promise<void | true>;
 }
 export function defineSource<T extends Detail = DetailUnit>(collect: Source<T>["collect"]): Source<T>;
 export function defineCurator<T extends Detail = DetailUnit>(curate: Curator<T>["curate"]): Curator<T>;
@@ -1808,7 +1821,8 @@ export class Session<T extends Detail = DetailUnit> {
 export function createSession<T extends Detail = DetailUnit>(o: SessionOptions<T>): Session<T>;
 /** The highlight groups lists use (defined at SessionReady; a user's own
  * `highlight()` after that, in a SessionReady hook of the configuration,
- * wins): matched parts, the selected line, marked candidates. */
+ * wins): matched parts, the selected line, marked candidates, and a fuzzy
+ * finder's rule between its prompt and its list. */
 export const defaultHighlights: {
 	readonly FFMatch: {
 		readonly fg: 4;
@@ -1820,6 +1834,9 @@ export const defaultHighlights: {
 	readonly FFMarked: {
 		readonly fg: 5;
 		readonly bold: true;
+	};
+	readonly FFBorder: {
+		readonly fg: 8;
 	};
 };
 /** Define the default highlight groups (again: over the user's own). */
@@ -1961,10 +1978,117 @@ export class List<T extends Detail = DetailUnit> {
 /** A list over `o.session`, in the pane `o.open` opens (or one attached
  * later). Call it where the plain `action` works. */
 export function createList<T extends Detail = DetailUnit>(o: ListOptions<T>): List<T>;
+/** What `define` takes: a source (collects once) or a curator (collects
+ * again for each query), how its items are matched, sorted and shown, and
+ * what accepting does. */
+export interface FinderDefinition<T extends Detail = DetailUnit> {
+	readonly source?: Source<T>;
+	readonly curator?: Curator<T>;
+	/** Applied in turn, each narrowing what the one before matched (default: `fuzzy()`). */
+	readonly matchers?: readonly Matcher<T>[];
+	/** Applied in turn (default: `byScore()`). */
+	readonly sorters?: readonly Sorter<T>[];
+	/** Applied in turn on the lines written (default: the value as it is). */
+	readonly renderers?: readonly Renderer<T>[];
+	/** Kept for later: nothing previews yet. */
+	readonly previewers?: readonly Previewer<T>[];
+	/** Named actions (the action picker lists them). */
+	readonly actions: Readonly<Record<string, Action<T>>>;
+	/** The action accepting runs (a name in `actions`). */
+	readonly defaultAction: string;
+	/** Shown beside the name in `:FF`'s completion. */
+	readonly desc?: string;
+}
+/** What `start` takes besides the arguments. */
+export interface StartOptions {
+	/** The first query (""). */
+	readonly query?: string;
+}
+/** Define the finder `name` (again: replaces it). */
+export function define<T extends Detail = DetailUnit>(name: string, def: FinderDefinition<T>): void;
+/** Forget the finder `name`. */
+export function undefine(name: string): void;
+/** The finders defined, by name (sorted), with their descriptions. */
+export function finders(): {
+	name: string;
+	desc?: string;
+}[];
+/** The finder showing now (undefined: none). */
+export function active(): Finder<Detail> | undefined;
+/** Whether `pane` (a mapping's context's, the focused one) is a finder's
+ * prompt: for `when`. */
+export function isFinder(pane?: number | KeyContext): boolean;
+/** Start the finder `name` with `args` (its source's arguments), closing
+ * the one showing. Call it where the plain `action` works; the source
+ * starts collecting at once, so a source reads what it needs of the
+ * session (the focused pane: the one the finder starts from) before its
+ * first `await`. */
+export function start(name: string, args?: readonly string[], o?: StartOptions): Finder<Detail>;
+/** A finder: its session, and while it shows its prompt and list. */
+export class Finder<T extends Detail = DetailUnit> {
+	#private;
+	readonly name: string;
+	readonly args: readonly string[];
+	readonly definition: FinderDefinition<T>;
+	readonly session: Session<T>;
+	/** The pane focused when it started, where actions run. */
+	readonly origin: number | undefined;
+	constructor(name: string, def: FinderDefinition<T>, args: readonly string[], query: string, onCancel?: () => void);
+	/** The list while the finder shows. */
+	get list(): List<T> | undefined;
+	/** The prompt's buffer and pane while the finder shows. */
+	get prompt(): {
+		readonly buffer: number;
+		readonly pane: number;
+	} | undefined;
+	get closed(): boolean;
+	/** Whether its panes show. */
+	get shown(): boolean;
+	/** The query: the prompt's text. */
+	get query(): string;
+	/** Open its panes (again), the query in the prompt: a bordered float
+	 * with the finder's name and counts as its title, and over its content a
+	 * prompt row, a rule and the list, as floats without a border. */
+	show(): void;
+	/** Close its panes, keeping the session (show() opens them again). */
+	hide(): void;
+	/** Close it for good: its panes, buffers and hooks, the session;
+	 * running actions are aborted. */
+	close(): void;
+	/** Close it, as <Esc> does (the action picker goes back to its finder). */
+	cancel(): void;
+	/** Resolves once the list shows everything the session published and
+	 * no typed-ahead key waits. */
+	whenIdle(): Promise<void>;
+	next(count?: number): void;
+	prev(count?: number): void;
+	page(count?: number): void;
+	first(): void;
+	last(): void;
+	/** Mark the selected candidate (unmark it), then select the next. */
+	toggleMark(): void;
+	/** Run the action `name` (the default one) on the selected candidate
+	 * and the marked ones. With neither, nothing happens. */
+	accept(name?: string): void;
+	/** Pick the action from a finder over the actions (its `<Esc>` comes
+	 * back here). */
+	pickAction(): void;
+}
+/** The keys of a finder's prompt (namespace builtin-ff-finder, mode
+ * `input` when `isFinder`, priority 1 over the mode's own): `<C-n>` /
+ * `<Down>` and `<C-p>` / `<Up>` move, `<PageDown>` / `<PageUp>` a screen,
+ * `<Tab>` marks and moves on, `<CR>` runs the default action, `<C-a>`
+ * picks the action, `<Esc>` closes (`<C-c>` cannot be mapped). */
+export const finderKeys: Keyset;
+/** `:FF NAME ARGS` starts a finder (names complete in the command line;
+ * namespace builtin-ff). */
+export const finderCommand: Keyset;
 
 }
 
 declare module "temzdf/ff/builtin" {
+import { Actions, PaneKind } from 'temzdf';
+
 class AbortSignal {
 	readonly aborted: boolean;
 	readonly reason: unknown;
@@ -2003,6 +2127,11 @@ type DisplayItem<T extends Detail = DetailUnit> = Item<T> & {
 interface PartOptions {
 	readonly signal: AbortSignal;
 }
+interface Source<T extends Detail = DetailUnit> {
+	collect(p: {
+		readonly args: readonly string[];
+	}, o: PartOptions): AsyncIterable<Item<T>>;
+}
 interface Matcher<T extends Detail = DetailUnit> {
 	match<V extends T>(p: {
 		readonly query: string;
@@ -2019,6 +2148,62 @@ interface Renderer<T extends Detail = DetailUnit> {
 		readonly items: DisplayItem<V>[];
 	}, o: PartOptions): void | Promise<void>;
 }
+interface InvokeParams<T extends Detail = DetailUnit> {
+	/** The cursor's item. */
+	readonly item: Item<T> | undefined;
+	/** The marked items. */
+	readonly marked: readonly Item<T>[];
+	/** Every matched item. */
+	readonly matched: readonly Item<T>[];
+}
+interface InvokeOptions extends PartOptions {
+	readonly action: Actions;
+	atomic<R>(fn: () => R): R;
+}
+interface Action<T extends Detail = DetailUnit> {
+	invoke(p: InvokeParams<T>, o: InvokeOptions): void | true | Promise<void | true>;
+}
+export interface BufferDetail {
+	readonly buffer: number;
+	readonly kind: PaneKind;
+	readonly modified: boolean;
+}
+/** The listed buffers (`buffers()`), by name. */
+export function bufferSource(): Source<BufferDetail>;
+/** The name, `[+]` after a buffer with unsaved changes, the kind of one
+ * that is not text. */
+export function bufferRenderer(): Renderer<BufferDetail>;
+/** `open` (the first chosen, in the pane the finder started from),
+ * `split` and `vsplit` (each chosen in a new pane below or beside),
+ * `delete` (each chosen; one with unsaved changes is refused). */
+export function bufferActions(): Record<"open" | "split" | "vsplit" | "delete", Action<BufferDetail>>;
+export interface LineDetail {
+	/** The pane whose buffer the line is in. */
+	readonly pane: number;
+	/** 0-based. */
+	readonly line: number;
+	/** How many lines the buffer has (for the numbers' width). */
+	readonly count: number;
+}
+/** The lines of the text buffer in the focused pane (the one the finder
+ * starts from); nothing for another kind of pane. */
+export function lineSource(): Source<LineDetail>;
+/** The line's number before it. */
+export function lineNumberRenderer(): Renderer<LineDetail>;
+/** `jump`: the cursor to the line's first non-blank. */
+export function lineActions(): Record<"jump", Action<LineDetail>>;
+export interface CommandDetail {
+	readonly name: string;
+	readonly desc: string | undefined;
+}
+/** The Ex commands that exist in the focused pane (command.list with
+ * `live`), each name once, sorted. */
+export function commandSource(): Source<CommandDetail>;
+/** The name, and the description after the names written at once. */
+export function commandRenderer(): Renderer<CommandDetail>;
+/** `execute` runs `:NAME`; `edit` opens a command line with `NAME ` in it,
+ * for the arguments. */
+export function commandActions(): Record<"execute" | "edit", Action<CommandDetail>>;
 /** The style of matched parts. */
 export const MATCH_STYLE = "FFMatch";
 /** Case: `true` ignores it, `false` respects it, `"smart"` ignores it

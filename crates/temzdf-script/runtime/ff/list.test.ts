@@ -159,6 +159,31 @@ test("a new query writes the list again and puts the cursor at the top", async (
   );
 });
 
+test("view().query is the query of the lines in the buffer, not of those being rendered", async (assert, t) => {
+  let hold: { wait: Promise<void>; open: () => void } | undefined;
+  const renderer = defineRenderer(async () => {
+    if (hold !== undefined) await hold.wait;
+  });
+  const { s, list, pane } = setup(t, { sources: [fake(["apple", "banana"])], matcher: substring() }, { renderer });
+  await list.whenIdle();
+  hold = gate();
+  s.setQuery("ban");
+  await s.whenIdle();
+  await sleep(20);
+  assert.deepEqual(lines(t, pane), ["apple", "banana"], "the old lines while the renderer runs");
+  assert.equal(t.run(() => list.view()).query, "", "their query");
+  hold.open();
+  await list.whenIdle();
+  assert.deepEqual(lines(t, pane), ["banana"]);
+  assert.equal(t.run(() => list.view()).query, "ban");
+  hold = undefined;
+  s.setQuery("zzz");
+  await list.whenIdle();
+  s.setQuery("zzzz");
+  await list.whenIdle();
+  assert.equal(t.run(() => list.view()).query, "zzzz", "an empty list shows every query that matched nothing");
+});
+
 test("writing again as the order changes keeps the selected candidate on the cursor line", async (assert, t) => {
   const g = gate();
   const { list, pane } = setup(t, { sources: [fake(["d", "f", "h"], g.wait, ["a", "e", "b"])], sorter: alphabetical });

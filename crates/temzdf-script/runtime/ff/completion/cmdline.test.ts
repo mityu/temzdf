@@ -127,7 +127,7 @@ test("command names: at the start, after a range (those taking one), after |", a
     every.size,
     "every command there, each once, not the range's own",
   );
-  assert.equal(names(t)[0], "bNext", "sorted");
+  assert.deepEqual(names(t).slice(0, 2), ["FF", "bNext"], "sorted (upper case first)");
   await keys(t, "<C-e>%");
   await keys(t, "<Tab>");
   const ranged = names(t);

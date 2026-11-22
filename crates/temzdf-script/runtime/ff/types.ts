@@ -109,11 +109,20 @@ export interface InvokeParams<T extends Detail = DetailUnit> {
   readonly matched: readonly Item<T>[];
 }
 
+/** What an action is given besides its parameters: it runs in a
+ * dispatched task, `action` is the task's, and `atomic` runs a synchronous
+ * function with everything else held, where the plain `action` (and what
+ * uses it: `command.execute`, `openPrompt`, `schedule`) works. */
+export interface InvokeOptions extends PartOptions {
+  readonly action: Actions;
+  atomic<R>(fn: () => R): R;
+}
+
 /** What accepting a candidate does; `true` keeps the session open. */
 export interface Action<T extends Detail = DetailUnit> {
   invoke(
     p: InvokeParams<T>,
-    o: PartOptions & { readonly action: Actions },
+    o: InvokeOptions,
     // biome-ignore lint/suspicious/noConfusingVoidType: an action may return nothing.
   ): void | true | Promise<void | true>;
 }
