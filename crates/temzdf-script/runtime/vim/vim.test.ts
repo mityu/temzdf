@@ -35,3 +35,13 @@ test("a mapping that is a prefix of another runs once no key follows", async (as
   await t.keys("<F3><F4>");
   assert.deepEqual(ran, ["short", "long"]);
 });
+
+test("mapped functions hear the keys that ran them", async (assert, t) => {
+  t.openText("x\n");
+  const namespace = "vim.test";
+  let heard = "";
+  t.run(() => keymap.add("vim/normal", "gZ", (c) => (heard = `${c.count} ${c.keys}`), { namespace }));
+  t.after(() => t.run(() => keymap.clear({ namespace })));
+  await t.keys("3gZ");
+  assert.equal(heard, "3 gZ");
+});

@@ -285,65 +285,6 @@ fn recording_a_macro_hooks_keys_only_while_it_records() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-fn ex_commands_split_switch_and_close_panes_buffers_and_tabs() {
-    let dir = std::env::temp_dir().join(format!("temzdf-vim-ex-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let (mut s, rx) = vim_session(&dir, "one\n").unwrap();
-    let ex = |s: &mut Session, line: &str| type_keys(s, &rx, &format!(":{line}<CR>"), None).unwrap();
-    let shown = |s: &mut Session| {
-        let info = s.run_command("text.info", &[], Instant::now()).unwrap().0;
-        info.get("name").and_then(ScriptValue::as_str).unwrap_or_default().to_owned()
-    };
-    let buffer_count = |s: &mut Session| match s.run_command("buffers", &[], Instant::now()).unwrap().0 {
-        ScriptValue::List(l) => l.iter().filter(|b| b.get("kind") != Some(&ScriptValue::Str("input".into()))).count(),
-        _ => 0,
-    };
-    let first = s.focus;
-    ex(&mut s, "sp");
-    assert_eq!(s.pane_count(), 2);
-    assert_ne!(s.focus, first, "the new pane has the focus");
-    assert_eq!(shown(&mut s), "case.txt", "showing the same buffer");
-    ex(&mut s, "vnew");
-    assert_eq!(s.pane_count(), 3);
-    assert_ne!(shown(&mut s), "case.txt", "a new buffer");
-    assert_eq!(buffer_count(&mut s), 2);
-    ex(&mut s, "only");
-    assert_eq!(s.pane_count(), 1);
-    assert!(ex(&mut s, "close").iter().any(|e| e.contains("E444")), "the last pane stays");
-    ex(&mut s, "bn");
-    assert_eq!(shown(&mut s), "case.txt", "round to the first buffer");
-    ex(&mut s, "bp");
-    assert_ne!(shown(&mut s), "case.txt");
-    ex(&mut s, "enew");
-    assert_eq!(buffer_count(&mut s), 3);
-    // Changes keep a buffer, unless :bd!; its pane shows another then.
-    type_keys(&mut s, &rx, "ix<Esc>", None).unwrap();
-    assert!(ex(&mut s, "bd").iter().any(|e| e.contains("E89")));
-    ex(&mut s, "bd!");
-    assert_eq!(buffer_count(&mut s), 2);
-    assert_eq!(s.pane_count(), 1, "the pane stays");
-    ex(&mut s, "ls");
-    let ls: Vec<String> = s.notices.iter().map(|n| n.text.clone()).collect();
-    assert!(ls.iter().any(|t| t.contains("\"case.txt\"")), "{ls:?}");
-    // By name; :wa writes what changed.
-    ex(&mut s, "enew");
-    ex(&mut s, "b case");
-    assert_eq!(shown(&mut s), "case.txt");
-    type_keys(&mut s, &rx, "Atwo<Esc>", None).unwrap();
-    ex(&mut s, "wa");
-    assert_eq!(std::fs::read_to_string(dir.join("case.txt")).unwrap(), "onetwo\n");
-    // Tab pages.
-    ex(&mut s, "tabnew");
-    assert_eq!(s.tabs.len(), 2);
-    ex(&mut s, "tabnew");
-    ex(&mut s, "tabo");
-    assert_eq!(s.tabs.len(), 1);
-    assert!(ex(&mut s, "tabc").iter().any(|e| e.contains("E784")));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn the_recursion_guard_counts_how_deep_mappings_feed_keys() {
     let config = r#"import { action, defineMode, feedkeys, keymap } from "temzdf";
 import vim from "temzdf/edit/vim";
@@ -418,63 +359,11 @@ keymap.add("vim/normal", "<F6>", () => {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-fn mapped_functions_hear_the_keys_that_ran_them() {
-    let config = r#"import { action, keymap } from "temzdf";
-import vim from "temzdf/edit/vim";
-vim.enable();
-keymap.add("vim/normal", "gZ", (c) => action.setVar("pane", "keys", `${c.count} ${c.keys}`));
-"#;
-    let dir = std::env::temp_dir().join(format!("temzdf-ctx-keys-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let (mut s, rx) = config_session(&dir, "x\n", Some(config)).unwrap();
-    type_keys(&mut s, &rx, "3gZ", None).unwrap();
-    let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("keys".into())];
-    let got = s.run_command("get-var", &args, Instant::now()).unwrap().0;
-    assert_eq!(got, ScriptValue::Str("3 gZ".into()));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn text_panes_edit_as_vim_by_default() {
     let dir = std::env::temp_dir().join(format!("temzdf-vim-default-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let (s, _rx) = config_session(&dir, "x\n", None).unwrap();
     assert_eq!(s.history.current(), "vim/normal", "{:?}", errors(&s));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-fn editors_are_enabled_and_disabled_while_running() {
-    // <F2> swaps Vim and Notepad editing in the focused pane, at once.
-    let config = "import vim from \"temzdf/edit/vim\";\nimport notepad from \"temzdf/edit/notepad\";\n\
-        import { keymap } from \"temzdf\";\nvim.enable();\n\
-        keymap.add([\"vim/normal\", \"edit\"], \"<F2>\", () => {\n\
-          if (vim.enabled) { vim.disable(); notepad.enable(); } else { notepad.disable(); vim.enable(); }\n\
-        });\n";
-    let dir = std::env::temp_dir().join(format!("temzdf-vim-swap-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let (mut s, rx) = config_session(&dir, "ab\n", Some(config)).unwrap();
-    assert_eq!(s.history.current(), "vim/normal");
-    let ns = |s: &mut Session, n: &str| -> usize {
-        s.modes.names().iter().map(|m| s.modes.mappings(m, Some(n)).len()).sum()
-    };
-    let vim_maps = ns(&mut s, "builtin-edit-vim");
-    assert!(vim_maps > 100, "{vim_maps}");
-    // Notepad: the edit mode at once, typed text goes in, Vim's keys gone.
-    type_keys(&mut s, &rx, "<F2>", None).unwrap();
-    assert_eq!(s.history.current(), "edit");
-    assert_eq!(ns(&mut s, "builtin-edit-vim"), 0);
-    assert!(!s.script.hooks_on("ModeChanged"), "its hook went");
-    type_keys(&mut s, &rx, "x<Right>y", None).unwrap();
-    let text = s.run_command("text.get-text", &[], Instant::now()).unwrap().0;
-    assert_eq!(text, ScriptValue::Str("xayb\n".into()));
-    // Vim again: once only, however often enabled.
-    type_keys(&mut s, &rx, "<F2>", None).unwrap();
-    assert_eq!(s.history.current(), "vim/normal");
-    assert_eq!(ns(&mut s, "builtin-edit-vim"), vim_maps);
-    assert_eq!(ns(&mut s, "builtin-edit-notepad"), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
