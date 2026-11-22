@@ -761,10 +761,11 @@ refs=()
 # Whether temzdf of this run still runs (a viewer or a session server):
 # known by its environment.
 temzdf_alive() {
-  local p
+  local p comm
   if [[ -d /proc/self ]]; then
     for p in /proc/[0-9]*; do
-      [[ -O $p && $(cat "$p/comm" 2>/dev/null) == temzdf ]] || continue
+      # (read, not a process per entry: this runs in loops.)
+      [[ -O $p ]] && read -r comm 2>/dev/null <"$p/comm" && [[ $comm == temzdf ]] || continue
       tr '\0' '\n' 2>/dev/null <"$p/environ" | grep -qxF "XDG_STATE_HOME=$outdir/state" && return 0
     done
     return 1

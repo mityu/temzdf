@@ -81,7 +81,10 @@ fi
 session() { cmd=(sh -c "SHELL=/bin/sh PS1=\"\$ \" target/debug/temzdf --clean -s $1; exec sh"); }
 # The viewer on a PDF, and a shell after it: there e2e.sh has the terminal
 # draw the cells of each expect, to compare with its screen during the run.
-pdf() { cmd=(sh -c "target/debug/temzdf standalone pdf --clean ${1:-target/fixtures/sample.pdf}; exec sh"); }
+# (SHELL and PS1 as for sessions; they reach temzdf only, not that shell.)
+pdf() {
+  cmd=(sh -c "SHELL=/bin/sh PS1=\"\$ \" target/debug/temzdf standalone pdf --clean ${1:-target/fixtures/sample.pdf}; exec sh")
+}
 
 # Sets cmd (the COMMAND), opts (more e2e.sh options) and prepares files, for
 # scenario $1 (as its "Used with:" says).

@@ -671,8 +671,8 @@ the expect with it inside `NAME.cells.png` (`-fuzz 3%`, no pixel may
 differ): `PASS NAME.cells (N cells)` or `FAIL NAME.cells` in
 `OUTDIR/expect.txt` (`NAME.cells.actual.png`, `NAME.cells.ref.png`,
 `NAME.cells.diff.png`). SKIP without such a shell, and when the terminal
-changed size since the expect (`resize`). Each expect adds about 1.2 s
-(kitty), each scenario about 3 s more to end temzdf and set up the shell.
+changed size since the expect (no scenario does so far). Each expect adds about 1.2 s
+(kitty), each scenario about 2.5 s more to end temzdf and set up the shell.
 Dropping inverse from `--ansi` fails `terminal-extras`' `selected.cells`
 and `scrolled.cells` (the selection and the scrollback position), which the
 text and the pixels outside the mask pass.
