@@ -260,6 +260,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "runs processes")]
     fn caught_and_survived_restore_the_file() {
         let (dir, file) = scratch("mut-verdict", "hello world\n");
         // Fails with the mutation.
@@ -273,6 +274,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "runs processes")]
     fn huge_output_is_fine() {
         let (dir, file) = scratch("mut-huge", "hello\n");
         let script = "head -c 300000 /dev/zero | tr '\\0' x; exit 1";
@@ -281,6 +283,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "runs processes")]
     fn restores_when_the_command_cannot_run() {
         let (dir, file) = scratch("mut-fail", "hello\n");
         let mut o = opts(false, "hello", "bye", "");
@@ -290,6 +293,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "runs processes")]
     fn compile_errors_and_no_tests_are_told_apart() {
         let (dir, file) = scratch("mut-cargo", "hello\n");
         let o = opts(false, "hello", "bye", "echo 'error: could not compile x'; exit 1");

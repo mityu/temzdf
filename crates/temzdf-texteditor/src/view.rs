@@ -508,6 +508,7 @@ xy",
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "every offset of several layouts: too slow under Miri")]
     fn offsets_map_to_the_cells_the_cursor_is_drawn_in() {
         use crate::marks::{Conceal, VirtChunk, VirtPos};
         let chunk = |t: &str| VirtChunk { text: t.into(), style: None };

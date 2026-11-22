@@ -51,11 +51,11 @@ fail() {
     exit 1
 }
 
-# Waits (up to 30 s) until `temzdf ls` shows session smoke with $1 panes.
+# Waits (up to 30 s) until session smoke has $1 panes.
 wait_panes() {
     local i
     for ((i = 0; i < 300; i++)); do
-        if "$temzdf" ls 2>/dev/null | grep -q "^smoke  ($1 panes,"; then
+        if [[ "$("$temzdf" eval -s smoke -p -c 'temzdf.action.panes().length' 2>/dev/null)" == "$1" ]]; then
             return 0
         fi
         sleep 0.1

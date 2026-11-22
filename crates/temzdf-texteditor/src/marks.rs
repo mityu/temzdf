@@ -485,6 +485,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "hundreds of random operations: too slow under Miri")]
     fn the_indexes_follow_adds_moves_removals_edits_and_undo() {
         let mut rng = Rng(0x2545_f491_4f6c_dd1d);
         let mut t = Text::from("abcdefghij\n".repeat(200).as_str());

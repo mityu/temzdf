@@ -537,6 +537,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "thousands of marks drawn: too slow under Miri")]
     fn drawing_looks_only_at_the_marks_near_the_rows() {
         // Every frame draws each text pane: thousands of decorations
         // (semantic highlighting) must cost what is shown, in layout too.
