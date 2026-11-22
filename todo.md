@@ -403,10 +403,18 @@ server on one `Session`). Next and open:
   `select-autoscroll` copies, the truncated moment of `reload` (the screen
   unchanged outside the status line, which says "reloading…") and the
   page a forward search lands on (the status line's text; 2026-11-02).
-  Left unjudged: SyncTeX's highlight, IME composing,
-  how far `select-autoscroll` scrolls (it follows the frames drawn, which
-  a replay does not; judging it needs autoscroll driven by time alone),
+  `select-autoscroll` is judged with `expect` once the autoscroll reached
+  the document's end, and `scroll_demo` by how far its image moved
+  (2026-11-23). Left unjudged: SyncTeX's highlight, IME composing,
   sessions inside multiplexers, and Ghostty's text.
+- `--render-frame --events` does not reproduce a selection that
+  autoscroll extends onto another page: `advance` in
+  `crates/temzdf/src/headless.rs` ticks the simulated clock without waiting
+  for the page's text, so `caret_at` finds none and the selection's head
+  stays on page 1 (the real viewer selects "3 Conclusion" on page 2 of
+  `sample-short.pdf`); nothing extends it after the last `settle` either.
+  `tests/e2e/select-autoscroll.actions` keeps selected text out of view at
+  its `expect` for now.
 - MuPDF's allocation lock makes text rendering slower with more threads (see
   `doc/dev/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the
   allocator itself, and `mupdf-sys` backs every context with the same static

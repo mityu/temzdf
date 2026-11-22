@@ -129,7 +129,8 @@ scenario() {
       cmd=(env SHELL=/bin/sh 'PS1=$ ' target/debug/temzdf-gui --clean)
       if [[ $1 == gui-ime ]]; then opts=(-I); fi
       ;;
-    expect | links | preview | search | select | select-autoscroll | viewer) pdf ;;
+    expect | links | preview | search | select | viewer) pdf ;;
+    select-autoscroll) pdf target/fixtures/sample-short.pdf ;;
     # Inline transfers, as over SSH.
     viewer-stress) pdf; cmd=(env TERMPIX_MEDIUM=direct "${cmd[@]}") ;;
     # As a terminal without kitty graphics.

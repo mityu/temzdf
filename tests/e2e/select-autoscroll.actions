@@ -1,19 +1,27 @@
-# Used with: scripts/e2e.sh tests/e2e/select-autoscroll.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
+# Used with: scripts/e2e.sh tests/e2e/select-autoscroll.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample-short.pdf
 # Coordinates assume the default 900x600 window (fit width, page 1 at the top).
-# Judged (check): releasing copies the selection (clipboard.txt starts with
-# "temzdf sample document"; copied). Not judged: dragging from the title into
-# the bottom edge and holding scrolls the page by itself while the selection
-# grows (held.png: blue selection over many lines, the view moved down); how
-# far it scrolls follows the frames the viewer drew, which a replay does not.
+# Judged: dragging from the title into the bottom edge and holding scrolls
+# the document by itself while the selection grows, until the end of the
+# two pages (held, expect: the bottom of page 2; the autoscroll there takes
+# under 2 s, held 4 s, so the screen no longer depends on how many frames
+# the viewer drew); releasing copies the selection, from the title to the
+# document's last line (clipboard.txt; copied and to-end, check).
+# held judges where the view stopped, not where the selection ends: no
+# selected text is in view there (the pointer stays left of the page
+# number, which WezTerm's pixel to the right selected), and the replay's
+# selection stays on page 1 (page 2's text is not loaded while it runs
+# through the autoscroll; todo.md); to-end judges the real selection's end.
 pause 1
 down 318 188
 # kitty on macOS reports a press followed at once by motion at the motion's
 # position (the selection then started below the title).
 sleep 0.1
-for y in 260 360 460 560 575; do move 450 $y; sleep 0.05; done
-pause 1
-shot held
+for y in 260 360 460 560 575; do move 300 $y; sleep 0.05; done
+# To the end (under 2 s) and a margin.
+pause 4
+expect held
 up
 pause 0.5
 clipboard >"$outdir/clipboard.txt" || true
 check copied grep -q "^temzdf sample document" "$outdir/clipboard.txt"
+check to-end sh -c 'tail -n 1 "$1" | grep -qx "The end, with a last needle."' sh "$outdir/clipboard.txt"
