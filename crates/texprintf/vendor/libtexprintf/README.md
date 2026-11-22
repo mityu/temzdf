@@ -1,9 +1,10 @@
 # Vendored libtexprintf
 
-Unmodified copy of the library sources of libtexprintf (the library behind
+Copy of the library sources of libtexprintf (the library behind
 `utftex`) version 1.31, tag `v1.31` of https://github.com/bartp5/libtexprintf
 (commit 18977837b20649d56a651eb6bf846f1c914db77a), the same version the
-Nix overlay that built it before (removed) used.
+Nix overlay that built it before (removed) used, with the local changes
+below.
 
 Files, all from upstream's `src/`: `boxes.c`, `drawbox.c`, `error.c`,
 `lexer.c`, `parser.c`, `stringutils.c`, `texprintf.c` and the headers they
@@ -23,5 +24,18 @@ writes them from the `// ERRORFLAG NAME "message"` comments in `boxes.c`,
 `drawbox.c`, `lexer.c` and `parser.c`, and `build.rs` does the same in Rust
 (into `OUT_DIR`, so no shell is needed). The Rust declarations (three
 functions) are in `crates/texprintf/src/lib.rs`. To update, replace the
-files with a newer upstream version, check the file lists in `build.rs`
+files with a newer upstream version, apply the local changes below again
+unless upstream has fixed them, check the file lists in `build.rs`
 against upstream's `src/Makefile.am`, and run `cargo test -p texprintf -p temzdf-markdown`.
+
+## Local changes
+
+- `boxes.c`, `AddChild`: upstream writes
+  `parent->child[parent->Nc]=InitBox(parent, T, content);`, and `InitBox`
+  increments `parent->Nc`. C leaves unspecified whether the index is read
+  before or after the call: GCC reads it before, MSVC after, so with MSVC
+  every new child box was written one element past the array just
+  reallocated (AddressSanitizer: "WRITE of size 80 ... 0 bytes after 80-byte
+  region", boxes.c:50), and every call crashed with
+  `STATUS_HEAP_CORRUPTION`. The index is now read before the call.
+  A candidate for an upstream report.

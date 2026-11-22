@@ -43,11 +43,12 @@ box InitBox(box *parent, boxtype T, void *content)
 
 void AddChild(box * parent, boxtype T, void *content)
 {
+	int n=parent->Nc; /* InitBox increments parent->Nc */
 	if (!parent->child)
 		parent->child=malloc(sizeof(box));
 	else
 		parent->child=realloc(parent->child, (parent->Nc+1)*sizeof(box));
-	parent->child[parent->Nc]=InitBox(parent, T, content);
+	parent->child[n]=InitBox(parent, T, content);
 }
 	
 void FreeBox(box *b)
