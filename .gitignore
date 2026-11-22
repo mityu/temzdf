@@ -12,3 +12,5 @@
 *.log
 *.out
 *.toc
+# Git worktrees Claude Code agents work in (isolated copies of this repository).
+/.claude/worktrees/

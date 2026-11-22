@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command // \"\"' | { c=$(cat); if printf '%s' \"$c\" | tr '\\n' ' ' | grep -Eq '(^|[^[:alnum:]_])(while|until)[[:space:]][^;]*pgrep[[:space:]]+(-[[:alnum:]]+[[:space:]]+)*-[[:alpha:]]*f[^;]*;[[:space:]]*do([^[:alnum:]_]|$)'; then printf '%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not poll with pgrep -f in a loop: the pattern matches the loop'\"'\"'s own command line, so it never ends. To wait for a command you started, run it with run_in_background and wait for its completion notification. To wait for another process, wait on its PID (while kill -0 PID; do sleep 1; done). cargo xtask check/test already wait for another run of the gate by themselves.\"}}'; fi; }",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
