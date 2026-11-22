@@ -977,6 +977,12 @@ mod tests {
     /// Run `argv` in a pane and feed it until `done` holds for its text (or
     /// the program exits). Returns the pane and its rows.
     /// Run `argv` in a pane; its output comes on the receiver ([`wait`]).
+    /// The command line of `temzdf-testhelper` (a program for tests to run
+    /// instead of `sh -c`) with these commands.
+    fn helper<'a>(commands: &[&'a str]) -> Vec<&'a str> {
+        std::iter::once(temzdf_testhelper::path()).chain(commands.iter().copied()).collect()
+    }
+
     fn start(argv: &[&str]) -> (TermBuffer, mpsc::Receiver<TermEvent>) {
         let (tx, rx) = mpsc::channel();
         let sink: Sink = temzdf_scene::sink::channel_sink(tx, |e| e);
@@ -1068,7 +1074,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn shows_program_output_with_colours() {
         let (mut pane, rows) = run(
-            &["sh", "-c", "printf 'hello \\033[31mred\\033[0m\\n\\033[38;2;1;2;3mrgb'; sleep 5"],
+            &helper(&["print", "hello \\e[31mred\\e[0m\\n\\e[38;2;1;2;3mrgb", "sleep", "5000"]),
             |_| {},
             |r| r[1].contains("rgb"),
         );
@@ -1086,20 +1092,21 @@ mod tests {
         // Keys only once echo is off: typed while stty ran, some would be
         // echoed and some not, and "got:hi" could land on the row of an
         // echoed "h" without its newline.
-        let (mut pane, rx) = start(&["sh", "-c", "stty -echo; echo ready; read line; echo \"got:$line\"; sleep 5"]);
+        let (mut pane, rx) = start(&helper(&["raw", "print", "ready\\r\\n", "hex"]));
         wait(&mut pane, &rx, |r| r[0] == "ready");
         for c in "hi".chars() {
             pane.key(&KeyEvent::new(KeyCode::Char(c), Modifiers::NONE));
         }
         pane.key(&KeyEvent::new(KeyCode::Enter, Modifiers::NONE));
-        let rows = wait(&mut pane, &rx, |r| r.iter().any(|l| l.contains("got:")));
-        assert_eq!(&rows[..2], ["ready", "got:hi"]);
+        // "hi" and Enter (CR in a raw terminal), as hex bytes.
+        let rows = wait(&mut pane, &rx, |r| r.iter().any(|l| l.contains("0d")));
+        assert_eq!(&rows[..2], ["ready", "68 69 0d"]);
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn smaller_views_show_the_bottom_left() {
-        let (mut term, _) = run(&["sh", "-c", "printf 'a\\nb\\nc\\nd\\ne\\nf'; sleep 5"], |_| {}, |r| r[5] == "f");
+        let (mut term, _) = run(&helper(&["print", "a\\nb\\nc\\nd\\ne\\nf", "sleep", "5000"]), |_| {}, |r| r[5] == "f");
         let small = TermView::new(Geometry { cols: 3, rows: 2, ..GEOMETRY });
         let frame = small.frame(&mut term, &mut Images::new());
         let rows: Vec<String> =
@@ -1119,7 +1126,7 @@ mod tests {
         // bottom left): the wide character's first half is the last cell;
         // drawn, it would spill over (or wrap the screen).
         let (mut term, _) =
-            run(&["sh", "-c", "printf '\\n\\n\\n\\n\\nab\\346\\225\\260'; sleep 5"], |_| {}, |r| r[5] == "ab数");
+            run(&helper(&["print", "\\n\\n\\n\\n\\nab\\346\\225\\260", "sleep", "5000"]), |_| {}, |r| r[5] == "ab数");
         let view = TermView::new(Geometry { cols: 3, rows: 2, ..GEOMETRY });
         let frame = view.frame(&mut term, &mut Images::new());
         let row = &frame.text[0].rows[1];
@@ -1177,8 +1184,8 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn programs_tracking_the_mouse_get_plain_drags_and_shift_selects() {
         // Mouse tracking (button events, SGR), then echo what arrives.
-        let script = "stty raw -echo; printf 'ready\\033[?1002h\\033[?1006h\\n'; od -An -c";
-        let (mut term, _) = run(&["sh", "-c", script], |_| {}, |r| r[0] == "ready");
+        let argv = helper(&["raw", "print", "ready\\e[?1002h\\e[?1006h\\r\\n", "hex"]);
+        let (mut term, _) = run(&argv, |_| {}, |r| r[0] == "ready");
         let none = Modifiers::NONE;
         term.mouse(&mouse(MouseEventKind::Press(LEFT), 0, 0, none), false);
         term.mouse(&mouse(MouseEventKind::Release(LEFT), 0, 0, none), false);
@@ -1200,8 +1207,8 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn clicking_a_link_opens_it() {
-        let script = "printf 'see \\033]8;;https://example.org/a\\033\\\\here\\033]8;;\\033\\\\ now'; sleep 5";
-        let (mut term, _) = run(&["sh", "-c", script], |_| {}, |r| r[0] == "see here now");
+        let argv = helper(&["print", "see \\e]8;;https://example.org/a\\e\\\\here\\e]8;;\\e\\\\ now", "sleep", "5000"]);
+        let (mut term, _) = run(&argv, |_| {}, |r| r[0] == "see here now");
         let none = Modifiers::NONE;
         assert!(term.mouse(&mouse(MouseEventKind::Move, 5, 0, none), false), "the pointer changes");
         assert!(term.hovering_link());
@@ -1337,7 +1344,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     fn the_pane_reports_its_program_exiting() {
-        let (pane, _) = run(&["sh", "-c", "exit 0"], |_| {}, |_| false);
+        let (pane, _) = run(&helper(&["exit", "0"]), |_| {}, |_| false);
         assert!(pane.exited());
     }
 

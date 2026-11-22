@@ -19,5 +19,8 @@ rustix = { version = "1.1.5", features = ["event", "process"] }
 temzdf-scene.workspace = true
 termpix-core.workspace = true
 
+[dev-dependencies]
+temzdf-testhelper.workspace = true
+
 [lints]
 workspace = true

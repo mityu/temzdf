@@ -37,6 +37,7 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
 | `temzdf-tty` | `temzdf-client`, `temzdf-scene`, `termpix` |
 | `temzdf` (bin) | `temzdf-server`, `temzdf-client`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-script`, `temzdf-tty`, `temzdf-scene`, `termpix` |
 | `temzdf-gui` (bin) | `temzdf-client`, `temzdf-protocol`, `temzdf-scene`, `termpix-core` (and winit, wgpu, glyphon) |
+| `temzdf-testhelper` (tests only) | none of ours (a program for tests to run instead of `sh`) |
 | `tuitest` (tests only) | none of ours (`libghostty-vt`, `portable-pty`; `temzdf` uses it in `tests/tui.rs`) |
 | `wlinput` (tests only) | none of ours (Wayland virtual keyboard and pointer) |
 | `temzdf-fixtures` (tests only) | none of ours (builds `target/fixtures/` with latexmk) |
@@ -134,6 +135,10 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
   `wlinput` is one virtual keyboard and pointer on a wlroots compositor,
   driven by commands on stdin; `scripts/e2e.sh -d wayland` drives
   headless sway with it.
+- `temzdf-testhelper`: a program for tests to run instead of `sh -c`
+  (which is not on Windows): print bytes with escapes, set the terminal
+  raw, echo input as hex, sleep, exit. Its library's `path()` builds it
+  and returns the executable (`temzdf-term`'s tests use it).
 - `temzdf-fixtures`: builds the test fixtures (`tests/fixtures/*.tex`
   into `target/fixtures/` with latexmk) when stale, for
   `temzdf_pdfcore::pdf::fixture` (feature `test-support`) and `cargo

@@ -24,6 +24,7 @@ members = [
     "crates/temzdf",
     "crates/temzdf-fixtures",
     "crates/tuitest",
+    "crates/temzdf-testhelper",
     "crates/wlinput",
     "xtask",
 ]
@@ -54,6 +55,7 @@ temzdf-server = { path = "crates/temzdf-server" }
 temzdf-protocol = { path = "crates/temzdf-protocol", default-features = false }
 temzdf-client = { path = "crates/temzdf-client" }
 tuitest = { path = "crates/tuitest" }
+temzdf-testhelper = { path = "crates/temzdf-testhelper" }
 temzdf-fixtures = { path = "crates/temzdf-fixtures" }
 anyhow = "1.0.104"
 pdf-writer = "0.15.0"

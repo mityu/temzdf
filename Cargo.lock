@@ -5872,7 +5872,15 @@ dependencies = [
  "portable-pty",
  "rustix",
  "temzdf-scene",
+ "temzdf-testhelper",
  "termpix-core",
+]
+
+[[package]]
+name = "temzdf-testhelper"
+version = "0.1.0"
+dependencies = [
+ "rustix",
 ]
 
 [[package]]
