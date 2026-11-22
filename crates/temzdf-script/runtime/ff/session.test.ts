@@ -95,6 +95,28 @@ test("the engine waits for a timer between chunks: a timer set during a match ru
   assert.ok(atTimer > 0 && atTimer < 2000, `the timer ran after ${atTimer} items`);
 });
 
+test("time the source waits is no chunk's: what comes together after a wait is matched together", async (assert, t) => {
+  const batches: number[] = [];
+  const m = defineMatcher(async function* ({ items }) {
+    batches.push(items.length);
+    yield* items;
+  });
+  const first = gate();
+  const second = gate();
+  const s = session(t, {
+    sources: [fake(first.wait, ["a", "b", "c"], second.wait, ["d", "e"])],
+    matcher: m,
+    chunkTime: 10,
+  });
+  await sleep(30);
+  first.open();
+  await until(() => s.snapshot().matched === 3);
+  await sleep(30);
+  second.open();
+  await s.whenIdle();
+  assert.deepEqual(batches, [3, 2]);
+});
+
 test("a mapped key runs between chunks of a long match", async (assert, t) => {
   t.openText("x\n");
   const namespace = "ff.test";

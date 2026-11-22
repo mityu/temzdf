@@ -95,6 +95,14 @@ interface Batch<T extends Detail> {
 }
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+/** Whether a timer ran since: the host had a turn. */
+function nextTurn(): { came: boolean } {
+  const t = { came: false };
+  setTimeout(() => {
+    t.came = true;
+  }, 0);
+  return t;
+}
 const markKey = (k: ItemKey) => `${k.source}:${typeof k.id}:${k.id}`;
 
 /** A session: create it with createSession, start() it, set the query as
@@ -360,16 +368,28 @@ export class Session<T extends Detail = DetailUnit> {
       const items = s.curator
         ? (s.part as Curator<T>).curate({ args: this.#args, query: this.#query }, { signal })
         : (s.part as Source<T>).collect({ args: this.#args }, { signal });
+      // A chunk is what comes without a timer running in between: time
+      // the source spent waiting for something (a process, a file, the
+      // host's next turn) is not the engine's work, and the items that
+      // come after it together stay together (a first item would
+      // otherwise go to the matcher, and be published, on its own).
       let n = 0;
       let since = Date.now();
+      let turn = nextTurn();
       for await (const item of items) {
         if (signal.aborted) break;
+        if (turn.came) {
+          n = 0;
+          since = Date.now();
+          turn = nextTurn();
+        }
         this.#take(i, s, item);
         if (++n >= this.#chunkItems || Date.now() - since >= this.#chunkTime) {
           await tick();
           if (signal.aborted) break;
           n = 0;
           since = Date.now();
+          turn = nextTurn();
         }
       }
       if (signal.aborted) return;

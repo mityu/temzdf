@@ -93,10 +93,12 @@ interface Decoration { start: number; length: number; style?: string }
   items or 100 ms; counting the items handed in also breaks up a query
   that matches little). Collecting waits for a timer every 1000 items or
   100 ms the same way (a source yielding from an array would otherwise run
-  in promise jobs alone), and what was collected until the host's next
-  turn goes to the matcher as one batch. A matcher therefore never sees
-  all items at once; one that keeps only the best N would do so per
-  chunk.
+  in promise jobs alone), counted from the first item after a timer ran
+  (time the source spent waiting for something is not the engine's, so
+  what comes together after a wait stays together), and what was
+  collected until the host's next turn goes to the matcher as one batch.
+  A matcher therefore never sees all items at once; one that keeps only
+  the best N would do so per chunk.
   The script host runs pending promise jobs until none is left before it
   takes the session's next message (JavaScript's event loop: microtasks
   before the next task), so a chain of `yield`s alone would keep mapped
