@@ -211,7 +211,7 @@ fn run(root: &Path, opts: &Options) -> Result<i32> {
     Ok(0)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -261,29 +261,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "runs processes")]
-    fn caught_and_survived_restore_the_file() {
-        let (dir, file) = scratch("mut-verdict", "hello world\n");
-        // Fails with the mutation.
-        assert_eq!(run(&dir, &opts(false, "hello", "bye", "grep -q hello f.txt")).unwrap(), 0);
-        assert_eq!(fs::read_to_string(&file).unwrap(), "hello world\n");
-        // Passes with it.
-        assert_eq!(run(&dir, &opts(false, "hello", "bye", "true")).unwrap(), 1);
-        assert_eq!(fs::read_to_string(&file).unwrap(), "hello world\n");
-        // Fails before the mutation.
-        assert_eq!(run(&dir, &opts(true, "hello", "bye", "false")).unwrap(), 2);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "runs processes")]
-    fn huge_output_is_fine() {
-        let (dir, file) = scratch("mut-huge", "hello\n");
-        let script = "head -c 300000 /dev/zero | tr '\\0' x; exit 1";
-        assert_eq!(run(&dir, &opts(false, "hello", "bye", script)).unwrap(), 0);
-        assert_eq!(fs::read_to_string(file).unwrap(), "hello\n");
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "runs processes")]
     fn restores_when_the_command_cannot_run() {
         let (dir, file) = scratch("mut-fail", "hello\n");
         let mut o = opts(false, "hello", "bye", "");
@@ -292,14 +269,43 @@ mod tests {
         assert_eq!(fs::read_to_string(file).unwrap(), "hello\n");
     }
 
-    #[test]
-    #[cfg_attr(miri, ignore = "runs processes")]
-    fn compile_errors_and_no_tests_are_told_apart() {
-        let (dir, file) = scratch("mut-cargo", "hello\n");
-        let o = opts(false, "hello", "bye", "echo 'error: could not compile x'; exit 1");
-        assert_eq!(run(&dir, &o).unwrap(), 3);
-        let o = opts(false, "hello", "bye", "echo 'running 0 tests'; echo 'test result: ok.'");
-        assert_eq!(run(&dir, &o).unwrap(), 4);
-        assert_eq!(fs::read_to_string(file).unwrap(), "hello\n");
+    /// What runs COMMAND through `sh -c`.
+    #[cfg(unix)]
+    mod shell {
+        use super::*;
+
+        #[test]
+        #[cfg_attr(miri, ignore = "runs processes")]
+        fn caught_and_survived_restore_the_file() {
+            let (dir, file) = scratch("mut-verdict", "hello world\n");
+            // Fails with the mutation.
+            assert_eq!(run(&dir, &opts(false, "hello", "bye", "grep -q hello f.txt")).unwrap(), 0);
+            assert_eq!(fs::read_to_string(&file).unwrap(), "hello world\n");
+            // Passes with it.
+            assert_eq!(run(&dir, &opts(false, "hello", "bye", "true")).unwrap(), 1);
+            assert_eq!(fs::read_to_string(&file).unwrap(), "hello world\n");
+            // Fails before the mutation.
+            assert_eq!(run(&dir, &opts(true, "hello", "bye", "false")).unwrap(), 2);
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore = "runs processes")]
+        fn huge_output_is_fine() {
+            let (dir, file) = scratch("mut-huge", "hello\n");
+            let script = "head -c 300000 /dev/zero | tr '\\0' x; exit 1";
+            assert_eq!(run(&dir, &opts(false, "hello", "bye", script)).unwrap(), 0);
+            assert_eq!(fs::read_to_string(file).unwrap(), "hello\n");
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore = "runs processes")]
+        fn compile_errors_and_no_tests_are_told_apart() {
+            let (dir, file) = scratch("mut-cargo", "hello\n");
+            let o = opts(false, "hello", "bye", "echo 'error: could not compile x'; exit 1");
+            assert_eq!(run(&dir, &o).unwrap(), 3);
+            let o = opts(false, "hello", "bye", "echo 'running 0 tests'; echo 'test result: ok.'");
+            assert_eq!(run(&dir, &o).unwrap(), 4);
+            assert_eq!(fs::read_to_string(file).unwrap(), "hello\n");
+        }
     }
 }

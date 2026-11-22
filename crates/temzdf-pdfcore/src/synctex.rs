@@ -284,6 +284,7 @@ fn normalize(p: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[cfg(unix)] // std::os::unix symlinks
     #[test]
     fn inputs_match_the_same_file_through_symlinks() {
         let dir = std::env::temp_dir().join(format!("temzdf-inputs-{}", std::process::id()));

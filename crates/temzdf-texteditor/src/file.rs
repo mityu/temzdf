@@ -189,6 +189,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(d);
     }
 
+    #[cfg(unix)] // std::os::unix symlinks and modes
     #[test]
     #[cfg_attr(miri, ignore = "the file system")]
     fn changes_on_disk_are_not_overwritten_and_symlinks_and_modes_stay() {
@@ -210,6 +211,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(d);
     }
 
+    #[cfg(unix)] // std::os::unix symlinks
     #[test]
     #[cfg_attr(miri, ignore = "the file system")]
     fn saving_never_writes_through_a_link_planted_at_the_temporary_name() {

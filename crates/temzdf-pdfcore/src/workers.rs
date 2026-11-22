@@ -714,6 +714,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(unix)] // std::os::unix symlinks
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn synctex_data_follows_its_file_through_a_symlink() {
