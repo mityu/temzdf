@@ -1221,12 +1221,8 @@ impl Session {
                     .and_then(|o| o.get("range"))
                     .and_then(range)
                     .map_or((0, text.len_chars()), |r| text.offsets(r));
-                let mut list: Vec<&temzdf_texteditor::Mark> = t
-                    .buf
-                    .marks()
-                    .iter()
-                    .filter(|m| ns.is_none_or(|n| m.spec.namespace == n) && m.start <= b && m.end >= a)
-                    .collect();
+                let mut list: Vec<&temzdf_texteditor::Mark> =
+                    t.buf.marks().touching(a, b).filter(|m| ns.is_none_or(|n| m.spec.namespace == n)).collect();
                 list.sort_by_key(|m| (m.start, m.id));
                 none(ScriptValue::List(list.into_iter().map(value).collect()))
             }

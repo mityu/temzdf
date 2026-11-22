@@ -181,16 +181,15 @@ pub fn render(
     let gutter = view.gutter(text.line_count());
     let rows = view.rows(buf);
     let (vis_start, vis_end) = (view.top, rows.last().map_or(view.top, |r| r.end));
-    let marks: Vec<_> = buf
-        .marks()
-        .overlapping(vis_start, vis_end)
-        .into_iter()
+    // The marks shown (the index visits only those near the rows).
+    let shown = buf.marks().overlapping(vis_start, vis_end);
+    let marks: Vec<_> = shown
+        .iter()
+        .copied()
         .filter(|m| m.spec.style.is_some() && m.start < m.end && m.spec.pane.is_none_or(|p| Some(p) == pane))
         .collect();
     // Virtual text drawn over the rows (end of line, overlay).
-    let virt: Vec<&Mark> = buf
-        .marks()
-        .overlapping(vis_start, vis_end)
+    let virt: Vec<&Mark> = shown
         .into_iter()
         .filter(|m| {
             m.spec.virt_pos != VirtPos::Inline
@@ -276,6 +275,10 @@ pub fn render(
             style("CursorLine", &mut base);
         }
         let mut cells = vec![base.clone(); width];
+        // The styled marks over this row's glyphs, by priority still: each
+        // glyph looks only at them.
+        let (lo, hi) = row.glyphs.iter().fold((usize::MAX, 0), |(lo, hi), g| (lo.min(g.offset), hi.max(g.offset + 1)));
+        let row_marks: Vec<&Mark> = marks.iter().copied().filter(|m| m.start < hi && m.end > lo).collect();
         // The gutter.
         if gutter > 0 && row.first {
             let n = match view.number {
@@ -345,7 +348,7 @@ pub fn render(
                     style(name, &mut cell);
                 }
             }
-            for m in &marks {
+            for m in &row_marks {
                 if m.start <= g.offset
                     && g.offset < m.end
                     && let Some(name) = &m.spec.style
@@ -531,6 +534,32 @@ mod tests {
         assert_eq!(d.rows[0][1].bg, Color::Indexed(4), "nor None's colour");
         assert_eq!(d.rows[1][0].bg, Color::Default, "a group never defined: nothing");
         assert_eq!(d.rows[1][1], plain.rows[1][1], "the others as before");
+    }
+
+    #[test]
+    fn drawing_looks_only_at_the_marks_near_the_rows() {
+        // Every frame draws each text pane: thousands of decorations
+        // (semantic highlighting) must cost what is shown, in layout too.
+        let n = 20_000;
+        let mut buf = Buffer::new(Text::from("item\n".repeat(n).as_str()), LineEnding::Lf);
+        for line in 0..n {
+            buf.marks_mut().add(
+                line * 5,
+                line * 5 + 2,
+                MarkSpec { style: Some("Search".into()), ..MarkSpec::default() },
+            );
+        }
+        let mut v = View { width: 10, height: 10, ..View::default() };
+        v.top = n / 2 * 5;
+        v.cursor = Cursor::at(v.top);
+        let hl = Highlights::default();
+        let before = crate::marks::VISITED.get();
+        let d = render(&buf, &v, &hl, None, true, &[]);
+        let visited = crate::marks::VISITED.get() - before;
+        assert_eq!(line(&d, 9), "item      ");
+        let search = hl.get("Search").unwrap().bg.unwrap();
+        assert_eq!((d.rows[9][1].bg, d.rows[9][2].bg), (search, Color::Default), "decorated");
+        assert!(visited < 100, "{visited} marks looked at");
     }
 
     #[test]

@@ -120,7 +120,7 @@ impl VirtLine {
     /// columns.
     pub fn of(text: &Text, marks: &Marks, pane: Option<u32>, cell: (u32, u32), width: usize) -> Vec<VirtLine> {
         let mut v: Vec<_> = marks
-            .iter()
+            .with_virt_lines()
             .filter(|m| !m.deleted && m.spec.pane.is_none_or(|p| Some(p) == pane))
             .filter_map(|m| Some((m, m.spec.virt_lines.as_ref()?)))
             .collect();
@@ -178,7 +178,7 @@ impl Inline {
     /// most `width` columns.
     pub fn of(marks: &Marks, pane: Option<u32>, cell: (u32, u32), width: usize) -> Vec<Inline> {
         let mut v: Vec<_> = marks
-            .iter()
+            .inline()
             .filter(|m| {
                 m.spec.virt_pos == VirtPos::Inline
                     && (!m.spec.virt_text.is_empty() || m.spec.virt_image.is_some())
@@ -230,10 +230,10 @@ impl Concealed {
         width: usize,
         cursor_line: usize,
     ) -> Vec<Concealed> {
-        // The fields first, the text's lines (a lookup in the rope) only
-        // for the few that conceal: a buffer may have thousands of marks.
+        // Only those that conceal (a buffer may have thousands of marks),
+        // the fields first, the text's lines (a lookup in the rope) last.
         let mut v: Vec<_> = marks
-            .iter()
+            .concealing()
             .filter_map(|m| {
                 let c = m.spec.conceal.as_ref()?;
                 (m.start < m.end && !m.deleted && m.spec.pane.is_none_or(|p| Some(p) == pane)).then_some((m, c))
