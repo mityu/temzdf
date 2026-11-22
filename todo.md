@@ -105,7 +105,9 @@ server on one `Session`). Next and open:
   - The adapter: what a pane or editor (Vim, Notepad, prompts, the command
     line) provides to the engine.
   - Errors from sources; where the module lives and the registration API.
-  - There is no LSP client and no fuzzy finder yet; which comes first.
+  - There is no LSP client and no fuzzy finder yet: the fuzzy finder and
+    completion framework comes first (decided 2026-11-22), an LSP client
+    later.
 - A Windows port of the tests. The gate is `cargo xtask check` and the
   JavaScript tooling Node TypeScript (`scripts/ts-types.ts`,
   `scripts/check-docs.ts`), neither assuming Nix or bash; what is left:
