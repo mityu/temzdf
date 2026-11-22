@@ -115,6 +115,9 @@ impl Session {
         if let Some(result) = self.register_command(name, args) {
             return result;
         }
+        if let Some(result) = self.test_report_command(name, args) {
+            return result;
+        }
         if let Some(result) = self.markdown_command(name, args, now) {
             return result;
         }

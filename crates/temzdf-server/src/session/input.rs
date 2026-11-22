@@ -286,7 +286,7 @@ impl Session {
     }
 
     /// The text a key types (no modifier but Shift), if any.
-    fn typed_text(&self, k: &KeyEvent) -> Option<String> {
+    pub(super) fn typed_text(&self, k: &KeyEvent) -> Option<String> {
         let typed = k.text.clone().or_else(|| match k.code {
             KeyCode::Char(c) => Some(c.to_string()),
             _ => None,

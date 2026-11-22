@@ -89,9 +89,9 @@ pub(super) struct Copies {
     history: VecDeque<Entry>,
     named: BTreeMap<String, Entry>,
     next_id: u64,
-    /// Clipboard reads asked of the client, by ticket: when they give up.
+    /// Clipboard reads asked of the client, by ticket (the Promise's
+    /// number, `Bridge::new_promise`): when they give up.
     reads: HashMap<u64, Instant>,
-    next_ticket: u64,
 }
 
 impl Copies {
@@ -431,8 +431,7 @@ impl Session {
                 self.put_entry(pane, &entry).map(|o| (ScriptValue::Null, o))
             })(),
             "read-clipboard" => {
-                self.copies.next_ticket += 1;
-                let ticket = self.copies.next_ticket;
+                let ticket = self.script.new_promise();
                 self.copies.reads.insert(ticket, Instant::now() + CLIPBOARD_WAIT);
                 self.effects.push(Effect::ReadClipboard { ticket, primary: opt_bool("primary").unwrap_or(false) });
                 Ok((ScriptValue::map([("$promise", ScriptValue::Num(ticket as f64))]), Outcome::None))

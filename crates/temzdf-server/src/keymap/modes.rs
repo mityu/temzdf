@@ -399,6 +399,24 @@ impl Matcher {
         self.since.map(|t| t + timeout)
     }
 
+    /// The pending keys time out now, as if their time had run out (the
+    /// next [`Matcher::step`] resolves them): `test.keys` flushes so,
+    /// without waiting for `timeoutlen`.
+    pub fn expire(&mut self) {
+        if !self.pending.is_empty() {
+            self.expired = true;
+        }
+    }
+
+    /// The pending keys' time starts again at `now`: while `test.keys`
+    /// types, a prefix waits for its next key however long the session
+    /// took to settle.
+    pub fn restart(&mut self, now: Instant) {
+        if self.since.is_some() {
+            self.since = Some(now);
+        }
+    }
+
     /// The next decision for keys in `layers`. Call until it says
     /// [`Step::Wait`]; mappings that change the mode take effect for the
     /// keys after them.
@@ -655,6 +673,30 @@ mod tests {
         assert_eq!(run(&m, "base", &[("g", 0), ("j", 10)], 20), ["g", "down"], "a key that does not continue");
         assert_eq!(run(&m, "base", &[("q", 0)], 10), ["unmapped q"]);
         assert_eq!(run(&m, "base", &[("<C-b>", 0)], 10), ["prefix"], "nowait runs the shorter mapping at once");
+    }
+
+    #[test]
+    fn expire_resolves_a_pending_prefix_and_restart_puts_its_timeout_off() {
+        let m = modes();
+        let layers = Layers::of("base", true);
+        let t0 = Instant::now();
+        let mut matcher = Matcher::default();
+        matcher.push(&k("g")[0].event());
+        assert_eq!(matcher.step(&m, &layers, T, t0), Step::Wait(Some(t0 + T)));
+        // Restarted later: the timeout counts from then.
+        let later = t0 + Duration::from_millis(900);
+        matcher.restart(later);
+        assert_eq!(matcher.step(&m, &layers, T, t0 + T), Step::Wait(Some(later + T)), "not timed out");
+        matcher.expire();
+        assert!(
+            matches!(matcher.step(&m, &layers, T, later), Step::Run { target: "g", .. }),
+            "expired: the shorter mapping at once"
+        );
+        assert!(matcher.pending().is_empty());
+        // Nothing pending: nothing to expire, nothing to restart.
+        matcher.expire();
+        matcher.restart(later);
+        assert_eq!(matcher.step(&m, &layers, T, later), Step::Wait(None));
     }
 
     #[test]

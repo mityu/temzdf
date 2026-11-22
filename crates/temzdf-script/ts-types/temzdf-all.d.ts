@@ -932,6 +932,31 @@ declare module "temzdf" {
       /** The headings of the Markdown file a pane shows: level, text, anchor and source line (0-based) */
       outline(pane?: number): { level: number; text: string; anchor: string; line: number }[];
     };
+    /** For scripts' tests (temzdf/test drives the session with these; a script's function or dispatched task only, not `temzdf action`) */
+    test: {
+      /** Type `keys` (key notation) one at a time, each once the session settled after the one before (mapped functions done, no script running or waiting to run), then wait until it settled again; `flush` (default true) runs a prefix still waiting for a longer mapping as if its time ran out, `remap` false feeds the keys without mappings. Resolves with the error messages shown meanwhile, the keys still pending and the mode */
+      keys(keys: string, opts?: { flush?: boolean; remap?: boolean }): Promise<TestSettled>;
+      /** Wait until the session settled (see keys) */
+      settle(opts?: { flush?: boolean }): Promise<TestSettled>;
+      /** Abandon the waits (their Promises are rejected) and their keys, drop pending keys, and go back to the focused pane's base mode */
+      reset(): void;
+      /** A line of TAP: to `temzdf test`, else the log */
+      report(line?: string): void;
+      /** The run ended with `failed` of `total` tests failing: to `temzdf test`, else the log */
+      end(summary?: { failed: number; total: number }): void;
+      /** Whether `temzdf test` collects the reports (otherwise they go to the log) */
+      reporting(): boolean;
+    };
+  }
+
+  /** What test.keys and test.settle resolve with. */
+  export interface TestSettled {
+    /** The error messages shown while it waited. */
+    errors: string[];
+    /** Keys waiting for a longer mapping (key notation; empty after a flush). */
+    pending: string;
+    /** The current mode. */
+    mode: string;
   }
 }
 

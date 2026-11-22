@@ -119,6 +119,13 @@ pub struct Bridge {
     scheduled: Vec<FuncId>,
     /// The invocation whose `InvokePost` comes at the next safe point.
     pub(super) pending_post: Option<ScriptValue>,
+    /// The last number given to a Promise a command answered with
+    /// (`{ "$promise": n }`: `read-clipboard`, `test.keys`, `test.settle`).
+    next_promise: u64,
+    /// Why the configuration failed to load, if it did (this host's).
+    load_error: Option<String>,
+    /// Why the host ended, if it did (until one starts again).
+    exit_reason: Option<String>,
 }
 
 /// `<C-c>`, whatever the lock keys (kitty's keyboard protocol reports Caps
@@ -140,6 +147,26 @@ impl Bridge {
 
     fn send(&mut self, msg: &ToHost) -> bool {
         self.host.as_ref().is_some_and(|h| h.send(msg.clone()))
+    }
+
+    /// A number for a Promise a command answers with (`{ "$promise": n }`),
+    /// settled later with [`Session::resolve_promise`].
+    pub(super) fn new_promise(&mut self) -> u64 {
+        self.next_promise += 1;
+        self.next_promise
+    }
+
+    /// Nothing runs or waits to run: no call, condition, atomic section or
+    /// load; no input held; no hook, scheduled function or `InvokePost`
+    /// waiting; no dispatched task but `task` (`test.keys`: the test
+    /// itself, waiting).
+    pub(super) fn quiet_but(&self, task: Option<TaskId>) -> bool {
+        !self.busy()
+            && self.held.is_empty()
+            && self.deferred_events.is_empty()
+            && self.scheduled.is_empty()
+            && self.pending_post.is_none()
+            && self.tasks.iter().all(|t| Some(*t) == task)
     }
 
     /// Stop the host whatever it does (`debug-stop-script-host`, for
@@ -227,6 +254,8 @@ impl Session {
         };
         self.script.generation = generation;
         self.script.host = Some(host);
+        self.script.load_error = None;
+        self.script.exit_reason = None;
         self.clear_host_notice();
         self.script.loading = Some(Instant::now() + LOAD_TIMEOUT);
         self.script.busy_since = Some(Instant::now());
@@ -240,6 +269,7 @@ impl Session {
     pub(super) fn reload_scripts(&mut self) -> anyhow::Result<Outcome> {
         let Some(s) = self.settings.script.clone() else { anyhow::bail!("no configuration script") };
         let mut out = self.drop_host();
+        self.script.exit_reason = None;
         self.script.hooks.clear();
         // Mappings start over too (the configuration registers them again).
         self.modes = super::builtin_modes();
@@ -257,6 +287,8 @@ impl Session {
         self.script.loading = None;
         self.script.tasks.clear();
         self.script.atomic = None;
+        // Their Promises went with the host.
+        self.test.drop_waiters();
         let mut out = Outcome::None;
         for f in std::mem::take(&mut self.script.frames) {
             if let Frame::Op { op, cancel: None } = f {
@@ -272,6 +304,18 @@ impl Session {
             "{why}: mappings are off. <C-b>d detaches, <C-b>q ends the session, <C-b>r restarts the script host"
         );
         self.notify(super::notices::Kind::Host, &text);
+    }
+
+    /// Why the configuration failed to load (an error, an exception, the
+    /// load timeout), if it did.
+    pub fn config_error(&self) -> Option<&str> {
+        self.script.load_error.as_deref()
+    }
+
+    /// Why the script host ended (a trap, the memory cap, a stop), if it
+    /// did and was not started again.
+    pub fn script_host_exit(&self) -> Option<&str> {
+        self.script.exit_reason.as_deref()
     }
 
     /// The host runs something: input is held and frames wait.
@@ -747,6 +791,7 @@ impl Session {
             return Outcome::None;
         }
         eprintln!("temzdf: the script host ended: {why}");
+        self.script.exit_reason = Some(why.to_owned());
         let loading = self.script.loading.is_some();
         let mut out = self.drop_host();
         self.host_down("the script host exited");
@@ -763,6 +808,7 @@ impl Session {
         if let Err(e) = result {
             let msg = format!("configuration: {e}");
             eprintln!("temzdf: {msg}");
+            self.script.load_error = Some(e.message.clone());
             self.script.startup_error = Some(e.message);
         }
         let out = self.open_first();
@@ -825,6 +871,7 @@ impl Session {
             self.script.startup_error =
                 Some(format!("the configuration did not finish loading within {} s", LOAD_TIMEOUT.as_secs()));
             eprintln!("temzdf: {}", self.script.startup_error.as_deref().unwrap_or_default());
+            self.script.load_error.clone_from(&self.script.startup_error);
             self.script.loading = Some(now);
             let out = self.finish_loading(Ok(()));
             self.host_down("the configuration did not finish loading");
@@ -881,7 +928,7 @@ impl Session {
         self.script.deferred_events.append(&mut self.script_events);
         let frames_before = self.script.frames.len();
         self.script.frames.push(Frame::Reply { req, result: None });
-        let (result, mut out) = self.run_op(op);
+        let (result, mut out) = self.run_op(op, token);
         let events = std::mem::take(&mut self.script_events);
         // A deferred operation (a close waiting for its "before" hooks)
         // fills in the reply later.
@@ -899,8 +946,15 @@ impl Session {
     }
 
     /// Perform one operation of a script.
-    fn run_op(&mut self, op: HostOp) -> (Result<ScriptValue, String>, Outcome) {
+    fn run_op(&mut self, op: HostOp, token: Token) -> (Result<ScriptValue, String>, Outcome) {
         match op {
+            // What waits on the session needs to know who waits.
+            HostOp::Command { name, args } if super::test_actions::WAITING.contains(&name.as_str()) => {
+                match self.test_command(&name, &args, token) {
+                    Ok((v, o)) => (Ok(v), o),
+                    Err(e) => (Err(e), Outcome::None),
+                }
+            }
             HostOp::Schedule { func } => {
                 self.script.scheduled.push(func);
                 (Ok(ScriptValue::Null), Outcome::None)
@@ -1087,6 +1141,7 @@ const READS: &[&str] = &[
     "text.wordchars",
     "get-var",
     "markdown.outline",
+    "test.reporting",
 ];
 
 /// A mapping as `keymap.get` gives it: functions as `{ func: id }`, which

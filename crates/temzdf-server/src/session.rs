@@ -35,6 +35,8 @@ mod frame;
 mod host_tests;
 mod images;
 mod input;
+#[cfg(test)]
+mod js_tests;
 mod markdown;
 mod notices;
 mod options;
@@ -44,6 +46,7 @@ mod script;
 mod statusline;
 mod swap;
 mod tabs;
+mod test_actions;
 #[cfg(test)]
 mod tests;
 mod text;
@@ -58,6 +61,7 @@ pub use commands::action_names;
 pub use options::{Options, ShowTabline, TextOptions};
 
 pub use script::ScriptSettings;
+pub use test_actions::TestReport;
 
 pub type DocId = u32;
 /// A buffer is what a pane shows, as in Vim: a document (its id is the
@@ -402,6 +406,8 @@ pub struct Session {
     script: script::Bridge,
     /// Events for script hooks, collected while an operation runs.
     script_events: Vec<(String, Vec<ScriptValue>)>,
+    /// Scripts' tests: their waits and reports (`test.*`).
+    test: test_actions::TestState,
 }
 
 impl Session {
@@ -469,7 +475,13 @@ impl Session {
             error: None,
             script: script::Bridge::default(),
             script_events: Vec::new(),
+            test: test_actions::TestState::default(),
         }
+    }
+
+    /// What new shell panes run (`None`: `$SHELL`, the default).
+    pub fn set_shell(&mut self, argv: Option<Vec<String>>) {
+        self.shell = argv;
     }
 
     pub fn images(&mut self) -> &mut Images {
@@ -1165,6 +1177,9 @@ impl Session {
 
     pub fn handle(&mut self, ev: SessionEvent, now: Instant) -> Outcome {
         self.clock = self.clock.max(now);
+        // (A script's answer lets queued keys go on, past a prefix's
+        // timeout when it ran long.)
+        self.test_hold_timeout(now);
         let out = match ev {
             SessionEvent::Script(generation, msg) => {
                 return if generation == self.script.generation { self.handle_script(msg) } else { Outcome::None };
@@ -1579,6 +1594,7 @@ impl Session {
     /// [`Session::tick`], plus scripting's timers (the configuration's load
     /// timeout, the "running a script" notice). For event loops.
     pub fn poll(&mut self, now: Instant) -> Outcome {
+        self.test_hold_timeout(now);
         self.expire_clipboard_reads(now);
         self.write_due_swaps(now);
         let mut out =
@@ -1596,7 +1612,9 @@ impl Session {
         // not finding anything: the notice now, not after the next frame
         // (take_effects comes after it).
         out = out.merge(self.collect_pane_requests());
-        out.merge(self.flush_events())
+        out = out.merge(self.flush_events());
+        // Waits of scripts' tests, once all of the above is done.
+        out.merge(self.test_waits(now))
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
@@ -1619,6 +1637,7 @@ impl Session {
             .chain(self.matcher.deadline(self.options.timeoutlen).filter(|_| !self.script.busy()))
             .chain(self.submode_deadline().filter(|_| !self.script.busy()))
             .chain(self.notice_deadline())
+            .chain(self.test_deadline())
             .min()
     }
 

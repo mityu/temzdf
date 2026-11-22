@@ -32,6 +32,9 @@ impl Session {
     /// Show a floating message.
     pub(super) fn notify(&mut self, kind: Kind, text: &str) {
         eprintln!("temzdf: {text}");
+        if kind != Kind::Info {
+            self.test.note_error(text);
+        }
         if kind == Kind::Host {
             self.notices.retain(|n| n.kind != Kind::Host);
         }
