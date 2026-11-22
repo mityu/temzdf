@@ -3,7 +3,8 @@
 //! (`node scripts/ts-types.ts`), the Node scripts' types (`tsc -p
 //! scripts`), shellcheck, references to documents (`node
 //! scripts/check-docs.ts`), clippy, the workspace's tests and the scripts'
-//! (`temzdf test` on `runtime/**/*.test.ts`), then the unit tests under
+//! (`temzdf test` on `runtime/**/*.test.ts`), a cross-check of the crates
+//! that build for Windows (on Unix), then the unit tests under
 //! Miri (`scripts/miri.sh`), with terse output: a failed step's main
 //! lines, its whole output in `target/check/`.
 //!
@@ -26,6 +27,28 @@ use crate::{root, target_dir};
 const NODE_MODULES: &str = "crates/temzdf-script/runtime/node_modules";
 /// The shipped scripts, beside their tests (`*.test.ts`).
 const RUNTIME: &str = "crates/temzdf-script/runtime";
+/// The crates that build and test on Windows so far, and the gate runs
+/// there (`windows-latest` in CI), `xtask` among them. On Unix the others
+/// are also checked for `x86_64-pc-windows-msvc` ("windows" step), where
+/// the standard library for it is installed. Left out, and why
+/// (`todo.md`, "The Windows port"): texprintf and tuitest only
+/// cross-check because pkg-config finds the Linux libraries; temzdf-script-guest
+/// is empty off wasm; the rest use Unix APIs (`std::os::unix`, rustix) or C
+/// that is not built for MSVC yet.
+const WINDOWS_CRATES: &[&str] = &[
+    "temzdf-fixtures",
+    "temzdf-markdown",
+    "temzdf-mdview",
+    "temzdf-scene",
+    "temzdf-texteditor",
+    "temzdf-watchfs",
+    "termpix-core",
+    "termpix-ui",
+    "wlinput",
+    "xtask",
+];
+/// The target of the cross-check ("windows" step).
+const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
 /// The generated declarations, committed.
 const DECLARATIONS: &str = "crates/temzdf-script/ts-types/temzdf-all.d.ts";
 
@@ -196,19 +219,19 @@ pub fn check(o: &Options) -> Result<i32> {
     gate.end();
     ran.push("docs");
 
-    gate.header("clippy");
-    let mut clippy = tools.cargo();
-    clippy.args(["clippy", "--workspace", "--all-targets", "--color", "never", "--", "-D", "warnings"]);
-    if !gate.run(&mut clippy, "clippy")? {
-        gate.failed(
-            "clippy",
-            "clippy",
-            |l| l.starts_with("error") || l.starts_with("warning") || l.contains("-->"),
-            40,
-        );
-    }
+    gate.clippy(&tools, "clippy", &[])?;
     gate.end();
     ran.push("clippy");
+
+    if cfg!(windows) {
+        // Native: the clippy step above is the Windows build.
+    } else if !windows_std_installed() {
+        println!("SKIP windows (no {WINDOWS_TARGET} standard library)");
+    } else {
+        gate.clippy(&tools, "windows", &["--target", WINDOWS_TARGET])?;
+        gate.end();
+        ran.push("windows");
+    }
 
     let summary = if tests {
         let rust = gate.tests(&tools, &o.test_args)?;
@@ -497,6 +520,27 @@ impl<'a> Gate<'a> {
         }
     }
 
+    /// Clippy as the step NAME (header included), with EXTRA arguments
+    /// before the package selection; `-D warnings`.
+    fn clippy(&mut self, tools: &Tools, name: &str, extra: &[&str]) -> Result<()> {
+        self.header(name);
+        let mut cmd = tools.cargo();
+        cmd.arg("clippy").args(extra);
+        // Cross-checking: only what is known to build for the target.
+        if extra.is_empty() {
+            select_packages(&mut cmd);
+        } else {
+            for p in WINDOWS_CRATES.iter().filter(|p| **p != "xtask") {
+                cmd.args(["-p", p]);
+            }
+        }
+        cmd.args(["--all-targets", "--color", "never", "--", "-D", "warnings"]);
+        if !self.run(&mut cmd, name)? {
+            self.failed(name, name, |l| l.starts_with("error") || l.starts_with("warning") || l.contains("-->"), 40);
+        }
+        Ok(())
+    }
+
     /// The workspace's tests: how many passed.
     fn tests(&mut self, tools: &Tools, args: &[OsString]) -> Result<u64> {
         self.header("tests");
@@ -524,6 +568,9 @@ impl<'a> Gate<'a> {
         // The arguments pick Rust tests: the binary may not be built.
         if !args.is_empty() {
             return Ok("js tests skipped (cargo test arguments given)".to_owned());
+        }
+        if cfg!(windows) {
+            return Ok("js tests skipped (temzdf does not build on Windows yet)".to_owned());
         }
         let files = js_test_files(Path::new(RUNTIME));
         if files.is_empty() {
@@ -595,12 +642,34 @@ impl<'a> Gate<'a> {
     }
 }
 
+/// The packages cargo works on: the workspace, but only WINDOWS_CRATES on
+/// Windows (the others do not build there yet).
+fn select_packages(cmd: &mut Command) {
+    if cfg!(windows) {
+        for p in WINDOWS_CRATES {
+            cmd.args(["-p", p]);
+        }
+    } else {
+        cmd.arg("--workspace");
+    }
+}
+
+/// Whether the Rust toolchain has the standard library for WINDOWS_TARGET
+/// (the Nix dev shells do; rustup needs `rustup target add`).
+fn windows_std_installed() -> bool {
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let Ok(sysroot) = output(command(rustc).args(["--print", "sysroot"])) else { return false };
+    Path::new(sysroot.trim()).join("lib/rustlib").join(WINDOWS_TARGET).is_dir()
+}
+
 /// `cargo test --workspace`, as the tests run: text is drawn with the
 /// fonts the dev shell fixes for tests (flake.nix, testFontConfig), not
 /// the host's, so that it is drawn as in CI.
 fn cargo_test(tools: &Tools) -> Command {
     let mut cmd = tools.cargo();
-    cmd.args(["test", "--workspace", "--color", "never"]);
+    cmd.arg("test");
+    select_packages(&mut cmd);
+    cmd.args(["--color", "never"]);
     if let Some(fc) = std::env::var_os("TEMZDF_TEST_FONTCONFIG").filter(|v| !v.is_empty()) {
         cmd.env("FONTCONFIG_FILE", fc);
     }
@@ -699,6 +768,8 @@ fn miri_logs(text: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Seek, SeekFrom};
+
     use super::*;
 
     #[test]
@@ -706,8 +777,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("xtask-lock-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("lock");
-        let first = acquire_lock(&path).unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), std::process::id().to_string());
+        let mut first = acquire_lock(&path).unwrap();
+        // Read through the handle that holds the lock: Windows does not let
+        // another handle read a locked file.
+        let mut held = String::new();
+        first.seek(SeekFrom::Start(0)).unwrap();
+        first.read_to_string(&mut held).unwrap();
+        assert_eq!(held, std::process::id().to_string());
         let second = open_lock(&path).unwrap();
         assert!(matches!(second.try_lock(), Err(fs::TryLockError::WouldBlock)));
         drop(first);
