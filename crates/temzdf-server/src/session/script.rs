@@ -156,6 +156,12 @@ impl Bridge {
         self.host.as_ref().is_some_and(|h| h.send(msg.clone()))
     }
 
+    /// One of the host's requests is being answered: the host waits for it,
+    /// and a call sent now is one it caused (`ToHost::Call`'s `nested`).
+    fn answering(&self) -> bool {
+        self.frames.iter().any(|f| matches!(f, Frame::Reply { .. }))
+    }
+
     /// A number for a Promise a command answers with (`{ "$promise": n }`),
     /// settled later with [`Session::resolve_promise`].
     pub(super) fn new_promise(&mut self) -> u64 {
@@ -430,8 +436,9 @@ impl Session {
             self.script.busy_since = Some(Instant::now());
             self.script.notice_shown = false;
         }
+        let nested = self.script.answering();
         self.script.frames.push(Frame::Call { id, hook });
-        if !self.script.send(&ToHost::Call { id, func, args }) {
+        if !self.script.send(&ToHost::Call { id, func, args, nested }) {
             self.script.frames.pop();
         }
     }
@@ -446,8 +453,9 @@ impl Session {
             self.script.busy_since = Some(Instant::now());
             self.script.notice_shown = false;
         }
+        let nested = self.script.answering();
         self.script.frames.push(Frame::Eval { id, funcs: funcs.clone() });
-        if !self.script.send(&ToHost::Eval { id, funcs: funcs.clone(), args }) {
+        if !self.script.send(&ToHost::Eval { id, funcs: funcs.clone(), args, nested }) {
             self.script.frames.pop();
             // No host: no condition holds.
             self.matcher.set_conditions(funcs.into_iter().map(|f| (f, false)));

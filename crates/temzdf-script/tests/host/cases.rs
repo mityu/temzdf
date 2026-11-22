@@ -225,7 +225,7 @@ keymap.clear();
 
     // The prefix mapping: its commands carry its call's token.
     log.clear();
-    s.send(ToHost::Call { id: 5, func: user(1), args: vec![] });
+    s.send(ToHost::Call { id: 5, func: user(1), args: vec![], nested: false });
     match s.serve(&mut log) {
         FromHost::Done { id: 5, result: Ok(ScriptValue::Null) } => {}
         other => panic!("{other:?}"),
@@ -234,7 +234,7 @@ keymap.clear();
 
     // A hook gets its arguments.
     log.clear();
-    s.send(ToHost::Call { id: 6, func: user(0), args: vec![ScriptValue::Num(3.0)] });
+    s.send(ToHost::Call { id: 6, func: user(0), args: vec![ScriptValue::Num(3.0)], nested: false });
     assert!(matches!(s.serve(&mut log), FromHost::Done { id: 6, result: Ok(ScriptValue::Null) }));
     assert_eq!(log, ["call6 message(opened 3)"]);
 }
@@ -287,7 +287,7 @@ action.message(typeof action.text + " " + Object.isFrozen(action.text) + " " + t
         .parse()
         .unwrap();
     log.clear();
-    s.send(ToHost::Call { id: 1, func: user(f), args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(f), args: vec![], nested: false });
     assert!(matches!(s.serve(&mut log), FromHost::Done { id: 1, result: Ok(ScriptValue::Null) }));
     assert_eq!(log, ["call1 text.get-text()"], "the command's whole name");
 }
@@ -302,10 +302,10 @@ keymap.add("normal", "s", () => { action.split("right"); action.message("after s
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
     ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 1, func: user(1), args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(1), args: vec![], nested: false });
     // The split: before answering it, the session runs the hook.
     let FromHost::Request { req: split, token: Token::Call(1), .. } = s.recv() else { panic!() };
-    s.send(ToHost::Call { id: 2, func: user(0), args: vec![] });
+    s.send(ToHost::Call { id: 2, func: user(0), args: vec![], nested: true });
     let FromHost::Request { req, token: Token::Call(2), op } = s.recv() else { panic!() };
     assert_eq!(describe(Token::Call(2), &op), "call2 message(hook)");
     s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
@@ -327,15 +327,15 @@ keymap.add("normal", "d", () => { try { action.message("x"); } catch (e) { throw
     let mut s = Session::start(&[("config.ts", config)]);
     s.load("config.ts");
     ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 1, func: user(0), args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(0), args: vec![], nested: false });
     let FromHost::Done { result: Err(e), .. } = s.serve(&mut Vec::new()) else { panic!() };
     assert!(e.message.contains("synchronous"), "{e}");
-    s.send(ToHost::Call { id: 2, func: user(1), args: vec![] });
+    s.send(ToHost::Call { id: 2, func: user(1), args: vec![], nested: false });
     let FromHost::Done { result: Err(e), .. } = s.serve(&mut Vec::new()) else { panic!() };
     assert_eq!(e.message, "Error: boom");
     assert!(e.stack.as_deref().unwrap_or_default().contains("config.ts:3"), "{e}");
     // A failed command (the session refused it) is an exception too.
-    s.send(ToHost::Call { id: 3, func: user(2), args: vec![] });
+    s.send(ToHost::Call { id: 3, func: user(2), args: vec![], nested: false });
     let FromHost::Request { req, .. } = s.recv() else { panic!() };
     s.send(ToHost::Reply { req, result: Err("no such pane".into()) });
     let FromHost::Done { result: Err(e), .. } = s.recv() else { panic!() };
@@ -344,7 +344,7 @@ keymap.add("normal", "d", () => { try { action.message("x"); } catch (e) { throw
     assert_eq!((e.message.as_str(), e.stack.as_deref(), e.command), ("no such pane", None, true));
     // Caught, it is an ordinary Error, and what is thrown then is the
     // script's.
-    s.send(ToHost::Call { id: 4, func: user(3), args: vec![] });
+    s.send(ToHost::Call { id: 4, func: user(3), args: vec![], nested: false });
     let FromHost::Request { req, .. } = s.recv() else { panic!() };
     s.send(ToHost::Reply { req, result: Err("no such pane".into()) });
     let FromHost::Done { result: Err(e), .. } = s.recv() else { panic!() };
@@ -360,18 +360,18 @@ keymap.add("normal", "w", () => { try { action.message("waits"); } catch (e) {} 
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
     ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 1, func: user(0), args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(0), args: vec![], nested: false });
     std::thread::sleep(Duration::from_millis(100));
     s.send(ToHost::Interrupt);
     assert!(matches!(s.recv(), FromHost::Done { id: 1, result: Err(_) }));
     // Blocked in a command the session does not answer: the interrupt ends
     // the wait, and the catch cannot keep it running.
-    s.send(ToHost::Call { id: 2, func: user(1), args: vec![] });
+    s.send(ToHost::Call { id: 2, func: user(1), args: vec![], nested: false });
     let FromHost::Request { .. } = s.recv() else { panic!() };
     s.send(ToHost::Interrupt);
     assert!(matches!(s.recv(), FromHost::Done { id: 2, result: Err(_) }));
     // The host still works afterwards.
-    s.send(ToHost::Call { id: 3, func: 1_000_000, args: vec![] });
+    s.send(ToHost::Call { id: 3, func: 1_000_000, args: vec![], nested: false });
     assert!(matches!(s.recv(), FromHost::Done { id: 3, result: Err(_) }));
 }
 
@@ -600,7 +600,7 @@ keymap.add("normal", "x", () => action.message("ran"));
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
     std::thread::sleep(Duration::from_millis(100));
-    s.send(ToHost::Call { id: 1, func: user(0), args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(0), args: vec![], nested: false });
     s.send(ToHost::Interrupt);
     log.clear();
     match s.serve(&mut log) {
@@ -612,7 +612,7 @@ keymap.add("normal", "x", () => action.message("ran"));
     let mut s = Session::start_with_limit(&[("config.js", config)], Duration::from_millis(200));
     s.load("config.js");
     ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 2, func: user(0), args: vec![] });
+    s.send(ToHost::Call { id: 2, func: user(0), args: vec![], nested: false });
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 2, result: Ok(ScriptValue::Null) }));
 }
 
@@ -685,7 +685,7 @@ keymap.add("normal", "a", (ctx) => action.message(`${ctx.count === undefined} ${
     let mut seen = Seen::default();
     ready_ok(serve(&mut s, &mut seen));
     let ctx = ScriptValue::map([("count", ScriptValue::Null), ("paneKind", ScriptValue::Null)]);
-    s.send(ToHost::Call { id: 7, func: seen.func.expect("mapped"), args: vec![ctx] });
+    s.send(ToHost::Call { id: 7, func: seen.func.expect("mapped"), args: vec![ctx], nested: false });
     match serve(&mut s, &mut seen) {
         FromHost::Done { id: 7, result } => {
             result.unwrap();
@@ -827,7 +827,7 @@ keymap.add("normal", "w", () => {
 
     // Values in order: true, an exception, a Promise (refused).
     let ctx = ScriptValue::map([("paneKind", ScriptValue::Str("terminal".into()))]);
-    s.send(ToHost::Eval { id: 9, funcs: vec![user(0), when_u, when_v], args: vec![ctx] });
+    s.send(ToHost::Eval { id: 9, funcs: vec![user(0), when_u, when_v], args: vec![ctx], nested: false });
     match s.recv() {
         FromHost::Values { id: 9, results } => {
             assert_eq!(results[0], Ok(true));
@@ -840,7 +840,7 @@ keymap.add("normal", "w", () => {
     // keymap.get gives the functions back: mapping them again reuses
     // their ids.
     let w = maps[3].1;
-    s.send(ToHost::Call { id: 10, func: w, args: vec![] });
+    s.send(ToHost::Call { id: 10, func: w, args: vec![], nested: false });
     let mut copied = None;
     loop {
         match s.recv() {
@@ -946,7 +946,7 @@ dispatch(async (ctx) => {
     s.send(ToHost::Interrupt);
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::TaskDone { task: 1, .. }));
     // A call waiting in a command: the user's next <C-c> must end it.
-    s.send(ToHost::Call { id: 7, func: user(0), args: vec![] });
+    s.send(ToHost::Call { id: 7, func: user(0), args: vec![], nested: false });
     let FromHost::Request { token: Token::Call(7), .. } = s.recv() else { panic!() };
     s.send(ToHost::Interrupt);
     assert!(matches!(s.recv(), FromHost::Done { id: 7, result: Err(_) }));
@@ -967,9 +967,10 @@ dispatch(async (ctx) => { await new Promise((r) => setTimeout(r, 30)); ctx.actio
             _ => {}
         }
     };
-    // The task has waited past the limit when the user's mapping runs.
+    // The task has waited past the limit when a call runs (one the
+    // session sent while answering, as for a deferred close's hooks).
     std::thread::sleep(Duration::from_millis(400));
-    s.send(ToHost::Call { id: 9, func: user(0), args: vec![] });
+    s.send(ToHost::Call { id: 9, func: user(0), args: vec![], nested: true });
     assert!(matches!(s.recv(), FromHost::Done { id: 9, result: Ok(ScriptValue::Null) }));
     s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::TaskDone { task: 1, result: Ok(()) }));
@@ -977,8 +978,8 @@ dispatch(async (ctx) => { await new Promise((r) => setTimeout(r, 30)); ctx.actio
 
 #[test]
 fn answers_taken_by_a_nested_wait_reach_their_request_and_promise() {
-    // A task's request waits; a call the session runs meanwhile (a
-    // scheduled function) waits for its own, and the task's answer and the
+    // A task's request waits; a call the session runs meanwhile (a hook
+    // the request caused) waits for its own, and the task's answer and the
     // Promise's settling come during that inner wait. Neither may be lost,
     // and the Promise settles without another message to wake the host.
     let config = r#"import { action, dispatch, keymap } from "temzdf";
@@ -991,7 +992,7 @@ keymap.add("normal", "b", () => action.message("inner"));
     let mut s = Session::start(&[("config.js", config)]);
     s.load("config.js");
     ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 1, func: user(0), args: vec![] });
+    s.send(ToHost::Call { id: 1, func: user(0), args: vec![], nested: false });
     let task_req = loop {
         match s.recv() {
             FromHost::TaskStart(_) | FromHost::Done { id: 1, .. } => {}
@@ -1000,7 +1001,7 @@ keymap.add("normal", "b", () => action.message("inner"));
         }
     };
     // Before answering, another call runs; while it waits, the answers come.
-    s.send(ToHost::Call { id: 2, func: user(1), args: vec![] });
+    s.send(ToHost::Call { id: 2, func: user(1), args: vec![], nested: true });
     let FromHost::Request { req: inner, token: Token::Call(2), .. } = s.recv() else { panic!() };
     let promise = ScriptValue::map([("$promise", ScriptValue::Num(9.0))]);
     s.send(ToHost::Reply { req: task_req, result: Ok(promise) });
@@ -1011,6 +1012,58 @@ keymap.add("normal", "b", () => action.message("inner"));
     assert_eq!(describe(token, &op), "task1 message(got clip)");
     s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
     assert!(matches!(s.recv(), FromHost::TaskDone { result: Ok(()), .. }));
+}
+
+#[test]
+fn a_call_crossing_a_tasks_atomic_section_runs_after_it() {
+    // The session sent a key's call before it saw the task's atomic section
+    // begin: run inside the section's command wait, the call would change
+    // what the section saw between its two commands.
+    let config = r#"import { action, dispatch, keymap } from "temzdf";
+keymap.add("normal", "x", () => action.message("key"));
+dispatch(async (ctx) => {
+  await new Promise((r) => setTimeout(r, 30));
+  ctx.atomic(() => { action.message("one"); action.message("two"); });
+});
+"#;
+    let mut s = Session::start(&[("config.js", config)]);
+    s.load("config.js");
+    let mut log = Vec::new();
+    let first = loop {
+        match s.recv() {
+            FromHost::Request { req, token: Token::Task(1), op } => {
+                log.push(describe(Token::Task(1), &op));
+                break req;
+            }
+            FromHost::Request { req, .. } => s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) }),
+            FromHost::AtomicBegin(t) => log.push(format!("begin {t:?}")),
+            FromHost::Ready(r) => assert!(r.is_ok(), "{r:?}"),
+            FromHost::TaskStart(_) => {}
+            other => panic!("{other:?}"),
+        }
+    };
+    s.send(ToHost::Call { id: 5, func: user(0), args: vec![], nested: false });
+    s.send(ToHost::Reply { req: first, result: Ok(ScriptValue::Null) });
+    let mut done = (false, false);
+    while done != (true, true) {
+        match s.serve(&mut log) {
+            FromHost::AtomicEnd(t) => log.push(format!("end {t:?}")),
+            FromHost::Done { id: 5, result } => {
+                result.unwrap();
+                log.push("done5".into());
+                done.0 = true;
+            }
+            FromHost::TaskDone { task: 1, result } => {
+                result.unwrap();
+                done.1 = true;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(
+        log,
+        ["begin Task(1)", "task1 message(one)", "task1 message(two)", "end Task(1)", "call5 message(key)", "done5"]
+    );
 }
 
 /// Run `temzdf eval`'s steps (named `-c 1`, ...) as request `id`; the

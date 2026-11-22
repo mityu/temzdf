@@ -7,7 +7,11 @@
 //! or hook function ([`ToHost::Call`]) and waits for [`FromHost::Done`]; the
 //! function's commands are [`FromHost::Request`]s the host waits on until
 //! [`ToHost::Reply`]. While waiting, each side keeps serving the other (a hook
-//! can run nested inside a command, as Vim's autocmds do).
+//! can run nested inside a command, as Vim's autocmds do). A call the server
+//! sends while it is not answering a request (input, a scheduled function)
+//! may cross code the host started on its own (a timer, a dispatched task):
+//! the host runs it once that code has returned, never inside its commands,
+//! so a task's atomic section stays atomic (`nested` tells the two apart).
 
 use std::path::PathBuf;
 
@@ -116,14 +120,19 @@ pub enum ToHost {
         id: CallId,
         func: FuncId,
         args: Vec<ScriptValue>,
+        /// Sent while the server answers one of the host's requests (a hook
+        /// that request caused): the host runs it inside that request's
+        /// wait. Otherwise the host runs it once nothing runs.
+        nested: bool,
     },
     /// Evaluate conditions (`when`, `keepalive`) with `args`; answered by
     /// [`FromHost::Values`]. Their commands carry [`Token::Call`] with `id`
-    /// and may only read.
+    /// and may only read. `nested` as for [`ToHost::Call`].
     Eval {
         id: CallId,
         funcs: Vec<FuncId>,
         args: Vec<ScriptValue>,
+        nested: bool,
     },
     /// The answer to a [`FromHost::Request`].
     Reply {
@@ -339,7 +348,7 @@ mod tests {
             ("ok", ScriptValue::Bool(true)),
         ]);
         assert_eq!(v.get("pane").and_then(ScriptValue::as_num), Some(3.0));
-        round_trip(&ToHost::Call { id: 7, func: 2, args: vec![v.clone()] });
+        round_trip(&ToHost::Call { id: 7, func: 2, args: vec![v.clone()], nested: false });
         round_trip(&ToHost::Load { config: Some("config.ts".into()), commands: vec!["split".into()] });
         round_trip(&FromHost::Request {
             req: 1,
@@ -351,7 +360,7 @@ mod tests {
             result: Err(ScriptError { message: "boom".into(), stack: Some("at f".into()), command: false }),
         });
         round_trip(&ToHost::Reply { req: 1, result: Ok(v) });
-        round_trip(&ToHost::Eval { id: 8, funcs: vec![3, 4], args: vec![] });
+        round_trip(&ToHost::Eval { id: 8, funcs: vec![3, 4], args: vec![], nested: true });
         round_trip(&ToHost::RunCode {
             id: 2,
             code: Code {

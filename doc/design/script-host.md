@@ -115,11 +115,21 @@ dependencies are cached apart from the server.
   Calls run nested in a request's wait (hooks) are part of the task
   waiting; their jobs run after it.
 - **Nested waits**: every request waits for its answer, attending calls
-  the session runs meanwhile (hooks, scheduled functions), whose own
+  the session runs while answering it (hooks the request caused), whose own
   requests wait inside it. An answer for a request further out that comes
   during such an inner wait is kept for it; a `Resolve` is queued, and the
   host settles queued answers before it waits for a message again (none
   may come to wake it).
+- **Calls crossing the host's own code wait for it**: the session runs a
+  key's call (or a scheduled function, a condition) when it thinks
+  nothing runs, but a timer or a dispatched task may have started
+  meanwhile, its `AtomicBegin` and requests on their way. The session
+  marks each `ToHost::Call` and `ToHost::Eval` `nested` when it sends it
+  while answering a request; the host runs one that is not once nothing
+  runs (queued, before `temzdf eval`s), never inside the request it
+  waits for. Run there, the key's call would change what the task sees
+  between two commands of an atomic section (a finder's pane closed
+  between "is it there?" and "set its title").
 - **The prelude's payloads**: each operation's JSON payload (`map`,
   `defineMode`, `on`, ...) is read into a struct of its own in `host_op`
   (`src/host.rs`). One that breaks the protocol (a required `func`

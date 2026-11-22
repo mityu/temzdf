@@ -130,6 +130,7 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         commands: RefCell::new(Vec::new()),
         evals: RefCell::default(),
         queued_code: RefCell::default(),
+        queued_calls: RefCell::default(),
         promises: RefCell::default(),
         settled: RefCell::default(),
         replies: RefCell::default(),
@@ -145,6 +146,15 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         // Answers that came while code ran (a nested wait took them) settle
         // before waiting: no message may come to wake the loop for them.
         loop {
+            // Calls that crossed code waiting for an answer, in order.
+            let call = st.queued_calls.borrow_mut().pop_front();
+            if let Some(call) = call {
+                context.with(|ctx| match call {
+                    QueuedCall::Call { id, func, args } => run_call(&ctx, &st, id, func, args),
+                    QueuedCall::Eval { id, funcs, args } => run_eval(&ctx, &st, id, &funcs, args),
+                });
+                continue;
+            }
             // `temzdf eval`s that came while code waited.
             let queued = st.queued_code.borrow_mut().pop_front();
             if let Some((id, code)) = queued {
@@ -152,7 +162,10 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
                 continue;
             }
             context.with(|ctx| run_jobs(&ctx, &st));
-            if st.settled.borrow().is_empty() && st.queued_code.borrow().is_empty() {
+            if st.settled.borrow().is_empty()
+                && st.queued_code.borrow().is_empty()
+                && st.queued_calls.borrow().is_empty()
+            {
                 break;
             }
             context.with(|ctx| settle_promises(&ctx, &st));
@@ -165,8 +178,8 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
                 let result = context.with(|ctx| load_config(&ctx, &st, config.as_deref()));
                 st.send(&FromHost::Ready(result));
             }
-            Ok(ToHost::Call { id, func, args }) => context.with(|ctx| run_call(&ctx, &st, id, func, args)),
-            Ok(ToHost::Eval { id, funcs, args }) => context.with(|ctx| run_eval(&ctx, &st, id, &funcs, args)),
+            Ok(ToHost::Call { id, func, args, .. }) => context.with(|ctx| run_call(&ctx, &st, id, func, args)),
+            Ok(ToHost::Eval { id, funcs, args, .. }) => context.with(|ctx| run_eval(&ctx, &st, id, &funcs, args)),
             Ok(ToHost::RunCode { id, code }) => context.with(|ctx| run_code(&ctx, &st, id, code)),
             // Nothing runs: an interrupt or a late answer has nothing to stop.
             Ok(ToHost::Interrupt) => {
@@ -218,6 +231,12 @@ impl Interrupts {
     }
 }
 
+/// A call or conditions waiting until nothing runs (`State::queued_calls`).
+enum QueuedCall {
+    Call { id: u64, func: FuncId, args: Vec<ScriptValue> },
+    Eval { id: u64, funcs: Vec<FuncId>, args: Vec<ScriptValue> },
+}
+
 struct State {
     link: RefCell<Box<dyn Link>>,
     interrupt: Interrupts,
@@ -248,6 +267,12 @@ struct State {
     /// `temzdf eval`s that came while code waited for an answer: started
     /// once nothing runs.
     queued_code: RefCell<std::collections::VecDeque<(u64, Code)>>,
+    /// Calls and conditions the session sent while not answering a request
+    /// (input, a scheduled function) that came while code the host started
+    /// itself (a timer, a dispatched task) waited for an answer: run once
+    /// nothing runs, never inside that code's command (or its atomic
+    /// section).
+    queued_calls: RefCell<std::collections::VecDeque<QueuedCall>>,
     /// Promises commands answered with, by number: the function settling
     /// each (`(ok, json)`), and answers that came while code ran.
     promises: RefCell<std::collections::HashMap<u64, Persistent<Function<'static>>>>,
@@ -753,7 +778,10 @@ struct GetOptionArgs {
 
 /// A command from JavaScript: send it, then wait for the answer. A hook the
 /// command causes arrives meanwhile and runs right here, nested (Vim's
-/// autocmds run inside the command that triggered them).
+/// autocmds run inside the command that triggered them). A call the session
+/// sent before it saw this command (a key typed while a timer or a task ran)
+/// waits until nothing runs: run here, it would change what the code sees
+/// between two of its commands, inside an atomic section too.
 fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: &str) -> rquickjs::Result<String> {
     let throw = |m: &str| Err(Exception::throw_message(ctx, m));
     let Ok(token) = serde_json::from_str::<Token>(token) else { return throw("internal: bad context token") };
@@ -790,8 +818,14 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
                 Ok(ToHost::Reply { req: r, result }) if r < req => {
                     st.replies.borrow_mut().insert(r, result);
                 }
-                Ok(ToHost::Call { id, func, args }) => run_call(ctx, st, id, func, args),
-                Ok(ToHost::Eval { id, funcs, args }) => run_eval(ctx, st, id, &funcs, args),
+                Ok(ToHost::Call { id, func, args, nested: true }) => run_call(ctx, st, id, func, args),
+                Ok(ToHost::Eval { id, funcs, args, nested: true }) => run_eval(ctx, st, id, &funcs, args),
+                Ok(ToHost::Call { id, func, args, nested: false }) => {
+                    st.queued_calls.borrow_mut().push_back(QueuedCall::Call { id, func, args });
+                }
+                Ok(ToHost::Eval { id, funcs, args, nested: false }) => {
+                    st.queued_calls.borrow_mut().push_back(QueuedCall::Eval { id, funcs, args });
+                }
                 // Started once nothing runs.
                 Ok(ToHost::RunCode { id, code }) => st.queued_code.borrow_mut().push_back((id, code)),
                 // Settled once nothing runs (as timers fire).

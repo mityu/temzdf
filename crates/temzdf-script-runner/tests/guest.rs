@@ -187,7 +187,7 @@ fn keys_and_startup() {
         let mut samples = Vec::new();
         for i in 0..(KEYS + 200) {
             let t = Instant::now();
-            host.send(ToHost::Call { id: i as u64, func, args: Vec::new() });
+            host.send(ToHost::Call { id: i as u64, func, args: Vec::new(), nested: false });
             match until_answer(&host, &rx, &mut Vec::new()) {
                 FromHost::Done { result: Ok(ScriptValue::Null), .. } => {}
                 other => panic!("{other:?}"),

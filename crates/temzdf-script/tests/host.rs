@@ -63,7 +63,7 @@ keymap.add("normal", "x", () => caught("call"));
     let (mut s, lines) = start_logged(&[("config.js", config)], temzdf_script::UNATTENDED_LIMIT);
     s.load("config.js");
     cases::ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 1, func: cases::user(0), args: vec![] });
+    s.send(ToHost::Call { id: 1, func: cases::user(0), args: vec![], nested: false });
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 1, result: Ok(ScriptValue::Null) }));
     let log = log_with(&lines, &["unhandled-load", "unhandled-timer", "unhandled-call"]);
     let rejections: Vec<&String> = log.iter().filter(|l| l.contains("unhandled promise rejection")).collect();
@@ -122,7 +122,7 @@ keymap.add("normal", "x", () => {
     let (mut s, lines) = start_logged(&[("config.js", config)], temzdf_script::UNATTENDED_LIMIT);
     s.load("config.js");
     cases::ready_ok(s.serve(&mut Vec::new()));
-    s.send(ToHost::Call { id: 1, func: cases::user(0), args: vec![] });
+    s.send(ToHost::Call { id: 1, func: cases::user(0), args: vec![], nested: false });
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 1, result: Ok(ScriptValue::Null) }));
     let log = log_with(&lines, &["order: timer"]);
     let order: Vec<&str> = log.iter().filter_map(|l| l.split_once("order: ").map(|(_, o)| o)).collect();
