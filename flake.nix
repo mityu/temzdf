@@ -122,7 +122,7 @@
           # crates/temzdf-script/build.rs with esbuild; their npm packages
           # come from the lock file, built here so builds need no network.
           # Builds get the dependencies only; the dev shells also the
-          # devDependencies (scripts/ts-types.sh bundles declarations).
+          # devDependencies (scripts/ts-types.ts bundles declarations).
           runtimeNodeModules =
             dev:
             pkgs.importNpmLock.buildNodeModules {
@@ -188,7 +188,7 @@
                         shellcheck
                         esbuild
                         biome # Formats and lints the shipped scripts (scripts/check.sh).
-                        # scripts/ts-types.sh (checked by scripts/check.sh), and
+                        # scripts/ts-types.ts (checked by scripts/check.sh), and
                         # npm install --package-lock-only in
                         # crates/temzdf-script/runtime (adding a package).
                         nodejs

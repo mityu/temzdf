@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Pre-commit gate: rustfmt check, Biome (the scripts' formatting and
 # lints, biome.jsonc), the generated declarations
-# (crates/temzdf-script/ts-types/temzdf-all.d.ts, scripts/ts-types.sh),
-# the scripts' shell lint, references to documents
-# (scripts/check-docs.sh), clippy (warnings are errors) and tests for the
+# (crates/temzdf-script/ts-types/temzdf-all.d.ts, scripts/ts-types.ts),
+# the Node scripts' types (tsc -p scripts), the scripts' shell lint,
+# references to documents (scripts/check-docs.ts), clippy (warnings are errors) and tests for the
 # whole workspace, then the unit tests under Miri (scripts/miri.sh) when
 # `cargo miri` is available, with terse output. Re-executes itself inside the
 # Nix dev shell when needed, so it works from any shell.
@@ -88,17 +88,24 @@ if ! biome check --colors=off . >target/check/biome.log 2>&1; then
   status=1
 fi
 
-# temzdf-all.d.ts as scripts/ts-types.sh writes it from the declarations
+# temzdf-all.d.ts as scripts/ts-types.ts writes it from the declarations
 # by hand and the shipped modules.
 declarations=crates/temzdf-script/ts-types/temzdf-all.d.ts
 if ((fix)); then
-  scripts/ts-types.sh >target/check/ts-types.log 2>&1 || true
+  node scripts/ts-types.ts >target/check/ts-types.log 2>&1 || true
 fi
-if ! scripts/ts-types.sh target/check/temzdf-all.d.ts >target/check/ts-types.log 2>&1; then
+if ! node scripts/ts-types.ts target/check/temzdf-all.d.ts >target/check/ts-types.log 2>&1; then
   failed ts-types target/check/ts-types.log "" 20
   status=1
 elif ! cmp -s target/check/temzdf-all.d.ts "$declarations"; then
-  echo "FAIL ts-types ($declarations is not what scripts/ts-types.sh writes; run scripts/check.sh --fix)"
+  echo "FAIL ts-types ($declarations is not what scripts/ts-types.ts writes; run scripts/check.sh --fix)"
+  status=1
+fi
+
+# The Node scripts' types (scripts/tsconfig.json): Node only strips them.
+# The TypeScript of runtime/node_modules (the CI shell has no tsc).
+if ! node crates/temzdf-script/runtime/node_modules/typescript/bin/tsc -p scripts --pretty false >target/check/scripts.log 2>&1; then
+  failed scripts target/check/scripts.log "error" 40
   status=1
 fi
 
@@ -107,7 +114,7 @@ if ! shellcheck -x --color=never --format=gcc ./scripts/{*.sh,*/*.sh} ./tests/*/
   status=1
 fi
 
-if ! scripts/check-docs.sh >target/check/docs.log 2>&1; then
+if ! node scripts/check-docs.ts >target/check/docs.log 2>&1; then
   failed docs target/check/docs.log "^" 40
   status=1
 fi
@@ -134,7 +141,7 @@ else
 fi
 
 if ((status == 0)); then
-  echo "OK fmt, biome, ts-types, shellcheck, docs, clippy, $summary"
+  echo "OK fmt, biome, ts-types, scripts, shellcheck, docs, clippy, $summary"
 fi
 
 if ((miri)); then

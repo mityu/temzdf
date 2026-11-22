@@ -1,7 +1,8 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
   // The scripts written by hand: the shipped ones, the script host's
-  // prelude and `temzdf` module and the tests' configurations (scripts/check.sh checks them).
+  // prelude and `temzdf` module, the tests' configurations and the
+  // repository's Node scripts (scripts/check.sh checks them).
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "includes": [
@@ -12,7 +13,8 @@
       "crates/temzdf-script/ts-types/temzdf-core.d.ts",
       "crates/temzdf-script/ts-types/temzdf-actions.d.ts",
       "crates/temzdf/tests/configs/*.ts",
-      "tests/e2e/configs/*.ts"
+      "tests/e2e/configs/*.ts",
+      "scripts/**/*.ts"
     ]
   },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },

@@ -15,7 +15,7 @@ fn root() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
 }
 
-/// What `temzdf print-types` prints, committed (scripts/ts-types.sh).
+/// What `temzdf print-types` prints, committed (scripts/ts-types.ts).
 fn declarations() -> PathBuf {
     root().join("crates/temzdf-script/ts-types/temzdf-all.d.ts")
 }

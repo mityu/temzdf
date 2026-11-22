@@ -1,5 +1,5 @@
 //! `temzdf print-types`: the TypeScript declarations of the scripting API,
-//! `ts-types/temzdf-all.d.ts`. scripts/ts-types.sh writes that file from
+//! `ts-types/temzdf-all.d.ts`. scripts/ts-types.ts writes that file from
 //! the declarations written by hand (`ts-types/temzdf-core.d.ts`,
 //! `ts-types/temzdf-actions.d.ts`) and the shipped modules' TypeScript, and
 //! scripts/check.sh checks that the committed one is up to date.

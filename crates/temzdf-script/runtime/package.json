@@ -1,7 +1,7 @@
 {
   "name": "temzdf-runtime",
   "private": true,
-  "description": "temzdf's shipped scripts (defaults, Vim mode), bundled by crates/temzdf-script/build.rs with esbuild. npm packages used here must be widely used, maintained, and plain ES code (no Node APIs: they run in QuickJS). The devDependencies are tools (scripts/ts-types.sh) and types (type-fest), never bundled.",
+  "description": "temzdf's shipped scripts (defaults, Vim mode), bundled by crates/temzdf-script/build.rs with esbuild. npm packages used here must be widely used, maintained, and plain ES code (no Node APIs: they run in QuickJS). The devDependencies are tools (scripts/ts-types.ts) and types (type-fest; @types/node for the Node scripts under scripts/), never bundled.",
   "type": "module",
   "dependencies": {
     "abortcontroller-polyfill": "^1.7.8",
@@ -9,6 +9,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/node": "^24.19.2",
     "dts-bundle-generator": "^10.0.0",
     "type-fest": "^6.0.3",
     "typescript": "^6.0.3"

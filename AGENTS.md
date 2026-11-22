@@ -223,7 +223,7 @@ splits its pane on `<C-b>%`).
 The Rust caches (of `build`, `check-with-nix` and `miri-with-nix`) are saved only by pushes to
 `dev` and `main`, and a job after each (`prune-rust-cache.yml`) deletes
 those of the same branch but the one used last.
-The documents' check (`scripts/check-docs.sh`) runs on every push,
+The documents' check (`scripts/check-docs.ts`) runs on every push,
 documentation-only ones included (`.github/workflows/docs.yml`).
 `nix build` uses crane: the Rust dependencies, the script host's guest
 and the guest's dependencies are derivations of their own (`.#deps`,
@@ -242,7 +242,7 @@ made rust-cache's restores fail with it (`todo.md`).
   `target/` instead, as `scripts/build-fixtures.sh` does. Exceptions: lock files
   (`Cargo.lock`, `flake.lock`), which pin dependencies and contain no paths,
   and `crates/temzdf-script/ts-types/temzdf-all.d.ts`, which editors and
-  `temzdf print-types` read, written by `scripts/ts-types.sh` and checked
+  `temzdf print-types` read, written by `scripts/ts-types.ts` and checked
   by `scripts/check.sh` (`--fix` writes it again).
 - Paths written in docs, comments and commit messages are relative to the
   repository root. Never write absolute paths (home directories, scratch
@@ -281,5 +281,5 @@ made rust-cache's restores fail with it (`todo.md`).
   experiments), as of when it was written.
 
 A new document goes into one of these and into `doc/README.md`;
-`scripts/check-docs.sh` (part of `scripts/check.sh`) fails otherwise, and
+`scripts/check-docs.ts` (part of `scripts/check.sh`) fails otherwise, and
 when a path to a document written anywhere no longer exists.

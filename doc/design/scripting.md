@@ -75,7 +75,7 @@ that part follows tmux and zellij (see "Prior art").
   (`temzdf-actions.d.ts`, which the server's list of action names is
   built from, and a test checks that each one runs), and
   `temzdf-all.d.ts`, generated from those and the shipped modules'
-  TypeScript (`scripts/ts-types.sh`, dts-bundle-generator; each module
+  TypeScript (`scripts/ts-types.ts`, dts-bundle-generator; each module
   shows what it exports) and committed, checked by `scripts/check.sh`.
 - The TOML configuration was removed (there were no outside users); where
   each of its settings went is decision 22.

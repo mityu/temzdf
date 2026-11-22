@@ -1,6 +1,6 @@
 // temzdf's scripting API that Rust provides (the script host and the
 // session), written by hand; the actions (action.*) are in
-// temzdf-actions.d.ts. scripts/ts-types.sh puts both, with the shipped
+// temzdf-actions.d.ts. scripts/ts-types.ts puts both, with the shipped
 // modules' declarations, into temzdf-all.d.ts (what `temzdf print-types`
 // prints).
 

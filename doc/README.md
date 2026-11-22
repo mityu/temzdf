@@ -1,7 +1,7 @@
 # Documents
 
 Every document under `doc/`, by kind. Start with
-[architecture.md](architecture.md). `scripts/check-docs.sh` (run by
+[architecture.md](architecture.md). `scripts/check-docs.ts` (run by
 `scripts/check.sh`) checks that each one is listed here and that paths to
 documents written anywhere in the repository exist.
 

@@ -1,0 +1,20 @@
+{
+  // Type-checks the repository's Node scripts (scripts/*.ts), which Node
+  // runs as they are by stripping their types: `tsc -p scripts`, run by
+  // `cargo xtask check`. @types/node is a devDependency of
+  // crates/temzdf-script/runtime (`npm ci` there).
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "typeRoots": ["../crates/temzdf-script/runtime/node_modules/@types"],
+    "types": ["node"]
+  },
+  "include": ["*.ts", "**/*.ts"]
+}
