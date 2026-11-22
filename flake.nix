@@ -140,6 +140,16 @@
               "rustfmt"
             ];
           };
+          # The dev shells' toolchain also has Windows' standard library, for
+          # `cargo check --target x86_64-pc-windows-msvc` (the Windows port,
+          # doc/survey/windows-port.md); `nix build` keeps stableToolchain.
+          shellToolchain = pkgs.rust-bin.stable.latest.minimal.override {
+            targets = wasmTargets ++ [ "x86_64-pc-windows-msvc" ];
+            extensions = [
+              "clippy"
+              "rustfmt"
+            ];
+          };
           guiLibs = with pkgs; [
             vulkan-loader
             libxkbcommon
@@ -218,7 +228,7 @@
                             ))
                           ]
                         else
-                          [ stableToolchain ] ++ lib.optionals (!forCi) [ pkgs.rust-analyzer ]
+                          [ shellToolchain ] ++ lib.optionals (!forCi) [ pkgs.rust-analyzer ]
                       )
                       ++ lib.optionals withTeX [
                         (pkgs.texliveBasic.withPackages (
