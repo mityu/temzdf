@@ -54,7 +54,7 @@ declare module "temzdf" {
     rotatePanes(reverse?: boolean, count?: number): void;
     /** Close a pane, the focused one by default (its buffer stays, hidden) */
     closePane(pane?: number): void;
-    /** Open a floating pane (a new shell by default); sizes in cells (the content's) or "N%" of the screen, centred unless col/row; tabpage as Vim's popups (0 the current tab page, -1 all, N tab page N); returns the pane (undefined for a file still opening) */
+    /** Open a floating pane (a new shell by default); sizes in cells (the content's) or "N%" of the screen, centred unless col/row (counted as screenSize and text.screenPosition do); tabpage as Vim's popups (0 the current tab page, -1 all, N tab page N); `border: false` leaves out the frame and the title (the content at col/row, one cell at least); `focusable: false` never takes the focus: clicks and the wheel go through it, focusNextPane and moveFocus skip it, toggleFloats neither hides nor counts it, focusPane refuses it; returns the pane (undefined for a file still opening) */
     openFloat(
       what?: { buffer: number } | { file: string } | { command: string[] },
       opts?: {
@@ -65,9 +65,11 @@ declare module "temzdf" {
         title?: string;
         focus?: boolean;
         tabpage?: number;
+        border?: boolean;
+        focusable?: boolean;
       },
     ): number | undefined;
-    /** Move or resize a floating pane (the focused one for undefined), change its title, or the tab pages it shows on (tabpage) */
+    /** Move or resize a floating pane (the focused one for undefined), change its title, its frame (border), whether it takes the focus (focusable: false moves the focus off it), or the tab pages it shows on (tabpage) */
     floatConfig(
       pane: number | undefined,
       opts: {
@@ -78,6 +80,8 @@ declare module "temzdf" {
         title?: string;
         focus?: boolean;
         tabpage?: number;
+        border?: boolean;
+        focusable?: boolean;
       },
     ): void;
     /** Show or hide every floating pane; with none, open a floating shell */
@@ -134,16 +138,19 @@ declare module "temzdf" {
     exitMode(): void;
     /** The current mode's name */
     currentMode(): string;
-    /** The panes of every tab (tab: its index from 1, undefined for a float on all tabs; rect: the content, in cells) */
+    /** The panes of every tab (tab: its index from 1, undefined for a float on all tabs; focusable: false for a float that never takes the focus; rect: the pane in cells from the screen's top left, its status line included, a float's frame not) */
     panes(): {
       id: number;
       kind: PaneKind;
       buffer: number;
       focused: boolean;
       floating: boolean;
+      focusable: boolean;
       tab: number | undefined;
       rect: { col: number; row: number; width: number; height: number };
     }[];
+    /** The size in cells of the room panes and floats take (the screen without the tab line and the window's status line): what openFloat's col, row and "N%" count in, as text.screenPosition does */
+    screenSize(): { width: number; height: number };
     /** The focused pane's id */
     focusedPane(): number | undefined;
     /** Open a tab page after the current one, its pane showing `what` (a new shell by default), as Vim's :tabnew; returns the pane (undefined for a file still opening) */
@@ -381,6 +388,8 @@ declare module "temzdf" {
       positionOf(from: Position, unit: TextUnit, count?: number, opts?: { pane?: number }): Position;
       /** The text the pane shows */
       visibleRange(opts?: { pane?: number }): Range;
+      /** The cell where a position (the cursor) shows, as the cursor there would be drawn, counted as openFloat's col and row are (from the top left of screenSize's room); undefined when the pane does not show it (scrolled away, past the edge, a hidden pane) */
+      screenPosition(at?: Position, opts?: { pane?: number }): { col: number; row: number } | undefined;
       /** Search with a Rust regex (^ and $ at lines): forward the first match starting at or after `from` (the cursor), backward the last one starting before it; `wrap` goes on from the other end; `lines` (zero based, inclusive) narrows it; `group` is the capture that counts as the match; `word` wants word boundaries of the buffer's word characters */
       search(
         pattern: string,
@@ -436,6 +445,8 @@ declare module "temzdf" {
           number?: "off" | "absolute" | "relative" | "both";
           cursorline?: boolean;
           scrolloff?: number;
+          /** Groups drawn as others in the pane (Neovim's winhighlight), e.g. { CursorLine: "PickedLine", CursorUnfocused: "None" }; "None" (or a group never defined) draws nothing; replaces the pane's last ones, {} none */
+          highlights?: Record<string, string>;
         },
         opts?: { pane?: number },
       ): void;

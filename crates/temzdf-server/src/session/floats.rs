@@ -1,7 +1,8 @@
 //! Floating panes: panes outside the layout tree, stacked over it (the last
-//! on top), each in a one-cell frame with a title. They show and hide
-//! together; what lies under a shown float is cut out of the panes below
-//! (see `crate::clip`). Design: `doc/design/floating-panes.md`.
+//! on top), each in a one-cell frame with a title (or none: `border`).
+//! They show and hide together, but those that never take the focus
+//! (`focusable`); what lies under a shown float is cut out of the panes
+//! below (see `crate::clip`). Design: `doc/design/floating-panes.md`.
 
 use temzdf_scene::{Attrs, Cell, Color, Pointer, Rect, TextGrid};
 use termpix_core::input::{MouseButton, MouseEvent, MouseEventKind};
@@ -15,7 +16,8 @@ use super::{BACKGROUND, BufferId, Outcome, Session, Spot};
 use crate::layout::{Direction, PaneId};
 use temzdf_protocol::script::ScriptValue;
 
-/// The smallest float content, in cells (as the smallest tiled pane).
+/// The smallest float content, in cells (as the smallest tiled pane);
+/// without a frame, one cell.
 const MIN_COLS: u32 = 10;
 const MIN_ROWS: u32 = 4;
 /// How far a float opened from another one is moved right and down.
@@ -51,19 +53,23 @@ impl Extent {
 
 /// Where a float goes and how large it is. Sizes in cells are the content's
 /// (the frame comes around it, as in Neovim); shares of the screen are the
-/// whole float's. A missing position centres it.
+/// whole float's. A missing position centres it. Without `border`, the
+/// float is its content alone (no frame, no title).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FloatSpec {
     pub width: Extent,
     pub height: Extent,
     pub col: Option<Extent>,
     pub row: Option<Extent>,
+    pub border: bool,
     /// When it opens (a file may open later): its title, and whether it
     /// takes the focus.
     pub title: Option<String>,
     pub focus: bool,
     /// The tabs it shows on; `None`: the current one when it opens.
     pub tab: Option<FloatTab>,
+    /// Whether it ever takes the focus (when it opens; then the float's).
+    pub focusable: bool,
 }
 
 impl Default for FloatSpec {
@@ -73,9 +79,11 @@ impl Default for FloatSpec {
             height: Extent::Percent(80),
             col: None,
             row: None,
+            border: true,
             title: None,
             focus: true,
             tab: None,
+            focusable: true,
         }
     }
 }
@@ -84,12 +92,14 @@ impl FloatSpec {
     /// The float's frame (content and frame) on a screen of `area`, kept
     /// on the screen.
     pub(super) fn frame(&self, area: Rect) -> Rect {
+        let pad = self.pad();
         let outer = |e: Extent, whole: u32| match e {
-            Extent::Cells(n) => n.saturating_add(2),
+            Extent::Cells(n) => n.saturating_add(pad),
             Extent::Percent(_) => e.of(whole),
         };
-        let w = outer(self.width, area.w).clamp((MIN_COLS + 2).min(area.w), area.w.max(1));
-        let h = outer(self.height, area.h).clamp((MIN_ROWS + 2).min(area.h), area.h.max(1));
+        let (min_w, min_h) = if self.border { (MIN_COLS + 2, MIN_ROWS + 2) } else { (1, 1) };
+        let w = outer(self.width, area.w).clamp(min_w.min(area.w), area.w.max(1));
+        let h = outer(self.height, area.h).clamp(min_h.min(area.h), area.h.max(1));
         let place = |pos: Option<Extent>, size: u32, whole: u32| {
             let at = pos.map_or(whole.saturating_sub(size) / 2, |p| p.of(whole));
             at.min(whole.saturating_sub(size)) as i32
@@ -97,15 +107,27 @@ impl FloatSpec {
         Rect::new(area.x + place(self.col, w, area.w), area.y + place(self.row, h, area.h), w, h)
     }
 
+    /// Cells the frame adds to the content's width and height.
+    fn pad(&self) -> u32 {
+        if self.border { 2 } else { 0 }
+    }
+
     /// The same float pinned where `frame` is, its content `w` x `h` cells.
-    fn at(frame: Rect, w: u32, h: u32) -> Self {
+    fn at(&self, frame: Rect, w: u32, h: u32) -> Self {
         Self {
             width: Extent::Cells(w),
             height: Extent::Cells(h),
             col: Some(Extent::Cells(frame.x.max(0) as u32)),
             row: Some(Extent::Cells(frame.y.max(0) as u32)),
+            border: self.border,
+            focusable: self.focusable,
             ..Self::default()
         }
+    }
+
+    /// The inside of `frame` (all of it without a border).
+    fn content(&self, frame: Rect) -> Rect {
+        if self.border { content(frame) } else { frame }
     }
 }
 
@@ -119,8 +141,8 @@ pub(super) struct Float {
     pub title: Option<String>,
     /// The tabs it shows on.
     pub tab: FloatTab,
-    /// Takes the focus (Neovim's `focusable`); not settable yet.
-    #[allow(dead_code)]
+    /// Takes the focus (Neovim's `focusable`): else clicks go through it,
+    /// cycling skips it, and `toggleFloats` neither hides nor counts it.
     pub focusable: bool,
     /// Keeps the keys and the focus until it closes; reserved for modal
     /// floats, unused yet.
@@ -130,7 +152,13 @@ pub(super) struct Float {
 
 impl Float {
     pub(super) fn new(pane: PaneId, spec: FloatSpec, tab: FloatTab) -> Self {
-        Self { pane, spec, frame: Rect::default(), title: None, tab, focusable: true, modal: false }
+        let focusable = spec.focusable;
+        Self { pane, spec, frame: Rect::default(), title: None, tab, focusable, modal: false }
+    }
+
+    /// Where its pane goes: inside its frame.
+    pub(super) fn content(&self) -> Rect {
+        self.spec.content(self.frame)
     }
 }
 
@@ -211,8 +239,8 @@ pub(super) enum FloatWhat {
     Buffer(BufferId),
 }
 
-/// Read a float's options (`width`, `height`, `col`, `row`, `title`) onto
-/// `spec` and `title`.
+/// Read a float's options (`width`, `height`, `col`, `row`, `border`,
+/// `focusable`, `title`) onto `spec` and `title`.
 pub(super) fn read_opts(o: &ScriptValue, spec: &mut FloatSpec, title: &mut Option<String>) -> Result<(), String> {
     if !matches!(o, ScriptValue::Map(_)) {
         return Err("float options must be an object".into());
@@ -232,6 +260,13 @@ pub(super) fn read_opts(o: &ScriptValue, spec: &mut FloatSpec, title: &mut Optio
     }
     if let Some(r) = extent("row")? {
         spec.row = Some(r);
+    }
+    for (key, flag) in [("border", &mut spec.border), ("focusable", &mut spec.focusable)] {
+        match o.get(key) {
+            None | Some(ScriptValue::Null) => {}
+            Some(ScriptValue::Bool(b)) => *flag = *b,
+            Some(v) => return Err(format!("{key}: {v:?} is not true or false")),
+        }
     }
     if let Some(t) = o.get("title").and_then(ScriptValue::as_str) {
         *title = Some(t.to_owned());
@@ -259,9 +294,15 @@ impl Session {
         self.floats.iter().filter(|f| self.here(f.tab)).collect()
     }
 
-    /// The floats on screen, bottom to top (none while they are hidden).
+    /// The floats on screen, bottom to top (while they are hidden, those
+    /// that never take the focus).
     pub(super) fn shown_floats(&self) -> Vec<&Float> {
-        if self.floats_hidden { Vec::new() } else { self.tab_floats() }
+        self.tab_floats().into_iter().filter(|f| !self.floats_hidden || !f.focusable).collect()
+    }
+
+    /// The shown floats that take the focus, bottom to top.
+    pub(super) fn focusable_floats(&self) -> Vec<&Float> {
+        self.shown_floats().into_iter().filter(|f| f.focusable).collect()
     }
 
     /// What covers `pane` (the session's own layers with `None`), in cells:
@@ -281,24 +322,29 @@ impl Session {
         let frame = spec.frame(self.area());
         let title = spec.title.clone();
         let tab = spec.tab.unwrap_or(FloatTab::Only(self.tab_id()));
-        self.floats.push(Float { frame, title, ..Float::new(id, spec, tab) });
-        // A new float shows the others of its tab page too.
-        if self.here(tab) {
+        let focusable = spec.focusable;
+        let float = Float { frame, title, ..Float::new(id, spec, tab) };
+        let rect = float.content();
+        self.floats.push(float);
+        // A new float shows the others of its tab page too (one that never
+        // takes the focus shows alone).
+        if focusable && self.here(tab) {
             self.floats_hidden = false;
-        } else if let FloatTab::Only(t) = tab
+        } else if focusable
+            && let FloatTab::Only(t) = tab
             && let Some(i) = self.tab_index(t)
         {
             self.show_tab_floats(i);
         }
-        content(frame)
+        rect
     }
 
     /// Whether a pane put at `spot` takes the focus: not a float opened
-    /// without it, nor one for another tab page (keys would go to a pane
-    /// nobody sees).
+    /// without it or never taking it, nor one for another tab page (keys
+    /// would go to a pane nobody sees).
     pub(super) fn takes_focus(&self, spot: &Spot) -> bool {
         match spot {
-            Spot::Float(s) => s.focus && s.tab.is_none_or(|t| self.here(t)),
+            Spot::Float(s) => s.focus && s.focusable && s.tab.is_none_or(|t| self.here(t)),
             _ => true,
         }
     }
@@ -319,7 +365,7 @@ impl Session {
             .iter_mut()
             .map(|f| {
                 f.frame = f.spec.frame(area);
-                (f.pane, content(f.frame))
+                (f.pane, f.content())
             })
             .collect();
         for (id, r) in rects {
@@ -331,30 +377,30 @@ impl Session {
     /// right and down (zellij).
     pub(super) fn cascade(&self) -> FloatSpec {
         let Some(f) = self.floats.iter().find(|f| f.pane == self.focus) else { return FloatSpec::default() };
-        let r = content(f.frame);
+        let r = f.content();
         let moved =
             Rect::new(f.frame.x.saturating_add(CASCADE), f.frame.y.saturating_add(CASCADE), f.frame.w, f.frame.h);
-        FloatSpec { tab: Some(f.tab), ..FloatSpec::at(moved, r.w, r.h) }
+        FloatSpec { tab: Some(f.tab), ..f.spec.at(moved, r.w, r.h) }
     }
 
     /// Move or resize a float: `cells` added to its width or height
     /// (`resizePane` moves its right or bottom edge), or a new size.
     pub(super) fn resize_float(&mut self, pane: PaneId, width: Option<i64>, height: Option<i64>, absolute: bool) {
         let Some(f) = self.float_mut(pane) else { return };
-        let r = content(f.frame);
+        let r = f.content();
         let size = |cur: u32, v: Option<i64>| match v {
             Some(n) if absolute => n.max(0) as u32,
             Some(n) => (cur as i64 + n).max(0) as u32,
             None => cur,
         };
-        f.spec = FloatSpec::at(f.frame, size(r.w, width), size(r.h, height));
+        f.spec = f.spec.at(f.frame, size(r.w, width), size(r.h, height));
         self.relayout();
     }
 
     /// The float next to the focused one in `dir`, by their centres (floats
     /// overlap, so none need be wholly beyond the other).
     pub(super) fn float_neighbor(&self, dir: Direction) -> Option<PaneId> {
-        let floats = self.shown_floats();
+        let floats = self.focusable_floats();
         let from = floats.iter().find(|f| f.pane == self.focus)?.frame;
         let centre = |r: &Rect| (r.x as i64 * 2 + r.w as i64, r.y as i64 * 2 + r.h as i64);
         let c = centre(&from);
@@ -375,11 +421,11 @@ impl Session {
             .map(|(_, _, p)| p)
     }
 
-    /// The panes in focus order: the shown floats as they were opened (not
-    /// as stacked: focusing raises, which would change the order while
-    /// cycling), then the tiled panes.
+    /// The panes in focus order: the shown floats that take the focus as
+    /// they were opened (not as stacked: focusing raises, which would
+    /// change the order while cycling), then the tiled panes.
     pub(super) fn focus_order(&self) -> Vec<PaneId> {
-        let mut v: Vec<PaneId> = self.shown_floats().iter().map(|f| f.pane).collect();
+        let mut v: Vec<PaneId> = self.focusable_floats().iter().map(|f| f.pane).collect();
         v.sort();
         v.extend(self.layout.as_ref().map(|l| l.panes()).unwrap_or_default());
         v
@@ -411,9 +457,10 @@ impl Session {
         })
     }
 
-    /// Show or hide every float; with none, open a floating shell.
+    /// Show or hide every float that takes the focus; with none, open a
+    /// floating shell.
     pub(super) fn toggle_floats(&mut self) -> anyhow::Result<()> {
-        if self.tab_floats().is_empty() {
+        if !self.tab_floats().iter().any(|f| f.focusable) {
             return self.open_terminal(&Spawn::default(), Spot::Float(FloatSpec::default())).map(drop);
         }
         self.floats_hidden = !self.floats_hidden;
@@ -421,7 +468,7 @@ impl Session {
             if self.is_float(self.focus) {
                 self.set_focus(self.tiled_focus);
             }
-        } else if let Some(top) = self.tab_floats().last().map(|f| f.pane) {
+        } else if let Some(top) = self.focusable_floats().last().map(|f| f.pane) {
             self.set_focus(top);
         }
         self.relayout();
@@ -462,10 +509,11 @@ impl Session {
     }
 
     /// The topmost shown float whose frame (not its content) is at cell
-    /// (`col`, `row`), and that part of the frame.
+    /// (`col`, `row`), and that part of the frame. Floats that never take
+    /// the focus let the mouse through.
     fn grip_at(&self, col: i32, row: i32) -> Option<(PaneId, Grip)> {
-        let f = self.shown_floats().into_iter().rev().find(|f| f.frame.contains(col, row))?;
-        if content(f.frame).contains(col, row) {
+        let f = self.focusable_floats().into_iter().rev().find(|f| f.frame.contains(col, row))?;
+        if f.content().contains(col, row) {
             return None;
         }
         let r = f.frame;
@@ -486,7 +534,7 @@ impl Session {
                 MouseEventKind::Drag(_) => {
                     let frame = d.grip.drag(d.start, col - d.from.0, row - d.from.1);
                     if let Some(f) = self.float_mut(d.pane) {
-                        f.spec = FloatSpec::at(frame, frame.w.saturating_sub(2), frame.h.saturating_sub(2));
+                        f.spec = f.spec.at(frame, frame.w.saturating_sub(2), frame.h.saturating_sub(2));
                     }
                     self.relayout();
                     Outcome::Redraw
@@ -526,6 +574,7 @@ impl Session {
         let frames: Vec<(PaneId, Rect, String)> = self
             .shown_floats()
             .iter()
+            .filter(|f| f.spec.border)
             .map(|f| (f.pane, f.frame, f.title.clone().unwrap_or_else(|| self.pane_name(f.pane))))
             .collect();
         for (pane, frame, title) in frames {

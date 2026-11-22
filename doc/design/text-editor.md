@@ -103,7 +103,16 @@ Following VS Code **(user)**:
 - **Selection and cursor**: `setCursor`, `setSelection(anchor, active,
   kind)`, `clearSelection`, `setCursorStyle`.
 - **View**: `scroll`, `reveal(pos, "center" | "top" | "minimal")`,
-  `visibleRange`.
+  `visibleRange`, `screenPosition(pos?)` (2026-11-22, for completion
+  popups, `doc/design/completion.md`): the cell where a position shows,
+  computed by `View::cell_of` as the cursor there is drawn (gutter,
+  horizontal scroll, wrapped rows and their prefix, tabs, wide
+  characters, inline virtual text, concealed ranges, virtual lines), plus
+  the pane's origin; undefined when it is not on screen. It counts from
+  the top left of the room panes take (below the tab line), as
+  `openFloat`'s `col` and `row` do, so a popup goes at what it returns;
+  `screenSize()` gives that room's size. (`panes()`' rectangles count
+  from the screen's top left: they differ by the tab line.)
 
 ## 6. Search
 
@@ -434,7 +443,12 @@ hook's own `dispatch`. Events are sent only while someone subscribes.
   line and column, position in the file, mode, encoding, line ending.
   Customising it comes later, all at once **(user)**.
 - Colours come from highlight groups; their definitions and the default
-  scheme are the scripts'.
+  scheme are the scripts'. A pane may draw groups as others
+  (`text.setOptions({ highlights })`, Neovim's `winhighlight`, 2026-11-22):
+  a map in its `View` looked up in `render` before every group, `"None"`
+  drawing nothing. A completion list colours its cursor's line
+  (`CursorLine`) and hides its unfocused cursor (`CursorUnfocused`) with
+  it, without touching other panes.
 - Later: folding, `listchars`, signs.
 
 ## 15. Smaller primitives

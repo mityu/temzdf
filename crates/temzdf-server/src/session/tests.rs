@@ -4034,3 +4034,90 @@ fn copies_registers_and_the_clipboard() {
     assert_eq!(s.clipboard_answer(ticket, Ok("late".into())), Outcome::None);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "the file system")]
+fn floats_without_a_frame_or_the_focus_let_clicks_through() {
+    let line = "0123456789".repeat(5);
+    let (mut s, path) = text_session("popup.txt", &format!("{line}\n{line}\n{line}\n{line}\n"));
+    let tiled = s.focus;
+    let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap().0;
+    let n = |v: f64| ScriptValue::Num(v);
+    let buf = run(&mut s, "new-buffer", &[ScriptValue::map([("text", ScriptValue::Str("POPUP".into()))])]);
+    let opts = |border: bool, focusable: bool, col: f64| {
+        ScriptValue::map([
+            ("col", n(col)),
+            ("row", n(1.0)),
+            ("width", n(10.0)),
+            ("height", n(3.0)),
+            ("border", ScriptValue::Bool(border)),
+            ("focusable", ScriptValue::Bool(focusable)),
+        ])
+    };
+    let what = ScriptValue::map([("buffer", buf)]);
+    let popup = run(&mut s, "open-float", &[what.clone(), opts(false, false, 20.0)]).as_num().unwrap() as PaneId;
+    assert_eq!(s.focus, tiled, "never focused");
+    assert_eq!(s.panes[&popup].rect, Rect::new(20, 1, 10, 3), "no frame: the content at col and row");
+    let rows = screen_text(&s.frame(), GEOMETRY);
+    assert_eq!(cols(&rows[1], 19, 31), format!("9{}0", "POPUP".to_owned() + "     "), "no frame around it");
+    assert_eq!(cols(&rows[0], 19, 31), line[19..31], "nor a title above");
+    // A click on it goes to the pane below: its cursor moves there.
+    let cell = GEOMETRY.cell;
+    let at = |col: i32, row: i32| (col * cell.width as i32 + 2, row * cell.height as i32 + 2);
+    let (x, y) = at(23, 1);
+    click(&mut s, x, y);
+    assert_eq!(s.focus, tiled);
+    assert_eq!(run(&mut s, "text.cursor", &[]), pos(1, 23), "the text below took the click");
+    // One that takes the focus takes the click.
+    let framed = run(&mut s, "open-float", &[what, opts(true, true, 50.0)]).as_num().unwrap() as PaneId;
+    s.set_focus(tiled);
+    let (x, y) = at(53, 2);
+    click(&mut s, x, y);
+    assert_eq!(s.focus, framed);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the file system")]
+fn a_text_pane_draws_highlight_groups_as_others() {
+    let (mut s, path) = text_session("winhl.txt", "one\ntwo\n");
+    let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap().0;
+    let tiled = s.focus;
+    run(&mut s, "highlight", &[ScriptValue::Str("Pick".into()), ScriptValue::map([("bg", ScriptValue::Num(4.0))])]);
+    // Another pane has the focus: the text pane's cursor is underlined.
+    cmd(&mut s, "split", &["right"]).unwrap();
+    let pane = |p: PaneId| ScriptValue::map([("pane", ScriptValue::Num(p as f64))]);
+    let cell_at = |s: &mut Session, col: u16, row: usize| {
+        let frame = s.frame();
+        let grid = frame.text.iter().find(|g| g.col == col && g.row == 0).expect("the pane's text");
+        grid.rows[row][0].clone()
+    };
+    let cursor_cell = |s: &mut Session| cell_at(s, 0, 0);
+    assert_eq!(cursor_cell(&mut s).attrs.underline, temzdf_scene::Underline::Single);
+    let o = ScriptValue::map([
+        ("cursorline", ScriptValue::Bool(true)),
+        (
+            "highlights",
+            ScriptValue::map([
+                ("CursorLine", ScriptValue::Str("Pick".into())),
+                ("CursorUnfocused", ScriptValue::Str("None".into())),
+            ]),
+        ),
+    ]);
+    run(&mut s, "text.set-options", &[o, pane(tiled)]);
+    let cell = cursor_cell(&mut s);
+    assert_eq!((cell.attrs.underline, cell.bg), (temzdf_scene::Underline::None, temzdf_scene::Color::Indexed(4)));
+    assert_eq!(cell_at(&mut s, 0, 1).bg, temzdf_scene::Color::Default, "only the cursor's line");
+    // The other pane on the same buffer draws as before.
+    let other = s.focus;
+    run(&mut s, "text.set-options", &[ScriptValue::map([("cursorline", ScriptValue::Bool(true))]), pane(other)]);
+    s.set_focus(tiled);
+    let col = s.panes[&other].rect.x as u16;
+    assert_eq!(cell_at(&mut s, col, 0).bg, temzdf_scene::Color::Default, "CursorLine has no colour there");
+    // {} drops them.
+    let none = ScriptValue::map([("highlights", ScriptValue::Map(Vec::new()))]);
+    run(&mut s, "text.set-options", &[none, pane(tiled)]);
+    s.set_focus(other);
+    assert_eq!(cursor_cell(&mut s).attrs.underline, temzdf_scene::Underline::Single);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}

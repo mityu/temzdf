@@ -32,8 +32,11 @@ the UI differ.
 
 Everything here is TypeScript in the shipped scripts: temzdf's core is
 Rust and everything else extends it in scripts. Rust gains only what a
-script cannot do (`PaneScrolled`, below); matching speed in the script
-host is judged after using it (see "Speed").
+script cannot do (`PaneScrolled`, below; for the popup,
+`text.screenPosition` and `screenSize`, floats with `border: false` and
+`focusable: false`, and a pane's own highlight groups through
+`text.setOptions({ highlights })`, added 2026-11-22); matching speed in
+the script host is judged after using it (see "Speed").
 
 ## Items
 

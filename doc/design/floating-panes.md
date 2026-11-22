@@ -21,7 +21,8 @@ defaults, accepted with the design.
    them: they belong to a separate class (as zellij's pinned floats) that the
    toggle leaves alone.
 3. `focusable: false` as a flag in the model, not exposed in the first step,
-   as proposed. Later the flag should not be limited to floats: a tiled pane
+   as proposed (exposed 2026-11-22: "Borderless and non-focusable floats"
+   below). Later the flag should not be limited to floats: a tiled pane
    that never takes the focus (as Emacs side windows with `no-other-window`)
    could then carry a status bar or similar. So the flag lives on the pane
    entry, not on the float geometry. (2026-11-19: as built it is a field of
@@ -276,3 +277,26 @@ floats on every tab page follow the current one's. Closing a tab page's
 last tiled pane puts only a float of that tab page in its place: one on
 every tab page would leave the others. `toggleFloating` makes a float on
 every tab page a tiled pane of the current one.
+
+## Borderless and non-focusable floats (2026-11-22, with the user)
+
+For the completion popup (`doc/design/completion.md`), `openFloat` and
+`floatConfig` take two options:
+
+- `border: false`: no frame and no title. The float is its content alone,
+  at `col`, `row`; sizes in cells are the whole float's, and the smallest
+  is one cell (a framed float keeps 10 by 4). Nothing to grip, so the
+  mouse cannot move or resize it.
+- `focusable: false` (decision 3's flag, on `Float`): the float never
+  takes the focus. Opening it leaves the focus where it was (whatever
+  `focus` says); the mouse goes through it to what is below (clicks, the
+  wheel, hovering: Neovim's `mouse` follows `focusable` the same way);
+  `focusNextPane` and `moveFocus` skip it; `focusPane` refuses it;
+  `toggleFloats` neither hides it nor counts it (with only such floats it
+  opens a floating shell, as with none), and a new one does not show
+  hidden floats; closing the last tiled pane never puts one in its place;
+  `floatConfig(pane, { focusable: false })` on the focused float moves
+  the focus to the tiled pane. `panes()` lists it with `focusable: false`.
+  One flag covers all of this for now (agreed with the user); `todo.md`
+  notes that "stays when floats are hidden" (decision 2's pinned class)
+  may become a flag of its own.

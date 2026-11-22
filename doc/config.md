@@ -483,7 +483,15 @@ A floating pane shows a buffer, as any pane, in a frame over the tiled panes
 shell by default); `opts` take `width`, `height` (the content's, in cells,
 or `"N%"` of the screen for the whole float), `col`, `row` (centred when
 left out), `title` and `focus: false`. The default is a centred float of
-80% by 80%. `temzdf action open-float FILE.pdf` and `temzdf action
+80% by 80%. `col` and `row` count from the top left of the room panes take
+(below the tab line), as `screenSize()` and `text.screenPosition()` do.
+`border: false` leaves out the frame and the title: the content sits at
+`col`, `row`, as small as one cell. `focusable: false` makes a float that
+never takes the focus (a popup beside the pane being typed in): opening it
+leaves the focus where it was, clicks and the wheel go through it to what
+is below, `focusNextPane` and `moveFocus` skip it, `focusPane` refuses
+it, and `toggleFloats` neither hides it nor counts it. `panes()` lists
+it with `focusable: false`. `temzdf action open-float FILE.pdf` and `temzdf action
 open-float -- htop` work as `new-pane`. `tabpage` says where it shows, as
 for Vim's popups: `0` (default) the tab page it opens on, `-1` every tab
 page, `N` tab page N.
@@ -499,7 +507,8 @@ page, `N` tab page N.
 - Splitting, or `newPane`, while a float has the focus opens another float,
   two cells right and down.
 - `resizePane("right", 5)` widens a float (its right or bottom edge moves);
-  `floatConfig(pane, opts)` moves or resizes one, or changes its title.
+  `floatConfig(pane, opts)` moves or resizes one, or changes its title,
+  `border` or `focusable`.
   With the mouse, its title edge moves it and its other edges and corners
   resize it.
 - `toggleFloating(pane?)` turns a tiled pane floating and back (beside the
@@ -679,7 +688,12 @@ JavaScript strings index; out of range is clamped), ranges
 
 - queries: `text.lineCount()`, `text.line(n)`, `text.getText(range?)`,
   `text.cursor()`, `text.selection()`, `text.offsetAt(pos)`,
-  `text.positionAt(offset)`, `text.info()`, `text.visibleRange()`;
+  `text.positionAt(offset)`, `text.info()`, `text.visibleRange()`,
+  `text.screenPosition(pos?)` (the cell `{ col, row }` where a position,
+  the cursor by default, shows, counted as `openFloat`'s `col` and `row`;
+  undefined when the pane does not show it), and `screenSize()` (`{
+  width, height }` of the room those count in: the screen without the tab
+  line and the window's status line);
 - edits: `text.edit([{ range, newText }, ...])` takes LSP's `TextEdit[]`
   as they come (ranges in the text before the edit, not overlapping;
   insertions at one point go in the array's order), `text.insert(text, at?)`,
@@ -753,7 +767,13 @@ JavaScript strings index; out of range is clamped), ranges
   action`), typing merged; moving the cursor ends a typing step.
 
 Options for text panes: `wrap`, `linebreak`, `breakindent`, `showbreak`,
-`tabstop`, `number`, `cursorline`, `scrolloff` (see Options). The status
+`tabstop`, `number`, `cursorline`, `scrolloff` (see Options).
+`text.setOptions({ wrap?, number?, cursorline?, scrolloff?, highlights? })`
+sets them for one pane over the session's; `highlights` draws groups as
+others in that pane alone, as Neovim's `winhighlight` (`{ CursorLine:
+"PickedLine", CursorUnfocused: "None" }` colours the cursor's line and
+hides the underline of the cursor while the pane is not focused; `"None"`
+draws nothing; it replaces the pane's last ones, `{}` none). The status
 line shows the file, `[+]` when modified, the mode, the encoding, the line
 ending, the line and column and the position in the file.
 

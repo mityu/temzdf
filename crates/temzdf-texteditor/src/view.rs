@@ -2,6 +2,8 @@
 //! scrolled to, how it lays text out, and the motions that need all that
 //! (lines keeping a column, display lines, pages).
 
+use std::collections::HashMap;
+
 use crate::buffer::Buffer;
 use crate::cursor::{Cursor, SelectionKind};
 use crate::edit::{Change, Gravity, map_offset};
@@ -77,6 +79,10 @@ pub struct View {
     /// A cell's size in pixels (images take as many cells as their pixels
     /// fill).
     pub cell: (u32, u32),
+    /// Highlight groups drawn as others in this view (Neovim's
+    /// `winhighlight`): a group's name to the one used instead (`"None"`:
+    /// nothing).
+    pub highlights: HashMap<String, String>,
 }
 
 impl Default for View {
@@ -94,6 +100,7 @@ impl Default for View {
             scrolloff: 0,
             pane: None,
             cell: (10, 20),
+            highlights: HashMap::new(),
         }
     }
 }
@@ -350,6 +357,26 @@ impl View {
         if r.wrapped && at >= r.end { r.glyphs.last().map_or(r.start, |g| g.offset) } else { at }
     }
 
+    /// The cell (`col`, `row`) of the pane (gutter included) where `offset`
+    /// shows, as the cursor there would be drawn (a wide character's first
+    /// cell, after inline virtual text before it, a concealed range's
+    /// first cell); `None` when it is not in sight (scrolled away, beyond
+    /// the edge without wrapping). The inverse of
+    /// [`offset_at_cell`](Self::offset_at_cell).
+    pub fn cell_of(&self, buf: &Buffer, offset: usize) -> Option<(usize, usize)> {
+        let gutter = self.gutter(buf.text().line_count());
+        let width = self.width as usize;
+        let (y, r) = self.rows(buf).into_iter().enumerate().find(|(_, r)| r.virt.is_none() && r.contains(offset))?;
+        let x = (r.col_of(offset) + gutter).checked_sub(self.left).filter(|x| *x >= gutter)?;
+        // A line's end just past the last column: drawn in the last cell
+        // (as the cursor is), unless the line goes on beyond the edge.
+        let whole = r.glyphs.last().is_none_or(|g| g.offset + g.chars >= r.end);
+        if x == width && offset == r.end && whole && width > gutter {
+            return Some((width - 1, y));
+        }
+        (x < width).then_some((x, y))
+    }
+
     /// The text shown: from the top row's start to the last row's end.
     pub fn visible_range(&self, buf: &Buffer) -> (usize, usize) {
         let rows = self.rows(buf);
@@ -370,6 +397,7 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::marks::MarkSpec;
     use crate::text::LineEnding;
 
     fn view(width: u16, height: u16) -> View {
@@ -457,6 +485,101 @@ xy",
         assert_eq!(v.offset_at_cell(&buf, 4, 3), 9, "below the text: its end");
     }
 
+    /// Where the drawn cursor of `v` (focused) is with the cursor at
+    /// `offset`, as `render` draws it.
+    fn drawn_cursor(buf: &Buffer, v: &View, offset: usize) -> Option<(usize, usize)> {
+        let mut v = v.clone();
+        v.cursor = crate::cursor::Cursor::at(offset);
+        let d = crate::render::render(buf, &v, &crate::render::Highlights::default(), v.pane, true, &[]);
+        d.cursor.map(|(x, y)| (x as usize, y as usize))
+    }
+
+    /// `cell_of` agrees with the drawn cursor at every offset of `buf`
+    /// (the cursor there: its line shows concealed text). Beyond the right
+    /// edge without wrapping, the cursor is drawn in the last column, and
+    /// the offset is not in sight.
+    fn cells_agree_with_the_cursor(buf: &Buffer, v: &View) {
+        for offset in 0..=buf.text().len_chars() {
+            let at = View { cursor: crate::cursor::Cursor::at(offset), ..v.clone() };
+            let (cell, drawn) = (at.cell_of(buf, offset), drawn_cursor(buf, v, offset));
+            let clamped = !v.layout.wrap && cell.is_none() && drawn.is_some_and(|(x, _)| x + 1 == v.width as usize);
+            assert!(cell == drawn || clamped, "offset {offset}: {cell:?}, drawn at {drawn:?} in {v:?}");
+        }
+    }
+
+    #[test]
+    fn offsets_map_to_the_cells_the_cursor_is_drawn_in() {
+        use crate::marks::{Conceal, VirtChunk, VirtPos};
+        let chunk = |t: &str| VirtChunk { text: t.into(), style: None };
+        let mut buf = Buffer::new(Text::from("one\n\tあいx\n  wrapped long line here\nend"), LineEnding::Lf);
+        buf.marks_mut().add(
+            4,
+            4,
+            MarkSpec { virt_text: vec![chunk(">>")], virt_pos: VirtPos::Inline, ..Default::default() },
+        );
+        let at = buf.text().line_start(2) + 2;
+        let conceal = Conceal { text: vec![chunk("W")], ..Default::default() };
+        buf.marks_mut().add(at, at + 7, MarkSpec { conceal: Some(conceal), ..Default::default() });
+        let mut v = View { number: NumberMode::Absolute, ..view(14, 6) };
+        v.layout.tabstop = 4;
+        v.layout.showbreak = "+".into();
+        v.layout.breakindent = true;
+        // The cursor away from the concealed line, which then shows "W".
+        v.cursor = crate::cursor::Cursor::at(0);
+        cells_agree_with_the_cursor(&buf, &v);
+        // Spot checks: a gutter of four; "o" of "one"; after the tab and
+        // the inline text; the wide character's first cell.
+        assert_eq!(v.cell_of(&buf, 0), Some((4, 0)));
+        assert_eq!(v.cell_of(&buf, 4), Some((6, 1)), "the tab, after the inline text before it");
+        assert_eq!(v.cell_of(&buf, 5), Some((10, 1)), "after the tab (a tab stop's width)");
+        assert_eq!(v.cell_of(&buf, 6), Some((12, 1)), "after あ, two columns wide");
+        assert_eq!(
+            v.cell_of(&buf, at + 3),
+            Some((6, 3)),
+            "in a concealed range: its first cell (line 1 took two rows)"
+        );
+        // Scrolled down: the first lines are not in sight.
+        v.top = buf.text().line_start(2);
+        assert_eq!(v.cell_of(&buf, 0), None);
+        assert_eq!(v.cell_of(&buf, v.top), Some((4, 0)));
+        cells_agree_with_the_cursor(&buf, &v);
+        // Narrower, wrapping more: continuation rows after showbreak.
+        let narrow = View { width: 9, top: 0, top_skip: 0, ..v.clone() };
+        cells_agree_with_the_cursor(&buf, &narrow);
+        // Without wrapping, scrolled sideways.
+        let mut side = View { left: 3, ..v.clone() };
+        side.top = 0;
+        side.layout.wrap = false;
+        cells_agree_with_the_cursor(&buf, &side);
+        assert_eq!(side.cell_of(&buf, 0), None, "left of the edge");
+        assert_eq!(side.cell_of(&buf, 3), Some((4, 0)), "the line's end of \"one\", at the first text column");
+    }
+
+    #[test]
+    fn a_full_rows_end_shows_in_its_last_cell_but_not_past_the_edge() {
+        let buf = Buffer::new(Text::from("abcd\nabcdefgh"), LineEnding::Lf);
+        let v = view(4, 4);
+        assert_eq!(v.cell_of(&buf, 4), Some((3, 0)), "the end of a line as wide as the pane");
+        cells_agree_with_the_cursor(&buf, &v);
+        let mut side = View { layout: LayoutOptions { wrap: false, ..Default::default() }, ..view(4, 4) };
+        assert_eq!(side.cell_of(&buf, 5 + 3), Some((3, 1)));
+        assert_eq!(side.cell_of(&buf, 5 + 4), None, "beyond the right edge");
+        assert_eq!(side.cell_of(&buf, 5 + 8), None, "a line's end beyond the edge");
+        side.left = 5;
+        assert_eq!(side.cell_of(&buf, 5 + 8), Some((3, 1)));
+    }
+
+    #[test]
+    fn cells_and_offsets_go_both_ways() {
+        let buf = with_lines("one\ntwo words\nthree", &[(1, true, &["A"])]);
+        let v = View { number: NumberMode::Absolute, ..view(10, 6) };
+        for offset in 0..buf.text().len_chars() {
+            let (x, y) = v.cell_of(&buf, offset).expect("in sight");
+            assert_eq!(v.offset_at_cell(&buf, x, y), offset, "offset {offset} at ({x}, {y})");
+        }
+        assert_eq!(v.cell_of(&buf, 4), Some((4, 2)), "below the virtual line");
+    }
+
     #[test]
     fn without_wrapping_the_view_scrolls_sideways() {
         let buf = Buffer::new(Text::from(&*"x".repeat(100)), LineEnding::Lf);
@@ -471,7 +594,7 @@ xy",
 
     /// `text` with virtual lines `(line, above, rows of text)`.
     fn with_lines(text: &str, lines: &[(usize, bool, &[&str])]) -> Buffer {
-        use crate::marks::{MarkSpec, VirtChunk, VirtLines};
+        use crate::marks::{VirtChunk, VirtLines};
         let mut buf = Buffer::new(Text::from(text), LineEnding::Lf);
         for &(line, above, rows) in lines {
             let at = buf.text().line_start(line);

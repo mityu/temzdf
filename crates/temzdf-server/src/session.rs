@@ -1240,7 +1240,7 @@ impl Session {
                         let opening = self.docs.values().any(|d| !d.waiting.is_empty());
                         if self.layout.is_none()
                             && !opening
-                            && let Some(top) = self.floats.last().map(|f| f.pane)
+                            && let Some(top) = self.floats.iter().rev().find(|f| f.focusable).map(|f| f.pane)
                         {
                             self.floats.retain(|f| f.pane != top);
                             self.layout = Some(Layout::new(top));
@@ -1462,10 +1462,10 @@ impl Session {
         }
         let next = if self.is_float(id) {
             self.floats.retain(|f| f.pane != id);
-            self.shown_floats().last().map_or(self.tiled_focus, |f| f.pane)
+            self.focusable_floats().last().map_or(self.tiled_focus, |f| f.pane)
         } else {
             let own = tabs::FloatTab::Only(self.tab_id());
-            let top = self.shown_floats().into_iter().rev().find(|f| f.tab == own).map(|f| f.pane);
+            let top = self.focusable_floats().into_iter().rev().find(|f| f.tab == own).map(|f| f.pane);
             // No pane tiled here (should not be): this tab page goes, the
             // session only with the last one.
             let Some(layout) = self.layout.as_mut() else { return self.remove_tab(self.tab) };

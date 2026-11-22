@@ -219,8 +219,13 @@ pub fn render(
         let (ca, cb) = (l.line_col(a), l.line_col(b));
         (text.line_of(a), text.line_of(b), ca.min(cb), ca.max(cb) + 1)
     });
+    // The view's own groups (Neovim's winhighlight) in place of the
+    // session's.
     let style = |name: &str, cell: &mut Cell| {
-        if let Some(s) = hl.get(name) {
+        let name = view.highlights.get(name).map_or(name, String::as_str);
+        if name != "None"
+            && let Some(s) = hl.get(name)
+        {
             s.apply(cell);
         }
     };
@@ -501,6 +506,31 @@ mod tests {
         let unfocused = render(&buf, &v, &Highlights::default(), None, false, &[]);
         assert_eq!(unfocused.cursor, None);
         assert_eq!(unfocused.rows[1][6].attrs.underline, Underline::Single, "drawn in the cell instead");
+    }
+
+    #[test]
+    fn a_view_draws_groups_as_others() {
+        let mut buf = Buffer::new(Text::from("one\ntwo"), LineEnding::Lf);
+        let mut hl = Highlights::default();
+        hl.set("Search", Style { bg: Some(Color::Indexed(3)), ..Style::default() });
+        hl.set("Pick", Style { bg: Some(Color::Indexed(4)), ..Style::default() });
+        // "None" draws nothing, even defined.
+        hl.set("None", Style { bg: Some(Color::Indexed(5)), ..Style::default() });
+        buf.marks_mut().add(4, 5, MarkSpec { style: Some("Search".into()), ..MarkSpec::default() });
+        let mut v = View { width: 5, height: 2, cursorline: true, ..View::default() };
+        v.cursor = Cursor::at(1);
+        let plain = render(&buf, &v, &hl, None, false, &[]);
+        assert_eq!(plain.rows[0][4].bg, Color::Default, "CursorLine has no colour by default");
+        assert_eq!(plain.rows[0][1].attrs.underline, Underline::Single, "the unfocused cursor");
+        v.highlights = [("CursorLine", "Pick"), ("CursorUnfocused", "None"), ("Search", "Missing")]
+            .map(|(a, b)| (a.to_owned(), b.to_owned()))
+            .into();
+        let d = render(&buf, &v, &hl, None, false, &[]);
+        assert!(d.rows[0].iter().all(|c| c.bg == Color::Indexed(4)), "the cursor line in Pick");
+        assert_eq!(d.rows[0][1].attrs.underline, Underline::None, "no cursor drawn");
+        assert_eq!(d.rows[0][1].bg, Color::Indexed(4), "nor None's colour");
+        assert_eq!(d.rows[1][0].bg, Color::Default, "a group never defined: nothing");
+        assert_eq!(d.rows[1][1], plain.rows[1][1], "the others as before");
     }
 
     #[test]

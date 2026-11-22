@@ -278,13 +278,15 @@ impl Session {
                     None => None,
                 };
                 if let Some(f) = self.float_mut(pane) {
+                    f.focusable = spec.focusable;
                     (f.spec, f.title) = (spec, title);
                     if let Some(tab) = tab {
                         f.tab = tab;
                     }
                 }
-                // Moved off the current tab: the focus stays on this one.
-                if tab.is_some() && self.focus == pane && !self.shown_floats().iter().any(|f| f.pane == pane) {
+                // Moved off the current tab, or no longer taking the focus:
+                // the focus goes to the tiled pane.
+                if self.focus == pane && !self.focusable_floats().iter().any(|f| f.pane == pane) {
                     self.set_focus(self.tiled_focus);
                 }
                 self.relayout();
@@ -368,8 +370,13 @@ impl Session {
                 let tab = self.tab_of(pane).ok_or_else(|| format!("focusPane: no pane {pane}"))?;
                 // Refused before going to its tab page (else a failed call
                 // would have changed tabs).
-                if self.is_float(pane) && self.tab_floats_hidden(tab) {
-                    return Err(format!("focusPane: pane {pane} is a hidden float"));
+                if let Some(f) = self.floats.iter().find(|f| f.pane == pane) {
+                    if !f.focusable {
+                        return Err(format!("focusPane: pane {pane} never takes the focus"));
+                    }
+                    if self.tab_floats_hidden(tab) {
+                        return Err(format!("focusPane: pane {pane} is a hidden float"));
+                    }
                 }
                 self.enter_tab(tab);
                 self.set_focus(pane);
@@ -550,6 +557,11 @@ impl Session {
                 ok(Outcome::Redraw)
             }
             "current-mode" => Ok((ScriptValue::Str(self.history.current().to_owned()), Outcome::None)),
+            "screen-size" => {
+                let area = self.area();
+                let size = [("width", area.w), ("height", area.h)].map(|(k, n)| (k, ScriptValue::Num(n.into())));
+                Ok((ScriptValue::map(size), Outcome::None))
+            }
             "panes" => {
                 let mut ids: Vec<_> = self.panes.keys().copied().collect();
                 ids.sort();
@@ -565,6 +577,7 @@ impl Session {
                             ("buffer", ScriptValue::Num(buffer as f64)),
                             ("focused", ScriptValue::Bool(id == self.focus)),
                             ("floating", ScriptValue::Bool(self.is_float(id))),
+                            ("focusable", ScriptValue::Bool(self.floats.iter().all(|f| f.pane != id || f.focusable))),
                             (
                                 "tab",
                                 match self.floats.iter().find(|f| f.pane == id).map(|f| f.tab) {

@@ -117,6 +117,9 @@ pub(super) struct LocalOptions {
     pub number: Option<temzdf_texteditor::NumberMode>,
     pub cursorline: Option<bool>,
     pub scrolloff: Option<usize>,
+    /// Highlight groups drawn as others in the pane (Neovim's
+    /// `winhighlight`; the session has none).
+    pub highlights: HashMap<String, String>,
 }
 
 impl TextView {
@@ -128,6 +131,7 @@ impl TextView {
         v.number = self.local.number.unwrap_or(o.number);
         v.cursorline = self.local.cursorline.unwrap_or(o.cursorline);
         v.scrolloff = self.local.scrolloff.unwrap_or(o.scrolloff);
+        v.highlights.clone_from(&self.local.highlights);
     }
 }
 
@@ -1268,6 +1272,21 @@ impl Session {
                 let (a, b) = tv.view.visible_range(&t.buf);
                 none(range_value(text, a, b))
             }
+            // In the cells floats are placed in (below the tab line), as
+            // the cursor there would be drawn; null when not on screen.
+            "screen-position" => {
+                let at = arg_pos(0).map_or(cursor.pos, |p| text.offset(p));
+                let content = self.panes[&pane].content();
+                let area = self.area();
+                let cell =
+                    (content.h > 0 && self.here_panes().contains(&pane)).then(|| tv.view.cell_of(&t.buf, at)).flatten();
+                none(cell.map_or(ScriptValue::Null, |(x, y)| {
+                    ScriptValue::map([
+                        ("col", ScriptValue::Num(f64::from(content.x - area.x) + x as f64)),
+                        ("row", ScriptValue::Num(f64::from(content.y - area.y) + y as f64)),
+                    ])
+                }))
+            }
             // Edits.
             "edit" | "insert" | "delete" | "replace" => {
                 let edits: Vec<TextEdit> = match name {
@@ -1389,6 +1408,19 @@ impl Session {
                 }
                 if let Some(n) = o.get("scrolloff") {
                     local.scrolloff = Some(n.as_num().ok_or("scrolloff: a number")? as usize);
+                }
+                match o.get("highlights") {
+                    None => {}
+                    Some(ScriptValue::Map(m)) => {
+                        local.highlights = m
+                            .iter()
+                            .map(|(k, v)| match v.as_str() {
+                                Some(to) => Ok((k.clone(), to.to_owned())),
+                                None => Err(format!("highlights: {k}: a group's name")),
+                            })
+                            .collect::<Result<_, _>>()?;
+                    }
+                    Some(_) => return Err("highlights: an object of groups' names".into()),
                 }
                 let text_opts = self.options.text.clone();
                 let b = &self.texts[&buf].buf;

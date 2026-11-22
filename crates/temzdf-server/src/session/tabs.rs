@@ -85,8 +85,8 @@ impl Session {
     pub(super) fn shown_anywhere(&self, pane: PaneId) -> bool {
         match self.floats.iter().find(|f| f.pane == pane) {
             Some(f) => match f.tab {
-                FloatTab::All => !self.floats_hidden,
-                FloatTab::Only(t) => self.tab_index(t).is_some_and(|i| !self.tab_floats_hidden(i)),
+                FloatTab::All => !self.floats_hidden || !f.focusable,
+                FloatTab::Only(t) => self.tab_index(t).is_some_and(|i| !self.tab_floats_hidden(i) || !f.focusable),
             },
             None => self.layouts().any(|(_, l)| l.panes().contains(&pane)),
         }
@@ -268,7 +268,7 @@ impl Session {
                 // Its own shown float takes the place, else the tab closes.
                 let tab = FloatTab::Only(self.tabs[i].id);
                 let top = (!self.floats_hidden)
-                    .then(|| self.floats.iter().rev().find(|f| f.tab == tab).map(|f| f.pane))
+                    .then(|| self.floats.iter().rev().find(|f| f.tab == tab && f.focusable).map(|f| f.pane))
                     .flatten();
                 match top {
                     Some(top) => {

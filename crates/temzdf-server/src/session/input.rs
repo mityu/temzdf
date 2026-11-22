@@ -570,14 +570,15 @@ impl Session {
     }
 
     /// The pane at a screen pixel.
-    /// The shown floats come first, top down, with their frames.
+    /// The shown floats come first, top down, with their frames; those that
+    /// never take the focus let the mouse through (Neovim's `mouse`).
     pub(super) fn pane_at(&self, x: f32, y: f32) -> Option<PaneId> {
         let cell = self.geometry.cell;
         let inside = |r: &Rect| {
             let (x0, y0) = (r.x as f32 * cell.width as f32, r.y as f32 * cell.height as f32);
             x >= x0 && y >= y0 && x < x0 + (r.w * cell.width) as f32 && y < y0 + (r.h * cell.height) as f32
         };
-        if let Some(f) = self.shown_floats().iter().rev().find(|f| inside(&f.frame)) {
+        if let Some(f) = self.focusable_floats().iter().rev().find(|f| inside(&f.frame)) {
             return Some(f.pane);
         }
         let tiled = self.layout.as_ref().map(|l| l.panes()).unwrap_or_default();
