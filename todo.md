@@ -233,10 +233,20 @@ server on one `Session`). Next and open:
     `scripts/windows-vm.sh` (a thin wrapper, "Windows in a VM" in
     `doc/dev/testing.md`) starts, stops, resets, runs commands in,
     copies to and from, and takes screenshots of a VM from the golden
-    image. Still to do: wrap `vitro build` (the golden image was rescued
-    by hand; vitro's unattended install fixes en-US and its shutdown wait
-    is 180 s, so an English ISO or a rescue step), provision it (Rust,
-    MSVC build tools, fonts), run the e2e there. The ConPTY
+    image; `build` (an English ISO, unattended, 20 minutes), `provision`
+    (Git, Node, VS Build Tools, LLVM, Zig, rustup; promoted to the next
+    golden image) and `check` (the gate on a commit in the guest) too.
+    The first `check` (2026-11-23, at 2d734c9): fmt, Biome, the
+    declarations and docs pass; clippy and the tests stop at `stylo`'s
+    build script, which needs Python (the CI runner has it, the VM not:
+    not installed, waiting for a decision). `cargo check --workspace`
+    there besides: `termpix`, `temzdf-protocol`, `temzdf-term` (Unix
+    APIs), `temzdf-pdfcore` (MSVC rejects `synctex_parser.c`'s
+    `SYNCTEX_ATTRIBUTE_FORMAT_PRINTF`), `temzdf-script` (no esbuild),
+    `temzdf-script-runner` (no WASI C compiler, `CC_wasm32_wasip1`) fail;
+    `texprintf` builds, but its tests die with `STATUS_HEAP_CORRUPTION`;
+    `tuitest`'s pty tests need `sh`. Still to do: Python or not, fonts,
+    the e2e. The ConPTY
     experiment with the in-box ConPTY is done (`doc/terminals/conpty.md`,
     `experiments/conpty/`): kitty graphics are dropped, the kitty
     keyboard, the SGR-pixel mouse and OSC 52 pass, the pass-through flag

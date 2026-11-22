@@ -571,23 +571,51 @@ and Wayland too). Wayland: 683 s before. With `gui-focus`, `gui-ime` and
 ## Windows in a VM
 
 `scripts/windows-vm.sh` runs one disposable Windows 11 VM (QEMU/KVM) through
-vitro, pinned in the script, as `scripts/macos-vm.sh` does for macOS. First
-version: it starts, stops and resets the VM from a golden image built
-beforehand (building one is not wrapped yet, nor provisioning or e2e runs):
+vitro, pinned in the script, as `scripts/macos-vm.sh` does for macOS. It
+builds the golden image from an ISO, provisions it, starts, stops and
+resets the VM from it, and runs the gate there (no e2e runs yet):
 
 ```sh
+scripts/windows-vm.sh build Win11_x64_en-us.iso  # about 20 minutes
+scripts/windows-vm.sh provision              # tools; the next golden image
 scripts/windows-vm.sh start                  # waits for the desktop
 scripts/windows-vm.sh run 'cmd /c exit 3'    # PowerShell; exits 3
 scripts/windows-vm.sh cp-in FILE guest.bin   # cp-out GUEST HOST
 scripts/windows-vm.sh screenshot             # target/windows-vm/*.png
 scripts/windows-vm.sh reset                  # a fresh overlay; stop: delete it
+scripts/windows-vm.sh check [REV]            # the gate on REV in the guest
 ```
 
+- `build` takes an English x64 ISO (vitro's answer file is en-US). With
+  Windows 11 build 26300 it ran through unattended in 20 minutes
+  (2026-11-23), nothing done by hand. `scripts/windows/build-prepare.ps1`
+  turns automatic updates off before vitro shuts the guest down, which it
+  waits 180 s for; `--keep-failed` keeps a failed build's disk in
+  `~/.local/state/vitro/builds/`.
+- `provision` runs `scripts/windows/provision.ps1` in a fresh VM: Git,
+  Node 24, VS Build Tools 2022 (the VC tools, Community license), LLVM,
+  Zig 0.15.2 (winget), rustup with stable and `wasm32-wasip1`, Biome
+  (npm, as in CI); the time zone UTC (QEMU's clock is UTC, and Windows
+  reads it as local time), no sleep or screen lock, PowerShell scripts
+  allowed (npm's shims). It restarts the guest, so that the installers'
+  pending reboot is not left to the shutdown vitro waits 180 s for, writes
+  the versions to `target/windows-vm/provision-versions.txt` and keeps the
+  VM as the next golden image (`vitro promote`). The image is about 29 GB,
+  and leaves about 44 GB free on the guest's C:.
+- `check` copies a commit (`git archive`, so not the uncommitted changes)
+  to the guest's `C:\t`, runs `npm ci` and `cargo xtask check --no-miri`
+  there; the output is `target/windows-vm/check.log`. The VM has no
+  Python yet, which `stylo`'s build script (`temzdf-mdview`) needs, so
+  clippy and the tests stop there (`todo.md` lists what else fails).
+- Each image is a new dated file in `~/.local/share/vitro/golden/`; the
+  newest is used unless `TEMZDF_WINDOWS_GOLDEN` names another. Old ones are
+  not deleted.
+
 The nix build links of vitro and the OVMF firmware, and the config vitro
-reads (`XDG_CONFIG_HOME` points there, so `~/.config/vitro/config.toml` is
-not used), are in `~/.local/state/temzdf/windows-vm/`, outside `target/`.
-The header of the script lists the known problems of vitro and their
-workarounds.
+reads (one per VM name, written on every call; `XDG_CONFIG_HOME` points
+there, so `~/.config/vitro/config.toml` is not used), are in
+`~/.local/state/temzdf/windows-vm/`, outside `target/`. The header of the
+script lists the known problems of vitro and their workarounds.
 
 ## Judged e2e scenarios
 
