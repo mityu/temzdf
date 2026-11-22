@@ -59,7 +59,9 @@
           # JetBrains Mono first, nothing from the host (its font directories,
           # /etc/fonts), so that text is drawn the same on every machine and
           # in CI. nixpkgs' makeFontsConf adds the host's directories and
-          # settings, which made CI and this machine draw differently.
+          # settings, which made CI and this machine draw differently. No
+          # cachedir: scanning six fonts takes milliseconds, and a cache in
+          # ~/.cache once went stale and hid Noto Color Emoji.
           testFontConfig =
             let
               dir = pkgs.linkFarm "temzdf-test-fonts" (
@@ -84,7 +86,6 @@
               <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
               <fontconfig>
                 <dir>${dir}</dir>
-                <cachedir prefix="xdg">temzdf-test-fontconfig</cachedir>
                 ${pkgs.lib.concatMapStrings alias [
                   "sans-serif"
                   "serif"
