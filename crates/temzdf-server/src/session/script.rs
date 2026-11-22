@@ -215,8 +215,7 @@ impl Session {
                 events(SessionEvent::Script(generation, msg));
             }
             Event::Exited(why) => {
-                eprintln!("temzdf: the script host ended: {why}");
-                events(SessionEvent::ScriptExited(generation));
+                events(SessionEvent::ScriptExited(generation, why));
             }
         });
         let host = match started {
@@ -743,10 +742,11 @@ impl Session {
     }
 
     /// The host process ended (crashed, or was killed).
-    pub(super) fn script_exited(&mut self) -> Outcome {
+    pub(super) fn script_exited(&mut self, why: &str) -> Outcome {
         if self.script.host.is_none() {
             return Outcome::None;
         }
+        eprintln!("temzdf: the script host ended: {why}");
         let loading = self.script.loading.is_some();
         let mut out = self.drop_host();
         self.host_down("the script host exited");

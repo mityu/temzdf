@@ -76,7 +76,7 @@ pub enum SessionEvent {
     /// replaced on reload, and an old one's last words must not count).
     Script(u32, FromHost),
     /// The script host of this generation ended.
-    ScriptExited(u32),
+    ScriptExited(u32, String),
     /// A text buffer's file changed (or may have: a watcher's event).
     TextFile(BufferId),
     /// A Markdown viewer's file changed (or may have).
@@ -1169,8 +1169,8 @@ impl Session {
             SessionEvent::Script(generation, msg) => {
                 return if generation == self.script.generation { self.handle_script(msg) } else { Outcome::None };
             }
-            SessionEvent::ScriptExited(generation) => {
-                return if generation == self.script.generation { self.script_exited() } else { Outcome::None };
+            SessionEvent::ScriptExited(generation, why) => {
+                return if generation == self.script.generation { self.script_exited(&why) } else { Outcome::None };
             }
             ev => self.handle_inner(ev, now),
         };
@@ -1179,7 +1179,7 @@ impl Session {
 
     fn handle_inner(&mut self, ev: SessionEvent, now: Instant) -> Outcome {
         match ev {
-            SessionEvent::Script(..) | SessionEvent::ScriptExited(_) => Outcome::None,
+            SessionEvent::Script(..) | SessionEvent::ScriptExited(..) => Outcome::None,
             SessionEvent::TextFile(buf) => {
                 self.text_file_changed(buf);
                 Outcome::None
