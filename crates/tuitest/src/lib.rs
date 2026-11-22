@@ -11,13 +11,18 @@
 //! Waiting is by condition ([`Term::wait_for`]), never by fixed sleeps; a
 //! failed wait panics with the screen, and the screen and the bytes received
 //! are written to `target/tuitest/<test name>.txt`.
+//!
+//! [`Screen::render`] draws the screen into pixels: cell backgrounds and
+//! images, no text yet (see doc/dev/testing.md).
 
 pub mod keys;
 
 use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -31,6 +36,8 @@ use libghostty_vt::terminal::{
 };
 use libghostty_vt::{RenderState, Terminal, TerminalOptions, key};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use termpix_core::geom::Rect;
+use termpix_core::raster::{RgbaImage, RgbaRef, blit};
 
 /// How long [`Term::wait_for`] waits before failing.
 pub const TIMEOUT: Duration = Duration::from_secs(15);
@@ -74,6 +81,11 @@ pub struct Cell {
     pub bold: bool,
     pub italic: bool,
     pub inverse: bool,
+    /// The background as drawn: `bg` (or the content's own background
+    /// colour, as erasing with a colour leaves) resolved through the
+    /// palette, the foreground when `inverse`; `None` for the default
+    /// background, which images below the backgrounds show through.
+    pub bg_rgb: Option<[u8; 3]>,
 }
 
 /// An image placed with the kitty graphics protocol.
@@ -91,6 +103,29 @@ pub struct Placement {
     pub width: u32,
     pub height: u32,
     pub z: i32,
+    /// The part of the image shown, `(x, y, width, height)` in its pixels.
+    pub source: (u32, u32, u32, u32),
+    /// The size it is drawn at, in screen pixels.
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+    /// Offset from the top-left cell's corner, in screen pixels.
+    pub x_offset: u32,
+    pub y_offset: u32,
+}
+
+/// Placements below this z go under the cell backgrounds (the kitty
+/// graphics protocol's rule, as in Ghostty and kitty).
+pub const BELOW_BACKGROUNDS: i32 = i32::MIN / 2;
+
+/// Images' pixels by image ID, as RGBA (shared between screens while an
+/// image is unchanged).
+#[derive(Clone, Default)]
+pub struct ImagePixels(pub BTreeMap<u32, Arc<RgbaImage>>);
+
+impl std::fmt::Debug for ImagePixels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.0.iter().map(|(id, img)| (id, (img.width, img.height)))).finish()
+    }
 }
 
 /// What the terminal shows.
@@ -100,6 +135,12 @@ pub struct Screen {
     pub cursor: Option<(u16, u16)>,
     pub images: Vec<Placement>,
     pub title: String,
+    /// Cell size in pixels.
+    pub cell: (u32, u32),
+    /// The default background colour.
+    pub background: [u8; 3],
+    /// The pixels of the images placed.
+    pub pixels: ImagePixels,
 }
 
 impl Screen {
@@ -160,6 +201,133 @@ impl Screen {
             .collect();
         s.trim_end().to_owned()
     }
+
+    /// The screen as pixels, as a terminal would draw it but without text
+    /// and the cursor: the default background, then placements below the
+    /// backgrounds ([`BELOW_BACKGROUNDS`]), then the cells' own
+    /// backgrounds ([`Cell::bg_rgb`]), then the other placements, each set
+    /// in z order. A placement shows its source rectangle scaled to its
+    /// pixel size by nearest neighbour (simple and exact; terminals that
+    /// filter scaled images differ from it only where an image is scaled,
+    /// and temzdf draws its images at their own size), placed at its cell
+    /// plus its offsets, blended source-over on sRGB values and
+    /// clipped to the screen. Images through Unicode placeholders (inside
+    /// tmux) are not drawn. Text is in [`Screen::text_mask`].
+    pub fn render(&self) -> RgbaImage {
+        let (cw, ch) = self.cell;
+        let rows = self.cells.len() as u32;
+        let cols = self.cells.iter().map(Vec::len).max().unwrap_or(0) as u32;
+        let [r, g, b] = self.background;
+        let mut out = RgbaImage::new(cols * cw, rows * ch, [r, g, b, 255]);
+        let draw = |out: &mut RgbaImage, below: bool| {
+            for p in self.images.iter().filter(|p| (p.z < BELOW_BACKGROUNDS) == below) {
+                let Some(img) = self.pixels.0.get(&p.image) else { continue };
+                let (sx, sy, sw, sh) = p.source;
+                let dst = Rect::new(
+                    p.col * cw as i32 + p.x_offset as i32,
+                    p.row * ch as i32 + p.y_offset as i32,
+                    p.pixel_width,
+                    p.pixel_height,
+                );
+                let src = RgbaRef { width: img.width, height: img.height, data: &img.data };
+                blit(out, dst, src, Rect::new(sx as i32, sy as i32, sw, sh));
+            }
+        };
+        draw(&mut out, true);
+        for (y, row) in self.cells.iter().enumerate() {
+            for (x, c) in row.iter().enumerate() {
+                if let Some([r, g, b]) = c.bg_rgb {
+                    fill(&mut out, x as u32 * cw, y as u32 * ch, cw, ch, [r, g, b, 255]);
+                }
+            }
+        }
+        draw(&mut out, false);
+        out
+    }
+
+    /// Where [`Screen::render`] leaves text out: opaque white over each cell
+    /// holding a character (both halves of a wide one), transparent
+    /// elsewhere. Pixels under it are not to be compared.
+    pub fn text_mask(&self) -> RgbaImage {
+        let (cw, ch) = self.cell;
+        let rows = self.cells.len() as u32;
+        let cols = self.cells.iter().map(Vec::len).max().unwrap_or(0) as u32;
+        let mut out = RgbaImage::new(cols * cw, rows * ch, [0, 0, 0, 0]);
+        for (y, row) in self.cells.iter().enumerate() {
+            for (x, c) in row.iter().enumerate() {
+                let wide_tail = c.spacer && x > 0 && !row[x - 1].text.trim().is_empty();
+                if !c.text.trim().is_empty() || wide_tail {
+                    fill(&mut out, x as u32 * cw, y as u32 * ch, cw, ch, [255, 255, 255, 255]);
+                }
+            }
+        }
+        out
+    }
+
+    /// [`Screen::render`] and [`Screen::text_mask`], written to
+    /// `target/tuitest/NAME.png` and `NAME.mask.png` for people to look at.
+    /// Returns the rendering.
+    pub fn save_render(&self, name: &str) -> RgbaImage {
+        let dir = out_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let img = self.render();
+        img.save_png(&dir.join(format!("{name}.png"))).expect("write the rendering");
+        self.text_mask().save_png(&dir.join(format!("{name}.mask.png"))).expect("write the text mask");
+        img
+    }
+}
+
+/// Fill a rectangle of `img` (clipped to it) with `color`.
+fn fill(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, color: [u8; 4]) {
+    let x1 = (x + w).min(img.width);
+    for yy in y..(y + h).min(img.height) {
+        for xx in x..x1 {
+            let i = (yy as usize * img.width as usize + xx as usize) * 4;
+            img.data[i..i + 4].copy_from_slice(&color);
+        }
+    }
+}
+
+/// Where failure dumps and renderings go: `target/tuitest/`.
+pub fn out_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tuitest")
+}
+
+/// An image as the terminal stores it, as RGBA. `None` for formats the
+/// harness does not take: PNG never gets stored (the harness sets no PNG
+/// decoder, so the terminal refuses it; termpix sends raw RGB or RGBA).
+fn to_rgba(
+    format: libghostty_vt::kitty::graphics::ImageFormat,
+    compression: libghostty_vt::kitty::graphics::Compression,
+    data: &[u8],
+    width: u32,
+    height: u32,
+) -> Option<RgbaImage> {
+    use libghostty_vt::kitty::graphics::{Compression, ImageFormat};
+    let inflated;
+    let data = match compression {
+        Compression::None => data,
+        Compression::ZlibDeflate => {
+            let mut out = Vec::new();
+            flate2::read::ZlibDecoder::new(data).read_to_end(&mut out).ok()?;
+            inflated = out;
+            &inflated
+        }
+        _ => return None,
+    };
+    let n = width as usize * height as usize;
+    let rgba: Vec<u8> = match format {
+        ImageFormat::Rgba => data.get(..n * 4)?.to_vec(),
+        ImageFormat::Rgb => {
+            data.get(..n * 3)?.as_chunks::<3>().0.iter().flat_map(|&[r, g, b]| [r, g, b, 255]).collect()
+        }
+        ImageFormat::GrayAlpha => {
+            data.get(..n * 2)?.as_chunks::<2>().0.iter().flat_map(|&[v, a]| [v, v, v, a]).collect()
+        }
+        ImageFormat::Gray => data.get(..n)?.iter().flat_map(|&v| [v, v, v, 255]).collect(),
+        _ => return None,
+    };
+    RgbaImage::from_raw(width, height, rgba)
 }
 
 /// A directory removed when dropped (for sockets, logs and state of one test).
@@ -252,6 +420,8 @@ pub struct Term {
     tmux: Option<Tmux>,
     /// Text the program copied (OSC 52), oldest first.
     copied: Rc<RefCell<Vec<String>>>,
+    /// Images converted to RGBA, by ID, with the generation converted.
+    pixels: HashMap<u32, (u64, Arc<RgbaImage>)>,
 }
 
 impl Term {
@@ -416,6 +586,7 @@ impl Term {
             size,
             tmux,
             copied,
+            pixels: HashMap::new(),
         }
     }
 
@@ -453,7 +624,14 @@ impl Term {
         self.pump(Duration::ZERO);
         let mut cells = Vec::new();
         let mut cursor = None;
+        let mut background = [0, 0, 0];
         if let Ok(snapshot) = self.render.update(&self.terminal) {
+            let colors = snapshot.colors().ok();
+            if let Some(c) = &colors {
+                background = [c.background.r, c.background.g, c.background.b];
+            }
+            let foreground =
+                colors.as_ref().map_or([255, 255, 255], |c| [c.foreground.r, c.foreground.g, c.foreground.b]);
             if let Ok(mut rows) = self.rows_it.update(&snapshot) {
                 while let Some(row) = rows.next() {
                     let mut line = Vec::new();
@@ -469,7 +647,13 @@ impl Term {
                                 Ok(s) => (color(s.fg_color), color(s.bg_color), s.bold, s.italic, s.inverse),
                                 Err(_) => (Color::Default, Color::Default, false, false, false),
                             };
-                            line.push(Cell { text, spacer, fg, bg, bold, italic, inverse });
+                            let rgb = |c: Option<libghostty_vt::style::RgbColor>| c.map(|c| [c.r, c.g, c.b]);
+                            let bg_rgb = if inverse {
+                                Some(rgb(c.fg_color().ok().flatten()).unwrap_or(foreground))
+                            } else {
+                                rgb(c.bg_color().ok().flatten())
+                            };
+                            line.push(Cell { text, spacer, fg, bg, bold, italic, inverse, bg_rgb });
                         }
                     }
                     cells.push(line);
@@ -481,21 +665,45 @@ impl Term {
                 cursor = Some((c.x, c.y));
             }
         }
-        let images = self.images();
+        let (images, pixels) = self.images();
         let title = self.terminal.title().map(str::to_owned).unwrap_or_default();
-        Screen { cells, cursor, images, title }
+        let (_, _, cw, ch) = *self.size.borrow();
+        Screen { cells, cursor, images, title, cell: (cw, ch), background, pixels }
     }
 
-    fn images(&mut self) -> Vec<Placement> {
+    /// The placements shown, and their images' pixels.
+    fn images(&mut self) -> (Vec<Placement>, ImagePixels) {
         let mut out = Vec::new();
-        let Ok(graphics) = self.terminal.kitty_graphics() else { return out };
-        let Ok(mut it) = self.placements.update(&graphics) else { return out };
+        let mut pixels = ImagePixels::default();
+        let Ok(graphics) = self.terminal.kitty_graphics() else { return (out, pixels) };
+        let Ok(mut it) = self.placements.update(&graphics) else { return (out, pixels) };
         while let Some(p) = it.next() {
             let Ok(id) = p.image_id() else { continue };
             let Some(image) = graphics.image(id) else { continue };
             let pos = p.viewport_pos(&image, &self.terminal).ok().flatten();
             let grid = p.grid_size(&image, &self.terminal).unwrap_or_default();
             let Some(pos) = pos else { continue };
+            let size = p.pixel_size(&image, &self.terminal).unwrap_or_default();
+            let src = p.source_rect(&image).unwrap_or_default();
+            if let std::collections::btree_map::Entry::Vacant(slot) = pixels.0.entry(id) {
+                let generation = image.generation().unwrap_or(0);
+                let cached = self.pixels.get(&id).filter(|(g, _)| *g == generation).map(|(_, img)| img.clone());
+                let converted = cached.or_else(|| {
+                    let img = to_rgba(
+                        image.format().ok()?,
+                        image.compression().ok()?,
+                        image.data().ok()?,
+                        image.width().ok()?,
+                        image.height().ok()?,
+                    )?;
+                    let img = Arc::new(img);
+                    self.pixels.insert(id, (generation, img.clone()));
+                    Some(img)
+                });
+                if let Some(img) = converted {
+                    slot.insert(img);
+                }
+            }
             out.push(Placement {
                 image: id,
                 placement: p.placement_id().unwrap_or(0),
@@ -506,10 +714,17 @@ impl Term {
                 width: image.width().unwrap_or(0),
                 height: image.height().unwrap_or(0),
                 z: p.z().unwrap_or(0),
+                source: (src.x, src.y, src.width, src.height),
+                pixel_width: size.width,
+                pixel_height: size.height,
+                x_offset: p.x_offset().unwrap_or(0),
+                y_offset: p.y_offset().unwrap_or(0),
             });
         }
+        // Images no longer placed leave the cache.
+        self.pixels.retain(|id, _| pixels.0.contains_key(id));
         out.sort_by_key(|p| (p.z, p.row, p.col));
-        out
+        (out, pixels)
     }
 
     /// Wait until `done` holds for the screen; panics (with a dump) after
@@ -548,7 +763,7 @@ impl Term {
     /// in `target/tuitest/`.
     pub fn fail(&self, message: &str, screen: &Screen) -> ! {
         let name = std::thread::current().name().unwrap_or("tuitest").replace("::", "-");
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tuitest");
+        let dir = out_dir();
         let _ = std::fs::create_dir_all(&dir);
         let dump = format!(
             "{message}\n--- screen ({} images, cursor {:?}) ---\n{}\n---\n",
@@ -774,6 +989,43 @@ mod tests {
         let text = s.text();
         assert!(text.contains("\\b"), "{text}");
         assert!(text.contains("033   [   1   0   4   ;   5   u"), "{text}");
+    }
+
+    #[test]
+    fn renders_backgrounds_and_images() {
+        // A 2x2 RGB image (red, green / blue, white), placed: at (0, 0)
+        // offset by (3, 4) px; at row 4 scaled to 2x1 cells; under the
+        // backgrounds at row 6 below a red cell and in the default
+        // background.
+        let img = "f=24,s=2,v=2,C=1,q=2;/wAAAP8AAAD/////";
+        let script = format!(
+            "printf '\\033_Ga=T,i=1,X=3,Y=4,{img}\\033\\\\\\033[4;1H\\033_Ga=T,i=2,c=2,r=1,{img}\\033\\\\\
+             \\033[6;1H\\033[41m  \\033[0m\\033[6;1H\\033_Ga=T,i=3,z=-1073741825,{img}\\033\\\\\
+             \\033[6;6H\\033_Ga=T,i=4,z=-1073741825,{img}\\033\\\\\\033[8;1Hdone'; sleep 5"
+        );
+        let mut t = Term::spawn(&["sh", "-c", &script], &Options::default());
+        let s = t.wait_for("the images", |s| s.images.len() == 4 && s.contains("done"));
+        let out = s.render();
+        assert_eq!((out.width, out.height), (1000, 600));
+        let [r, g, b] = s.background;
+        let bg = [r, g, b, 255];
+        let (red, green, blue) = ([255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]);
+        // Offsets.
+        assert_eq!([out.pixel(2, 4), out.pixel(3, 4), out.pixel(4, 4), out.pixel(3, 5)], [bg, red, green, blue]);
+        // Scaled by nearest neighbour to 20x20.
+        assert_eq!(
+            [out.pixel(9, 69), out.pixel(10, 60), out.pixel(0, 70), out.pixel(19, 79)],
+            [red, green, blue, [255; 4]]
+        );
+        // Under the backgrounds: hidden by the red cells, shown in the default.
+        let cell_red = out.pixel(15, 105);
+        assert!(cell_red != bg && cell_red[0] > 128, "{cell_red:?}");
+        assert_eq!(out.pixel(0, 100), cell_red);
+        assert_eq!(out.pixel(50, 100), red);
+        // Text is left to the mask.
+        let mask = s.text_mask();
+        assert_eq!(mask.pixel(5, 145)[3], 255, "\"done\" on row 8");
+        assert_eq!(mask.pixel(5, 105)[3], 0);
     }
 
     #[test]

@@ -6203,9 +6203,11 @@ dependencies = [
 name = "tuitest"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "libghostty-vt",
  "libghostty-vt-sys",
  "portable-pty",
+ "termpix-core",
 ]
 
 [[package]]

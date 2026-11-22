@@ -502,6 +502,110 @@ fn a_pdf_shows_its_pages() {
     assert_eq!(t.wait_exit(), 0);
 }
 
+/// Wait until the client's latest frame is complete (every page in sight
+/// painted) and on the screen, and `done` holds: the client's log
+/// (`temzdf.log`) past `from` bytes says so last, as scripts/e2e.sh's
+/// `wait_complete` reads it. No new line counts too: the frontend writes
+/// one only when a frame shown was incomplete, before its bytes reach the
+/// terminal, so with `done` seeing the new frame none means it came
+/// complete. Images alone do not tell: the Markdown viewer places a blank
+/// stand-in where a strip is not painted yet.
+fn wait_complete(env: &Env, t: &mut Term, from: usize, done: impl Fn(&Screen) -> bool) -> Screen {
+    let log = env.path("log/temzdf.log");
+    t.wait_for("a complete frame", |s| {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        let last = text.get(from..).unwrap_or("").lines().rfind(|l| l.contains("complete frame")).map(str::to_owned);
+        done(s) && last.is_none_or(|l| l.contains("complete frame written"))
+    });
+    // The bytes of the frame logged may still be on their way.
+    t.settle(std::time::Duration::from_millis(300))
+}
+
+/// The length of the client's log so far (for [`wait_complete`]).
+fn log_len(env: &Env) -> usize {
+    std::fs::metadata(env.path("log/temzdf.log")).map_or(0, |m| m.len() as usize)
+}
+
+/// The standalone PDF viewer's first screen of sample.pdf, rendered
+/// (written to `target/tuitest/NAME.png`).
+fn pdf_shot(name: &str) -> (Screen, termpix::raster::RgbaImage) {
+    let env = Env::new(name);
+    let pdf = fixture("sample.pdf");
+    let mut t = Term::spawn(&[BIN, "standalone", "pdf", &pdf.display().to_string()], &env.options());
+    let s = wait_complete(&env, &mut t, 0, |s| !s.images.is_empty() && s.title.contains("1 / 3"));
+    let img = s.save_render(name);
+    (s, img)
+}
+
+/// The Markdown viewer's graphics mode showing a short document, rendered
+/// (written to `target/tuitest/NAME.png`).
+fn markdown_shot(name: &str) -> (Screen, termpix::raster::RgbaImage) {
+    let env = Env::new(name);
+    let file = env.path("doc.md");
+    std::fs::write(&file, "# Title\n\nSome *text* and $\\alpha^2$.\n\n- one\n- two\n\n```\ncode\n```\n").unwrap();
+    env.config("config.ts", &markdown_config(&file));
+    let mut t = Term::spawn(&[BIN, "-s", "mr", file.to_str().unwrap()], &env.options());
+    t.wait_text("# Title");
+    t.key("F5");
+    t.wait_text("═════");
+    let from = log_len(&env);
+    t.key("Tab");
+    let s = wait_complete(&env, &mut t, from, |s| !s.images.is_empty() && s.text().contains("markdown"));
+    let img = s.save_render(name);
+    (s, img)
+}
+
+/// The pixels of `img` that differ from `other`'s (both the same size).
+fn differing_pixels(img: &termpix::raster::RgbaImage, other: &termpix::raster::RgbaImage) -> usize {
+    assert_eq!((img.width, img.height), (other.width, other.height));
+    img.data.as_chunks::<4>().0.iter().zip(other.data.as_chunks::<4>().0).filter(|(a, b)| a != b).count()
+}
+
+#[test]
+fn a_pdf_screen_renders_to_pixels() {
+    let (s, img) = pdf_shot("pdf-render");
+    assert_eq!((img.width, img.height), (1000, 600));
+    // The page: white above its title, the title dark; beside the page
+    // the pane's dark background, the same on both sides.
+    assert_eq!(img.pixel(500, 100), [255, 255, 255, 255]);
+    let title = (350..650).map(|x| img.pixel(x, 208)).min_by_key(|p| p[0]).unwrap();
+    assert!(title[0] < 100, "the title is drawn: {title:?}");
+    let left = img.pixel(4, 300);
+    assert_eq!(left, img.pixel(995, 300));
+    assert!(left[..3].iter().all(|&c| c < 100), "{left:?}");
+    // Text only on the status line (rows 28 and 29).
+    let mask = s.text_mask();
+    let masked = |y0: u32, y1: u32| (y0..y1).any(|y| (0..mask.width).any(|x| mask.pixel(x, y)[3] != 0));
+    assert!(!masked(0, 560) && masked(560, 600));
+}
+
+#[test]
+fn a_markdown_screen_renders_to_pixels() {
+    let (s, img) = markdown_shot("markdown-render");
+    // The page from the top, white around a dark heading; below it the
+    // terminal's default background.
+    assert_eq!(img.pixel(500, 20), [255, 255, 255, 255]);
+    let heading = (30..110).map(|x| img.pixel(x, 70)).min_by_key(|p| p[0]).unwrap();
+    assert!(heading[0] < 100, "the heading is drawn: {heading:?}");
+    let page_bottom = s.images.iter().map(|p| p.row * 20 + p.y_offset as i32 + p.pixel_height as i32).max().unwrap();
+    let [r, g, b] = s.background;
+    assert_eq!(img.pixel(500, page_bottom as u32 + 10), [r, g, b, 255]);
+}
+
+#[test]
+fn a_pdf_shot_is_the_same_each_time() {
+    let (_, a) = pdf_shot("pdf-again-1");
+    let (_, b) = pdf_shot("pdf-again-2");
+    assert_eq!(differing_pixels(&a, &b), 0, "see target/tuitest/pdf-again-*.png");
+}
+
+#[test]
+fn a_markdown_shot_is_the_same_each_time() {
+    let (_, a) = markdown_shot("markdown-again-1");
+    let (_, b) = markdown_shot("markdown-again-2");
+    assert_eq!(differing_pixels(&a, &b), 0, "see target/tuitest/markdown-again-*.png");
+}
+
 #[test]
 fn inside_tmux() {
     if !tuitest::have_tmux() {

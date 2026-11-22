@@ -129,6 +129,21 @@ gives tests:
 - Waiting by condition only: `wait_for(what, |screen| ...)`, `wait_text`,
   `wait_exit`. A failed wait panics with the screen and leaves it, plus the raw
   bytes received, in `target/tuitest/<test>.txt` and `.out`.
+- Pixels: `Screen::render()` draws the screen as a terminal would, for
+  any kind of pane: the default background, images below the backgrounds,
+  the cells' backgrounds, then the other images, each image cropped to its
+  source rectangle, scaled by nearest neighbour to its size and placed at
+  its cell plus offsets. Text and the cursor are not drawn; `text_mask()`
+  marks the cells holding text, to leave out of comparisons. Images shown
+  through Unicode placeholders (inside tmux) are not drawn either.
+  `save_render(NAME)` writes both to `target/tuitest/NAME.png` and
+  `NAME.mask.png` (`a_pdf_screen_renders_to_pixels`,
+  `a_markdown_screen_renders_to_pixels`, and `*_shot_is_the_same_each_time`
+  checking two runs give the same pixels). Images do not prove a screen
+  finished: the Markdown viewer places a blank stand-in for each strip not
+  painted yet. The tests wait for the client's log (`temzdf.log`) to say
+  last that a complete frame was written (`wait_complete` in tui.rs), as
+  `scripts/e2e.sh` does.
 
 `crates/temzdf/tests/tui.rs` gives every test its own `XDG_RUNTIME_DIR`,
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `TEMZDF_LOG_DIR`, so the user's
