@@ -96,7 +96,7 @@ pub(super) fn config_session(
 
 /// A session editing `text` (in `dir`/case.txt), with the configuration
 /// file `config`.
-pub(super) fn config_file_session(
+fn config_file_session(
     dir: &Path,
     text: &str,
     config: Option<PathBuf>,

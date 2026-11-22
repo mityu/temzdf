@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use temzdf_protocol::script::ScriptValue;
 
-use super::host_tests::{GEOMETRY, config_file_session, config_session, errors, settle, type_keys};
+use super::host_tests::{GEOMETRY, config_session, errors, settle, type_keys};
 use super::*;
 use crate::keymap::notation;
 use temzdf_scene::sink::channel_sink;
@@ -431,23 +431,6 @@ keymap.add("vim/normal", "gZ", (c) => action.setVar("pane", "keys", `${c.count} 
     let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("keys".into())];
     let got = s.run_command("get-var", &args, Instant::now()).unwrap().0;
     assert_eq!(got, ScriptValue::Str("3 gZ".into()));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-fn command_cases() {
-    // runtime/test/command.ts: <F5> runs temzdf/command's cases.
-    let dir = std::env::temp_dir().join(format!("temzdf-command-cases-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let config = Path::new(env!("CARGO_MANIFEST_DIR")).join("../temzdf-script/runtime/test/command.ts");
-    let (mut s, rx) = config_file_session(&dir, "x\n", Some(config)).unwrap();
-    assert_eq!(s.history.current(), "vim/normal", "{:?}", errors(&s));
-    let seen = type_keys(&mut s, &rx, "<F5>", None).unwrap();
-    assert!(seen.is_empty(), "{}", seen.join("\n"));
-    let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("commandTests".into())];
-    let ran = s.run_command("get-var", &args, Instant::now()).unwrap().0;
-    assert!(ran.as_str().is_some_and(|r| r.starts_with("ok ")), "the cases did not run: {ran:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

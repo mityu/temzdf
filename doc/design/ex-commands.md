@@ -4,8 +4,8 @@ Commands typed on a `:` command line, as Vim's Ex commands, that scripts
 (and the user's configuration) define. Agreed with the user on 2026-11-19.
 
 Status: built, in TypeScript only: the module `temzdf/command`
-(`crates/temzdf-script/runtime/command.ts`; cases in
-`crates/temzdf-script/runtime/test/command.ts`). The Vim mode defines its
+(`crates/temzdf-script/runtime/command.ts`; its tests in
+`crates/temzdf-script/runtime/command.test.ts`). The Vim mode defines its
 commands with it (`crates/temzdf-script/runtime/vim/ex.ts`, in its
 namespace; those on text with a `when` for text panes), and two command
 lines run it: the Vim mode's `:` in text panes and `<C-b>:` (the normal
