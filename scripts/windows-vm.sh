@@ -30,8 +30,8 @@
 #                    image lands beside the others in vitro's golden
 #                    directory, the older ones are kept
 #   provision        start a fresh VM, run scripts/windows/provision.ps1 in
-#                    it (Git, Node, VS Build Tools, LLVM, Zig, rustup; no
-#                    sleep or screen lock; UTC), restart it and keep it as the
+#                    it (Git, Node, VS Build Tools, LLVM, Zig, rustup,
+#                    Python, Biome, esbuild; no sleep or screen lock; UTC), restart it and keep it as the
 #                    next golden image (vitro promote); the versions go to
 #                    target/windows-vm/provision-versions.txt
 #   check [REV] [-- ARGS...]  copy REV (default HEAD; `git archive`, so only
@@ -124,7 +124,7 @@ tools() {
 kind = \"unattended-install\"
 source = \"$iso\"
 virtio_iso = \"$virtio_iso\"
-disk_size = \"80G\"
+disk_size = \"120G\"
 build_timeout = \"90m\"
 provision = \"$PWD/scripts/windows/build-prepare.ps1\""
   else
@@ -223,6 +223,7 @@ case $cmd in
     vitro exec "$vm" "chcp 65001 > \$null; [Console]::OutputEncoding=[Text.Encoding]::UTF8; \
       git --version; node --version; npm --version; zig version; clang --version | Select-Object -First 1; \
       rustup --version 2>&1 | Select-Object -First 1; rustc --version; cargo --version; rustup target list --installed; biome --version; \
+      python --version; esbuild --version; \
       & \"\${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe\" -products * -format text | Select-String '^(displayName|catalog_productDisplayVersion):'; \
       Get-TimeZone | Select-Object -ExpandProperty Id; Get-Date -Format o" 2>&1 | tee "$out/provision-versions.txt"
     vitro promote "$vm"

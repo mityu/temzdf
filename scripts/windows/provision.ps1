@@ -67,6 +67,12 @@ if (($machinePath -split ';') -notcontains $llvm) {
 # As in CI (.github/workflows/ci.yml) and the dev shell.
 Install zig.zig @('--version', '0.15.2')
 Install Rustlang.Rustup
+# stylo's build script (temzdf-mdview, through blitz-dom) runs python.exe
+# (its Python packages come with it); the CI's runner image has Python. For
+# all users and first on the machine's PATH, ahead of the Store's python.exe
+# stub in the user's.
+Install Python.Python.3.14 @('--scope', 'machine', '--override',
+  '/quiet InstallAllUsers=1 PrependPath=1 Include_test=0')
 
 # A new process sees the machine's and the user's PATH as winget left them.
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
@@ -83,6 +89,13 @@ if ($LASTEXITCODE -ne 0) { throw "rustup target add: $LASTEXITCODE" }
 Step 'biome'
 npm i -g --no-audit --no-fund '@biomejs/biome@2.6.8'
 if ($LASTEXITCODE -ne 0) { throw "npm i -g biome: $LASTEXITCODE" }
+
+# temzdf-script's build.rs bundles the scripts with it; the CI's build
+# without Nix installs it the same way (unpinned there; this is the dev
+# shell's version).
+Step 'esbuild'
+npm i -g --no-audit --no-fund 'esbuild@0.27.2'
+if ($LASTEXITCODE -ne 0) { throw "npm i -g esbuild: $LASTEXITCODE" }
 
 Step 'done'
 exit 0
