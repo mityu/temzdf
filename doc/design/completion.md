@@ -30,6 +30,158 @@ shared between the minibuffer (`completing-read`) and in-buffer
 completion (`completion-at-point-functions`); only the entry points and
 the UI differ.
 
+Everything here is TypeScript in the shipped scripts: temzdf's core is
+Rust and everything else extends it in scripts. Rust gains only what a
+script cannot do (`PaneScrolled`, below); matching speed in the script
+host is judged after using it (see "Speed").
+
+## Items
+
+```ts
+interface Item<T extends Detail = {}> {
+  readonly id: string | number;          // unique within its source
+  readonly value: string;                // what matchers match
+  readonly detail: T;                    // the source's own data, typed
+  label?: string;                        // what is shown (default: value); set by renderers only
+  decorations?: readonly Decoration[];   // matchers add matched parts, renderers styling
+}
+interface Decoration { start: number; length: number; style?: string }
+```
+
+- As vim-fall's `IdItem`, with three changes: positions count UTF-16 code
+  units (JavaScript strings and temzdf's text positions both do; vim-fall
+  counts bytes), `id` is a string or number (the engine compares and keys
+  by it) and unique within its source (the engine tells sources apart
+  when it mixes them).
+- `detail` carries what each part adds: refiners turn `Item<V>` into
+  `Item<V & U>` (vim-fall's way), and a matcher's score goes there too.
+  Scripts get freedom and the responsibility that comes with it.
+- Matchers match `value` and add the matched parts to `decorations`, at
+  a point where nothing has set `label` (so positions on `value` are
+  positions on what is shown). Only renderers set `label`, after
+  matching; a renderer that changes it moves the decorations along
+  (vim-fall's rule: respect and extend existing decorations). A source or
+  refiner that wants another display puts what it needs in `detail` for a
+  renderer.
+- Completion's own fields (a range, the text to insert, a kind) are not
+  here: the completion layer adds them (`Item<T> & { range?, ... }`);
+  LSP's own data (`data`, `command`) goes in `detail`.
+- Once script-made TUI panes exist, a renderer may return an element tree
+  (JSX) instead of a label and decorations, with a helper that splits a
+  value into matched and unmatched spans; plain label and decorations
+  stay the simple path.
+
+## Collecting, matching, sorting
+
+- A session (a fuzzy finder's, or one completion) keeps, per source, the
+  running collection and its abort signal, the items collected and its
+  state (collecting, done, failed; for completion also `prev`); and over
+  all: the matched items (sorted), the marked items' ids, errors.
+- Items arrive in batches from a source's async generator, through its
+  refiners. While the query stays, only new batches are matched; a new
+  query aborts the running match (an `AbortController` per generation)
+  and matches everything collected again. Collecting goes on.
+- Matchers and sorters are written plainly (`for await`, `yield`), given
+  arrays of items (`{ query, items }`). The engine breaks the work up: it
+  takes the matched items in chunks (1000 items or 100 ms, as vim-fall's
+  match processor) and waits for a timer (`setTimeout`) between chunks.
+  The script host runs pending promise jobs until none is left before it
+  takes the session's next message (JavaScript's event loop: microtasks
+  before the next task), so a chain of `yield`s alone would keep mapped
+  functions waiting; a timer lets the host take messages in between
+  (vim-fall does the same with `delay(0)`). Each job also stays far below
+  the 10 s unattended limit.
+- Renderers run only on what is written to the list (below), not on
+  every match.
+- Combining several matchers, sorters, renderers, previewers, actions and
+  sources follows vim-fall (`composeMatchers`, `composeSorters`,
+  `refineSource`, `composeSources`, ...). A few matchers are shipped;
+  which is the default is not important.
+
+## The list
+
+- The list is a text buffer (no file), one candidate per line, in a pane
+  without the focus (the prompt or the edited buffer has it). The
+  selected candidate is the list pane's cursor line, shown by
+  `cursorline`; moving, scrolling and keeping the cursor in view
+  (`scrolloff`, `reveal`, `scroll`, the mouse wheel) are the text pane's
+  own. Decorations become the buffer's decorations.
+- The engine does not write every match: it writes the first part and
+  adds more in chunks as results come, rewriting the first screens while
+  the order changes (sorting by score moves later items up) and keeping
+  the selected candidate (by id) on the cursor line. It writes more when
+  the cursor nears the end (its own keys move the cursor) or when the
+  list scrolls near the end: `PaneScrolled`, an event added in Rust for
+  this (Vim's `WinScrolled`), also wanted for highlighting only the
+  visible range later (tree-sitter, LSP semantic tokens).
+- What the engine hands the UI is small: the lines (labels and
+  decorations), the counts (collected, matched), the state (collecting,
+  matching, done), the marked ids, errors. No query (the prompt or the
+  buffer has it) and no scroll offset (the pane has it). The engine reads
+  the selected candidate from the list pane's cursor line. A fuzzy
+  finder's screen and completion's popup are two UIs over this.
+- Operations are the session's methods (move the cursor, mark, invoke an
+  action, cancel), called from key mappings.
+
+## Actions
+
+```ts
+interface Action<T = {}> {
+  invoke(
+    p: { item: Item<T> | undefined; marked: readonly Item<T>[]; matched: readonly Item<T>[] },
+    o: { signal: AbortSignal; action: Actions },
+  ): void | true | Promise<void | true>;   // true keeps the session open
+}
+```
+
+- As vim-fall's, with the actions to use passed in (`ctx.action`: an
+  action runs asynchronously, where plain `action.*` has no context).
+  Both the cursor's item and the marked ones are passed; a helper gives
+  "the marked ones, else the cursor's".
+- A session has named actions and a default one; key mappings invoke one
+  by name. Picking an action is a fuzzy finder over that table.
+- Accepting a completion is an action too: the default one replaces the
+  candidate's range (else the anchor to the cursor) through the adapter;
+  LSP's additional edits and command are actions composed on it. The
+  completion layer passes the source's `CompletionContext` along; the
+  details are decided with the completion layer.
+
+## Fuzzy finder sources
+
+```ts
+interface Source<T>  { collect(p: { args: readonly string[] }, o: { signal: AbortSignal }): AsyncIterable<Item<T>> }
+interface Curator<T> { curate(p: { args: readonly string[]; query: string }, o: { signal: AbortSignal }): AsyncIterable<Item<T>> }
+interface Refiner<T, U> { refine<V extends T>(p: { items: AsyncIterable<Item<V>> }, o: { signal: AbortSignal }): AsyncIterable<Item<V & U>> }
+```
+
+vim-fall's; `args` are the finder's arguments as invoked. What a source
+needs beyond them (the working directory, the current buffer) it reads
+with helpers. Completion's sources (below) take a context they find
+instead of `args`; refining, matching and sorting are shared.
+
+## Modules and definitions
+
+- `temzdf/ff`: the engine (sessions, the pipeline, the list), the types,
+  the combinators. `temzdf/ff/completion`: the completion layer (finding
+  contexts, registration, groups, the adapter), on `temzdf/ff`. Shipped
+  matchers, sorters, renderers, actions and common sources go in a module
+  of their own (`temzdf/ff/builtin`, name not final).
+- A fuzzy finder is defined by name, as vim-fall's pickers:
+  `ff.define("file", { source, matchers, sorters, renderers, actions,
+  defaultAction })`, and started by an Ex command (`:FF NAME ARGS`) or a
+  function (`ff.start(NAME, args)`).
+
+## Speed
+
+Measured in the script host (2026-11-22, a debug build, 100k path-like
+strings averaging 40 characters): one query took 2-7 s with npm `fzf`
+(v2, its default), 1-2 s with v1, 0.3-0.5 s with a plain subsequence
+check and 0.1-0.3 s with `fuzzysort` (top 50); building `fzf`'s index
+took 0.8 s; Node is 20-40 times faster. Completion's lists (hundreds to
+thousands) are fine; a fuzzy finder over 100k files needs narrowing only
+the previous matches when the query extends (`todo.md`) and a light
+default matcher. Rust is considered only if that is still unusable.
+
 ## Completion sources
 
 ```ts

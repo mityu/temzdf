@@ -31,8 +31,9 @@ the way, with the reasons.
   conditions on mappings (`when`), namespaces, transient modes (submodes).
 - [design/completion.md](design/completion.md): completion and fuzzy
   finding for scripts, a draft (nothing built): the skeleton shared with
-  fuzzy finders, completion sources (`findContext`, the anchor), how
-  sources mix (groups), what is open.
+  fuzzy finders (items, the pipeline, the list buffer, actions, modules
+  `temzdf/ff`), completion sources (`findContext`, the anchor), how
+  sources mix (groups), matching speed in the script host.
 - [design/floating-panes.md](design/floating-panes.md): floating panes,
   and bars on panes and the window.
 - [design/tui-panes.md](design/tui-panes.md): script-made TUI panes, a

@@ -89,28 +89,31 @@ server on one `Session`). Next and open:
 ## Deferred
 
 - Completion and fuzzy finding for scripts (`doc/design/completion.md`,
-  a draft). Still to decide:
-  - Candidate (`Item`) fields; removing duplicates across sources; default
-    matcher and sorting across sources (scores, `priority`, `sortText`);
-    whether fuzzy matching many candidates in QuickJS is fast enough (else a
-    matching action in Rust).
-  - Accepting: edits, snippets (none yet), additional edits, undo grouping,
+  a draft; the shared foundation and completion's sources are decided).
+  Order: the fuzzy finder and completion framework (`temzdf/ff`) before
+  an LSP client; the first use wanted is completing Ex commands in the
+  command line, which is a text buffer like Vim's cmdwin, so it is
+  insert-mode completion in a text pane and completion's UI (a popup over
+  the list buffer) comes before the fuzzy finder's. Still to decide:
+  - Completion's own item fields, removing duplicates across sources,
+    sorting across sources (scores, `priority`, `sortText`).
+  - Accepting a completion (the default action and what composes on
+    it): edits, snippets (none yet), additional edits, undo grouping,
     `.` repeat.
-  - Keys and the menu: select, accept, cancel; insert on select or not;
-    mappings only while the menu shows (a `when` condition).
-  - Rendering and previewing, resolving details lazily, ghost text.
+  - Keys and the popup: select, accept, cancel; insert on select or not;
+    mappings only while it shows (a `when` condition).
+  - Previewing, resolving details lazily, ghost text.
   - Events that start a completion, debouncing, per-source time limits,
     keeping the old candidates while collecting again; when a completion
     ends.
-  - The adapter: what a pane or editor (Vim, Notepad, prompts, the command
-    line) provides to the engine.
-  - Errors from sources; where the module lives and the registration API.
-  - There is no LSP client and no fuzzy finder yet: the fuzzy finder and
-    completion framework comes first (decided 2026-11-22), an LSP client
-    later.
-  - The first use wanted is completing Ex commands on the command line
-    (command names, then arguments per command), so completion's UI
-    comes before the fuzzy finder's (most of it is shared).
+  - The adapter: what a text pane in insert mode (Vim, Notepad, prompts)
+    provides to the engine.
+  - Errors from sources; the registration API in detail; how commands
+    declare their arguments' completion (`command.add`).
+  - Narrowing only the previous matches when the new query extends the
+    old one (as fzf does): measured, one query over 100k items takes
+    seconds with npm `fzf` in the script host ("Speed" there).
+  - Hiding the list pane's cursor if an unfocused text pane draws one.
 - A Windows port of the tests. The gate is `cargo xtask check` and the
   JavaScript tooling Node TypeScript (`scripts/ts-types.ts`,
   `scripts/check-docs.ts`), neither assuming Nix or bash; what is left:
