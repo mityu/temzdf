@@ -24,6 +24,10 @@ mod session;
 pub mod shared;
 #[cfg(feature = "session")]
 pub use session::*;
+#[cfg(feature = "session")]
+pub mod transport;
+#[cfg(feature = "session")]
+pub use transport::{FileId, Listener, Stream, file_id, file_id_of};
 
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};

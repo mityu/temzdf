@@ -2,11 +2,10 @@
 //! their servers say about themselves (clients and the server share this).
 
 use std::io;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::{ClientMsg, ServerMsg, SessionInfo, VERSION};
+use crate::{ClientMsg, ServerMsg, SessionInfo, Stream, VERSION};
 
 /// Is a session with this socket alive? Stale sockets are removed.
 pub fn probe(socket: &Path) -> Option<SessionInfo> {
@@ -38,7 +37,7 @@ pub fn probe_detail(socket: &Path) -> Probe {
 
 fn probe_within(socket: &Path, timeout: Duration) -> Probe {
     let answer = (|| {
-        let Ok(mut s) = UnixStream::connect(socket) else { return Probe::Gone };
+        let Ok(mut s) = Stream::connect(socket) else { return Probe::Gone };
         if s.set_read_timeout(Some(timeout)).is_err()
             || crate::send(&mut s, &ClientMsg::Info { version: VERSION }).is_err()
         {
@@ -52,7 +51,7 @@ fn probe_within(socket: &Path, timeout: Duration) -> Probe {
     })();
     // A stale socket goes, unless its server holds the session's lock: one
     // that is starting (bound, not yet answering) keeps it.
-    if !matches!(answer, Probe::Info(_)) && UnixStream::connect(socket).is_err() && !locked(socket) {
+    if !matches!(answer, Probe::Info(_)) && Stream::connect(socket).is_err() && !locked(socket) {
         let _ = std::fs::remove_file(socket);
         return Probe::Gone;
     }
@@ -124,6 +123,12 @@ pub fn list_all() -> io::Result<Listing> {
 mod tests {
     use super::*;
 
+    /// Whether something is at `path` (`exists` follows links, and Windows
+    /// cannot follow its AF_UNIX sockets).
+    fn there(path: &Path) -> bool {
+        path.symlink_metadata().is_ok()
+    }
+
     #[test]
     #[cfg_attr(miri, ignore = "Miri has no Unix sockets")]
     fn a_server_too_busy_to_answer_is_not_another_version() {
@@ -132,16 +137,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         // Takes connections (the kernel's backlog) and never answers.
         let busy = dir.join("busy.sock");
-        let _listener = std::os::unix::net::UnixListener::bind(&busy).unwrap();
+        let _listener = crate::Listener::bind(&busy).unwrap();
         assert!(matches!(probe_within(&busy, Duration::from_millis(100)), Probe::NoAnswer));
-        assert!(busy.exists());
+        assert!(there(&busy));
         // Answers with something else: another version.
         let other = dir.join("other.sock");
-        let listener = std::os::unix::net::UnixListener::bind(&other).unwrap();
+        let listener = crate::Listener::bind(&other).unwrap();
         // (Kept listening: a socket nothing listens on is stale.)
         let _kept = listener.try_clone().unwrap();
         std::thread::spawn(move || {
-            let (mut s, _) = listener.accept().unwrap();
+            let mut s = listener.accept().unwrap();
             let mut len = [0u8; 4];
             std::io::Read::read_exact(&mut s, &mut len).unwrap();
             std::io::Write::write_all(&mut s, &[3, 0, 0, 0, 0xff, 0xff, 0xff]).unwrap();
@@ -158,14 +163,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let socket = dir.join("s.sock");
         // A socket nothing answers on (its listener gone).
-        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        drop(crate::Listener::bind(&socket).unwrap());
         let lock = std::fs::File::create(socket.with_extension("lock")).unwrap();
         lock.lock().unwrap();
         assert!(probe(&socket).is_none());
-        assert!(socket.exists(), "its server holds the lock: starting, not stale");
+        assert!(there(&socket), "its server holds the lock: starting, not stale");
         drop(lock);
         assert!(probe(&socket).is_none());
-        assert!(!socket.exists(), "stale");
+        assert!(!there(&socket), "stale");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

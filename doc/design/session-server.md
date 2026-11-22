@@ -309,6 +309,25 @@ git log), and why:
   image's own buffer, smaller ones inside it (`temzdf-protocol`'s
   `send_server`, `recv_server`, `shared.rs`; numbers in
   `doc/dev/performance.md`).
+- **Windows (2026-11-23, transport only, the server not yet run
+  there).** Sessions and forward search use Unix domain sockets there
+  too: `temzdf-protocol`'s `Stream` and `Listener` (`transport.rs`) wrap
+  std's on Unix and `uds_windows`'s (AF_UNIX, Windows 10 1803 and later)
+  on Windows, so the server and the clients name no platform's socket.
+  Sockets live under `%LOCALAPPDATA%\temzdf` (`sessions\NAME.sock`,
+  forward search beside it) and state under `%LOCALAPPDATA%\temzdf\state`,
+  unless `XDG_RUNTIME_DIR` or `XDG_STATE_HOME` is set. There is no shared
+  memory yet: clients never ask for it and every image travels on the
+  socket. A client starts the server with `DETACHED_PROCESS |
+  CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`. Documents' canonical paths
+  drop the `\\?\` prefix (`dunce`). Gaps: the directories are not
+  checked for owner or ACL (Unix checks the owner and sets 0700); they
+  rely on the profile's ACL under `%LOCALAPPDATA%`, and with an XDG
+  variable on whatever that directory has. A socket or lock file
+  replaced at the same path looks like the one a server made (std has no
+  stable file index), so a server may remove a newer server's socket
+  when it ends. Logs get no mode. `file:` links do not open, and path
+  comparisons are not case-insensitive yet.
 - **Nesting.** A client says which session's pane it runs in (`Hello`), and
   a session lists those of its clients (`SessionInfo::shown_in`); `attach`
   from a pane refuses that session and every session showing it, directly

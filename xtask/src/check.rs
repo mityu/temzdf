@@ -35,11 +35,15 @@ const RUNTIME: &str = "crates/temzdf-script/runtime";
 /// (`todo.md`, "The Windows port"): texprintf and tuitest only
 /// cross-check because pkg-config finds the Linux libraries; temzdf-script-guest
 /// is empty off wasm; the rest use Unix APIs (`std::os::unix`, rustix) or C
-/// that is not built for MSVC yet.
+/// that is not built for MSVC yet. temzdf-gui's GPU and font tests skip
+/// there (no `TEMZDF_TEST_FONTS`, no built-in fonts).
 const WINDOWS_CRATES: &[&str] = &[
+    "temzdf-client",
     "temzdf-fixtures",
+    "temzdf-gui",
     "temzdf-markdown",
     "temzdf-mdview",
+    "temzdf-protocol",
     "temzdf-scene",
     "temzdf-texteditor",
     "temzdf-watchfs",

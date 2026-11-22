@@ -260,7 +260,11 @@ server on one `Session`). Next and open:
     build tooling), the transport
     (`uds_windows`), directories and processes (the GUI attached to a
     PDF session), terminal panes, SyncTeX paths, shared memory, the
-    terminal frontend.
+    terminal frontend. Done: the transport, directories and the
+    server's start-up for `temzdf-protocol`, `temzdf-client` and
+    `temzdf-gui` (cross-checked; their tests not run on Windows yet),
+    and the server moved to them (not built for Windows yet; gaps in
+    `doc/design/session-server.md`, "Windows").
   - The tests: a helper program instead of `sh` in the pty tests; script
     host tests on `std::io::pipe`; test fonts without fontconfig; the
     gate's lock test; `cargo xtask miri` (also cross-target from Linux);

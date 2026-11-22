@@ -1616,7 +1616,7 @@ fn hovering_over_another_client_keeps_the_session_size() {
     // A second client, as a GUI would attach, narrower than the terminal: the
     // latest client, so the session takes its size.
     let sock = env.path("run/temzdf/sessions/hv.sock");
-    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let mut s = temzdf_protocol::Stream::connect(&sock).unwrap();
     let geometry =
         termpix::geom::Geometry { cols: 60, rows: 20, cell: termpix::geom::CellSize { width: 10, height: 20 } };
     let hello = ClientMsg::Hello {
@@ -1629,7 +1629,7 @@ fn hovering_over_another_client_keeps_the_session_size() {
     temzdf_protocol::send(&mut s, &hello).unwrap();
     let mut r = temzdf_protocol::shared::FdReader::new(s.try_clone().unwrap());
     // The width of the next frame (acknowledged), None when none comes.
-    let mut next_width = |s: &mut std::os::unix::net::UnixStream, wait| {
+    let mut next_width = |s: &mut temzdf_protocol::Stream, wait| {
         s.set_read_timeout(Some(std::time::Duration::from_millis(wait))).unwrap();
         loop {
             match temzdf_protocol::recv_server(&mut r) {
@@ -1670,7 +1670,7 @@ fn clients_of_one_session_take_pixels_each_their_own_way() {
     // Each client gets every image when it attaches: the first frame with
     // pixels, and how many descriptors (images in shared memory) came.
     let first_frame = |shared_memory: bool| {
-        let s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let s = temzdf_protocol::Stream::connect(&sock).unwrap();
         s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
         let hello = ClientMsg::Hello {
             version: temzdf_protocol::VERSION,
@@ -1719,7 +1719,7 @@ fn an_attaching_client_is_told_how_to_look() {
     t.wait_for("the prompt", prompt);
     // A second client, as a GUI would attach.
     let sock = env.path("run/temzdf/sessions/ap.sock");
-    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let mut s = temzdf_protocol::Stream::connect(&sock).unwrap();
     s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
     let geometry =
         termpix::geom::Geometry { cols: 80, rows: 24, cell: termpix::geom::CellSize { width: 10, height: 20 } };

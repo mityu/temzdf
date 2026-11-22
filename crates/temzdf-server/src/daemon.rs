@@ -7,7 +7,6 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::BufReader;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,7 +14,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use temzdf_protocol::{self as proto, ClientMsg, ExitReason, ServerMsg, SessionInfo};
+use temzdf_protocol::{self as proto, ClientMsg, ExitReason, Listener, ServerMsg, SessionInfo, Stream};
 use temzdf_scene::sink::channel_sink;
 use temzdf_scene::{Frame, Hints, ImageKey, ImageUpdate, Pointer};
 use termpix_core::geom::{CellSize, Geometry};
@@ -35,7 +34,7 @@ type ClientId = u64;
 
 enum Event {
     Session(SessionEvent),
-    Connected(UnixStream),
+    Connected(Stream),
     Msg(ClientId, ClientMsg),
     Gone(ClientId),
 }
@@ -131,7 +130,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
             socket_checked = Instant::now();
             session.serve_free_forward_sockets();
             let attached = clients.values().filter(|c| c.attached).count();
-            let answered = || UnixStream::connect(&socket).is_ok();
+            let answered = || Stream::connect(&socket).is_ok();
             match socket_check(cleanup.still_ours(), attached, answered) {
                 SocketCheck::Fine => {}
                 SocketCheck::End => {
@@ -734,7 +733,7 @@ fn detach(clients: &mut HashMap<ClientId, Client>, id: ClientId) -> Outcome {
     Outcome::Redraw
 }
 
-fn start_reader(id: ClientId, stream: &UnixStream, tx: Sender<Event>) -> Result<()> {
+fn start_reader(id: ClientId, stream: &Stream, tx: Sender<Event>) -> Result<()> {
     // A connection that says nothing goes after a while (each holds a
     // thread); once it spoke, it may stay quiet as long as it likes.
     stream.set_read_timeout(Some(FIRST_MESSAGE_WITHIN))?;
@@ -759,7 +758,7 @@ fn start_reader(id: ClientId, stream: &UnixStream, tx: Sender<Event>) -> Result<
     Ok(())
 }
 
-fn start_writer(stream: UnixStream, rx: mpsc::Receiver<ServerMsg>, shared_memory: Arc<AtomicBool>) -> Result<()> {
+fn start_writer(stream: Stream, rx: mpsc::Receiver<ServerMsg>, shared_memory: Arc<AtomicBool>) -> Result<()> {
     std::thread::Builder::new().name("temzdf-client-out".into()).spawn(move || {
         for msg in rx {
             let exit =
@@ -781,7 +780,7 @@ fn start_writer(stream: UnixStream, rx: mpsc::Receiver<ServerMsg>, shared_memory
 }
 
 /// Accept connections on `listener` into the event loop.
-fn accept(listener: UnixListener, tx: Sender<Event>) -> Result<()> {
+fn accept(listener: Listener, tx: Sender<Event>) -> Result<()> {
     std::thread::Builder::new().name("temzdf-accept".into()).spawn(move || {
         for stream in listener.incoming().flatten() {
             if tx.send(Event::Connected(stream)).is_err() {
@@ -819,13 +818,12 @@ fn socket_check(still_ours: bool, attached: usize, answered: impl FnOnce() -> bo
 /// Listen for session `name` again after its socket was removed. The lock
 /// (`NAME.lock`) is taken again if its file went too, so no other server
 /// gets the name meanwhile.
-fn rebind(name: &str, lock: &mut std::fs::File) -> Result<(UnixListener, RemoveOnDrop)> {
-    use std::os::unix::fs::MetadataExt;
+fn rebind(name: &str, lock: &mut std::fs::File) -> Result<(Listener, RemoveOnDrop)> {
     // Makes the directory again if it is gone.
     let socket = proto::socket_path(name)?;
     let lock_path = socket.with_extension("lock");
-    let held = lock.metadata().ok().map(|m| (m.dev(), m.ino()));
-    if file_id(&lock_path) != held {
+    let held = proto::file_id_of(lock);
+    if proto::file_id(&lock_path) != held {
         let new = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -841,7 +839,7 @@ fn rebind(name: &str, lock: &mut std::fs::File) -> Result<(UnixListener, RemoveO
         }
     }
     let _ = std::fs::remove_file(&socket);
-    let listener = UnixListener::bind(&socket).with_context(|| format!("cannot listen on {}", socket.display()))?;
+    let listener = Listener::bind(&socket).with_context(|| format!("cannot listen on {}", socket.display()))?;
     Ok((listener, RemoveOnDrop::new(&socket)))
 }
 
@@ -866,7 +864,7 @@ fn lock_held_briefly(file: &std::fs::File) -> Result<(), std::fs::TryLockError> 
 /// think the name free and unlink each other's socket), refuse a socket
 /// something answers on (a live session, maybe of another version), and
 /// replace only a stale one.
-fn claim_socket(name: &str, socket: &Path) -> Result<(std::fs::File, UnixListener, RemoveOnDrop)> {
+fn claim_socket(name: &str, socket: &Path) -> Result<(std::fs::File, Listener, RemoveOnDrop)> {
     let lock_path = socket.with_extension("lock");
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -879,14 +877,14 @@ fn claim_socket(name: &str, socket: &Path) -> Result<(std::fs::File, UnixListene
         Err(std::fs::TryLockError::WouldBlock) => bail!("session {name:?} already exists (or is starting)"),
         Err(std::fs::TryLockError::Error(e)) => return Err(e).context(format!("cannot lock {}", lock_path.display())),
     }
-    if UnixStream::connect(socket).is_ok() {
+    if Stream::connect(socket).is_ok() {
         if probe(socket).is_some() {
             bail!("session {name:?} already exists");
         }
         bail!("a session {name:?} of another temzdf version is running (end it with that version)");
     }
     let _ = std::fs::remove_file(socket);
-    let listener = UnixListener::bind(socket).with_context(|| format!("cannot listen on {}", socket.display()))?;
+    let listener = Listener::bind(socket).with_context(|| format!("cannot listen on {}", socket.display()))?;
     let cleanup = RemoveOnDrop::new(socket);
     Ok((lock, listener, cleanup))
 }
@@ -896,28 +894,23 @@ fn claim_socket(name: &str, socket: &Path) -> Result<(std::fs::File, UnixListene
 #[derive(Debug)]
 struct RemoveOnDrop {
     path: PathBuf,
-    id: Option<(u64, u64)>,
+    id: Option<proto::FileId>,
 }
 
 impl RemoveOnDrop {
     fn new(path: &Path) -> Self {
-        Self { path: path.to_owned(), id: file_id(path) }
+        Self { path: path.to_owned(), id: proto::file_id(path) }
     }
 
     /// The socket is still there, and the one this server bound.
     fn still_ours(&self) -> bool {
-        self.id.is_some() && file_id(&self.path) == self.id
+        self.id.is_some() && proto::file_id(&self.path) == self.id
     }
-}
-
-fn file_id(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::symlink_metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
 impl Drop for RemoveOnDrop {
     fn drop(&mut self) {
-        if self.id.is_some() && file_id(&self.path) == self.id {
+        if self.id.is_some() && proto::file_id(&self.path) == self.id {
             let _ = std::fs::remove_file(&self.path);
         }
     }
@@ -983,21 +976,21 @@ mod tests {
         let e = claim_socket("s", &socket).unwrap_err();
         assert!(e.to_string().contains("already exists"), "{e}");
         drop(first);
-        assert!(!socket.exists(), "the server's own socket goes with it");
+        assert!(socket.symlink_metadata().is_err(), "the server's own socket goes with it");
         // Something listens that does not answer as this version: kept.
-        let other = UnixListener::bind(&socket).unwrap();
+        let other = Listener::bind(&socket).unwrap();
         let e = claim_socket("s", &socket).unwrap_err();
         assert!(e.to_string().contains("another temzdf version"), "{e}");
-        assert!(socket.exists());
+        assert!(socket.symlink_metadata().is_ok());
         drop(other);
         // Stale (nobody listens): replaced.
         let (lock, listener, cleanup) = claim_socket("s", &socket).unwrap();
         // Another server's socket replaced ours meanwhile: ours does not
         // take it along when it ends.
         std::fs::remove_file(&socket).unwrap();
-        let _theirs = UnixListener::bind(&socket).unwrap();
+        let _theirs = Listener::bind(&socket).unwrap();
         drop((lock, listener, cleanup));
-        assert!(socket.exists(), "the new socket stays");
+        assert!(socket.symlink_metadata().is_ok(), "the new socket stays");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

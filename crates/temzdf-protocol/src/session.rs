@@ -1,9 +1,8 @@
 //! The session's messages between server and clients, their transport
 //! (shared memory, trailing pixels) and where sessions' sockets live.
 
+use std::ffi::OsString;
 use std::io::{self, Read};
-use std::os::fd::AsFd;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -13,7 +12,7 @@ use temzdf_scene::{Appearance, CopyKind, Effect, Frame, Hints, Image, ImageKey, 
 use termpix_core::geom::Geometry;
 use termpix_core::input::{KeyEvent, MouseEvent};
 
-use crate::{MAX_MESSAGE, recv_timed, shared};
+use crate::{MAX_MESSAGE, Stream, recv_timed, shared};
 
 /// Bumped on incompatible changes; client and server must agree.
 pub const VERSION: u32 = 19;
@@ -159,7 +158,7 @@ const MIN_TRAILING: usize = 4 << 10;
 /// message (`shared`); otherwise, or when that memory cannot be made, their
 /// bytes follow the message as they are (`trailing`), written from the
 /// images themselves.
-pub fn send_server(stream: &UnixStream, msg: ServerMsg, shared_memory: bool) -> io::Result<()> {
+pub fn send_server(stream: &Stream, msg: ServerMsg, shared_memory: bool) -> io::Result<()> {
     let (msg, fds, after) = match msg {
         ServerMsg::Frame { seq, updates, frame, complete, mut shared, mut trailing } => {
             let (mut inline, mut fds, mut after) = (Vec::new(), Vec::new(), Vec::new());
@@ -195,8 +194,7 @@ pub fn send_server(stream: &UnixStream, msg: ServerMsg, shared_memory: bool) -> 
     let len = len.to_le_bytes();
     let mut parts = vec![io::IoSlice::new(&len), io::IoSlice::new(&body)];
     parts.extend(after.iter().map(|p| io::IoSlice::new(p)));
-    let borrowed: Vec<_> = fds.iter().map(|fd| fd.as_fd()).collect();
-    shared::send_with_fds(stream, &mut parts, &borrowed)
+    shared::send_with_fds(stream, &mut parts, &fds)
 }
 
 /// Read a message from the server ([`send_server`]): a frame's images in
@@ -233,9 +231,10 @@ pub fn recv_server(r: &mut shared::FdReader) -> io::Result<Option<(ServerMsg, Du
 }
 
 /// Whether this client takes pixels in shared memory: yes unless
-/// `TEMZDF_PIXELS=socket` (tests pick either way; `doc/config.md`).
+/// `TEMZDF_PIXELS=socket` (tests pick either way; `doc/config.md`); never
+/// on Windows (no shared memory there yet, see [`shared`]).
 pub fn shared_memory_wanted() -> bool {
-    std::env::var("TEMZDF_PIXELS").map_or(true, |v| v != "socket")
+    cfg!(unix) && std::env::var("TEMZDF_PIXELS").map_or(true, |v| v != "socket")
 }
 
 /// Whether to log how long frames take on their way (`TEMZDF_TIMING` set,
@@ -266,16 +265,55 @@ pub fn ms(d: Duration) -> f64 {
 /// The per-user directory for state kept between runs (logs, swap and undo
 /// files): `$XDG_STATE_HOME/temzdf`, else `~/.local/state/temzdf`; none
 /// when neither variable is set.
+/// On Windows `$XDG_STATE_HOME/temzdf`, else `%LOCALAPPDATA%\temzdf\state`.
 pub fn state_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
+    let xdg = std::env::var_os("XDG_STATE_HOME");
+    if cfg!(windows) {
+        return windows_state_dir(xdg, std::env::var_os("LOCALAPPDATA"));
+    }
+    let base = xdg
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
     Some(base.join("temzdf"))
 }
 
+/// [`state_dir`] on Windows, from `$XDG_STATE_HOME` (`xdg`) and
+/// `%LOCALAPPDATA%` (`local`): known folders unless the XDG variable is set.
+fn windows_state_dir(xdg: Option<OsString>, local: Option<OsString>) -> Option<PathBuf> {
+    match (set(xdg), set(local)) {
+        (Some(x), _) => Some(PathBuf::from(x).join("temzdf")),
+        (None, Some(l)) => Some(PathBuf::from(l).join("temzdf").join("state")),
+        (None, None) => None,
+    }
+}
+
+/// [`runtime_dir`] on Windows, from `$XDG_RUNTIME_DIR` (`xdg`) and
+/// `%LOCALAPPDATA%` (`local`), else `temp`: sockets end up in
+/// `%LOCALAPPDATA%\temzdf`, which only the user can reach (the profile's
+/// ACL; temzdf sets none of its own).
+#[cfg(any(not(unix), test))]
+fn windows_runtime_dir(xdg: Option<OsString>, local: Option<OsString>, temp: PathBuf) -> PathBuf {
+    set(xdg).or(set(local)).map_or(temp, PathBuf::from)
+}
+
+/// An environment variable's value, unless it is empty.
+fn set(v: Option<OsString>) -> Option<OsString> {
+    v.filter(|v| !v.is_empty())
+}
+
 /// The per-user directory for sockets: `$XDG_RUNTIME_DIR`, else the per-user
-/// temporary directory on macOS, else `<temp dir>/temzdf-<uid>`.
+/// temporary directory on macOS, else `<temp dir>/temzdf-<uid>`. On Windows
+/// `$XDG_RUNTIME_DIR`, else `%LOCALAPPDATA%`, else the temporary directory.
+#[cfg(not(unix))]
+pub fn runtime_dir() -> PathBuf {
+    windows_runtime_dir(std::env::var_os("XDG_RUNTIME_DIR"), std::env::var_os("LOCALAPPDATA"), std::env::temp_dir())
+}
+
+/// The per-user directory for sockets: `$XDG_RUNTIME_DIR`, else the per-user
+/// temporary directory on macOS, else `<temp dir>/temzdf-<uid>`. On Windows
+/// `$XDG_RUNTIME_DIR`, else `%LOCALAPPDATA%`, else the temporary directory.
+#[cfg(unix)]
 pub fn runtime_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
         return within_runtime_dir(dir.into());
@@ -292,6 +330,7 @@ pub fn runtime_dir() -> PathBuf {
 /// `$XDG_RUNTIME_DIR` (`dir`) if it is a directory of this user's, else (a
 /// container or CI setting it to `/tmp`) `temzdf-<uid>` in it, as in the
 /// shared temporary directory.
+#[cfg(unix)]
 fn within_runtime_dir(dir: PathBuf) -> PathBuf {
     use std::os::unix::fs::MetadataExt;
     let uid = rustix::process::getuid().as_raw();
@@ -330,17 +369,27 @@ pub fn sessions_dir() -> io::Result<PathBuf> {
 /// runtime directory is in the shared temporary directory, where another
 /// user could create it first and plant a socket: a client attaching to it
 /// would run what that server's effects ask for.
+///
+/// On Windows only the first half: real directories, no links or
+/// junctions. Who may reach them is left to their ACLs, inherited from the
+/// user's profile under `%LOCALAPPDATA%` (owner and ACL checks are a gap,
+/// `doc/design/session-server.md`).
 pub fn private_dir(dir: &Path) -> io::Result<()> {
     let base = runtime_dir();
+    #[cfg(unix)]
     let ours = base.file_name().is_some_and(|n| *n == *format!("temzdf-{}", rustix::process::getuid().as_raw()));
+    #[cfg(not(unix))]
+    let ours = false;
     private_dir_in(&base, ours, dir)
 }
 
 /// [`private_dir`] for runtime directory `base`; `base_ours`: temzdf made it
 /// (its mode is set too).
 fn private_dir_in(base: &Path, base_ours: bool, dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
     let uid = rustix::process::getuid().as_raw();
     let unsafe_dir = |d: &Path, why: &str| {
         // Removing is advice for what temzdf made (or someone planted in
@@ -355,12 +404,15 @@ fn private_dir_in(base: &Path, base_ours: bool, dir: &Path) -> io::Result<()> {
         if m.file_type().is_symlink() || !m.is_dir() {
             return Err(unsafe_dir(d, "not a directory"));
         }
-        if m.uid() != uid {
-            return Err(unsafe_dir(d, &format!("owned by user {}, not by you", m.uid())));
-        }
         let at_base = d == base;
-        if m.mode() & 0o077 != 0 && (!at_base || base_ours) {
-            std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
+        #[cfg(unix)]
+        {
+            if m.uid() != uid {
+                return Err(unsafe_dir(d, &format!("owned by user {}, not by you", m.uid())));
+            }
+            if m.mode() & 0o077 != 0 && (!at_base || base_ours) {
+                std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
+            }
         }
         match d.parent() {
             Some(p) if !at_base && d.starts_with(base) => d = p,
@@ -382,7 +434,7 @@ pub fn socket_path(name: &str) -> io::Result<PathBuf> {
     socket_in(&sessions_dir()?, name)
 }
 
-/// The size of `sockaddr_un`'s path, NUL included.
+/// The size of `sockaddr_un`'s path, NUL included (108 on Windows too).
 #[cfg(target_os = "macos")]
 const SUN_PATH: usize = 104;
 #[cfg(not(target_os = "macos"))]
@@ -433,6 +485,22 @@ mod tests {
     }
 
     #[test]
+    fn windows_directories_are_known_folders_unless_xdg_says() {
+        let s = |v: &str| Some(OsString::from(v));
+        let local = s("C:/Users/u/AppData/Local");
+        let temp = || PathBuf::from("C:/tmp");
+        assert_eq!(windows_runtime_dir(None, local.clone(), temp()), Path::new("C:/Users/u/AppData/Local"));
+        assert_eq!(windows_runtime_dir(s("/run/x"), local.clone(), temp()), Path::new("/run/x"));
+        assert_eq!(windows_runtime_dir(s(""), local.clone(), temp()), Path::new("C:/Users/u/AppData/Local"), "empty");
+        assert_eq!(windows_runtime_dir(None, s(""), temp()), temp());
+        let state = windows_state_dir(None, local.clone()).unwrap();
+        assert_eq!(state, Path::new("C:/Users/u/AppData/Local/temzdf/state"));
+        assert_eq!(windows_state_dir(s("/st"), local).unwrap(), Path::new("/st/temzdf"));
+        assert_eq!(windows_state_dir(s(""), s("")), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore = "Miri's getuid is always 1000, that does not always match the user's actual uid.")]
     fn private_dirs_are_ours_alone() {
         use std::os::unix::fs::PermissionsExt;
@@ -477,6 +545,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore = "Miri's getuid is always 1000, not the files' owner unless that is 1000 (GHA, macOS)")]
     fn a_runtime_directory_not_ours_gets_one_of_ours_inside() {
         let uid = rustix::process::getuid().as_raw();
@@ -671,7 +740,7 @@ mod tests {
         // places apart only by their pixels.
         let (msg, want) = frame_of(&[128, 128, 256, 32, 8]);
         for shared_memory in [false, true] {
-            let (tx, rx) = UnixStream::pair().unwrap();
+            let (tx, rx) = Stream::pair().unwrap();
             let mut rx = shared::FdReader::new(rx);
             // From another thread: a frame can be more than the socket holds.
             let sender = {
@@ -685,7 +754,8 @@ mod tests {
             // On the wire first: which images went where.
             let (raw, _) = recv_timed::<ServerMsg>(&mut rx).unwrap().unwrap();
             let ServerMsg::Frame { updates, shared, trailing, .. } = &raw else { panic!() };
-            let (inside, fds, after) = if shared_memory { (1, 3, 1) } else { (1, 0, 4) };
+            // (No shared memory on Windows: all of them after the message.)
+            let (inside, fds, after) = if shared_memory && cfg!(unix) { (1, 3, 1) } else { (1, 0, 4) };
             let counts = (updates.len(), shared.len(), trailing.len());
             assert_eq!(counts, (inside, fds, after), "shared_memory: {shared_memory}");
             for _ in 0..fds {
@@ -709,7 +779,7 @@ mod tests {
     fn images_beyond_the_descriptor_limit_go_inside_the_message() {
         let sides = vec![128; shared::MAX_FDS + 10];
         let (msg, want) = frame_of(&sides);
-        let (tx, rx) = UnixStream::pair().unwrap();
+        let (tx, rx) = Stream::pair().unwrap();
         let mut rx = shared::FdReader::new(rx);
         let sender = std::thread::spawn(move || send_server(&tx, msg, true).unwrap());
         let (got, _) = recv_server(&mut rx).unwrap().unwrap();
@@ -739,7 +809,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "sockets")]
     fn pixels_after_a_frame_are_checked() {
         let read = |bytes: Vec<u8>| {
-            let (mut tx, rx) = UnixStream::pair().unwrap();
+            let (mut tx, rx) = Stream::pair().unwrap();
             let mut rx = shared::FdReader::new(rx);
             let sender = std::thread::spawn(move || tx.write_all(&bytes));
             let got = recv_server(&mut rx).map(|m| m.map(|m| m.0));
@@ -759,6 +829,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore = "shared memory")]
     fn shared_memory_smaller_than_announced_is_an_error() {
         // Past any page rounding: macOS sizes the object in 16 KiB pages.
@@ -803,7 +874,7 @@ mod tests {
             v.sort();
             v[v.len() / 2].as_secs_f64() * 1e3
         };
-        let (tx, rx) = UnixStream::pair().unwrap();
+        let (tx, rx) = Stream::pair().unwrap();
         let mut rx = shared::FdReader::new(rx);
         for n in [1usize, 4, 12, 30] {
             let mut images = Images::new();

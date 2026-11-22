@@ -185,6 +185,16 @@ pub fn spawn_server(
         cmd.arg("--clean");
     }
     cmd.arg(name).arg("--").args(pane);
+    // Not tied to this console: it outlives the client and its window
+    // (on Unix the server calls setsid itself).
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
     let mut child = cmd.stdin(std::process::Stdio::null()).stdout(out).stderr(err).spawn()?;
     for _ in 0..200 {
         match proto::discovery::probe(&socket) {
@@ -236,12 +246,17 @@ pub fn make_log_dir(dir: &Path) -> std::io::Result<()> {
 
 /// `dir` and its parents; `dir` itself 0700 when made here, or when it is
 /// there already and `tighten`.
+/// On Windows just made: the user's profile's ACL keeps it private.
 fn private_dir(dir: &Path, tighten: bool) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
     if let Some(parent) = dir.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    let builder = std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    #[cfg(not(unix))]
+    let builder = &mut builder;
+    match builder.create(dir) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && dir.is_dir() => {
             if tighten {
@@ -255,7 +270,15 @@ fn private_dir(dir: &Path, tighten: bool) -> std::io::Result<()> {
 }
 
 /// Take group's and others' permissions away from `path` (ours), leaving at
-/// most `mode`.
+/// most `mode`. Nothing on Windows (ACLs, inherited from the profile).
+#[cfg(not(unix))]
+fn make_private(_: &Path, _: u32) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Take group's and others' permissions away from `path` (ours), leaving at
+/// most `mode`. Nothing on Windows (ACLs, inherited from the profile).
+#[cfg(unix)]
 fn make_private(path: &Path, mode: u32) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let now = std::fs::metadata(path)?.permissions().mode() & 0o7777;
@@ -268,8 +291,10 @@ fn make_private(path: &Path, mode: u32) -> std::io::Result<()> {
 /// Open log `path` for appending: made 0600, or made so if it was readable
 /// by others (logs written before temzdf made them private).
 pub fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let file = std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(path)?;
+    let mut options = std::fs::OpenOptions::new();
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let file = options.create(true).append(true).open(path)?;
     make_private(path, 0o600)?;
     Ok(file)
 }
@@ -368,7 +393,9 @@ pub fn openable(uri: &str) -> bool {
     let Some((scheme, rest)) = uri.split_once(':') else { return false };
     match scheme.to_ascii_lowercase().as_str() {
         "http" | "https" | "mailto" | "ftp" => true,
-        "file" => file_path(rest).is_some_and(|p| viewable_file(&p)),
+        // Not on Windows yet: neither `file:///C:/...` paths nor what an
+        // opener there would run are worked out, so none open.
+        "file" => cfg!(unix) && file_path(rest).is_some_and(|p| viewable_file(&p)),
         _ => false,
     }
 }
@@ -397,8 +424,11 @@ fn file_path(rest: &str) -> Option<PathBuf> {
             bytes.push(b);
         }
     }
-    use std::os::unix::ffi::OsStringExt;
-    Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+    #[cfg(unix)]
+    let path = <std::ffi::OsString as std::os::unix::ffi::OsStringExt>::from_vec(bytes);
+    #[cfg(not(unix))]
+    let path = String::from_utf8(bytes).ok()?;
+    Some(PathBuf::from(path))
 }
 
 /// Whether a local file is safe to hand to the opener: a regular file (not a
@@ -410,10 +440,14 @@ fn viewable_file(path: &Path) -> bool {
         "lnk", "msi", "pkg", "pl", "ps1", "py", "rb", "run", "scpt", "sh", "terminal", "tool", "url", "vbs", "webloc",
         "workflow", "zsh", "bash",
     ];
-    use std::os::unix::fs::PermissionsExt;
     let Ok(meta) = std::fs::metadata(path) else { return false };
+    #[cfg(unix)]
+    let executable = std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o111 != 0;
+    // (No such bit: what runs is decided by the extension, `PATHEXT`.)
+    #[cfg(not(unix))]
+    let executable = true;
     let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
-    meta.is_file() && meta.permissions().mode() & 0o111 == 0 && ext.is_none_or(|e| !LAUNCHED.contains(&e.as_str()))
+    meta.is_file() && !executable && ext.is_none_or(|e| !LAUNCHED.contains(&e.as_str()))
 }
 
 /// Open a URI with the configured handler (none or empty: the system's), detached from the terminal. A
@@ -494,6 +528,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore = "Miri cannot set file permissions")]
     fn logs_are_the_users_alone() {
         use std::os::unix::fs::PermissionsExt;
@@ -537,6 +572,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore = "Miri cannot set file permissions")]
     fn file_links_open_documents_only() {
         use std::os::unix::fs::PermissionsExt;

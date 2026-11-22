@@ -10,15 +10,22 @@ repository.workspace = true
 default = ["session"]
 # The session's messages and sockets; without it, only the script host's
 # messages and the framing (what the WebAssembly guest needs).
-session = ["dep:memmap2", "dep:rustix", "dep:temzdf-scene", "dep:termpix-core", "dep:libc"]
+session = ["dep:memmap2", "dep:rustix", "dep:temzdf-scene", "dep:termpix-core", "dep:libc", "dep:uds_windows"]
 
 [dependencies]
 postcard = { version = "1.1.3", features = ["use-std"] }
-memmap2 = { version = "0.9.12", optional = true }
-rustix = { version = "1.1.5", features = ["fs", "mm", "net", "process", "shm"], optional = true }
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 temzdf-scene = { workspace = true, features = ["serde"], optional = true }
 termpix-core = { workspace = true, features = ["serde"], optional = true }
+
+# Shared memory, ownership and modes: Unix only (`src/shared.rs`).
+[target.'cfg(unix)'.dependencies]
+memmap2 = { version = "0.9.12", optional = true }
+rustix = { version = "1.1.5", features = ["fs", "mm", "net", "process", "shm"], optional = true }
+
+# AF_UNIX sockets on Windows 10 1803 and later (`src/transport.rs`).
+[target.'cfg(windows)'.dependencies]
+uds_windows = { version = "1.2.1", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = { version = "0.2.191", optional = true }

@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+# Canonical paths without Windows' `\\?\` prefix (documents' identity).
+dunce = "1.0.5"
 temzdf-pdfcore.workspace = true
 temzdf-pdfview.workspace = true
 temzdf-protocol = { workspace = true, features = ["session"] }

@@ -7,19 +7,42 @@
 //! The server copies the pixels in once; the client maps them read-only and
 //! hands the mapping on (to the GPU, or to the terminal's image store) as
 //! [`Pixels`], without copying.
+//!
+//! Unix only so far: on Windows no object is ever made ([`create`] fails,
+//! [`crate::shared_memory_wanted`] is false), so every image travels in the
+//! message; an unnamed file mapping handed over with `DuplicateHandle` would
+//! do there what the descriptor does here.
 
+#[cfg(unix)]
 use std::collections::VecDeque;
+#[cfg(unix)]
 use std::fs::File;
-use std::io::{self, IoSlice, IoSliceMut, Read, Write};
+#[cfg(unix)]
+use std::io::IoSliceMut;
+use std::io::{self, IoSlice, Read, Write};
+#[cfg(unix)]
 use std::mem::MaybeUninit;
+#[cfg(unix)]
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
-use std::os::unix::net::UnixStream;
 
+#[cfg(unix)]
 use rustix::net::{
     RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer, SendAncillaryMessage,
     SendFlags,
 };
 use temzdf_scene::Pixels;
+
+use crate::Stream;
+
+/// A shared memory object, passed with a message: a descriptor on Unix;
+/// none can exist elsewhere.
+#[cfg(unix)]
+pub type Object = OwnedFd;
+/// A shared memory object, passed with a message: a descriptor on Unix;
+/// none can exist elsewhere.
+#[cfg(not(unix))]
+#[derive(Debug)]
+pub enum Object {}
 
 /// Smaller images travel inside the message: an object costs a few system
 /// calls on each side, and macOS rounds it up to 16 KiB pages.
@@ -30,7 +53,8 @@ pub const MAX_FDS: usize = 250;
 
 /// An object of `pixels.len()` bytes holding `pixels`, which cannot change
 /// afterwards where the system can promise it (Linux seals).
-pub fn create(pixels: &[u8]) -> io::Result<OwnedFd> {
+#[cfg(unix)]
+pub fn create(pixels: &[u8]) -> io::Result<Object> {
     #[cfg(target_os = "linux")]
     {
         use rustix::fs::{MemfdFlags, SealFlags};
@@ -70,8 +94,22 @@ pub fn create(pixels: &[u8]) -> io::Result<OwnedFd> {
     }
 }
 
+/// [`create`] where there is no shared memory: always an error, so the
+/// pixels go in the message.
+#[cfg(not(unix))]
+pub fn create(_: &[u8]) -> io::Result<Object> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
 /// The first `len` bytes of object `fd`, mapped read-only.
-pub fn map(fd: OwnedFd, len: usize) -> io::Result<Pixels> {
+#[cfg(not(unix))]
+pub fn map(fd: Object, _: usize) -> io::Result<Pixels> {
+    match fd {}
+}
+
+/// The first `len` bytes of object `fd`, mapped read-only.
+#[cfg(unix)]
+pub fn map(fd: Object, len: usize) -> io::Result<Pixels> {
     let size = rustix::fs::fstat(&fd)?.st_size;
     if u64::try_from(size).map_or(true, |size| size < len as u64) {
         // Mapped anyway, reading past the end would be SIGBUS.
@@ -86,12 +124,16 @@ pub fn map(fd: OwnedFd, len: usize) -> io::Result<Pixels> {
     Ok(Pixels::from_owner(map))
 }
 
-/// Write `parts` to `stream` in order, the descriptors `fds` with the first
+/// Writes take at most this many parts at a time (IOV_MAX on Linux and
+/// macOS).
+const MAX_PARTS: usize = 1024;
+
+/// Write `parts` to `stream` in order, the objects `fds` with the first
 /// bytes. `parts` is used up (advanced past what was written).
-pub fn send_with_fds(stream: &UnixStream, mut parts: &mut [IoSlice<'_>], fds: &[BorrowedFd<'_>]) -> io::Result<()> {
-    // Writes take at most this many parts at a time (IOV_MAX on Linux and
-    // macOS).
-    const MAX_PARTS: usize = 1024;
+#[cfg(unix)]
+pub fn send_with_fds(stream: &Stream, mut parts: &mut [IoSlice<'_>], fds: &[Object]) -> io::Result<()> {
+    let fds: Vec<BorrowedFd<'_>> = fds.iter().map(|fd| fd.as_fd()).collect();
+    let fds = fds.as_slice();
     let mut space =
         vec![MaybeUninit::uninit(); if fds.is_empty() { 0 } else { rustix::cmsg_space!(ScmRights(MAX_FDS)) }];
     let mut control = SendAncillaryBuffer::new(&mut space);
@@ -102,7 +144,7 @@ pub fn send_with_fds(stream: &UnixStream, mut parts: &mut [IoSlice<'_>], fds: &[
     while !parts.is_empty() {
         let some = &parts[..parts.len().min(MAX_PARTS)];
         let n = if first {
-            rustix::net::sendmsg(stream, some, &mut control, SendFlags::empty()).map_err(io::Error::from)
+            rustix::net::sendmsg(&stream.0, some, &mut control, SendFlags::empty()).map_err(io::Error::from)
         } else {
             (&mut &*stream).write_vectored(some)
         };
@@ -119,30 +161,79 @@ pub fn send_with_fds(stream: &UnixStream, mut parts: &mut [IoSlice<'_>], fds: &[
     Ok(())
 }
 
+/// [`send_with_fds`] where no objects exist: `parts` written in order.
+#[cfg(not(unix))]
+pub fn send_with_fds(stream: &Stream, mut parts: &mut [IoSlice<'_>], fds: &[Object]) -> io::Result<()> {
+    if let Some(fd) = fds.first() {
+        match *fd {}
+    }
+    while !parts.is_empty() {
+        let some = &parts[..parts.len().min(MAX_PARTS)];
+        match (&mut &*stream).write_vectored(some) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(n) => IoSlice::advance_slices(&mut parts, n),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 /// A socket's reading side that keeps the descriptors arriving with the
-/// bytes, in order, for [`crate::recv_server`].
+/// bytes, in order, for [`crate::recv_server`] (on Unix; elsewhere it only
+/// reads).
 pub struct FdReader {
-    stream: UnixStream,
-    fds: VecDeque<OwnedFd>,
+    stream: Stream,
+    #[cfg(unix)]
+    fds: VecDeque<Object>,
+    #[cfg(unix)]
     received: usize,
 }
 
 impl FdReader {
-    pub fn new(stream: UnixStream) -> Self {
-        Self { stream, fds: VecDeque::new(), received: 0 }
+    pub fn new(stream: Stream) -> Self {
+        Self {
+            stream,
+            #[cfg(unix)]
+            fds: VecDeque::new(),
+            #[cfg(unix)]
+            received: 0,
+        }
     }
 
     /// How many descriptors came so far (images in shared memory).
     pub fn fds_received(&self) -> usize {
-        self.received
+        #[cfg(unix)]
+        {
+            self.received
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
     }
 
     /// The next descriptor received.
-    pub fn take_fd(&mut self) -> Option<OwnedFd> {
-        self.fds.pop_front()
+    pub fn take_fd(&mut self) -> Option<Object> {
+        #[cfg(unix)]
+        {
+            self.fds.pop_front()
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
     }
 }
 
+#[cfg(not(unix))]
+impl Read for FdReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.stream.read(buf)
+    }
+}
+
+#[cfg(unix)]
 impl Read for FdReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_FDS + 3))];
@@ -151,7 +242,7 @@ impl Read for FdReader {
         let flags = RecvFlags::CMSG_CLOEXEC;
         #[cfg(not(target_os = "linux"))]
         let flags = RecvFlags::empty();
-        let got = rustix::net::recvmsg(&self.stream, &mut [IoSliceMut::new(buf)], &mut control, flags)?;
+        let got = rustix::net::recvmsg(&self.stream.0, &mut [IoSliceMut::new(buf)], &mut control, flags)?;
         for msg in control.drain() {
             if let RecvAncillaryMessage::ScmRights(fds) = msg {
                 for fd in fds {
@@ -169,8 +260,9 @@ impl Read for FdReader {
     }
 }
 
+#[cfg(unix)]
 impl AsFd for FdReader {
     fn as_fd(&self) -> BorrowedFd<'_> {
-        self.stream.as_fd()
+        self.stream.0.as_fd()
     }
 }

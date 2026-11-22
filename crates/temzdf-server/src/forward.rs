@@ -1,21 +1,22 @@
 //! Talking to a running viewer: `temzdf --forward LINE:FILE doc.pdf` sends a
 //! forward-search request to the viewer that has `doc.pdf` open.
 //!
-//! Each viewer listens on a Unix socket at
+//! Each viewer listens on a Unix domain socket (also on Windows) at
 //! `<runtime dir>/temzdf/<hash of the canonical PDF path>.sock`, the runtime
 //! directory being `temzdf_protocol::runtime_dir`: `$XDG_RUNTIME_DIR`, else
-//! the per-user temp dir on macOS, else `<temp dir>/temzdf-<uid>`. The protocol
+//! the per-user temp dir on macOS, else `<temp dir>/temzdf-<uid>` (on Windows
+//! `%LOCALAPPDATA%`). The protocol
 //! is one line per request:
 //! `forward\t<line>\t<column>\t<source file>\n`, answered with `ok\n`.
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub use temzdf_pdfview::host::Forward;
+use temzdf_protocol::{Listener, Stream};
 
 /// Parse `LINE[:COLUMN]:FILE` (the file may itself contain colons, not
 /// a line break: the request is one line).
@@ -60,7 +61,7 @@ pub fn send_forward(pdf: &Path, req: &Forward) -> std::io::Result<bool> {
 }
 
 fn send_to(socket: &Path, req: &Forward) -> std::io::Result<bool> {
-    let Ok(mut stream) = UnixStream::connect(socket) else { return Ok(false) };
+    let Ok(mut stream) = Stream::connect(socket) else { return Ok(false) };
     stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
     stream.write_all(encode(req).as_bytes())?;
     let mut reply = String::new();
@@ -78,7 +79,7 @@ impl Drop for Server {
     fn drop(&mut self) {
         // The thread waits in accept: wake it to see it must end.
         self.stop.store(true, Ordering::SeqCst);
-        let _ = UnixStream::connect(&self.path);
+        let _ = Stream::connect(&self.path);
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -116,11 +117,11 @@ fn serve_at(path: PathBuf, deliver: impl Fn(Forward) -> bool + Send + 'static) -
     if let Some(dir) = path.parent() {
         temzdf_protocol::private_dir(dir)?;
     }
-    if UnixStream::connect(&path).is_ok() {
+    if Stream::connect(&path).is_ok() {
         return Err(std::io::Error::new(std::io::ErrorKind::AddrInUse, "another viewer has this file open"));
     }
     let _ = std::fs::remove_file(&path);
-    let listener = UnixListener::bind(&path)?;
+    let listener = Listener::bind(&path)?;
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = stop.clone();
     std::thread::Builder::new().name("temzdf-ipc".into()).spawn(move || {
@@ -193,7 +194,7 @@ mod tests {
         // while it stays connected, the next one is answered (once its
         // REQUEST_TIMEOUT ran out; no wall-clock bound here, CI machines
         // are slow, but the patient reply's own timeout is far above it).
-        let _silent = UnixStream::connect(&socket).unwrap();
+        let _silent = Stream::connect(&socket).unwrap();
         assert!(send_to_patiently(&socket, &req));
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), req);
         drop(server);
@@ -228,7 +229,7 @@ mod tests {
 
     /// send_to, waiting longer for the reply than it does.
     fn send_to_patiently(socket: &Path, req: &Forward) -> bool {
-        let mut stream = UnixStream::connect(socket).unwrap();
+        let mut stream = Stream::connect(socket).unwrap();
         stream.set_read_timeout(Some(REQUEST_TIMEOUT * 15)).unwrap();
         stream.write_all(encode(req).as_bytes()).unwrap();
         let mut reply = String::new();

@@ -4,13 +4,12 @@
 //! connection ends.
 
 use std::io;
-use std::os::unix::net::UnixStream;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use temzdf_protocol::{self as proto, ClientMsg, ExitReason, ServerMsg};
+use temzdf_protocol::{self as proto, ClientMsg, ExitReason, ServerMsg, Stream};
 use temzdf_scene::Hints;
 use termpix_core::geom::Geometry;
 
@@ -27,7 +26,7 @@ pub enum FromServer {
 /// A client's connection to a session.
 #[derive(Clone)]
 pub struct Connection {
-    writer: Arc<Mutex<UnixStream>>,
+    writer: Arc<Mutex<Stream>>,
 }
 
 impl Connection {
@@ -96,9 +95,9 @@ fn log_received(msg: &ServerMsg, took: Duration) {
 }
 
 /// Connect to session `name`'s socket.
-pub fn connect(name: &str) -> Result<UnixStream> {
+pub fn connect(name: &str) -> Result<Stream> {
     let socket = proto::socket_path(name)?;
-    UnixStream::connect(&socket).with_context(|| format!("no session {name:?}"))
+    Stream::connect(&socket).with_context(|| format!("no session {name:?}"))
 }
 
 /// Send a one-shot request to session `name` and wait for the answer.
