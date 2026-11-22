@@ -116,8 +116,8 @@ fn mistakes_do_not_type_check() {
         "import { keymap } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", 42);\n",
         "import { o } from \"temzdf\";\no.timeoutlen = \"slow\";\n",
         "import { defineMode } from \"temzdf\";\ndefineMode(\"m\", { inherit: \"normal\" });\n",
-        "import { keymap, action } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", () => action.quit(), { when: () => 1 });\n",
-        "import { keymap, action } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", action.quit());\n",
+        "import { keymap, action } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", () => action.closePane(), { when: () => 1 });\n",
+        "import { keymap, action } from \"temzdf\";\nkeymap.add(\"normal\", \"x\", action.closePane());\n",
         // The shipped modules show what they export, nothing of their insides.
         "import vim from \"temzdf/edit/vim\";\nvim.state;\n",
         "import type { Operator } from \"temzdf/edit/vim\";\nlet o: Operator | undefined;\n",

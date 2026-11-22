@@ -8,7 +8,7 @@ import { openSearch } from "../lib/search";
 
 /** PDF panes' keys (namespace builtin-pane-pdf). */
 export default keyset("builtin-pane-pdf", (d) => {
-  d.map("pdf", ["q"], () => action.quit());
+  d.map("pdf", ["q"], () => action.closePane());
   d.map("pdf", ["<Esc>"], () => action.cancel());
   d.map("pdf", ["j", "<Down>"], (c) => action.scrollDown(c.count));
   d.map("pdf", ["k", "<Up>"], (c) => action.scrollUp(c.count));

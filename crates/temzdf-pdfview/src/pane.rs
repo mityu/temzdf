@@ -1242,7 +1242,6 @@ impl PdfPane {
         let half = v.view.screen_h as f64 * 0.5 * n as f64;
         let centre = (v.view.screen_w / 2.0, v.view.screen_h / 2.0);
         match cmd {
-            Command::Quit => return Action::Quit,
             Command::Cancel if self.selection.is_some() => self.selection = None,
             Command::Cancel if self.search.is_active() => self.clear_search(),
             Command::Cancel => return Action::Quit,

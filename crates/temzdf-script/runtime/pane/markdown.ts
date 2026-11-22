@@ -60,7 +60,7 @@ const inText = () => action.markdown.mode() === "text";
 /** Markdown viewers' keys (namespace builtin-pane-markdown): the graphics mode (the mode `markdown`), links and the outline in the text mode. */
 export default keyset("builtin-pane-markdown", (d) => {
   // The graphics mode.
-  d.map(M, ["q"], () => action.quit());
+  d.map(M, ["q"], () => action.closePane());
   d.map(M, ["j", "<Down>", "<C-e>"], (c: MapContext) => action.markdown.scroll(c.count ?? 1));
   d.map(M, ["k", "<Up>", "<C-y>"], (c: MapContext) => action.markdown.scroll(-(c.count ?? 1)));
   d.map(M, ["<Space>", "<PageDown>", "<C-f>", "f"], (c: MapContext) => action.markdown.page(c.count ?? 1));

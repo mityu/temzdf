@@ -250,7 +250,7 @@ panes and the Markdown graphics mode do not fire it.
 | `normal` | `]` `p` | put the newest copy (any pane's, see Copies and registers) into the pane (tmux's `<C-b>]`) |
 | `normal` | `:` | an Ex command line below the pane, in any pane (see Ex commands) |
 | `pdf` | `q` | close the pane (see Buffers) |
-| `pdf` | `<Esc>` | clear the selection, else the search, else quit |
+| `pdf` | `<Esc>` | clear the selection, else the search, else close the pane |
 | `pdf` | `j` `k` / `<Down>` `<Up>` | scroll (counts) |
 | `pdf` | `h` `l` / `<Left>` `<Right>` | scroll sideways (counts) |
 | `pdf` | `<Space>` `<PageDown>` `<C-f>` / `b` `<PageUp>` | page down / up (counts) |

@@ -292,6 +292,24 @@ fn with_the_host_down_pdf_keys_do_nothing_but_the_escape_keys_work() {
     assert_eq!(press(&mut s, "<C-b>q"), Outcome::Quit);
 }
 
+/// `q` closes a PDF pane and a Markdown viewer's graphics mode alike (in a
+/// split beside a terminal), with no error shown.
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn q_closes_pdf_and_markdown_graphics_panes() {
+    let dir = TempDir::new("q-closes");
+    for what in [Open::Pdf, Open::MarkdownGraphics] {
+        let (mut s, rx) = open(what, &dir.0);
+        // A second pane keeps the session alive to look at.
+        type_keys(&mut s, &rx, "<C-b>%<C-b>h", None).unwrap();
+        let before = s.panes.len();
+        let mode = s.current_mode().to_owned();
+        let errors = type_keys(&mut s, &rx, "q", None).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(s.panes.len(), before - 1, "the pane is closed (mode {mode})");
+    }
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn counts_choose_the_tab_page_and_the_pdf_page() {

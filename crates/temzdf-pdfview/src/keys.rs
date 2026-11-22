@@ -4,8 +4,7 @@
 /// What a key can do in the page view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Command {
-    Quit,
-    /// Clear the selection, else the search, else quit.
+    /// Clear the selection, else the search, else close the pane.
     Cancel,
     ScrollDown,
     ScrollUp,
@@ -33,7 +32,6 @@ pub enum Command {
 impl Command {
     /// Every command, with its name in commands and scripts (`scroll-down`).
     pub const NAMES: &[(Command, &str)] = &[
-        (Command::Quit, "quit"),
         (Command::Cancel, "cancel"),
         (Command::ScrollDown, "scroll-down"),
         (Command::ScrollUp, "scroll-up"),

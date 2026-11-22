@@ -664,8 +664,6 @@ declare module "temzdf" {
     loadImage(path: string): number;
     /** Drop an image: decorations showing it show their alt text instead */
     unloadImage(id: number): void;
-    /** Page view: quit in the focused PDF pane (`count` times, where that means something) */
-    quit(count?: number): void;
     /** Page view: cancel in the focused PDF pane (`count` times, where that means something) */
     cancel(count?: number): void;
     /** Page view: scroll-down in the focused PDF pane (`count` times, where that means something) */
