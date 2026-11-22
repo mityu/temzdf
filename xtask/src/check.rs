@@ -587,7 +587,9 @@ fn temzdf_executable(messages: &str) -> Option<PathBuf> {
         let v: serde_json::Value = serde_json::from_str(l).ok()?;
         let target = v.get("target")?;
         let bin = target.get("kind")?.as_array()?.iter().any(|k| k == "bin");
-        (v.get("reason")? == "compiler-artifact" && target.get("name")? == "temzdf" && bin)
+        // Not the binary's own unit tests (a "bin" too, built as a test).
+        let tests = v.get("profile")?.get("test")? == true;
+        (v.get("reason")? == "compiler-artifact" && target.get("name")? == "temzdf" && bin && !tests)
             .then(|| v.get("executable")?.as_str().map(PathBuf::from))
             .flatten()
     })
@@ -693,9 +695,11 @@ Bail out! stuck
 
     #[test]
     fn finds_the_temzdf_executable() {
-        let messages = r#"{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["lib"]},"executable":null}
-{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["test"]},"executable":"/t/deps/temzdf-1"}
-{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["bin"]},"executable":"/t/temzdf"}
+        // The binary's unit tests are a "bin" too, and may come first.
+        let messages = r#"{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["lib"]},"profile":{"test":false},"executable":null}
+{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["test"]},"profile":{"test":true},"executable":"/t/deps/temzdf-1"}
+{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["bin"]},"profile":{"test":true},"executable":"/t/deps/temzdf-2"}
+{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["bin"]},"profile":{"test":false},"executable":"/t/temzdf"}
 {"reason":"build-finished","success":true}"#;
         assert_eq!(temzdf_executable(messages), Some(PathBuf::from("/t/temzdf")));
     }
