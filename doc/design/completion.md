@@ -222,13 +222,16 @@ interface Decoration { start: number; length: number; style?: string }
 interface Action<T = {}> {
   invoke(
     p: { item: Item<T> | undefined; marked: readonly Item<T>[]; matched: readonly Item<T>[] },
-    o: { signal: AbortSignal; action: Actions },
+    o: { signal: AbortSignal; action: Actions; atomic<R>(fn: () => R): R },
   ): void | true | Promise<void | true>;   // true keeps the session open
 }
 ```
 
 - As vim-fall's, with the actions to use passed in (`ctx.action`: an
-  action runs asynchronously, where plain `action.*` has no context).
+  action runs asynchronously, where plain `action.*` has no context), and
+  `ctx.atomic`, inside which the plain `action` works, for what is built
+  on it (`command.execute`, `openPrompt`; `schedule` does not work in a
+  task either). Completion's `CompletionAction` gets no `atomic` yet.
   Both the cursor's item and the marked ones are passed; a helper gives
   "the marked ones, else the cursor's".
 - A list has named actions and a default one (`actions`,
@@ -237,8 +240,9 @@ interface Action<T = {}> {
   marked) and every match at once, and runs the action in a dispatched
   task (`action` is the task's, `signal` aborts when the list goes).
   Unless it returns `true` the list is disposed after it; the action runs
-  while the list is still open. Picking an action is a fuzzy finder over
-  that table.
+  while the list is still open. A fuzzy finder does it the other way
+  round (below): it closes first. Picking an action is a fuzzy finder
+  over that table.
 - Accepting a completion is an action too: the default one replaces the
   candidate's range (else the anchor to the cursor) through the adapter;
   LSP's additional edits and command are actions composed on it. The
@@ -268,7 +272,79 @@ instead of `args`; refining, matching and sorting are shared.
 - A fuzzy finder is defined by name, as vim-fall's pickers:
   `ff.define("file", { source, matchers, sorters, renderers, actions,
   defaultAction })`, and started by an Ex command (`:FF NAME ARGS`) or a
-  function (`ff.start(NAME, args)`).
+  function (`ff.start(NAME, args)`); built as `runtime/ff/finder.ts`, in
+  `temzdf/ff` (below). The shipped finders' parts (sources, renderers,
+  actions) are in `temzdf/ff/builtin` (`runtime/ff/builtin/finders.ts`);
+  `temzdf/ff` defines the finders with them, because `temzdf/ff/builtin`
+  imports from `temzdf/ff` (types only) and a module of finders of its
+  own would need a new entry in `crates/temzdf-script/build.rs`.
+
+## The fuzzy finder
+
+Built as `runtime/ff/finder.ts` (`temzdf/ff`), 2026-11-22: what the code
+settled, for the user to review.
+
+- **The screen**: three floats centred on the screen, 80% of it wide and
+  high: a bordered frame (an empty buffer, without the focus) titled with
+  the finder's name and counts (matched / collected, marked, `...` while
+  collecting), and over its content, without borders, the prompt on the
+  first row, a rule (`─`, `FFBorder`) and the list (`createList`) without
+  the focus. A bordered float is at least four rows high, so the prompt
+  cannot be a framed float of its own; one frame around both reads as one
+  thing (as Telescope's or fzf's boxes) and the prompt above the list
+  puts the best match next to the query. The list's float is as high as
+  its lines (none: one blank row) and the frame's buffer has blank lines
+  under the rule, as a text pane draws `~` past its last line. The list
+  writes three frames' worth of lines at first, whatever its float's
+  height.
+- **The prompt** is a buffer of its own (`nofile`, `unlisted`, base mode
+  `input`) rather than `openPrompt`, which splits its pane off the focused
+  one. Its text is the query: `TextChanged` sets the session's query, and
+  the keys acting on the list set it first too. Starting a finder closes
+  the one showing; the focus leaving the prompt (a click, the prefix's
+  keys) or one of its panes closing closes it.
+- **Keys** (`finderKeys`, namespace `builtin-ff-finder`): mappings in the
+  mode `input` with `when: isFinder`, priority 1 (over `input`'s and
+  completion's `<C-n>`/`<C-p>`). `<C-n>`/`<Down>`, `<C-p>`/`<Up>`,
+  `<PageDown>`/`<PageUp>` move, `<Tab>` marks and moves on (as fzf's),
+  `<CR>` accepts, `<C-a>` picks the action, `<Esc>` closes. `<C-a>` is
+  `input`'s line start (readline); the query is one short line and
+  `<Home>` stays, so the action picker gets the mnemonic key (vim-fall
+  uses `<Tab>`, taken here by marking). `<C-c>` was wanted too, but the
+  server reserves it (it cancels pending keys).
+- **Closing before the action** (vim-fall's order): accepting takes the
+  parameters (the selected item, the marked ones, every match), closes
+  the finder's panes, gives the focus back to the pane the finder started
+  from and then runs the action in a dispatched task, so an action that
+  opens or shows something does it there, not in a float. An action
+  returning `true` opens the finder again over the same session, its
+  query and marks kept (vim-fall resumes its picker the same way).
+  Accepting with neither a selected nor a marked item does nothing.
+- **The action picker** is a finder over the actions' names opened by
+  `pickAction()`, not one defined by name: the finder hides (its session
+  kept), the picker's choice runs on the parameters taken before, and
+  the picker's `<Esc>` shows the finder again.
+- **Keys typed ahead**: a key acting on the list (moving, marking,
+  accepting, picking) waits until the list shows the current query: its
+  first lines are written, or nothing matched and everything is collected.
+  So `abc<CR>` typed at once acts on a match of `abc`, never on the
+  selection left from `ab`. Text keys still go into the prompt at once, so
+  the waiting keys act on the query as it is when the list catches up,
+  and an action picker's query typed at once with `<C-a>` goes into the
+  finder's prompt (the picker is not open yet): a known limit, `todo.md`.
+  For this the list's `view().query` is the query of the lines in the
+  buffer (it was set before the renderers ran).
+- **Sources read the session when the finder starts**: `ff.start` runs
+  where the plain `action` works and starts the session before it opens
+  its panes, and a session calls `collect` at once, so a source reads
+  what it needs (the focused pane: the one the finder starts from, the
+  buffers, the commands) before its first `await`.
+- **Shipped finders**: `buffers` (`open` in the pane started from,
+  `split`, `vsplit`, `delete`), `lines` of the current text buffer
+  (`jump`) and `commands` (from `command.list({ live: true, pane })`;
+  `execute`, `edit`). No help topics (temzdf has no help yet) and no files
+  (`fs.readDir` is deferred). Previewers are in the definition's type and
+  ignored until a previewer's UI is designed.
 
 ## Speed
 

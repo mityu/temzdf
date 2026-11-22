@@ -97,8 +97,9 @@ server on one `Session`). Next and open:
   `firstOf`, inserting on select, the keys `<C-n>` `<C-p>` `<C-y>`
   `<C-e>`), and completing Ex commands in the command line (its marker
   and `isCmdline`, `promptOrigin`, `<Tab>`/`<S-Tab>` there, command names
-  and `command.add`'s `complete`: buffers, commands, `:set`'s options).
-  Next: the fuzzy finder's UI.
+  and `command.add`'s `complete`: buffers, commands, `:set`'s options),
+  and the fuzzy finder's UI (`ff.define`, `ff.start`, `:FF`, the finders
+  `buffers`, `lines` and `commands`, the action picker).
   Order: the fuzzy finder and completion framework (`temzdf/ff`) before
   an LSP client; the first use wanted is completing Ex commands in the
   command line, which is a text buffer like Vim's cmdwin, so it is
@@ -120,6 +121,15 @@ server on one `Session`). Next and open:
   - Keys typed ahead of the list: `<Tab><Tab><CR>` typed at once in the
     command line runs the line before the selection waiting for the
     candidates is made (the moves wait for lines to be written).
+  - Keys typed ahead in a fuzzy finder: the keys acting on the list wait
+    for it, but text goes into the prompt at once, so `<C-a>split<CR>`
+    typed at once types `split` into the finder's query (the action
+    picker is not open yet).
+  - The fuzzy finder: a previewer's UI (previewers are types only), a
+    files finder (needs `fs.readDir`), help topics (no help yet),
+    clicking a candidate, closing with `<C-c>` (reserved by the server:
+    a Rust change), remembering the last query or resuming the last
+    finder.
   - Narrowing only the previous matches when the new query extends the
     old one (as fzf does): measured, one query over 100k items takes
     seconds with npm `fzf` in the script host ("Speed" there).

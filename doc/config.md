@@ -908,6 +908,97 @@ with a candidate in runs the line as it is. The source is
 commandLine } from "temzdf/ff/completion"; commandLine.disable();` takes
 it away.
 
+### Fuzzy finders
+
+`:FF NAME ARGS` (or `ff.start(NAME, args)` from `temzdf/ff`) opens a fuzzy
+finder: a frame centred on the screen, titled with the finder's name and
+its counts (matched / collected, marked, `...` while collecting), with a
+prompt on its first row and the matches below. What you type in the
+prompt is the query; the matches narrow as you type. Finder names
+complete in the command line (`:FF <Tab>`). Shipped finders:
+
+| Finder | Candidates | Actions (default first) |
+|---|---|---|
+| `buffers` | the listed buffers (`[+]` with unsaved changes) | `open` (in the pane you started from), `split`, `vsplit` (each marked one in a new pane), `delete` |
+| `lines` | the lines of the current text buffer, numbered | `jump` (the cursor to the line's first non-blank) |
+| `commands` | the Ex commands there, with their descriptions | `execute` (`:NAME`), `edit` (a command line with `NAME ` in it, for the arguments) |
+
+The keys in the prompt (namespace `builtin-ff-finder`, in the mode
+`input` while `isFinder()` holds, priority 1 over the mode's own; the
+rest of `input`'s keys edit the query):
+
+| Keys | Action |
+|---|---|
+| `<C-n>` / `<Down>`, `<C-p>` / `<Up>` | the next / previous candidate |
+| `<PageDown>` / `<PageUp>` | a screen down / up |
+| `<Tab>` | mark the candidate (or unmark it), then the next |
+| `<CR>` | the default action on the marked candidates, else the selected one (nothing when there is neither) |
+| `<C-a>` | pick the action from a finder over the finder's actions (`<Esc>` there comes back); in the prompt `<C-a>` is no longer the line's start: `<Home>` still is |
+| `<Esc>` | close the finder |
+
+`<C-c>` cannot be mapped (it cancels pending keys), so it does not close a
+finder. Moving the focus elsewhere (a click, a key of the prefix) closes
+it too. Accepting closes the finder first and runs the action in the pane
+you started it from. Keys acting on the list typed before it shows the
+query typed so far wait for it (`abc<CR>` typed at once accepts a match
+of `abc`); text typed meanwhile still goes into the prompt at once, so
+`<C-a>split<CR>` typed at once types `split` into the finder's query, not
+the action picker's.
+
+`import { finderKeys } from "temzdf/ff"; finderKeys.disable();` takes the
+keys away; to change one, map it in `input` with `when: isFinder` and
+`priority: 1` (or more), calling the showing finder's methods:
+
+```ts
+import { keymap } from "temzdf";
+import { active, isFinder } from "temzdf/ff";
+
+keymap.add("input", "<C-j>", () => active()?.next(), { when: isFinder, priority: 1 });
+keymap.add("input", "<C-s>", () => active()?.accept("split"), { when: isFinder, priority: 1 });
+```
+
+A finder's methods: `next(n?)`, `prev(n?)`, `page(n?)`, `first()`,
+`last()`, `toggleMark()`, `accept(name?)`, `pickAction()`, `cancel()`,
+`close()`. `finderCommand` (namespace `builtin-ff`) is `:FF`.
+
+Defining one (`ff.define(name, { source | curator, matchers?, sorters?,
+renderers?, actions, defaultAction, desc? })`, again to replace it,
+`ff.undefine(name)`; `ff.finders()` lists them):
+
+```ts
+import { action } from "temzdf";
+import * as ff from "temzdf/ff";
+import { chosenItems } from "temzdf/ff";
+import { substring } from "temzdf/ff/builtin";
+
+ff.define("tabs", {
+  desc: "tab pages: go",
+  source: {
+    // Called when the finder starts: read the session here, before the
+    // first await (afterwards the plain `action` no longer works).
+    collect() {
+      const tabs = action.tabs();
+      return (async function* () {
+        for (const t of tabs) yield { id: t.index, value: `tab ${t.index}`, detail: { index: t.index } };
+      })();
+    },
+  },
+  matchers: [substring()], // fuzzy() by default; sorters: [byScore()] by default
+  actions: {
+    // In a dispatched task, once the finder closed: o.action is the task's,
+    // o.atomic(fn) runs fn where the plain `action` works.
+    go: { invoke: (p, o) => { if (p.item) o.action.gotoTab(p.item.detail.index); } },
+    count: { invoke: (p, o) => o.atomic(() => action.message(`${chosenItems(p).length} chosen`)) },
+  },
+  defaultAction: "go",
+});
+```
+
+An action returning `true` opens the finder again, its query and marks
+kept. A curator (`{ curate({ args, query }, { signal }) }`) collects again
+for each query. `args` are the words after the name in `:FF NAME ARGS`.
+Previewers are accepted (`previewers`) but nothing previews yet.
+
 ## The Markdown viewer
 
 `markdown.open(path, { pane? })` shows a Markdown file (GitHub-flavoured:
