@@ -52,6 +52,10 @@ cargo xtask check --all      # the tests even when only Markdown under doc/ chan
 ```
 
 `scripts/check.sh` takes the same options and runs it inside the dev shell.
+Runs of the gate in one checkout wait for each other by themselves. Never
+wait for a process with `pgrep -f` in a loop (it matches its own command
+line); wait for your own background command's completion notification, or
+on a PID.
 
 Read before you act:
 

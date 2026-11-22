@@ -96,6 +96,13 @@ skipped (`--all` or cargo test arguments run them). `--stream` prints each
 step's output as it comes under a `==> STEP` header, or in a log group of
 its own under GitHub Actions (`GITHUB_ACTIONS=true`), as CI runs it.
 
+Runs of the gate in one checkout wait for each other: `cargo xtask check`
+and `cargo xtask test` hold an exclusive lock on `target/check/lock` (the
+holder's PID is in it; the system drops it when the process ends) and
+print `waiting for another run of the gate (PID N) to finish` while
+another run has it. Agents sharing a tree need not wait themselves, and
+a worktree with its own `target/` does not wait for another's.
+
 It is Rust rather than shell so that it can run on Windows one day: it
 assumes no Nix and finds its tools on PATH (Biome and shellcheck also in
 the npm packages' `.bin`), says what to install when a required one

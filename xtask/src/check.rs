@@ -357,6 +357,45 @@ struct Gate<'a> {
     groups: bool,
     /// A header was printed and its group is not closed yet.
     open: bool,
+    /// Held until the run ends: one run of the gate per checkout at a time.
+    _lock: File,
+}
+
+/// The line printed when another run holds the lock.
+fn wait_message(pid: Option<u32>) -> String {
+    match pid {
+        Some(pid) => format!("waiting for another run of the gate (PID {pid}) to finish"),
+        None => "waiting for another run of the gate to finish".to_owned(),
+    }
+}
+
+/// Opens the lock file at PATH without truncating it (it holds the
+/// holder's PID for others to read).
+fn open_lock(path: &Path) -> Result<File> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .with_context(|| format!("cannot open {}", path.display()))
+}
+
+/// Takes the exclusive lock on PATH, waiting (after saying so) while
+/// another process holds it, then writes our PID into it. The operating
+/// system drops the lock when the process ends, however it ends.
+fn acquire_lock(path: &Path) -> Result<File> {
+    let mut file = open_lock(path)?;
+    if file.try_lock().is_err() {
+        let pid = fs::read_to_string(path).ok().and_then(|s| s.trim().parse().ok());
+        println!("{}", wait_message(pid));
+        let _ = io::stdout().flush();
+        file.lock().with_context(|| format!("cannot lock {}", path.display()))?;
+    }
+    file.set_len(0)?;
+    write!(file, "{}", std::process::id())?;
+    file.flush()?;
+    Ok(file)
 }
 
 impl<'a> Gate<'a> {
@@ -364,7 +403,8 @@ impl<'a> Gate<'a> {
         let dir = target_dir().join("check");
         fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
         let groups = std::env::var_os("GITHUB_ACTIONS").is_some_and(|v| v == "true");
-        Ok(Gate { o, dir, status: 0, groups, open: false })
+        let _lock = acquire_lock(&dir.join("lock"))?;
+        Ok(Gate { o, dir, status: 0, groups, open: false, _lock })
     }
 
     /// With --stream, the header of step NAME.
@@ -659,6 +699,26 @@ fn miri_logs(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn second_lock_waits_until_the_first_is_dropped() {
+        let dir = std::env::temp_dir().join(format!("xtask-lock-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lock");
+        let first = acquire_lock(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), std::process::id().to_string());
+        let second = open_lock(&path).unwrap();
+        assert!(matches!(second.try_lock(), Err(fs::TryLockError::WouldBlock)));
+        drop(first);
+        assert!(second.try_lock().is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn says_whom_it_waits_for() {
+        assert_eq!(wait_message(Some(42)), "waiting for another run of the gate (PID 42) to finish");
+        assert_eq!(wait_message(None), "waiting for another run of the gate to finish");
+    }
 
     #[test]
     fn counts_every_passed() {
