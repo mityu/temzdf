@@ -13,16 +13,18 @@ libz-sys = { version = "1.1.30", features = ["static"] }
 mupdf.workspace = true
 temzdf-scene.workspace = true
 temzdf-watchfs.workspace = true
+temzdf-fixtures = { workspace = true, optional = true }
 
 [build-dependencies]
 cc = "1.10.0"
 
 [features]
-# `testing::fixture` for tests in other crates.
-test-support = []
+# `pdf::fixture` for tests in other crates.
+test-support = ["dep:temzdf-fixtures"]
 
 [dev-dependencies]
 pdf-writer.workspace = true
+temzdf-fixtures.workspace = true
 
 [lints]
 workspace = true

@@ -57,6 +57,12 @@ tasks:
       \"could not compile\", \"running N tests\" and \"test result\"; any
       other command is judged by its exit status alone.
       scripts/mutate.sh runs this inside the Nix dev shell.
+  fixtures [--force]
+      Build the test fixtures: tests/fixtures/*.tex into target/fixtures/
+      (PDF and SyncTeX) with latexmk, those missing or older than their
+      source (all with --force). Tests build them on first use
+      (temzdf_pdfcore::pdf::fixture); scripts/build-fixtures.sh runs this
+      inside the Nix dev shell.
   fetch-fonts [--manifest PATH]
       Download the fonts temzdf-gui embeds (crates/temzdf-gui/fonts.toml)
       into target/fonts/, checking their sha256; files already there and
@@ -85,6 +91,7 @@ fn run() -> Result<i32> {
         "check" => return check::check(&check::Options::parse(args, false)),
         "test" => return check::test(&check::Options::parse(args, true)),
         "mutate" => return mutate::mutate(args.map(|a| a.to_string_lossy().into_owned())),
+        "fixtures" => return fixtures(args.map(|a| a.to_string_lossy().into_owned())),
         _ => {}
     }
     let mut args = args.map(|a| a.to_string_lossy().into_owned());
@@ -108,6 +115,22 @@ fn run() -> Result<i32> {
         "update-fonts" => fonts::update(&manifest, &dir, &tags, check)?,
         "" | "help" | "-h" | "--help" => print!("{USAGE}"),
         _ => bail!("unknown task {task:?}\n\n{USAGE}"),
+    }
+    Ok(0)
+}
+
+/// `cargo xtask fixtures [--force]`.
+fn fixtures(args: impl Iterator<Item = String>) -> Result<i32> {
+    let mut force = false;
+    for a in args {
+        match a.as_str() {
+            "--force" => force = true,
+            _ => bail!("unexpected argument {a:?}\n\n{USAGE}"),
+        }
+    }
+    for pdf in temzdf_fixtures::build(&root(), force)? {
+        let shown = pdf.strip_prefix(root()).unwrap_or(&pdf);
+        println!("built {}", shown.display());
     }
     Ok(0)
 }

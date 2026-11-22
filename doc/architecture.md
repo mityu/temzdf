@@ -39,7 +39,8 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
 | `temzdf-gui` (bin) | `temzdf-client`, `temzdf-protocol`, `temzdf-scene`, `termpix-core` (and winit, wgpu, glyphon) |
 | `tuitest` (tests only) | none of ours (`libghostty-vt`, `portable-pty`; `temzdf` uses it in `tests/tui.rs`) |
 | `wlinput` (tests only) | none of ours (Wayland virtual keyboard and pointer) |
-| `xtask` | none of ours (repository tasks: `cargo xtask help`) |
+| `temzdf-fixtures` (tests only) | none of ours (builds `target/fixtures/` with latexmk) |
+| `xtask` | `temzdf-fixtures` (repository tasks: `cargo xtask help`) |
 
 - `termpix-core`: frontend-independent primitives (geometry, RGBA raster
   helpers, kinetic scroll, key/mouse events, and the viewport the PDF and
@@ -132,6 +133,10 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
   `wlinput` is one virtual keyboard and pointer on a wlroots compositor,
   driven by commands on stdin; `scripts/e2e.sh -d wayland` drives
   headless sway with it.
+- `temzdf-fixtures`: builds the test fixtures (`tests/fixtures/*.tex`
+  into `target/fixtures/` with latexmk) when stale, for
+  `temzdf_pdfcore::pdf::fixture` (feature `test-support`) and `cargo
+  xtask fixtures` (`scripts/build-fixtures.sh`).
 - `xtask`: repository tasks as `cargo xtask TASK` (alias in
   `.cargo/config.toml`; `cargo xtask help`): `check` and `test` (the gate,
   `doc/dev/testing.md`), `fetch-fonts` downloads the fonts `temzdf-gui`

@@ -41,7 +41,7 @@ a headless render and fails the run on a mismatch (`tests/e2e/expect.actions`,
 "Judged e2e scenarios" below). See the `scripts/e2e.sh` header for the
 helpers. `temzdf standalone pdf FILE --render-frame out.png` renders one
 screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/`
-from `tests/fixtures/*.tex` (tests run it automatically; e2e scenarios
+from `tests/fixtures/*.tex` (tests do it automatically; e2e scenarios
 need it first; "Fixtures" below).
 
 For refactorings, `scripts/frames.sh render-rev HEAD A` (the last commit),
@@ -706,9 +706,15 @@ arrived left no match selected.
 
 ## Fixtures
 
-`tests/fixtures/*.tex` are the sources. `scripts/build-fixtures.sh` builds them
-into `target/fixtures/` (PDF and SyncTeX) with a global TeX installation (or
-the one in `nix develop .#alldeps`), reproducibly
-(`SOURCE_DATE_EPOCH`), and skips fixtures newer than their source. Unit tests
-call it on first use (`pdf::fixture`); run it yourself before e2e scenarios.
+`tests/fixtures/*.tex` are the sources. `crates/temzdf-fixtures` builds them
+into `target/fixtures/` (PDF and SyncTeX) with latexmk from a global TeX
+installation (or the one in `nix develop .#alldeps`), reproducibly
+(`SOURCE_DATE_EPOCH`, and the same scratch directory name each time:
+pdfTeX's `/ID` depends on it), and skips fixtures newer than their source
+and than its own source. Each is built in a scratch directory and renamed
+into place, and builds in several processes wait for each other on
+`target/fixtures/.lock`. Unit tests build them on first use
+(`pdf::fixture`, in Rust, so also where there is no shell);
+`scripts/build-fixtures.sh` (`cargo xtask fixtures [--force]`) builds them
+before e2e scenarios.
 Generated files are never committed (see AGENTS.md).

@@ -1,0 +1,11 @@
+[package]
+name = "temzdf-fixtures"
+description = "Builds the test fixtures (tests/fixtures/*.tex into target/fixtures/ with latexmk) for tests and `cargo xtask fixtures`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
