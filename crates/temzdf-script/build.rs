@@ -12,7 +12,7 @@
 //! lock file), else from `$TEMZDF_NODE_MODULES`: the dev shells and `nix
 //! build` set it to node_modules Nix built from the same lock file, so `nix
 //! build` needs no network. esbuild comes from `PATH` (`$ESBUILD`
-//! overrides). Only with the feature `host` (the type declarations alone
+//! overrides; on Windows see [`esbuild`]). Only with the feature `host` (the type declarations alone
 //! need none of this).
 //!
 //! Cargo runs this again when a file a bundle was made from changes (as
@@ -73,7 +73,7 @@ fn main() {
     } else {
         std::env::var_os("TEMZDF_NODE_MODULES").map(PathBuf::from)
     };
-    let esbuild = std::env::var_os("ESBUILD").unwrap_or_else(|| "esbuild".into());
+    let esbuild = esbuild(&runtime, modules.as_deref());
     // The files the bundles were made from.
     let mut inputs = BTreeSet::new();
     let mut bundle = |entry: &Path, out_file: &str, format: &str| {
@@ -125,6 +125,51 @@ fn main() {
     for file in inputs {
         println!("cargo::rerun-if-changed={}", file.display());
     }
+}
+
+/// The esbuild to run: `$ESBUILD`, else `esbuild` from `PATH`. On Windows
+/// npm installs esbuild as `esbuild.cmd`, a shim running Node, which
+/// `Command` does not find by the bare name: there the native executable
+/// is looked for, as xtask's `find_tool` looks for tools: `esbuild.exe`
+/// in node_modules' `.bin` or on `PATH`, the platform package's
+/// executable (`@esbuild/win32-x64/esbuild.exe`) in node_modules or where
+/// a global npm install put it beside a `PATH` entry, and `esbuild.cmd`
+/// last.
+fn esbuild(runtime: &Path, modules: Option<&Path>) -> std::ffi::OsString {
+    if let Some(e) = std::env::var_os("ESBUILD") {
+        return e;
+    }
+    if !cfg!(windows) {
+        return "esbuild".into();
+    }
+    println!("cargo::rerun-if-env-changed=PATH");
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86" => "ia32",
+        _ => "x64",
+    };
+    let package = Path::new("@esbuild").join(format!("win32-{arch}")).join("esbuild.exe");
+    let nested = Path::new("esbuild").join("node_modules").join(&package);
+    let mut node_modules = vec![runtime.join("node_modules")];
+    node_modules.extend(modules.map(Path::to_path_buf));
+    let path: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let mut candidates = Vec::new();
+    for m in &node_modules {
+        candidates.push(m.join(".bin").join("esbuild.exe"));
+        candidates.push(m.join(&package));
+        candidates.push(m.join(&nested));
+    }
+    for dir in &path {
+        candidates.push(dir.join("esbuild.exe"));
+        // `npm install -g` on Windows: the shims in the prefix, the
+        // packages in its node_modules.
+        candidates.push(dir.join("node_modules").join(&package));
+        candidates.push(dir.join("node_modules").join(&nested));
+    }
+    for dir in node_modules.iter().map(|m| m.join(".bin")).chain(path.iter().cloned()) {
+        candidates.push(dir.join("esbuild.cmd"));
+    }
+    candidates.into_iter().find(|p| p.is_file()).map_or_else(|| "esbuild".into(), PathBuf::into_os_string)
 }
 
 /// The source files esbuild's metafile `meta` lists as a bundle's inputs
