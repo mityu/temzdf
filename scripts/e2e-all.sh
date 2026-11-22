@@ -24,7 +24,8 @@
 #             for the terminal; gui is the GUI's only)
 #
 # Prints PASS/FAIL/SKIP counts per terminal and scenario and their sum;
-# exits 1 if anything failed or crashed. Builds nothing but -R's renderers:
+# exits 1 if anything failed or crashed. Builds nothing but -R's renderers
+# and termpix's scroll_demo example (the scroll_demo scenario's command):
 # build temzdf and temzdf-gui first (scripts/macos-vm.sh e2e-all does, in the
 # VM).
 set -uo pipefail
@@ -51,6 +52,8 @@ while getopts "t:d:P:o:j:Rh" opt; do
 done
 shift $((OPTIND - 1))
 outdir=${outdir:-target/e2e-all${display:+-$display}}
+# The scroll_demo scenario's command (a second when it is up to date).
+cargo build -q -p termpix --example scroll_demo || exit 2
 # Sway's runs drive it with wlinput: built once here, not by each run.
 if [[ $display == wayland ]]; then
   cargo build -q -p wlinput || exit 2
@@ -68,7 +71,7 @@ fi
 # gui-focus (AppKit sends no presses for keys held on focus-in) and gui-ime
 # (-I, fcitx5, is Linux's).
 judged=(session terminal terminal-extras edit markdown tabs floats resize float-wide expect links preview search select
-  select-autoscroll viewer viewer-stress synctex synctex-reload reload no-graphics visual)
+  select-autoscroll viewer viewer-stress synctex synctex-reload reload no-graphics visual scroll_demo)
 gui_judged=(gui gui-focus gui-ime)
 if [[ $(uname) == Darwin ]]; then
   gui_judged=(gui)
@@ -120,6 +123,7 @@ scenario() {
       cp target/fixtures/sample.pdf target/e2e-reload/doc.pdf
       pdf target/e2e-reload/doc.pdf
       ;;
+    scroll_demo) cmd=(target/debug/examples/scroll_demo) ;;
     gui) cmd=(target/debug/temzdf-gui --clean target/fixtures/sample.pdf) ;;
     gui-focus | gui-ime)
       cmd=(env SHELL=/bin/sh 'PS1=$ ' target/debug/temzdf-gui --clean)

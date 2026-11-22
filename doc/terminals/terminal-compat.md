@@ -98,6 +98,10 @@ Known problems:
   `--render-frame --linear-blending`, not the sRGB blend). Started with
   `--window-decoration=false` and zero padding, its terminal area starts at
   the window's top left, so `scripts/e2e.sh`'s `expect` works there.
+- Ghostty 1.4.0 (Xvfb, 2026-11-23) reports three wheel steps for each X
+  button 4/5 click; kitty 0.51.0 and WezTerm 0-unstable-2026-11-08 report one
+  (`tests/e2e/scroll_demo.actions`: six clicks scroll scroll_demo 2880 px
+  in Ghostty, 540 px in the others).
 - WezTerm 20260117 (software renderer, Xvfb, 2026-10-28): SGR-pixel
   coordinates are one-based (`xdotool mousemove 450 300` arrives as 451,301;
   kitty reports 450,300), and input arrives in bursts while it renders:

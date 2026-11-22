@@ -1,9 +1,56 @@
 # Used with: scripts/e2e.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
-# Expected: wheel6 shows the first band boundary 360 px from the top (6 steps x 60 px);
-# drag100 shows a further 100 px scroll.
+# Expected: the image's top at the top (start); six quick wheel notches
+# scroll 540 px (wheel6: 60 px a step, each step of the flick 0.2 more:
+# 60 x (1 + 1.2 + 1.4 + 1.6 + 1.8 + 2.0)); in Ghostty 2880 px (it reports
+# three steps a notch: 18 steps, the multiplier capped at 4); dragging up
+# by 100 px scrolls 100 px further (drag100).
+# Judged (check): how far each scrolled, from where the bands' boundaries
+# are in the screenshots (wheel6, drag100; scroll_demo writes no log, so by
+# the difference between two screenshots). Not on macOS (SKIP), where
+# kitty reports three steps a notch and Ghostty nine (past the image's end).
+pause 1
+shot start
+# The image's offset at the top of screenshot $1 (plus the terminal's
+# padding, the same in every screenshot): from the first boundary between
+# two bands (every 500 px, their colour's hue 0.13 apart) below the top. A
+# strip of columns around the middle averaged into one, the grid's rows
+# (grey) and the dark line every 1000 px skipped: the first band row seen
+# is the image's row 500 k + 2 (below the grid's line), or 500 k + 8 for
+# even k (below the dark line). The hues wrap after the image's row 3500.
+band_offset() {
+  local w
+  w=$(magick identify -format '%w' "$outdir/$1.png") || return 1
+  magick "$outdir/$1.png" -alpha off -crop "200x+$((w / 2 - 100))+0" +repage -scale '1x!' -depth 8 txt:- |
+    awk -F'[(),: ]+' 'NR > 1 {
+      y = $2; r = $3; g = $4; b = $5
+      max = r > g ? (r > b ? r : b) : (g > b ? g : b)
+      min = r < g ? (r < b ? r : b) : (g < b ? g : b)
+      if (done || max - min < 30) next
+      if (max == r) h = (g - b) / (max - min)
+      else if (max == g) h = 2 + (b - r) / (max - min)
+      else h = 4 + (r - g) / (max - min)
+      h /= 6; if (h < 0) h += 1
+      k = int(h / 0.13 + 0.5)
+      if (seen && k != pk) { print 500 * k + (k % 2 ? 2 : 8) - y; done = 1; next }
+      pk = k; seen = 1
+    }
+    END { exit !done }'
+}
+# Whether the image moved N px (within 2) from screenshot $1 to $2.
+band_moved() {
+  local a b
+  [[ $display != macos ]] || return 77
+  a=$(band_offset "$1") && b=$(band_offset "$2") || return 1
+  echo "band_moved $1 -> $2: $((b - a)) px (expected $3)"
+  (((b - a) - $3 <= 2 && $3 - (b - a) <= 2))
+}
 wheel 6
 pause 1
 shot wheel6
+wheeled=540
+[[ $term != ghostty ]] || wheeled=2880
+check wheel6 band_moved start wheel6 "$wheeled"
 drag 450 300 200
 pause 0.5
 shot drag100
+check drag100 band_moved wheel6 drag100 100
