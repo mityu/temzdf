@@ -142,7 +142,8 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
   `doc/dev/testing.md`), `fetch-fonts` downloads the fonts `temzdf-gui`
   embeds (`crates/temzdf-gui/fonts.toml`) into `target/fonts/` for builds
   without Nix, `update-fonts` moves that list to newer releases
-  (`doc/dev/building.md`).
+  (`doc/dev/building.md`), `mutate` puts a bug back for one run, and
+  `fixtures` builds the test fixtures (`temzdf-fixtures`).
 
 Other top-level directories and files:
 

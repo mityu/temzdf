@@ -12,7 +12,8 @@ shell passes them in `TEMZDF_BUNDLED_FONTS`; a build without Nix runs
 `crates/temzdf-gui/build.rs` finds them).
 
 Such a build also needs Zig 0.15.2 (libghostty-vt is then built from
-source), esbuild and npm, libclang, fontconfig and pkg-config (on Ubuntu:
+source), esbuild (on Windows `crates/temzdf-script/build.rs` finds its
+executable behind npm's `esbuild.cmd`) and npm, libclang, fontconfig and pkg-config (on Ubuntu:
 `libclang-dev libfontconfig-dev pkg-config`, and `autoconf automake
 libtool` for the next step), and libtexprintf and the shipped scripts' npm
 packages, which `scripts/deps-without-nix.sh PREFIX` installs (it prints
