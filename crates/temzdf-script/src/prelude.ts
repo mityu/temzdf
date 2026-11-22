@@ -441,6 +441,12 @@ const temzdf: Temzdf = {
     const b = buffer ?? focusedBuffer();
     return b !== undefined && prompts.has(b);
   },
+  promptOrigin(buffer) {
+    check("promptOrigin", promptBuffer, buffer, "buffer");
+    const b = buffer ?? focusedBuffer();
+    const origin = b === undefined ? undefined : prompts.get(b)?.origin;
+    return isNullish(origin) ? undefined : origin;
+  },
   // Inside a mapped or hook function everything is atomic already.
   atomic(fn) {
     check("atomic", func(), fn);

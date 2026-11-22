@@ -2641,6 +2641,39 @@ fn the_vim_mode_runs_macros_and_splits_panes() {
 }
 
 #[test]
+fn ex_commands_complete_in_the_command_line() {
+    // <Tab> in Vim's command line shows the commands named so far in a
+    // popup at the name, above the command line at the bottom; <Tab>
+    // again puts the first in, <CR> runs it (rendered for people to look
+    // at: target/tuitest/cmdline-completion.png).
+    let env = Env::new("cmdline-completion");
+    let file = env.path("c.txt");
+    std::fs::write(&file, "one\ntwo\n").unwrap();
+    let mut t = Term::spawn(&[BIN, "-s", "cc", file.to_str().unwrap()], &env.options());
+    t.wait_text("vim/normal");
+    t.type_text(":tabn");
+    t.wait_for("the command line", |s| s.lines().iter().any(|l| l.starts_with(":tabn")));
+    t.key("Tab");
+    let s = t.wait_for("the popup", |s| s.contains("tabnext  command"));
+    let lines = s.lines();
+    let row = |p: &dyn Fn(&str) -> bool| lines.iter().position(|l| p(l)).unwrap_or_else(|| t.fail("a row", &s));
+    let cmdline = row(&|l| l.starts_with(":tabn"));
+    let first = row(&|l| l.contains("tabnew   command"));
+    let second = row(&|l| l.contains("tabnext  command"));
+    assert_eq!((first, second), (cmdline - 2, cmdline - 1), "right above the command line:\n{}", s.text());
+    // At the name, after the prompt's ":" (in cells: the split's border
+    // beside it takes more than a byte).
+    let col = |l: &str, word: &str| l.find(word).map(|b| l[..b].chars().count());
+    assert_eq!(col(&lines[first], "tabnew"), Some(1), "{}", s.text());
+    assert_eq!(col(&lines[second], "tabnext"), Some(1), "{}", s.text());
+    s.save_render("cmdline-completion");
+    t.key("Tab");
+    t.wait_for("the first one in", |s| s.lines().iter().any(|l| l.trim_end() == ":tabnew"));
+    t.key("Enter");
+    t.wait_for("a new tab", tab_line);
+}
+
+#[test]
 fn a_pdfs_selection_goes_into_the_copy_history() {
     // What a PDF pane copies is in the session's copy history, as a
     // terminal's copy (doc/design/registers.md).

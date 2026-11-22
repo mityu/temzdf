@@ -7,7 +7,7 @@
 import { action, o } from "temzdf";
 import type { KeyContext, KeyInfo, Position, Range as TextRange } from "temzdf";
 import { command, parseBang, resolveRange, splitBar } from "temzdf/command";
-import type { CmdCtx, VimRangeEnv } from "temzdf/command";
+import type { CmdCompleteParams, CmdCompletion, CmdCtx, VimRangeEnv } from "temzdf/command";
 import type { Define } from "temzdf/keyset";
 import { operate } from "./operators";
 import { convert } from "./pattern";
@@ -549,7 +549,7 @@ export function exCommands(add: Define["command"]): void {
       const n = arg !== "" ? arg : String(resolveRange(c.range!, env).last + 1);
       action.showBuffer(bufferNamed(n), action.focusedPane());
     },
-    { shortName: "b", prefix: "vim-range" },
+    { shortName: "b", prefix: "vim-range", complete: "buffer" },
   );
   for (const name of ["ls", "buffers", "files"]) add(name, () => action.message(listBuffers()));
   add(
@@ -558,7 +558,7 @@ export function exCommands(add: Define["command"]): void {
       const [bang, arg] = bangArg(c.args);
       deleteBuffer(arg === "" ? focusedBuffer() : bufferNamed(arg), bang);
     },
-    { shortName: "bd" },
+    { shortName: "bd", complete: "buffer" },
   );
   const tabnew = (c: CmdCtx) => {
     const arg = bangArg(c.args)[1];
@@ -637,7 +637,7 @@ export function exCommands(add: Define["command"]): void {
         .filter((x) => x !== ""))
         setOption(opt);
     },
-    { ...text, shortName: "se" },
+    { ...text, shortName: "se", complete: completeOption },
   );
 }
 
@@ -657,6 +657,17 @@ const names: Record<string, keyof typeof options> = {
   sw: "shiftwidth",
   shiftwidth: "shiftwidth",
 };
+
+/** :set's completion: the option names (after `no`, the boolean ones);
+ * nothing for a value (after `=`). */
+function completeOption({ args }: CmdCompleteParams): CmdCompletion | undefined {
+  const at = args.search(/\S*$/);
+  const word = args.slice(at);
+  if (word.includes("=")) return undefined;
+  const long = [...new Set(Object.values(names))].sort();
+  if (word.startsWith("no")) return { start: at + 2, items: long.filter((n) => n !== "shiftwidth") };
+  return { start: at, items: long };
+}
 
 function setOption(opt: string): void {
   const m = /^(no)?(\w+)(?:=(\d+))?$/.exec(opt);

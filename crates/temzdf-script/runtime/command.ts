@@ -48,6 +48,33 @@ export type CmdCtx = {
   line: string;
 };
 
+/** A candidate for an argument (completion in the command line): its text, or that with a kind and a description shown beside it. */
+export type CmdCandidate = string | { value: string; kind?: string; description?: string };
+
+/** What an argument's completer gets. */
+export type CmdCompleteParams = {
+  /** The arguments typed, from the first one's start (after `!` and blanks) to the cursor. */
+  args: string;
+  /** The command's full name. */
+  name: string;
+  /** Whether `!` follows the name. */
+  bang: boolean;
+  /** The context of the pane the command line runs in (the prompt's origin; the mode is the command line's). */
+  context: KeyContext;
+};
+
+/** An argument's completer's answer. */
+export type CmdCompletion = {
+  /** Where the completed text starts in `args` (default: after the last blank not after a backslash). */
+  start?: number;
+  items: readonly CmdCandidate[];
+  /** How the text typed from `start` narrows them: "prefix" (default; case respected, Vim's way for command and option names), "substring" (Vim's for buffer names; case ignored unless it has an upper-case letter) or "fuzzy". */
+  match?: "prefix" | "substring" | "fuzzy";
+};
+
+/** How a command's arguments complete in the command line: "buffer" (buffer names, by substring), "command" (command names, by prefix) or a function (synchronous, reading only; undefined: nothing to complete). */
+export type CmdComplete = "buffer" | "command" | ((p: CmdCompleteParams) => CmdCompletion | undefined);
+
 export type CmdOpts = {
   /** The shortest abbreviation accepted (a prefix of the name); without it, only the full name. */
   shortName?: string;
@@ -60,6 +87,8 @@ export type CmdOpts = {
   desc?: string;
   /** Adding the same name with the same namespace again replaces it; `clear` removes a namespace's commands. */
   namespace?: string;
+  /** How its arguments complete in the command line (Vim's `-complete=`). */
+  complete?: CmdComplete;
 };
 
 /** A registered command, as `command.list` shows it. */
@@ -70,6 +99,15 @@ export type CmdSpec = {
   bar: "auto" | "handle";
   desc?: string;
   namespace?: string;
+  complete?: CmdComplete;
+};
+
+/** Which commands `command.list` and `command.find` look at. */
+export type CmdFilter = {
+  /** Only those whose `when` holds (default false; `command.find`: always). */
+  live?: boolean;
+  /** For `live`: the pane `when` is asked about (default: the focused one). */
+  pane?: number;
 };
 
 type Entry = CmdSpec & { fn: (ctx: CmdCtx) => void; when?: (ctx: KeyContext) => boolean };
@@ -89,12 +127,15 @@ const cmdOpts = options({
   bar: z._default(z.enum(["auto", "handle"]), "auto"),
   desc: z.optional(z.string()),
   namespace: z.optional(z.string()),
+  complete: z.optional(z.union([z.enum(["buffer", "command"]), func<Exclude<CmdComplete, string>>()])),
 });
+const cmdFilter = options({ live: z._default(z.boolean(), false), pane: z.optional(z.number()) });
 const namespaceFilter = options({ namespace: z.optional(z.string()) });
 // A new {} each time: commands may add to the mods they pass on.
 const executeOptions = options({ mods: z._default(z.record(z.string(), z.unknown()), () => ({})) });
 type _Options = Assert<
   | Takes<typeof cmdOpts, CmdOpts>
+  | Takes<typeof cmdFilter, CmdFilter>
   | Takes<typeof namespaceFilter, { namespace?: string }>
   | Takes<typeof executeOptions, { mods?: Mods }>
 >;
@@ -118,11 +159,11 @@ function removeWhere(keep: (e: Entry) => boolean): void {
   registry.push(...kept);
 }
 
-/** The context `when` gets, as a mapping's (no keys typed). */
-function keyContext(): KeyContext {
-  const info = focusedPaneInfo(action);
+/** The context `when` gets, as a mapping's (no keys typed), for `pane` (the focused one). */
+function keyContext(pane?: number): KeyContext {
+  const info = pane === undefined ? focusedPaneInfo(action) : action.panes().find((p) => p.id === pane);
   return {
-    pane: info?.id ?? -1,
+    pane: info?.id ?? pane ?? -1,
     paneKind: info?.kind,
     floating: info?.floating ?? false,
     mode: action.currentMode(),
@@ -130,12 +171,12 @@ function keyContext(): KeyContext {
   };
 }
 
-/** The command `input` names: exact names first, then abbreviations; the last defined of either. */
-function lookup(input: string): Entry | undefined {
+/** The command `input` names: exact names first, then abbreviations; the last defined of either (`when` asked about `pane`, the focused one). */
+function lookup(input: string, pane?: number): Entry | undefined {
   // The context, made once, when a `when` asks for it.
   let ctx: KeyContext | undefined;
   const context = () => {
-    if (ctx === undefined) ctx = keyContext();
+    if (ctx === undefined) ctx = keyContext(pane);
     return ctx;
   };
   const live = (e: Entry) => e.when === undefined || e.when(context());
@@ -155,6 +196,27 @@ function lookup(input: string): Entry | undefined {
     }
   }
   return abbreviated;
+}
+
+function spec({ name, shortName, prefix, bar, desc, namespace, complete }: Entry): CmdSpec {
+  return { name, shortName, prefix, bar, desc, namespace, complete };
+}
+
+/** The buffer variable marking a prompt as a command line: ":" (Ex commands; Vim's `:` and `<C-b>:`), "/" or "?" (Vim's searches). */
+export const CMDLINE_VAR = "cmdline";
+
+/** The kind of command line `pane` (a mapping's context's, the focused one) shows (CMDLINE_VAR), or undefined. */
+export function cmdlineKind(pane?: number | KeyContext): string | undefined {
+  const id = typeof pane === "object" ? pane.pane : pane;
+  const info = id === undefined ? focusedPaneInfo(action) : action.panes().find((p) => p.id === id);
+  if (info === undefined) return undefined;
+  const v = action.getVar("buffer", CMDLINE_VAR, info.buffer);
+  return typeof v === "string" ? v : undefined;
+}
+
+/** Whether `pane` (a mapping's context's, the focused one) is an Ex command line: for `when`. */
+export function isCmdline(pane?: number | KeyContext): boolean {
+  return cmdlineKind(pane) === ":";
 }
 
 function run(line: string, mods: Mods): void {
@@ -186,9 +248,9 @@ function run(line: string, mods: Mods): void {
 export const command = {
   /** Define an Ex command (`:name`). */
   add(name: string, fn: (ctx: CmdCtx) => void, opts?: CmdOpts): void {
-    const { shortName, when, prefix, bar, desc, namespace } = check(name, fn, opts);
+    const { shortName, when, prefix, bar, desc, namespace, complete } = check(name, fn, opts);
     if (namespace !== undefined) removeWhere((e) => !(e.name === name && e.namespace === namespace));
-    registry.push({ name, fn, shortName, when, prefix, bar, desc, namespace });
+    registry.push({ name, fn, shortName, when, prefix, bar, desc, namespace, complete });
   },
   /** Remove the commands called `name`: those of a namespace, or all. */
   remove(name: string, filter?: { namespace?: string }): void {
@@ -201,16 +263,23 @@ export const command = {
     const { namespace } = parse("command.clear", namespaceFilter, filter, "filter");
     removeWhere((e) => namespace !== undefined && e.namespace !== namespace);
   },
-  /** The commands, in the order defined (a snapshot). */
-  list(): CmdSpec[] {
-    return registry.map(({ name, shortName, prefix, bar, desc, namespace }) => ({
-      name,
-      shortName,
-      prefix,
-      bar,
-      desc,
-      namespace,
-    }));
+  /** The commands, in the order defined (a snapshot); with `live`, those whose `when` holds for `pane` (the focused one). */
+  list(filter?: CmdFilter): CmdSpec[] {
+    const { live, pane } = parse("command.list", cmdFilter, filter, "filter");
+    let ctx: KeyContext | undefined;
+    const holds = (e: Entry) => {
+      if (!live || e.when === undefined) return true;
+      if (ctx === undefined) ctx = keyContext(pane);
+      return e.when(ctx);
+    };
+    return registry.filter(holds).map(spec);
+  },
+  /** The command `name` runs as (an abbreviation's too) for `pane` (the focused one), as `command.execute` finds it; undefined: none. */
+  find(name: string, filter?: Omit<CmdFilter, "live">): CmdSpec | undefined {
+    validate("command.find", z.string(), name, "name");
+    const { pane } = parse("command.find", cmdFilter, filter, "filter");
+    const e = lookup(name, pane);
+    return e === undefined ? undefined : spec(e);
   },
   /** Run a command line (`|` separating commands as they say). Errors reach the caller. */
   execute: now(() => {

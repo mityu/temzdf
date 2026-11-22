@@ -16,7 +16,7 @@ import normal from "temzdf/mode/normal";
 import pdf from "temzdf/pane/pdf";
 import markdown from "temzdf/pane/markdown";
 import terminal from "temzdf/pane/terminal";
-import { keys as completionKeys } from "temzdf/ff/completion";
+import { commandLine as cmdlineCompletion, keys as completionKeys } from "temzdf/ff/completion";
 
 pdf.enable();
 terminal.enable();
@@ -28,5 +28,8 @@ vim.enable();
 // After vim: its text-mode keys (<CR> on a link) are tried first.
 markdown.enable();
 // Completion's keys in the modes where text is typed: <C-n>/<C-p> select
-// (starting a completion), <C-y> accepts, <C-e> cancels.
+// (starting a completion), <C-y> accepts, <C-e> cancels; <Tab>/<S-Tab> in
+// the command line.
 completionKeys.enable();
+// Ex command names and arguments completed in the command line.
+cmdlineCompletion.enable();

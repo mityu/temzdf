@@ -421,6 +421,8 @@ declare module "temzdf" {
   export function cancelPrompt(buffer?: number): void;
   /** Whether `buffer` (the focused pane's) is an open prompt. */
   export function isPrompt(buffer?: number): boolean;
+  /** The pane that was focused when the prompt (the focused pane's, or `buffer`) opened, where the focus goes back when it closes; undefined when there was none or `buffer` is not a prompt. */
+  export function promptOrigin(buffer?: number): number | undefined;
   /** Start an asynchronous task without waiting for it. */
   export function dispatch(fn: (ctx: TaskContext) => Promise<void> | void): void;
   export function atomic<T>(fn: () => T): T;
@@ -1197,6 +1199,33 @@ export type CmdCtx = {
 	/** This command's part of the line: its range, name and arguments. */
 	line: string;
 };
+/** A candidate for an argument (completion in the command line): its text, or that with a kind and a description shown beside it. */
+export type CmdCandidate = string | {
+	value: string;
+	kind?: string;
+	description?: string;
+};
+/** What an argument's completer gets. */
+export type CmdCompleteParams = {
+	/** The arguments typed, from the first one's start (after `!` and blanks) to the cursor. */
+	args: string;
+	/** The command's full name. */
+	name: string;
+	/** Whether `!` follows the name. */
+	bang: boolean;
+	/** The context of the pane the command line runs in (the prompt's origin; the mode is the command line's). */
+	context: KeyContext;
+};
+/** An argument's completer's answer. */
+export type CmdCompletion = {
+	/** Where the completed text starts in `args` (default: after the last blank not after a backslash). */
+	start?: number;
+	items: readonly CmdCandidate[];
+	/** How the text typed from `start` narrows them: "prefix" (default; case respected, Vim's way for command and option names), "substring" (Vim's for buffer names; case ignored unless it has an upper-case letter) or "fuzzy". */
+	match?: "prefix" | "substring" | "fuzzy";
+};
+/** How a command's arguments complete in the command line: "buffer" (buffer names, by substring), "command" (command names, by prefix) or a function (synchronous, reading only; undefined: nothing to complete). */
+export type CmdComplete = "buffer" | "command" | ((p: CmdCompleteParams) => CmdCompletion | undefined);
 export type CmdOpts = {
 	/** The shortest abbreviation accepted (a prefix of the name); without it, only the full name. */
 	shortName?: string;
@@ -1209,6 +1238,8 @@ export type CmdOpts = {
 	desc?: string;
 	/** Adding the same name with the same namespace again replaces it; `clear` removes a namespace's commands. */
 	namespace?: string;
+	/** How its arguments complete in the command line (Vim's `-complete=`). */
+	complete?: CmdComplete;
 };
 /** A registered command, as `command.list` shows it. */
 export type CmdSpec = {
@@ -1218,7 +1249,21 @@ export type CmdSpec = {
 	bar: "auto" | "handle";
 	desc?: string;
 	namespace?: string;
+	complete?: CmdComplete;
 };
+/** Which commands `command.list` and `command.find` look at. */
+export type CmdFilter = {
+	/** Only those whose `when` holds (default false; `command.find`: always). */
+	live?: boolean;
+	/** For `live`: the pane `when` is asked about (default: the focused one). */
+	pane?: number;
+};
+/** The buffer variable marking a prompt as a command line: ":" (Ex commands; Vim's `:` and `<C-b>:`), "/" or "?" (Vim's searches). */
+export const CMDLINE_VAR = "cmdline";
+/** The kind of command line `pane` (a mapping's context's, the focused one) shows (CMDLINE_VAR), or undefined. */
+export function cmdlineKind(pane?: number | KeyContext): string | undefined;
+/** Whether `pane` (a mapping's context's, the focused one) is an Ex command line: for `when`. */
+export function isCmdline(pane?: number | KeyContext): boolean;
 /** Ex commands (doc/design/ex-commands.md): the registry and running a command line (with helpers parsing one: `parseBang`, `splitArgs`, `splitBar`, `parsePrefix`, `resolveRange`). */
 export const command: {
 	/** Define an Ex command (`:name`). */
@@ -1231,8 +1276,10 @@ export const command: {
 	clear(filter?: {
 		namespace?: string;
 	}): void;
-	/** The commands, in the order defined (a snapshot). */
-	list(): CmdSpec[];
+	/** The commands, in the order defined (a snapshot); with `live`, those whose `when` holds for `pane` (the focused one). */
+	list(filter?: CmdFilter): CmdSpec[];
+	/** The command `name` runs as (an abbreviation's too) for `pane` (the focused one), as `command.execute` finds it; undefined: none. */
+	find(name: string, filter?: Omit<CmdFilter, "live">): CmdSpec | undefined;
 	/** Run a command line (`|` separating commands as they say). Errors reach the caller. */
 	execute: (line: string, opts?: {
 		mods?: Mods;
@@ -1324,6 +1371,29 @@ type CmdCtx = {
 	/** This command's part of the line: its range, name and arguments. */
 	line: string;
 };
+type CmdCandidate = string | {
+	value: string;
+	kind?: string;
+	description?: string;
+};
+type CmdCompleteParams = {
+	/** The arguments typed, from the first one's start (after `!` and blanks) to the cursor. */
+	args: string;
+	/** The command's full name. */
+	name: string;
+	/** Whether `!` follows the name. */
+	bang: boolean;
+	/** The context of the pane the command line runs in (the prompt's origin; the mode is the command line's). */
+	context: KeyContext;
+};
+type CmdCompletion = {
+	/** Where the completed text starts in `args` (default: after the last blank not after a backslash). */
+	start?: number;
+	items: readonly CmdCandidate[];
+	/** How the text typed from `start` narrows them: "prefix" (default; case respected, Vim's way for command and option names), "substring" (Vim's for buffer names; case ignored unless it has an upper-case letter) or "fuzzy". */
+	match?: "prefix" | "substring" | "fuzzy";
+};
+type CmdComplete = "buffer" | "command" | ((p: CmdCompleteParams) => CmdCompletion | undefined);
 type CmdOpts = {
 	/** The shortest abbreviation accepted (a prefix of the name); without it, only the full name. */
 	shortName?: string;
@@ -1336,6 +1406,8 @@ type CmdOpts = {
 	desc?: string;
 	/** Adding the same name with the same namespace again replaces it; `clear` removes a namespace's commands. */
 	namespace?: string;
+	/** How its arguments complete in the command line (Vim's `-complete=`). */
+	complete?: CmdComplete;
 };
 export interface Keyset {
 	/** Define the mappings and hooks (again: nothing more). */
@@ -2000,6 +2072,18 @@ class AbortSignal {
 	static timeout(ms: number): AbortSignal;
 	static any(signals: AbortSignal[]): AbortSignal;
 }
+type CmdCandidate = string | {
+	value: string;
+	kind?: string;
+	description?: string;
+};
+type CmdCompletion = {
+	/** Where the completed text starts in `args` (default: after the last blank not after a backslash). */
+	start?: number;
+	items: readonly CmdCandidate[];
+	/** How the text typed from `start` narrows them: "prefix" (default; case respected, Vim's way for command and option names), "substring" (Vim's for buffer names; case ignored unless it has an upper-case letter) or "fuzzy". */
+	match?: "prefix" | "substring" | "fuzzy";
+};
 interface Keyset {
 	/** Define the mappings and hooks (again: nothing more). */
 	enable(): void;
@@ -2049,6 +2133,24 @@ interface Renderer<T extends Detail = DetailUnit> {
 		readonly items: DisplayItem<V>[];
 	}, o: PartOptions): void | Promise<void>;
 }
+type Match = NonNullable<CmdCompletion["match"]>;
+/** Each candidate says how it is matched (its context's way). */
+export interface ExDetail {
+	readonly match: Match;
+}
+/** What the source keeps of a context: the candidates found with it, and
+ * a key telling contexts apart beyond their anchor. */
+export interface ExContext {
+	readonly key: string;
+	readonly items: readonly CompletionItem<ExDetail>[];
+}
+/** The source completing Ex commands in the command line (the focused
+ * pane's prompt): command names and their arguments. */
+export function exCommandSource(): CompletionSource<ExContext, ExDetail>;
+/** A matcher matching each candidate its own way (`detail.match`): prefix
+ * respecting case, substring and fuzzy ignoring it unless the text typed
+ * has an upper-case letter. */
+export function byMatch(): Matcher<Detail>;
 /** Where a source completes: its `anchor` (candidates without a range of
  * their own replace the text from it to the cursor; the query is that
  * text) and its own data, fixed when findContext ran. */
@@ -2248,8 +2350,18 @@ export function accept(): void;
 export function cancel(): void;
 /** The keys: <C-n> and <C-p> select (starting a completion when none
  * runs), <C-y> accepts and <C-e> cancels while one runs; in the modes
- * where text is typed (settings.modes when enabled). Namespace
+ * where text is typed (settings.modes when enabled). <Tab> and <S-Tab> do
+ * as <C-n> and <C-p> in the command line only (isCmdline). Namespace
  * builtin-ff-completion. */
 export const keys: Keyset;
+/** The source of Ex commands in the command line (exCommandSource()),
+ * registered by `commandLine`. */
+export const exCommands: CompletionSource<ExContext, ExDetail>;
+/** Completing Ex commands in the command line (isCmdline): command names
+ * (where a name is typed: at the start, after a range, after `|`) and
+ * arguments (the command's `complete` option), started by hand (<Tab>,
+ * <C-n>), names and options by prefix as Vim. Namespace
+ * builtin-ff-cmdline. */
+export const commandLine: Keyset;
 
 }

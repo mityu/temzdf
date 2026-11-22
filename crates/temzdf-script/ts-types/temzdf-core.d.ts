@@ -417,6 +417,8 @@ declare module "temzdf" {
   export function cancelPrompt(buffer?: number): void;
   /** Whether `buffer` (the focused pane's) is an open prompt. */
   export function isPrompt(buffer?: number): boolean;
+  /** The pane that was focused when the prompt (the focused pane's, or `buffer`) opened, where the focus goes back when it closes; undefined when there was none or `buffer` is not a prompt. */
+  export function promptOrigin(buffer?: number): number | undefined;
   /** Start an asynchronous task without waiting for it. */
   export function dispatch(fn: (ctx: TaskContext) => Promise<void> | void): void;
   export function atomic<T>(fn: () => T): T;

@@ -418,7 +418,10 @@ item fields; the rest is how the code settled it.
   PaneFocused, PaneClosed); nothing changed since the last check (the
   buffer's version and the cursor) is nothing to do. Without a completion
   only text changes (typing or scripts, not undo) are looked at, and only
-  while an `auto` source is registered.
+  while an `auto` source is registered: the hooks are there only while needed
+  (TextChanged while a completion runs or an `auto` source is
+  registered, the others while a completion runs), as every hook costs
+  every event.
 - **Starting**: by hand (`start()`, `<C-n>`), every source whose `when`
   holds and whose `findContext(undefined)` answers takes part; by typing,
   one `auto` source must answer with a query of at least `minLength`
@@ -470,8 +473,7 @@ item fields; the rest is how the code settled it.
   completion when none runs), `<C-y>` accepts and `<C-e>` cancels while
   one runs (`when: active`, priority 1 over the modes' own `<C-y>` and
   `<C-e>`). `<Tab>` / `<S-Tab>` start and select only in the command
-  line: they come with the command line's marker (stage 4 in `todo.md`);
-  in other text panes `<Tab>` stays a tab.
+  line (`isCmdline`, below); in other text panes `<Tab>` stays a tab.
 - **The adapter** (`CompletionAdapter`, `textPaneAdapter(pane, act?)`):
   what completion does to the pane (cursor, lines, replacing a range, the
   buffer's version), with the plain actions or a task's.
@@ -482,6 +484,43 @@ item fields; the rest is how the code settled it.
   path, the name, and the extension as a file type until temzdf has file
   types). `firstOf(a, b, ...)` asks its sources in turn and keeps the one
   that answered while it answers with the same context.
+
+## The command line
+
+Ex commands complete in the command line (`runtime/ff/completion/
+cmdline.ts`), decided with the user (2026-11-22): by hand (`<Tab>` as
+Vim's `wildchar` and cmdwin, or `<C-n>`), command and option names by
+prefix and buffer names by substring (Vim's defaults), no file paths yet.
+
+- **The marker**: the openers of a command line (the Vim mode's `:`, `/`
+  and `?`, `<C-b>:`) set the prompt buffer's variable `cmdline` to `:`,
+  `/` or `?`; `isCmdline(ctx)` (`temzdf/command`) holds for `:` only, so
+  search prompts get no Ex completion. A variable rather than a prompt
+  option: any script opening a command line of its own can set it.
+- **`<Tab>` / `<S-Tab>`** are in the completion keys with `when:
+  isCmdline` and priority 1, doing what `<C-n>` / `<C-p>` do (start, then
+  select); in other text panes `<Tab>` stays the mode's own.
+- **One source** (`exCommands`, registered by the keyset `commandLine`
+  with `when: isCmdline`, not `auto`): `findContext` parses the line up to
+  the cursor as `command.execute` would (blanks and `:`, a range with
+  `parsePrefix`, the name) and, at a `|` of a command with `bar: "auto"`,
+  starts again after it; a `bar: "handle"` command takes the rest as its
+  argument. The cursor at the end of a name completes names: every
+  command there each once, sorted, only those taking a range after one,
+  with `desc` as the description. After the name, `!` and a blank, the
+  command's `complete` answers (the command found as `command.execute`
+  finds it, abbreviations included). A new context comes with another
+  anchor or another kind of completion (names, or which command's
+  arguments); otherwise `prev` keeps the candidates found.
+- **The pane**: `when` of the commands is asked about the pane the line
+  runs in (`promptOrigin`, added to the prompt API), with the command
+  line's mode; the source's own `when` gets the prompt's context.
+- **Matching** follows each candidate (`detail.match`, the matcher
+  `byMatch()`): prefix respecting case (`:bN` and `:bn` differ), substring
+  and fuzzy ignoring case unless the text typed has an upper-case letter.
+  Candidates stay in the order given (`byScore` keeps it without scores).
+- **`<CR>`** with a candidate in runs the line as it is (accepting is
+  nothing more: the text is in); the prompt closing ends the completion.
 
 ## LSP, for reference
 

@@ -190,12 +190,25 @@ on the rest with different `mods` (above). Which modifiers exist and what
 `Mods` holds is decided when the first of them is built; commands that
 open panes read the ones they understand.
 
+## Completion
+
+Command names and arguments complete in the command line
+(`doc/design/completion.md`, "The command line"). A command says how its
+arguments complete with `complete` in `command.add` (Vim's `-complete=`):
+a builtin's name (`"buffer"`, `"command"`) or a function given what was
+typed of the arguments and the pane the line runs in, answering with
+candidates, where they start and how they match. A function rather than
+a completion source: the command line's source does the parsing (range,
+name, `!`, `|`), so a command only says what fits its arguments.
+`command.list({ live, pane })` and `command.find(name, { pane })` ask the
+commands' `when` about the pane the line runs in, not the prompt.
+
 ## Left for later
 
 - Running JavaScript from the CLI (`temzdf action eval`, say), which then
   reaches commands through `command.execute` without an entry point of
   its own.
-- Completion of command names and arguments.
+- Completing file paths (no way to read directories from scripts yet).
 
 ## Alternatives considered
 

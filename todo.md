@@ -95,9 +95,10 @@ server on one `Session`). Next and open:
   the list buffer, the UI's shared part (`createList`), and completion's
   layer and popup (`temzdf/ff/completion`: registration, groups,
   `firstOf`, inserting on select, the keys `<C-n>` `<C-p>` `<C-y>`
-  `<C-e>`). Next: completing Ex commands in the command line (its marker,
-  `<Tab>`/`<S-Tab>` there, command names and arguments), then the fuzzy
-  finder's UI.
+  `<C-e>`), and completing Ex commands in the command line (its marker
+  and `isCmdline`, `promptOrigin`, `<Tab>`/`<S-Tab>` there, command names
+  and `command.add`'s `complete`: buffers, commands, `:set`'s options).
+  Next: the fuzzy finder's UI.
   Order: the fuzzy finder and completion framework (`temzdf/ff`) before
   an LSP client; the first use wanted is completing Ex commands in the
   command line, which is a text buffer like Vim's cmdwin, so it is
@@ -115,8 +116,10 @@ server on one `Session`). Next and open:
     UTF-16 code units, wide characters misalign the columns); `<C-p>`
     from nothing selected takes the last line written, not necessarily
     the last match.
-  - Errors from sources (logged, not shown); how commands declare their
-    arguments' completion (`command.add`).
+  - Errors from sources (logged, not shown).
+  - Keys typed ahead of the list: `<Tab><Tab><CR>` typed at once in the
+    command line runs the line before the selection waiting for the
+    candidates is made (the moves wait for lines to be written).
   - Narrowing only the previous matches when the new query extends the
     old one (as fzf does): measured, one query over 100k items takes
     seconds with npm `fzf` in the script host ("Speed" there).

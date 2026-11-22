@@ -22,6 +22,7 @@ export const {
   acceptPrompt,
   cancelPrompt,
   isPrompt,
+  promptOrigin,
 } = t;
 
 // Exactly the exports (and types) the declarations give `temzdf`: one

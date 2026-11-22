@@ -35,7 +35,9 @@ import type {
   Sorter,
 } from "temzdf/ff";
 import { byScore, fuzzy } from "temzdf/ff/builtin";
+import { isCmdline } from "temzdf/command";
 import { keyset } from "temzdf/keyset";
+import { byMatch, exCommandSource } from "./cmdline";
 import { Merged } from "./merged";
 import type { MergedSlot } from "./merged";
 
@@ -305,6 +307,7 @@ export function remove(source: AnySource, o: { namespace?: string } = {}): void 
     const r = regs[i]!;
     if (r.source === source && (o.namespace === undefined || r.namespace === o.namespace)) regs.splice(i, 1);
   }
+  hooks();
 }
 
 /** Remove the registrations of a namespace (all). */
@@ -312,6 +315,7 @@ export function clear(o: { namespace?: string } = {}): void {
   for (let i = regs.length - 1; i >= 0; i--) {
     if (o.namespace === undefined || regs[i]!.namespace === o.namespace) regs.splice(i, 1);
   }
+  hooks();
 }
 
 /** The registrations (of a namespace), in the order they are mixed. */
@@ -511,43 +515,62 @@ export async function whenIdle(): Promise<void> {
 
 // ---------------------------------------------------------------- hooks
 
-let hooked = false;
+let textHook: (() => void) | undefined;
+let liveHooks: (() => void)[] | undefined;
 let scheduled = false;
 let textChanged = false;
 
-/** Hear the session once something is registered (or started). */
+/** Hear the session only while needed (every hook costs every event):
+ * text changes while a completion runs or an automatic source is
+ * registered, the rest while a completion runs. */
 function hooks(): void {
-  if (hooked) return;
-  hooked = true;
-  on("TextChanged", (buffer, change) => {
-    if (current !== undefined) {
-      if (buffer === current.adapter.buffer) later(true);
-    } else if (change.cause === "typing" || change.cause === "script") {
-      if (regs.some((r) => r.auto)) {
-        const p = action.focusedPane();
-        const info = p === undefined ? undefined : action.panes().find((x) => x.id === p);
-        if (info?.kind === "edit" && info.buffer === buffer) later(true);
+  const wantText = current !== undefined || regs.some((r) => r.auto);
+  if (wantText && textHook === undefined) textHook = on("TextChanged", onText);
+  else if (!wantText && textHook !== undefined) {
+    textHook();
+    textHook = undefined;
+  }
+  const wantLive = current !== undefined;
+  if (wantLive && liveHooks === undefined) liveHooks = live();
+  else if (!wantLive && liveHooks !== undefined) {
+    for (const off of liveHooks) off();
+    liveHooks = undefined;
+  }
+}
+
+function onText(buffer: number, change: { cause: string }): void {
+  if (current !== undefined) {
+    if (buffer === current.adapter.buffer) later(true);
+  } else if (change.cause === "typing" || change.cause === "script") {
+    if (regs.some((r) => r.auto)) {
+      const p = action.focusedPane();
+      const info = p === undefined ? undefined : action.panes().find((x) => x.id === p);
+      if (info?.kind === "edit" && info.buffer === buffer) later(true);
+    }
+  }
+}
+
+function live(): (() => void)[] {
+  return [
+    on("InvokePost", (inv) => {
+      if (current !== undefined && inv.pane === current.pane) later(false);
+    }),
+    on("ModeChanged", () => {
+      if (current !== undefined) later(false);
+    }),
+    on("PaneFocused", () => {
+      if (current !== undefined) later(false);
+    }),
+    on("PaneClosed", (pane) => {
+      const c = current;
+      if (c === undefined) return;
+      if (pane === c.popup) {
+        // Closed by someone else: the list forgot it.
+        c.popup = undefined;
       }
-    }
-  });
-  on("InvokePost", (inv) => {
-    if (current !== undefined && inv.pane === current.pane) later(false);
-  });
-  on("ModeChanged", () => {
-    if (current !== undefined) later(false);
-  });
-  on("PaneFocused", () => {
-    if (current !== undefined) later(false);
-  });
-  on("PaneClosed", (pane) => {
-    const c = current;
-    if (c === undefined) return;
-    if (pane === c.popup) {
-      // Closed by someone else: the list forgot it.
-      c.popup = undefined;
-    }
-    if (pane === c.pane) later(false);
-  });
+      if (pane === c.pane) later(false);
+    }),
+  ];
 }
 
 /** Check at the next safe point (hooks only read). */
@@ -806,6 +829,7 @@ function begin(manual: boolean): boolean {
 function finish(c: Completion, how: "accept" | "cancel" | "leave"): void {
   if (current !== c) return;
   current = undefined;
+  hooks();
   const sel = c.sel;
   try {
     if (how === "cancel" && sel !== undefined) restore(c, sel);
@@ -942,7 +966,6 @@ function hide(c: Completion): void {
 
 /** Start a completion by hand (all applicable sources); whether one runs. */
 export function start(): boolean {
-  hooks();
   return current !== undefined || begin(true);
 }
 
@@ -1021,13 +1044,39 @@ export function cancel(): void {
 
 /** The keys: <C-n> and <C-p> select (starting a completion when none
  * runs), <C-y> accepts and <C-e> cancels while one runs; in the modes
- * where text is typed (settings.modes when enabled). Namespace
+ * where text is typed (settings.modes when enabled). <Tab> and <S-Tab> do
+ * as <C-n> and <C-p> in the command line only (isCmdline). Namespace
  * builtin-ff-completion. */
 export const keys = keyset("builtin-ff-completion", (d) => {
   const modes = [...settings.modes];
   d.map(modes, ["<C-n>"], () => next(), { desc: "completion: next" });
   d.map(modes, ["<C-p>"], () => prev(), { desc: "completion: previous" });
+  // Vim's wildchar: in the command line, over the modes' own <Tab>.
+  d.map(modes, ["<Tab>"], () => next(), { when: isCmdline, priority: 1, desc: "completion: next" });
+  d.map(modes, ["<S-Tab>"], () => prev(), { when: isCmdline, priority: 1, desc: "completion: previous" });
   // Over the modes' own <C-y> and <C-e> while a completion runs.
   d.map(modes, ["<C-y>"], () => accept(), { when: active, priority: 1, desc: "completion: accept" });
   d.map(modes, ["<C-e>"], () => cancel(), { when: active, priority: 1, desc: "completion: cancel" });
 });
+
+// --------------------------------------------------------- command line
+
+export type { ExContext, ExDetail } from "./cmdline";
+export { byMatch, exCommandSource } from "./cmdline";
+
+/** The source of Ex commands in the command line (exCommandSource()),
+ * registered by `commandLine`. */
+export const exCommands = exCommandSource();
+
+/** Completing Ex commands in the command line (isCmdline): command names
+ * (where a name is typed: at the start, after a range, after `|`) and
+ * arguments (the command's `complete` option), started by hand (<Tab>,
+ * <C-n>), names and options by prefix as Vim. Namespace
+ * builtin-ff-cmdline. */
+export const commandLine = keyset(
+  "builtin-ff-cmdline",
+  () => {
+    add(exCommands, { when: isCmdline, namespace: "builtin-ff-cmdline", matcher: byMatch(), auto: false });
+  },
+  () => clear({ namespace: "builtin-ff-cmdline" }),
+);

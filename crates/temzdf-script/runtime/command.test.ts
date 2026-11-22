@@ -1,5 +1,6 @@
 // temzdf/command (runtime/command.ts): the registry of Ex commands,
 // running a command line, and the helpers parsing one.
+import { action } from "temzdf";
 import { command, parseBang, parsePrefix, resolveRange, splitArgs, splitBar } from "temzdf/command";
 import type { CmdCtx, VimRangeEnv } from "temzdf/command";
 import vim from "temzdf/edit/vim";
@@ -140,6 +141,40 @@ module(
         "E492: Not an editor command: only",
       );
       eq(assert, "the live one", log, ["text"]);
+    });
+
+    cmdTest("list({ live, pane }) and find ask when about a pane; complete is kept", (assert) => {
+      const pane = action.focusedPane()!;
+      const words = () => ({ items: ["x"] });
+      command.add("go", () => {}, { when: (c) => c.pane === pane, shortName: "g", complete: "buffer" });
+      command.add("gone", () => {}, { when: (c) => c.pane !== pane, complete: words });
+      eq(
+        assert,
+        "all",
+        command.list().map((c) => c.name),
+        ["go", "gone"],
+      );
+      eq(
+        assert,
+        "live here",
+        command.list({ live: true }).map((c) => [c.name, c.complete]),
+        [["go", "buffer"]],
+      );
+      eq(
+        assert,
+        "live elsewhere",
+        command.list({ live: true, pane: -5 }).map((c) => c.name),
+        ["gone"],
+      );
+      eq(assert, "find: an abbreviation", command.find("g")?.name, "go");
+      eq(assert, "find: elsewhere", command.find("gone", { pane: -5 })?.complete, words);
+      eq(assert, "find: not live", command.find("gone"), undefined);
+      eq(
+        assert,
+        "complete: unknown builtin",
+        thrown(() => command.add("w", () => {}, { complete: "file" as never })) !== "",
+        true,
+      );
     });
 
     cmdTest("namespaces: replaced, removed, cleared", (assert) => {

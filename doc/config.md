@@ -572,7 +572,15 @@ input-method text and pastes go in (lines and all), `text.*` edits it.
 `onLine`; `cancelPrompt()` (`<Esc>`), or closing it any other way, calls
 `onCancel`; `onChange(line)` hears the cursor's line as it changes (a
 preview). Either way the pane and the buffer go and the focus goes back.
-`isPrompt(buffer?)` says whether a buffer is an open prompt. The `input`
+`isPrompt(buffer?)` says whether a buffer is an open prompt, and
+`promptOrigin(buffer?)` which pane was focused when it opened (where the
+focus goes back; a mapping's `when` in the prompt gets the prompt's pane).
+The command lines (the Vim mode's `:`, `/` and `?`, and `<C-b>:`) mark
+their prompt's buffer with the variable `cmdline` (`":"`, `"/"` or `"?"`;
+`CMDLINE_VAR` in `temzdf/command`); `isCmdline(ctx?)` from
+`temzdf/command` says whether a pane (a mapping's context's, else the
+focused one) is an Ex command line, for `when`, and `cmdlineKind()` gives
+the variable. The `input`
 mode maps readline's keys (`<C-a>`, `<C-e>`, `<C-w>`, `<C-u>`, `<C-k>`,
 `<M-b>`, `<M-f>`, arrows) to `text.*`.
 
@@ -593,13 +601,16 @@ command.execute("w! | quit");
 ```
 
 - `command.add(name, fn, { shortName?, when?, prefix?, bar?, desc?,
-  namespace? })`: names are letters only; the empty name gets the lines
+  namespace?, complete? })`: names are letters only; the empty name gets the lines
   without one (a range alone, `:5`, or `:!...`); `:wri` runs `write` when
   `shortName` is at most that long (without one, only the full name).
   Among the commands whose `when` holds (the context a mapping's `when`
   gets), an exact name wins over an abbreviation, then the one defined
   last. `command.remove(name, { namespace? })`, `command.clear({
-  namespace? })` and `command.list()` as `keymap`'s.
+  namespace? })` and `command.list()` as `keymap`'s; `command.list({
+  live: true, pane? })` only the commands whose `when` holds for a pane
+  (the focused one), and `command.find(name, { pane? })` the command a
+  name (or an abbreviation) runs there.
 - `fn` gets `{ name, args, range, mods, line }`: `args` everything after
   the name, untrimmed (`:w!` and `:w !sort` differ); no `!` or arguments
   parsed for it (`parseBang`, `splitArgs`).
@@ -612,6 +623,17 @@ command.execute("w! | quit");
   the command runs what it wants of it with `command.execute(rest, {
   mods? })` (`:normal`, `:g`, modifiers such as `:vertical` passing
   `mods`).
+- `complete` says how the arguments complete in the command line (Vim's
+  `-complete=`): `"buffer"` (buffer names, matching anywhere in the name,
+  case ignored unless you type an upper-case letter), `"command"`
+  (command names, by prefix), or a function `({ args, name, bang, context
+  }) => { start?, items, match? } | undefined`: `args` is what was typed
+  of the arguments up to the cursor (after `!` and blanks), `context` the
+  pane the command line runs in (as a mapping's); `items` are strings or
+  `{ value, kind?, description? }`, matched from `start` in `args` (by
+  default the last word) by `match` (`"prefix"`, the default, respecting
+  case; `"substring"`; `"fuzzy"`). It must only read. The Vim mode's
+  `:buffer` and `:bdelete` complete buffers, `:set` its option names.
 - Errors reach the caller of `command.execute` and stop the rest; an
   unknown name is `E492`; more than 100 nested `command.execute` calls are
   `E169`.
@@ -866,6 +888,7 @@ The keys (namespace `builtin-ff-completion`, in the modes above):
 | Keys | Action |
 |---|---|
 | `<C-n>` / `<C-p>` | the next / previous candidate (put in); without a completion, start one |
+| `<Tab>` / `<S-Tab>` | in the Ex command line only (`isCmdline`): as `<C-n>` / `<C-p>`; elsewhere `<Tab>` stays the mode's own |
 | `<C-y>` | while completing: keep the candidate |
 | `<C-e>` | while completing: put back what was typed, and stop |
 
@@ -873,6 +896,17 @@ The keys (namespace `builtin-ff-completion`, in the modes above):
 away; mapping the same keys in your configuration replaces them (map with
 `when: completion.active` and `priority: 1` or more to win over `<C-y>`
 and `<C-e>`).
+
+In the Ex command line (`:` and `<C-b>:`) the defaults complete Ex
+commands by hand (`<Tab>`): the command's name where one is typed (at the
+start, after a range, which leaves only the commands taking one, and
+after a `|` of a command that stops there), by prefix as Vim, and its
+arguments as its `complete` option says. The commands and their `when`
+are those of the pane the command line runs in (`promptOrigin`). `<CR>`
+with a candidate in runs the line as it is. The source is
+`completion.exCommands` (namespace `builtin-ff-cmdline`); `import {
+commandLine } from "temzdf/ff/completion"; commandLine.disable();` takes
+it away.
 
 ## The Markdown viewer
 

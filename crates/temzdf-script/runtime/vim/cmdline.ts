@@ -3,7 +3,7 @@
 // work); <CR> runs the cursor's line in the text pane, <Esc> cancels.
 import { acceptPrompt, action, cancelPrompt, openPrompt } from "temzdf";
 import type { Position } from "temzdf";
-import { command } from "temzdf/command";
+import { CMDLINE_VAR, command } from "temzdf/command";
 import { rememberEx } from "./macros";
 import { recordJump } from "./marks";
 import { combine, leaveTransient, operator } from "./normal";
@@ -43,6 +43,8 @@ export function openCmdline(kind: "/" | "?" | ":", count: number | null): void {
     return;
   }
   o.buf = p.buffer;
+  // What kind of command line it is (completion's `<Tab>` is for ":").
+  action.setVar("buffer", CMDLINE_VAR, kind, p.buffer);
   action.switchMode("vim/cmdline");
 }
 
