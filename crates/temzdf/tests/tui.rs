@@ -593,6 +593,40 @@ fn a_markdown_screen_renders_to_pixels() {
 }
 
 #[test]
+fn a_markdown_text_screen_renders_to_pixels() {
+    // The Markdown viewer's text mode, for people to look at
+    // (target/tuitest/markdown-text-render.png).
+    let env = Env::new("markdown-text-render");
+    let file = env.path("doc.md");
+    std::fs::write(
+        &file,
+        "# Title\n\nSome *text*, **bold** and $\\alpha^2$, a [link](#more).\n\n- one\n- two\n\n\
+         ```rust\nfn main() {}\n```\n\n## More\n\n> A quote.\n",
+    )
+    .unwrap();
+    env.config("config.ts", &markdown_config(&file));
+    let mut t = Term::spawn(&[BIN, "-s", "mx", file.to_str().unwrap()], &env.options());
+    t.wait_text("# Title");
+    t.key("F5");
+    t.wait_for("the viewer", |s| s.lines()[1].starts_with("═════") && s.contains("A quote."));
+    let s = t.settle(std::time::Duration::from_millis(300));
+    let img = s.save_render("markdown-text-render");
+    // The heading's row has ink of the text's colours; an empty row none.
+    let (cw, ch) = s.cell;
+    let [r, g, b] = s.background;
+    let bg = [r, g, b, 255];
+    let row_ink = |row: u32| {
+        (row * ch..(row + 1) * ch)
+            .flat_map(|y| (0..20 * cw).map(move |x| (x, y)))
+            .filter(|&(x, y)| img.pixel(x, y) != bg)
+            .count()
+    };
+    assert!(row_ink(0) > 50, "the heading is drawn");
+    assert!(s.lines()[2].trim().is_empty());
+    assert_eq!(row_ink(2), 0);
+}
+
+#[test]
 fn a_pdf_shot_is_the_same_each_time() {
     let (_, a) = pdf_shot("pdf-again-1");
     let (_, b) = pdf_shot("pdf-again-2");

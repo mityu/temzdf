@@ -130,16 +130,28 @@ gives tests:
   `wait_exit`. A failed wait panics with the screen and leaves it, plus the raw
   bytes received, in `target/tuitest/<test>.txt` and `.out`.
 - Pixels: `Screen::render()` draws the screen as a terminal would, for
-  any kind of pane: the default background, images below the backgrounds,
-  the cells' backgrounds, then the other images, each image cropped to its
-  source rectangle, scaled by nearest neighbour to its size and placed at
-  its cell plus offsets. Text and the cursor are not drawn; `text_mask()`
-  marks the cells holding text, to leave out of comparisons. Images shown
-  through Unicode placeholders (inside tmux) are not drawn either.
+  any kind of pane, in the kitty graphics protocol's layers as Ghostty
+  draws them: the default background, images below the backgrounds, the
+  cells' backgrounds, images with a negative z, the text, then the other
+  images, each image cropped to its source rectangle, scaled by nearest
+  neighbour to its size and placed at its cell plus offsets. The text is
+  laid out one character per cell with `termpix-ui` (family `monospace`,
+  bold; italic is drawn upright, `termpix-ui` has none) in the cell's
+  colours (`Cell::fg_rgb`, `Cell::bg_rgb`, inverse swapped), centred in
+  its cell (both cells for a wide character), at the largest size whose
+  advance fits the cell's width and line height its height. Its fonts come
+  from fontconfig, so they are the ones of the section "Fonts" only with
+  `FONTCONFIG_FILE=$TEMZDF_TEST_FONTCONFIG` (`scripts/check.sh` sets it):
+  CJK has no font there and shows as `.notdef` boxes, and box drawing
+  characters are the font's glyphs, not lines drawn as terminals do. The
+  cursor is not drawn, nor images shown through Unicode placeholders
+  (inside tmux). `text_mask()` marks the cells holding text, to leave
+  out of comparisons that should not depend on the fonts.
   `save_render(NAME)` writes both to `target/tuitest/NAME.png` and
   `NAME.mask.png` (`a_pdf_screen_renders_to_pixels`,
-  `a_markdown_screen_renders_to_pixels`, and `*_shot_is_the_same_each_time`
-  checking two runs give the same pixels). Images do not prove a screen
+  `a_markdown_screen_renders_to_pixels`,
+  `a_markdown_text_screen_renders_to_pixels`, and
+  `*_shot_is_the_same_each_time` checking two runs give the same pixels). Images do not prove a screen
   finished: the Markdown viewer places a blank stand-in for each strip not
   painted yet. The tests wait for the client's log (`temzdf.log`) to say
   last that a complete frame was written (`wait_complete` in tui.rs), as

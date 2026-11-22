@@ -12,8 +12,8 @@
 //! failed wait panics with the screen, and the screen and the bytes received
 //! are written to `target/tuitest/<test name>.txt`.
 //!
-//! [`Screen::render`] draws the screen into pixels: cell backgrounds and
-//! images, no text yet (see doc/dev/testing.md).
+//! [`Screen::render`] draws the screen into pixels: cell backgrounds, text
+//! and images (see doc/dev/testing.md).
 
 pub mod keys;
 
@@ -38,6 +38,7 @@ use libghostty_vt::{RenderState, Terminal, TerminalOptions, key};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use termpix_core::geom::Rect;
 use termpix_core::raster::{RgbaImage, RgbaRef, blit};
+use termpix_ui::{Canvas, Color as UiColor, Text, TextLayout, TextStyle};
 
 /// How long [`Term::wait_for`] waits before failing.
 pub const TIMEOUT: Duration = Duration::from_secs(15);
@@ -86,6 +87,10 @@ pub struct Cell {
     /// palette, the foreground when `inverse`; `None` for the default
     /// background, which images below the backgrounds show through.
     pub bg_rgb: Option<[u8; 3]>,
+    /// The foreground as drawn: `fg` resolved through the palette (the
+    /// default foreground when unset), the background (or the default
+    /// background) when `inverse`.
+    pub fg_rgb: [u8; 3],
 }
 
 /// An image placed with the kitty graphics protocol.
@@ -202,25 +207,28 @@ impl Screen {
         s.trim_end().to_owned()
     }
 
-    /// The screen as pixels, as a terminal would draw it but without text
-    /// and the cursor: the default background, then placements below the
+    /// The screen as pixels, as a terminal would draw it but without the
+    /// cursor: the default background, then placements below the
     /// backgrounds ([`BELOW_BACKGROUNDS`]), then the cells' own
-    /// backgrounds ([`Cell::bg_rgb`]), then the other placements, each set
-    /// in z order. A placement shows its source rectangle scaled to its
-    /// pixel size by nearest neighbour (simple and exact; terminals that
-    /// filter scaled images differ from it only where an image is scaled,
-    /// and temzdf draws its images at their own size), placed at its cell
-    /// plus its offsets, blended source-over on sRGB values and
-    /// clipped to the screen. Images through Unicode placeholders (inside
-    /// tmux) are not drawn. Text is in [`Screen::text_mask`].
+    /// backgrounds ([`Cell::bg_rgb`]), then placements with a negative z,
+    /// then the text, then the other placements, each set in z order (the
+    /// kitty graphics protocol's layers, as Ghostty draws them). A placement
+    /// shows its source rectangle scaled to its pixel size by nearest
+    /// neighbour (simple and exact; terminals that filter scaled images
+    /// differ from it only where an image is scaled, and temzdf draws its
+    /// images at their own size), placed at its cell plus its offsets,
+    /// blended source-over on sRGB values and clipped to the screen.
+    /// Images through Unicode placeholders (inside tmux) are not drawn.
+    /// The text is drawn as [`draw_text`] says.
     pub fn render(&self) -> RgbaImage {
         let (cw, ch) = self.cell;
         let rows = self.cells.len() as u32;
         let cols = self.cells.iter().map(Vec::len).max().unwrap_or(0) as u32;
         let [r, g, b] = self.background;
         let mut out = RgbaImage::new(cols * cw, rows * ch, [r, g, b, 255]);
-        let draw = |out: &mut RgbaImage, below: bool| {
-            for p in self.images.iter().filter(|p| (p.z < BELOW_BACKGROUNDS) == below) {
+        // Placements in `z`'s range, in z order.
+        let draw = |out: &mut RgbaImage, z: std::ops::Range<i32>| {
+            for p in self.images.iter().filter(|p| z.contains(&p.z)) {
                 let Some(img) = self.pixels.0.get(&p.image) else { continue };
                 let (sx, sy, sw, sh) = p.source;
                 let dst = Rect::new(
@@ -233,7 +241,7 @@ impl Screen {
                 blit(out, dst, src, Rect::new(sx as i32, sy as i32, sw, sh));
             }
         };
-        draw(&mut out, true);
+        draw(&mut out, i32::MIN..BELOW_BACKGROUNDS);
         for (y, row) in self.cells.iter().enumerate() {
             for (x, c) in row.iter().enumerate() {
                 if let Some([r, g, b]) = c.bg_rgb {
@@ -241,13 +249,16 @@ impl Screen {
                 }
             }
         }
-        draw(&mut out, false);
+        draw(&mut out, BELOW_BACKGROUNDS..0);
+        draw_text(&mut out, &self.cells, self.cell);
+        draw(&mut out, 0..i32::MAX);
         out
     }
 
-    /// Where [`Screen::render`] leaves text out: opaque white over each cell
+    /// Where [`Screen::render`] draws text: opaque white over each cell
     /// holding a character (both halves of a wide one), transparent
-    /// elsewhere. Pixels under it are not to be compared.
+    /// elsewhere. Pixels under it depend on the fonts, for comparisons
+    /// that want to leave them out.
     pub fn text_mask(&self) -> RgbaImage {
         let (cw, ch) = self.cell;
         let rows = self.cells.len() as u32;
@@ -275,6 +286,77 @@ impl Screen {
         self.text_mask().save_png(&dir.join(format!("{name}.mask.png"))).expect("write the text mask");
         img
     }
+}
+
+/// A cell size and the font size picked for it.
+type PickedSize = Option<((u32, u32), f32)>;
+
+thread_local! {
+    /// The fonts and layout scratch space, and the font size picked for a
+    /// cell size (loading the fonts takes a while; once per test thread).
+    static TEXT: RefCell<(Text, PickedSize)> = RefCell::new((Text::new(), None));
+}
+
+/// Draw each cell's text over `out` (cells of `cell` pixels) in its
+/// [`Cell::fg_rgb`], bold as [`Cell::bold`] says; italic is drawn upright
+/// (termpix-ui has no italic). Every character is laid out on its own with
+/// termpix-ui (parley, fonts from fontconfig: family `monospace`, which
+/// the tests point at JetBrains Mono with `TEMZDF_TEST_FONTCONFIG`), so it
+/// stays in its cell whatever font it falls back to.
+///
+/// The font size is the largest at which both a character's advance fits
+/// the cell's width and the line height (the font's ascent plus descent
+/// plus line gap, as parley lays out one line) fits its height, measured
+/// on `0` at size 100 and scaled. Each character is centred in its cell
+/// (in both cells for a wide one, which also centres fonts' glyphs that
+/// are narrower or wider than two cells, like emoji): horizontally on its
+/// advance, vertically on the line, its top rounded to a whole pixel so
+/// that every row's baseline sits at the same pixel in its cell. Box
+/// drawing characters are the font's glyphs too (terminals draw their own,
+/// so lines may not join across cells here). No cursor.
+pub fn draw_text(out: &mut RgbaImage, cells: &[Vec<Cell>], cell: (u32, u32)) {
+    let (cw, ch) = cell;
+    let has_text = |c: &Cell| !c.spacer && !c.text.trim().is_empty();
+    if cw == 0 || ch == 0 || !cells.iter().flatten().any(has_text) {
+        return;
+    }
+    let style = |size: f32, bold: bool, [r, g, b]: [u8; 3]| TextStyle {
+        size,
+        color: UiColor::rgb(r, g, b),
+        bold,
+        family: "monospace",
+    };
+    let mut canvas = Canvas::new(out.width, out.height);
+    TEXT.with_borrow_mut(|(text, picked)| {
+        let size = match *picked {
+            Some((c, size)) if c == cell => size,
+            _ => {
+                let probe = text.layout("0", &style(100.0, false, [0; 3]), None);
+                let size = (cw as f32 * 100.0 / probe.width()).min(ch as f32 * 100.0 / probe.height());
+                *picked = Some((cell, size));
+                size
+            }
+        };
+        let mut layouts: HashMap<(&str, bool, [u8; 3]), TextLayout> = HashMap::new();
+        for (y, row) in cells.iter().enumerate() {
+            for (x, c) in row.iter().enumerate() {
+                if !has_text(c) {
+                    continue;
+                }
+                let span = if row.get(x + 1).is_some_and(|n| n.spacer) { 2 } else { 1 };
+                let layout = layouts
+                    .entry((c.text.as_str(), c.bold, c.fg_rgb))
+                    .or_insert_with(|| text.layout(&c.text, &style(size, c.bold, c.fg_rgb), None));
+                let left = (x as u32 * cw) as f32 + ((span * cw) as f32 - layout.width()) / 2.0;
+                let top = (y as u32 * ch) as f32 + ((ch as f32 - layout.height()) / 2.0).round();
+                canvas.text(layout, left, top);
+            }
+        }
+    });
+    let (w, h) = (canvas.width(), canvas.height());
+    let pixels = canvas.finish();
+    let src = RgbaRef { width: w, height: h, data: &pixels };
+    blit(out, Rect::new(0, 0, w, h), src, Rect::new(0, 0, w, h));
 }
 
 /// Fill a rectangle of `img` (clipped to it) with `color`.
@@ -648,12 +730,11 @@ impl Term {
                                 Err(_) => (Color::Default, Color::Default, false, false, false),
                             };
                             let rgb = |c: Option<libghostty_vt::style::RgbColor>| c.map(|c| [c.r, c.g, c.b]);
-                            let bg_rgb = if inverse {
-                                Some(rgb(c.fg_color().ok().flatten()).unwrap_or(foreground))
-                            } else {
-                                rgb(c.bg_color().ok().flatten())
-                            };
-                            line.push(Cell { text, spacer, fg, bg, bold, italic, inverse, bg_rgb });
+                            let fg_rgb = rgb(c.fg_color().ok().flatten()).unwrap_or(foreground);
+                            let bg_own = rgb(c.bg_color().ok().flatten());
+                            let (bg_rgb, fg_rgb) =
+                                if inverse { (Some(fg_rgb), bg_own.unwrap_or(background)) } else { (bg_own, fg_rgb) };
+                            line.push(Cell { text, spacer, fg, bg, bold, italic, inverse, bg_rgb, fg_rgb });
                         }
                     }
                     cells.push(line);
@@ -1026,6 +1107,93 @@ mod tests {
         let mask = s.text_mask();
         assert_eq!(mask.pixel(5, 145)[3], 255, "\"done\" on row 8");
         assert_eq!(mask.pixel(5, 105)[3], 0);
+    }
+
+    #[test]
+    fn renders_text() {
+        // Row 0: red ASCII, then blank cells. Rows 1 and 2: the same text,
+        // regular and bold. Row 3: wide characters. Row 4: inverse, in the
+        // default colours and in green on blue. Rows 6 and 7: text with a
+        // red image over its two cells, below the text (z -1) and above it
+        // (z 1).
+        let red_image = |id: u32, z: i32| format!("\\033_Ga=T,i={id},c=2,r=1,z={z},C=1,q=2,f=24,s=1,v=1;/wAA\\033\\\\");
+        let script = format!(
+            "printf '\\033[31mHello\\033[0m\\nHHHH\\n\\033[1mHHHH\\033[0m\\n数😀\\n\
+             \\033[7mXX\\033[0m \\033[7;32;44mXX\\033[0m\\n\
+             \\033[7;1HWW\\033[7;1H{}\\033[8;1HWW\\033[8;1H{}\\033[10;1Hdone'; sleep 5",
+            red_image(1, -1),
+            red_image(2, 1),
+        );
+        let mut t = Term::spawn(&["sh", "-c", &script], &Options::default());
+        let s = t.wait_for("the text and images", |s| s.images.len() == 2 && s.contains("done"));
+        let out = s.render();
+        let _ = std::fs::create_dir_all(out_dir());
+        out.save_png(&out_dir().join("renders-text.png")).unwrap();
+        let (cw, ch) = s.cell;
+        let [r, g, b] = s.background;
+        let bg = [r, g, b, 255];
+        // The pixels of cell (col, row) (a span of `n` cells) for which `f` holds.
+        let count = |col: u32, row: u32, n: u32, f: &dyn Fn([u8; 4]) -> bool| {
+            let mut k = 0;
+            for y in row * ch..(row + 1) * ch {
+                for x in col * cw..(col + n) * cw {
+                    k += usize::from(f(out.pixel(x, y)));
+                }
+            }
+            k
+        };
+        let ink = |col, row, n| count(col, row, n, &|p| p != bg);
+        // Red text, reddish pixels in every letter, none in blank cells.
+        let red = s.cell(0, 0).fg_rgb;
+        assert!(red[0] > red[1].saturating_add(60) && red[0] > red[2].saturating_add(60), "{red:?}");
+        for col in 0..5 {
+            let reddish = count(col, 0, 1, &|p| p[0] > p[1].saturating_add(40) && p[0] > p[2].saturating_add(40));
+            assert!(reddish > 5, "letter {col}: {reddish} red pixels");
+        }
+        for col in [5, 6, 20, 99] {
+            assert_eq!(ink(col, 0, 1), 0, "blank cell {col}");
+        }
+        assert_eq!(ink(50, 10, 1), 0, "a blank row");
+        // Bold has more ink than regular, in the default foreground.
+        let fg = s.cell(0, 1).fg_rgb;
+        assert_eq!(fg, s.cell(0, 2).fg_rgb);
+        assert_ne!(fg, s.background);
+        let near = |c: [u8; 3]| move |p: [u8; 4]| (0..3).all(|i| p[i].abs_diff(c[i]) < 60);
+        // Ink: how far the pixels are from the background, summed.
+        let ink_sum = |row: u32| {
+            let mut sum = 0u32;
+            for y in row * ch..(row + 1) * ch {
+                for x in 0..4 * cw {
+                    let p = out.pixel(x, y);
+                    sum += (0..3).map(|i| u32::from(p[i].abs_diff(bg[i]))).sum::<u32>();
+                }
+            }
+            sum
+        };
+        let (regular, bold) = (ink_sum(1), ink_sum(2));
+        assert!(regular > 0 && bold > regular * 5 / 4, "regular {regular}, bold {bold}");
+        // Wide characters draw in both of their cells.
+        assert!(s.cell(1, 3).spacer && s.cell(3, 3).spacer);
+        for col in 0..4 {
+            assert!(ink(col, 3, 1) > 5, "cell {col} of the wide characters: {}", ink(col, 3, 1));
+        }
+        assert_eq!(ink(4, 3, 1), 0);
+        // Inverse: the cell's background is the foreground, the glyphs the
+        // background.
+        let inv = s.cell(0, 4);
+        assert_eq!((inv.bg_rgb, inv.fg_rgb), (Some(fg), s.background));
+        let [fr, fgg, fb] = fg;
+        assert_eq!(out.pixel(0, 4 * ch), [fr, fgg, fb, 255]);
+        assert!(count(0, 4, 2, &near(s.background)) > 20);
+        let green_on_blue = s.cell(3, 4);
+        let (green, blue) = (green_on_blue.bg_rgb.unwrap(), green_on_blue.fg_rgb);
+        assert!(green[1] > green[2] && blue[2] > blue[1], "inverse swaps: background {green:?}, glyphs {blue:?}");
+        assert_eq!(out.pixel(3 * cw, 4 * ch), [green[0], green[1], green[2], 255]);
+        assert!(count(3, 4, 2, &near(blue)) > 20);
+        // Text over an image with a negative z, under one with z >= 0.
+        let image_red = |p: [u8; 4]| p == [255, 0, 0, 255];
+        assert!(count(0, 6, 2, &image_red) > 100 && count(0, 6, 2, &near(fg)) > 20, "text above z -1");
+        assert_eq!(count(0, 7, 2, &image_red), (2 * cw * ch) as usize, "text below z 1");
     }
 
     #[test]
