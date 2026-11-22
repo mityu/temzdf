@@ -112,8 +112,10 @@ Known problems:
   6 runs scroll_demo accelerated one of six wheel steps, as if two
   arrived within its 80 ms flick window, with the steps sent 0.34 s apart
   (1 of 2 runs), 0.8 s apart (0 of 2) and each once the screen stood
-  still, 1.1 s apart (1 of 2). The cause is not known (scroll_demo
-  writes no log).
+  still, 1.1 s apart (1 of 2). The cause is not known: later the same
+  day, with `SCROLL_DEMO_LOG`, 6 of 6 runs (1.1 s apart) scrolled 360 px,
+  each click arriving as one report 2 to 5 ms after it was sent, and
+  scroll_demo drawing a frame in under 10 ms.
 - Ghostty (reported by the user, 2026-10-27, more often over SSH) reports
   SGR-pixel motion past the window's left or top edge with negative
   coordinates (`CSI <35;-3;251M`). The `-` is not a CSI parameter byte

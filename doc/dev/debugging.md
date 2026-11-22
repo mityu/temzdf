@@ -7,6 +7,9 @@ What you learn about terminal behaviour goes into
 - `cargo run -p termpix --example probe` prints what detection found.
 - `cargo run -p termpix --example events -- events.log` logs every parsed input
   event (what the terminal really sends).
+- `SCROLL_DEMO_LOG=FILE` makes the `scroll_demo` example write each event it
+  receives and each frame it draws with the time (Unix ms), for telling a
+  terminal's late input from a slow loop.
 - In interactive mode `temzdf` sends stdout/stderr (MuPDF and SyncTeX warnings)
   to `temzdf.log`, and session servers theirs to `NAME.log`, in the log
   directory: `$TEMZDF_LOG_DIR`, else `$XDG_STATE_HOME/temzdf`. `temzdf ls -v`

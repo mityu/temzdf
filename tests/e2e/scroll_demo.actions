@@ -4,7 +4,8 @@
 # px a step; sent at least 0.6 s apart, far past the 80 ms flick window
 # of termpix-core's scroll.rs, so no step should accelerate; WezTerm
 # still gave 372 px, one step accelerated, in 2 of 6 runs, with steps
-# 0.34 s and 1.1 s apart: todo.md); in Ghostty 1296 px (it reports three steps a
+# 0.34 s and 1.1 s apart, but not in 6 later runs logged with
+# SCROLL_DEMO_LOG: todo.md); in Ghostty 1296 px (it reports three steps a
 # notch, at once: each notch's three accelerate, 60 x (1 + 1.2 + 1.4));
 # dragging up by 100 px scrolls 100 px further (drag100).
 # Judged (check): how far each scrolled, from where the bands' boundaries

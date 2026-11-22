@@ -3,10 +3,15 @@
 //!
 //! Keys: j/k or arrows scroll, space/b page, g/G top/bottom, q or Esc quit.
 //! `TERMPIX_BACKEND` / `TERMPIX_MEDIUM` override detection (see `termpix::probe`).
+//! `SCROLL_DEMO_LOG=FILE` writes a line per event received (the Unix time in
+//! ms, the event; keys only as `key`) and per frame drawn (the offset, its
+//! target and how long `present` and the write took), for telling a
+//! terminal's late input from a slow loop.
 
-use std::io;
+use std::fs::File;
+use std::io::{self, Write};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use termpix::compositor::{Compositor, Layer};
 use termpix::geom::{Geometry, Rect};
@@ -18,6 +23,7 @@ const IMAGE_HEIGHT: u32 = 6000;
 const FRAME: Duration = Duration::from_millis(16);
 
 fn main() -> io::Result<()> {
+    let mut log = std::env::var_os("SCROLL_DEMO_LOG").map(File::create).transpose()?;
     let mut tty = Tty::open(Modes::default())?;
     let caps = termpix::probe::probe(&mut tty, Duration::from_secs(1))?;
     if !caps.kitty_graphics {
@@ -56,10 +62,22 @@ fn main() -> io::Result<()> {
                 dst: Rect::new(x, 0, width, geometry.height_px().min(IMAGE_HEIGHT)),
                 z: -1_073_741_825,
             };
+            let start = Instant::now();
             out.clear();
             comp.present(&[layer], &mut out)?;
+            let presented = Instant::now();
             tty.write_all(&out)?;
             dirty = false;
+            if let Some(log) = &mut log {
+                let (p, w) = (presented - start, presented.elapsed());
+                let target = scroll.target();
+                writeln!(
+                    log,
+                    "{} draw {offset} (target {target}) present {p:?} write {w:?} {} bytes",
+                    unix_ms(),
+                    out.len()
+                )?;
+            }
         }
         let timeout = if scroll.is_animating() { FRAME } else { Duration::from_secs(3600) };
         let event = match rx.recv_timeout(timeout) {
@@ -68,6 +86,13 @@ fn main() -> io::Result<()> {
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         let now = Instant::now();
+        if let (Some(log), Some(e)) = (&mut log, &event) {
+            match e {
+                TermEvent::Input(Event::Key(_)) => writeln!(log, "{} key", unix_ms())?,
+                TermEvent::Input(Event::Graphics(_)) => writeln!(log, "{} graphics reply", unix_ms())?,
+                e => writeln!(log, "{} {e:?}", unix_ms())?,
+            }
+        }
         let page = geometry.height_px() as f64 * 0.9;
         match event {
             Some(TermEvent::Terminate) => break,
@@ -115,6 +140,12 @@ fn main() -> io::Result<()> {
         dirty |= scroll.tick(Instant::now());
     }
     Ok(())
+}
+
+/// The Unix time in milliseconds, with three decimals.
+fn unix_ms() -> String {
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    format!("{}.{:03}", t.as_millis(), t.subsec_micros() % 1000)
 }
 
 /// Horizontal bands with a 100 px grid, so scrolling is easy to judge by eye.

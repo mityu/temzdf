@@ -100,9 +100,11 @@ server on one `Session`). Next and open:
   372 px instead of 360 in 2 of 6 runs (2026-11-23), one step accelerated
   as if two arrived within the 80 ms flick window, with the steps sent
   0.34 s apart and with each sent once the screen stood still (1.1 s
-  apart). scroll_demo writes no log, so the cause is not known. To
-  decide: accept 372 in WezTerm, SKIP the check there, or log what
-  scroll_demo receives.
+  apart). The cause is not known: 6 later runs with `SCROLL_DEMO_LOG=FILE`
+  (what scroll_demo receives, with times) all gave 360, each click one
+  report 2 to 5 ms after it was sent. Run it with the log until a 372 is
+  caught; to decide then: accept 372 in WezTerm, SKIP the check there, or
+  change how e2e sends or how scroll_demo takes its time.
 - Simulated-terminal tests that fail under heavy load (seen 2026-11-23 while
   `cargo test --workspace` and many `temzdf test` runs loaded the machine):
   `the_markdown_viewer_copies_follows_links_and_lists_its_headings`,
