@@ -649,7 +649,7 @@ without a pane (returns it; show it as any buffer). `attrs` (Vim's
 `text.info().attrs` reads them): `"nofile"` is tied to no file, never
 modified (nothing to lose: no unsaved-changes refusal) and written only to
 a path given; `"unlisted"` is for a script's own use, left out of
-`buffers()`, `temzdf ls` and the Vim mode's `:ls`; `"readonly"` is
+`buffers()` and the Vim mode's `:ls`; `"readonly"` is
 written only with `force` (Vim's `'readonly'`). Files are UTF-8 (a BOM kept);
 binary files are refused, and so are others unless named:
 `openFile(path, { encoding: "shift_jis" })` (Encoding Standard labels;
@@ -1154,6 +1154,11 @@ temzdf eval -s NAME ...   # session NAME (else the one this runs in, else the on
   its stack, `FILE:LINE:COLUMN`), and the exit code is 1.
 - `--timeout SECONDS` (default 10): how long to wait for the session, as
   `temzdf action`'s.
+
+`temzdf ls` lists the sessions by name and state (`detached` or `N
+attached`, and `(current)` for the one it runs in); `-v` adds each
+server's pid and log file. What a session has open, `temzdf eval` asks:
+`temzdf eval -s NAME -p -c 'temzdf.action.buffers().map((b) => b.name)'`.
 
 ## Testing scripts
 

@@ -400,11 +400,6 @@ impl Session {
         }
     }
 
-    /// The number of tabs (for `temzdf ls`).
-    pub fn tab_count(&self) -> usize {
-        self.tabs.len()
-    }
-
     /// Whether the tab line takes the top row.
     pub(super) fn tabline_shown(&self) -> bool {
         let wanted = match self.options.showtabline {

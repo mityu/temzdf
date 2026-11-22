@@ -403,8 +403,9 @@ fn detaching_and_attaching_again_keeps_the_shell() {
     t.wait_text("[detached from session d]");
     assert_eq!(t.wait_exit(), 0);
 
+    // Name and state only.
     let ls = env.run(&["ls"]);
-    assert!(ls.contains("d  (1 panes, 1 buffers, detached)"), "{ls}");
+    assert_eq!(ls, "d  (detached)\n");
     assert!(!ls.contains("log:"), "the log only with -v: {ls}");
     let ls = env.run(&["ls", "-v"]);
     assert!(ls.contains(&format!("log: {}", env.path("log/d.log").display())), "{ls}");
@@ -442,8 +443,10 @@ fn splitting_a_terminal_and_opening_a_pdf_beside_it(pixels: PixelPath) {
     // (Above the window's status line, the bottom row.)
     let s = t.wait_for("the PDF's status line", |s| s.row_from(28, 75).contains("sample.pd"));
     assert!(s.row_from(28, 75).contains("1 / 3"), "{:?}", s.row_from(28, 75));
-    let ls = env.run(&["ls"]);
-    assert!(ls.contains("p  (3 panes, 3 buffers, 1 attached)") && ls.contains("sample.pdf"), "{ls}");
+    assert_eq!(env.run(&["ls"]), "p  (1 attached)\n", "no panes, buffers or files");
+    assert_eq!(env.query("p", "temzdf.action.panes().length"), "3");
+    let buffers = env.query("p", "temzdf.action.buffers().map((b) => b.name)");
+    assert!(buffers.starts_with('[') && buffers.contains("sample.pdf"), "{buffers}");
 }
 
 #[test]
@@ -595,7 +598,7 @@ fn typed_keys_echo_at_once_while_a_pdf_scrolls(pixels: PixelPath) {
     env.run(&["action", "-s", "e", "new-pane", &fixture("sample.pdf").display().to_string()]);
     // One composited image covers the screen: see the split in the shell.
     let deadline = std::time::Instant::now() + tuitest::TIMEOUT;
-    while !env.run(&["ls"]).contains("2 panes") {
+    while env.query("e", "temzdf.action.panes().length") != "2" {
         assert!(std::time::Instant::now() < deadline, "the PDF pane never opened");
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
@@ -875,8 +878,7 @@ on("PaneClosed", (id) => console.log(`closed ${id}`));
         ["opened 1 terminal", "ready", "opened 3 terminal", "pre 3", "refused", "closed 3", "opened 5 terminal"],
         "{lines:?}"
     );
-    let ls = env.run(&["ls"]);
-    assert!(ls.contains("h  (2 panes"), "the hook's split happened: {ls}");
+    assert_eq!(env.query("h", "temzdf.action.panes().length"), "2", "the hook's split happened");
 }
 
 #[test]
@@ -1082,8 +1084,7 @@ try { (o as any).nope = 1; } catch (e) { console.log(`option refused: ${(e as Er
     });
     let lines = env.script_lines("md");
     assert!(lines.iter().any(|l| l == "mode win terminal"), "the new pane's mode after the split: {lines:?}");
-    let ls = env.run(&["ls"]);
-    assert!(ls.contains("md  (2 panes"), "x did not close a pane: {ls}");
+    assert_eq!(env.query("md", "temzdf.action.panes().length"), "2", "x did not close a pane");
 }
 
 #[test]
@@ -1116,8 +1117,7 @@ fn a_closed_shell_stays_hidden_and_shows_again() {
     // Close the left pane: its shell keeps running, hidden.
     t.keys(&["C-b", "h", "C-b", "x"]);
     t.wait_for("one pane", |s| !s.contains("marker-left"));
-    let ls = env.run(&["ls"]);
-    assert!(ls.contains("b  (1 panes, 2 buffers, 1 attached)"), "{ls}");
+    assert_eq!(env.query("b", "[temzdf.action.panes().length, temzdf.action.buffers().length]"), "[1,2]");
     // The first shell's buffer is 2 (the first pane took 1).
     env.run(&["action", "-s", "b", "show-buffer", "2"]);
     t.wait_text("marker-left");
@@ -1553,7 +1553,7 @@ fn tabs_switch_by_keys_and_clicks_and_floats_on_all_tabs_follow(pixels: PixelPat
     let s = t.wait_for("the tab line and the PDF", |s| tab_line(s) && s.images.iter().any(|p| p.cols > 1));
     assert!(s.lines()[0].contains(" 2 sample.pdf"), "{}", s.lines()[0]);
     assert!(!s.text().contains("first-2"), "the first tab's shell does not show");
-    assert!(env.run(&["ls"]).contains("(2 tabs, 2 panes"));
+    assert_eq!(env.query("tb", "[temzdf.action.tabs().length, temzdf.action.panes().length]"), "[2,2]");
     // gt: the first tab again, without the PDF's images.
     t.keys(&["C-b", "g", "t"]);
     t.wait_for("the shell's tab", |s| s.text().contains("first-2") && s.images.is_empty());
@@ -1858,8 +1858,7 @@ fn slash_searches_through_an_input_line_below_the_pdf() {
     let s = t.wait_for("the search done", |s| s.row_from(28, 0).contains("/Back to 1/1"));
     assert!(s.lines().iter().all(|l| !l.starts_with("/Back to")), "the input is gone");
     // The input buffer went with it: the document is the only buffer.
-    let ls = env.run(&["ls"]);
-    assert!(ls.contains("1 buffers") || ls.contains("1 buffer,") || ls.contains("1 buffer)"), "{ls}");
+    assert_eq!(env.query("si", "temzdf.action.buffers({ all: true }).length"), "1");
     // Esc cancels: back to where it began.
     t.key("g");
     t.wait_for("page 1 again", |s| s.title.contains("1 / 3"));
@@ -2080,7 +2079,7 @@ fn closing_a_tab_page_runs_the_close_hooks_of_its_panes() {
     env.run(&["action", "-s", "tc", "close-tab"]);
     let lines = env.wait_log("tc", "the hooks", |l| l.matches("closing ").count() >= 2);
     assert_eq!(lines.matches("closing ").count(), 2, "{lines}");
-    assert!(env.run(&["ls"]).contains("tc  (1 panes"), "the tab page went");
+    assert_eq!(env.query("tc", "temzdf.action.panes().length"), "1", "the tab page went");
 }
 
 #[test]

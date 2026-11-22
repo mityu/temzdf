@@ -321,7 +321,8 @@ git log), and why:
   it (`crates/temzdf-server/src/clip.rs`), since images cannot be stacked
   over text.
 - **Commands** follow zellij's names (`attach`, `list-sessions`/`ls`,
-  `kill-session`, `action`); unnamed sessions are named after the NATO
+  `kill-session`, `action`; `ls` shows each session's name and state
+  only, decided 2026-11-22: what it has open, `temzdf eval` asks); unnamed sessions are named after the NATO
   alphabet (alfa, bravo, ...). One server process per session, its output
   in `NAME.log`. Splitting a PDF pane shows the same document again;
   splitting a terminal starts another shell in the directory the shell

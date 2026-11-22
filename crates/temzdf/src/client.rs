@@ -212,14 +212,12 @@ pub fn list_sessions(verbose: bool) -> Result<()> {
     }
     // The session whose pane this runs in, marked as zellij does.
     let current = temzdf_client::current_session();
+    // Name and state only: what a session has open, `temzdf eval` asks.
     for s in sessions {
-        let files: Vec<String> = s.files.iter().map(|f| f.display().to_string()).collect();
         let clients = if s.clients == 0 { "detached".to_owned() } else { format!("{} attached", s.clients) };
-        let tabs = if s.tabs > 1 { format!("{} tabs, ", s.tabs) } else { String::new() };
-        let mut line =
-            format!("{}  ({tabs}{} panes, {} buffers, {clients})  {}", s.name, s.panes, s.buffers, files.join(" "));
+        let mut line = format!("{}  ({clients})", s.name);
         if current.as_deref() == Some(s.name.as_str()) {
-            line = format!("{} (current)", line.trim_end());
+            line.push_str(" (current)");
         }
         println!("{line}");
         if verbose {

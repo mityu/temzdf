@@ -446,7 +446,9 @@ with the plan.
   `BufferDeleted(id)`.
 - A terminal's scrollback position is per buffer for now (libghostty keeps
   one viewport). Hidden PDFs drop tiles and display lists but keep their
-  information and watcher. `temzdf ls` shows the number of buffers.
+  information and watcher. (`temzdf ls` showed the number of buffers
+  until 2026-11-22; it shows names and states only, and `temzdf eval`
+  asks a session what it has.)
 - Found while implementing (2026-10-26, without the user):
   - Panes and buffers take ids from one counter, so a document's buffer id
     is its document id and no id names both a pane and a buffer.

@@ -469,11 +469,7 @@ mod tests {
             version: proto::VERSION,
             name: "alfa".into(),
             pid,
-            tabs: 1,
-            panes: 1,
-            buffers: 1,
             clients: 0,
-            files: vec![],
             log: None,
             shown_in: vec![],
         };

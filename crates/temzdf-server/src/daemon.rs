@@ -360,11 +360,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                             version: proto::VERSION,
                             name: name.to_owned(),
                             pid: std::process::id(),
-                            tabs: session.tab_count(),
-                            panes: session.pane_count(),
-                            buffers: session.buffer_count(),
                             clients: clients.values().filter(|c| c.attached).count(),
-                            files: session.files(),
                             log: log.clone(),
                             shown_in: shown_in(&clients),
                         };

@@ -16,7 +16,7 @@ use termpix_core::input::{KeyEvent, MouseEvent};
 use crate::{MAX_MESSAGE, recv_timed, shared};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 18;
+pub const VERSION: u32 = 19;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// Attach and show the session at this size, with this frontend.
@@ -141,13 +141,7 @@ pub struct SessionInfo {
     pub version: u32,
     pub name: String,
     pub pid: u32,
-    pub tabs: usize,
-    pub panes: usize,
-    /// Documents and terminals, shown or hidden.
-    pub buffers: usize,
     pub clients: usize,
-    /// The files open in the session.
-    pub files: Vec<PathBuf>,
     /// Where the server's output goes.
     pub log: Option<PathBuf>,
     /// The sessions whose panes its attached clients run in: the sessions
