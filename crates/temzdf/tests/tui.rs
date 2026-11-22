@@ -1855,8 +1855,12 @@ fn sessions_started_at_once_get_names_of_their_own() {
     // Started together: both see no session yet and want "alfa".
     let mut ta = Term::spawn(&[BIN, &a.display().to_string()], &env.options());
     let mut tb = Term::spawn(&[BIN, &b.display().to_string()], &env.options());
-    let sa = ta.wait_for("a's pages", |s| !s.images.is_empty() && s.title.contains(".pdf"));
-    let sb = tb.wait_for("b's pages", |s| !s.images.is_empty() && s.title.contains(".pdf"));
+    // Both pumped at once: waiting on a alone leaves b's capability probe
+    // unanswered, and on a loaded machine past its timeout.
+    let [sa, sb]: [Screen; 2] =
+        Term::wait_for_all(&mut [&mut ta, &mut tb], "the pages", |s| !s.images.is_empty() && s.title.contains(".pdf"))
+            .try_into()
+            .unwrap();
     // Each client shows its own file, in its own session.
     assert!(sa.title.starts_with("a.pdf"), "{}", sa.title);
     assert!(sb.title.starts_with("b.pdf"), "{}", sb.title);

@@ -825,6 +825,33 @@ impl Term {
         }
     }
 
+    /// [`Self::wait_for`] on several terminals at once: until `done` holds
+    /// for each. A `Term` answers its program's queries (the capability
+    /// probe at startup among them) only while it is pumped, so waiting on
+    /// one program while another starts up can leave the other unanswered
+    /// past its probe's timeout; this pumps them all in turn.
+    pub fn wait_for_all(terms: &mut [&mut Term], what: &str, done: impl Fn(&Screen) -> bool) -> Vec<Screen> {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let screens: Vec<Screen> = terms.iter_mut().map(|t| t.screen()).collect();
+            if screens.iter().all(&done) {
+                return screens;
+            }
+            for (t, screen) in terms.iter_mut().zip(&screens) {
+                if done(screen) {
+                    continue;
+                }
+                if Instant::now() >= deadline || (t.eof && !t.pump(Duration::ZERO)) {
+                    let why = if t.eof { "the program exited" } else { "timed out" };
+                    t.fail(&format!("waiting for {what}: {why}"), screen);
+                }
+            }
+            for t in terms.iter_mut() {
+                t.pump(Duration::from_millis(10));
+            }
+        }
+    }
+
     /// Wait until `needle` is on the screen.
     pub fn wait_text(&mut self, needle: &str) -> Screen {
         self.wait_for(&format!("{needle:?}"), |s| s.contains(needle))

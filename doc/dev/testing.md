@@ -215,7 +215,12 @@ gives tests:
   tmux).
 - Waiting by condition only: `wait_for(what, |screen| ...)`, `wait_text`,
   `wait_exit`. A failed wait panics with the screen and leaves it, plus the raw
-  bytes received, in `target/tuitest/<test>.txt` and `.out`.
+  bytes received, in `target/tuitest/<test>.txt` and `.out`. A `Term`
+  answers its program's queries only while the test pumps it (waits,
+  `settle`): with several programs starting at once, wait on them together
+  with `Term::wait_for_all`, or one's capability probe (one second) can go
+  unanswered while the test waits on another and it starts without
+  graphics.
 - Pixels: `Screen::render()` draws the screen as a terminal would, for
   any kind of pane, in the kitty graphics protocol's layers as Ghostty
   draws them: the default background, images below the backgrounds, the
