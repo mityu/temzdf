@@ -96,6 +96,13 @@ server on one `Session`). Next and open:
   a hook caused while a request is being answered goes `nested: true`; a
   key's call while a dispatched task runs and asks nothing goes `nested:
   false`.
+- `tests/e2e/scroll_demo.actions` in WezTerm on X11: `wheel6` scrolled
+  372 px instead of 360 in 2 of 6 runs (2026-11-23), one step accelerated
+  as if two arrived within the 80 ms flick window, with the steps sent
+  0.34 s apart and with each sent once the screen stood still (1.1 s
+  apart). scroll_demo writes no log, so the cause is not known. To
+  decide: accept 372 in WezTerm, SKIP the check there, or log what
+  scroll_demo receives.
 - Simulated-terminal tests that fail under heavy load (seen 2026-11-23 while
   `cargo test --workspace` and many `temzdf test` runs loaded the machine):
   `the_markdown_viewer_copies_follows_links_and_lists_its_headings`,

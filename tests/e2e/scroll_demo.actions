@@ -1,9 +1,12 @@
 # Used with: scripts/e2e.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
-# Expected: the image's top at the top (start); six quick wheel notches
-# scroll 540 px (wheel6: 60 px a step, each step of the flick 0.2 more:
-# 60 x (1 + 1.2 + 1.4 + 1.6 + 1.8 + 2.0)); in Ghostty 2880 px (it reports
-# three steps a notch: 18 steps, the multiplier capped at 4); dragging up
-# by 100 px scrolls 100 px further (drag100).
+# Expected: the image's top at the top (start); six wheel notches, each
+# once the screen stood still after the last, scroll 360 px (wheel6: 60
+# px a step; sent at least 0.6 s apart, far past the 80 ms flick window
+# of termpix-core's scroll.rs, so no step should accelerate; WezTerm
+# still gave 372 px, one step accelerated, in 2 of 6 runs, with steps
+# 0.34 s and 1.1 s apart: todo.md); in Ghostty 1296 px (it reports three steps a
+# notch, at once: each notch's three accelerate, 60 x (1 + 1.2 + 1.4));
+# dragging up by 100 px scrolls 100 px further (drag100).
 # Judged (check): how far each scrolled, from where the bands' boundaries
 # are in the screenshots (wheel6, drag100; scroll_demo writes no log, so by
 # the difference between two screenshots). Not on macOS (SKIP), where
@@ -44,11 +47,11 @@ band_moved() {
   echo "band_moved $1 -> $2: $((b - a)) px (expected $3)"
   (((b - a) - $3 <= 2 && $3 - (b - a) <= 2))
 }
-wheel 6
+for _ in 1 2 3 4 5 6; do wheel 1; wait_still; done
 pause 1
 shot wheel6
-wheeled=540
-[[ $term != ghostty ]] || wheeled=2880
+wheeled=360
+[[ $term != ghostty ]] || wheeled=1296
 check wheel6 band_moved start wheel6 "$wheeled"
 drag 450 300 200
 pause 0.5

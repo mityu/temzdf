@@ -100,14 +100,20 @@ Known problems:
   the window's top left, so `scripts/e2e.sh`'s `expect` works there.
 - Ghostty 1.4.0 (Xvfb, 2026-11-23) reports three wheel steps for each X
   button 4/5 click; kitty 0.51.0 and WezTerm 0-unstable-2026-11-08 report one
-  (`tests/e2e/scroll_demo.actions`: six clicks scroll scroll_demo 2880 px
-  in Ghostty, 540 px in the others).
+  (`tests/e2e/scroll_demo.actions`: six clicks well apart scroll
+  scroll_demo 1296 px in Ghostty, each click's three steps arriving
+  together and accelerating, 360 px in the others).
 - WezTerm 20260117 (software renderer, Xvfb, 2026-10-28): SGR-pixel
   coordinates are one-based (`xdotool mousemove 450 300` arrives as 451,301;
   kitty reports 450,300), and input arrives in bursts while it renders:
   wheel steps sent 30 ms apart came 78, 1, 24 and 91 ms apart. So
   `scripts/e2e.sh` replays what temzdf recorded (`TEMZDF_RECORD_INPUT`),
-  not what it sent.
+  not what it sent. WezTerm 0-unstable-2026-11-08 (2026-11-23): in 2 of
+  6 runs scroll_demo accelerated one of six wheel steps, as if two
+  arrived within its 80 ms flick window, with the steps sent 0.34 s apart
+  (1 of 2 runs), 0.8 s apart (0 of 2) and each once the screen stood
+  still, 1.1 s apart (1 of 2). The cause is not known (scroll_demo
+  writes no log).
 - Ghostty (reported by the user, 2026-10-27, more often over SSH) reports
   SGR-pixel motion past the window's left or top edge with negative
   coordinates (`CSI <35;-3;251M`). The `-` is not a CSI parameter byte
