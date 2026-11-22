@@ -3,6 +3,7 @@ mod client;
 mod config;
 mod headless;
 mod lsfonts;
+mod script_tests;
 mod snapshot;
 
 use temzdf_server::forward as ipc;
@@ -200,6 +201,27 @@ enum Cmd {
         #[arg(long)]
         list_system: bool,
     },
+    /// Run tests written as scripts (`import { test } from "temzdf/test"`,
+    /// e.g. crates/temzdf-script/runtime/**/*.test.ts): each FILE in a
+    /// session of its own, in a process of its own whose XDG directories,
+    /// TEMZDF_LOG_DIR and TMPDIR point into a temporary directory (nothing
+    /// reaches your sessions, swap files or configuration). Prints each
+    /// file's TAP in one piece (with the file's stderr when it failed),
+    /// then the totals; exits with 1 when a test failed.
+    Test {
+        /// Run at most N files at once (default: the number of CPUs).
+        #[arg(short, long, value_name = "N")]
+        jobs: Option<usize>,
+        /// Stop a file, and fail it, when it prints no TAP line for this
+        /// long (a test stuck in a synchronous loop).
+        #[arg(long, value_name = "SECONDS", default_value_t = 30.0)]
+        timeout: f64,
+        /// Run the one FILE in this process (what each child runs).
+        #[arg(long, hide = true)]
+        one: bool,
+        #[arg(required = true, value_name = "FILE")]
+        files: Vec<PathBuf>,
+    },
     /// Draw session NAME's frame as a terminal client of this geometry would
     /// show it, into a PNG (scripts/e2e.sh compares terminals against it).
     #[command(hide = true)]
@@ -342,6 +364,19 @@ fn main() -> Result<()> {
                 rest.push("--list-system".into());
             }
             return lsfonts::run(&looks, &rest);
+        }
+        Some(Cmd::Test { jobs, timeout, one, files }) => {
+            warn_unused(&start_flags, "test");
+            let status = if one {
+                let [file] = files.as_slice() else { bail!("--one takes one FILE") };
+                script_tests::run_one(file)?
+            } else {
+                let timeout = std::time::Duration::try_from_secs_f64(timeout.max(0.001))
+                    .map_err(|_| anyhow::anyhow!("--timeout {timeout}: not a number of seconds"))?;
+                let jobs = jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from));
+                script_tests::run(&files, jobs, timeout)?
+            };
+            std::process::exit(status);
         }
         Some(Cmd::PrintTypes) => {
             print!("{}", temzdf_script::types::DECLARATIONS);
