@@ -240,9 +240,11 @@ server on one `Session`). Next and open:
     experiment with the in-box ConPTY is done (`doc/terminals/conpty.md`,
     `experiments/conpty/`): kitty graphics are dropped, the kitty
     keyboard, the SGR-pixel mouse and OSC 52 pass, the pass-through flag
-    changes nothing. Still to try: a side-loaded `conpty.dll` with
-    `OpenConsole.exe` (a download from Microsoft), and the probes inside
-    Windows Terminal and WezTerm.
+    changes nothing. A side-loaded `conpty.dll` + `OpenConsole.exe`
+    (NuGet `Microsoft.Windows.Console.ConPTY` 1.25.261109001) passes kitty
+    graphics, XTGETTCAP, DA1 and DECRQM through, with either flag. Still
+    to try: the probes inside Windows Terminal and WezTerm, and shipping
+    `conpty.dll` with temzdf (portable-pty loading it).
   - The product: compile (gate `rustix`, `signal-hook`, `libc`;
     libtexprintf built with `cc`; build tooling), the transport
     (`uds_windows`), directories and processes (the GUI attached to a

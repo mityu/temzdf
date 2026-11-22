@@ -62,6 +62,44 @@ for focus reports itself).
 - For temzdf's own terminal frontend on Windows the same holds: drawn with
   kitty graphics, it cannot show anything through an in-box ConPTY,
   whatever the terminal is. The GUI client stays the frontend there.
-- Not tried yet: a side-loaded newer `conpty.dll` with `OpenConsole.exe`
-  (Windows Terminal's), where the pass-through flag may be implemented;
-  and the same probes inside real terminals (Windows Terminal, WezTerm).
+- A side-loaded `conpty.dll` with its `OpenConsole.exe` changes this, see
+  the next section.
+- Not tried yet: the same probes inside real terminals (Windows Terminal,
+  WezTerm).
+
+## Side-loaded conpty.dll
+
+Measured on 2026-11-23 in the same VM image, with the NuGet package
+`Microsoft.Windows.Console.ConPTY` 1.25.261109001 (MIT, latest stable; the
+x64 `runtimes/win-x64/native/conpty.dll` and
+`build/native/runtimes/x64/OpenConsole.exe`, both in one directory).
+`Host.cs` takes the DLL's path as an optional fifth argument and calls its
+`CreatePseudoConsole` / `ClosePseudoConsole` (LoadLibrary, GetProcAddress);
+`run.ps1 -ConptyDir DIR` runs in-box and side-loaded, each with flags 0
+and 8. Raw logs of that run: `target/conpty/` (not committed).
+
+Flags 0 and 8 gave the same bytes again, but this time the stream
+differs from the in-box one in every flag:
+
+| What | In-box (`conhost.exe`) | Side-loaded (`OpenConsole.exe`) |
+|---|---|---|
+| kitty graphics (transmit and query) | dropped | **passed as written** |
+| XTGETTCAP `DCS + q` | dropped | **passed as written** |
+| DA1 `CSI c` | answered by ConPTY, not forwarded | **forwarded**, not answered by ConPTY (the terminal's own answer is the program's only one) |
+| DECRQM `CSI ? 2026 $ p` | answered by ConPTY | **forwarded** |
+| kitty keyboard, mouse (1016 too), 2004, 2026, `14t`, `16t`, OSC 52, OSC 7, truecolor, OSC 8 | passed (OSC 8 gets an `id`) | passed; OSC 8 as written |
+| the program's text | redrawn by ConPTY (`CSI 2 J`, `CSI H`, cursor hiding, a title) | **copied** with the program's own line endings, no redraw, no title |
+| input: keys, kitty keyboard, SGR mouse, paste, replies (DA1, `CSI ? 1 u`, kitty graphics, `14t`, DECRPM, XTGETTCAP) | unchanged | unchanged |
+| focus report `CSI I` | consumed | consumed |
+
+ConPTY's own start-up output: `CSI 1 t`, `CSI c` (it asks the terminal,
+and the host here never answered), `CSI ? 1004 h`, `CSI ? 9001 h`,
+`CSI ? 7 l`; `l` for 1004 and 9001 at the end.
+
+What follows: with a side-loaded `conpty.dll` (as Windows Terminal ships
+it) kitty graphics can reach the real terminal, so the terminal
+frontend and graphics programs in terminal panes are possible there.
+It needs `conpty.dll` and `OpenConsole.exe` shipped beside temzdf, and
+portable-pty (or temzdf's own wrapper) to load `conpty.dll` instead of
+kernel32's functions. Not checked: whether a real terminal then shows the
+image, and what an unmatched `conpty.dll` / `OpenConsole.exe` pair does.

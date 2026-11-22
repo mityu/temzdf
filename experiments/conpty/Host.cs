@@ -1,8 +1,10 @@
 // The terminal side: opens a pseudoconsole (CreatePseudoConsole with the
-// flags given as the first argument, decimal), starts Child.exe in it,
+// flags given as the first argument, decimal; from the in-box kernel32, or
+// from the conpty.dll named by the optional fifth argument, loaded with
+// LoadLibrary, its OpenConsole.exe beside it), starts Child.exe in it,
 // records every byte ConPTY writes to the output pipe and, at about 1.5 s,
 // writes input a terminal would send. Usage:
-//   Host.exe FLAGS CHILD_EXE CHILD_LOG HOST_LOG
+//   Host.exe FLAGS CHILD_EXE CHILD_LOG HOST_LOG [CONPTY_DLL]
 // Compiled by run.ps1 with the .NET Framework's csc (C# 5).
 using System;
 using System.IO;
@@ -37,10 +39,19 @@ static class Host
 
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool CreatePipe(out IntPtr read, out IntPtr write, IntPtr sa, int size);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern int CreatePseudoConsole(COORD size, IntPtr input, IntPtr output, uint flags, out IntPtr hpc);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern void ClosePseudoConsole(IntPtr hpc);
+    [DllImport("kernel32.dll", EntryPoint = "CreatePseudoConsole")]
+    static extern int CreatePseudoConsoleInBox(COORD size, IntPtr input, IntPtr output, uint flags, out IntPtr hpc);
+    [DllImport("kernel32.dll", EntryPoint = "ClosePseudoConsole")]
+    static extern void ClosePseudoConsoleInBox(IntPtr hpc);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr LoadLibraryW(string path);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+    static extern IntPtr GetProcAddress(IntPtr module, string name);
+
+    delegate int CreateFn(COORD size, IntPtr input, IntPtr output, uint flags, out IntPtr hpc);
+    delegate void CloseFn(IntPtr hpc);
+    static CreateFn createFn = CreatePseudoConsoleInBox;
+    static CloseFn closeFn = ClosePseudoConsoleInBox;
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -79,12 +90,27 @@ static class Host
         string childExe = args[1], childLog = args[2], hostLog = args[3];
         var log = new StringBuilder();
         var start = DateTime.UtcNow;
+        if (args.Length > 4)
+        {
+            IntPtr mod = LoadLibraryW(args[4]);
+            IntPtr c = mod == IntPtr.Zero ? IntPtr.Zero : GetProcAddress(mod, "CreatePseudoConsole");
+            IntPtr d = mod == IntPtr.Zero ? IntPtr.Zero : GetProcAddress(mod, "ClosePseudoConsole");
+            if (c == IntPtr.Zero || d == IntPtr.Zero)
+            {
+                log.AppendLine("cannot load " + args[4] + ": " + Marshal.GetLastWin32Error());
+                File.WriteAllText(hostLog, log.ToString());
+                return 1;
+            }
+            createFn = (CreateFn)Marshal.GetDelegateForFunctionPointer(c, typeof(CreateFn));
+            closeFn = (CloseFn)Marshal.GetDelegateForFunctionPointer(d, typeof(CloseFn));
+            log.AppendLine("using " + args[4]);
+        }
 
         IntPtr inRead, inWrite, outRead, outWrite;
         CreatePipe(out inRead, out inWrite, IntPtr.Zero, 0);
         CreatePipe(out outRead, out outWrite, IntPtr.Zero, 0);
         IntPtr hpc;
-        int hr = CreatePseudoConsole(new COORD { X = 80, Y = 25 }, inRead, outWrite, flags, out hpc);
+        int hr = createFn(new COORD { X = 80, Y = 25 }, inRead, outWrite, flags, out hpc);
         log.AppendLine("CreatePseudoConsole(flags=0x" + flags.ToString("x") + ") = 0x" + hr.ToString("x8"));
         if (hr != 0) { File.WriteAllText(hostLog, log.ToString()); return 1; }
         CloseHandle(inRead);
@@ -141,7 +167,7 @@ static class Host
 
         WaitForSingleObject(pi.hProcess, 15000);
         Thread.Sleep(300);
-        ClosePseudoConsole(hpc);
+        closeFn(hpc);
         reader.Join(3000);
         lock (output) log.AppendLine("=== output").Append(output.ToString());
         File.WriteAllText(hostLog, log.ToString());

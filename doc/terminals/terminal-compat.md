@@ -72,6 +72,10 @@ Known problems:
   answers DA1 and DECRQM itself, passes the kitty keyboard, mouse (1016
   too), 2004, 2026, OSC 52 and OSC 7 sequences; input reaches the program
   unchanged. `PSEUDOCONSOLE_PASSTHROUGH_MODE` changes nothing there.
+  A side-loaded `conpty.dll` + `OpenConsole.exe` (NuGet
+  `Microsoft.Windows.Console.ConPTY` 1.25.261109001) passes kitty graphics
+  and XTGETTCAP, forwards DA1 and DECRQM, and does not redraw, with either
+  flag.
 
 ## Verified in practice
 
