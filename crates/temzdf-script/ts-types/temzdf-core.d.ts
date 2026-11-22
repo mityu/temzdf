@@ -252,7 +252,7 @@ declare module "temzdf" {
     linkpreview: boolean;
     /** Milliseconds the pointer rests before a preview. */
     linkpreviewdelay: number;
-    /** How long a forward search's highlight stays: milliseconds (0: none), or "input": until the next key or mouse input. */
+    /** How long a forward search's highlight stays: milliseconds (0: none), or "input": until the next key, click, wheel step or drag (not a pointer move). */
     forwardflash: number | "input";
     /** Milliseconds to wait after the PDF changed before reloading. */
     reloaddebounce: number;

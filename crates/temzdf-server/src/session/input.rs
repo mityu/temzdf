@@ -588,7 +588,9 @@ impl Session {
 
     pub fn mouse(&mut self, m: &MouseEvent, now: Instant) -> Outcome {
         self.clock = self.clock.max(now);
-        let gone = Outcome::None.or(self.input_arrived());
+        // The pointer only passing over does not count as input.
+        let pointing = matches!(m.kind, MouseEventKind::Move | MouseEventKind::Leave);
+        let gone = if pointing { Outcome::None } else { Outcome::None.or(self.input_arrived()) };
         if self.hold_mouse(m) {
             return gone;
         }
@@ -596,8 +598,8 @@ impl Session {
         out.merge(self.flush_events())
     }
 
-    /// Key or mouse input arrived: forward-search highlights shown until
-    /// then go (`o.forwardflash = "input"`). Whether any did.
+    /// Key or mouse input (a press, a release, a drag, a wheel step; not a
+    /// move) arrived: forward-search highlights shown until then go (`o.forwardflash = "input"`). Whether any did.
     fn input_arrived(&mut self) -> bool {
         let mut changed = false;
         for e in self.panes.values_mut() {

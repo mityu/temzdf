@@ -206,7 +206,7 @@ fn key(s: &mut Session, spec: &str) -> Outcome {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
-fn forward_highlights_until_input_go_with_the_next_key_or_mouse_input() {
+fn forward_highlights_until_input_go_with_the_next_key_click_or_wheel_but_not_a_move() {
     use temzdf_pdfcore::pdf::PageRect;
     use temzdf_pdfcore::synctex::PdfBox;
     let (mut s, rx) = session();
@@ -227,10 +227,20 @@ fn forward_highlights_until_input_go_with_the_next_key_or_mouse_input() {
     assert!(!s.tick(Instant::now() + Duration::from_secs(60)));
     assert!(shown(&mut s), "no time ends it");
     flash(&mut s);
-    let m =
-        MouseEvent { kind: MouseEventKind::Move, x: 300, y: 200, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
-    assert_eq!(s.mouse(&m, Instant::now()), Outcome::Redraw);
-    assert!(!shown(&mut s), "a mouse move ends it");
+    let mouse = |s: &mut Session, kind| {
+        let m = MouseEvent { kind, x: 300, y: 200, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
+        s.mouse(&m, Instant::now());
+    };
+    mouse(&mut s, MouseEventKind::Move);
+    mouse(&mut s, MouseEventKind::Leave);
+    assert!(shown(&mut s), "the pointer moving or leaving does not end it");
+    flash(&mut s);
+    mouse(&mut s, MouseEventKind::Press(MouseButton::Left));
+    assert!(!shown(&mut s), "a click ends it");
+    mouse(&mut s, MouseEventKind::Release(MouseButton::Left));
+    flash(&mut s);
+    mouse(&mut s, MouseEventKind::Scroll(termpix_core::input::ScrollDirection::Down));
+    assert!(!shown(&mut s), "a wheel step ends it");
     flash(&mut s);
     let release = KeyEvent { kind: KeyEventKind::Release, ..notation::parse("x").unwrap()[0].event() };
     s.key(&release, Instant::now());

@@ -54,7 +54,8 @@ const FLASH_COLOR: [u8; 4] = [255, 70, 70, 80];
 pub enum FlashLength {
     /// This long (none when zero).
     For(Duration),
-    /// Until the next key or mouse input.
+    /// Until the next key or mouse input (not a pointer move: the caller
+    /// decides what counts, see [`PdfPane::input_arrived`]).
     UntilInput,
 }
 
