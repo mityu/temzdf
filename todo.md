@@ -234,20 +234,27 @@ server on one `Session`). Next and open:
     `doc/dev/testing.md`) starts, stops, resets, runs commands in,
     copies to and from, and takes screenshots of a VM from the golden
     image; `build` (an English ISO, unattended, 20 minutes), `provision`
-    (Git, Node, VS Build Tools, LLVM, Zig, rustup; promoted to the next
-    golden image) and `check` (the gate on a commit in the guest) too.
+    (Git, Node, VS Build Tools, LLVM, Zig, rustup, Python, esbuild;
+    promoted to the next golden image) and `check` (the gate on a commit
+    in the guest) too.
     The first `check` (2026-11-23, at 2d734c9): fmt, Biome, the
     declarations and docs pass; clippy and the tests stop at `stylo`'s
     build script, which needs Python (the CI runner has it), so clippy
     has not run on the other crates there either. `cargo check
-    --workspace` there besides: the VM lacks Python and esbuild
+    --workspace` there besides: the VM lacked Python and esbuild
     (`temzdf-script`, and through its nested build
-    `temzdf-script-runner`; not installed, waiting for a decision); the
+    `temzdf-script-runner`); the
     product: `termpix`, `temzdf-protocol`, `temzdf-term` (Unix APIs),
     `temzdf-pdfcore` (MSVC rejects `synctex_parser.c`'s
     `SYNCTEX_ATTRIBUTE_FORMAT_PRINTF`) fail; `texprintf` builds, but its
     tests die with `STATUS_HEAP_CORRUPTION`; `tuitest`'s pty tests need
-    `sh`. Still to do: Python and esbuild or not, fonts, the e2e. The ConPTY
+    `sh`. With Python and esbuild in the image (a 120 GB disk), `check`
+    at 7ed00b8 passes (clippy and 208 tests over `WINDOWS_CRATES`);
+    `cargo check --workspace` there: `termpix`, `temzdf-term` (Unix
+    APIs), `temzdf-pdfcore` (as above) and the script host tests of
+    `temzdf-script` and `temzdf-script-runner` (`UnixStream`) fail,
+    `temzdf-protocol` builds; `tuitest`'s pty tests still need `sh`.
+    Still to do: fonts, the e2e. The ConPTY
     experiment with the in-box ConPTY is done (`doc/terminals/conpty.md`,
     `experiments/conpty/`): kitty graphics are dropped, the kitty
     keyboard, the SGR-pixel mouse and OSC 52 pass, the pass-through flag

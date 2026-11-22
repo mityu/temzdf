@@ -594,19 +594,21 @@ scripts/windows-vm.sh check [REV]            # the gate on REV in the guest
   `~/.local/state/vitro/builds/`.
 - `provision` runs `scripts/windows/provision.ps1` in a fresh VM: Git,
   Node 24, VS Build Tools 2022 (the VC tools, Community license), LLVM,
-  Zig 0.15.2 (winget), rustup with stable and `wasm32-wasip1`, Biome
-  (npm, as in CI); the time zone UTC (QEMU's clock is UTC, and Windows
+  Zig 0.15.2, Python 3.14 (`stylo`'s build script, for `temzdf-mdview`;
+  winget), rustup with stable and `wasm32-wasip1`, Biome and esbuild
+  0.27.2 (`temzdf-script`'s build script; npm, as in CI); the time zone UTC (QEMU's clock is UTC, and Windows
   reads it as local time), no sleep or screen lock, PowerShell scripts
   allowed (npm's shims). It restarts the guest, so that the installers'
   pending reboot is not left to the shutdown vitro waits 180 s for, writes
   the versions to `target/windows-vm/provision-versions.txt` and keeps the
-  VM as the next golden image (`vitro promote`). The image is about 29 GB,
-  and leaves about 44 GB free on the guest's C:.
+  VM as the next golden image (`vitro promote`). The image is about
+  29 GB. The guest's disk is 120 GB: after the gate and a `cargo check --workspace`
+  in it, about 75 GB of C: are still free.
 - `check` copies a commit (`git archive`, so not the uncommitted changes)
   to the guest's `C:\t`, runs `npm ci` and `cargo xtask check --no-miri`
-  there; the output is `target/windows-vm/check.log`. The VM has no
-  Python yet, which `stylo`'s build script (`temzdf-mdview`) needs, so
-  clippy and the tests stop there (`todo.md` lists what else fails).
+  there; the output is `target/windows-vm/check.log`. It passes
+  (2026-11-23); of the crates outside `WINDOWS_CRATES`, some do not
+  build yet (`todo.md` lists what fails).
 - Each image is a new dated file in `~/.local/share/vitro/golden/`; the
   newest is used unless `TEMZDF_WINDOWS_GOLDEN` names another. Old ones are
   not deleted.

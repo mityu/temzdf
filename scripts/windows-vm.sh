@@ -31,8 +31,9 @@
 #                    directory, the older ones are kept
 #   provision        start a fresh VM, run scripts/windows/provision.ps1 in
 #                    it (Git, Node, VS Build Tools, LLVM, Zig, rustup,
-#                    Python, Biome, esbuild; no sleep or screen lock; UTC), restart it and keep it as the
-#                    next golden image (vitro promote); the versions go to
+#                    Python, Biome, esbuild; no sleep or screen lock; UTC),
+#                    restart it and keep it as the next golden image
+#                    (vitro promote); the versions go to
 #                    target/windows-vm/provision-versions.txt
 #   check [REV] [-- ARGS...]  copy REV (default HEAD; `git archive`, so only
 #                    committed files; a one-commit repository, for the
