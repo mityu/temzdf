@@ -12,7 +12,12 @@ const BIN: &str = env!("CARGO_BIN_EXE_temzdf");
 /// Render the fixture after `input` (`--keys` or `--events` with a file
 /// holding the timeline); returns the PNG's bytes.
 fn render(dir: &Path, name: &str, flag: &str, input: &str) -> Vec<u8> {
-    let pdf = temzdf_pdfcore::pdf::fixture("sample.pdf");
+    render_pdf(dir, "sample.pdf", name, flag, input)
+}
+
+/// [`render`] of fixture `fixture`.
+fn render_pdf(dir: &Path, fixture: &str, name: &str, flag: &str, input: &str) -> Vec<u8> {
+    let pdf = temzdf_pdfcore::pdf::fixture(fixture);
     let out = dir.join(format!("{name}.png"));
     let arg = if flag == "--events" {
         let file = dir.join(format!("{name}.txt"));
@@ -62,6 +67,31 @@ fn a_replayed_timeline_renders_as_its_input_did() {
     assert!(flick != slow);
     assert!(early == none, "no preview yet");
     assert!(early != late, "the preview");
+}
+
+#[test]
+fn a_replayed_autoscroll_selects_onto_the_pages_it_reaches() {
+    let dir = TempDir::new("render-autoscroll");
+    let d = dir.path();
+    // As tests/e2e/select-autoscroll.actions: from the title into the bottom
+    // edge, held there until the end of the two pages. At x = 480 the
+    // selection ends after page 2's number (in view there), at x = 300
+    // before it: the screens differ only if the replay extended the
+    // selection onto page 2 while it scrolled.
+    let held = |x: u32| {
+        let drags: String = [260, 360, 460, 560, 575]
+            .iter()
+            .enumerate()
+            .map(|(i, y)| format!("{} drag {x} {y} left\n", 130 + 75 * i))
+            .collect();
+        format!("0 move 318 188\n15 press 318 188 left\n{drags}5000 end\n")
+    };
+    let [right, left] = std::thread::scope(|s| {
+        let right = s.spawn(|| render_pdf(d, "sample-short.pdf", "right", "--events", &held(480)));
+        let left = s.spawn(|| render_pdf(d, "sample-short.pdf", "left", "--events", &held(300)));
+        [right.join().unwrap(), left.join().unwrap()]
+    });
+    assert!(right != left, "page 2's number selected");
 }
 
 #[test]

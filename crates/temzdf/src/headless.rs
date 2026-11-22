@@ -232,16 +232,22 @@ impl Recorder {
 /// The simulated clock's step while time passes in a replay (a frame).
 const STEP: Duration = Duration::from_millis(16);
 
-/// Let simulated time pass until `to`: timers, animations, and whatever the
-/// workers finished meanwhile.
-fn advance(session: &mut Session, rx: &Receiver<SessionEvent>, now: &mut Instant, to: Instant) {
+/// Let simulated time pass until `to`: timers, animations, whatever the
+/// workers finished meanwhile, and a frame each step with the work it asks
+/// for done (the pages it shows loaded), as a terminal's viewer draws while
+/// time passes. An autoscrolling selection then reaches the text of the
+/// pages it scrolls onto.
+fn advance(session: &mut Session, rx: &Receiver<SessionEvent>, now: &mut Instant, to: Instant) -> Result<()> {
     while *now < to {
         *now = (*now + STEP).min(to);
         session.poll(*now);
+        // Events no work waits for (the file watcher's) come too.
         while let Ok(ev) = rx.try_recv() {
             session.handle(ev, *now);
         }
+        settle(session, rx, *now)?;
     }
+    Ok(())
 }
 
 /// Run animations started by an input to their end (at most 3.2 s).
@@ -297,7 +303,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         let start = now;
         let mut ended = false;
         for t in events {
-            advance(&mut session, &rx, &mut now, start + t.at);
+            advance(&mut session, &rx, &mut now, start + t.at)?;
             match &t.input {
                 Input::Key(k) => {
                     session.key(k, now);

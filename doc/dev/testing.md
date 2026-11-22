@@ -588,8 +588,10 @@ frame's (`--text`, `NAME.expected.txt`) where the terminal can tell it
   harness sent: terminals deliver late and in bursts (WezTerm turned wheel
   steps 30 ms apart into 1 to 90 ms), and their pixels differ by one
   (WezTerm). The replay runs time between inputs in 16 ms steps with the
-  session's timers, so wheel flicks, easing and link previews (after 300 ms
-  resting) come out as in the terminal. It ends as long after temzdf's last
+  session's timers, drawing a frame each step and waiting for the work it
+  asks for (the pages it shows), so a selection autoscroll extends reaches
+  the pages it scrolls onto, and wheel flicks, easing and link previews
+  (after 300 ms resting) come out as in the terminal. It ends as long after temzdf's last
   input as the screenshot came after the last one sent; pause before
   `expect` until animations end. The first screen is up, its pages loaded,
   before the first input (as in the terminal, where the scenario starts
