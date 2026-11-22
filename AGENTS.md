@@ -38,7 +38,7 @@ inside it, so run tools directly, never through `nix develop -c` (the
 scripts enter their dev shell by themselves); if a tool the dev shell
 should provide is missing, say so instead of working around it. A tool
 added to `flake.nix` needs the shell, and the agent in it, restarted.
-Never put the WASI clang (`CC_wasm32_wasip1`) on `PATH`. Run `npm ci` in
+Run `npm ci` in
 `crates/temzdf-script/runtime/` once after cloning and whenever its
 `package-lock.json` changes. Miri: `env -u IN_NIX_SHELL scripts/miri.sh`.
 
