@@ -399,3 +399,5 @@ server on one `Session`). Next and open:
 - The page thumbnail is misplaced by up to half a cell with the Layered
   backend (terminals scale images to whole cells). It only shows briefly; the
   `StandIn::Composed` path could compose it too.
+
+- Move the Miri job (and other slow jobs) out of `ci.yml` into a workflow of its own, e.g. `advanced-tests.yml`, once work settles.

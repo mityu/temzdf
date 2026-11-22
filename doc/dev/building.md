@@ -34,7 +34,7 @@ rust-cache's restores fail with it (`todo.md`).
 ## CI
 
 CI (`.github/workflows/ci.yml`) runs `npm ci` and
-`cargo xtask check --stream --no-miri` in `nix develop .#ci` (job
+`cargo xtask check --stream` in `nix develop .#ci` (job
 `check-with-nix`), `scripts/miri.sh` in `.#ci-miri` as a job of its own
 (`miri-with-nix`; both keep built dependencies with
 `Swatinem/rust-cache`), and `nix build` on Linux and macOS

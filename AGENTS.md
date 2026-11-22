@@ -45,11 +45,16 @@ Run `npm ci` in
 Run the gate before every commit:
 
 ```sh
-cargo xtask check            # fmt, Biome, declarations, docs, clippy -D warnings, tests (+ Miri where available)
+cargo xtask check            # fmt, Biome, declarations, docs, clippy -D warnings, tests (no Miri unless --miri)
 cargo xtask check --fix      # same, applying rustfmt and Biome's fixes
-cargo xtask check --no-miri  # without Miri (about a minute and a half less)
+cargo xtask check --miri     # also Miri (about a minute and a half more); --no-miri is the default, accepted
 cargo xtask check --all      # the tests even when only Markdown under doc/ changed
 ```
+
+Miri is not run routinely (not per commit, not per plan): it runs only when
+someone asks (`cargo xtask check --miri`, or `env -u IN_NIX_SHELL
+scripts/miri.sh` from inside the dev shell), and the user runs it from time
+to time. A change that adds unsafe or FFI code should say Miri was not run.
 
 `scripts/check.sh` takes the same options and runs it inside the dev shell.
 A test written for a fix should fail without it: `cargo xtask mutate FILE OLD NEW

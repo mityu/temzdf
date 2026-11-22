@@ -5,7 +5,7 @@ Layers of verification, cheapest first. All of them run without a human.
 | Layer | How | What it catches |
 |---|---|---|
 | Unit tests | `cargo xtask check` (the gate; `cargo xtask test` runs the tests alone) | Input parsing, kitty command encoding, compositor diffing (replayed through `termpix::mock`), layout maths, tile rendering vs full-page rendering |
-| Miri | `scripts/miri.sh` (part of `cargo xtask check` when `cargo miri` is there) | Undefined behaviour, data races and leaked threads or memory in the unit tests' Rust code (ours and the Rust dependencies). See "Miri" below. |
+| Miri | `scripts/miri.sh` (`cargo xtask check --miri`) | Undefined behaviour, data races and leaked threads or memory in the unit tests' Rust code (ours and the Rust dependencies). See "Miri" below. |
 | Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal (images only: `--text FILE` writes the status line's text, `--mask PNG` where it is). Read the PNG to check it. `scripts/frames.sh` renders a fixed set, with the `shots` scenes of `tui.rs` (sessions, Markdown, terminal panes, tabs), and compares two sets pixel by pixel (for refactorings). |
 | Script tests | `target/debug/temzdf test [-j N] [--timeout SECS] FILE...` (part of `cargo xtask check` for `crates/temzdf-script/runtime/**/*.test.ts`) | temzdf's behaviour driven from TypeScript (`temzdf/test`, QUnit): keys typed into a session and what the scripting API then sees (buffers, modes, registers). Each file runs in a session of its own in a process of its own, its `XDG_*`, `TEMZDF_LOG_DIR` and `TMPDIR` in a temporary directory; TAP out, a file printing nothing for `--timeout` (30 s) stopped and failed. |
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
@@ -74,9 +74,9 @@ best in a VM (`scripts/macos-vm.sh e2e ARGS...`).
 ## The gate
 
 ```sh
-cargo xtask check            # fmt check + Biome (scripts) + declarations + docs + clippy -D warnings + tests + js tests (+ Miri where available), terse output
+cargo xtask check            # fmt check + Biome (scripts) + declarations + docs + clippy -D warnings + tests + js tests, terse output
 cargo xtask check --fix      # same, but apply rustfmt and Biome's formatting and safe fixes
-cargo xtask check --no-miri  # without Miri (it takes about a minute and a half)
+cargo xtask check --miri     # also Miri (about a minute and a half more); --no-miri is the default, accepted
 cargo xtask check --all      # the tests even when only Markdown under doc/ changed (skipped then)
 cargo xtask check --verbose  # a failed step's whole output; always in target/check/
 cargo xtask check --stream   # each step's output as it comes, under a header (CI: log groups)
@@ -88,10 +88,10 @@ cargo build --workspace
 rustfmt, Biome, the generated declarations (`node scripts/ts-types.ts`
 writes `temzdf-all.d.ts` again into `target/check/` and compares), the
 Node scripts' types (`tsc -p scripts`), shellcheck, references to
-documents (`node scripts/check-docs.ts`), clippy, the tests and Miri. Each
+documents (`node scripts/check-docs.ts`), clippy and the tests (and Miri with `--miri`). Each
 step's whole output is in `target/check/STEP.log`; a failed step prints
 `FAIL STEP` and its main lines, a passing run one `OK ...` line. When every
-uncommitted change is Markdown under `doc/`, the tests and Miri are
+uncommitted change is Markdown under `doc/`, the tests are
 skipped (`--all` or cargo test arguments run them). `--stream` prints each
 step's output as it comes under a `==> STEP` header, or in a log group of
 its own under GitHub Actions (`GITHUB_ACTIONS=true`), as CI runs it.
@@ -294,10 +294,14 @@ embeds nothing (Miri runs no WebAssembly); the guest's tests are in
 
 `scripts/miri.sh [PACKAGE...]` runs the workspace's unit tests (`--lib`,
 `--bins`; not `crates/*/tests` or `tuitest`) under Miri, one process per
-test and all cores at once, in about a minute and a half. `cargo xtask check`
-runs it after the normal tests, or skips it with a note when the toolchain
-has no Miri; `--no-miri` skips it on purpose. The default dev shell leaves
-Miri out (it is slow to run on every commit): it is in
+test and all cores at once, in about a minute and a half. `cargo xtask check --miri`
+runs it after the normal tests (with a note when the toolchain has no
+Miri); without `--miri` the gate skips it (`--no-miri` is accepted and does
+nothing). Miri is not run routinely (not per commit, not per plan): it runs only
+when someone asks (`cargo xtask check --miri`, or `env -u IN_NIX_SHELL
+scripts/miri.sh` from inside the dev shell), and the user runs it from time
+to time. A change that adds unsafe or FFI code should say Miri was not run. The
+default dev shell leaves Miri out: it is in
 `nix develop .#enable-miri` (and the `ci-miri` and `alldeps` shells), run
 from time to time (`scripts/miri.sh` enters it by itself when started
 outside a dev shell); CI runs it in a job of its own. Isolation is

@@ -14,20 +14,22 @@ pub(crate) const USAGE: &str = "\
 usage: cargo xtask TASK [ARGS]
 
 tasks:
-  check [--fix] [--no-miri] [--all] [--verbose] [--stream] [CARGO TEST ARGS...]
+  check [--fix] [--miri] [--no-miri] [--all] [--verbose] [--stream] [CARGO TEST ARGS...]
       The pre-commit gate: rustfmt check, Biome (the scripts' formatting
       and lints), the generated declarations (node scripts/ts-types.ts),
       the Node scripts' types (tsc -p scripts), shellcheck, references to
       documents (node scripts/check-docs.ts), clippy (warnings are errors),
       the workspace's tests and the scripts' (temzdf test on
-      crates/temzdf-script/runtime/**/*.test.ts), then the unit tests
-      under Miri (scripts/miri.sh) when `cargo miri` is there, with terse
+      crates/temzdf-script/runtime/**/*.test.ts), then, with --miri, the
+      unit tests under Miri (scripts/miri.sh; needs `cargo miri`), with terse
       output: a failed step's main lines, its whole output in
       target/check/.
       shellcheck and Miri are Unix only (SKIP elsewhere).
         --fix      apply rustfmt, Biome's safe fixes and temzdf-all.d.ts
                    instead of only checking
-        --no-miri  skip Miri (about a minute and a half)
+        --miri     also run the unit tests under Miri (about a minute and
+                   a half); off by default
+        --no-miri  accepted and ignored: Miri is off by default now
         --all      run the tests even when only Markdown under doc/
                    changed (then they and Miri are skipped; a clean tree
                    or cargo test arguments run them; the scripts' tests

@@ -5,7 +5,7 @@
 # dev shell: this re-executes itself there when needed, so it works from
 # any shell. Inside the dev shell `cargo xtask check` is the same.
 #
-# Usage: scripts/check.sh [--fix] [--no-miri] [--all] [--verbose] [--stream] [cargo test args...]
+# Usage: scripts/check.sh [--fix] [--miri] [--all] [--verbose] [--stream] [cargo test args...]
 #   (`cargo xtask help` says what each option does)
 set -euo pipefail
 

@@ -51,12 +51,13 @@ impl Options {
     /// the rest are cargo test's. `test` takes only `--stream` and
     /// `--verbose`.
     pub fn parse(args: impl Iterator<Item = OsString>, test: bool) -> Self {
-        let mut o = Options { miri: true, ..Options::default() };
+        let mut o = Options::default();
         let mut args = args.peekable();
         while let Some(a) = args.peek() {
             match a.to_str() {
                 Some("--fix") if !test => o.fix = true,
-                Some("--no-miri") if !test => o.miri = false,
+                Some("--miri") if !test => o.miri = true,
+                Some("--no-miri") if !test => o.miri = false, // the default; kept for old habits
                 Some("--all") if !test => o.all = true,
                 Some("--verbose") => o.verbose = true,
                 Some("--stream") => o.stream = true,
@@ -772,10 +773,13 @@ Bail out! stuck
 
     #[test]
     fn parses_leading_options() {
-        let args = ["--fix", "--no-miri", "--stream", "-p", "xtask", "--all"].map(OsString::from);
+        let args = ["--fix", "--miri", "--no-miri", "--stream", "-p", "xtask", "--all"].map(OsString::from);
         let o = Options::parse(args.into_iter(), false);
         assert!(o.fix && !o.miri && o.stream && !o.all && !o.verbose);
         assert_eq!(o.test_args, ["-p", "xtask", "--all"]);
+        assert!(!Options::parse(std::iter::empty(), false).miri);
+        assert!(Options::parse(["--miri"].map(OsString::from).into_iter(), false).miri);
+        assert!(!Options::parse(["--miri", "--no-miri"].map(OsString::from).into_iter(), false).miri);
         let o = Options::parse(["--stream", "--fix"].map(OsString::from).into_iter(), true);
         assert!(o.stream && !o.fix);
         assert_eq!(o.test_args, ["--fix"]);
