@@ -37,6 +37,8 @@ const MODULES: &[(&str, &str)] = &[
     ("command", "command.ts"),
     ("keyset", "lib/keyset.ts"),
     ("test", "test/index.ts"),
+    ("ff", "ff/index.ts"),
+    ("ff/builtin", "ff/builtin/index.ts"),
 ];
 
 fn main() {

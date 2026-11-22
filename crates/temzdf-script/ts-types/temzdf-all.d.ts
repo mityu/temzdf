@@ -1469,3 +1469,365 @@ export function module(name: string, hooks?: ModuleHooks | (() => void), scope?:
 export function run(): void;
 
 }
+
+declare module "temzdf/ff" {
+import { Actions } from 'temzdf';
+
+class AbortSignal {
+	readonly aborted: boolean;
+	readonly reason: unknown;
+	onabort: (() => void) | null;
+	throwIfAborted(): void;
+	addEventListener(type: "abort", listener: () => void, options?: {
+		once?: boolean;
+	}): void;
+	removeEventListener(type: "abort", listener: () => void): void;
+	static timeout(ms: number): AbortSignal;
+	static any(signals: AbortSignal[]): AbortSignal;
+}
+/** What an item carries for the parts that follow (a source's own data, a
+ * refiner's additions, a matcher's score). */
+export type Detail = object;
+/** No detail. */
+export type DetailUnit = Record<never, never>;
+/** A part of a label (or of `value`, before a renderer set a label):
+ * `length` UTF-16 code units from `start`, shown with the highlight group
+ * `style`. */
+export interface Decoration {
+	readonly start: number;
+	readonly length: number;
+	readonly style?: string;
+}
+/** A candidate. */
+export interface Item<T extends Detail = DetailUnit> {
+	/** Unique within its source (the engine keys by it). */
+	readonly id: string | number;
+	/** What matchers match. */
+	readonly value: string;
+	/** The source's own data and what refiners and matchers added. */
+	readonly detail: T;
+	/** What is shown (default: `value`); set by renderers only. */
+	label?: string;
+	/** Matchers add the matched parts (on `value`), renderers styling. */
+	decorations?: readonly Decoration[];
+}
+/** An item as renderers get it: a label and decorations filled in. */
+export type DisplayItem<T extends Detail = DetailUnit> = Item<T> & {
+	label: string;
+	decorations: readonly Decoration[];
+};
+/** What every part gets besides its parameters. */
+export interface PartOptions {
+	readonly signal: AbortSignal;
+}
+/** Collects candidates once. */
+export interface Source<T extends Detail = DetailUnit> {
+	collect(p: {
+		readonly args: readonly string[];
+	}, o: PartOptions): AsyncIterable<Item<T>>;
+}
+/** Collects candidates again for each query. */
+export interface Curator<T extends Detail = DetailUnit> {
+	curate(p: {
+		readonly args: readonly string[];
+		readonly query: string;
+	}, o: PartOptions): AsyncIterable<Item<T>>;
+}
+/** Turns items carrying `T` into items carrying `T & U` (or drops them). */
+export interface Refiner<T extends Detail = DetailUnit, U extends Detail = DetailUnit> {
+	refine<V extends T>(p: {
+		readonly items: AsyncIterable<Item<V>>;
+	}, o: PartOptions): AsyncIterable<Item<V & U>>;
+}
+/** Narrows `items` to the query, yielding those that match with the
+ * matched parts added to their decorations (a score in their detail). It
+ * keeps the items' other fields (`{ ...item, decorations }`). */
+export interface Matcher<T extends Detail = DetailUnit> {
+	match<V extends T>(p: {
+		readonly query: string;
+		readonly items: readonly Item<V>[];
+	}, o: PartOptions): AsyncIterable<Item<V>>;
+}
+/** Orders `items` in place. */
+export interface Sorter<T extends Detail = DetailUnit> {
+	sort<V extends T>(p: {
+		readonly items: Item<V>[];
+	}, o: PartOptions): void | Promise<void>;
+}
+/** Sets the label and decorations of `items` in place (moving the
+ * decorations along when it changes the label). */
+export interface Renderer<T extends Detail = DetailUnit> {
+	render<V extends T>(p: {
+		readonly items: DisplayItem<V>[];
+	}, o: PartOptions): void | Promise<void>;
+}
+/** What a previewer shows. */
+export interface PreviewItem {
+	readonly content: readonly string[];
+	readonly line?: number;
+	readonly column?: number;
+	readonly filetype?: string;
+	readonly filename?: string;
+}
+/** Shows an item (types only for now: the UI is to be designed). */
+export interface Previewer<T extends Detail = DetailUnit> {
+	preview(p: {
+		readonly item: Item<T>;
+	}, o: PartOptions): void | PreviewItem | Promise<void | PreviewItem>;
+}
+/** What an action is given. */
+export interface InvokeParams<T extends Detail = DetailUnit> {
+	/** The cursor's item. */
+	readonly item: Item<T> | undefined;
+	/** The marked items. */
+	readonly marked: readonly Item<T>[];
+	/** Every matched item. */
+	readonly matched: readonly Item<T>[];
+}
+/** What accepting a candidate does; `true` keeps the session open. */
+export interface Action<T extends Detail = DetailUnit> {
+	invoke(p: InvokeParams<T>, o: PartOptions & {
+		readonly action: Actions;
+	}): void | true | Promise<void | true>;
+}
+export function defineSource<T extends Detail = DetailUnit>(collect: Source<T>["collect"]): Source<T>;
+export function defineCurator<T extends Detail = DetailUnit>(curate: Curator<T>["curate"]): Curator<T>;
+export function defineRefiner<T extends Detail = DetailUnit, U extends Detail = DetailUnit>(refine: Refiner<T, U>["refine"]): Refiner<T, U>;
+export function defineMatcher<T extends Detail = DetailUnit>(match: Matcher<T>["match"]): Matcher<T>;
+export function defineSorter<T extends Detail = DetailUnit>(sort: Sorter<T>["sort"]): Sorter<T>;
+export function defineRenderer<T extends Detail = DetailUnit>(render: Renderer<T>["render"]): Renderer<T>;
+export function defineAction<T extends Detail = DetailUnit>(invoke: Action<T>["invoke"]): Action<T>;
+type Added<R> = R extends Refiner<never, infer U> ? U : never;
+type Pipe<Rs extends readonly unknown[], In extends Detail> = Rs extends readonly [
+	infer H,
+	...infer Tail
+] ? [
+	Refiner<In, Added<H>>,
+	...Pipe<Tail, In & Added<H>>
+] : Rs;
+type PipeAdded<Rs extends readonly unknown[]> = Rs extends readonly [
+	infer H,
+	...infer Tail
+] ? Added<H> & PipeAdded<Tail> : DetailUnit;
+/** The refiners one after the other: each gets what the one before yields. */
+export function composeRefiners<T extends Detail, Rs extends Refiner<never, Detail>[]>(...refiners: Pipe<Rs, T>): Refiner<T, PipeAdded<Rs>>;
+/** `source`'s items through `refiners` (composeRefiners). */
+export function refineSource<T extends Detail, Rs extends Refiner<never, Detail>[]>(source: Source<T>, ...refiners: Pipe<Rs, T>): Source<T & PipeAdded<Rs>>;
+/** `curator`'s items through `refiners` (composeRefiners). */
+export function refineCurator<T extends Detail, Rs extends Refiner<never, Detail>[]>(curator: Curator<T>, ...refiners: Pipe<Rs, T>): Curator<T & PipeAdded<Rs>>;
+/** The sources' items one source after the other, as one source. An id
+ * becomes `JSON.stringify([index, id])` (`[0,"a"]`, `[1,2]`): unique
+ * across the sources and the same each time they collect. */
+export function composeSources<T extends Detail>(...sources: readonly Source<T>[]): Source<T>;
+/** The matchers as a pipe: each narrows what the one before matched (and
+ * adds its decorations to theirs). */
+export function composeMatchers<T extends Detail>(...matchers: readonly Matcher<T>[]): Matcher<T>;
+/** The sorters one after the other (with stable sorters the last one
+ * decides first, the ones before break its ties). */
+export function composeSorters<T extends Detail>(...sorters: readonly Sorter<T>[]): Sorter<T>;
+/** The renderers one after the other, each on what the one before left. */
+export function composeRenderers<T extends Detail>(...renderers: readonly Renderer<T>[]): Renderer<T>;
+/** The actions one after the other; the session stays open when any of
+ * them returned `true`. */
+export function composeActions<T extends Detail>(...actions: readonly Action<T>[]): Action<T>;
+/** The items an action acts on: the marked ones, else the cursor's. */
+export function chosenItems<T extends Detail>(p: InvokeParams<T>): readonly Item<T>[];
+/** Where a source is: still collecting, done, failed (`error`), or
+ * stopped before it was done (stop(), dispose()). */
+export type SourceState = "collecting" | "done" | "failed" | "stopped";
+/** What the session is doing: some source is still collecting, else
+ * matching (or sorting what was matched), else done. */
+export type SessionState = "collecting" | "matching" | "done";
+/** An item's key in a session: its source's index and its id. */
+export interface ItemKey {
+	readonly source: number;
+	readonly id: string | number;
+}
+/** An error a part threw. */
+export interface SessionError {
+	readonly part: "source" | "matcher" | "sorter" | "listener";
+	/** The source's index (source, and the matcher on that source's items). */
+	readonly source?: number;
+	readonly error: unknown;
+}
+export interface SessionOptions<T extends Detail> {
+	/** Sources collect once, curators again for each query. */
+	readonly sources: readonly (Source<T> | Curator<T>)[];
+	/** The sources' arguments. */
+	readonly args?: readonly string[];
+	/** The first query (""). */
+	readonly query?: string;
+	/** Narrows the items (none: every item matches, undecorated). */
+	readonly matcher?: Matcher<T>;
+	/** Orders the matched items (none: as collected). */
+	readonly sorter?: Sorter<T>;
+	/** At least this many milliseconds between two changes heard (40);
+	 * the first after a quiet spell is heard at once. */
+	readonly throttle?: number;
+	/** The engine waits for the host after this many items (1000) ... */
+	readonly chunkItems?: number;
+	/** ... or this many milliseconds (100), collecting or matching. */
+	readonly chunkTime?: number;
+}
+export interface SourceSnapshot {
+	readonly state: SourceState;
+	readonly error?: unknown;
+	readonly collected: number;
+}
+/** What a UI reads. The items, their count and the query they match are
+ * those last published: matched and sorted, updated at most every
+ * `throttle` milliseconds. */
+export interface Snapshot<T extends Detail> {
+	readonly query: string;
+	/** The matched items asked for (all, or a range of them). */
+	readonly items: readonly Item<T>[];
+	readonly matched: number;
+	readonly collected: number;
+	readonly state: SessionState;
+	readonly sources: readonly SourceSnapshot[];
+	/** The marked items' keys, in the order they were marked. */
+	readonly marked: readonly ItemKey[];
+	readonly errors: readonly SessionError[];
+}
+/** A session: create it with createSession, start() it, set the query as
+ * it changes, read snapshot() when onChange's listeners are called, and
+ * dispose() it. */
+export class Session<T extends Detail = DetailUnit> {
+	#private;
+	constructor(o: SessionOptions<T>);
+	/** Start collecting (once). */
+	start(): void;
+	/** Stop collecting; what was collected stays, and is matched again when
+	 * the query changes. */
+	stop(): void;
+	/** Stop everything: collecting, matching, listeners. */
+	dispose(): void;
+	get disposed(): boolean;
+	get query(): string;
+	/** Match everything collected against `query` (curators collect again);
+	 * a match of the query before stops. */
+	setQuery(query: string): void;
+	/** Call `fn` when the snapshot changed (at most every `throttle`
+	 * milliseconds); returns what stops it. */
+	onChange(fn: () => void): () => void;
+	/** Resolves once nothing is collecting, matching or waiting to be
+	 * published (or the session is disposed). */
+	whenIdle(): Promise<void>;
+	/** The state, with the matched items from `start` to `end` (all). */
+	snapshot(range?: {
+		start?: number;
+		end?: number;
+	}): Snapshot<T>;
+	/** The key of an item the session collected or matched. */
+	keyOf(item: Item<T>): ItemKey | undefined;
+	/** The item a source collected with `id` (its collection's, for a
+	 * curator). */
+	item(key: ItemKey): Item<T> | undefined;
+	isMarked(item: Item<T>): boolean;
+	/** Mark `item` (or unmark it with `on` false); false for an item the
+	 * session does not know. */
+	mark(item: Item<T>, on?: boolean): boolean;
+	unmark(item: Item<T>): boolean;
+	/** Mark `item` if it was not, else unmark it; whether it is marked now. */
+	toggleMark(item: Item<T>): boolean;
+	clearMarks(): void;
+	/** The marked items still collected, in the order they were marked. */
+	markedItems(): Item<T>[];
+}
+/** A session over `o.sources` (not started). */
+export function createSession<T extends Detail = DetailUnit>(o: SessionOptions<T>): Session<T>;
+
+}
+
+declare module "temzdf/ff/builtin" {
+class AbortSignal {
+	readonly aborted: boolean;
+	readonly reason: unknown;
+	onabort: (() => void) | null;
+	throwIfAborted(): void;
+	addEventListener(type: "abort", listener: () => void, options?: {
+		once?: boolean;
+	}): void;
+	removeEventListener(type: "abort", listener: () => void): void;
+	static timeout(ms: number): AbortSignal;
+	static any(signals: AbortSignal[]): AbortSignal;
+}
+type Detail = object;
+type DetailUnit = Record<never, never>;
+interface Decoration {
+	readonly start: number;
+	readonly length: number;
+	readonly style?: string;
+}
+interface Item<T extends Detail = DetailUnit> {
+	/** Unique within its source (the engine keys by it). */
+	readonly id: string | number;
+	/** What matchers match. */
+	readonly value: string;
+	/** The source's own data and what refiners and matchers added. */
+	readonly detail: T;
+	/** What is shown (default: `value`); set by renderers only. */
+	label?: string;
+	/** Matchers add the matched parts (on `value`), renderers styling. */
+	decorations?: readonly Decoration[];
+}
+type DisplayItem<T extends Detail = DetailUnit> = Item<T> & {
+	label: string;
+	decorations: readonly Decoration[];
+};
+interface PartOptions {
+	readonly signal: AbortSignal;
+}
+interface Matcher<T extends Detail = DetailUnit> {
+	match<V extends T>(p: {
+		readonly query: string;
+		readonly items: readonly Item<V>[];
+	}, o: PartOptions): AsyncIterable<Item<V>>;
+}
+interface Sorter<T extends Detail = DetailUnit> {
+	sort<V extends T>(p: {
+		readonly items: Item<V>[];
+	}, o: PartOptions): void | Promise<void>;
+}
+interface Renderer<T extends Detail = DetailUnit> {
+	render<V extends T>(p: {
+		readonly items: DisplayItem<V>[];
+	}, o: PartOptions): void | Promise<void>;
+}
+/** The style of matched parts. */
+export const MATCH_STYLE = "FFMatch";
+/** Case: `true` ignores it, `false` respects it, `"smart"` ignores it
+ * unless the query has an upper-case letter. */
+export type IgnoreCase = boolean | "smart";
+export interface MatchOptions {
+	/** Default `true`. */
+	readonly ignoreCase?: IgnoreCase;
+}
+/** What the fuzzy matcher adds to an item's detail. */
+export interface ScoreDetail {
+	/** Higher is better. */
+	readonly score: number;
+}
+/** Items whose value contains every word of the query (split at white
+ * space), each word's first occurrence decorated. An empty query matches
+ * everything. */
+export function substring(o?: MatchOptions): Matcher<DetailUnit>;
+/** Items whose value starts with the query (as it is, white space
+ * included). */
+export function prefix(o?: MatchOptions): Matcher<DetailUnit>;
+/** Items whose value has each word of the query (split at white space) as
+ * a subsequence, scored (`detail.score`, higher is better: matches at the
+ * start, after a separator or a lower-case letter, and in a row score
+ * more) and the matched code units decorated. A light matcher: each
+ * occurrence of a word's first code unit is tried, the rest is taken
+ * greedily. An empty query matches everything with score 0. */
+export function fuzzy(o?: MatchOptions): Matcher<DetailUnit>;
+/** By `detail.score`, highest first (items without one count as 0); stable,
+ * so equal scores keep their order. Integer scores (the fuzzy matcher's)
+ * are sorted by counting, without comparisons: the engine sorts every
+ * match again as more come. */
+export function byScore(): Sorter<DetailUnit>;
+/** Leaves the items as they are (label: value). */
+export function identity(): Renderer<DetailUnit>;
+
+}

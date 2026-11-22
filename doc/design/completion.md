@@ -1,9 +1,10 @@
 # Completion and fuzzy finding for scripts (draft)
 
-A draft: nothing is built yet. It records what was decided with the user
-(2026-11-22) about a framework, written as scripts, for completion in text
-panes and prompts and for fuzzy finders, and the reasons. What is still
-open is in `todo.md`.
+A draft. It records what was decided with the user (2026-11-22) about a
+framework, written as scripts, for completion in text panes and prompts
+and for fuzzy finders, and the reasons, with the details the code settled
+(`crates/temzdf-script/runtime/ff/`). What is still open, and what is
+built, is in `todo.md`.
 
 ## A skeleton shared with fuzzy finders
 
@@ -86,20 +87,70 @@ interface Decoration { start: number; length: number; style?: string }
   and matches everything collected again. Collecting goes on.
 - Matchers and sorters are written plainly (`for await`, `yield`), given
   arrays of items (`{ query, items }`). The engine breaks the work up: it
-  takes the matched items in chunks (1000 items or 100 ms, as vim-fall's
-  match processor) and waits for a timer (`setTimeout`) between chunks.
+  hands the matcher at most 1000 items at a time and waits for a timer
+  (`setTimeout`) after each such chunk, and also within one when its
+  matches took 100 ms (vim-fall's match processor counts 1000 matched
+  items or 100 ms; counting the items handed in also breaks up a query
+  that matches little). Collecting waits for a timer every 1000 items or
+  100 ms the same way (a source yielding from an array would otherwise run
+  in promise jobs alone), and what was collected until the host's next
+  turn goes to the matcher as one batch. A matcher therefore never sees
+  all items at once; one that keeps only the best N would do so per
+  chunk.
   The script host runs pending promise jobs until none is left before it
   takes the session's next message (JavaScript's event loop: microtasks
   before the next task), so a chain of `yield`s alone would keep mapped
   functions waiting; a timer lets the host take messages in between
   (vim-fall does the same with `delay(0)`). Each job also stays far below
   the 10 s unattended limit.
+- A new query also aborts the matcher's signal; the engine itself drops
+  whatever a match of an older query still yields (it compares
+  generations), so a matcher that ignores the signal only wastes time.
+- What a UI reads is published: the matches so far, sorted (the sorter
+  runs on all of them each time, on a copy, so the order is stable as
+  more come), with the query they match. Publishing is throttled: the
+  first change after a quiet spell is published at the host's next turn,
+  later ones at most every 40 ms (an option), or every twice as long as
+  the last sort took when that is longer (sorting 100k items again and
+  again would otherwise take most of the time). The listeners
+  (`onChange`) are called after each publication and read a snapshot:
+  a range of the matched items, the counts (collected, matched), the
+  state (collecting, matching, done; each source's own: collecting, done,
+  failed with its error, stopped), the marked items' keys, the errors
+  (of sources, the matcher, the sorter, listeners). Until the new query's
+  first publication the old one's matches stay, so the list does not
+  flash empty.
+- An item's key in a session is its source's index and its id: marks are
+  kept by key, so they survive new queries (the matcher returns new
+  objects) and a curator collecting again with the same ids.
+- A curator's collection is aborted and started again on every new
+  query; a source's goes on. Stopping a session keeps what was collected
+  (a new query still matches it); disposing it stops everything.
 - Renderers run only on what is written to the list (below), not on
   every match.
 - Combining several matchers, sorters, renderers, previewers, actions and
   sources follows vim-fall (`composeMatchers`, `composeSorters`,
   `refineSource`, `composeSources`, ...). A few matchers are shipped;
-  which is the default is not important.
+  which is the default is not important. As vim-fall: `composeMatchers`
+  is a pipe (each narrows what the one before matched, decorations
+  adding up), `composeRefiners` and `refineSource`/`refineCurator` pipe
+  refiners lazily, `composeSorters` and `composeRenderers` run one after
+  the other on the same array. Two differences: `composeSources` gives
+  each item the id `JSON.stringify([index, id])` (vim-fall numbers the
+  items again, which would lose the selection and marks when a source
+  collects again), and `composeActions` returns `true` when any of its
+  actions did (vim-fall drops what they return).
+- The shipped matchers (`temzdf/ff/builtin`): `substring` (every word of
+  the query, split at white space, somewhere in the value), `prefix` (the
+  query as it is at the start; for command and option names, as Vim) and
+  `fuzzy` (each word a subsequence, scored: matches at the start, after a
+  separator or a lower-case letter, and in a row score more; the score in
+  `detail.score`). All ignore case by default (or respect it, or
+  `"smart"`), lower-casing only where that keeps a code unit one code unit
+  so that positions stay positions in the value, and decorate matches with
+  the style `FFMatch`. The sorter `byScore` orders by `detail.score`,
+  stably, by counting when the scores are integers (a comparison sort of
+  100k items took 0.2-0.3 s in a debug build, counting under 0.1 s).
 
 ## The list
 
@@ -184,6 +235,10 @@ took 0.8 s; Node is 20-40 times faster. Completion's lists (hundreds to
 thousands) are fine; a fuzzy finder over 100k files needs narrowing only
 the previous matches when the query extends (`todo.md`) and a light
 default matcher. Rust is considered only if that is still unusable.
+The engine with the shipped `fuzzy` and `byScore` (a debug build, 100k
+path-like strings, `runtime/ff/session.test.ts`): collecting them all
+(matched against the empty query as they come) took about 3 s, of which
+the source's generator alone took 0.5 s; one query then 0.4 s.
 
 ## Completion sources
 
