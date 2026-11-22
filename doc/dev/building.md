@@ -41,14 +41,28 @@ CI (`.github/workflows/ci.yml`) runs `npm ci` and
 Ubuntu without Nix and starts them (`scripts/smoke-session.sh`: a session
 splits its pane on `<C-b>%`).
 
+Its job `check-windows` runs the same gate on `windows-latest`, without
+Nix, for the crates that build on Windows so far (`WINDOWS_CRATES` in
+`xtask/src/check.rs`: clippy and the tests of those packages instead of
+the workspace; the js tests are skipped, as `temzdf` does not build
+there yet). It installs Node 24, runs `npm ci` and installs Biome 2.6.8
+globally. It has not run on a runner yet: the first run (a dispatch of
+the branch `windows-port`, `gh workflow run CI --ref windows-port`) is
+the first check of `cargo xtask check` itself on Windows, `xtask` having
+been cross-checked only as far as `ring`'s C code allows. The Linux gate
+also checks those crates for `x86_64-pc-windows-msvc` (step `windows`, a
+clippy run with `-D warnings`), where the Nix dev shells' toolchain
+carries that standard library (`flake.nix`), so `check-with-nix` runs it
+too; it prints `SKIP windows` without it.
+
 The slower checks are a workflow of their own, Advanced CI
 (`.github/workflows/advanced-ci.yml`), on the same events:
 `scripts/miri.sh` in `.#ci-miri` (job `miri-with-nix`). Both
 `check-with-nix` and `miri-with-nix` keep built dependencies with
 `Swatinem/rust-cache`.
 
-The Rust caches (of `build`, `check-with-nix` and `miri-with-nix`) are
-saved only by pushes to `dev` and `main`, and a job after each
+The Rust caches (of `build`, `check-with-nix`, `check-windows` and
+`miri-with-nix`) are saved only by pushes to `dev` and `main`, and a job after each
 (`prune-rust-cache.yml`) deletes those of the same branch but the one used
 last.
 

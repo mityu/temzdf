@@ -88,7 +88,10 @@ cargo build --workspace
 rustfmt, Biome, the generated declarations (`node scripts/ts-types.ts`
 writes `temzdf-all.d.ts` again into `target/check/` and compares), the
 Node scripts' types (`tsc -p scripts`), shellcheck, references to
-documents (`node scripts/check-docs.ts`), clippy and the tests (and Miri with `--miri`). Each
+documents (`node scripts/check-docs.ts`), clippy, a clippy run for
+`x86_64-pc-windows-msvc` over the crates that build there (step
+`windows`, Unix only; `SKIP windows` without that standard library),
+and the tests (and Miri with `--miri`). Each
 step's whole output is in `target/check/STEP.log`; a failed step prints
 `FAIL STEP` and its main lines, a passing run one `OK ...` line. When every
 uncommitted change is Markdown under `doc/`, the tests are
