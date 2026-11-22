@@ -80,6 +80,13 @@ How to work on temzdf and where it stands.
 
 - [dev/testing.md](dev/testing.md): how to verify changes without a human
   (unit, simulated terminal, e2e in real terminals, Miri).
+- [dev/environment.md](dev/environment.md): the Nix dev shell and its
+  variants, the shipped scripts' npm packages, script development (Biome,
+  the TypeScript declarations), running Miri.
+- [dev/debugging.md](dev/debugging.md): tools for terminal problems
+  (probing, input logs, log files, byte traces, overriding detection).
+- [dev/building.md](dev/building.md): builds without Nix, the fonts
+  `temzdf-gui` embeds, `nix build` and CI.
 - [dev/performance.md](dev/performance.md): measurements (raster pool,
   display lists, transfer, the session socket) and the benchmarks to rerun.
 - [dev/known-issues.md](dev/known-issues.md): problems known and left in
@@ -89,7 +96,8 @@ How to work on temzdf and where it stands.
 
 Research done before deciding (libraries, prior art, experiments), as of
 when it was written; most of it came from the former `research/notes`
-branch. The decisions taken from it are in the design documents.
+branch (design notes and research lived there until it was merged in on
+2026-10-27). The decisions taken from it are in the design documents.
 
 - [survey/research.md](survey/research.md): the library survey and why
   each dependency was chosen.

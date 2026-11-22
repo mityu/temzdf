@@ -80,6 +80,21 @@ is fine for now.
 
 ## Checking GUI terminals on a Mac without a human
 
+In short: on macOS `scripts/e2e.sh` (`-d macos`, the default there) runs
+the same action files and judgements in kitty, Ghostty, WezTerm and the
+GUI on a virtual display beside the real screen; it takes the front and
+the pointer for the run and needs the screen unlocked.
+`scripts/macos-vm.sh e2e ARGS...` runs it in a macOS VM (Tart) instead,
+leaving the host alone (set up once: "Running in a VM" below); that is the
+way to run them on macOS. `scripts/e2e-all.sh` (in the VM:
+`scripts/macos-vm.sh e2e-all -t ghostty -t wezterm -t gui`) runs every
+judged scenario and sums up. For poking at a terminal step by step,
+`scripts/macos-gui.sh` runs kitty, Ghostty, WezTerm or `temzdf-gui`
+(`launch app`) in the background on a virtual display and drives them
+(keys, mouse, window screenshots); see its header. Scripted macOS
+scenarios are in `tests/macos/` (`gui-redraw.sh`: the GUI redraws after
+its window was covered).
+
 Two tools share the Swift helpers in `scripts/macos/` (built into
 `target/macos-gui/`): `scripts/e2e.sh` runs the action files of
 `tests/e2e/` with their judgements, as on Linux; `scripts/macos-gui.sh`

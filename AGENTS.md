@@ -16,232 +16,54 @@ The terminal plumbing is a separate, reusable library so that other viewers
 
 ## Layout
 
-| Path | Purpose |
-|---|---|
-| `crates/termpix-core` | Library. Frontend-independent primitives: geometry, RGBA raster helpers, kinetic scroll helper, the viewport panes drawing their own documents scroll through, key/mouse event types. No terminal code. |
-| `crates/termpix` | Library. Terminal I/O: tty setup, capability probing, input parsing (SGR-pixel mouse, kitty keyboard), kitty graphics transport, layered compositor, mock terminal for tests; re-exports `termpix-core`. **Knows nothing about PDF.** |
-| `crates/termpix-ui` | Library. Small widget kit rendering UI layers to RGBA (`vello_cpu` + `parley`, laid out by hand). Independent of `termpix` (`termpix-core` only in its tests). |
-| `crates/temzdf-scene` | Library. What a pane shows, frontend-independent: image store and frames of layers, frontend hints, effects, tiles painted by worker threads (cache, schedule, pool). |
-| `crates/temzdf-protocol` | Library. Session protocol: client/server messages, framing, socket locations, finding sessions (`discovery`). |
-| `crates/temzdf-gui` | The GUI client (`temzdf-gui`): a winit window drawing the session with wgpu and glyphon (draw list, renderer, fonts with built-in fallbacks embedded from nixpkgs, input, IME, clipboard), `--render-frame` offscreen, `ls-fonts`. Uses `temzdf-protocol`, `temzdf-scene`, `temzdf-client`, `termpix-core`; no `termpix`, no server code. See `doc/design/gui-client.md`. |
-| `crates/temzdf-client` | Library. What every client shares: naming, resolving and starting sessions (`spawn_server`), the connection to a session (`Connection`, `request`), log locations, carrying out effects (links, inverse search). No terminal or window code. |
-| `crates/temzdf-watchfs` | Library. Watching a file for changes made elsewhere (`notify`), also when a tool replaces it or it is a symlink: `watch_file` returns a `FileWatcher`. Used by `temzdf-pdfcore` (reload) and the server's text and Markdown buffers. |
-| `crates/temzdf-pdfcore` | Library. PDF backend: MuPDF (`mupdf` crate), display list and tile cache, text, SyncTeX, background workers, reload. No terminal code. |
-| `crates/temzdf-pdfview` | Library. The PDF pane: view state, input handling, UI (status bar, outline, search, link preview), key bindings; `Document`/`DocumentHost` shared by the panes on one file (workers, reload, SyncTeX routing). No terminal code. |
-| `crates/temzdf-term` | Library. The terminal pane: a program on a pty (`portable-pty`), its output interpreted by `libghostty-vt` (from Nix: `nix/libghostty-vt.nix`), the screen as scene text cells. No `termpix`. |
-| `crates/temzdf-texteditor` | Library. A framework for text editors (`doc/design/text-editor.md`): text (`ropey`, LF inside), positions (`{ line, character }`, UTF-16), edits, cursor and selection, decorations and marks, the undo tree, motions. Editors are scripts on it. No terminal code. |
-| `crates/temzdf-markdown` | Library. Markdown for the viewer: parsing (`comrak`) into blocks that keep their source lines, the text mode's drawing (syntect for code), the graphics mode's HTML. No terminal code. |
-| `crates/temzdf-mdview` | Library. The Markdown viewer's graphics mode: Blitz pages painted in shared strips, panes over them, math by RaTeX. No terminal code. |
-| `crates/texprintf` | Library. TeX math as Unicode text through libtexprintf (C, from `nix/libtexprintf.nix`). |
-| `crates/temzdf-tty` | Library. Terminal frontend (`TtyFrontend`): shows scene frames through `termpix`, frame pacing, effects. |
-| `crates/temzdf-server` | Library. `Session` (panes, layout, focus, modes and key mappings, the command registry, composed frame), the session server process, forward-search sockets. No terminal code. |
-| `crates/temzdf-script` | Library. The script host: runs `config.ts`/`config.js` in QuickJS (`rquickjs`, TypeScript stripped with swc) and talks to the session through a `Link` with `temzdf-protocol`'s messages (feature `host`; without it only the type declarations). |
-| `crates/temzdf-script-guest` | The script host built for `wasm32-wasip1` (imports as its `Link`); empty on other targets. |
-| `crates/temzdf-script-runner` | Library. Runs the guest in wasmtime inside the server (`ScriptHost`: a thread, memory cap, stop). Its `build.rs` builds the guest with a nested cargo (`target/script-guest`, profile `script-guest`) and precompiles it with Cranelift; see `doc/design/script-host.md`. |
-| `crates/tuitest` | Test-only library: runs a program on a pty behind `libghostty-vt` (optionally inside a private tmux), drives it with keys and reads the screen (text, colours, cursor, image placements). Used by `crates/temzdf/tests/tui.rs`. |
-| `crates/wlinput` | Test-only tool: one virtual keyboard and pointer on a wlroots compositor, driven by commands on stdin. `scripts/e2e.sh -d wayland` drives headless sway with it. |
-| `xtask` | Repository tasks as `cargo xtask TASK` (alias in `.cargo/config.toml`; `cargo xtask help`): `fetch-fonts` downloads the fonts `temzdf-gui` embeds (`crates/temzdf-gui/fonts.toml`) into `target/fonts/` for builds without Nix, `update-fonts` moves that list to newer releases. |
-| `crates/temzdf` | The binary: `temzdf [FILE]` starts a session (named alfa, bravo, ... unless `-s NAME`), session commands and client (zellij names: `attach`, `ls`, `kill-session`, `action`), the standalone viewer (`temzdf standalone pdf`), `ls-fonts`, config, headless `--render-frame`. |
-| `doc/` | Design notes and research, indexed in `doc/README.md`. Start with `doc/architecture.md`. |
-| `tests/fixtures/` | LaTeX sources of the test documents. Their PDFs and SyncTeX files are generated into `target/fixtures/` (never committed). |
-| `todo.md` | Long-running tasks and deferred work. |
-| `experiments/` | Standalone experiment crates outside the workspace (see the matching doc). |
+Crates and other directories, each with its purpose: "Crates" in
+`doc/architecture.md`. Read it before adding a crate, moving code between
+crates or changing dependencies. Start any larger change with
+`doc/architecture.md`.
 
 Dependency direction: `termpix-core <- termpix <- temzdf-tty <- temzdf` and
 `temzdf-scene <- temzdf-pdfcore <- temzdf-pdfview <- temzdf-server <- temzdf`
-(and `temzdf-scene <- temzdf-term <- temzdf-server`)
-(details in `doc/architecture.md`). Never make `termpix*` depend on PDF,
-SyncTeX or viewer code, and never make `temzdf-pdfcore`, `temzdf-pdfview`,
-`temzdf-term` or `temzdf-server` depend on `termpix` (tests excepted): backends, panes and the
-session produce scenes, only frontends draw. The direction the project is
-heading (a tmux-like session server with terminal, PDF and web panes) is in
+(and `temzdf-scene <- temzdf-term <- temzdf-server`). Never make `termpix*`
+depend on PDF, SyncTeX or viewer code, and never make `temzdf-pdfcore`,
+`temzdf-pdfview`, `temzdf-term` or `temzdf-server` depend on `termpix`
+(tests excepted): backends, panes and the session produce scenes, only
+frontends draw. The direction the project is heading (a tmux-like session
+server with terminal, PDF and web panes) is in
 `doc/design/session-server.md`.
 
 ## Environment
 
-Everything runs inside the Nix dev shell (`flake.nix`). Its Rust toolchain
-(rust-overlay) has the `wasm32-wasip1` target, and `CC_wasm32_wasip1` names
-nixpkgs' WASI clang (for the script host's guest; never put that clang on
-`PATH`, it would replace the native `cc`). The shipped scripts
-(`crates/temzdf-script/runtime/`, an npm package) are bundled by
-`crates/temzdf-script/build.rs` with esbuild; npm manages their packages
-in `runtime/node_modules`: run `npm ci` in `runtime/` once after cloning and
-whenever `package-lock.json` changes (`build.rs` refuses node_modules that
-no longer match it, `cargo xtask check` stops without them; tsc and editors
-read the packages' types there). To add one: `npm install PKG` in
-`runtime/` (widely used, maintained, plain ES code: it runs in QuickJS; its
-install scripts never run, `runtime/.npmrc`). `nix build` has Nix build
-the same lock file into `$TEMZDF_NODE_MODULES` (no network in builds; the
-dev shells set it too, used where `runtime/node_modules` is missing, as in
-CI's Nix jobs but `check-with-nix`). Agents are started
-inside it, so run tools directly, not through `nix develop -c` (it costs a
-shell evaluation each time); if a tool the dev shell should provide is
-missing, say so instead of working around it. A tool added to `flake.nix`
-needs the shell, and the agent in it, restarted.
+Everything runs inside the Nix dev shell (`flake.nix`). Agents are started
+inside it, so run tools directly, never through `nix develop -c` (the
+scripts enter their dev shell by themselves); if a tool the dev shell
+should provide is missing, say so instead of working around it. A tool
+added to `flake.nix` needs the shell, and the agent in it, restarted.
+Never put the WASI clang (`CC_wasm32_wasip1`) on `PATH`. Run `npm ci` in
+`crates/temzdf-script/runtime/` once after cloning and whenever its
+`package-lock.json` changes. Miri: `env -u IN_NIX_SHELL scripts/miri.sh`.
+
+Run the gate before every commit:
 
 ```sh
-cargo xtask check            # fmt check + Biome (scripts) + declarations + docs + clippy -D warnings + tests (+ Miri where available), terse output
-cargo xtask check --fix      # same, but apply rustfmt and Biome's formatting and safe fixes
-cargo xtask check --no-miri  # without Miri (it takes about a minute and a half)
-cargo xtask check --all      # the tests even when only Markdown under doc/ changed (skipped then)
-cargo xtask check --verbose  # a failed step's whole output; always in target/check/
-cargo xtask check --stream   # each step's output as it comes, under a header (CI: log groups)
-cargo xtask test [ARGS...]   # the tests alone, as the gate runs them
-cargo build --workspace
+cargo xtask check            # fmt, Biome, declarations, docs, clippy -D warnings, tests (+ Miri where available)
+cargo xtask check --fix      # same, applying rustfmt and Biome's fixes
+cargo xtask check --no-miri  # without Miri (about a minute and a half less)
+cargo xtask check --all      # the tests even when only Markdown under doc/ changed
 ```
 
-Run `cargo xtask check` before every commit. It is Rust
-(`xtask/src/check.rs`) and assumes no Nix, for a future Windows port:
-it finds its tools on PATH, and the Unix-only steps (shellcheck, Miri)
-say `SKIP` where they cannot run. `scripts/check.sh` takes the same
-options and runs it inside the dev shell, entering it from any shell.
-The repository's own Node scripts are TypeScript that Node runs as it is
-(type stripping, Node 22.18 or later): `node scripts/ts-types.ts`,
-`node scripts/check-docs.ts`; erasable syntax only, `.ts` in imports,
-type-checked by the gate with `tsc -p scripts` (`scripts/tsconfig.json`;
-`@types/node` is a devDependency of `runtime/`). The scripts (TypeScript and
-the script host's `prelude.ts` and `temzdf.ts`) are formatted and linted by Biome
-(`biome.jsonc`; `biome check --write .` alone fixes what it can). Their
-TypeScript declarations are in `crates/temzdf-script/ts-types/`: Rust's
-API by hand in `temzdf-core.d.ts` (the server takes its events from
-`interface Events`, and a test holds its options to `interface Options`), the session's actions by hand in
-`temzdf-actions.d.ts` (a new action is declared there: the server's names
-come from it, and a test runs each), and the generated
-`temzdf-all.d.ts`; editors use `crates/temzdf-script/runtime/tsconfig.json`
-(the dev shell's `tsc --lsp --stdio` is a language server). The
-devDependencies of `runtime/package.json` (dts-bundle-generator,
-TypeScript 6, type-fest's and Node's types) are tools, never bundled. A value the API may leave out is `undefined`; the scripts check one with
-`isNullish` (`runtime/lib/validate.ts`). The default dev shell has no Miri (the gate
-says it skipped it); `nix develop .#enable-miri` has it, and the user runs
-it from time to time. To run Miri yourself, `scripts/miri.sh` (it enters
-`.#enable-miri` by itself when started outside a dev shell; its toolchain is
-nightly); from inside the default dev shell, as agents are, run it as `env -u
-IN_NIX_SHELL scripts/miri.sh`, or it only says it skipped. The scripts enter their
-dev shell by themselves when started outside it (`scripts/lib/devshell.sh`), so
-never use `nix develop -c` to run them. A unit test Miri cannot run (foreign
-code, ptys, processes, sockets) gets `#[cfg_attr(miri, ignore = "why")]`;
-see "Miri" in `doc/dev/testing.md`.
+`scripts/check.sh` takes the same options and runs it inside the dev shell.
 
-The fonts `temzdf-gui` embeds are listed with their URLs and sha256 in
-`crates/temzdf-gui/fonts.toml`. Nix fetches them from there and the dev
-shell passes them in `TEMZDF_BUNDLED_FONTS`; a build without Nix runs
-`cargo xtask fetch-fonts` first (into `target/fonts/`, where
-`crates/temzdf-gui/build.rs` finds them). Such a build also needs Zig
-0.15.2 (libghostty-vt is then built from source), esbuild and npm,
-libclang, fontconfig and pkg-config (on Ubuntu: `libclang-dev
-libfontconfig-dev pkg-config`, and `autoconf automake libtool` for the
-next step), and libtexprintf and the shipped scripts' npm packages, which
-`scripts/deps-without-nix.sh PREFIX` installs (it prints the environment
-variables to set). `cargo xtask update-fonts --check`
-shows newer releases, `cargo xtask update-fonts` rewrites the list (then run
-the tests and restart the dev shell).
+Read before you act:
 
-Design notes and research live in `doc/` with the code (they used to be on a
-separate `research/notes` branch, merged in on 2026-10-27; that research is
-in `doc/survey/`).
-
-Behaviour visible on screen (terminal panes, sessions, CLI, keys) is best
-tested in `crates/temzdf/tests/tui.rs`: the real binary behind a simulated
-terminal (`crates/tuitest`), checked by text, cells and image placements, also
-inside tmux, without an X server. See "Simulated terminal tests" in
-`doc/dev/testing.md`.
-
-End-to-end checks in a real kitty (virtual X server, no display needed):
-
-```sh
-cargo build --example scroll_demo
-scripts/e2e.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
-```
-
-Action files in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
-screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. For
-key-driven checks prefer `expect NAME KEYS`, which compares the terminal with
-a headless render and fails the run on a mismatch (`tests/e2e/expect.actions`). See the
-script header for the helpers. `temzdf standalone pdf FILE --render-frame out.png`
-renders one screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/` from
-`tests/fixtures/*.tex` (tests run it automatically; e2e scenarios need it first).
-For refactorings, `scripts/frames.sh render-rev HEAD A` (the last commit),
-`scripts/frames.sh render B` (your build) and `scripts/frames.sh compare A B`
-prove the screen is pixel-identical: PDF frames and the `shots` scenes of
-`crates/temzdf/tests/tui.rs` (sessions, Markdown, terminal panes, floats,
-tabs), with an image of each difference in `B/diff/`. A test written for a fix should fail
-without it: `scripts/mutate.sh FILE OLD NEW -- cargo test ...` puts the bug
-back for one run and restores the file (it refuses a pattern that does not
-match once, and tells a mutation that did not compile or a filter that ran
-no test from a caught one). The
-full testing approach is in `doc/dev/testing.md`.
-
-`scripts/e2e.sh -t gui ... -- target/debug/temzdf-gui --clean FILE` drives the GUI
-client the same way (xfwm4 on Xvfb, lavapipe; `-I` adds fcitx5 with Mozc for
-Japanese input); its GPU tests (`cargo test -p temzdf-gui --test gpu`) run
-offscreen on lavapipe.
-
-`scripts/e2e.sh -d wayland ...` runs the same scenarios on headless sway
-instead of Xvfb (every terminal and the GUI, `-I` too; keys and pointer
-through `crates/wlinput`, screenshots with grim).
-
-Every judged scenario in every terminal and the GUI, summed up:
-`scripts/e2e-all.sh -R -j 8` (about a minute and a half; `-d wayland` for
-sway; `-R` renders the comparisons with release builds, `-j` runs
-scenarios at once); the GUI's `gui-focus` and `gui-ime` (`-I`) included,
-not on macOS.
-
-On macOS `scripts/e2e.sh` (`-d macos`, the default there) runs the same
-action files and judgements in kitty, Ghostty, WezTerm and the GUI on a
-virtual display beside the real screen; it takes the front and the pointer
-for the run and needs the screen unlocked (`doc/terminals/macos.md`).
-`scripts/macos-vm.sh e2e ARGS...` runs it in a macOS VM (Tart) instead,
-leaving the host alone (set up once: "Running in a VM" there); that is the
-way to run them on macOS. `scripts/e2e-all.sh` (in the VM: `scripts/macos-vm.sh
-e2e-all -t ghostty -t wezterm -t gui`) runs every judged scenario and sums up. For poking at a
-terminal step by step, `scripts/macos-gui.sh` runs kitty, Ghostty, WezTerm
-or `temzdf-gui` (`launch app`) in the background on a virtual display and
-drives them (keys, mouse, window screenshots); see its header. Scripted
-macOS scenarios are in `tests/macos/` (`gui-redraw.sh`: the GUI redraws
-after its window was covered).
-
-Debugging terminal problems:
-
-- `cargo run -p termpix --example probe` prints what detection found.
-- `cargo run -p termpix --example events -- events.log` logs every parsed input
-  event (what the terminal really sends).
-- In interactive mode `temzdf` sends stdout/stderr (MuPDF and SyncTeX warnings)
-  to `temzdf.log`, and session servers theirs to `NAME.log`, in the log
-  directory: `$TEMZDF_LOG_DIR`, else `$XDG_STATE_HOME/temzdf`. `temzdf ls -v` shows each session's log file.
-- `TERMPIX_TRACE=out.bin <app>` records every byte written to the terminal;
-  replay prefixes of it into a terminal (`cat out.bin`) to bisect crashes.
-- `TERMPIX_BACKEND=layered|composited` and `TERMPIX_MEDIUM=direct|shm|file`
-  override detection (e.g. `direct` mimics SSH); `TERMPIX_GRAPHICS=off` runs
-  as in a terminal without the kitty graphics protocol (text only).
-- `scripts/e2e.sh -t ghostty ...` runs the same scenarios in Ghostty; it exits
-  with 3 when the terminal crashed.
-
-The host has no `rustc` or `python3` on `PATH` outside the dev shell (`python3` is in it for scratch scripts). The default
-dev shell leaves out large tools that are usually installed globally: TeX
-(`latexmk`, `pdflatex`, `synctex`, needed for the fixtures) and the extra
-terminals/multiplexers for e2e (Ghostty, WezTerm, zellij). On this machine they
-come from the host profile. `nix develop .#alldeps` provides all of them.
-`nix develop .#ci` is the minimal shell CI uses (toolchain, TeX, no
-end-to-end tools), `.#ci-miri` the same with the nightly toolchain and
-Miri and without TeX (Miri runs no test that needs the fixtures); `nix build` builds the `temzdf` package (`nix run . -- FILE` runs it).
-CI (`.github/workflows/ci.yml`) runs `npm ci` and `cargo xtask check --stream --no-miri` in the
-first (job `check-with-nix`), `scripts/miri.sh` in the second as a job of
-its own (`miri-with-nix`; both keep built dependencies with
-`Swatinem/rust-cache`), and `nix build` on Linux and macOS
-(`build-with-nix`). Its job `build` builds `temzdf` and `temzdf-gui` on
-Ubuntu without Nix and starts them (`scripts/smoke-session.sh`: a session
-splits its pane on `<C-b>%`).
-The Rust caches (of `build`, `check-with-nix` and `miri-with-nix`) are saved only by pushes to
-`dev` and `main`, and a job after each (`prune-rust-cache.yml`) deletes
-those of the same branch but the one used last.
-The documents' check (`node scripts/check-docs.ts`, Node's standard
-library only, so no `npm ci`) runs on every push,
-documentation-only ones included (`.github/workflows/docs.yml`).
-`nix build` uses crane: the Rust dependencies, the script host's guest
-and the guest's dependencies are derivations of their own (`.#deps`,
-`.#guest`, `.#guest-deps`), for a Nix cache to keep between runs. There
-is none for now: Magic Nix Cache ran into the cache API's rate limit and
-made rust-cache's restores fail with it (`todo.md`).
+- Before setting up, adding an npm package, touching the scripts
+  (TypeScript, Biome) or their declarations, or running Miri:
+  `doc/dev/environment.md`.
+- Before writing or changing tests, or verifying a change on screen
+  (simulated terminal, e2e, frames, mutation checks, Miri, fixtures):
+  `doc/dev/testing.md`; on macOS also `doc/terminals/macos.md`.
+- When investigating terminal problems: `doc/dev/debugging.md`.
+- Before touching builds without Nix, the embedded fonts, `nix build` or
+  CI: `doc/dev/building.md`.
 
 ## Conventions
 
@@ -288,7 +110,8 @@ made rust-cache's restores fail with it (`todo.md`).
   `todo.md`, not here;
 - `doc/terminals/`: terminal and platform behaviour (the compatibility
   matrix, the kitty protocol, input modes, macOS);
-- `doc/dev/`: testing, performance, known issues;
+- `doc/dev/`: the environment, testing, debugging, building and CI,
+  performance, known issues;
 - `doc/survey/`: research done before deciding (libraries, prior art,
   experiments), as of when it was written.
 

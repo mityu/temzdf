@@ -11,6 +11,9 @@
 
 ## Crates
 
+Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
+`crates/temzdf-watchfs`, ...), except `xtask` at the top.
+
 | Crate | Depends on (ours) |
 |---|---|
 | `termpix-core` | - |
@@ -38,12 +41,17 @@
 | `wlinput` (tests only) | none of ours (Wayland virtual keyboard and pointer) |
 | `xtask` | none of ours (repository tasks: `cargo xtask help`) |
 
-- `termpix-core`: frontend-independent primitives (geometry, raster helpers,
-  kinetic scroll, key/mouse events, and the viewport the PDF and Markdown
-  panes scroll through: both axes, sizes, scrolling input, Ctrl+wheel as
-  a zoom request).
-- `termpix`: the terminal library (below); re-exports `termpix-core`.
-- `termpix-ui`: pixel widgets (below); no dependency on `termpix`.
+- `termpix-core`: frontend-independent primitives (geometry, RGBA raster
+  helpers, kinetic scroll, key/mouse events, and the viewport the PDF and
+  Markdown panes scroll through: both axes, sizes, scrolling input,
+  Ctrl+wheel as a zoom request). No terminal code.
+- `termpix`: the terminal library (below): tty setup, capability probing,
+  input parsing (SGR-pixel mouse, kitty keyboard), kitty graphics
+  transport, the layered compositor, a mock terminal for tests;
+  re-exports `termpix-core`. It knows nothing about PDF.
+- `termpix-ui`: pixel widgets (below), a small widget kit rendering UI
+  layers to RGBA (`vello_cpu` + `parley`, laid out by hand); no
+  dependency on `termpix` (`termpix-core` only in its tests).
 - `temzdf-scene`: what a pane shows, independent of the frontend: an image
   store whose changes frontends mirror, and frames (layers, text cells,
   text cursor, pointer shape, title), frontend hints and effects; `tiles`:
@@ -57,54 +65,96 @@
 - `temzdf-client`: what every client shares: naming, resolving and
   starting sessions (`spawn_server`), the connection to a session
   (`Connection`, one-shot `request`s), log locations, carrying out effects
-  (links, inverse search).
+  (links, inverse search). No terminal or window code.
 - `temzdf-watchfs`: watching a file for changes made elsewhere
-  (`watch_file`, a `FileWatcher` kept alive), also when a tool replaces
-  it or it is a symlink: the PDF a typesetter writes (auto-reload), the
-  files of text and Markdown buffers.
-- `temzdf-pdfcore`: the PDF backend: MuPDF wrapper, `DocCache` (display lists
-  and tiles), page text and selection, SyncTeX, background workers.
-- `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`, outline, search, keys)
+  (`notify`; `watch_file` returns a `FileWatcher`, kept alive), also when
+  a tool replaces it or it is a symlink: the PDF a typesetter writes
+  (auto-reload in `temzdf-pdfcore`), the files of the server's text and
+  Markdown buffers.
+- `temzdf-pdfcore`: the PDF backend: MuPDF wrapper (`mupdf` crate),
+  `DocCache` (display lists and tiles), page text and selection, SyncTeX,
+  background workers, reload. No terminal code.
+- `temzdf-pdfview`: the PDF pane (`PdfPane`, `Viewer`: view state, input
+  handling, UI (status bar, outline, search, link preview), key bindings)
   and what panes on one file share (`Document`, `DocumentHost`: workers,
-  reload, SyncTeX routing).
+  reload, SyncTeX routing). No terminal code.
 - `temzdf-term`: the terminal pane's buffer (`TermBuffer`: a program on a
-  pty, its output interpreted by `libghostty-vt`) and its view
-  (`TermView`: the screen as scene text cells).
+  pty (`portable-pty`), its output interpreted by `libghostty-vt`, from
+  Nix: `nix/libghostty-vt.nix`) and its view (`TermView`: the screen as
+  scene text cells). No `termpix`.
 - `temzdf-texteditor`: a framework for text editors
-  (`doc/design/text-editor.md`): text (`ropey`), positions, edits, cursor
-  and selection, decorations and marks, the undo tree, motions, search,
-  files, and the layout and drawing of lines into scene text cells.
-  Editors are scripts on it; the server's text panes use it
-  (`crates/temzdf-server/src/session/text.rs`).
+  (`doc/design/text-editor.md`): text (`ropey`, LF inside), positions
+  (`{ line, character }`, UTF-16), edits, cursor and selection,
+  decorations and marks, the undo tree, motions, search, files, and the
+  layout and drawing of lines into scene text cells. Editors are scripts
+  on it; the server's text panes use it
+  (`crates/temzdf-server/src/session/text.rs`). No terminal code.
 - `temzdf-markdown`: Markdown for the viewer (`doc/design/markdown-viewer.md`):
   a document of blocks keeping their source lines (comrak), the text
   mode's drawing (lines and decorations at a width; syntect for code),
-  and the graphics mode's HTML.
+  and the graphics mode's HTML. No terminal code.
 - `temzdf-mdview`: the viewer's graphics mode: pages laid out and painted
   by Blitz in shared strips, panes scrolled, zoomed and searched over
-  them, their status line; math by RaTeX.
+  them, their status line; math by RaTeX. No terminal code.
 - `texprintf`: TeX math as Unicode text, wrapping libtexprintf (utftex's
-  library, `nix/libtexprintf.nix`).
-- `temzdf-script`: the script host (QuickJS, TypeScript stripped with
-  swc), see `doc/design/script-host.md`; `temzdf-script-guest` builds it
-  for WebAssembly, and `temzdf-script-runner` runs that in wasmtime inside
-  the server (`ScriptHost`; built and precompiled by its `build.rs`).
+  library, C, `nix/libtexprintf.nix`).
+- `temzdf-script`: the script host (QuickJS through `rquickjs`,
+  TypeScript stripped with swc), see `doc/design/script-host.md`: it runs
+  `config.ts`/`config.js` and talks to the session through a `Link` with
+  `temzdf-protocol`'s messages (feature `host`; without it only the type
+  declarations). `temzdf-script-guest` builds it for WebAssembly
+  (`wasm32-wasip1`, with imports as its `Link`; empty on other targets),
+  and `temzdf-script-runner` runs that in wasmtime inside the server
+  (`ScriptHost`: a thread, a memory cap, stop). The runner's `build.rs`
+  builds the guest with a nested cargo (`target/script-guest`, profile
+  `script-guest`) and precompiles it with Cranelift.
 - `temzdf-server`: `Session` (panes, layout, focus, modes and key
   mappings, the command registry, the composed frame), the session server
-  process and the forward-search sockets.
-- `temzdf-tty`: the terminal frontend (`TtyFrontend`: terminal setup, frame
-  pacing, effects; `Presenter`, `Screen`, text cells, notices for
-  terminals without graphics).
-- `temzdf`: the binary: session commands and client, the standalone
-  viewer (`temzdf standalone pdf`), config, `ls-fonts`, headless
-  rendering. The standalone viewer, its `--render-frame` and the session
-  server all run a `Session`.
+  process and the forward-search sockets. No terminal code.
+- `temzdf-tty`: the terminal frontend (`TtyFrontend`: shows scene frames
+  through `termpix`; terminal setup, frame pacing, effects; `Presenter`,
+  `Screen`, text cells, notices for terminals without graphics).
+- `temzdf`: the binary: `temzdf [FILE]` starts a session (named alfa,
+  bravo, ... unless `-s NAME`), session commands and client (zellij
+  names: `attach`, `ls`, `kill-session`, `action`), the standalone viewer
+  (`temzdf standalone pdf`), config, `ls-fonts`, headless rendering
+  (`--render-frame`). The standalone viewer, its `--render-frame` and the
+  session server all run a `Session`.
 - `temzdf-gui`: the GUI client, a winit window drawing the session with
-  wgpu and glyphon (`doc/design/gui-client.md`).
-- `tuitest`, `wlinput`: test tools (a simulated terminal on a pty; a
-  virtual keyboard and pointer on a wlroots compositor), see
-  `doc/dev/testing.md`.
-- `xtask`: repository tasks (`fetch-fonts`, `update-fonts`).
+  wgpu and glyphon (draw list, renderer, fonts with built-in fallbacks
+  embedded from nixpkgs, input, IME, clipboard), `--render-frame`
+  offscreen, `ls-fonts`; no `termpix`, no server code
+  (`doc/design/gui-client.md`).
+- `tuitest`, `wlinput`: test tools, see `doc/dev/testing.md`. `tuitest`
+  runs a program on a pty behind `libghostty-vt` (optionally inside a
+  private tmux), drives it with keys and reads the screen (text, colours,
+  cursor, image placements); `crates/temzdf/tests/tui.rs` uses it.
+  `wlinput` is one virtual keyboard and pointer on a wlroots compositor,
+  driven by commands on stdin; `scripts/e2e.sh -d wayland` drives
+  headless sway with it.
+- `xtask`: repository tasks as `cargo xtask TASK` (alias in
+  `.cargo/config.toml`; `cargo xtask help`): `check` and `test` (the gate,
+  `doc/dev/testing.md`), `fetch-fonts` downloads the fonts `temzdf-gui`
+  embeds (`crates/temzdf-gui/fonts.toml`) into `target/fonts/` for builds
+  without Nix, `update-fonts` moves that list to newer releases
+  (`doc/dev/building.md`).
+
+Other top-level directories and files:
+
+- `doc/`: design notes and research, indexed in `doc/README.md`.
+- `tests/fixtures/`: LaTeX sources of the test documents. Their PDFs and
+  SyncTeX files are generated into `target/fixtures/` (never committed).
+- `tests/e2e/`, `tests/macos/`: end-to-end scenarios (`doc/dev/testing.md`).
+- `todo.md`: long-running tasks and deferred work.
+- `experiments/`: standalone experiment crates outside the workspace (see
+  the matching doc).
+- `scripts/`: repository scripts (the gate's dev-shell entry, e2e,
+  fixtures, frames, Miri, ...).
+
+Dependency direction: `termpix-core <- termpix <- temzdf-tty <- temzdf` and
+`temzdf-scene <- temzdf-pdfcore <- temzdf-pdfview <- temzdf-server <- temzdf`
+(and `temzdf-scene <- temzdf-term <- temzdf-server`); the rules are under
+"Invariants" below.
 
 This layout prepares the session server (`doc/design/session-server.md`): backends and
 panes know nothing about terminals, only frontends draw.

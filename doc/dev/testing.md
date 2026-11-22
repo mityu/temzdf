@@ -19,7 +19,69 @@ Action files live in `tests/e2e/`; each starts with a comment saying how to run 
 and what the screenshots should show. To look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 
+## Where to start
+
+Behaviour visible on screen (terminal panes, sessions, CLI, keys) is best
+tested in `crates/temzdf/tests/tui.rs`: the real binary behind a simulated
+terminal (`crates/tuitest`), checked by text, cells and image placements, also
+inside tmux, without an X server. See "Simulated terminal tests" below.
+
+End-to-end checks in a real kitty (virtual X server, no display needed):
+
+```sh
+cargo build --example scroll_demo
+scripts/e2e.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
+```
+
+Action files in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
+screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. For
+key-driven checks prefer `expect NAME KEYS`, which compares the terminal with
+a headless render and fails the run on a mismatch (`tests/e2e/expect.actions`,
+"Judged e2e scenarios" below). See the `scripts/e2e.sh` header for the
+helpers. `temzdf standalone pdf FILE --render-frame out.png` renders one
+screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/`
+from `tests/fixtures/*.tex` (tests run it automatically; e2e scenarios
+need it first; "Fixtures" below).
+
+For refactorings, `scripts/frames.sh render-rev HEAD A` (the last commit),
+`scripts/frames.sh render B` (your build) and `scripts/frames.sh compare A B`
+prove the screen is pixel-identical: PDF frames and the `shots` scenes of
+`crates/temzdf/tests/tui.rs` (sessions, Markdown, terminal panes, floats,
+tabs), with an image of each difference in `B/diff/`.
+
+A test written for a fix should fail without it: `scripts/mutate.sh FILE
+OLD NEW -- cargo test ...` puts the bug back for one run and restores the
+file ("Mutation checks" below).
+
+`scripts/e2e.sh -t gui ... -- target/debug/temzdf-gui --clean FILE` drives the GUI
+client the same way (xfwm4 on Xvfb, lavapipe; `-I` adds fcitx5 with Mozc for
+Japanese input); its GPU tests (`cargo test -p temzdf-gui --test gpu`) run
+offscreen on lavapipe.
+
+`scripts/e2e.sh -d wayland ...` runs the same scenarios on headless sway
+instead of Xvfb (every terminal and the GUI, `-I` too; keys and pointer
+through `crates/wlinput`, screenshots with grim).
+
+Every judged scenario in every terminal and the GUI, summed up:
+`scripts/e2e-all.sh -R -j 8` (about a minute and a half; `-d wayland` for
+sway; `-R` renders the comparisons with release builds, `-j` runs
+scenarios at once); the GUI's `gui-focus` and `gui-ime` (`-I`) included,
+not on macOS. On macOS, read `doc/terminals/macos.md` ("Checking GUI
+terminals on a Mac without a human"): the same action files run there,
+best in a VM (`scripts/macos-vm.sh e2e ARGS...`).
+
 ## The gate
+
+```sh
+cargo xtask check            # fmt check + Biome (scripts) + declarations + docs + clippy -D warnings + tests (+ Miri where available), terse output
+cargo xtask check --fix      # same, but apply rustfmt and Biome's formatting and safe fixes
+cargo xtask check --no-miri  # without Miri (it takes about a minute and a half)
+cargo xtask check --all      # the tests even when only Markdown under doc/ changed (skipped then)
+cargo xtask check --verbose  # a failed step's whole output; always in target/check/
+cargo xtask check --stream   # each step's output as it comes, under a header (CI: log groups)
+cargo xtask test [ARGS...]   # the tests alone, as the gate runs them
+cargo build --workspace
+```
 
 `cargo xtask check` (`xtask/src/check.rs`) is the pre-commit gate:
 rustfmt, Biome, the generated declarations (`node scripts/ts-types.ts`
