@@ -583,7 +583,7 @@ frame's (`--text`, `NAME.expected.txt`) where the terminal can tell it
   with a pause: quick repeats accelerate in the real terminal (flick) but
   not here.
 - `expect NAME`: a replay of all the input since startup with its timing
-  (`--render-frame --events`). The input is what temzdf itself handled,
+  (`--render-frame --events`): keys, the mouse and forward searches. The input is what temzdf itself handled,
   recorded through `TEMZDF_RECORD_INPUT` (`OUTDIR/input.txt`), not what the
   harness sent: terminals deliver late and in bursts (WezTerm turned wheel
   steps 30 ms apart into 1 to 90 ms), and their pixels differ by one
@@ -601,9 +601,18 @@ frame's (`--text`, `NAME.expected.txt`) where the terminal can tell it
 Rules for scenarios:
 
 - Only `temzdf standalone pdf --clean [--page N] [--scale S] FILE` (one
-  viewer, no session). `--clean`: the headless side draws with the shipped
-  defaults, so the terminal must too; `scripts/e2e.sh` refuses a COMMAND
-  running temzdf without it.
+  viewer, no session), or `--config FILE` with a configuration of the
+  repository's (`tests/e2e/configs/`) instead of `--clean`. `--clean`: the
+  headless side draws with the shipped defaults, so the terminal must
+  too; with `--config` both sides load that file on top of them
+  (`expect` passes it on to `--render-frame`); `scripts/e2e.sh` refuses a
+  COMMAND running temzdf with neither.
+- Forward searches go through the `forward LINE:FILE PDF` helper (`temzdf
+  --forward` from another process): temzdf records the search it got, the
+  replay sends it at the same time, and the helper's record times the
+  screenshot. `tests/e2e/configs/forward.ts` keeps the highlight until the
+  next input, so it is there at the screenshot on both sides
+  (`synctex.actions`, `synctex-reload.actions`).
 - Use the helpers (`wheel`, `dragto`, `click`, `move`, `keys`, `type`), not
   raw xdotool: their input is what reaches temzdf either way, but the
   harness's own record (`OUTDIR/events.txt`) times the screenshot from it.
@@ -649,7 +658,7 @@ screens match only if the reload kept the place.
 
 `check NAME CMD...` judges what a screenshot cannot: a command's exit
 status or a file it wrote (`tests/e2e/synctex.actions`: the forward search
-succeeds, Ctrl+click runs the editor on the title's lines). Its results go to
+is sent, Ctrl+click runs the editor on the title's lines). Its results go to
 `OUTDIR/expect.txt` too, and a failure exits 4 as well.
 
 Both sides run the same viewer code, so a bug in viewer state shows up on

@@ -48,7 +48,17 @@ const KEY_OVERLAYS: u32 = LAYER_KEYS_END + 0x1000;
 const Z_OVERLAY: i32 = -1_073_741_850;
 /// Forward-search target, shown briefly.
 const FLASH_COLOR: [u8; 4] = [255, 70, 70, 80];
-const FLASH_DURATION: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// How long a forward search's highlight stays (`o.forwardflash`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlashLength {
+    /// This long (none when zero).
+    For(Duration),
+    /// Until the next key or mouse input.
+    UntilInput,
+}
+
+pub const DEFAULT_FLASH: FlashLength = FlashLength::For(Duration::from_millis(1500));
 /// How long a text reload anchor waits for the pages around it to load.
 const TEXT_ANCHOR_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -180,8 +190,11 @@ pub struct PdfPane {
     restore_hit: Option<(usize, usize)>,
     /// The file changed and a reload is pending (shown in the status bar).
     pub reloading: bool,
-    /// Forward-search result highlighted until the deadline.
-    flash: Option<(Vec<PdfBox>, Instant)>,
+    /// Forward-search result highlighted until the deadline (`None`: until
+    /// the next input).
+    flash: Option<(Vec<PdfBox>, Option<Instant>)>,
+    /// How long that highlight stays.
+    pub flash_length: FlashLength,
     pointer_shape: Pointer,
     /// `[links] preview`: preview internal links after the pointer rests on
     /// them this long (`None`: never).
@@ -232,6 +245,7 @@ impl PdfPane {
             restore_hit: None,
             reloading: false,
             flash: None,
+            flash_length: DEFAULT_FLASH,
             pointer_shape: Pointer::Default,
             preview_delay: Some(DEFAULT_PREVIEW_DELAY),
             hover: None,
@@ -914,7 +928,17 @@ impl PdfPane {
         if self.reveal(first.page, first.rect.y0, now) {
             self.push_history();
         }
-        self.flash = Some((boxes, now + FLASH_DURATION));
+        self.flash = match self.flash_length {
+            FlashLength::For(d) if d.is_zero() => None,
+            FlashLength::For(d) => Some((boxes, Some(now + d))),
+            FlashLength::UntilInput => Some((boxes, None)),
+        };
+    }
+
+    /// A key or mouse input arrived: a highlight shown until then goes.
+    /// Returns true when the screen changed.
+    pub fn input_arrived(&mut self) -> bool {
+        self.flash.take_if(|f| f.1.is_none()).is_some()
     }
 
     /// When the screen next needs redrawing without any input (a highlight
@@ -955,7 +979,7 @@ impl PdfPane {
         }
         // The forward-search highlight ends on the caller's clock (a replay's
         // simulated one too), not the wall clock.
-        if self.flash.as_ref().is_some_and(|f| now >= f.1) {
+        if self.flash.as_ref().and_then(|f| f.1).is_some_and(|end| now >= end) {
             self.flash = None;
             changed = true;
         }
@@ -971,7 +995,7 @@ impl PdfPane {
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
-        let flash = self.flash.as_ref().map(|f| f.1);
+        let flash = self.flash.as_ref().and_then(|f| f.1);
         let anchor = self.text_anchor.as_ref().map(|a| a.deadline);
         let hover = self.hover.as_ref().map(|h| h.due);
         let leave = self.preview.as_ref().and_then(|p| p.left_at).map(|t| t + PREVIEW_GRACE);
@@ -1563,8 +1587,41 @@ mod tests {
         // long the test itself took.
         s.frame(&mut temzdf_scene::Images::new());
         assert!(s.flash.is_some(), "drawn while it lasts");
-        assert!(s.tick(now + FLASH_DURATION));
+        assert!(s.tick(now + Duration::from_millis(1500)));
         assert!(s.flash.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn forward_highlights_last_as_long_as_configured() {
+        let mut s = session();
+        let rect = PageRect { x0: 10.0, y0: 10.0, x1: 50.0, y1: 20.0 };
+        let boxes = || vec![PdfBox { page: 0, rect }];
+        let now = Instant::now();
+        let ms = Duration::from_millis;
+        // A length: gone at that time, not before; input does not end it.
+        s.flash_length = FlashLength::For(ms(200));
+        s.forward_result(boxes(), now);
+        assert!(!s.input_arrived());
+        assert_eq!(s.next_deadline(), Some(now + ms(200)));
+        s.tick(now + ms(199));
+        assert!(s.flash.is_some());
+        assert!(s.tick(now + ms(200)));
+        assert!(s.flash.is_none());
+        // Zero: none at all.
+        s.flash_length = FlashLength::For(Duration::ZERO);
+        s.forward_result(boxes(), now);
+        assert!(s.flash.is_none());
+        // Until input: no time ends it (nor wakes the viewer for it), the
+        // next input does.
+        s.flash_length = FlashLength::UntilInput;
+        s.forward_result(boxes(), now);
+        assert_eq!(s.next_deadline(), None);
+        s.tick(now + Duration::from_secs(3600));
+        assert!(s.flash.is_some());
+        assert!(s.input_arrived());
+        assert!(s.flash.is_none());
+        assert!(!s.input_arrived(), "nothing more to take away");
     }
 
     #[test]

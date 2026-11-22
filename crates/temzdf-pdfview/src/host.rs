@@ -82,6 +82,7 @@ impl Opening {
             watcher_error,
             reload: ReloadState::default(),
             deferred_forward: None,
+            synctex_pending: 0,
         }
     }
 }
@@ -103,6 +104,8 @@ pub struct DocumentHost {
     /// compile callback (vimtex) sends it right after the PDF changed, and the
     /// old document or SyncTeX data would put it in the wrong place.
     deferred_forward: Option<Forward>,
+    /// SyncTeX queries sent and not answered yet (each gets one answer).
+    synctex_pending: usize,
 }
 
 impl DocumentHost {
@@ -120,10 +123,19 @@ impl DocumentHost {
         }
     }
 
-    fn send_forward(&self, req: Forward, pane: &PdfPane) {
+    fn send_forward(&mut self, req: Forward, pane: &PdfPane) {
         let page_hint = pane.viewer.current_page();
-        let _ =
-            self.synctex.send(SynctexCmd::Forward { file: req.file, line: req.line, column: req.column, page_hint });
+        let cmd = SynctexCmd::Forward { file: req.file, line: req.line, column: req.column, page_hint };
+        if self.synctex.send(cmd).is_ok() {
+            self.synctex_pending += 1;
+        }
+    }
+
+    /// Whether every SyncTeX query sent has its answer (a forward search
+    /// waiting for a reload is not sent yet): `--render-frame` waits for
+    /// them as for the other workers.
+    pub fn synctex_idle(&self) -> bool {
+        self.synctex_pending == 0
     }
 
     /// Handle an event of this file's threads. `panes` are the panes showing it;
@@ -182,11 +194,13 @@ impl DocumentHost {
                 }
             }
             DocEvent::ForwardResult(boxes) => {
+                self.synctex_pending = self.synctex_pending.saturating_sub(1);
                 if let Some(pane) = panes.first_mut() {
                     pane.forward_result(boxes, now);
                 }
             }
             DocEvent::InverseResult(loc) => {
+                self.synctex_pending = self.synctex_pending.saturating_sub(1);
                 match self.options.editor.as_deref().and_then(|t| editor_command(t, &loc.file, loc.line, loc.column)) {
                     Some(cmd) => effect = Some(Effect::RunShell(cmd)),
                     None => {
@@ -202,6 +216,7 @@ impl DocumentHost {
                 }
             }
             DocEvent::SynctexFailed(e) => {
+                self.synctex_pending = self.synctex_pending.saturating_sub(1);
                 if let Some(pane) = panes.first_mut() {
                     pane.message = Some(format!("SyncTeX: {e}"));
                 }
@@ -298,7 +313,9 @@ impl DocumentHost {
                 None
             }
             Request::Inverse { page, x, y } => {
-                let _ = self.synctex.send(SynctexCmd::Inverse { page, x, y });
+                if self.synctex.send(SynctexCmd::Inverse { page, x, y }).is_ok() {
+                    self.synctex_pending += 1;
+                }
                 None
             }
             Request::OpenUri(uri) => Some(Effect::OpenUri { uri, command: None }),

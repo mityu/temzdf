@@ -2,16 +2,19 @@
 # (vimtex) does: it must land in the new version.
 # Used with:
 #   mkdir -p target/e2e-sync-reload && cp target/fixtures/sample.{pdf,synctex.gz} target/e2e-sync-reload/
-#   scripts/e2e.sh tests/e2e/synctex-reload.actions -- target/debug/temzdf standalone pdf --clean target/e2e-sync-reload/sample.pdf
-# Judged (check): the forward search after the rebuild succeeds (forward).
-# Expected:
-#   forward.png  page 1 of the new version (six "Inserted paragraph" lines) with
-#                the line starting "This document exercises" highlighted in red,
-#                not the place that line had before the rebuild
+#   scripts/e2e.sh tests/e2e/synctex-reload.actions -- target/debug/temzdf standalone pdf \
+#     --config tests/e2e/configs/forward.ts target/e2e-sync-reload/sample.pdf
+# (forward.ts: the forward search's highlight stays until the next input.)
+# Judged: the forward search after the rebuild succeeds (forward-sent,
+# check) and shows page 1 of the new version (six "Inserted paragraph"
+# lines) with the line starting "This document exercises" highlighted in
+# red, not the place that line had before the rebuild (forward, expect:
+# the replay opens the new version and sends both searches, the first
+# one, for the old version, to the new SyncTeX data).
 line=$(grep -n "^This document exercises" tests/fixtures/sample-insert.tex | cut -d: -f1)
 pause 1
 # A first forward search loads the old SyncTeX data into the viewer.
-target/debug/temzdf --forward "$(grep -n "^Back to Section" tests/fixtures/sample.tex | cut -d: -f1):sample.tex" target/e2e-sync-reload/sample.pdf
+forward "$(grep -n "^Back to Section" tests/fixtures/sample.tex | cut -d: -f1):sample.tex" target/e2e-sync-reload/sample.pdf
 pause 1
 keys g
 pause 0.5
@@ -19,6 +22,6 @@ pause 0.5
 cp target/fixtures/sample-insert.pdf target/e2e-sync-reload/new.pdf
 mv target/e2e-sync-reload/new.pdf target/e2e-sync-reload/sample.pdf
 cp target/fixtures/sample-insert.synctex.gz target/e2e-sync-reload/sample.synctex.gz
-check forward target/debug/temzdf --forward "$line:sample-insert.tex" target/e2e-sync-reload/sample.pdf
+check forward-sent forward "$line:sample-insert.tex" target/e2e-sync-reload/sample.pdf
 pause 0.8
-shot forward
+expect forward

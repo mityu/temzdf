@@ -48,8 +48,9 @@ impl Session {
         self.invocation += 1;
         // A cancelled operation a key asked for is told in a message.
         self.cli_cancel = None;
-        // A key dismisses error messages (and is handled as usual).
-        let dismissed = Outcome::None.or(self.dismiss_errors());
+        // A key dismisses error messages and forward-search highlights
+        // shown until input (and is handled as usual).
+        let dismissed = Outcome::None.or(self.dismiss_errors()).or(self.input_arrived());
         if self.hold_key(k) {
             return dismissed;
         }
@@ -587,11 +588,24 @@ impl Session {
 
     pub fn mouse(&mut self, m: &MouseEvent, now: Instant) -> Outcome {
         self.clock = self.clock.max(now);
+        let gone = Outcome::None.or(self.input_arrived());
         if self.hold_mouse(m) {
-            return Outcome::None;
+            return gone;
         }
-        let out = self.mouse_inner(m, now);
+        let out = gone.merge(self.mouse_inner(m, now));
         out.merge(self.flush_events())
+    }
+
+    /// Key or mouse input arrived: forward-search highlights shown until
+    /// then go (`o.forwardflash = "input"`). Whether any did.
+    fn input_arrived(&mut self) -> bool {
+        let mut changed = false;
+        for e in self.panes.values_mut() {
+            if let Kind::Pdf { pane, .. } = &mut e.kind {
+                changed |= pane.input_arrived();
+            }
+        }
+        changed
     }
 
     fn mouse_inner(&mut self, m: &MouseEvent, now: Instant) -> Outcome {

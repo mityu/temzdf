@@ -409,7 +409,8 @@ with the plan.
 - Options (global for now, Vim-style names): `timeoutlen`, `splitbelow`,
   `splitright`, `modehistory` (100), `scrollstep` (60), `scrollsmoothness`
   (60), `linkopener`, `linkpreview`, `linkpreviewdelay` (300),
-  `reloaddebounce` (200), `reloadanchor`, `synctexeditor`.
+  `reloaddebounce` (200), `reloadanchor`, `synctexeditor`, `forwardflash`
+  (1500, or `"input"`; 2026-11-23).
 - `ModeChanged(old, new)` joins the events.
 - `temzdf print-types` (hidden) writes `temzdf.d.ts` from the command
   registry and the static API; generated, never committed. (Since

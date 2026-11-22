@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use temzdf_pdfview::host::HostOptions;
+use temzdf_pdfview::pane::FlashLength;
 use temzdf_protocol::script::ScriptValue;
 use termpix_core::scroll::ScrollConfig;
 
@@ -74,6 +75,8 @@ pub struct Options {
     /// Preview internal links after the pointer rests on one this long.
     pub linkpreview: bool,
     pub linkpreviewdelay: Duration,
+    /// How long a forward search's highlight stays.
+    pub forwardflash: FlashLength,
     /// Wait this long after the PDF changed before reloading.
     pub reloaddebounce: Duration,
     /// Keep the line being read across reloads (else the position).
@@ -151,6 +154,7 @@ impl Default for Options {
             linkopener: None,
             linkpreview: true,
             linkpreviewdelay: temzdf_pdfview::pane::DEFAULT_PREVIEW_DELAY,
+            forwardflash: temzdf_pdfview::pane::DEFAULT_FLASH,
             reloaddebounce: Duration::from_millis(200),
             reloadanchor_text: false,
             synctexeditor: None,
@@ -230,6 +234,13 @@ impl Session {
             }
             "linkpreview" => o.linkpreview = flag()?,
             "linkpreviewdelay" => o.linkpreviewdelay = ms()?,
+            "forwardflash" => {
+                o.forwardflash = match value {
+                    ScriptValue::Str(s) if s == "input" => FlashLength::UntilInput,
+                    ScriptValue::Num(_) => FlashLength::For(ms()?),
+                    _ => return Err("o.forwardflash: expected milliseconds or \"input\"".into()),
+                }
+            }
             "reloaddebounce" => o.reloaddebounce = ms()?,
             "reloadanchor" => {
                 o.reloadanchor_text =
@@ -339,6 +350,10 @@ impl Session {
             }),
             "linkpreview" => ScriptValue::Bool(o.linkpreview),
             "linkpreviewdelay" => ms(o.linkpreviewdelay),
+            "forwardflash" => match o.forwardflash {
+                FlashLength::For(d) => ms(d),
+                FlashLength::UntilInput => ScriptValue::Str("input".into()),
+            },
             "reloaddebounce" => ms(o.reloaddebounce),
             "reloadanchor" => name_in(RELOADANCHOR, &o.reloadanchor_text),
             "synctexeditor" => o.synctexeditor.clone().map_or(ScriptValue::Null, ScriptValue::Str),

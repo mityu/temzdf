@@ -107,12 +107,20 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let settings = settings(true, script_settings(opts.clean, opts.config.as_deref())?, opts.editor.as_deref());
     let mut session = Session::new(name, front.geometry(), front.hints(), settings, sink(&tx, AppEvent::Session));
     session.start(PaneSpec::File(path.to_owned()), None)?;
+    // TEMZDF_RECORD_INPUT=FILE: what this viewer handles, for replaying
+    // (scripts/e2e.sh judges mouse actions with it). From here: forward
+    // searches that come while the document opens count too.
+    let mut recorder = crate::headless::Recorder::from_env()?;
 
     // Wait for the document before drawing anything.
     while session.is_starting() {
         match rx.recv()? {
             AppEvent::Session(ev) => {
-                session.handle(ev, Instant::now());
+                let now = Instant::now();
+                if let (Some(r), SessionEvent::Forward(_, req)) = (&mut recorder, &ev) {
+                    r.forward(req, now);
+                }
+                session.handle(ev, now);
             }
             AppEvent::Term(TermEvent::Terminate) => return Ok(()),
             // Resizes count already (keys wait for the document).
@@ -131,7 +139,11 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     }
     apply_view(&mut session, opts.page, opts.scale, Instant::now());
     if let Some(req) = opts.forward.take() {
-        session.forward(req);
+        let now = Instant::now();
+        if let Some(r) = &mut recorder {
+            r.forward(&req, now);
+        }
+        session.forward(req, now);
     }
     let report = |tx: &Sender<AppEvent>| {
         let tx = tx.clone();
@@ -140,9 +152,6 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
         }
     };
 
-    // TEMZDF_RECORD_INPUT=FILE: what this viewer handles, for replaying
-    // (scripts/e2e.sh judges mouse actions with it).
-    let mut recorder = crate::headless::Recorder::from_env()?;
     let mut dirty = true;
     loop {
         if dirty && front.ready() && !session.holds_frames() {
@@ -199,6 +208,9 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
                 Input::Handled(false) => Outcome::None,
             },
             Some(AppEvent::Session(ev)) => {
+                if let (Some(r), SessionEvent::Forward(_, req)) = (&mut recorder, &ev) {
+                    r.forward(req, now);
+                }
                 let o = session.handle(ev, now);
                 front.sync(session.images());
                 o

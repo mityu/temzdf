@@ -82,7 +82,8 @@ struct PdfArgs {
     keys: Option<String>,
     /// For --render-frame: a timeline of keys and mouse input to replay first
     /// (one per line: "MS key KEYS", "MS press|release|drag X Y BUTTON",
-    /// "MS move X Y", "MS wheel DIR X Y", "MS end"; see headless.rs).
+    /// "MS move X Y", "MS wheel DIR X Y", "MS forward LINE COLUMN FILE",
+    /// "MS end"; see headless.rs).
     #[arg(long, value_name = "FILE")]
     events: Option<PathBuf>,
     /// For --render-frame: blend translucent layers in linear light like kitty
@@ -327,11 +328,15 @@ fn main() -> Result<()> {
     let start_flags = session_only_options(&cli, false);
     match cli.command.take() {
         Some(Cmd::Standalone { kind: Standalone::Pdf(args) }) => {
-            // A frame is drawn with the shipped configuration, and no
-            // viewer runs to search.
+            // A frame is drawn with the shipped configuration (or
+            // --config's), and no viewer runs to search.
             if args.render_frame.is_some() {
                 let forward = args.forward.is_some().then_some("--forward");
-                warn_unused(&start_flags.iter().copied().chain(forward).collect::<Vec<_>>(), "--render-frame");
+                // (--clean leaves --config's script out, so it counts only with one.)
+                let configured = cli.config.is_some();
+                let unused =
+                    start_flags.iter().copied().filter(|f| *f != "--config" && (*f != "--clean" || !configured));
+                warn_unused(&unused.chain(forward).collect::<Vec<_>>(), "--render-frame");
             }
             return standalone_pdf(args, &cli);
         }
@@ -572,6 +577,8 @@ fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
             linear_blending: args.linear_blending,
             text: args.text.clone(),
             mask: args.mask.clone(),
+            // Never the user's configuration: the shipped one, or --config's.
+            config: if cli.clean { None } else { cli.config.clone() },
         };
         return headless::render_frame(&file, out, &opts);
     }

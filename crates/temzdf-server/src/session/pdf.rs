@@ -147,9 +147,9 @@ impl Session {
     }
 
     /// Ask for a forward search in the focused pane's document.
-    pub fn forward(&mut self, req: Forward) {
+    pub fn forward(&mut self, req: Forward, now: Instant) {
         if let Some(doc) = self.panes.get(&self.focus).and_then(PaneEntry::doc) {
-            self.handle(SessionEvent::Forward(doc, req), Instant::now());
+            self.handle(SessionEvent::Forward(doc, req), now);
         }
     }
 }

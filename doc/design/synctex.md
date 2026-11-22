@@ -14,7 +14,9 @@ socket (`$XDG_RUNTIME_DIR/temzdf/<hash>.sock`; on macOS under the per-user
 `/var/folders/.../T/`; see `crates/temzdf-server/src/forward.rs`)
 and the command exits immediately. The viewer scrolls the matching place 30 % down
 the screen (unless it is 10-85 % down already, as for a search hit) and
-highlights it in red for 1.5 s.
+highlights it in red for 1.5 s (`o.forwardflash`: another length in
+milliseconds, 0 for none, or `"input"` to keep it until the next key or
+mouse input).
 Otherwise `temzdf` starts a new session showing `doc.pdf` (named as `temzdf
 FILE` names it, or `-s NAME`), sends the search once the pane listens, and
 attaches. `temzdf standalone pdf --forward ... doc.pdf` starts the standalone

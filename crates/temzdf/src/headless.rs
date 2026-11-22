@@ -5,9 +5,10 @@
 //! kitty-compatible terminal would show.
 //!
 //! Input comes as keys (`--keys`, each run to its end) or as a timeline of
-//! keys and mouse events (`--events`, see [`parse_events`]) replayed on a
-//! simulated clock: wheel acceleration, easing, link previews and other
-//! timers see the same times as in the run that was recorded.
+//! keys, mouse events and forward searches (`--events`, see
+//! [`parse_events`]) replayed on a simulated clock: wheel acceleration,
+//! easing, link previews and other timers see the same times as in the run
+//! that was recorded.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use temzdf_scene::Hints;
+use temzdf_server::forward::Forward;
 use temzdf_server::session::{Session, SessionEvent};
 use temzdf_tty::Presenter;
 use termpix::compositor::{Backend, Compositor};
@@ -40,6 +42,9 @@ pub struct FrameOptions {
     /// Write a mask of the cells the terminal draws itself here (as
     /// `render-session --mask`).
     pub mask: Option<PathBuf>,
+    /// This configuration script on top of the shipped defaults (never the
+    /// user's own).
+    pub config: Option<PathBuf>,
 }
 
 /// Parse keys in Vim's `feedkeys` notation (`jjj++02G/needle<CR>`).
@@ -61,8 +66,17 @@ pub struct Timed {
 pub enum Input {
     Key(KeyEvent),
     Mouse(MouseEvent),
+    /// A SyncTeX forward search (as `temzdf --forward` sends).
+    Forward(Forward),
     /// Render the screen as it is at this time.
     End,
+}
+
+/// The first word of `s` and the rest after the blanks that follow it.
+fn first_word(s: &str) -> (&str, &str) {
+    let s = s.trim_start();
+    let end = s.find(char::is_whitespace).unwrap_or(s.len());
+    (&s[..end], s[end..].trim_start())
 }
 
 /// Parse a timeline, one input per line, times in milliseconds since the
@@ -75,13 +89,29 @@ pub enum Input {
 /// 180   release 160 430 left
 /// 200   move 300 200            move, leave: X Y [MODS]
 /// 230   wheel down 300 200 C    wheel up|down|left|right X Y [MODS]
+/// 900   forward 12 0 a b.tex    forward search: LINE COLUMN FILE
 /// 1500  end                     render at this time (else when settled)
 /// ```
 ///
-/// MODS are letters: C (Ctrl), S (Shift), A (Alt).
+/// MODS are letters: C (Ctrl), S (Shift), A (Alt). A forward search's FILE
+/// is the rest of the line, blanks and `#` included.
 pub fn parse_events(text: &str) -> Result<Vec<Timed>> {
     let mut out = Vec::new();
     for (n, line) in text.lines().enumerate() {
+        let bad = || anyhow::anyhow!("line {}: {:?}", n + 1, line.trim());
+        let (ms, rest) = first_word(line);
+        if let ("forward", rest) = first_word(rest) {
+            let at = Duration::from_millis(ms.parse().map_err(|_| bad())?);
+            let (line_no, rest) = first_word(rest);
+            let (column, file) = first_word(rest);
+            let (Ok(line_no), Ok(column)) = (line_no.parse(), column.parse()) else { return Err(bad()) };
+            if file.is_empty() {
+                return Err(bad());
+            }
+            let file = PathBuf::from(file);
+            out.push(Timed { at, input: Input::Forward(Forward { file, line: line_no, column }) });
+            continue;
+        }
         // A comment is a word that starts with `#` (keys may be `#`).
         let words_of = |line: &str| -> Vec<String> {
             let mut words: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
@@ -95,7 +125,6 @@ pub fn parse_events(text: &str) -> Result<Vec<Timed>> {
         if all.is_empty() {
             continue;
         }
-        let bad = || anyhow::anyhow!("line {}: {:?}", n + 1, line.trim());
         let mut words = all.iter().map(String::as_str);
         let at = Duration::from_millis(words.next().and_then(|w| w.parse().ok()).ok_or_else(bad)?);
         let what = words.next().ok_or_else(bad)?;
@@ -176,6 +205,12 @@ impl Recorder {
         let ms = now.saturating_duration_since(self.start).as_millis();
         let _ = writeln!(self.out, "{ms} {what}");
         let _ = self.out.flush();
+    }
+
+    /// A forward search, as it came (`temzdf --forward`, or the viewer's
+    /// own `--forward`).
+    pub fn forward(&mut self, req: &Forward, now: Instant) {
+        self.line(now, &format!("forward {} {} {}", req.line, req.column, req.file.display()));
     }
 
     pub fn key(&mut self, k: &KeyEvent, now: Instant) {
@@ -268,8 +303,12 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     let name = crate::app::session_name(pdf_path);
     let (tx, rx) = mpsc::channel::<SessionEvent>();
     let sink = crate::app::sink(&tx, |e| e);
-    // The shipped default configuration maps the keys (no user configuration).
-    let script = crate::app::script_settings(true, None)?;
+    // The shipped default configuration maps the keys (no user
+    // configuration), with --config's script if given.
+    let script = match &opts.config {
+        Some(config) => crate::app::script_settings(false, Some(config))?,
+        None => crate::app::script_settings(true, None)?,
+    };
     let settings = crate::app::settings(false, script, None);
     // A Layered terminal over inline transfers, like the mock terminal.
     let mut session = Session::new(name, opts.geometry, Hints::default(), settings, sink);
@@ -310,6 +349,9 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
                 }
                 Input::Mouse(m) => {
                     session.mouse(m, now);
+                }
+                Input::Forward(req) => {
+                    session.forward(req.clone(), now);
                 }
                 Input::End => {
                     ended = true;
@@ -380,6 +422,10 @@ mod tests {
         assert_eq!(keys("0     key jj<C-f>\n"), ["j", "j", "<C-f>"]);
         assert_eq!(keys("0\tkey\tG   # to the end\n# a comment\n"), ["G"]);
         assert_eq!(keys("0 key #\n"), ["#"]);
+        // A forward search needs its line, column and file.
+        for bad in ["0 forward 12 0\n", "0 forward 12 x a.tex\n", "0 forward\n", "x forward 1 0 a.tex\n"] {
+            assert!(parse_events(bad).is_err(), "{bad:?}");
+        }
         // What the recorder writes for '#' and Alt+'#' replays as those keys.
         let path = std::env::temp_dir().join(format!("temzdf-record-hash-{}.txt", std::process::id()));
         let start = Instant::now();
@@ -410,11 +456,14 @@ mod tests {
             (90, Input::Mouse(mouse(MouseEventKind::Drag(MouseButton::Left), Modifiers::SHIFT))),
             (95, Input::Mouse(mouse(MouseEventKind::Release(MouseButton::Left), Modifiers::NONE))),
             (99, Input::Mouse(mouse(MouseEventKind::Leave, Modifiers::NONE))),
+            // The file's blanks and `#` are its own.
+            (110, Input::Forward(Forward { file: "dir with  blanks/#1 a.tex".into(), line: 12, column: 3 })),
         ];
         for (ms, i) in &input {
             match i {
                 Input::Key(k) => r.key(k, at(*ms)),
                 Input::Mouse(m) => r.mouse(m, at(*ms)),
+                Input::Forward(f) => r.forward(f, at(*ms)),
                 Input::End => {}
             }
         }
@@ -429,6 +478,7 @@ mod tests {
             match (want, &got.input) {
                 (Input::Key(a), Input::Key(b)) => assert_eq!((a.code, a.modifiers), (b.code, b.modifiers)),
                 (Input::Mouse(a), Input::Mouse(b)) => assert_eq!(a, b),
+                (Input::Forward(a), Input::Forward(b)) => assert_eq!(a, b),
                 other => panic!("{other:?}"),
             }
         }

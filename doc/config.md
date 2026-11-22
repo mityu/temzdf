@@ -364,6 +364,7 @@ unsets it.
 | `linkopener` | unset | command opening external links, the URI appended (`["firefox"]`); unset: `xdg-open` / `open`. Runs in the client; a failure shows as a message. Only `http`, `https`, `mailto` and `ftp` links open, and `file` links to existing documents: regular files, not executable, not of a kind openers launch (`.desktop`, `.command`, scripts, ...): documents and programs are not trusted |
 | `linkpreview` | `true` | preview internal links (references, citations, the outline) when the pointer rests on one |
 | `linkpreviewdelay` | `300` | milliseconds before the preview |
+| `forwardflash` | `1500` | how long a forward search's highlight stays: milliseconds (`0`: no highlight), or `"input"`: until the next key or mouse input (a key's release and a modifier alone do not count; a mouse move does) |
 | `reloaddebounce` | `200` | milliseconds after the PDF last changed before reloading |
 | `reloadanchor` | `"position"` | `"position"` keeps the page and place on it (as Skim, Okular); `"text"` finds the line read a third down the screen in the new PDF (falling back to the position) |
 | `synctexeditor` | unset | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/design/synctex.md. `--editor` overrides it |

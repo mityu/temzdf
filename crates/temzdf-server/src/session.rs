@@ -722,6 +722,7 @@ impl Session {
         let host = entry.host.as_mut().ok_or("the document is not open")?;
         let mut view = PdfPane::with_document(entry.name.clone(), host.info.clone(), host.doc.clone(), geometry);
         view.preview_delay = self.options.preview_delay();
+        view.flash_length = self.options.forwardflash;
         view.anchor_by_text = self.options.reloadanchor_text;
         view.viewer.viewport.set_config(self.options.scroll());
         view.viewer.stand_in_mode = StandIn::for_hints(self.hints);
@@ -1301,11 +1302,13 @@ impl Session {
     fn apply_options(&mut self) {
         let (scroll, preview, anchor, host) =
             (self.options.scroll(), self.options.preview_delay(), self.options.reloadanchor_text, self.options.host());
+        let flash = self.options.forwardflash;
         for e in self.panes.values_mut() {
             match &mut e.kind {
                 Kind::Pdf { pane: p, .. } => {
                     p.viewer.viewport.set_config(scroll);
                     p.preview_delay = preview;
+                    p.flash_length = flash;
                     p.anchor_by_text = anchor;
                 }
                 Kind::Markdown { pane, .. } => pane.set_scroll_config(scroll),
@@ -1551,7 +1554,10 @@ impl Session {
     /// runs (keys wait for it).
     pub fn is_idle(&self) -> bool {
         !self.script.busy()
-            && self.docs.values().all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle()))
+            && self
+                .docs
+                .values()
+                .all(|d| d.host.as_ref().is_some_and(|h| h.doc.borrow().cache.is_idle() && h.synctex_idle()))
             && self.md_docs.values().all(|d| d.strips.is_idle())
             && self.panes.values().all(|e| match &e.kind {
                 Kind::Pdf { pane, .. } => !pane.search.is_active() || pane.search.is_complete(),

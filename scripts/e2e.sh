@@ -65,6 +65,12 @@
 #                      20; past that FAIL wait_still in OUTDIR/expect.txt):
 #                      for judging a screen once something moving on its own
 #                      (autoscroll) has stopped, however long it took
+#   forward LINE[:COLUMN]:FILE PDF  a SyncTeX forward search from another
+#                      process (`temzdf --forward`, as an editor sends it;
+#                      the COMMAND's temzdf), recorded for `expect` like
+#                      the input; fails (under set -e: stops the run) when
+#                      the command does, so wrap it in `check NAME` to judge
+#                      it
 #   ime on|off         (-I) switch the input method
 #   expect NAME KEYS   save OUTDIR/NAME.png and compare it with the screen
 #                      `temzdf standalone pdf --render-frame` draws for the
@@ -80,7 +86,9 @@
 #                      before it until animations end. Mouse actions are not
 #                      judged inside multiplexers (they report cells).
 #                      Both forms only for COMMAND = temzdf standalone pdf
-#                      [--page N] [--scale S] FILE (possibly after
+#                      [--page N] [--scale S] [--config FILE] FILE (the
+#                      headless side loads that configuration too; else
+#                      --clean; possibly after
 #                      `env VAR=...`) and terminals
 #                      drawing from the window's top-left (kitty, WezTerm,
 #                      Ghostty without decorations). The images are compared
@@ -149,8 +157,9 @@
 # command that ended while starting, or no window, exits 1. Requires the dev
 # shell (kitty, xvfb-run, xdotool, imagemagick; Ghostty from the host);
 # re-executes inside it.
-# A COMMAND that runs temzdf must pass --clean (checked), so scenarios see the
-# shipped defaults rather than the user's config.ts.
+# A COMMAND that runs temzdf must pass --clean or --config FILE (checked), so
+# scenarios see the shipped defaults (or a configuration of the
+# repository's) rather than the user's config.ts.
 set -euo pipefail
 
 # shellcheck source=SCRIPTDIR/lib/devshell.sh
@@ -595,6 +604,14 @@ type() {
   record key "$out"
 }
 pause() { sleep "$1"; }
+forward() {
+  local spec=$1 pdf=$2 line col file
+  "$forward_temzdf" --forward "$spec" "$pdf" || return
+  # Recorded once sent (when temzdf has it), as LINE COLUMN FILE.
+  IFS=: read -r line col file <<<"$spec"
+  [[ -n $file ]] || { file=$col col=0; }
+  record forward "$line" "$col" "$file"
+}
 ime() {
   case $1 in
     on) fcitx5-remote -o ;;
@@ -978,7 +995,7 @@ expect() {
     input=("--keys=$keys")
   else
     # Everything sent so far, then the moment of the screenshot.
-    if [[ -n $mux ]] && grep -qvE '^[0-9]+ key ' "$events"; then
+    if [[ -n $mux ]] && grep -qvE '^[0-9]+ (key|forward) ' "$events"; then
       echo "FAIL $name: mouse actions are not judged inside $mux" | tee -a "$outdir/expect.txt"
       return
     fi
@@ -1047,15 +1064,17 @@ if [[ "$1" == */* && -e "$1" ]]; then
   set -- "$(realpath "$1")" "${@:2}"
 fi
 # For `expect`: the headless renderer with the app's document and view options.
-expect_cmd=() expect_file=
+# For `forward`: the COMMAND's temzdf (else the one in PATH).
+expect_cmd=() expect_file='' forward_temzdf=temzdf
 args=("$@")
 while [[ ${#args[@]} -gt 0 && ( ${args[0]} == env || ${args[0]} == *=* ) ]]; do args=("${args[@]:1}"); done
 if ((${#args[@]} > 0)); then
+  [[ ${args[0]} == */temzdf ]] && forward_temzdf=${args[0]}
   expect_cmd=("${E2E_RENDERER:-${args[0]}}" standalone pdf)
   expect_file=${args[-1]}
   for ((i = 1; i < ${#args[@]} - 1; i++)); do
     case ${args[i]} in
-      --page | --scale) expect_cmd+=("${args[i]}" "${args[i + 1]}") ;;
+      --page | --scale | --config) expect_cmd+=("${args[i]}" "${args[i + 1]}") ;;
     esac
   done
   # kitty and Ghostty blend translucent images themselves, in linear light.

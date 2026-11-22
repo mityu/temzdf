@@ -111,12 +111,13 @@ scenario() {
       mkdir -p target/e2e-sync
       cp target/fixtures/sample.pdf target/fixtures/sample.synctex.gz target/e2e-sync/
       rm -f target/e2e-sync/inverse.txt
-      pdf --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf
+      cmd=(target/debug/temzdf standalone pdf --config tests/e2e/configs/forward.ts
+        --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf)
       ;;
     synctex-reload)
       mkdir -p target/e2e-sync-reload
       cp target/fixtures/sample.pdf target/fixtures/sample.synctex.gz target/e2e-sync-reload/
-      pdf target/e2e-sync-reload/sample.pdf
+      cmd=(target/debug/temzdf standalone pdf --config tests/e2e/configs/forward.ts target/e2e-sync-reload/sample.pdf)
       ;;
     reload)
       mkdir -p target/e2e-reload

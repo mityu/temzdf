@@ -204,6 +204,42 @@ fn key(s: &mut Session, spec: &str) -> Outcome {
     out
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+fn forward_highlights_until_input_go_with_the_next_key_or_mouse_input() {
+    use temzdf_pdfcore::pdf::PageRect;
+    use temzdf_pdfcore::synctex::PdfBox;
+    let (mut s, rx) = session();
+    settle(&mut s, &rx);
+    s.set_option("forwardflash", &ScriptValue::Str("input".into())).unwrap();
+    let pane = s.focus;
+    let flash = |s: &mut Session| {
+        let rect = PageRect { x0: 10.0, y0: 10.0, x1: 50.0, y1: 20.0 };
+        s.panes
+            .get_mut(&pane)
+            .and_then(PaneEntry::pdf)
+            .unwrap()
+            .forward_result(vec![PdfBox { page: 0, rect }], Instant::now());
+    };
+    // Still there (taken now, so not gone before).
+    let shown = |s: &mut Session| s.panes.get_mut(&pane).and_then(PaneEntry::pdf).unwrap().input_arrived();
+    flash(&mut s);
+    assert!(!s.tick(Instant::now() + Duration::from_secs(60)));
+    assert!(shown(&mut s), "no time ends it");
+    flash(&mut s);
+    let m =
+        MouseEvent { kind: MouseEventKind::Move, x: 300, y: 200, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
+    assert_eq!(s.mouse(&m, Instant::now()), Outcome::Redraw);
+    assert!(!shown(&mut s), "a mouse move ends it");
+    flash(&mut s);
+    let release = KeyEvent { kind: KeyEventKind::Release, ..notation::parse("x").unwrap()[0].event() };
+    s.key(&release, Instant::now());
+    assert!(shown(&mut s), "a key's release is no input of its own");
+    flash(&mut s);
+    key(&mut s, "x");
+    assert!(!shown(&mut s), "a key ends it");
+}
+
 fn click(s: &mut Session, x: i32, y: i32) {
     for kind in [MouseEventKind::Press(MouseButton::Left), MouseEventKind::Release(MouseButton::Left)] {
         let m = MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
@@ -3940,6 +3976,7 @@ fn every_declared_option_reads_and_writes_back() {
         ("number", &["off", "absolute", "relative", "both"]),
         ("clipboard", &["all", "copies", "none"]),
         ("markdownmode", &["text", "graphics"]),
+        ("forwardflash", &["input"]),
     ] {
         for v in values {
             let v = ScriptValue::Str((*v).into());
@@ -3947,6 +3984,11 @@ fn every_declared_option_reads_and_writes_back() {
             assert_eq!(s.get_option(name), Ok(v), "{name}");
         }
     }
+    // forwardflash takes milliseconds as well as "input", nothing else.
+    s.set_option("forwardflash", &ScriptValue::Num(250.0)).unwrap();
+    assert_eq!(s.get_option("forwardflash"), Ok(ScriptValue::Num(250.0)));
+    assert!(s.set_option("forwardflash", &ScriptValue::Str("key".into())).is_err());
+    assert!(s.set_option("forwardflash", &ScriptValue::Bool(true)).is_err());
     // A name the declarations do not have is refused both ways.
     assert!(!options::OPTIONS.contains(&"nosuchoption"));
     assert_eq!(s.get_option("nosuchoption"), Err("no option \"nosuchoption\"".into()));

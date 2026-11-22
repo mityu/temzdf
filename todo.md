@@ -412,8 +412,11 @@ server on one `Session`). Next and open:
   page a forward search lands on (the status line's text; 2026-11-02).
   `select-autoscroll` is judged with `expect` once the autoscroll reached
   the document's end, and `scroll_demo` by how far its image moved
-  (2026-11-23). Left unjudged: SyncTeX's highlight, IME composing,
-  sessions inside multiplexers, and Ghostty's text.
+  (2026-11-23); `synctex` and `synctex-reload` judge the forward search's
+  highlight with `expect` (the replay sends the recorded searches;
+  `o.forwardflash = "input"` keeps the highlight until the screenshot;
+  2026-11-23). Left unjudged: IME composing, sessions inside
+  multiplexers, and Ghostty's text.
 - MuPDF's allocation lock makes text rendering slower with more threads (see
   `doc/dev/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the
   allocator itself, and `mupdf-sys` backs every context with the same static
