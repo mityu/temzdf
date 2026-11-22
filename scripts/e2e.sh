@@ -60,6 +60,11 @@
 #                      showed one that was not, at most S seconds (default
 #                      10): for judging a screen whose tiles come slowly
 #                      (inline transfers); nothing for the GUI
+#   wait_still [S]     until the screen stands still (unchanged across three
+#                      screenshots 0.3 s apart), at most S seconds (default
+#                      20; past that FAIL wait_still in OUTDIR/expect.txt):
+#                      for judging a screen once something moving on its own
+#                      (autoscroll) has stopped, however long it took
 #   ime on|off         (-I) switch the input method
 #   expect NAME KEYS   save OUTDIR/NAME.png and compare it with the screen
 #                      `temzdf standalone pdf --render-frame` draws for the
@@ -692,6 +697,33 @@ wait_complete() {
     sleep 0.05
   done
   phase complete
+}
+wait_still() {
+  local limit=${1:-20} deadline still=0 a=$outdir/still.a.png b=$outdir/still.b.png
+  deadline=$(($(usec) + limit * 1000000))
+  local shoot=(be_shot)
+  [[ $display == macos ]] &&
+    shoot=(screencapture -x -R "$disp_x,$((disp_y + menu_bar)),$width,$height")
+  "${shoot[@]}" "$a"
+  while (($(usec) < deadline)); do
+    sleep 0.3
+    "${shoot[@]}" "$b"
+    if cmp -s "$a" "$b"; then
+      if ((++still == 2)); then
+        rm -f "$a" "$b"
+        phase still
+        return 0
+      fi
+    else
+      still=0
+    fi
+    mv "$b" "$a"
+  done
+  rm -f "$a" "$b"
+  phase "still (timed out)"
+  # (Not a failed status: the actions run under set -e; the FAIL line
+  # fails the run at its end.)
+  echo "FAIL wait_still: the screen did not stand still within ${limit}s" | tee -a "$outdir/expect.txt"
 }
 # The GUI's form of expect: the window against an offscreen render of the
 # same session at this moment.

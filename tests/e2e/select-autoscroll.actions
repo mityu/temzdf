@@ -3,8 +3,8 @@
 # Judged: dragging from the title into the bottom edge and holding scrolls
 # the document by itself while the selection grows, until the end of the
 # two pages (held, expect: the bottom of page 2, its page number selected;
-# the autoscroll there takes under 2 s, held 4 s, so the screen no longer
-# depends on how many frames the viewer drew); releasing copies the
+# taken once the screen stood still, so it does not depend on how many
+# frames the viewer drew, nor on how long that took); releasing copies the
 # selection, from the title to the document's end, the last line and page
 # 2's number (clipboard.txt; copied and to-end, check).
 # The pointer stays right of the page number (x 480; at x 450 kitty left it
@@ -16,8 +16,8 @@ down 318 188
 # position (the selection then started below the title).
 sleep 0.1
 for y in 260 360 460 560 575; do move 480 $y; sleep 0.05; done
-# To the end (under 2 s) and a margin.
-pause 4
+# Until the autoscroll stopped at the end.
+wait_still
 expect held
 up
 pause 0.5

@@ -593,7 +593,8 @@ frame's (`--text`, `NAME.expected.txt`) where the terminal can tell it
   the pages it scrolls onto, and wheel flicks, easing and link previews
   (after 300 ms resting) come out as in the terminal. It ends as long after temzdf's last
   input as the screenshot came after the last one sent; pause before
-  `expect` until animations end. The first screen is up, its pages loaded,
+  `expect` until animations end, or wait for the screen to stand still
+  (`wait_still`, for motion of unknown length such as autoscroll). The first screen is up, its pages loaded,
   before the first input (as in the terminal, where the scenario starts
   seconds later).
 
