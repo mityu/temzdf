@@ -230,10 +230,13 @@ server on one `Session`). Next and open:
     do: the first run of `check-windows`, and the test code it finds
     still to gate.
   - The VM: vitro with a local Windows 11 ISO (OVMF firmware), then
-    `scripts/windows-vm.sh` as a thin wrapper over it, and the ConPTY
-    experiment (kitty graphics, kitty keyboard, SGR-pixel mouse through
-    portable-pty, also with its pass-through flag and a side-loaded
-    conpty.dll).
+    `scripts/windows-vm.sh` as a thin wrapper over it. The ConPTY
+    experiment with the in-box ConPTY is done (`doc/terminals/conpty.md`,
+    `experiments/conpty/`): kitty graphics are dropped, the kitty
+    keyboard, the SGR-pixel mouse and OSC 52 pass, the pass-through flag
+    changes nothing. Still to try: a side-loaded `conpty.dll` with
+    `OpenConsole.exe` (a download from Microsoft), and the probes inside
+    Windows Terminal and WezTerm.
   - The product: compile (gate `rustix`, `signal-hook`, `libc`;
     libtexprintf built with `cc`; build tooling), the transport
     (`uds_windows`), directories and processes (the GUI attached to a

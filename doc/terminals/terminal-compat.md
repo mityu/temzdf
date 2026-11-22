@@ -67,6 +67,11 @@ Known problems:
   takes only the grid from the kernel and the cell size from the report
   (`resized` in `crates/temzdf-tty/src/frontend.rs`).
 - tmux: 1016 passthrough unverified; fall back to cell coordinates.
+- Windows' in-box ConPTY (build 26200, measured 2026-11-23,
+  `doc/terminals/conpty.md`): drops kitty graphics (APC) and XTGETTCAP,
+  answers DA1 and DECRQM itself, passes the kitty keyboard, mouse (1016
+  too), 2004, 2026, OSC 52 and OSC 7 sequences; input reaches the program
+  unchanged. `PSEUDOCONSOLE_PASSTHROUGH_MODE` changes nothing there.
 
 ## Verified in practice
 

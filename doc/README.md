@@ -78,6 +78,8 @@ What terminals and operating systems do, and what we rely on.
   modes, smooth scrolling.
 - [terminals/macos.md](terminals/macos.md): macOS specifics, verification
   results, and how to drive GUI terminals there.
+- [terminals/conpty.md](terminals/conpty.md): what Windows' pseudoconsole
+  (ConPTY) passes, drops or answers itself (`experiments/conpty/`).
 
 ## Development (`dev/`)
 
