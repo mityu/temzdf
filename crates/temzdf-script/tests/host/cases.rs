@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use temzdf_protocol::script::{FromHost, HostOp, ScriptValue, ToHost, Token};
 
-struct Session {
+pub(crate) struct Session {
     to_host: UnixStream,
     from_host: BufReader<UnixStream>,
     dir: PathBuf,
@@ -25,6 +25,11 @@ impl Session {
 
     /// With another limit for timers and promise jobs.
     fn start_with_limit(files: &[(&str, &str)], limit: Duration) -> Self {
+        Self::start_with(files, |host_in, host_out| crate::spawn_host(host_in, host_out, limit))
+    }
+
+    /// With the host started by `spawn` (given its input and output).
+    pub(crate) fn start_with(files: &[(&str, &str)], spawn: impl FnOnce(UnixStream, UnixStream)) -> Self {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("temzdf-script-test-{}-{n}", std::process::id()));
@@ -35,12 +40,12 @@ impl Session {
         }
         let (server_in, host_out) = UnixStream::pair().unwrap();
         let (host_in, server_out) = UnixStream::pair().unwrap();
-        crate::spawn_host(host_in, host_out, limit);
+        spawn(host_in, host_out);
         server_in.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
         Self { to_host: server_out, from_host: BufReader::new(server_in), dir }
     }
 
-    fn send(&mut self, msg: ToHost) {
+    pub(crate) fn send(&mut self, msg: ToHost) {
         temzdf_protocol::send(&mut self.to_host, &msg).unwrap();
     }
 
@@ -48,14 +53,14 @@ impl Session {
         temzdf_protocol::recv(&mut self.from_host).unwrap().expect("the host hung up")
     }
 
-    fn load(&mut self, file: &str) {
+    pub(crate) fn load(&mut self, file: &str) {
         let config = Some(self.dir.join(file));
         let commands = command_names().into_iter().collect();
         self.send(ToHost::Load { config, commands });
     }
 
     /// Answer requests with `null` until the host sends something else.
-    fn serve(&mut self, log: &mut Vec<String>) -> FromHost {
+    pub(crate) fn serve(&mut self, log: &mut Vec<String>) -> FromHost {
         loop {
             match self.recv() {
                 FromHost::Request { req, token, op } => {
@@ -143,7 +148,7 @@ fn base() -> u32 {
 
 /// The id of the configuration's function number `n` (from 0, in the
 /// order registered; the defaults' come first).
-fn user(n: u32) -> u32 {
+pub(crate) fn user(n: u32) -> u32 {
     base() + n
 }
 
@@ -183,7 +188,7 @@ fn describe(token: Token, op: &HostOp) -> String {
     }
 }
 
-fn ready_ok(msg: FromHost) {
+pub(crate) fn ready_ok(msg: FromHost) {
     match msg {
         FromHost::Ready(Ok(())) => {}
         other => panic!("expected Ready(Ok), got {other:?}"),

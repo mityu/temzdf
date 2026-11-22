@@ -51,9 +51,27 @@ pub fn run_with_limit(
     run_link(Box::new(link), limit)
 }
 
+/// As [`run_with_limit`], with the host's log lines (stderr otherwise) going
+/// to `log`: for tests.
+#[doc(hidden)]
+pub fn run_with_log(
+    input: impl Read + Send + 'static,
+    output: impl Write + 'static,
+    limit: Duration,
+    log: impl Fn(&str) + 'static,
+) -> Result<(), String> {
+    let link = StreamLink::new(input, output).map_err(|e| e.to_string())?;
+    run(Box::new(link), limit, Box::new(log))
+}
+
 /// Run the host over `link` until the session goes away or says
 /// [`ToHost::Shutdown`], with `limit` as the [`UNATTENDED_LIMIT`](crate::UNATTENDED_LIMIT).
 pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
+    // stderr is the session's log file.
+    run(link, limit, Box::new(|line| eprintln!("{line}")))
+}
+
+fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(), String> {
     let interrupt = Interrupts { sent: link.interrupts().into(), cleared: Arc::default() };
     let rt = Runtime::new().map_err(|e| e.to_string())?;
     let unattended = Unattended::new(limit);
@@ -62,25 +80,22 @@ pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
         rt.set_interrupt_handler(Some(Box::new(move || interrupt.raised() || unattended.overdue())));
     }
     // A promise rejected with nobody to handle it (a timer's async code, a
-    // top-level `Promise.reject`) would fail silently: say so in the log.
-    // While a configuration loads they wait (see `load_config`).
-    let held: Arc<std::sync::Mutex<Option<Vec<String>>>> = Arc::default();
-    let tracker_held = held.clone();
-    rt.set_host_promise_rejection_tracker(Some(Box::new(move |_ctx, _promise, reason, handled| {
-        if !handled {
-            // An Error: "Name: message" and where (its stack has frames only).
-            let error = reason.as_object().and_then(|o| {
-                let message: String = o.get("message").ok()?;
-                let name: String = o.get("name").unwrap_or_else(|_| "Error".into());
-                let stack: String = o.get("stack").unwrap_or_default();
-                Some(format!("{name}: {message}\n{stack}").trim_end().to_owned())
-            });
-            let text =
-                error.or_else(|| reason.get::<rquickjs::Coerced<String>>().ok().map(|c| c.0)).unwrap_or_default();
-            match tracker_held.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
-                Some(held) => held.push(text),
-                None => log_rejection(&text),
-            }
+    // top-level `Promise.reject`) would fail silently: say so in the log,
+    // once the jobs have run and a handler can no longer come
+    // (`report_rejections`). QuickJS reports a rejection without a handler
+    // at once, and again when one is added.
+    let rejections = Rc::new(Rejections::default());
+    let tracker = rejections.clone();
+    rt.set_host_promise_rejection_tracker(Some(Box::new(move |ctx, promise, reason, handled| {
+        if handled {
+            let mut unhandled = tracker.unhandled.borrow_mut();
+            let i = unhandled.iter().rposition(|(p, _)| p.clone().restore(&ctx).is_ok_and(|p| p == promise));
+            let gone = i.map(|i| unhandled.remove(i));
+            drop(unhandled);
+            drop(gone);
+        } else {
+            let entry = (Persistent::save(&ctx, promise), Persistent::save(&ctx, reason));
+            tracker.unhandled.borrow_mut().push(entry);
         }
     })));
     rt.set_loader(Resolve, Load);
@@ -104,7 +119,8 @@ pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
         settled: RefCell::default(),
         replies: RefCell::default(),
         gone: Cell::new(false),
-        held_rejections: held,
+        rejections,
+        log,
     });
     context.with(|ctx| install(&ctx, &st)).map_err(|e| format!("cannot start the scripting API: {e}"))?;
     while !st.gone.get() {
@@ -113,7 +129,7 @@ pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
         // Answers that came while code ran (a nested wait took them) settle
         // before waiting: no message may come to wake the loop for them.
         loop {
-            while context.with(|ctx| st.unattended(|| ctx.execute_pending_job())) {}
+            context.with(|ctx| run_jobs(&ctx, &st));
             if st.settled.borrow().is_empty() {
                 break;
             }
@@ -145,6 +161,7 @@ pub fn run_link(link: Box<dyn Link>, limit: Duration) -> Result<(), String> {
     // JavaScript values kept in Rust must go before the runtime does.
     st.funcs.borrow_mut().clear();
     st.timers.borrow_mut().clear();
+    st.rejections.unhandled.borrow_mut().clear();
     Ok(())
 }
 
@@ -207,11 +224,25 @@ struct State {
     replies: RefCell<std::collections::HashMap<u64, Result<ScriptValue, String>>>,
     /// The session went away.
     gone: Cell<bool>,
-    /// Unhandled rejections held back while a configuration loads.
-    held_rejections: Arc<std::sync::Mutex<Option<Vec<String>>>>,
+    rejections: Rc<Rejections>,
+    /// Where log lines go (stderr, the session's log file, but in tests).
+    log: Box<dyn Fn(&str)>,
+}
+
+/// Promises rejected with no handler: the promise and its reason, in the
+/// order they were rejected.
+#[derive(Default)]
+struct Rejections {
+    unhandled: RefCell<Vec<(Persistent<Value<'static>>, Persistent<Value<'static>>)>>,
+    /// Held back while a configuration loads (see `load_config`).
+    held: Cell<bool>,
 }
 
 impl State {
+    fn log(&self, line: &str) {
+        (self.log)(line);
+    }
+
     fn send(&self, msg: &FromHost) {
         if self.link.borrow_mut().send(msg).is_err() {
             self.gone.set(true);
@@ -273,7 +304,7 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
                 _ => Ok(()),
             };
             if let Err(e) = &result {
-                eprintln!("temzdf script: a dispatched task failed: {e}");
+                s.log(&format!("temzdf script: a dispatched task failed: {e}"));
             }
             // Reported already if an interrupt cut it off (close_cut_off).
             if s.running_tasks.borrow_mut().remove(&(task as TaskId)) {
@@ -331,11 +362,11 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
             s.timers.borrow_mut().retain(|(_, t), _| *t != id as u64);
         })?,
     )?;
+    let s = st.clone();
     host.set(
         "print",
-        Function::new(ctx.clone(), |level: String, text: String| {
-            // stderr is the session's log file.
-            eprintln!("temzdf script [{level}]: {text}");
+        Function::new(ctx.clone(), move |level: String, text: String| {
+            s.log(&format!("temzdf script [{level}]: {text}"));
         })?,
     )?;
     ctx.globals().set("__host", host)?;
@@ -616,7 +647,7 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
                     st.gone.set(true);
                     return throw("the session is gone");
                 }
-                Ok(other) => eprintln!("temzdf script: unexpected {other:?} while waiting for an answer"),
+                Ok(other) => st.log(&format!("temzdf script: unexpected {other:?} while waiting for an answer")),
             }
         }
     })
@@ -701,10 +732,10 @@ fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {
         let Some(f) = due else { return };
         st.unattended(|| {
             if let Err(e) = f.restore(ctx).and_then(|f| f.call::<_, ()>(())) {
-                eprintln!("temzdf script: a timer failed: {}", error_of(ctx, e));
+                st.log(&format!("temzdf script: a timer failed: {}", error_of(ctx, e)));
             }
         });
-        while st.unattended(|| ctx.execute_pending_job()) {}
+        run_jobs(ctx, st);
     }
 }
 
@@ -720,11 +751,48 @@ fn settle_promises(ctx: &Ctx<'_>, st: &Rc<State>) {
         };
         st.unattended(|| {
             if let Err(e) = f.restore(ctx).and_then(|f| f.call::<_, ()>((ok, json))) {
-                eprintln!("temzdf script: settling a promise failed: {}", error_of(ctx, e));
+                st.log(&format!("temzdf script: settling a promise failed: {}", error_of(ctx, e)));
             }
         });
-        while st.unattended(|| ctx.execute_pending_job()) {}
+        run_jobs(ctx, st);
     }
+}
+
+/// Run the pending promise jobs, each on its own time, then report the
+/// rejections still without a handler: with no job left, none can come any
+/// more but from code that runs later (a timer, a call).
+fn run_jobs(ctx: &Ctx<'_>, st: &Rc<State>) {
+    while st.unattended(|| ctx.execute_pending_job()) {}
+    report_rejections(ctx, st);
+}
+
+/// Log the rejections nobody handled, unless a configuration loads.
+fn report_rejections(ctx: &Ctx<'_>, st: &State) {
+    if st.rejections.held.get() {
+        return;
+    }
+    for text in take_rejections(ctx, st) {
+        log_rejection(st, &text);
+    }
+}
+
+/// The rejections without a handler until now, as text, forgotten.
+fn take_rejections(ctx: &Ctx<'_>, st: &State) -> Vec<String> {
+    // Taken first: reading a reason can run code (a getter).
+    let unhandled = std::mem::take(&mut *st.rejections.unhandled.borrow_mut());
+    unhandled.into_iter().filter_map(|(_, reason)| reason.restore(ctx).ok()).map(|r| rejection_text(&r)).collect()
+}
+
+/// A rejection's reason as text. An Error: "Name: message" and where (its
+/// stack has frames only).
+fn rejection_text(reason: &Value<'_>) -> String {
+    let error = reason.as_object().and_then(|o| {
+        let message: String = o.get("message").ok()?;
+        let name: String = o.get("name").unwrap_or_else(|_| "Error".into());
+        let stack: String = o.get("stack").unwrap_or_default();
+        Some(format!("{name}: {message}\n{stack}").trim_end().to_owned())
+    });
+    error.or_else(|| reason.get::<rquickjs::Coerced<String>>().ok().map(|c| c.0)).unwrap_or_default()
 }
 
 /// When code nobody waits for (timers, promise jobs) must stop: see
@@ -816,7 +884,7 @@ impl State {
 /// Evaluate the shipped defaults, then the configuration at `path`.
 fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: Option<&Path>) -> Result<(), ScriptError> {
     st.tokens.borrow_mut().push(Token::Load);
-    *st.held_rejections.lock().unwrap_or_else(|p| p.into_inner()) = Some(Vec::new());
+    st.rejections.held.set(true);
     let result = (|| {
         let fill: Function = ctx.globals().get("__temzdfLoad").map_err(|e| error_of(ctx, e))?;
         fill.call::<_, ()>(()).map_err(|e| error_of(ctx, e))?;
@@ -827,9 +895,9 @@ fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: Option<&Path>) -> Result<(),
     })();
     st.tokens.borrow_mut().pop();
     st.interrupt.clear();
-    let held = st.held_rejections.lock().unwrap_or_else(|p| p.into_inner()).take().unwrap_or_default();
-    for text in rejections_to_log(held, &result) {
-        log_rejection(&text);
+    st.rejections.held.set(false);
+    for text in rejections_to_log(take_rejections(ctx, st), &result) {
+        log_rejection(st, &text);
     }
     result
 }
@@ -842,8 +910,8 @@ fn rejections_to_log(held: Vec<String>, result: &Result<(), ScriptError>) -> Vec
     if result.is_err() { Vec::new() } else { held }
 }
 
-fn log_rejection(text: &str) {
-    eprintln!("temzdf script: unhandled promise rejection: {text}");
+fn log_rejection(st: &State, text: &str) {
+    st.log(&format!("temzdf script: unhandled promise rejection: {text}"));
 }
 
 /// Evaluate one module. Its top level only registers things; a top-level

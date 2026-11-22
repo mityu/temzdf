@@ -13,7 +13,7 @@ pub mod strip;
 pub mod types;
 
 #[cfg(feature = "host")]
-pub use host::{run_link, run_with_limit};
+pub use host::{run_link, run_with_limit, run_with_log};
 
 /// How long a timer or a promise job (code nobody waits for, so nobody can
 /// interrupt) may run before it is interrupted.

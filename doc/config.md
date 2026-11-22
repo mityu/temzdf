@@ -76,7 +76,8 @@ values); errors report positions in the source as written. Imports: relative
 paths and `"temzdf"`; no npm packages or Node APIs. Relative imports resolve
 as TypeScript's do: `./util` finds `util.ts` or `util.js`, `./util.js` finds
 `util.ts`, a directory its `index.ts` or `index.js`. `console.log` goes to the
-log, as do promise rejections nothing handled.
+log, as do promise rejections nothing handled (by the time the promise jobs
+waiting to run have run: a handler added later in the same turn counts).
 
 A value the API may leave out (no count typed, no focused pane, an unset
 option) is `undefined`, never `null`; `x == null` checks for either.
