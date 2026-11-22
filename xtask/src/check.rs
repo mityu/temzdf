@@ -28,8 +28,9 @@ const NODE_MODULES: &str = "crates/temzdf-script/runtime/node_modules";
 /// The shipped scripts, beside their tests (`*.test.ts`).
 const RUNTIME: &str = "crates/temzdf-script/runtime";
 /// The crates that build and test on Windows so far, and the gate runs
-/// there (`windows-latest` in CI), `xtask` among them. On Unix the others
-/// are also checked for `x86_64-pc-windows-msvc` ("windows" step), where
+/// there (`windows-latest` in CI), `xtask` among them. On Unix all of them
+/// but `xtask` (whose `ring` is C) are also checked for
+/// `x86_64-pc-windows-msvc` ("windows" step), where
 /// the standard library for it is installed. Left out, and why
 /// (`todo.md`, "The Windows port"): texprintf and tuitest only
 /// cross-check because pkg-config finds the Linux libraries; temzdf-script-guest
