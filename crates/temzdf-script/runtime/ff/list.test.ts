@@ -313,7 +313,9 @@ test("renderers run on the lines written only, and their labels and decorations 
   const { list, pane } = setup(
     t,
     { sources: [fake(numbers(50, "a"))], matcher: substring(), query: "a" },
-    { renderer, initial: 5, chunk: 5 },
+    // No margin: the five lines fill the pane, and its PaneScrolled
+    // (whenever the hook runs, maybe after whenIdle) would want a chunk more.
+    { renderer, initial: 5, chunk: 5, margin: 0 },
   );
   await list.whenIdle();
   assert.deepEqual(lines(t, pane), ["> a 0 ", "> a 1 ", "> a 2 ", "> a 3 ", "> a 4 "], "line breaks become spaces");
