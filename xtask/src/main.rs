@@ -17,17 +17,20 @@ tasks:
       The pre-commit gate: rustfmt check, Biome (the scripts' formatting
       and lints), the generated declarations (node scripts/ts-types.ts),
       the Node scripts' types (tsc -p scripts), shellcheck, references to
-      documents (node scripts/check-docs.ts), clippy (warnings are errors)
-      and the workspace's tests, then the unit tests under Miri
-      (scripts/miri.sh) when `cargo miri` is there, with terse output: a
-      failed step's main lines, its whole output in target/check/.
+      documents (node scripts/check-docs.ts), clippy (warnings are errors),
+      the workspace's tests and the scripts' (temzdf test on
+      crates/temzdf-script/runtime/**/*.test.ts), then the unit tests
+      under Miri (scripts/miri.sh) when `cargo miri` is there, with terse
+      output: a failed step's main lines, its whole output in
+      target/check/.
       shellcheck and Miri are Unix only (SKIP elsewhere).
         --fix      apply rustfmt, Biome's safe fixes and temzdf-all.d.ts
                    instead of only checking
         --no-miri  skip Miri (about a minute and a half)
         --all      run the tests even when only Markdown under doc/
                    changed (then they and Miri are skipped; a clean tree
-                   or cargo test arguments run them)
+                   or cargo test arguments run them; the scripts' tests
+                   are skipped with cargo test arguments)
         --verbose  print a failed step's whole output
         --stream   print each step's output as it comes, under a
                    `==> STEP` header (GitHub Actions: a log group)
@@ -35,7 +38,7 @@ tasks:
       set (the dev shell's, as in CI). scripts/check.sh runs this inside
       the Nix dev shell.
   test [--stream] [--verbose] [CARGO TEST ARGS...]
-      The workspace's tests alone, as check runs them.
+      The workspace's tests and the scripts' alone, as check runs them.
   fetch-fonts [--manifest PATH]
       Download the fonts temzdf-gui embeds (crates/temzdf-gui/fonts.toml)
       into target/fonts/, checking their sha256; files already there and

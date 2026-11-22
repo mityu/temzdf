@@ -74,7 +74,7 @@ best in a VM (`scripts/macos-vm.sh e2e ARGS...`).
 ## The gate
 
 ```sh
-cargo xtask check            # fmt check + Biome (scripts) + declarations + docs + clippy -D warnings + tests (+ Miri where available), terse output
+cargo xtask check            # fmt check + Biome (scripts) + declarations + docs + clippy -D warnings + tests + js tests (+ Miri where available), terse output
 cargo xtask check --fix      # same, but apply rustfmt and Biome's formatting and safe fixes
 cargo xtask check --no-miri  # without Miri (it takes about a minute and a half)
 cargo xtask check --all      # the tests even when only Markdown under doc/ changed (skipped then)

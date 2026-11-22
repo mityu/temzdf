@@ -2,9 +2,10 @@
 //! (`cargo xtask test`): rustfmt, Biome, the generated declarations
 //! (`node scripts/ts-types.ts`), the Node scripts' types (`tsc -p
 //! scripts`), shellcheck, references to documents (`node
-//! scripts/check-docs.ts`), clippy and the workspace's tests, then the unit
-//! tests under Miri (`scripts/miri.sh`), with terse output: a failed
-//! step's main lines, its whole output in `target/check/`.
+//! scripts/check-docs.ts`), clippy, the workspace's tests and the scripts'
+//! (`temzdf test` on `runtime/**/*.test.ts`), then the unit tests under
+//! Miri (`scripts/miri.sh`), with terse output: a failed step's main
+//! lines, its whole output in `target/check/`.
 //!
 //! No Nix assumed: the tools are found on PATH (Biome and shellcheck also
 //! in the npm packages' `.bin`). shellcheck and Miri are Unix-only steps
@@ -23,6 +24,8 @@ use crate::{root, target_dir};
 
 /// The shipped scripts' npm packages (`npm ci` there).
 const NODE_MODULES: &str = "crates/temzdf-script/runtime/node_modules";
+/// The shipped scripts, beside their tests (`*.test.ts`).
+const RUNTIME: &str = "crates/temzdf-script/runtime";
 /// The generated declarations, committed.
 const DECLARATIONS: &str = "crates/temzdf-script/ts-types/temzdf-all.d.ts";
 
@@ -207,9 +210,10 @@ pub fn check(o: &Options) -> Result<i32> {
     ran.push("clippy");
 
     let summary = if tests {
-        format!("tests ({} passed)", gate.tests(&tools, &o.test_args)?)
+        let rust = gate.tests(&tools, &o.test_args)?;
+        format!("tests ({rust} passed), {}", gate.js_tests(&tools, &o.test_args)?)
     } else {
-        "tests skipped (only Markdown under doc/ changed; --all runs them)".to_owned()
+        "tests and js tests skipped (only Markdown under doc/ changed; --all runs them)".to_owned()
     };
 
     if gate.status == 0 {
@@ -228,8 +232,9 @@ pub fn test(o: &Options) -> Result<i32> {
     let tools = Tools::find_cargo();
     let mut gate = Gate::new(o)?;
     let passed = gate.tests(&tools, &o.test_args)?;
+    let js = gate.js_tests(&tools, &o.test_args)?;
     if gate.status == 0 {
-        println!("OK tests ({passed} passed)");
+        println!("OK tests ({passed} passed), {js}");
     }
     Ok(gate.status)
 }
@@ -432,6 +437,11 @@ impl<'a> Gate<'a> {
     /// of it with --verbose (not again with --stream); the whole output is
     /// in the log either way.
     fn failed(&mut self, what: &str, log: &str, main: impl Fn(&str) -> bool, n: usize) {
+        self.failed_with(what, log, |text| text.lines().filter(|l| main(l)).take(n).collect());
+    }
+
+    /// As [`Gate::failed`], the main lines picked by MAIN from the output.
+    fn failed_with(&mut self, what: &str, log: &str, main: impl FnOnce(&str) -> Vec<&str>) {
         self.end();
         self.status = 1;
         println!("FAIL {what} (all of it: {})", self.shown(log));
@@ -440,7 +450,7 @@ impl<'a> Gate<'a> {
         if self.o.verbose && !self.o.stream {
             print!("{text}");
         } else {
-            for line in text.lines().filter(|l| main(l)).take(n) {
+            for line in main(&text) {
                 println!("{line}");
             }
         }
@@ -449,14 +459,8 @@ impl<'a> Gate<'a> {
     /// The workspace's tests: how many passed.
     fn tests(&mut self, tools: &Tools, args: &[OsString]) -> Result<u64> {
         self.header("tests");
-        let mut cmd = tools.cargo();
-        cmd.args(["test", "--workspace", "--color", "never"]).args(args);
-        // Text is drawn with the fonts the dev shell fixes for tests
-        // (flake.nix, testFontConfig), not the host's, so that it is drawn
-        // as in CI.
-        if let Some(fc) = std::env::var_os("TEMZDF_TEST_FONTCONFIG").filter(|v| !v.is_empty()) {
-            cmd.env("FONTCONFIG_FILE", fc);
-        }
+        let mut cmd = cargo_test(tools);
+        cmd.args(args);
         if !self.run(&mut cmd, "test")? {
             self.failed(
                 "tests",
@@ -471,6 +475,41 @@ impl<'a> Gate<'a> {
         self.end();
         let log = fs::read(self.log("test")).unwrap_or_default();
         Ok(count_passed(&String::from_utf8_lossy(&log)))
+    }
+
+    /// The scripts' tests (`temzdf test` on `runtime/**/*.test.ts`), with
+    /// the temzdf the tests built: what the OK line says of them.
+    fn js_tests(&mut self, tools: &Tools, args: &[OsString]) -> Result<String> {
+        // The arguments pick Rust tests: the binary may not be built.
+        if !args.is_empty() {
+            return Ok("js tests skipped (cargo test arguments given)".to_owned());
+        }
+        let files = js_test_files(Path::new(RUNTIME));
+        if files.is_empty() {
+            return Ok(format!("js tests skipped (no {RUNTIME}/**/*.test.ts)"));
+        }
+        self.header("js tests");
+        // Built by the tests already (the same features): cargo only says
+        // where.
+        let mut build = cargo_test(tools);
+        build.args(["--no-run", "--message-format=json"]);
+        let out = build.stdin(Stdio::null()).stderr(Stdio::piped()).output().context("cannot run cargo test")?;
+        let path = self.log("js-build");
+        fs::write(&path, &out.stderr).with_context(|| format!("cannot write {}", path.display()))?;
+        let Some(temzdf) =
+            out.status.success().then(|| temzdf_executable(&String::from_utf8_lossy(&out.stdout))).flatten()
+        else {
+            self.failed("js tests (building temzdf failed)", "js-build", |l| l.starts_with("error"), 40);
+            return Ok(String::new());
+        };
+        let mut cmd = command(temzdf);
+        cmd.arg("test").args(&files);
+        if !self.run(&mut cmd, "js-tests")? {
+            self.failed_with("js tests", "js-tests", |text| failed_files(text).into_iter().take(80).collect());
+        }
+        self.end();
+        let log = fs::read(self.log("js-tests")).unwrap_or_default();
+        Ok(format!("js tests ({} passed)", js_passed(&String::from_utf8_lossy(&log))))
     }
 
     /// The unit tests under Miri (`scripts/miri.sh`, Unix only); its output
@@ -515,6 +554,75 @@ impl<'a> Gate<'a> {
     }
 }
 
+/// `cargo test --workspace`, as the tests run: text is drawn with the
+/// fonts the dev shell fixes for tests (flake.nix, testFontConfig), not
+/// the host's, so that it is drawn as in CI.
+fn cargo_test(tools: &Tools) -> Command {
+    let mut cmd = tools.cargo();
+    cmd.args(["test", "--workspace", "--color", "never"]);
+    if let Some(fc) = std::env::var_os("TEMZDF_TEST_FONTCONFIG").filter(|v| !v.is_empty()) {
+        cmd.env("FONTCONFIG_FILE", fc);
+    }
+    cmd
+}
+
+/// The `*.test.ts` files under DIR (not in node_modules), sorted.
+fn js_test_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for p in sorted_entries(dir) {
+        if p.is_dir() {
+            if p.file_name() != Some(OsStr::new("node_modules")) {
+                files.extend(js_test_files(&p));
+            }
+        } else if p.to_str().is_some_and(|s| s.ends_with(".test.ts")) {
+            files.push(p);
+        }
+    }
+    files
+}
+
+/// The temzdf executable in cargo's JSON messages.
+fn temzdf_executable(messages: &str) -> Option<PathBuf> {
+    messages.lines().find_map(|l| {
+        let v: serde_json::Value = serde_json::from_str(l).ok()?;
+        let target = v.get("target")?;
+        let bin = target.get("kind")?.as_array()?.iter().any(|k| k == "bin");
+        (v.get("reason")? == "compiler-artifact" && target.get("name")? == "temzdf" && bin)
+            .then(|| v.get("executable")?.as_str().map(PathBuf::from))
+            .flatten()
+    })
+}
+
+/// The lines of `temzdf test`'s output for the files that failed, and its
+/// totals.
+fn failed_files(text: &str) -> Vec<&str> {
+    /// BLOCK (one file's) goes into LINES when the file failed.
+    fn keep<'a>(block: &mut Vec<&'a str>, lines: &mut Vec<&'a str>) {
+        if block.iter().any(|l| l.starts_with("not ok ") || l.starts_with("Bail out!")) {
+            lines.append(block);
+        }
+        block.clear();
+    }
+    let mut lines = Vec::new();
+    let mut block = Vec::new();
+    for l in text.lines() {
+        if l.starts_with("# FILE: ") {
+            keep(&mut block, &mut lines);
+        }
+        block.push(l);
+    }
+    // The totals come last.
+    let totals = block.pop();
+    keep(&mut block, &mut lines);
+    lines.extend(totals);
+    lines
+}
+
+/// How many tests passed, from `temzdf test`'s totals (its last line).
+fn js_passed(log: &str) -> u64 {
+    log.lines().rev().find(|l| l.starts_with("# ") && l.contains(" tests: ")).map_or(0, count_passed)
+}
+
 /// The sum of every `N passed` in cargo test's output.
 fn count_passed(log: &str) -> u64 {
     let mut sum = 0;
@@ -555,6 +663,41 @@ mod tests {
         let log = "test result: ok. 12 passed; 0 failed\nrunning\ntest result: ok. 3 passed; 1 failed\n0 passed\n";
         assert_eq!(count_passed(log), 15);
         assert_eq!(count_passed("no tests passed"), 0);
+    }
+
+    #[test]
+    fn reads_temzdf_test_output() {
+        let out = "\
+# FILE: a.test.ts
+ok 1 x passed
+# FILE: b.test.ts
+not ok 1 y
+  ---
+# FILE: c.test.ts
+Bail out! stuck
+# 3 files (2 failed), 2 tests: 1 passed, 1 failed
+";
+        assert_eq!(
+            failed_files(out),
+            [
+                "# FILE: b.test.ts",
+                "not ok 1 y",
+                "  ---",
+                "# FILE: c.test.ts",
+                "Bail out! stuck",
+                "# 3 files (2 failed), 2 tests: 1 passed, 1 failed"
+            ]
+        );
+        assert_eq!(js_passed(out), 1);
+    }
+
+    #[test]
+    fn finds_the_temzdf_executable() {
+        let messages = r#"{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["lib"]},"executable":null}
+{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["test"]},"executable":"/t/deps/temzdf-1"}
+{"reason":"compiler-artifact","target":{"name":"temzdf","kind":["bin"]},"executable":"/t/temzdf"}
+{"reason":"build-finished","success":true}"#;
+        assert_eq!(temzdf_executable(messages), Some(PathBuf::from("/t/temzdf")));
     }
 
     #[test]
