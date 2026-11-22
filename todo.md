@@ -229,8 +229,14 @@ server on one `Session`). Next and open:
     in Rust (`crates/temzdf-fixtures`, `cargo xtask fixtures`). Still to
     do: the first run of `check-windows`, and the test code it finds
     still to gate.
-  - The VM: vitro with a local Windows 11 ISO (OVMF firmware), then
-    `scripts/windows-vm.sh` as a thin wrapper over it. The ConPTY
+  - The VM: vitro with a local Windows 11 ISO (OVMF firmware).
+    `scripts/windows-vm.sh` (a thin wrapper, "Windows in a VM" in
+    `doc/dev/testing.md`) starts, stops, resets, runs commands in,
+    copies to and from, and takes screenshots of a VM from the golden
+    image. Still to do: wrap `vitro build` (the golden image was rescued
+    by hand; vitro's unattended install fixes en-US and its shutdown wait
+    is 180 s, so an English ISO or a rescue step), provision it (Rust,
+    MSVC build tools, fonts), run the e2e there. The ConPTY
     experiment with the in-box ConPTY is done (`doc/terminals/conpty.md`,
     `experiments/conpty/`): kitty graphics are dropped, the kitty
     keyboard, the SGR-pixel mouse and OSC 52 pass, the pass-through flag

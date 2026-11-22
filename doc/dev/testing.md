@@ -568,6 +568,27 @@ threads, 2026-10-29): 884 s before; 678 s waiting for the first screen
 and Wayland too). Wayland: 683 s before. With `gui-focus`, `gui-ime` and
 `synctex-reload` added (182 checks): 96 s on X11, 65 s on Wayland (`-R -j 8`).
 
+## Windows in a VM
+
+`scripts/windows-vm.sh` runs one disposable Windows 11 VM (QEMU/KVM) through
+vitro, pinned in the script, as `scripts/macos-vm.sh` does for macOS. First
+version: it starts, stops and resets the VM from a golden image built
+beforehand (building one is not wrapped yet, nor provisioning or e2e runs):
+
+```sh
+scripts/windows-vm.sh start                  # waits for the desktop
+scripts/windows-vm.sh run 'cmd /c exit 3'    # PowerShell; exits 3
+scripts/windows-vm.sh cp-in FILE guest.bin   # cp-out GUEST HOST
+scripts/windows-vm.sh screenshot             # target/windows-vm/*.png
+scripts/windows-vm.sh reset                  # a fresh overlay; stop: delete it
+```
+
+The nix build links of vitro and the OVMF firmware, and the config vitro
+reads (`XDG_CONFIG_HOME` points there, so `~/.config/vitro/config.toml` is
+not used), are in `~/.local/state/temzdf/windows-vm/`, outside `target/`.
+The header of the script lists the known problems of vitro and their
+workarounds.
+
 ## Judged e2e scenarios
 
 `expect` (see the `scripts/e2e.sh` header) takes a screenshot, reads the
