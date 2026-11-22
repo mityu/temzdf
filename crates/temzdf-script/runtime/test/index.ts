@@ -106,6 +106,12 @@ let started = false;
 const scopes: ModuleHooks[] = [];
 let flat: ModuleHooks | undefined;
 
+/** The order tests run in, set at a test file's top level: `reorder`
+ * (QUnit's default true) runs a test that failed last time first, a
+ * `seed` runs them in an order shuffled by it (to find tests depending on
+ * the ones before). */
+export const config: { reorder: boolean; seed: string | undefined } = QUnit.config;
+
 QUnit.config.autostart = false;
 QUnit.config.testTimeout = DEFAULT_TIMEOUT + QUNIT_GRACE;
 // QUnit's own messages (ok's "was: ...") show values as the reports do.

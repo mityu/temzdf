@@ -204,6 +204,11 @@ impl Bridge {
         self.hooks.contains_key(event)
     }
 
+    /// How many hooks `event` has (`test.hooks`).
+    pub(super) fn hook_count(&self, event: &str) -> usize {
+        self.hooks.get(event).map_or(0, Vec::len)
+    }
+
     /// The nesting depth of hooks running now.
     fn hook_depth(&self) -> usize {
         self.frames.iter().filter(|f| matches!(f, Frame::Call { hook: true, .. })).count()

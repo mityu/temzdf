@@ -24,8 +24,8 @@ use crate::keymap::{Stroke, notation};
 /// `temzdf action` and not the configuration while it loads.
 pub(super) const WAITING: &[&str] = &["test.keys", "test.settle", "test.reset"];
 
-/// How many error messages are kept for waits to look back on.
-const ERRORS_KEPT: usize = 64;
+/// How many messages are kept for waits to look back on.
+const MESSAGES_KEPT: usize = 64;
 
 /// How often the event loop looks at a wait while one is under way (the
 /// session may settle without an event: a key no script hears).
@@ -50,7 +50,7 @@ struct Waiter {
     remap: bool,
     /// Resolve a pending prefix at the end rather than answer with it.
     flush: bool,
-    /// Errors shown after this number are the wait's.
+    /// Messages shown after this number are the wait's.
     mark: u64,
 }
 
@@ -62,9 +62,9 @@ pub(super) struct TestState {
     /// `Some` once a driver collects the reports (`temzdf test`);
     /// otherwise they go to the log.
     reports: Option<Vec<TestReport>>,
-    /// The latest error messages, numbered.
-    errors: VecDeque<(u64, String)>,
-    last_error: u64,
+    /// The latest messages, numbered, and whether each is an error.
+    messages: VecDeque<(u64, bool, String)>,
+    last_message: u64,
 }
 
 impl TestState {
@@ -73,12 +73,12 @@ impl TestState {
         self.waiters.clear();
     }
 
-    /// An error message was shown.
-    pub(super) fn note_error(&mut self, text: &str) {
-        self.last_error += 1;
-        self.errors.push_back((self.last_error, text.to_owned()));
-        while self.errors.len() > ERRORS_KEPT {
-            self.errors.pop_front();
+    /// A message was shown (`error`: one that stays until the next key).
+    pub(super) fn note_message(&mut self, error: bool, text: &str) {
+        self.last_message += 1;
+        self.messages.push_back((self.last_message, error, text.to_owned()));
+        while self.messages.len() > MESSAGES_KEPT {
+            self.messages.pop_front();
         }
     }
 
@@ -88,8 +88,13 @@ impl TestState {
         self.waiters.front().is_some_and(|w| !w.keys.is_empty() || w.flush)
     }
 
-    fn errors_since(&self, mark: u64) -> Vec<ScriptValue> {
-        self.errors.iter().filter(|(n, _)| *n > mark).map(|(_, t)| ScriptValue::Str(t.clone())).collect()
+    /// The errors (`error`), or the other messages, shown after `mark`.
+    fn messages_since(&self, mark: u64, error: bool) -> Vec<ScriptValue> {
+        self.messages
+            .iter()
+            .filter(|(n, e, _)| *n > mark && *e == error)
+            .map(|(_, _, t)| ScriptValue::Str(t.clone()))
+            .collect()
     }
 }
 
@@ -125,6 +130,10 @@ impl Session {
                 TestReport::End { failed: count("failed"), total: count("total") }
             }
             "test.reporting" => return Some(Ok((ScriptValue::Bool(self.test.reports.is_some()), Outcome::None))),
+            "test.hooks" => {
+                let event = args.first().and_then(ScriptValue::as_str).unwrap_or_default();
+                return Some(Ok((ScriptValue::Num(self.script.hook_count(event) as f64), Outcome::None)));
+            }
             n if WAITING.contains(&n) => {
                 return Some(Err(format!("{n}: only a script's function or dispatched task can run it")));
             }
@@ -177,7 +186,7 @@ impl Session {
             keys: keys.into(),
             remap: flag(o, "remap")?,
             flush: flag(o, "flush")?,
-            mark: self.test.last_error,
+            mark: self.test.last_message,
         });
         Ok((ScriptValue::map([("$promise", ScriptValue::Num(promise as f64))]), Outcome::None))
     }
@@ -237,7 +246,8 @@ impl Session {
             let w = self.test.waiters.pop_front().expect("a wait");
             let pending: String = self.matcher.pending().iter().map(|k| k.notation()).collect();
             let answer = ScriptValue::map([
-                ("errors", ScriptValue::List(self.test.errors_since(w.mark))),
+                ("errors", ScriptValue::List(self.test.messages_since(w.mark, true))),
+                ("messages", ScriptValue::List(self.test.messages_since(w.mark, false))),
                 ("pending", ScriptValue::Str(pending)),
                 ("mode", ScriptValue::Str(self.history.current().to_owned())),
             ]);

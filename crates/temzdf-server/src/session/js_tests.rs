@@ -144,7 +144,7 @@ const text = (t: any, pane: number) => t.action.text.getText(undefined, { pane }
 test("dd and u", async (assert, t) => {
   const pane = t.openText("one\ntwo\nthree\n");
   const r = await t.keys("dd");
-  assert.deepEqual(r, { errors: [], pending: "", mode: "vim/normal" });
+  assert.deepEqual(r, { errors: [], messages: [], pending: "", mode: "vim/normal" });
   assert.equal(text(t, pane), "two\nthree\n");
   await t.keys("u");
   assert.equal(text(t, pane), "one\ntwo\nthree\n");
@@ -268,15 +268,18 @@ fn errors_of_mapped_functions_come_back_and_fail_the_test() {
         "errors",
         "x\n",
         r#"
-import { keymap } from "temzdf";
+import { action, keymap } from "temzdf";
 import { test } from "temzdf/test";
 keymap.add("vim/normal", "<F5>", () => { throw new Error("boom"); });
+keymap.add("vim/normal", "<F6>", () => action.message("hello"));
 test("returned", async (assert, t) => {
   const r = await t.keys("<F5>", { allowErrors: true });
   assert.equal(r.errors.length, 1);
   assert.ok(r.errors[0].includes("boom"), r.errors[0]);
-  const again = await t.keys("j", { allowErrors: true });
+  assert.deepEqual(r.messages, [], "errors are not messages");
+  const again = await t.keys("<F6>", { allowErrors: true });
   assert.deepEqual(again.errors, [], "only those since the keys");
+  assert.deepEqual(again.messages, ["hello"], "information comes as messages");
 });
 test("failing", async (assert, t) => {
   await t.keys("<F5>");

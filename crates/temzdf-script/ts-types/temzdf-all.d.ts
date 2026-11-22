@@ -950,7 +950,7 @@ declare module "temzdf" {
     };
     /** For scripts' tests (temzdf/test drives the session with these; a script's function or dispatched task only, not `temzdf action`) */
     test: {
-      /** Type `keys` (key notation) one at a time, each once the session settled after the one before (mapped functions done, no script running or waiting to run), then wait until it settled again; `flush` (default true) runs a prefix still waiting for a longer mapping as if its time ran out, `remap` false feeds the keys without mappings. Resolves with the error messages shown meanwhile, the keys still pending and the mode */
+      /** Type `keys` (key notation) one at a time, each once the session settled after the one before (mapped functions done, no script running or waiting to run), then wait until it settled again; `flush` (default true) runs a prefix still waiting for a longer mapping as if its time ran out, `remap` false feeds the keys without mappings. Resolves with the error messages and the other messages shown meanwhile, the keys still pending and the mode */
       keys(keys: string, opts?: { flush?: boolean; remap?: boolean }): Promise<TestSettled>;
       /** Wait until the session settled (see keys) */
       settle(opts?: { flush?: boolean }): Promise<TestSettled>;
@@ -962,6 +962,8 @@ declare module "temzdf" {
       end(summary?: { failed: number; total: number }): void;
       /** Whether `temzdf test` collects the reports (otherwise they go to the log) */
       reporting(): boolean;
+      /** How many hooks scripts have on `event` (on()), to see that a module took its own away */
+      hooks(event?: keyof Events): number;
     };
   }
 
@@ -969,6 +971,8 @@ declare module "temzdf" {
   export interface TestSettled {
     /** The error messages shown while it waited. */
     errors: string[];
+    /** The other messages (information) shown while it waited. */
+    messages: string[];
     /** Keys waiting for a longer mapping (key notation; empty after a flush). */
     pending: string;
     /** The current mode. */
@@ -1427,6 +1431,14 @@ export interface ModuleHooks {
 	afterEach?(assert: Assert, t: TestContext): void | Promise<void>;
 }
 type TestFn = (assert: Assert, t: TestContext) => void | Promise<void>;
+/** The order tests run in, set at a test file's top level: `reorder`
+ * (QUnit's default true) runs a test that failed last time first, a
+ * `seed` runs them in an order shuffled by it (to find tests depending on
+ * the ones before). */
+export const config: {
+	reorder: boolean;
+	seed: string | undefined;
+};
 /** Register a test: `fn(assert, t)`, stopped and failed after
  * `opts.timeout` ms. */
 export function test(name: string, fn: TestFn, opts?: TestOptions): void;
