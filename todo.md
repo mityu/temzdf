@@ -88,6 +88,17 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
+- Simulated-terminal tests that fail under heavy load (seen 2026-11-23 while
+  `cargo test --workspace` and many `temzdf test` runs loaded the machine):
+  `the_markdown_viewer_copies_follows_links_and_lists_its_headings`,
+  `the_markdown_viewers_graphics_mode_is_pixels_or_says_why_not`,
+  `a_markdown_text_screen_renders_to_pixels`,
+  `inside_a_session_temzdf_means_that_session`, `a_pdf_screen_renders_to_pixels`,
+  `cmdline_completion_popup_stays_in_every_frame_while_typing`. Most failing
+  screens show the "running a script; <C-c> interrupts it" notice (the
+  script host busy for about a second), which the tests read as part of the
+  screen; the completion test once saw a partly published list. Make the
+  tests wait the notice out or ignore it.
 - Whether `temzdf action` goes, now that `temzdf eval` runs the
   configuration's language from the command line, or shrinks to what a
   shell needs (opening a file: `new-pane FILE` resolves paths against the
