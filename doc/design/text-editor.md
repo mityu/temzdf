@@ -578,6 +578,28 @@ Decided with the user on 2026-11-07, before building:
 - Wrapping is greedy, so a row depends only on where it starts: a view
   keeps the offset its top row starts at and lays out only the rows it
   shows. Tabs in continuation rows count from the row's start.
+- Marks are indexed so that drawing costs what is shown, not how many
+  there are (2026-11-22; tree-sitter and LSP highlighting make
+  thousands): by id (`get`, `set`, `remove` in O(log n)), by start for
+  those at most 256 characters long (a range query looks that far back)
+  with the longer ones in a list of their own, and sets of the few that
+  layout reads wherever they are (inline virtual text, conceal, virtual
+  lines), of those with images and of those that expire. A spec never
+  changes after `add` (but images' sizes), so the sets change only on
+  `add` and removals; an edit moves every mark after it, so `follow` stays
+  linear and builds the position index again (Neovim's marktree keeps
+  positions relative to avoid that; not needed so far). Numbers in
+  `doc/dev/performance.md`.
+- The server keeps each text pane's last frame and draws it again only
+  when something it is drawn from changed (`TextFrameKey` in
+  `crates/temzdf-server/src/session/frame.rs`). The buffer's text and
+  marks, and the session's highlight groups, patterns and images, are
+  `Stamped` (`crates/temzdf-texteditor/src/stamp.rs`): a mutable access
+  takes a stamp unique in the process, so the key compares stamps where
+  comparing values would cost as much as drawing, and can only miss too
+  often, never show a stale frame; the view, the cursor's shape, the
+  focus, the title, the word characters and the cell size it compares by
+  value.
 - Order of work: the crate's core (positions, edits, marks, undo,
   motions), then layout and drawing, then the pane in the server with
   files, `fallback`, `basemode` and the mode-less defaults (where the user

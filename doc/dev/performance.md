@@ -213,3 +213,57 @@ might delay keys typed into another.
   (8 MB/s), and 12.5 s written straight to the simulated terminal (also
   libghostty-vt) without temzdf: the parser's line feeds (two bytes a
   line, a scroll each) set the rate, not the session.
+
+## Text decorations
+
+Measured 2026-11-22 (i7-14700, `temzdf test`) with a scratch script test
+(not kept): N lines in a buffer shown in a 60x20 float, N style-only
+decorations added one request each (`text.addDecoration`), then 200 of
+each cheap request timed (`text.cursor`, `text.setCursor` near the top
+and in the middle, `text.edit` inserting a character mid-buffer), then
+the decorations deleted one by one. Tree-sitter and LSP highlighting will
+make that many. Per request in ms (add and delete: the whole phase in s);
+"before" is 6a2f528, "index" the marks indexed, "cache" with text panes'
+frames cached too:
+
+| N | build | read before / index / cache | setCursor (mid) before / index / cache | edit before / cache | add all before / cache | delete all before / cache |
+|---:|---|---|---|---|---|---|
+| 0 | release | 0.05 / 0.06 / 0.05 | 0.05 / 0.05 / 0.05 | 0.08 / 0.09 | 0 / 0 | 0 / 0 |
+| 2000 | release | 0.08 / 0.08 / 0.05 | 0.09 / 0.09 / 0.10 | 0.15 / 0.16 | 0.15 / 0.17 | 0.20 / 0.21 |
+| 8000 | release | 0.14 / 0.07 / 0.05 | 0.20 / 0.08 / 0.09 | 0.37 / 0.31 | 0.75 / 0.65 | 1.2 / 0.8 |
+| 32000 | release | 0.51-0.75 / 0.07 / 0.05 | 0.79-1.19 / 0.08 / 0.11 | 1.5 / 1.2 | 9.2-10.1 / 2.7 | 14.8-18.0 / 3.5 |
+| 0 | debug | 0.21 / 0.20 / 0.19 | 0.21 / 0.22 / 0.21 | 0.58 / 0.59 | 0 / 0 | 0 / 0 |
+| 2000 | debug | 0.65 / 0.48 / 0.18 | 0.92 / 0.72 / 0.76 | 1.25 / 1.34 | 1.6 / 1.1 | 1.5 / 1.3 |
+| 8000 | debug | 0.78 / 0.41 / 0.19 | 1.23 / 0.67 / 0.72 | 2.2 / 2.5 | 5.5 / 3.8 | 6.9 / 5.1 |
+| 32000 | debug | 1.70 / 0.40 / 0.19 | 2.84 / 0.64 / 0.69 | 6.0 / 7.6 | 37 / 15 | 48 / 20 |
+
+- Before, every frame made about five passes over all marks (layout's
+  inline virtual text, conceal and virtual lines; render's two
+  `overlapping`, each sorting what it kept), and `get`, `set` and
+  `remove` scanned by id, so deleting them one by one was quadratic.
+  Marks are now indexed by id, position and kind
+  (`crates/temzdf-texteditor/src/marks.rs`, `doc/design/text-editor.md`
+  section 18): a frame costs what it shows, adding or deleting one costs
+  the same with 32000 as with 2000. Tests count the marks looked at
+  (`a_range_visits_only_the_marks_near_it`,
+  `drawing_looks_only_at_the_marks_near_the_rows`).
+- What stays linear: an edit (`follow` maps every mark and builds the
+  position index again: 1.2 ms per keystroke with 32000 in release, a
+  little slower than the plain scan in debug builds, where the
+  `BTreeMap` costs more), clearing a namespace, and the
+  `text.decorations` request without a range. Neovim's marktree keeps
+  positions relative to the tree's nodes so an edit moves only a path;
+  worth it only if typing in such a buffer is felt.
+- Drawing a 60x20 text pane costs about 90 µs in release and 570 µs in
+  debug (cloning the drawn cells 30 and 50 µs), whatever the marks, and
+  the session draws every pane for every frame; `temzdf test` builds a
+  frame after each batch of requests. So the server keeps each text
+  pane's last frame with what it was drawn from (`TextFrameKey`, section
+  18 of the design) and clones it while that is unchanged: the read
+  column's debug numbers (0.4 to 0.19 ms with N lines) are the pane not
+  drawn again. Tests draw every cached frame again and compare
+  (`check_text_frames`), and so do debug builds with
+  `TEMZDF_CHECK_FRAME_CACHE` set: `TEMZDF_CHECK_FRAME_CACHE=1 cargo xtask
+  check` (script tests and the simulated terminal's) passes;
+  `text_panes_are_drawn_again_only_when_what_they_show_changed` checks
+  that each part of the key draws the pane again.
