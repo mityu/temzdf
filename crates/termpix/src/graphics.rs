@@ -347,14 +347,31 @@ fn unique_suffix() -> String {
     format!("{}-{}", std::process::id(), UNIQUE.fetch_add(1, Ordering::Relaxed))
 }
 
+/// Run `create` with names made of `unique_suffix`, the next one while the
+/// name is taken: an earlier process with our PID may have left objects or
+/// files behind (killed before it removed them, or the terminal never read
+/// them), and a fixed name would then fail for good.
+fn with_free_name<T>(mut create: impl FnMut(&str) -> io::Result<T>) -> io::Result<T> {
+    let mut tries = 0;
+    loop {
+        match create(&unique_suffix()) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && tries < 1000 => tries += 1,
+            r => return r,
+        }
+    }
+}
+
 /// Create a POSIX shared memory object holding `data`; returns its name.
 fn shm_create(data: &[u8]) -> io::Result<String> {
     use rustix::fs::Mode;
     use rustix::shm;
 
-    let name = format!("/termpix-{}", unique_suffix());
-    let fd =
-        shm::open(name.as_str(), shm::OFlags::CREATE | shm::OFlags::EXCL | shm::OFlags::RDWR, Mode::RUSR | Mode::WUSR)?;
+    let (name, fd) = with_free_name(|suffix| {
+        let name = format!("/termpix-{suffix}");
+        let flags = shm::OFlags::CREATE | shm::OFlags::EXCL | shm::OFlags::RDWR;
+        let fd = shm::open(name.as_str(), flags, Mode::RUSR | Mode::WUSR)?;
+        Ok((name, fd))
+    })?;
     let result = (|| -> io::Result<()> {
         let len = data.len() as u64;
         // fallocate makes a full /dev/shm fail here with ENOSPC instead of SIGBUS on write.
@@ -415,8 +432,12 @@ impl ShmTracker {
 /// is predictable, so the file is created new (never through a symlink or
 /// over a file someone else put there) and readable by us alone.
 fn write_temp_file(data: &[u8]) -> io::Result<PathBuf> {
-    let path = std::env::temp_dir().join(format!("tty-graphics-protocol-termpix-{}", unique_suffix()));
-    create_private(&path)?.write_all(data)?;
+    let (path, mut file) = with_free_name(|suffix| {
+        let path = std::env::temp_dir().join(format!("tty-graphics-protocol-termpix-{suffix}"));
+        let file = create_private(&path)?;
+        Ok((path, file))
+    })?;
+    file.write_all(data)?;
     Ok(path)
 }
 
@@ -635,5 +656,36 @@ mod tests {
         enc.end_frame(2, Duration::ZERO);
         assert!(!first.exists(), "frames later and old enough, it goes");
         enc.cleanup_shm();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot use shared memory")]
+    fn names_an_earlier_process_with_our_pid_left_behind_are_passed_over() {
+        // The objects and files the next transfers would be named.
+        let next = UNIQUE.load(Ordering::Relaxed);
+        let pid = std::process::id();
+        // (A test beside this one may take one of them first: those are its.)
+        let planted: Vec<_> = (next..next + 8)
+            .flat_map(|n| {
+                [
+                    std::path::PathBuf::from(format!("/dev/shm/termpix-{pid}-{n}")),
+                    std::env::temp_dir().join(format!("tty-graphics-protocol-termpix-{pid}-{n}")),
+                ]
+            })
+            .filter(|p| create_private(p).is_ok())
+            .collect();
+        let data = [9u8; 4];
+        let name = shm_create(&data);
+        let file = write_temp_file(&data);
+        for p in &planted {
+            let _ = std::fs::remove_file(p);
+        }
+        let name = name.expect("a free name");
+        assert_eq!(std::fs::read(format!("/dev/shm{name}")).unwrap(), data);
+        let _ = rustix::shm::unlink(name.as_str());
+        let file = file.expect("a free name");
+        assert_eq!(std::fs::read(&file).unwrap(), data);
+        let _ = std::fs::remove_file(file);
     }
 }

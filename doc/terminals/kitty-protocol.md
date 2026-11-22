@@ -19,7 +19,10 @@ sequences: `ESC _G <key=value,...> ; <payload> ESC \`.
 
 File and shm transmission only work when the terminal runs on the same host, so
 probe them and fall back to `t=d`. Clean up shm objects that the terminal did not
-consume.
+consume. Objects and files are named after the PID and a counter: a
+process killed before its cleanup leaves some behind, and one with the same
+PID later passes over names that are taken (`crates/termpix/src/graphics.rs`), or it
+would fail to send any image.
 
 ## Placement
 
