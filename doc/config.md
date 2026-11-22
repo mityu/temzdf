@@ -874,6 +874,15 @@ leave it, `resizePane` and dragging its border change it; it may be smaller
 than other panes can be). `focusPane(id)` focuses a pane, going to its tab
 page.
 
+## Testing scripts
+
+`temzdf/test` writes tests of what keys and scripts do, on QUnit
+(`test(name, async (assert, t) => { ... })`, `t.keys("dd")` types keys
+and waits for the session), and `temzdf test FILE...` runs each file in
+a session of its own and prints TAP. The shipped scripts are tested this
+way (`crates/temzdf-script/runtime/**/*.test.ts`); how to write one is in
+`doc/dev/testing.md` ("Script tests") for now.
+
 ## Terminals without graphics
 
 In a terminal without the kitty graphics protocol (or inside tmux without

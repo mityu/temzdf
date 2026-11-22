@@ -769,6 +769,27 @@ was (2026-10-26). They keep the numbers of the first list (1-7 became
     value the API may leave out with `isNullish` (`runtime/lib/validate.ts`,
     `== null`), which does not depend on which of the two it is.
 
+31. *Decided (2026-11-22)*: **temzdf's behaviour is tested from
+    TypeScript too**, as Vim tests itself in Vim script: the module
+    `temzdf/test` (QUnit 3, its `assert`; `runtime/test/index.ts`) and
+    `temzdf test FILE...`, one session per file (`doc/dev/testing.md`,
+    "Script tests"). It is shipped, not kept apart: a configuration can
+    import it and start its tests with `run()` (their TAP then goes to the
+    log). It drives the session through the actions `test.*`
+    (`crates/temzdf-server/src/session/test_actions.rs`): `test.keys`
+    types keys one at a time and `test.settle` waits until the session
+    settled (no script running or waiting to run, no key waiting to be
+    matched, nothing loading), both answering with the messages shown
+    meanwhile, the keys pending and the mode; `test.reset` drops waits and
+    pending keys and goes back to the base mode; `test.report` and
+    `test.end` hand the TAP out (collected by `temzdf test`, else written
+    to the log); `test.reporting` and `test.hooks` only read.
+    `test.keys`, `test.settle` and `test.reset` change the session's input
+    under a test's feet, so only a script's function or dispatched task
+    may run them: `temzdf action` and the configuration's top level (while
+    it loads) are refused. The first version checks what the API shows;
+    the screen stays with `crates/temzdf/tests/tui.rs`.
+
 ## Prior art: modes and keys in tmux and zellij
 
 Read from the sources (tmux `acee541`, zellij 0.45.1 `efd8fd5`, 2026-10-26),

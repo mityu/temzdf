@@ -1431,10 +1431,10 @@ export interface ModuleHooks {
 	afterEach?(assert: Assert, t: TestContext): void | Promise<void>;
 }
 type TestFn = (assert: Assert, t: TestContext) => void | Promise<void>;
-/** The order tests run in, set at a test file's top level: `reorder`
- * (QUnit's default true) runs a test that failed last time first, a
- * `seed` runs them in an order shuffled by it (to find tests depending on
- * the ones before). */
+/** The order tests run in (QUnit.config), set at a test file's top
+ * level: a `seed` runs them in an order shuffled by it, to find tests
+ * depending on the ones before (`reorder`, running a test that failed
+ * last time first, needs storage the script host does not have). */
 export const config: {
 	reorder: boolean;
 	seed: string | undefined;

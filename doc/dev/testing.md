@@ -148,6 +148,126 @@ they exercise:
   a key pressed N times against the key with the count N, so a mapping
   that drops `c.count` fails; add a row for a new counted key.
 
+## Script tests
+
+Tests of temzdf's behaviour can be TypeScript files run in a real
+session, as Vim tests itself in Vim script: the module `temzdf/test`
+(`crates/temzdf-script/runtime/test/index.ts`, on QUnit 3) and
+`temzdf test`. The design is in `doc/design/scripting.md` (decision 31).
+
+**Which kind to write.** A script test when what matters is what keys
+and scripts do to the state scripts can read: text, cursor, modes,
+registers, mappings, buffers, panes and tabs, messages shown. The
+shipped scripts (the Vim mode, Ex commands, keysets) are best tested
+this way, beside their code. A Rust test (`crates/temzdf-server`, "Server
+tests" above) for what the session does that scripts cannot see or must
+not depend on (the matcher's internals, the protocol, timing, the swap
+file's bytes), and for commands without a script host. A
+`crates/temzdf/tests/tui.rs` test for anything on screen (text, colours,
+cursor, images), the CLI and sessions end to end: script tests do not
+look at the screen.
+
+**Where.** `crates/temzdf-script/runtime/**/*.test.ts`, beside what they
+test (`runtime/command.test.ts`, `runtime/vim/ex.test.ts`). They are not
+bundled, and editing one rebuilds nothing; Biome and tsc check them with
+the other scripts.
+
+**Running.**
+
+```sh
+cargo xtask test                    # with the Rust tests (also part of cargo xtask check)
+target/debug/temzdf test FILE...    # some files (build temzdf first)
+target/debug/temzdf test -j 4 --timeout 60 FILE...
+```
+
+Each file runs in a process and a session of its own (its `XDG_*`,
+`TEMZDF_LOG_DIR` and `TMPDIR` in a temporary directory: nothing reaches
+your sessions, swap files or configuration), with the shipped defaults
+loaded and the file loaded as the configuration, on an empty
+`scratch.txt` in that directory. `-j N` runs N files at once (the number
+of CPUs by default). The output is each file's TAP in one piece (its
+stderr too when it failed: `console.log` and script errors go there),
+then the totals; the exit status is 1 when a test failed. A file printing
+no TAP line for `--timeout` seconds (30) is stopped and failed: a
+synchronous loop in a test (the script host stops a synchronous job after
+10 s, which breaks QUnit's chain, and the file goes quiet).
+
+**Writing one.** `runtime/vim/vim.test.ts` is a short example.
+
+```ts
+import { keymap } from "temzdf";
+import { module, test } from "temzdf/test";
+import type { TestContext } from "temzdf/test";
+
+test("dd deletes a line and u brings it back", async (assert, t) => {
+  const pane = t.openText("one\ntwo\n");
+  await t.keys("dd");
+  assert.equal(t.action.text.getText(undefined, { pane }), "two\n");
+});
+```
+
+- `test(name, fn, { timeout? })`: `fn(assert, t)`, usually `async`.
+  `assert` is QUnit's (`equal`, `strictEqual`, `deepEqual`, `ok`,
+  `true`, `false`, `throws`, `rejects`, `step`/`verifySteps`,
+  `expect(n)`; a test with no assertion fails unless `assert.expect(0)`).
+  Failures show both values with loupe (Maps, Sets, class names, `-0`).
+  A test is stopped and fails after `timeout` ms (10 000).
+- `module(name, hooks?, scope?)`: groups the tests registered in `scope`
+  (or, without one, those after it until the next `module`) under
+  `name`; `hooks.beforeEach(assert, t)` and `afterEach(assert, t)` run
+  around each, inside its timeout.
+- `t.keys(keys, { flush?, remap?, allowErrors? })`: type keys (Vim's
+  notation) one at a time, each once the session settled, and wait until
+  it settled again (mapped functions done, no script running or waiting
+  to run, nothing loading). It resolves with `{ errors, messages,
+  pending, mode }`. `flush` (true) resolves a prefix still waiting for a
+  longer mapping as if its time ran out (false: it stays, in `pending`);
+  `remap: false` types the keys without mappings. An error message shown
+  meanwhile fails the test unless `allowErrors` (then read `errors`).
+- `t.settle({ flush? })`: wait until the session settled, typing nothing.
+- `t.action`: the session's actions (the test runs in a dispatched task,
+  where the plain `action` does not work). `t.run(fn)`: run synchronous
+  `fn` with everything else held, where `action`, `o`, `keymap` and the
+  modules' functions work; it does not wait across keys.
+- `t.openText(text, { basemode? })`: a new text buffer (no file) in a
+  new pane beside the focused one, focused; returns the pane. Both go
+  after the test.
+- `t.after(fn)`: run `fn` after the test, passed or failed (the last
+  registered first). `t.signal`: aborted when the test timed out; the
+  helpers then throw instead of typing.
+- `test.hooks(event)` (`t.action.test.hooks`) counts the hooks on an
+  event, to see that a module took its own away.
+- The file's top level only registers tests (no top-level `await`; it
+  must load within 5 s). They start once the session is ready.
+
+**Independence.** The tests of a file share its session. Before each
+test the session is brought back to a known state: settled,
+`test.reset()` (pending keys dropped, the focused pane's base mode), the
+Vim mode's `reset()` (an insert, a selection, a macro being recorded), a
+prompt closed. Registers, buffers, panes, options and mappings are not
+reset: a test that changes them does so through a helper that undoes it
+(`t.openText`) or undoes it itself in `t.after` (`keymap.clear({
+namespace })`), and a test that needs, say, an empty register sets it
+first. Never depend on the tests before: setting `config.seed = "x"`
+(the `config` export of `temzdf/test`, QUnit's `QUnit.config`) at the
+top of a file runs its tests in an order shuffled by that seed, to find
+tests that do (`config.reorder`, QUnit's running first a test that
+failed last time, needs storage the script host does not have). A test that needs a session of its own goes into a file of its
+own.
+
+**Limits.**
+
+- A test file imports `"temzdf"`, `"temzdf/NAME"` and relative paths
+  only, and a relative import loads the source unbundled (another
+  instance, whose npm imports fail): import the shipped modules as
+  `temzdf/NAME`. Functions they do not export are not tested from here.
+- Type stripping takes erasable TypeScript only: no parameter
+  properties (`constructor(private x)`), enums or namespaces.
+- Scripts cannot write files (the guest's file system is read-only):
+  buffers come without a file (`t.openText`); the session itself writes
+  (`action.write`, `:w`) where a test needs a file.
+- No screen: what is drawn is tui.rs' business.
+
 ## Mutation checks
 
 A test written for a fix should fail without the fix. `scripts/mutate.sh

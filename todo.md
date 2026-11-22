@@ -132,6 +132,25 @@ server on one `Session`). Next and open:
   `run_command`'s `match` with no declaration) are not found by any test;
   turning the `match` into a table (name -> function) would let a test
   compare both ways.
+- Script tests (`temzdf/test`, `temzdf test`; `doc/dev/testing.md`),
+  left for later when the first version was built (2026-11-22):
+  - chai-style `expect(x).to.equal(y)` beside QUnit's `assert`;
+  - a diff of two strings in a failure, rather than both shown whole;
+  - `scenario`: steps sharing state, with cleanups that run when the
+    scenario ends rather than after each step;
+  - `t.newSession()`: a fresh session for one test, driven through a
+    remote API, for tests that cannot share the file's session;
+  - helpers reading the screen's text (what tui.rs checks), so that more
+    tests can move from `crates/temzdf/tests/tui.rs`;
+  - moving tui.rs' tests that only embed a configuration string and
+    check what scripts can see, and the rest of
+    `crates/temzdf-server/src/session/vim_tests.rs`, to `*.test.ts`;
+  - user-facing documentation of `temzdf test` (`doc/config.md` only
+    points to `doc/dev/testing.md`);
+  - stack paths in failures relative to the repository (today the
+    absolute paths the host loaded the file from);
+  - an action to write files from a test (`t.openText` makes buffers
+    without one; the Ex test writes beside the session's first file).
 - `:w` with a range (Vim's `:5w`, `:'<,'>w FILE`: those lines only) is
   not built; a range on `:w` is `E481` (`crates/temzdf-script/runtime/vim/ex.ts`).
 - A Nix cache for CI. Magic Nix Cache (in GitHub's cache) was turned off

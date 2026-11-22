@@ -59,7 +59,8 @@ Read before you act:
   (TypeScript, Biome) or their declarations, or running Miri:
   `doc/dev/environment.md`.
 - Before writing or changing tests, or verifying a change on screen
-  (simulated terminal, e2e, frames, mutation checks, Miri, fixtures):
+  (script tests, simulated terminal, e2e, frames, mutation checks, Miri,
+  fixtures):
   `doc/dev/testing.md`; on macOS also `doc/terminals/macos.md`.
 - When investigating terminal problems: `doc/dev/debugging.md`.
 - Before touching builds without Nix, the embedded fonts, `nix build` or
