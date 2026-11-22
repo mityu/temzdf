@@ -216,13 +216,15 @@ server on one `Session`). Next and open:
 - The Windows port (`doc/survey/windows-port.md`, 2026-11-22). Work
   happens on the branch `windows-port`. On Windows the GUI client is the
   frontend; the terminal frontend comes last. Order:
-  - First steps, no VM: `.gitattributes` with LF; `cargo check --target
-    x86_64-pc-windows-msvc` of the crates that build, in the Linux CI
-    job; `cfg(unix)` on test code that does not compile there (symlink
-    and mode tests; `mutate.rs`'s pure tests apart from its shell ones);
-    esbuild found as an exe in `crates/temzdf-script/build.rs`;
-    `pdf::fixture` without `scripts/build-fixtures.sh`; a
-    `windows-latest` CI job on those crates.
+  - First steps, no VM. Done: `.gitattributes` with LF; `cfg(unix)` on
+    the symlink and mode tests and on `mutate.rs`'s shell tests (not yet
+    compiled for Windows); esbuild found as an exe in
+    `crates/temzdf-script/build.rs`; `pdf::fixture` builds the fixtures
+    in Rust (`crates/temzdf-fixtures`, `cargo xtask fixtures`). Waiting
+    for the dev shell's toolchain to carry `x86_64-pc-windows-msvc`
+    (`flake.nix`): `cargo check --target x86_64-pc-windows-msvc` of the
+    crates that build, in the Linux CI job (and the test code it finds
+    still to gate); a `windows-latest` CI job on those crates.
   - The VM: vitro with a local Windows 11 ISO (OVMF firmware), then
     `scripts/windows-vm.sh` as a thin wrapper over it, and the ConPTY
     experiment (kitty graphics, kitty keyboard, SGR-pixel mouse through
