@@ -190,6 +190,7 @@ pane by default, since web views are stateful per viewport.
 | Need | Choice | Why, in this design |
 |---|---|---|
 | Session IPC | own protocol on Unix sockets (`std`/`rustix`), serde + a compact binary codec; framing adapted from zellij's `ipc.rs` (MIT, with attribution) | Depending on zellij crates, even via git, brings its whole application (wasm plugins, KDL layouts, web client) and no stable API; the framing is ~50 lines |
+| Session IPC on Windows (2026-11-23) | `uds_windows` 1.2.1 (2026-03-14; repository not archived; used by zbus, async-io and smol; depends on `windows-sys`, `tempfile`, `memoffset`) behind `temzdf-protocol`'s `Stream`/`Listener` | The same AF_UNIX sockets and code paths as on Unix; named pipes would need another "socket gone" design, an explicit DACL and overlapped I/O |
 | Session discovery | socket directory listing + liveness probe, adapted from zellij's `sessions.rs` | Simple logic, worth copying |
 | Shared memory | `rustix::shm` + `memmap2` (already used by termpix) | Images to local clients |
 | PTY | `portable-pty` | De facto standard |

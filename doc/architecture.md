@@ -63,7 +63,9 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
   worker pool whose queue each frame replaces, keeping the queued work it
   still wants).
 - `temzdf-protocol`: the session protocol (client/server messages,
-  framing, socket locations, finding sessions in `discovery`).
+  framing, socket locations, finding sessions in `discovery`), and the
+  sockets in `transport` (`Stream`, `Listener`: std's Unix sockets, or
+  `uds_windows`'s on Windows).
 - `temzdf-client`: what every client shares: naming, resolving and
   starting sessions (`spawn_server`), the connection to a session
   (`Connection`, one-shot `request`s), log locations, carrying out effects
