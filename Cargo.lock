@@ -5813,6 +5813,7 @@ dependencies = [
  "temzdf-scene",
  "termpix-core",
  "uds_windows",
+ "winapi-util",
 ]
 
 [[package]]

@@ -324,10 +324,11 @@ git log), and why:
   drop the `\\?\` prefix (`dunce`). Gaps: the directories are not
   checked for owner or ACL (Unix checks the owner and sets 0700); they
   rely on the profile's ACL under `%LOCALAPPDATA%`, and with an XDG
-  variable on whatever that directory has. A socket or lock file
-  replaced at the same path looks like the one a server made (std has no
-  stable file index), so a server may remove a newer server's socket
-  when it ends. Logs get no mode. `file:` links do not open, and path
+  variable on whatever that directory has (kept so, decided with the
+  user, 2026-11-23). A socket or lock file is told from one replaced at
+  the same path by its volume serial number and file index
+  (`winapi-util`, the file opened as a reparse point; not yet run on
+  Windows). Logs get no mode. `file:` links do not open, and path
   comparisons are not case-insensitive yet.
 - **Nesting.** A client says which session's pane it runs in (`Hello`), and
   a session lists those of its clients (`SessionInfo::shown_in`); `attach`

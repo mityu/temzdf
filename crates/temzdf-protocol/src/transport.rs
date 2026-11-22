@@ -128,28 +128,46 @@ impl Listener {
 pub type FileId = (u64, u64);
 
 /// The identity of the file at `path` (not followed if it is a link), or
-/// none when nothing is there. On Unix its device and inode. On Windows
-/// only whether it is there (std has no stable file index, and the
-/// AF_UNIX socket is a reparse point other crates do not open): a file
-/// replaced by another one is taken for the same file, a gap noted in
-/// `doc/design/session-server.md`.
+/// none when nothing is there: its device and inode on Unix, its volume's
+/// serial number and its file index on Windows (opened as the reparse
+/// point an AF_UNIX socket is, not followed).
+#[cfg(unix)]
 pub fn file_id(path: &Path) -> Option<FileId> {
+    use std::os::unix::fs::MetadataExt;
     let m = std::fs::symlink_metadata(path).ok()?;
-    Some(id_of(&m))
+    Some((m.dev(), m.ino()))
 }
 
 /// [`file_id`] of an open file.
-pub fn file_id_of(file: &std::fs::File) -> Option<FileId> {
-    file.metadata().ok().map(|m| id_of(&m))
-}
-
 #[cfg(unix)]
-fn id_of(m: &std::fs::Metadata) -> FileId {
+pub fn file_id_of(file: &std::fs::File) -> Option<FileId> {
     use std::os::unix::fs::MetadataExt;
-    (m.dev(), m.ino())
+    let m = file.metadata().ok()?;
+    Some((m.dev(), m.ino()))
 }
 
-#[cfg(not(unix))]
-fn id_of(_: &std::fs::Metadata) -> FileId {
-    (0, 0)
+/// The identity of the file at `path` (not followed if it is a link), or
+/// none when nothing is there: its device and inode on Unix, its volume's
+/// serial number and its file index on Windows (opened as the reparse
+/// point an AF_UNIX socket is, not followed).
+#[cfg(windows)]
+pub fn file_id(path: &Path) -> Option<FileId> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+    // The reparse point itself; directories too.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let file = std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .ok()?;
+    file_id_of(&file)
+}
+
+/// [`file_id`] of an open file.
+#[cfg(windows)]
+pub fn file_id_of(file: &std::fs::File) -> Option<FileId> {
+    let info = winapi_util::file::information(file).ok()?;
+    Some((info.volume_serial_number(), info.file_index()))
 }
