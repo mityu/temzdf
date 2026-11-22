@@ -17,7 +17,7 @@
 // mapped function, a scheduled one, t.run).
 import { action, dispatch, on } from "temzdf";
 import type { Actions } from "temzdf";
-import type { ItemKey, Session, SessionError, SessionState } from "./session";
+import type { ItemKey, SessionError, SessionState, Snapshot } from "./session";
 import type { Action, Detail, DetailUnit, DisplayItem, InvokeParams, Item, Renderer } from "./types";
 
 /** The highlight groups lists use (defined at SessionReady; a user's own
@@ -44,8 +44,22 @@ export const LIST_HIGHLIGHTS: Readonly<Record<string, string>> = { CursorLine: "
  * for a moment). */
 const ATTRS = ["nofile", "unlisted", "nomodifiable"] as const;
 
+/** What a list reads its candidates from: a Session, or another engine
+ * shaped like one (completion mixes several sessions into one). */
+export interface ListSession<T extends Detail> {
+  onChange(fn: () => void): () => void;
+  whenIdle(): Promise<void>;
+  snapshot(range?: { start?: number; end?: number }): Snapshot<T>;
+  keyOf(item: Item<T>): ItemKey | undefined;
+  isMarked(item: Item<T>): boolean;
+  mark(item: Item<T>, on?: boolean): boolean;
+  toggleMark(item: Item<T>): boolean;
+  clearMarks(): void;
+  markedItems(): Item<T>[];
+}
+
 export interface ListOptions<T extends Detail> {
-  readonly session: Session<T>;
+  readonly session: ListSession<T>;
   /** Opens the pane showing the list's buffer (returns it); without it,
    * attach() a pane later. */
   readonly open?: (buffer: number) => number | undefined;
@@ -103,7 +117,7 @@ const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 /** A list over a session; createList makes one. */
 export class List<T extends Detail = DetailUnit> {
-  readonly session: Session<T>;
+  readonly session: ListSession<T>;
   /** The list's buffer (nofile, unlisted, nomodifiable). */
   readonly buffer: number;
   readonly namespace: string;
@@ -419,7 +433,10 @@ export class List<T extends Detail = DetailUnit> {
         await this.#pump(ctx.atomic);
       } finally {
         this.#pumping = false;
-        this.#wake();
+        // Kicked again between the pump's end and here (a pane attached
+        // by another task): pump again.
+        if (this.#dirty && this.#pane !== undefined && !this.#disposed) this.#kick();
+        else this.#wake();
       }
     });
   }

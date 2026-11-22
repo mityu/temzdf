@@ -1755,8 +1755,24 @@ export function defineHighlights(act?: Actions): void;
 /** The groups a list pane draws as others (text.setOptions' highlights):
  * the cursor line in FFSelection, no cursor of an unfocused pane. */
 export const LIST_HIGHLIGHTS: Readonly<Record<string, string>>;
+/** What a list reads its candidates from: a Session, or another engine
+ * shaped like one (completion mixes several sessions into one). */
+export interface ListSession<T extends Detail> {
+	onChange(fn: () => void): () => void;
+	whenIdle(): Promise<void>;
+	snapshot(range?: {
+		start?: number;
+		end?: number;
+	}): Snapshot<T>;
+	keyOf(item: Item<T>): ItemKey | undefined;
+	isMarked(item: Item<T>): boolean;
+	mark(item: Item<T>, on?: boolean): boolean;
+	toggleMark(item: Item<T>): boolean;
+	clearMarks(): void;
+	markedItems(): Item<T>[];
+}
 export interface ListOptions<T extends Detail> {
-	readonly session: Session<T>;
+	readonly session: ListSession<T>;
 	/** Opens the pane showing the list's buffer (returns it); without it,
 	 * attach() a pane later. */
 	readonly open?: (buffer: number) => number | undefined;
@@ -1812,7 +1828,7 @@ export interface MoveOptions {
 /** A list over a session; createList makes one. */
 export class List<T extends Detail = DetailUnit> {
 	#private;
-	readonly session: Session<T>;
+	readonly session: ListSession<T>;
 	/** The list's buffer (nofile, unlisted, nomodifiable). */
 	readonly buffer: number;
 	readonly namespace: string;
@@ -1966,5 +1982,274 @@ export function fuzzy(o?: MatchOptions): Matcher<DetailUnit>;
 export function byScore(): Sorter<DetailUnit>;
 /** Leaves the items as they are (label: value). */
 export function identity(): Renderer<DetailUnit>;
+
+}
+
+declare module "temzdf/ff/completion" {
+import { Actions, KeyContext, Position, Range } from 'temzdf';
+
+class AbortSignal {
+	readonly aborted: boolean;
+	readonly reason: unknown;
+	onabort: (() => void) | null;
+	throwIfAborted(): void;
+	addEventListener(type: "abort", listener: () => void, options?: {
+		once?: boolean;
+	}): void;
+	removeEventListener(type: "abort", listener: () => void): void;
+	static timeout(ms: number): AbortSignal;
+	static any(signals: AbortSignal[]): AbortSignal;
+}
+interface Keyset {
+	/** Define the mappings and hooks (again: nothing more). */
+	enable(): void;
+	/** Remove them. */
+	disable(): void;
+	readonly enabled: boolean;
+}
+type Detail = object;
+type DetailUnit = Record<never, never>;
+interface Decoration {
+	readonly start: number;
+	readonly length: number;
+	readonly style?: string;
+}
+interface Item<T extends Detail = DetailUnit> {
+	/** Unique within its source (the engine keys by it). */
+	readonly id: string | number;
+	/** What matchers match. */
+	readonly value: string;
+	/** The source's own data and what refiners and matchers added. */
+	readonly detail: T;
+	/** What is shown (default: `value`); set by renderers only. */
+	label?: string;
+	/** Matchers add the matched parts (on `value`), renderers styling. */
+	decorations?: readonly Decoration[];
+}
+type DisplayItem<T extends Detail = DetailUnit> = Item<T> & {
+	label: string;
+	decorations: readonly Decoration[];
+};
+interface PartOptions {
+	readonly signal: AbortSignal;
+}
+interface Matcher<T extends Detail = DetailUnit> {
+	match<V extends T>(p: {
+		readonly query: string;
+		readonly items: readonly Item<V>[];
+	}, o: PartOptions): AsyncIterable<Item<V>>;
+}
+interface Sorter<T extends Detail = DetailUnit> {
+	sort<V extends T>(p: {
+		readonly items: Item<V>[];
+	}, o: PartOptions): void | Promise<void>;
+}
+interface Renderer<T extends Detail = DetailUnit> {
+	render<V extends T>(p: {
+		readonly items: DisplayItem<V>[];
+	}, o: PartOptions): void | Promise<void>;
+}
+/** Where a source completes: its `anchor` (candidates without a range of
+ * their own replace the text from it to the cursor; the query is that
+ * text) and its own data, fixed when findContext ran. */
+export interface CompletionContext<T = unknown> {
+	readonly anchor: Position;
+	readonly detail: T;
+}
+/** A candidate: an item with completion's own fields. */
+export type CompletionItem<D extends Detail = DetailUnit> = Item<D> & {
+	/** What goes in (default: `value`). */
+	insertText?: string;
+	/** What it replaces (default: from the anchor to the cursor); its start
+	 * also starts the text it is narrowed by (up to the cursor). An end
+	 * before the cursor counts as the cursor. */
+	range?: Range;
+	/** Shown in a column of its own (a function, a keyword, ...). */
+	kind?: string;
+	/** Shown in a column after the kind. */
+	description?: string;
+};
+/** findContext's answer: a new context (collect again with it), `prev`
+ * itself (keep what was collected; a collection running goes on) or
+ * undefined (the source does not apply here). Called synchronously where
+ * the plain `action` and the helpers below work. */
+export type FindContext<T> = (prev: CompletionContext<T> | undefined) => CompletionContext<T> | undefined;
+/** Collects once per context; the engine narrows to the query. */
+export interface CompletionSource<T = unknown, D extends Detail = DetailUnit> {
+	findContext: FindContext<T>;
+	source(p: {
+		readonly detail: T;
+	}, o: PartOptions): AsyncIterable<CompletionItem<D>>;
+}
+/** Collects once per context too, given the query of that moment (a
+ * prefix lookup, a server). */
+export interface CompletionCurator<T = unknown, D extends Detail = DetailUnit> {
+	findContext: FindContext<T>;
+	curator(p: {
+		readonly query: string;
+		readonly detail: T;
+	}, o: PartOptions): AsyncIterable<CompletionItem<D>>;
+}
+export type AnySource = CompletionSource<any, any> | CompletionCurator<any, any>;
+/** What accepting a candidate does. Runs in a dispatched task (`o.action`
+ * is the task's) after the completion ended. */
+export interface CompletionAction<D extends Detail = DetailUnit> {
+	invoke(p: {
+		readonly item: CompletionItem<D>;
+		/** The context of the item's source. */
+		readonly context: CompletionContext<unknown>;
+		/** Where the item's text is now (what it replaced, while selected). */
+		readonly range: Range;
+		/** The text pane completed in. */
+		readonly pane: number;
+	}, o: PartOptions & {
+		readonly action: Actions;
+	}): void | Promise<void>;
+}
+export interface AddOptions {
+	/** The source takes part only while this holds (as a mapping's `when`;
+	 * the focused pane and its mode, `keys` empty). */
+	readonly when?: (ctx: KeyContext) => boolean;
+	/** Sources are mixed by priority (higher first), then in the order they
+	 * were added. */
+	readonly priority?: number;
+	/** Adding the same source in the same namespace again replaces it;
+	 * remove() and clear() take a namespace. */
+	readonly namespace?: string;
+	/** Group N (0) shows only when no earlier group has a match. */
+	readonly group?: number;
+	/** Starts a completion by itself as text is typed (false: by hand,
+	 * start(), <C-n>). */
+	readonly auto?: boolean;
+	/** An automatic start wants at least this many characters of query
+	 * (1). */
+	readonly minLength?: number;
+	/** Narrows the candidates (fuzzy()). */
+	readonly matcher?: Matcher<any>;
+	/** Orders the matches (byScore()). */
+	readonly sorter?: Sorter<any>;
+	/** What accepting does after the text went in (replaceAction()). */
+	readonly action?: CompletionAction<any>;
+}
+/** A registration as get() gives it. */
+export interface Registration {
+	readonly source: AnySource;
+	readonly when: ((ctx: KeyContext) => boolean) | undefined;
+	readonly priority: number;
+	readonly namespace: string | undefined;
+	readonly group: number;
+	readonly auto: boolean;
+	readonly minLength: number;
+}
+/** The popup's settings (configure()). */
+export interface PopupOptions {
+	/** Rows at most (10). */
+	maxHeight: number;
+	/** Columns at most (60). */
+	maxWidth: number;
+	/** Sets the lines' labels (columns(): label, kind, description). */
+	renderer: Renderer<any>;
+	/** The modes where text is typed: completion lives only in them. */
+	modes: readonly string[];
+}
+/** What completion does to the text pane it completes in. */
+export interface CompletionAdapter {
+	readonly pane: number;
+	readonly buffer: number;
+	cursor(): Position;
+	setCursor(pos: Position): void;
+	line(n: number): string;
+	getText(range: Range): string;
+	replace(range: Range, text: string): void;
+	/** The buffer's version (it grows with every change). */
+	version(): number;
+}
+/** The adapter of a text pane, acting with `act` (the plain `action`, or
+ * a task's). */
+export function textPaneAdapter(pane: number, act?: Actions): CompletionAdapter;
+/** The cursor of the pane being completed in. */
+export function cursor(): Position;
+/** The text before the cursor on its line. */
+export function lineBeforeCursor(): string;
+/** Where the word before the cursor starts: a run of the buffer's word
+ * characters (`chars`, a regex character class) ending at the cursor (the
+ * cursor itself when there is none). */
+export function wordStart(chars?: string): Position;
+/** The text from `anchor` to the cursor ("" when the cursor is before it). */
+export function textFrom(anchor: Position): string;
+/** The pane's buffer: its id, path, name, whether it is a prompt, and its
+ * file type (the path's extension, until temzdf knows file types). */
+export function bufferInfo(): {
+	buffer: number;
+	path: string | undefined;
+	name: string;
+	fileType: string | undefined;
+};
+/** Register `source`. */
+export function add(source: AnySource, o?: AddOptions): void;
+/** Remove `source`'s registrations (those of a namespace). */
+export function remove(source: AnySource, o?: {
+	namespace?: string;
+}): void;
+/** Remove the registrations of a namespace (all). */
+export function clear(o?: {
+	namespace?: string;
+}): void;
+/** The registrations (of a namespace), in the order they are mixed. */
+export function get(o?: {
+	namespace?: string;
+}): Registration[];
+/** Change the popup's settings. */
+export function configure(o: Partial<PopupOptions>): void;
+interface FirstOfDetail {
+	readonly index: number;
+	readonly inner: CompletionContext<unknown>;
+}
+/** One source of `sources`: the first that applies (asked in turn each
+ * time), its context kept as long as it answers with it. */
+export function firstOf(...sources: readonly AnySource[]): CompletionCurator<FirstOfDetail, any>;
+/** The default action: the item's text replaces `range` unless it is
+ * there already (selecting put it there). */
+export function replaceAction(): CompletionAction<Detail>;
+/** The default renderer: the label, the kind and the description in
+ * columns (as wide as the widest of the lines written at once; widths
+ * count UTF-16 code units). */
+export function columns(): Renderer<Detail>;
+/** Whether a completion runs (for mappings' `when`). */
+export function active(): boolean;
+/** Whether its popup shows (it hides while nothing matches). */
+export function visible(): boolean;
+/** What a completion shows, for tests and status lines. */
+export function info(): {
+	readonly pane: number;
+	readonly manual: boolean;
+	/** The popup's pane, while it shows. */
+	readonly popup: number | undefined;
+	/** The candidate in the buffer. */
+	readonly selected: CompletionItem<Detail> | undefined;
+	readonly matched: number;
+	/** Each source's anchor, in the order they are mixed. */
+	readonly anchors: readonly Position[];
+} | undefined;
+/** Resolves once no source collects or matches and the popup shows what
+ * they found (at once without a completion). */
+export function whenIdle(): Promise<void>;
+/** Start a completion by hand (all applicable sources); whether one runs. */
+export function start(): boolean;
+/** Select the next candidate, putting its text in (after the last: the
+ * original text again); starts a completion when none runs. */
+export function next(): void;
+/** Select the previous candidate (before the first: the original text). */
+export function prev(): void;
+/** Keep the candidate in and end, running its action (without one in:
+ * just end). */
+export function accept(): void;
+/** Put the original text back and end. */
+export function cancel(): void;
+/** The keys: <C-n> and <C-p> select (starting a completion when none
+ * runs), <C-y> accepts and <C-e> cancels while one runs; in the modes
+ * where text is typed (settings.modes when enabled). Namespace
+ * builtin-ff-completion. */
+export const keys: Keyset;
 
 }

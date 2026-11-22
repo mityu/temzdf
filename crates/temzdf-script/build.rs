@@ -39,6 +39,7 @@ const MODULES: &[(&str, &str)] = &[
     ("test", "test/index.ts"),
     ("ff", "ff/index.ts"),
     ("ff/builtin", "ff/builtin/index.ts"),
+    ("ff/completion", "ff/completion/index.ts"),
 ];
 
 fn main() {

@@ -798,6 +798,82 @@ vim.options.shiftwidth = 2;` changes its settings. Its mappings are in the
 namespace `builtin-edit-vim`; `vim.disable()` takes them away
 (`temzdf/edit/notepad` edits without modes instead).
 
+### Completion
+
+`temzdf/ff/completion` completes words in text panes while text is typed
+(the modes `vim/insert`, `vim/cmdline`, `input` and `edit`), from sources
+a configuration registers (`doc/design/completion.md`). A source says
+where completion applies (`findContext`, called as you type) and collects
+candidates; the engine narrows them to what was typed since the anchor and
+shows them in a popup below the cursor (above when it does not fit).
+
+```ts
+import * as completion from "temzdf/ff/completion";
+import { prefix } from "temzdf/ff/builtin";
+
+const fruit = {
+  // Where the word before the cursor starts; the same anchor keeps what
+  // was collected (prev), a new one collects again.
+  findContext: (prev) => {
+    const anchor = completion.wordStart();
+    return prev?.anchor.character === anchor.character && prev.anchor.line === anchor.line
+      ? prev
+      : { anchor, detail: undefined };
+  },
+  async *source() {
+    for (const [id, value] of ["apple", "apricot", "banana"].entries()) {
+      yield { id, value, detail: {}, kind: "fruit" };
+    }
+  },
+};
+completion.add(fruit, { namespace: "mine", matcher: prefix(), auto: true, minLength: 2 });
+```
+
+- `completion.add(source, { when?, priority?, namespace?, group?, auto?,
+  minLength?, matcher?, sorter?, action? })`: `when` as a mapping's;
+  sources mix by `priority` (higher first), then in the order added;
+  `group` N shows only when no earlier group has a match; `auto` starts
+  completing as you type once the query has `minLength` characters (1),
+  else only by hand; `matcher` (`fuzzy()` from `temzdf/ff/builtin` by
+  default; `prefix()`, `substring()`) and `sorter` (`byScore()`) narrow
+  and order a source's candidates; `action` runs when one is accepted.
+  `completion.remove(source, { namespace? })`, `completion.clear({
+  namespace? })`, `completion.get()`. `completion.firstOf(a, b, ...)` is
+  one source: the first of them that applies.
+- A source is `{ findContext(prev), source({ detail }, { signal }) }`, or
+  `curator({ query, detail }, { signal })` for one that wants the query
+  when it collects. `findContext` returns a new context `{ anchor, detail
+  }` (collect again), `prev` (keep what was collected) or `undefined`
+  (does not apply). Helpers it may call: `completion.cursor()`,
+  `lineBeforeCursor()`, `wordStart(chars?)`, `textFrom(anchor)`,
+  `bufferInfo()` (path, name, file type as the extension). Candidates are
+  items (`{ id, value, detail }`) with `insertText?` (what goes in instead
+  of `value`), `range?` (what it replaces), `kind?` and `description?`
+  (columns of the popup).
+- Selecting a candidate puts its text in at once; `<C-e>` puts back what
+  was typed, `<C-y>` (or typing on) keeps it. The candidates put in are
+  one undo step. Completion ends when you leave the mode, the cursor goes
+  before the anchor or past what was typed, no source applies, or (when
+  started by hand) the word changes.
+- `completion.start()`, `next()`, `prev()`, `accept()`, `cancel()` for
+  your own mappings; `completion.active()` (a completion runs) and
+  `completion.visible()` (its popup shows: it hides while nothing
+  matches) for their `when`. `completion.configure({ maxHeight?,
+  maxWidth?, renderer?, modes? })` sets the popup.
+
+The keys (namespace `builtin-ff-completion`, in the modes above):
+
+| Keys | Action |
+|---|---|
+| `<C-n>` / `<C-p>` | the next / previous candidate (put in); without a completion, start one |
+| `<C-y>` | while completing: keep the candidate |
+| `<C-e>` | while completing: put back what was typed, and stop |
+
+`import { keys } from "temzdf/ff/completion"; keys.disable();` takes them
+away; mapping the same keys in your configuration replaces them (map with
+`when: completion.active` and `priority: 1` or more to win over `<C-y>`
+and `<C-e>`).
+
 ## The Markdown viewer
 
 `markdown.open(path, { pane? })` shows a Markdown file (GitHub-flavoured:

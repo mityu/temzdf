@@ -92,28 +92,31 @@ server on one `Session`). Next and open:
   a draft; the shared foundation and completion's sources are decided).
   Built: `temzdf/ff`'s types, combinators and engine without a UI, and
   the first shipped matchers, sorter and renderer (`temzdf/ff/builtin`),
-  and the list buffer, the UI's shared part (`createList`). Next:
-  completion's layer and popup.
+  the list buffer, the UI's shared part (`createList`), and completion's
+  layer and popup (`temzdf/ff/completion`: registration, groups,
+  `firstOf`, inserting on select, the keys `<C-n>` `<C-p>` `<C-y>`
+  `<C-e>`). Next: completing Ex commands in the command line (its marker,
+  `<Tab>`/`<S-Tab>` there, command names and arguments), then the fuzzy
+  finder's UI.
   Order: the fuzzy finder and completion framework (`temzdf/ff`) before
   an LSP client; the first use wanted is completing Ex commands in the
   command line, which is a text buffer like Vim's cmdwin, so it is
   insert-mode completion in a text pane and completion's UI (a popup over
   the list buffer) comes before the fuzzy finder's. Still to decide:
-  - Completion's own item fields, removing duplicates across sources,
-    sorting across sources (scores, `priority`, `sortText`).
-  - Accepting a completion (the default action and what composes on
-    it): edits, snippets (none yet), additional edits, undo grouping,
-    `.` repeat.
-  - Keys and the popup: select, accept, cancel; insert on select or not;
-    mappings only while it shows (a `when` condition).
-  - Previewing, resolving details lazily, ghost text.
-  - Events that start a completion, debouncing, per-source time limits,
-    keeping the old candidates while collecting again; when a completion
-    ends.
-  - The adapter: what a text pane in insert mode (Vim, Notepad, prompts)
-    provides to the engine.
-  - Errors from sources; the registration API in detail; how commands
-    declare their arguments' completion (`command.add`).
+  - Removing duplicates across sources, sorting across sources (scores,
+    `sortText`; now each source's matches follow the one before).
+  - Accepting a completion: snippets (none yet), additional edits, `.`
+    repeat (the Vim mode repeats what was typed, candidates included);
+    a cancelled completion leaves an undo step that changes nothing.
+  - Previewing, resolving details lazily, ghost text, long
+    documentation.
+  - Debouncing, per-source time limits, keeping the old candidates while
+    collecting again; display widths in the popup (labels are padded by
+    UTF-16 code units, wide characters misalign the columns); `<C-p>`
+    from nothing selected takes the last line written, not necessarily
+    the last match.
+  - Errors from sources (logged, not shown); how commands declare their
+    arguments' completion (`command.add`).
   - Narrowing only the previous matches when the new query extends the
     old one (as fzf does): measured, one query over 100k items takes
     seconds with npm `fzf` in the script host ("Speed" there).
@@ -125,6 +128,16 @@ server on one `Session`). Next and open:
     of `toggleFloats` and of its count. If a float ever should not take
     the focus yet still hide and show with the user's floats (a small
     always-on info window, say), split that into an option of its own.
+- Script requests get slower with the number of decorations (found in
+  completion's stage 2, 2026-11-22; the user decided to do this right
+  after completion's layer): one request costs the server about 0.7 ms
+  with no decorations and about 13 ms with 2000 of them, even a request
+  on another pane (a list's `last()` over 2000 decorated items took about
+  14 s). Profile the server's request path (`crates/temzdf-server`) and
+  fix it in Rust.
+- A way to turn undo off for a buffer (Vim's `undolevels=-1` for one
+  buffer): the ff list's buffer gets an undo step for every write, kept
+  for nothing.
 - A Windows port of the tests. The gate is `cargo xtask check` and the
   JavaScript tooling Node TypeScript (`scripts/ts-types.ts`,
   `scripts/check-docs.ts`), neither assuming Nix or bash; what is left:

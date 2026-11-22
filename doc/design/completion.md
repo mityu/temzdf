@@ -242,8 +242,8 @@ interface Action<T = {}> {
 - Accepting a completion is an action too: the default one replaces the
   candidate's range (else the anchor to the cursor) through the adapter;
   LSP's additional edits and command are actions composed on it. The
-  completion layer passes the source's `CompletionContext` along; the
-  details are decided with the completion layer.
+  completion layer passes the source's `CompletionContext` along (its
+  own shape, `CompletionAction`: "The completion layer" below).
 
 ## Fuzzy finder sources
 
@@ -372,6 +372,116 @@ source starts by itself and from how many characters.
   engine, so mixing cannot be a transformer of sources (vim-fall's
   refiners); transformers are for per-candidate work (labels, details,
   dropping, removing duplicates).
+
+## The completion layer
+
+Built as `temzdf/ff/completion` (`runtime/ff/completion/`). Decided with
+the user (2026-11-22): the keys, inserting on select, the predicates for
+`when`, starting by hand in the command line, the end conditions and the
+item fields; the rest is how the code settled it.
+
+- **Items**: `CompletionItem<T> = Item<T> & { insertText?, range?, kind?,
+  description? }`. `value` is what matchers match and the text that goes
+  in unless `insertText`; `range` replaces the anchor for that candidate
+  (its end counts as the cursor when before it); `kind` and `description`
+  are columns of the default renderer (`columns()`: label, kind,
+  description, as wide as the widest of the lines written at once, counted
+  in UTF-16 code units). Long documentation, resolving details later,
+  snippets and edits elsewhere are left for later.
+- **Registration**: `add(source, { when, priority, namespace, group,
+  auto, minLength, matcher, sorter, action })`, `remove(source, {
+  namespace })`, `clear({ namespace })`, `get()`, as key mappings: the same
+  source in the same namespace again replaces it. Sources are mixed by
+  group, then priority (higher first), then the order added (earlier
+  first: unlike mappings, where the last added wins). `when` gets a
+  mapping's context (the focused pane, its kind, the mode; `keys` empty).
+- **Matching per source**: each source of a completion has a session of
+  its own (`createSession`, one source in it): its context, its query and
+  its matcher and sorter (by default `fuzzy()` and `byScore()`; Vim's own
+  defaults, prefix for command and option names, are for the command
+  line's sources to choose). The sessions are read as one by the popup's
+  list (`Merged`, a `ListSession`: `createList` takes any engine shaped
+  like a session): concatenated in the sources' order, each source's
+  matches in its sorter's order (no sorting across sources), only the
+  first group with a match left; items keyed by the source's registration
+  and their id. The session's query is a key of the cursor and the text
+  before it; the matcher narrows each candidate by the text from its
+  range's start (else its source's anchor) to the cursor, read from the
+  line as it was at the last check (matchers run in timers, where the
+  buffer cannot be read).
+- **Curators** are handed the query of the moment their context was
+  found; like sources they collect again only for a new context (`prev`
+  keeps what they collected, narrowed as the query changes), so a curator
+  wanting every keystroke returns a new context each time.
+- **When findContext runs**: hooks only `schedule()` a check (TextChanged
+  of the completed buffer, InvokePost in its pane, ModeChanged,
+  PaneFocused, PaneClosed); nothing changed since the last check (the
+  buffer's version and the cursor) is nothing to do. Without a completion
+  only text changes (typing or scripts, not undo) are looked at, and only
+  while an `auto` source is registered.
+- **Starting**: by hand (`start()`, `<C-n>`), every source whose `when`
+  holds and whose `findContext(undefined)` answers takes part; by typing,
+  one `auto` source must answer with a query of at least `minLength`
+  (1), and then every applicable source takes part (`auto` says who may
+  start, not who may join). A context whose anchor is after the cursor or
+  on another line counts as not applying.
+- **Ending**: accept, cancel, leaving the modes where text is typed
+  (`configure({ modes })`: `vim/insert`, `vim/cmdline`, `input`, `edit`),
+  the focus leaving the pane or the pane closing, the cursor before an
+  anchor (or on another line) or moved past where the last change left it
+  without typing, no source applying, and in a completion started by hand
+  a source answering with another anchor. In an automatic one a new anchor
+  only makes that source collect again. Nothing matching hides the popup
+  and keeps the completion.
+- **Selecting puts the candidate in** (Vim's way): `next()` / `prev()`
+  move the list's cursor and replace the candidate's range with its text,
+  the text it replaced remembered; the first `next()` takes the first
+  candidate, `prev()` the last, and moving past either end puts the
+  original text back (nothing selected: the popup's cursor line is not
+  drawn). Moves asked for before anything was written (`<C-n><C-n>` typed
+  at once) are made once lines are; a text change drops them. The
+  popup's list never takes the focus: the edited pane keeps it and the
+  keys.
+- **Accepting** keeps the text in and ends, then runs the source's action
+  (`CompletionAction`: `{ item, context, range, pane }`, in a dispatched
+  task with the task's actions); the default (`replaceAction()`) puts the
+  item's text in its range unless it is there already, which it is after
+  selecting. Typing on after a candidate went in accepts it (and may start
+  a new completion); moving the cursor ends without the action.
+  `accept()` with nothing selected just ends. `cancel()` puts the original
+  text back and ends.
+- **Undo**: the first candidate put in opens an undo group
+  (`text.undoBegin`) that closes when the completion ends, so the
+  candidates put in and taken out are one step (inside the Vim insert
+  mode's own group, nested). A cancelled completion leaves a step that
+  changes nothing.
+- **The popup** is a float without a border or the focus (`border:
+  false`, `focusable: false`) over the list's buffer, at the earliest
+  anchor's (the selected candidate's range's start) `text.screenPosition`:
+  below it when the rows fit within `screenSize()`, else above, else on
+  the side with more room, cut to it; as wide as its longest line (at
+  most `maxWidth`, 60, and the screen), as high as the matches (at most
+  `maxHeight`, 10), moved left to stay on the screen. It closes while
+  nothing matches (the list detached) and opens again when something
+  does. `visible()` tells whether it shows, `active()` whether a
+  completion runs (for mappings' `when`, as Vim's `pumvisible()`).
+- **Keys** (`keys`, a keyset in namespace `builtin-ff-completion`,
+  enabled by the defaults): `<C-n>` / `<C-p>` select (starting a
+  completion when none runs), `<C-y>` accepts and `<C-e>` cancels while
+  one runs (`when: active`, priority 1 over the modes' own `<C-y>` and
+  `<C-e>`). `<Tab>` / `<S-Tab>` start and select only in the command
+  line: they come with the command line's marker (stage 4 in `todo.md`);
+  in other text panes `<Tab>` stays a tab.
+- **The adapter** (`CompletionAdapter`, `textPaneAdapter(pane, act?)`):
+  what completion does to the pane (cursor, lines, replacing a range, the
+  buffer's version), with the plain actions or a task's.
+- **Helpers** for `findContext` act on the pane being completed in (the
+  focused one otherwise): `cursor()`, `lineBeforeCursor()`,
+  `wordStart(chars?)` (a run of the buffer's word characters, a regex
+  class, ending at the cursor), `textFrom(anchor)`, `bufferInfo()` (the
+  path, the name, and the extension as a file type until temzdf has file
+  types). `firstOf(a, b, ...)` asks its sources in turn and keeps the one
+  that answered while it answers with the same context.
 
 ## LSP, for reference
 
