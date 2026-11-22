@@ -49,6 +49,9 @@ both_pixel_paths!(
 struct Env {
     dir: TempDir,
     pixels: PixelPath,
+    /// The temzdf binary [`Env::command`] runs (`BIN`; the `shots` take
+    /// another one's).
+    bin: String,
 }
 
 impl Env {
@@ -62,7 +65,7 @@ impl Env {
         for d in ["run", "config", "state", "log"] {
             std::fs::create_dir_all(dir.path().join(d)).unwrap();
         }
-        Self { dir, pixels }
+        Self { dir, pixels, bin: BIN.into() }
     }
 
     fn path(&self, sub: &str) -> PathBuf {
@@ -178,7 +181,7 @@ impl Env {
     /// tests may run in (`TEMZDF_SESSION_NAME`: temzdf would take that
     /// session for its own), as `tuitest` starts programs.
     fn command(&self) -> Command {
-        let mut cmd = Command::new(BIN);
+        let mut cmd = Command::new(&self.bin);
         cmd.envs(self.vars()).env_remove("TEMZDF_SESSION_NAME");
         cmd
     }
@@ -2605,4 +2608,201 @@ fn a_pdfs_selection_goes_into_the_copy_history() {
     let copied = t.copied()[0].clone();
     assert!(copied.starts_with("temzdf sample"), "{copied:?}");
     assert_eq!(env.run(&["paste", "-s", "pc"]), copied);
+}
+
+/// Named screens rendered to pixels for `scripts/frames.sh`, which renders
+/// them with two builds and compares them (for refactorings): not a check
+/// of its own, so ignored unless asked for.
+///
+/// `TEMZDF_SHOTS_DIR=DIR` (required) is where each scene's `NAME.png` goes;
+/// `TEMZDF_SHOTS_BIN=TEMZDF` runs that temzdf instead of this build's (an
+/// older revision's, with these scenes). Run with the tests' fonts:
+/// `FONTCONFIG_FILE=$TEMZDF_TEST_FONTCONFIG cargo test -p temzdf --test tui
+/// shots -- --ignored`. A scene the binary cannot show (an action it does
+/// not know) is named and the others still rendered; the test fails at the
+/// end.
+///
+/// Scenes have to come out the same each time: no temporary paths or PIDs
+/// on the screen (fixed file names, opened from the environment's
+/// directory), the shell's prompt `$ `, no clocks or notices that time out.
+mod shots {
+    use super::*;
+
+    /// The binary under test.
+    fn bin() -> String {
+        std::env::var("TEMZDF_SHOTS_BIN").unwrap_or_else(|_| BIN.into())
+    }
+
+    /// An environment running [`bin`], its programs started in its directory.
+    fn env(name: &str) -> (Env, Options) {
+        let mut env = Env::new(&format!("shot-{name}"));
+        env.bin = bin();
+        let mut opts = env.options();
+        opts.cwd = Some(env.path(""));
+        (env, opts)
+    }
+
+    fn spawn(env: &Env, opts: &Options, args: &[&str]) -> Term {
+        let mut argv = vec![env.bin.as_str()];
+        argv.extend_from_slice(args);
+        Term::spawn(&argv, opts)
+    }
+
+    /// The pages of a PDF are in sight, complete.
+    fn pages(s: &Screen) -> bool {
+        s.images.iter().any(|p| p.cols > 1)
+    }
+
+    fn session_pdf() -> Screen {
+        let (env, opts) = env("session-pdf");
+        let pdf = fixture("sample.pdf");
+        let mut t = spawn(&env, &opts, &["-s", "shots", pdf.to_str().unwrap()]);
+        env.wait_complete(&mut t, 0, |s| pages(s) && s.title.contains("1 / 3"))
+    }
+
+    fn outline() -> Screen {
+        let (env, opts) = env("outline");
+        let pdf = fixture("sample.pdf");
+        let mut t = spawn(&env, &opts, &["-s", "shots", pdf.to_str().unwrap()]);
+        let before = env.wait_complete(&mut t, 0, |s| pages(s) && s.title.contains("1 / 3"));
+        // The sidebar is pixels too: placements elsewhere.
+        let places = |s: &Screen| s.images.iter().map(|p| (p.col, p.row, p.cols, p.rows)).collect::<Vec<_>>();
+        env.complete_after(&mut t, |t| t.key("Tab"), |s| pages(s) && places(s) != places(&before))
+    }
+
+    fn command_line() -> Screen {
+        let (env, opts) = env("command-line");
+        let pdf = fixture("sample.pdf");
+        let mut t = spawn(&env, &opts, &["-s", "shots", pdf.to_str().unwrap()]);
+        env.wait_complete(&mut t, 0, |s| pages(s) && s.title.contains("1 / 3"));
+        env.complete_after(
+            &mut t,
+            |t| {
+                t.keys(&["C-b", ":"]);
+                t.type_text("vsplit");
+            },
+            |s| pages(s) && s.lines().iter().any(|l| l.starts_with(":vsplit")),
+        )
+    }
+
+    /// A short document in the Markdown viewer's text mode (`F5` from its
+    /// text pane).
+    fn markdown(env: &Env, opts: &Options) -> Term {
+        std::fs::write(
+            env.path("doc.md"),
+            "# Title\n\nSome *text*, **bold** and $\\alpha^2$, a [link](#more).\n\n- one\n- two\n\n\
+             ```rust\nfn main() {}\n```\n\n## More\n\n> A quote.\n",
+        )
+        .unwrap();
+        env.config("config.ts", &markdown_config(std::path::Path::new("doc.md")));
+        let mut t = spawn(env, opts, &["-s", "shots", "doc.md"]);
+        t.wait_text("# Title");
+        env.complete_after(&mut t, |t| t.key("F5"), |s| s.lines()[1].starts_with("═════") && s.contains("A quote."));
+        t
+    }
+
+    fn markdown_text() -> Screen {
+        let (env, opts) = env("markdown-text");
+        // Text alone: the frame waited for is the scene.
+        markdown(&env, &opts).screen()
+    }
+
+    fn markdown_graphics() -> Screen {
+        let (env, opts) = env("markdown-graphics");
+        let mut t = markdown(&env, &opts);
+        env.complete_after(&mut t, |t| t.key("Tab"), |s| !s.images.is_empty() && s.text().contains("markdown"))
+    }
+
+    /// A shell that said `echo left-pane`.
+    fn shell(env: &Env, opts: &Options) -> Term {
+        let mut t = spawn(env, opts, &["-s", "shots"]);
+        t.wait_for("the prompt", prompt);
+        t.type_text("echo left-pane\n");
+        t.wait_for("the output and the prompt", |s| {
+            s.lines().iter().any(|l| shows_output(l, "left-pane"))
+                && s.lines().iter().filter(|l| is_prompt(l)).count() >= 2
+        });
+        t
+    }
+
+    fn split() -> Screen {
+        let (env, opts) = env("split");
+        let mut t = shell(&env, &opts);
+        t.keys(&["C-b", "%"]);
+        t.wait_for("a prompt in the right pane", |s| is_prompt(&s.row_from(0, 50)));
+        let pdf = fixture("sample.pdf");
+        env.complete_after(
+            &mut t,
+            |_| _ = env.run(&["action", "-s", "shots", "new-pane", pdf.to_str().unwrap()]),
+            |s| s.images.iter().any(|p| p.col >= 75 && p.cols > 1) && s.row_from(28, 75).contains("1 / 3"),
+        )
+    }
+
+    fn float() -> Screen {
+        let (env, opts) = env("float");
+        let mut t = shell(&env, &opts);
+        let pdf = fixture("sample.pdf");
+        env.complete_after(
+            &mut t,
+            |_| _ = env.run(&["action", "-s", "shots", "new-pane", pdf.to_str().unwrap()]),
+            |s| s.images.iter().any(|p| p.col >= 50 && p.cols > 1),
+        );
+        env.run(&["action", "-s", "shots", "open-float"]);
+        t.wait_for("a prompt in the float", float_prompt);
+        t.type_text("echo inside-float\n");
+        env.wait_complete(&mut t, 0, |s| {
+            s.contains("inside-float")
+                && is_prompt(&s.row_from(FLOAT_CONTENT.1 + 2, FLOAT_CONTENT.0))
+                && s.images.iter().any(|p| p.col >= 90 && p.cols > 1)
+        })
+    }
+
+    fn tabs() -> Screen {
+        let (env, opts) = env("tabs");
+        let mut t = shell(&env, &opts);
+        let pdf = fixture("sample.pdf");
+        env.complete_after(
+            &mut t,
+            |_| _ = env.run(&["action", "-s", "shots", "new-tab", pdf.to_str().unwrap()]),
+            |s| tab_line(s) && pages(s) && s.lines()[0].contains(" 2 sample.pdf"),
+        )
+    }
+
+    /// A scene: the name of its file and what shows it.
+    type Scene = (&'static str, fn() -> Screen);
+
+    /// The scenes.
+    const SCENES: &[Scene] = &[
+        ("session-pdf", session_pdf),
+        ("outline", outline),
+        ("command-line", command_line),
+        ("markdown-text", markdown_text),
+        ("markdown-graphics", markdown_graphics),
+        ("split", split),
+        ("float", float),
+        ("tabs", tabs),
+    ];
+
+    #[test]
+    #[ignore = "renders the scenes for scripts/frames.sh (TEMZDF_SHOTS_DIR)"]
+    fn shots() {
+        let Some(dir) = std::env::var_os("TEMZDF_SHOTS_DIR").map(PathBuf::from) else {
+            panic!(
+                "set TEMZDF_SHOTS_DIR to the directory for the scenes' PNGs (and TEMZDF_SHOTS_BIN to \
+                 another temzdf to run); scripts/frames.sh render does"
+            );
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut failed = Vec::new();
+        for (name, scene) in SCENES {
+            match std::panic::catch_unwind(scene) {
+                Ok(s) => s.render().save_png(&dir.join(format!("{name}.png"))).unwrap(),
+                Err(_) => {
+                    eprintln!("shots: scene {name} failed (see above)");
+                    failed.push(*name);
+                }
+            }
+        }
+        assert!(failed.is_empty(), "scenes not rendered: {failed:?}");
+    }
 }

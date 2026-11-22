@@ -151,7 +151,9 @@ renders one screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtur
 `tests/fixtures/*.tex` (tests run it automatically; e2e scenarios need it first).
 For refactorings, `scripts/frames.sh render-rev HEAD A` (the last commit),
 `scripts/frames.sh render B` (your build) and `scripts/frames.sh compare A B`
-prove the screen is pixel-identical. A test written for a fix should fail
+prove the screen is pixel-identical: PDF frames and the `shots` scenes of
+`crates/temzdf/tests/tui.rs` (sessions, Markdown, terminal panes, floats,
+tabs), with an image of each difference in `B/diff/`. A test written for a fix should fail
 without it: `scripts/mutate.sh FILE OLD NEW -- cargo test ...` puts the bug
 back for one run and restores the file (it refuses a pattern that does not
 match once, and tells a mutation that did not compile or a filter that ran

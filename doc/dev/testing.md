@@ -6,7 +6,7 @@ Layers of verification, cheapest first. All of them run without a human.
 |---|---|---|
 | Unit tests | `scripts/check.sh` | Input parsing, kitty command encoding, compositor diffing (replayed through `termpix::mock`), layout maths, tile rendering vs full-page rendering |
 | Miri | `scripts/miri.sh` (part of `scripts/check.sh` when `cargo miri` is there) | Undefined behaviour, data races and leaked threads or memory in the unit tests' Rust code (ours and the Rust dependencies). See "Miri" below. |
-| Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal (images only: `--text FILE` writes the status line's text, `--mask PNG` where it is). Read the PNG to check it. `scripts/frames.sh` renders a fixed set and compares two sets pixel by pixel (for refactorings). |
+| Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal (images only: `--text FILE` writes the status line's text, `--mask PNG` where it is). Read the PNG to check it. `scripts/frames.sh` renders a fixed set, with the `shots` scenes of `tui.rs` (sessions, Markdown, terminal panes, tabs), and compares two sets pixel by pixel (for refactorings). |
 | Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
 | Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `scripts/check.sh`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
 | Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland\|macos] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
@@ -154,8 +154,34 @@ gives tests:
   `*_shot_is_the_same_each_time` checking two runs give the same pixels). Images do not prove a screen
   finished: the Markdown viewer places a blank stand-in for each strip not
   painted yet. The tests wait for the client's log (`temzdf.log`) to say
-  last that a complete frame was written (`Env::wait_complete` in tui.rs), as
-  `scripts/e2e.sh` does.
+  last that a complete frame was written (`Env::wait_complete` in tui.rs,
+  or `Env::complete_after` to send keys and wait in one call), as
+  `scripts/e2e.sh` does; frames of text alone write no line, so the same
+  wait serves screens without images.
+- What the renderer will not add: underlines, strikethrough, the cursor,
+  box drawing drawn as lines, ligatures, italics, images shown through
+  tmux's placeholders. It is for comparing a screen before and after a
+  change on the same machine and for people to look at, so it has to be
+  the same each time, not look like a real terminal; what a real terminal
+  shows is `scripts/e2e.sh`'s.
+
+The scenes for `scripts/frames.sh` are the `shots` test in `tui.rs`
+(ignored unless asked for): each one a function returning the `Screen`
+to render, listed in `SCENES` by the name of its file. `frames.sh render
+OUTDIR` runs it into `OUTDIR/tui/` with `TEMZDF_SHOTS_DIR` (where the
+PNGs go; required) and `TEMZDF_SHOTS_BIN` (the temzdf to run, else this
+build's), so `render-rev` plays today's scenes with an older revision's
+binary; a scene that binary cannot play is named and left out, and
+`compare` says `MISSING`. `compare` writes an image of each difference
+to `DIR_B/diff/`. To add a scene, write its function (`env(NAME)` runs
+the binary under test from the environment's directory) and add it to
+`SCENES`; it has to come out the same each time: fixed file names
+(files of its own opened by relative paths: no temporary directory on
+the screen), the shell's `$ ` prompt, no clocks or notices that go away
+by time, and a wait for a complete frame at the end. Check it with three `render`s and `compare`s
+of the same build. To run it alone:
+`FONTCONFIG_FILE=$TEMZDF_TEST_FONTCONFIG TEMZDF_SHOTS_DIR=DIR cargo test
+-p temzdf --test tui shots -- --ignored`.
 
 `crates/temzdf/tests/tui.rs` gives every test its own `XDG_RUNTIME_DIR`,
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `TEMZDF_LOG_DIR`, so the user's
