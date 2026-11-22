@@ -1046,8 +1046,66 @@ impl Term {
 
 impl Drop for Term {
     fn drop(&mut self) {
+        // Programs killed (or a test ended) before the terminal read an
+        // image leave its shared memory behind: note every process of the
+        // tree first, then remove what they made once they are gone.
+        let mut roots: Vec<u32> = self.child.process_id().into_iter().collect();
+        if let Some(tmux) = &self.tmux {
+            // The private tmux server is not below the child (the tmux client).
+            let out = tmux.cmd().args(["display-message", "-p", "#{pid}"]).output().ok();
+            roots.extend(out.and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok()));
+        }
+        let pids = process_tree(&roots);
         let _ = self.child.kill();
         let _ = self.child.try_wait();
+        // Kills the tmux server (and the programs in it) now.
+        self.tmux = None;
+        remove_image_transfers(&pids);
+    }
+}
+
+/// `roots` and all their descendants (Linux; just `roots` elsewhere).
+fn process_tree(roots: &[u32]) -> Vec<u32> {
+    let mut all: Vec<u32> = roots.to_vec();
+    let Ok(dir) = std::fs::read_dir("/proc") else { return all };
+    let mut parent_of: Vec<(u32, u32)> = Vec::new();
+    for e in dir.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { continue };
+        // "pid (comm) S ppid ...": comm may hold spaces and parentheses.
+        let ppid = stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().nth(1)?.parse::<u32>().ok());
+        if let Some(ppid) = ppid {
+            parent_of.push((pid, ppid));
+        }
+    }
+    let mut i = 0;
+    while i < all.len() {
+        let p = all[i];
+        for &(pid, ppid) in &parent_of {
+            if ppid == p && !all.contains(&pid) {
+                all.push(pid);
+            }
+        }
+        i += 1;
+    }
+    all
+}
+
+/// Remove the shared memory `/dev/shm/termpix-PID-*` of `pids` once they are
+/// gone (a terminal unlinks it when it reads the image; killed ones do not).
+fn remove_image_transfers(pids: &[u32]) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while pids.iter().any(|p| Path::new(&format!("/proc/{p}")).exists()) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let Ok(dir) = std::fs::read_dir("/dev/shm") else { return };
+    let prefixes: Vec<String> = pids.iter().map(|p| format!("termpix-{p}-")).collect();
+    for e in dir.flatten() {
+        if let Some(name) = e.file_name().to_str()
+            && prefixes.iter().any(|p| name.starts_with(p.as_str()))
+        {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
 }
 

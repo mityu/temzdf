@@ -62,7 +62,7 @@ impl Env {
     /// Clients in it take pixels `pixels`' way.
     fn with_pixels(label: &str, pixels: PixelPath) -> Self {
         let dir = TempDir::new(&format!("{label}-{pixels:?}"));
-        for d in ["run", "config", "state", "log"] {
+        for d in ["run", "config", "state", "log", "tmp"] {
             std::fs::create_dir_all(dir.path().join(d)).unwrap();
         }
         Self { dir, pixels, bin: BIN.into() }
@@ -79,6 +79,8 @@ impl Env {
             ("XDG_CONFIG_HOME".into(), d("config")),
             ("XDG_STATE_HOME".into(), d("state")),
             ("TEMZDF_LOG_DIR".into(), d("log")),
+            // Temp-file image transfers go away with the test directory.
+            ("TMPDIR".into(), d("tmp")),
             // TEMZDF_TEST_SHELL: another sh, e.g. dash, Ubuntu's (no line
             // editing: typed-ahead input is not shown again after the prompt).
             ("SHELL".into(), std::env::var("TEMZDF_TEST_SHELL").unwrap_or_else(|_| "/bin/sh".into())),

@@ -213,6 +213,9 @@ gives tests:
   `cursor`, `images` (kitty placements: cell, size, z) and
   `placeholder_cells()` (images shown through Unicode placeholders, as inside
   tmux).
+- Cleanup: dropping a `Term` removes the `/dev/shm/termpix-PID-*` images that
+  the program tree (and a private tmux server's) left unread; `tui.rs` gives
+  each test its own `TMPDIR`, so temp-file transfers go with the test directory.
 - Waiting by condition only: `wait_for(what, |screen| ...)`, `wait_text`,
   `wait_exit`. A failed wait panics with the screen and leaves it, plus the raw
   bytes received, in `target/tuitest/<test>.txt` and `.out`. A `Term`
