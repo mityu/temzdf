@@ -1734,6 +1734,145 @@ export class Session<T extends Detail = DetailUnit> {
 }
 /** A session over `o.sources` (not started). */
 export function createSession<T extends Detail = DetailUnit>(o: SessionOptions<T>): Session<T>;
+/** The highlight groups lists use (defined at SessionReady; a user's own
+ * `highlight()` after that, in a SessionReady hook of the configuration,
+ * wins): matched parts, the selected line, marked candidates. */
+export const defaultHighlights: {
+	readonly FFMatch: {
+		readonly fg: 4;
+		readonly bold: true;
+	};
+	readonly FFSelection: {
+		readonly bg: 8;
+	};
+	readonly FFMarked: {
+		readonly fg: 5;
+		readonly bold: true;
+	};
+};
+/** Define the default highlight groups (again: over the user's own). */
+export function defineHighlights(act?: Actions): void;
+/** The groups a list pane draws as others (text.setOptions' highlights):
+ * the cursor line in FFSelection, no cursor of an unfocused pane. */
+export const LIST_HIGHLIGHTS: Readonly<Record<string, string>>;
+export interface ListOptions<T extends Detail> {
+	readonly session: Session<T>;
+	/** Opens the pane showing the list's buffer (returns it); without it,
+	 * attach() a pane later. */
+	readonly open?: (buffer: number) => number | undefined;
+	/** Sets labels and decorations of what is written. */
+	readonly renderer?: Renderer<T>;
+	/** Named actions, invoked with invoke(name). */
+	readonly actions?: Readonly<Record<string, Action<T>>>;
+	/** The action invoke() without a name runs (a name in `actions`). */
+	readonly defaultAction?: string;
+	/** Moving past an end goes round to the other (false). */
+	readonly wrap?: boolean;
+	/** Lines written at first (three screens of the pane). */
+	readonly initial?: number;
+	/** Lines written more each time (as many as `initial`). */
+	readonly chunk?: number;
+	/** More is written when the cursor or the pane's last line comes this
+	 * close to the end of what is written (a screen). */
+	readonly margin?: number;
+	/** Highlight groups drawn as others in the pane, over LIST_HIGHLIGHTS. */
+	readonly highlights?: Readonly<Record<string, string>>;
+	/** The decorations' namespace (`ff-list-BUFFER`). */
+	readonly namespace?: string;
+	/** dispose() closes the pane (true). */
+	readonly closePane?: boolean;
+	/** Called after lines were written or the selection moved, where the
+	 * plain `action` works (a status, a title). */
+	readonly onChange?: (list: List<T>) => void;
+	/** Called once, when the list is disposed (an action that did not keep
+	 * it open, dispose()). */
+	readonly onClose?: () => void;
+}
+/** What a caller shows about a list. */
+export interface ListView {
+	/** The query of the matches written. */
+	readonly query: string;
+	readonly collected: number;
+	readonly matched: number;
+	/** Lines written. */
+	readonly written: number;
+	/** The selected line (0-based), undefined when there is none. */
+	readonly cursor: number | undefined;
+	readonly marked: number;
+	readonly state: SessionState;
+	readonly errors: readonly (SessionError | {
+		readonly part: "list";
+		readonly error: unknown;
+	})[];
+}
+export interface MoveOptions {
+	/** Over the list's `wrap`. */
+	readonly wrap?: boolean;
+}
+/** A list over a session; createList makes one. */
+export class List<T extends Detail = DetailUnit> {
+	#private;
+	readonly session: Session<T>;
+	/** The list's buffer (nofile, unlisted, nomodifiable). */
+	readonly buffer: number;
+	readonly namespace: string;
+	constructor(o: ListOptions<T>);
+	/** The pane showing the list (undefined: none attached). */
+	get pane(): number | undefined;
+	get disposed(): boolean;
+	/** Show the list in `pane` (it must show the list's buffer): its options
+	 * (no wrapping, numbers or status line; cursorline; the highlights) and
+	 * hooks. Writing waits for a pane: text actions act through one. */
+	attach(pane: number): void;
+	/** Forget the pane (it stays open); writing waits for the next one. */
+	detach(): void;
+	/** Stop: the hooks go, the pane closes (`closePane`), the buffer and
+	 * its decorations go, running actions are aborted. The session stays
+	 * (its owner disposes it). */
+	dispose(): void;
+	/** Resolves once the session is idle and everything it published is
+	 * written (or the list is disposed). */
+	whenIdle(): Promise<void>;
+	/** The items written, in order (as the session matched them). */
+	written(): readonly Item<T>[];
+	/** What a caller shows: counts, the state, the selected line. */
+	view(): ListView;
+	/** The selected item: the one on the pane's cursor line. */
+	selected(): Item<T> | undefined;
+	/** Move the selection `count` lines (negative: up). Past the end of
+	 * what is written while more matched, it stops at the last line written
+	 * and more is written; with `wrap`, past the ends of everything it goes
+	 * round. */
+	move(count: number, o?: MoveOptions): void;
+	next(count?: number, o?: MoveOptions): void;
+	prev(count?: number, o?: MoveOptions): void;
+	/** `count` screens down (negative: up), never round. */
+	page(count?: number): void;
+	first(): void;
+	/** The last match: everything is written (in chunks), the selection
+	 * following the last line. */
+	last(): void;
+	/** Mark `item` (the selected one) if it was not, else unmark it;
+	 * whether it is marked now. */
+	toggleMark(item?: Item<T> | undefined): boolean;
+	/** Mark (or unmark) `item` (the selected one). */
+	mark(item?: Item<T> | undefined, on?: boolean): void;
+	clearMarks(): void;
+	/** What an action gets now: the selected item, the marked ones, every
+	 * match. */
+	params(): InvokeParams<T>;
+	/** Run the action `name` (the default action) with params(), in a
+	 * dispatched task (its `action` is the task's). Unless it returns
+	 * `true` the list is disposed after it. Resolves with whether the list
+	 * stays (also after the action failed: its error is reported as a
+	 * task's). */
+	invoke(name?: string): Promise<boolean>;
+	/** invoke() with an action of the caller's. */
+	invokeWith(act: Action<T>): Promise<boolean>;
+}
+/** A list over `o.session`, in the pane `o.open` opens (or one attached
+ * later). Call it where the plain `action` works. */
+export function createList<T extends Detail = DetailUnit>(o: ListOptions<T>): List<T>;
 
 }
 

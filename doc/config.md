@@ -752,7 +752,10 @@ JavaScript strings index; out of range is clamped), ranges
   strikethrough, faint, overline })`, colours `"#rrggbb"`, a palette index
   or `"default"`; built in: `Selection`, `Search`, `IncSearch`,
   `CursorLine`, `LineNr`, `CursorLineNr`, `NonText`, `SpecialKey`,
-  `CursorUnfocused`;
+  `CursorUnfocused`; importing `temzdf/ff` (fuzzy finders' and
+  completion's lists, `doc/design/completion.md`) defines `FFMatch`,
+  `FFSelection` and `FFMarked` when the session is ready (your own
+  `highlight()` in a `SessionReady` hook of your configuration wins);
 - smaller ones: `text.findPair(at?, { open?, close?, direction? })` (Vim's
   `%`, nesting counted), `text.wordchars()` and
   `text.setWordchars(class)` (a buffer's word characters, a regex class:

@@ -91,8 +91,9 @@ server on one `Session`). Next and open:
 - Completion and fuzzy finding for scripts (`doc/design/completion.md`,
   a draft; the shared foundation and completion's sources are decided).
   Built: `temzdf/ff`'s types, combinators and engine without a UI, and
-  the first shipped matchers, sorter and renderer (`temzdf/ff/builtin`).
-  Next: the list buffer (the UI's shared part), then completion.
+  the first shipped matchers, sorter and renderer (`temzdf/ff/builtin`),
+  and the list buffer, the UI's shared part (`createList`). Next:
+  completion's layer and popup.
   Order: the fuzzy finder and completion framework (`temzdf/ff`) before
   an LSP client; the first use wanted is completing Ex commands in the
   command line, which is a text buffer like Vim's cmdwin, so it is

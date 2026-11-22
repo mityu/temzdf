@@ -696,6 +696,46 @@ keymap.add("normal", "t", (): void => {
     });
 }
 
+/// temzdf/ff's list (crates/temzdf-script/runtime/ff/list.ts) in a float:
+/// its selected line coloured by the pane's own highlight groups, matched
+/// parts styled. What it writes is tested in runtime/ff/list.test.ts.
+#[test]
+fn an_ff_list_colours_its_selected_line_and_matches() {
+    let env = Env::new("ff-list");
+    env.config(
+        "config.ts",
+        r#"import { action, keymap } from "temzdf";
+import { createList, createSession, defineSource } from "temzdf/ff";
+import { substring } from "temzdf/ff/builtin";
+const source = defineSource(async function* () {
+  for (const value of ["xx-alpha", "xx-beta", "xx-gamma"]) yield { id: value, value, detail: {} };
+});
+keymap.add("normal", "t", () => {
+  const session = createSession({ sources: [source], matcher: substring(), query: "a" });
+  createList({
+    session,
+    open: (buffer) =>
+      action.openFloat({ buffer }, { col: 4, row: 3, width: 20, height: 3, border: false, focusable: false }),
+  });
+  session.start();
+});
+"#,
+    );
+    let mut t = Term::spawn(&[BIN, "-s", "f"], &env.options());
+    t.wait_for("the prompt", prompt);
+    t.keys(&["C-b", "t"]);
+    let s = t.wait_for("the list", |s| s.row_from(5, 4).starts_with("xx-gamma"));
+    assert!(s.row_from(3, 4).starts_with("xx-alpha"), "{}", s.text());
+    let (selected, other) = (s.cell(10, 3), s.cell(10, 4));
+    assert_ne!(selected.bg, tuitest::Color::Default, "the selected line is coloured to its end");
+    assert_eq!(other.bg, tuitest::Color::Default);
+    // "xx-alpha": the first "a" (column 4 + 3) is matched.
+    let (plain, matched) = (s.cell(5, 3), s.cell(7, 3));
+    assert!(matched.bold && !plain.bold, "FFMatch is bold");
+    assert_ne!(matched.fg, plain.fg, "and coloured");
+    assert_eq!(matched.bg, selected.bg, "over the selection's colour");
+}
+
 #[test]
 fn hooks_run_like_vim_autocmds() {
     let env = Env::new("script-hooks");

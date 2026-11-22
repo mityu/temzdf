@@ -160,22 +160,61 @@ interface Decoration { start: number; length: number; style?: string }
   `cursorline`; moving, scrolling and keeping the cursor in view
   (`scrolloff`, `reveal`, `scroll`, the mouse wheel) are the text pane's
   own. Decorations become the buffer's decorations.
-- The engine does not write every match: it writes the first part and
-  adds more in chunks as results come, rewriting the first screens while
-  the order changes (sorting by score moves later items up) and keeping
-  the selected candidate (by id) on the cursor line. It writes more when
-  the cursor nears the end (its own keys move the cursor) or when the
-  list scrolls near the end: `PaneScrolled`, an event added in Rust for
-  this (Vim's `WinScrolled`), also wanted for highlighting only the
-  visible range later (tree-sitter, LSP semantic tokens).
-- What the engine hands the UI is small: the lines (labels and
-  decorations), the counts (collected, matched), the state (collecting,
-  matching, done), the marked ids, errors. No query (the prompt or the
-  buffer has it) and no scroll offset (the pane has it). The engine reads
-  the selected candidate from the list pane's cursor line. A fuzzy
-  finder's screen and completion's popup are two UIs over this.
-- Operations are the session's methods (move the cursor, mark, invoke an
-  action, cancel), called from key mappings.
+- `createList({ session, open, renderer, actions, defaultAction, ... })`
+  (`temzdf/ff`, `runtime/ff/list.ts`) makes the buffer (`nofile`,
+  `unlisted`, `nomodifiable`; writing lifts `nomodifiable` for the
+  moment) and calls `open(buffer)`, which opens the pane (a float, a
+  split) and returns it; or a pane is `attach`ed later (and `detach`ed:
+  completion's popup hides when nothing matches). Text actions act
+  through a pane, so writing waits for one. The pane goes without
+  wrapping, line numbers and a status line, with `cursorline` and its own
+  highlight groups `{ CursorLine: "FFSelection", CursorUnfocused: "None" }`
+  (the colour, and no underline for the cursor of a pane without the
+  focus), and the list's `highlights` over them.
+- What is written is always the first lines of the published order: as
+  many as are wanted, three screens of the pane at first (`initial`), a
+  chunk more (`chunk`, as many) when the cursor (moved by the list's
+  methods) or the pane's last line in sight (`PaneScrolled`, an event
+  added in Rust for this, Vim's `WinScrolled`; also wanted for
+  highlighting only the visible range later, tree-sitter, LSP semantic
+  tokens) comes within a screen (`margin`) of the end. As results come,
+  lines are added; when the order changes (sorting by score moves later
+  items up), the lines from the first that differs are written again. A
+  step writes at most a chunk more than was written, with a timer
+  between steps. A new query writes from the top, puts the cursor there
+  and wants the first screens again.
+- The selection stays at the top until the user moves it (the list's
+  methods, or the cursor found elsewhere than where the list put it);
+  then the candidate on it is kept on the cursor line by its key when
+  lines are written again (else the line, when it is gone).
+- Writing waits for the renderer (which may be asynchronous), and the
+  session's listeners run in timers, where only dispatched tasks act: the
+  list writes in a task of its own, each step one `ctx.atomic`. Its
+  methods run where the plain `action` works (mapped functions,
+  scheduled ones). Renderers run on the lines written only; a label's
+  line breaks become spaces.
+- Decorations with a style (the matchers' `FFMatch`, the renderers' own)
+  become buffer decorations in the list's namespace; a marked line is
+  styled `FFMarked`. `temzdf/ff` defines `FFMatch`, `FFSelection` and
+  `FFMarked` in a `SessionReady` hook registered when it is imported, so
+  a configuration's own `highlight()` in a `SessionReady` hook of its
+  own (registered after the import) wins; `defineHighlights()` defines
+  them again.
+- What the list hands its caller is small: `view()` (the query written,
+  the counts collected, matched and written, the cursor's line, the
+  marked count, the state, errors), `selected()`, `written()`, and
+  `onChange`, called after lines were written or the selection moved. No
+  query of its own (the prompt or the buffer has it) and no scroll offset
+  (the pane has it). A fuzzy finder's screen and completion's popup are
+  two UIs over this.
+- Operations are the list's methods, called from key mappings: `move`
+  (a count; past the end of what is written it stops at the last line
+  and more is written; `wrap` goes round past the ends of everything),
+  `next`, `prev`, `page`, `first`, `last` (everything is written, a chunk
+  at a time, the cursor following the end), `toggleMark`, `mark`,
+  `clearMarks` (the session keeps the marks), `invoke` (below) and
+  `dispose` (its hooks, the pane unless `closePane: false`, the buffer;
+  running actions are aborted; the session is its owner's to dispose).
 
 ## Actions
 
@@ -192,8 +231,14 @@ interface Action<T = {}> {
   action runs asynchronously, where plain `action.*` has no context).
   Both the cursor's item and the marked ones are passed; a helper gives
   "the marked ones, else the cursor's".
-- A session has named actions and a default one; key mappings invoke one
-  by name. Picking an action is a fuzzy finder over that table.
+- A list has named actions and a default one (`actions`,
+  `defaultAction`); key mappings invoke one by name: `list.invoke(name?)`
+  takes the cursor's item, the marked items (in the order they were
+  marked) and every match at once, and runs the action in a dispatched
+  task (`action` is the task's, `signal` aborts when the list goes).
+  Unless it returns `true` the list is disposed after it; the action runs
+  while the list is still open. Picking an action is a fuzzy finder over
+  that table.
 - Accepting a completion is an action too: the default one replaces the
   candidate's range (else the anchor to the cursor) through the adapter;
   LSP's additional edits and command are actions composed on it. The
