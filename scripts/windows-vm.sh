@@ -24,6 +24,10 @@
 #   screenshot [PATH]  the guest's screen as a PNG
 #                    (default target/windows-vm/screen-TIME.png)
 #   status           the VM, the golden image, the tools
+#   ssh-config       an ssh_config block for the running VM (its host name
+#                    first), as vitro prints it; for scripts/e2e.sh -d windows
+#   qmp-socket       the path of the VM's second QMP socket, which is
+#                    scripts/e2e.sh's (vitro keeps the first)
 #   cursor hidden|default  make the mouse pointer on the guest's desktop
 #                    transparent, or bring the usual pointers back (until the
 #                    next logon; scripts/windows/cursor.ps1), for e2e runs
@@ -100,6 +104,10 @@ golden_dir=${XDG_DATA_HOME:-$HOME/.local/share}/vitro/golden
 # nix names the link after the output: ovmf-fd.
 ovmf=$state/ovmf-fd/FV/OVMF.fd
 config=$state/config-$vm
+# A second QMP socket for scripts/e2e.sh (input, screenshots), beside the
+# one vitro keeps for itself. Short: a Unix socket's path has room for about
+# 108 bytes.
+qmp=$state/$vm.qmp
 configured=
 # The ISO for `build` (set there); empty: a config for running the VM.
 iso=
@@ -149,7 +157,7 @@ guest = "windows"
 $g
 cpus = ${TEMZDF_WINDOWS_CPUS:-4}
 memory = "8G"
-extra_args = ["-bios", "$ovmf", "-vga", "none"]
+extra_args = ["-bios", "$ovmf", "-vga", "none", "-qmp", "unix:$qmp,server=on,wait=off"]
 $build
 TOML
 }
@@ -266,6 +274,15 @@ case $cmd in
     # The gate's own logs (target/check/ in the guest).
     vitro cp "$vm:C:/t/target/check" "$out/check" >/dev/null 2>&1 || true
     exit "$status"
+    ;;
+  ssh-config)
+    (($# == 0)) || usage
+    running || die "the VM $vm is not running (start)"
+    vitro ssh-config "$vm"
+    ;;
+  qmp-socket)
+    (($# == 0)) || usage
+    echo "$qmp"
     ;;
   cursor)
     (($# == 1)) && [[ $1 == hidden || $1 == default ]] || usage

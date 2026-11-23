@@ -4,7 +4,7 @@
 # display on macOS, -d macos), drive it with an actions script, and save
 # screenshots.
 #
-# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-d x11|wayland|macos] [-m zellij|tmux] [-I] [-P shared|socket] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
+# Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-d x11|wayland|macos|windows] [-m zellij|tmux] [-I] [-P shared|socket] [-s WxH] [-o OUTDIR] ACTIONS -- COMMAND [ARGS...]
 #   -t TERM   terminal to run (default kitty); gui: COMMAND is temzdf-gui
 #             itself (e.g. target/debug/temzdf-gui FILE), run under the xfwm4
 #             window manager (X11; sway on Wayland) on lavapipe
@@ -25,7 +25,15 @@
 #             front and the pointer back),
 #             screenshots with screencapture; needs the accessibility and
 #             screen recording permissions, and the screen unlocked
-#             (doc/terminals/macos.md)
+#             (doc/terminals/macos.md); windows (-t gui only): temzdf-gui
+#             in the Windows VM of scripts/windows-vm.sh
+#             ($TEMZDF_WINDOWS_VM, running, with temzdf and temzdf-gui
+#             built in it), on its desktop, driven from this host: the
+#             pointer and keys through QEMU's QMP (socat), screenshots with
+#             QMP's screendump, commands and files over SSH. COMMAND is
+#             the guest's temzdf-gui.exe (e.g.
+#             C:/t/target/release/temzdf-gui.exe --clean FILE); arguments
+#             naming files of this host are copied into the guest first
 #   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
 #             frames, a single pane; its config and layout go to OUTDIR/zellij;
 #             tmux: a private server with passthrough and mouse on, no status)
@@ -211,9 +219,9 @@ actions=$(realpath "$1")
 shift 2
 # Runs of temzdf take the shipped defaults (--clean) or a configuration of
 # the repository's (--config FILE), not the user's config.ts. A word naming
-# temzdf or temzdf-gui (also inside `sh -c '...'`), not any path with
-# "temzdf" in it.
-runs_temzdf() { grep -qE "(^|[ /'\"])temzdf(-gui)?( |\$)" <<<"$*"; }
+# temzdf or temzdf-gui (also inside `sh -c '...'`; Windows' too:
+# C:\...\temzdf-gui.exe), not any path with "temzdf" in it.
+runs_temzdf() { grep -qE "(^|[ /'\"\\\\])temzdf(-gui)?(\.exe)?( |\$)" <<<"$*"; }
 if runs_temzdf "$@" && [[ "$*" != *--clean* && "$*" != *--config\ * ]]; then
   echo "e2e.sh: COMMAND runs temzdf without --clean or --config (it would load your config.ts)" >&2
   exit 2
@@ -227,8 +235,14 @@ case $display in
       exit 2
     fi
     ;;
+  windows)
+    if [[ $term != gui || -n $ime || -n $mux ]]; then
+      echo "e2e.sh: -d windows runs -t gui only, without -I or -m" >&2
+      exit 2
+    fi
+    ;;
   *)
-    echo "e2e.sh: unknown display server $display (x11, wayland or macos)" >&2
+    echo "e2e.sh: unknown display server $display (x11, wayland, macos or windows)" >&2
     exit 2
     ;;
 esac
@@ -492,6 +506,214 @@ if [[ $display == macos ]]; then
   }
 fi
 
+# Windows (the VM of scripts/windows-vm.sh, connected below): the pointer
+# and keys as QEMU's USB tablet and keyboard through QMP (QMP, a socat
+# coprocess on the harness's own QMP socket; raw JSON lines, as vitro's
+# src/qmp.rs sends them), screenshots with QMP's screendump (QEMU runs
+# here, so it writes them here), commands through one PowerShell in the
+# guest over SSH (GPS; a PowerShell started per command takes 1.5 s), files
+# with scp. What needs the desktop (the GUI, the clipboard) runs as a
+# scheduled task on it (on_desktop): SSH's session has none. The guest's
+# directory for the run is $gdir.
+if [[ $display == windows ]]; then
+  gdir=C:/e2e
+  # A JSON line to QMP; its answer, skipping the events in between.
+  qmp() {
+    local line
+    printf '%s\n' "$1" >&"${QMP[1]}"
+    while IFS= read -r -t 10 line <&"${QMP[0]}"; do
+      case $line in
+        '{"return"'*) return 0 ;;
+        '{"error"'*) echo "e2e.sh: QMP: $line ($1)" >&2; return 1 ;;
+      esac
+    done
+    echo "e2e.sh: no answer over QMP ($1)" >&2
+    return 1
+  }
+  qmp_events() { qmp "{\"execute\":\"input-send-event\",\"arguments\":{\"events\":[$1]}}"; }
+  # Each event its own call, the next one 30 ms later: events sent together
+  # arrive as one HID report (a press and its release as no press at all,
+  # vitro's src/qmp.rs).
+  qmp_gap() { sleep 0.03; }
+  # A pixel of the screen on the tablet's axis (0 to 0x7fff over the
+  # screen): its middle, whichever way the guest rounds.
+  tablet() { echo $(((2 * $1 + 1) * 32768 / (2 * $2))); }
+  be_move() {
+    qmp_events "{\"type\":\"abs\",\"data\":{\"axis\":\"x\",\"value\":$(tablet "$1" "$screen_w")}},{\"type\":\"abs\",\"data\":{\"axis\":\"y\",\"value\":$(tablet "$2" "$screen_h")}}"
+    ptr_x=$1 ptr_y=$2
+  }
+  qmp_button() {
+    case $1 in
+      1) echo left ;; 2) echo middle ;; 3) echo right ;; 4) echo wheel-up ;; 5) echo wheel-down ;;
+      *) echo "bad button $1" >&2; exit 2 ;;
+    esac
+  }
+  qmp_press() { qmp_events "{\"type\":\"btn\",\"data\":{\"down\":$1,\"button\":\"$2\"}}"; }
+  be_button() {
+    qmp_press "$([[ $1 == down ]] && echo true || echo false)" "$(qmp_button "$2")"
+    qmp_gap
+  }
+  # A wheel notch is a press and a release of a button, too.
+  be_clicks() {
+    local i b
+    b=$(qmp_button "$1")
+    for ((i = 0; i < $2; i++)); do
+      ((i == 0)) || sleep "$(printf '%d.%03d' $(($3 / 1000)) $(($3 % 1000)))"
+      qmp_press true "$b"
+      qmp_press false "$b"
+    done
+    qmp_gap
+  }
+  # QEMU's key names (qcodes) for an XKB key name with its modifiers
+  # (ctrl+shift+a, question: shift slash), on the US layout.
+  qcodes() {
+    local k=$1 held=() c
+    while [[ $k == *+?* ]]; do
+      case ${k%%+*} in
+        ctrl | Control_L) held+=(ctrl) ;; shift | Shift_L) held+=(shift) ;; alt | Alt_L) held+=(alt) ;;
+        super) held+=(meta_l) ;;
+        *) echo "e2e.sh: no qcode for ${k%%+*}" >&2; exit 2 ;;
+      esac
+      k=${k#*+}
+    done
+    case $k in
+      Return) c=ret ;; Escape) c=esc ;; Tab) c=tab ;; BackSpace) c=backspace ;; Delete) c=delete ;;
+      space) c=spc ;; Up | Down | Left | Right | Home | End) c=${k,,} ;; Prior | Page_Up) c=pgup ;;
+      Next | Page_Down) c=pgdn ;; Insert) c=insert ;; F[0-9] | F1[0-2]) c=${k,,} ;;
+      ctrl | Control_L) c=ctrl ;; shift | Shift_L) c="shift" ;; alt | Alt_L) c=alt ;;
+      [a-z0-9]) c=$k ;; [A-Z]) held+=(shift) c=${k,,} ;;
+      minus) c=minus ;; equal) c=equal ;; slash) c=slash ;; comma) c=comma ;; period) c="dot" ;;
+      semicolon) c=semicolon ;; apostrophe) c=apostrophe ;; grave) c=grave_accent ;;
+      bracketleft) c=bracket_left ;; bracketright) c=bracket_right ;; backslash) c=backslash ;;
+      plus) held+=(shift) c=equal ;; question) held+=(shift) c=slash ;; less) held+=(shift) c=comma ;;
+      greater) held+=(shift) c=dot ;; colon) held+=(shift) c=semicolon ;; percent) held+=(shift) c=5 ;;
+      underscore) held+=(shift) c=minus ;; exclam) held+=(shift) c=1 ;; at) held+=(shift) c=2 ;;
+      numbersign) held+=(shift) c=3 ;; dollar) held+=(shift) c=4 ;; asciicircum) held+=(shift) c=6 ;;
+      ampersand) held+=(shift) c=7 ;; asterisk) held+=(shift) c=8 ;; parenleft) held+=(shift) c=9 ;;
+      parenright) held+=(shift) c=0 ;; braceleft) held+=(shift) c=bracket_left ;;
+      braceright) held+=(shift) c=bracket_right ;; bar) held+=(shift) c=backslash ;;
+      quotedbl) held+=(shift) c=apostrophe ;; asciitilde) held+=(shift) c=grave_accent ;;
+      *) echo "e2e.sh: no qcode for $k" >&2; exit 2 ;;
+    esac
+    echo "${held[*]} $c"
+  }
+  qmp_key() { qmp_events "{\"type\":\"key\",\"data\":{\"down\":$1,\"key\":{\"type\":\"qcode\",\"data\":\"$2\"}}}"; }
+  modifier() { [[ $1 == ctrl || $1 == shift || $1 == alt || $1 == meta_l ]]; }
+  # A modifier and the key or button after it reach the guest as separate
+  # devices' reports: 150 ms apart, or they come in either order (vitro).
+  be_keydown() {
+    local q
+    for q in $(qcodes "$1"); do
+      qmp_key true "$q"
+      if modifier "$q"; then sleep 0.15; else sleep 0.02; fi
+    done
+  }
+  be_keyup() {
+    local q qs
+    read -ra qs <<<"$(qcodes "$1")"
+    for ((q = ${#qs[@]} - 1; q >= 0; q--)); do
+      modifier "${qs[q]}" && sleep 0.15
+      qmp_key false "${qs[q]}"
+    done
+    qmp_gap
+  }
+  be_key() { be_keydown "$1"; be_keyup "$1"; }
+  # The XKB name of a character typed (a letter as itself).
+  char_key() {
+    case $1 in
+      ' ') echo space ;; '-') echo minus ;; '=') echo equal ;; '/') echo slash ;; ',') echo comma ;;
+      '.') echo period ;; ';') echo semicolon ;; "'") echo apostrophe ;; '`') echo grave ;;
+      '[') echo bracketleft ;; ']') echo bracketright ;; "\\") echo backslash ;; '+') echo plus ;;
+      '?') echo question ;; '<') echo less ;; '>') echo greater ;; ':') echo colon ;; '%') echo percent ;;
+      '_') echo underscore ;; '!') echo exclam ;; '@') echo at ;; '#') echo numbersign ;; '$') echo dollar ;;
+      '^') echo asciicircum ;; '&') echo ampersand ;; '*') echo asterisk ;; '(') echo parenleft ;;
+      ')') echo parenright ;; '{') echo braceleft ;; '}') echo braceright ;; '|') echo bar ;;
+      '"') echo quotedbl ;; '~') echo asciitilde ;; $'\t') echo Tab ;;
+      *) echo "$1" ;;
+    esac
+  }
+  be_type() {
+    local i
+    for ((i = 0; i < ${#1}; i++)); do
+      ((i == 0 || ${2:-0} == 0)) || sleep "$(printf '%d.%03d' $(($2 / 1000)) $(($2 % 1000)))"
+      be_key "$(char_key "${1:i:1}")"
+    done
+  }
+  be_shot() { qmp "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$1\",\"format\":\"png\"}}"; }
+  # One line of PowerShell in the guest (GPS): its output; fails with the
+  # exit status of the last native program it ran, or 1 when it threw. The
+  # output goes out once the answer is in: a reader that stops early (head)
+  # cannot leave the rest of it in the pipe for the next command.
+  gps() {
+    local line out=''
+    printf '%s\n' "\$LASTEXITCODE = 0; try { $1 } catch { [Console]::Error.WriteLine(\$_); \$LASTEXITCODE = 1 }; \"@@done \$LASTEXITCODE\"" >&"${GPS[1]}"
+    while IFS= read -r -t 300 line <&"${GPS[0]}"; do
+      line=${line%$'\r'}
+      if [[ $line == '@@done '* ]]; then
+        printf %s "$out"
+        return "$((${line#@@done } != 0))"
+      fi
+      out+=$line$'\n'
+    done
+    echo "e2e.sh: no answer from the guest ($1)" >&2
+    return 1
+  }
+  # (The command is the guest's PowerShell text, made here.)
+  # shellcheck disable=SC2029
+  gssh() { ssh "${ssh_opts[@]}" "$ssh_host" "$@"; }
+  gcp_in() { scp -q "${ssh_opts[@]}" "$1" "$ssh_host:$2"; }
+  gcp_out() { scp -q "${ssh_opts[@]}" "$ssh_host:$1" "$2"; }
+  # Run the guest's cmd.exe line CMD on the desktop of the user logged on,
+  # without a console window (conhost --headless), as the scheduled task
+  # e2e-NAME; returns once it started.
+  on_desktop() {
+    gps "schtasks /create /tn e2e-$1 /tr 'conhost.exe --headless $2' /sc once /st 00:00 /it /f >\$null 2>&1; schtasks /run /tn e2e-$1 >\$null"
+  }
+  # Until guest file FILE exists, at most S seconds.
+  guest_wait() {
+    gps "\$n = 0; while (-not (Test-Path $1) -and \$n -lt $(($2 * 10))) { Start-Sleep -Milliseconds 100; \$n++ }; if (-not (Test-Path $1)) { \$LASTEXITCODE = 1 }"
+  }
+  # The clipboard through PowerShell's Get-Clipboard and Set-Clipboard on
+  # the desktop (clip.ps1, written below), as UTF-8 files.
+  be_clipboard() {
+    gps "Remove-Item $gdir/clip.txt -ErrorAction SilentlyContinue" &&
+      on_desktop clip "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $gdir/clip.ps1 get" &&
+      guest_wait "$gdir/clip.txt" 10 &&
+      gcp_out "$gdir/clip.txt" "$XDG_RUNTIME_DIR/clip.txt" && cat "$XDG_RUNTIME_DIR/clip.txt"
+  }
+  be_set_clipboard() {
+    printf %s "$1" >"$XDG_RUNTIME_DIR/clip.txt"
+    gps "Remove-Item $gdir/clip.done -ErrorAction SilentlyContinue" &&
+      gcp_in "$XDG_RUNTIME_DIR/clip.txt" "$gdir/clip-in.txt" &&
+      on_desktop clip "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $gdir/clip.ps1 set" &&
+      guest_wait "$gdir/clip.done" 10
+  }
+  # Where the drawing area is: what temzdf-gui wrote (TEMZDF_GUI_GEOMETRY:
+  # X Y W H SCALE, in pixels on the screen).
+  be_window_rect() {
+    local x y w h s
+    read -r x y w h s < <(gps "Get-Content $gdir/geometry.txt") || return 1
+    [[ -n ${s:-} ]] || return 1
+    echo "$x $y $w $h"
+  }
+  # A screenshot of the drawing area only (the desktop around it has a
+  # clock).
+  win_shot() {
+    be_shot "$1.full.png" && magick "$1.full.png" -crop "${win_w}x${win_h}+$origin_x+$origin_y" +repage -strip "$1" &&
+      rm -f "$1.full.png"
+  }
+  # The guest's logs and what temzdf-gui recorded, into OUTDIR (as on the
+  # other displays).
+  fetch_logs() {
+    gcp_out "$gdir/terminal.log" "$outdir/terminal.log" 2>/dev/null || true
+    gcp_out "$gdir/input.txt" "$outdir/input.txt" 2>/dev/null || true
+    mkdir -p "$outdir/state"
+    scp -q -r "${ssh_opts[@]}" "$ssh_host:$gdir/state/temzdf" "$outdir/state/" 2>/dev/null || true
+  }
+  be_focus() { echo "e2e.sh: focus_window is not there on Windows yet" >&2; return 1; }
+  be_other_window() { echo "e2e.sh: other_window is not there on Windows yet" >&2; return 1; }
+fi
+
 shot() { be_shot "$outdir/$1.png"; }
 wheel() {
   local n=$1 x=${2:-$((width / 2))} y=${3:-$((height / 2))} mods=${4:-} btn=5 dir=down k
@@ -715,6 +937,7 @@ wait_ready() {
   local shoot=(be_shot)
   [[ $display == macos ]] &&
     shoot=(screencapture -x -R "$disp_x,$((disp_y + menu_bar)),$width,$height")
+  [[ $display == windows ]] && shoot=(win_shot)
   "${shoot[@]}" "$a"
   while (($(usec) < deadline)) && kill -0 "$term_pid" 2>/dev/null; do
     sleep 0.15
@@ -755,6 +978,7 @@ wait_still() {
   local shoot=(be_shot)
   [[ $display == macos ]] &&
     shoot=(screencapture -x -R "$disp_x,$((disp_y + menu_bar)),$width,$height")
+  [[ $display == windows ]] && shoot=(win_shot)
   "${shoot[@]}" "$a"
   while (($(usec) < deadline)); do
     sleep 0.3
@@ -905,13 +1129,25 @@ draw_references() {
 expect_gui() {
   local name=$1 session out
   shot "$name"
-  session=$("$temzdf" ls | head -1 | cut -d' ' -f1)
-  phase "expect $name"
-  "${clean_env[@]}" VK_DRIVER_FILES="${TEMZDF_LAVAPIPE_ICD:-}" "${E2E_GUI_RENDERER:-$gui_bin}" --render-frame "$outdir/$name.expected.png" \
-    -s "$session" --size "${win_w}x${win_h}" 2>"$outdir/$name.expected.log" || {
-    echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
-    return
-  }
+  if [[ $display == windows ]]; then
+    # In the guest, at the window's scale; the picture comes back here.
+    session=$(gps "& '$temzdf' ls" | head -1 | cut -d' ' -f1)
+    phase "expect $name"
+    if ! gps "& '${E2E_GUI_RENDERER:-$gui_bin}' --render-frame $gdir/out/$name.expected.png -s '$session' --size ${win_w}x${win_h} --scale $win_scale 2>&1 | Out-File -Encoding utf8 $gdir/out/$name.expected.log" ||
+      ! gcp_out "$gdir/out/$name.expected.png" "$outdir/$name.expected.png"; then
+      gcp_out "$gdir/out/$name.expected.log" "$outdir/$name.expected.log" || true
+      echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
+      return
+    fi
+  else
+    session=$("$temzdf" ls | head -1 | cut -d' ' -f1)
+    phase "expect $name"
+    "${clean_env[@]}" VK_DRIVER_FILES="${TEMZDF_LAVAPIPE_ICD:-}" "${E2E_GUI_RENDERER:-$gui_bin}" --render-frame "$outdir/$name.expected.png" \
+      -s "$session" --size "${win_w}x${win_h}" 2>"$outdir/$name.expected.log" || {
+      echo "FAIL $name: --render-frame failed (see $name.expected.log)" | tee -a "$outdir/expect.txt"
+      return
+    }
+  fi
   phase "expected $name"
   magick "$outdir/$name.png" -crop "${win_w}x${win_h}+$origin_x+$origin_y" +repage "$outdir/$name.actual.png"
   mask_window_edges "$name" "$win_w" "$win_h"
@@ -1325,8 +1561,20 @@ fi
 export XDG_RUNTIME_DIR
 # kitty answers `kitten @ get-text` (expect in a session) here.
 kitty_socket=$XDG_RUNTIME_DIR/kitty.sock
-term_pid='' sway_pid='' vdisp_pid='' user_clipboard=''
+term_pid='' sway_pid='' vdisp_pid='' user_clipboard='' QMP=() GPS=()
 cleanup() {
+  if [[ -n ${GPS[1]:-} ]]; then
+    # What the run left in the guest: the GUI, its sessions, the tasks.
+    gps "taskkill /F /IM temzdf-gui.exe >\$null 2>&1; foreach (\$l in @(& '$temzdf' ls 2>\$null)) { & '$temzdf' kill-session (\$l -split ' ')[0] >\$null 2>&1 }; schtasks /delete /tn e2e-gui /f >\$null 2>&1; schtasks /delete /tn e2e-clip /f >\$null 2>&1" || true
+    fetch_logs
+    eval "exec ${GPS[1]}>&- ${GPS[0]}<&-"
+    GPS=()
+  fi
+  if [[ -n ${QMP[1]:-} ]]; then
+    eval "exec ${QMP[1]}>&- ${QMP[0]}<&-"
+    QMP=()
+  fi
+  [[ -z ${ssh_opts:-} ]] || ssh "${ssh_opts[@]}" -O exit "$ssh_host" 2>/dev/null || true
   if [[ -n ${TC[1]:-} ]]; then
     # The front and the pointer back to where they were.
     tc 'done' || true
@@ -1403,6 +1651,61 @@ EOF
   wlinput=${E2E_WLINPUT:-}
   [[ -n $wlinput ]] || { cargo build -q -p wlinput && wlinput=target/debug/wlinput; }
   coproc WL { "$wlinput" --size "${width}x${height}" 2>>"$outdir/wlinput.log"; }
+fi
+# Windows: connect to the VM (scripts/windows-vm.sh; QMP and SSH, see the
+# be_* above) and make the guest's directory for the run anew.
+if [[ $display == windows ]]; then
+  # COMMAND's temzdf-gui in the guest, and its temzdf.
+  gui_bin=${1//\\//}
+  temzdf=$(dirname "$gui_bin")/temzdf.exe
+  # A command in the background with a pipe each way (bash keeps one
+  # coprocess at a time): NAME=(READ_FD WRITE_FD), as coproc sets them.
+  piped() {
+    local name=$1 r w
+    shift
+    mkfifo "$XDG_RUNTIME_DIR/$name.in" "$XDG_RUNTIME_DIR/$name.out"
+    "$@" <"$XDG_RUNTIME_DIR/$name.in" >"$XDG_RUNTIME_DIR/$name.out" &
+    exec {w}>"$XDG_RUNTIME_DIR/$name.in" {r}<"$XDG_RUNTIME_DIR/$name.out"
+    eval "$name=($r $w)"
+  }
+  if ! scripts/windows-vm.sh ssh-config >"$XDG_RUNTIME_DIR/ssh_config" 2>"$outdir/guest.log"; then
+    echo "e2e.sh: no Windows VM ${TEMZDF_WINDOWS_VM:-temzdf-windows} running (scripts/windows-vm.sh start)" >&2
+    exit 1
+  fi
+  ssh_host=$(awk '$1 == "Host" { print $2; exit }' "$XDG_RUNTIME_DIR/ssh_config")
+  # One connection for the run (each SSH handshake takes a while).
+  ssh_opts=(-F "$XDG_RUNTIME_DIR/ssh_config" -o ControlMaster=auto -o "ControlPath=$XDG_RUNTIME_DIR/ssh"
+    -o ControlPersist=yes)
+  ssh "${ssh_opts[@]}" -MNf "$ssh_host" </dev/null >/dev/null 2>>"$outdir/guest.log"
+  qmp_socket=$(scripts/windows-vm.sh qmp-socket)
+  piped QMP socat - "UNIX-CONNECT:$qmp_socket"
+  # The greeting, then capabilities negotiation: then commands.
+  IFS= read -r -t 10 _ <&"${QMP[0]}" || { echo "e2e.sh: no QMP at $qmp_socket" >&2; exit 1; }
+  qmp '{"execute":"qmp_capabilities"}'
+  piped GPS ssh -T "${ssh_opts[@]}" "$ssh_host" 'powershell -NoLogo -NoProfile -NonInteractive -Command -' 2>>"$outdir/guest.log"
+  # Sessions of the run in its own directories (they end with it, in
+  # cleanup), for the GUI (gui.cmd) and the commands here alike.
+  gps "[Console]::OutputEncoding = [Text.Encoding]::UTF8; \$env:XDG_RUNTIME_DIR = '$gdir/run'; \$env:XDG_STATE_HOME = '$gdir/state'"
+  be_shot "$XDG_RUNTIME_DIR/screen.png"
+  read -r screen_w screen_h <<<"$(magick identify -format '%w %h' "$XDG_RUNTIME_DIR/screen.png")"
+  # What an earlier run left (it ended without its cleanup).
+  gps "taskkill /F /IM temzdf-gui.exe >\$null 2>&1; if (Test-Path $gdir/run) { foreach (\$l in @(& '$temzdf' ls 2>\$null)) { & '$temzdf' kill-session (\$l -split ' ')[0] >\$null 2>&1 } }; Remove-Item -Recurse -Force $gdir -ErrorAction SilentlyContinue; foreach (\$d in 'run', 'state', 'files', 'out') { New-Item -ItemType Directory -Force $gdir/\$d >\$null }; \$LASTEXITCODE = 0"
+  cat >"$XDG_RUNTIME_DIR/clip.ps1" <<PS1
+# scripts/e2e.sh -d windows: the clipboard of the desktop, run there; get
+# writes it to clip.txt, set takes clip-in.txt (UTF-8 without a BOM).
+param(\$what)
+\$utf8 = New-Object Text.UTF8Encoding \$false
+if (\$what -eq 'get') {
+  \$t = Get-Clipboard -Raw
+  if (\$null -eq \$t) { \$t = '' }
+  [IO.File]::WriteAllText('$gdir/clip.tmp', \$t, \$utf8)
+  Move-Item -Force $gdir/clip.tmp $gdir/clip.txt
+} else {
+  Set-Clipboard -Value ([IO.File]::ReadAllText('$gdir/clip-in.txt', \$utf8))
+  Set-Content $gdir/clip.done ''
+}
+PS1
+  gcp_in "$XDG_RUNTIME_DIR/clip.ps1" "$gdir/clip.ps1"
 fi
 # macOS: a virtual display at scale 1 (screenshot pixels are points and
 # match the terminal's), with room above the window for the menu bar every
@@ -1550,6 +1853,69 @@ if [[ $display == macos ]]; then
   [[ $("$ctl" front) == "$front" ]] || "$ctl" activate "$front" >/dev/null || true
   sleep 0.5
   touch "$go"
+elif [[ $display == windows ]]; then
+  # The GUI on the desktop: a batch file with the run's environment
+  # (gui.cmd), started by a scheduled task; COMMAND's arguments that name
+  # files here are copied in. The batch file waits for the GUI, then
+  # writes its exit status (exit.txt); term_pid is an SSH command here
+  # waiting for that, so the checks of whether the terminal (the GUI) still
+  # runs stay as they are.
+  gargs=''
+  for a in "${@:2}"; do
+    if [[ -f $a ]]; then
+      gcp_in "$a" "$gdir/files/$(basename "$a")"
+      a=$gdir/files/$(basename "$a")
+    fi
+    gargs+=" \"$a\""
+  done
+  win=${gdir//\//\\}
+  {
+    printf '@echo off\r\n'
+    printf 'set XDG_RUNTIME_DIR=%s\\run\r\nset XDG_STATE_HOME=%s\\state\r\n' "$win" "$win"
+    printf 'set TEMZDF_RECORD_INPUT=%s\\input.txt\r\nset TEMZDF_GUI_GEOMETRY=%s\\geometry.txt\r\n' "$win" "$win"
+    [[ -n ${TEMZDF_PIXELS:-} ]] && printf 'set TEMZDF_PIXELS=%s\r\n' "$TEMZDF_PIXELS"
+    printf '"%s"%s > %s\\terminal.log 2>&1\r\n' "${gui_bin//\//\\}" "$gargs" "$win"
+    printf 'echo %%ERRORLEVEL%%> %s\\exit.txt\r\n' "$win"
+  } >"$XDG_RUNTIME_DIR/gui.cmd"
+  gcp_in "$XDG_RUNTIME_DIR/gui.cmd" "$gdir/gui.cmd"
+  # The pointer out of the way, where the harness knows it: off the window
+  # to come (at the screen's right edge); the actions move it in.
+  be_move $((screen_w - 1)) $((screen_h / 2))
+  on_desktop gui "cmd.exe /c $win\\gui.cmd"
+  gssh "while (-not (Test-Path $gdir/exit.txt)) { Start-Sleep -Milliseconds 200 }" </dev/null &
+  term_pid=$!
+  # The drawing area, once the window is there (it took more than 5 s).
+  startup=5
+  if ! guest_wait "$gdir/geometry.txt" 60 ||
+    ! read -r origin_x origin_y win_w win_h win_scale < <(gps "Get-Content $gdir/geometry.txt"); then
+    fetch_logs
+    echo "e2e.sh: no window of temzdf-gui within 60 s; the end of its output:" >&2
+    tail -n 20 "$outdir/terminal.log" >&2
+    exit 1
+  fi
+  phase window
+  # Windows opens each new window a little lower and further right than
+  # the last (the third went under the taskbar), and one a scheduled task
+  # opens does not get the focus: its title bar (a little above the drawing
+  # area) dragged, as a person would, puts the drawing area in the middle
+  # of the screen and gives it the focus; nothing reaches the drawing area.
+  tx=$(((screen_w - win_w) / 2)) ty=$(((screen_h - win_h) / 2))
+  gx=$((origin_x + win_w / 2)) gy=$((origin_y - $(awk -v s="$win_scale" 'BEGIN { print int(10 * s + 0.5) }')))
+  be_move "$gx" "$gy"
+  be_button down 1
+  for ((i = 1; i <= 10; i++)); do be_move $((gx + (tx - origin_x) * i / 10)) $((gy + (ty - origin_y) * i / 10)); done
+  be_button up 1
+  # Away again, off the window (it never was over the drawing area).
+  be_move $((screen_w - 1)) $((screen_h / 2))
+  for ((i = 0; i < 50; i++)); do
+    read -r origin_x origin_y _ < <(gps "Get-Content $gdir/geometry.txt")
+    [[ "$origin_x $origin_y" == "$tx $ty" ]] && break
+    sleep 0.1
+  done
+  if [[ "$origin_x $origin_y" != "$tx $ty" ]]; then
+    echo "e2e.sh: the window did not move to $tx,$ty (it is at $origin_x,$origin_y)" >&2
+    exit 1
+  fi
 else
 case $term in
   kitty)
@@ -1629,13 +1995,14 @@ fi
 # A command that ends at once (a missing file, a bad option) leaves no window
 # to wait for.
 if ! kill -0 "$term_pid" 2>/dev/null; then
+  [[ $display == windows ]] && fetch_logs
   echo "e2e.sh: $term ended while starting; the end of its output:" >&2
   tail -n 20 "$outdir/terminal.log" >&2
   exit 1
 fi
 # The GUI's drawing area: where its window's inside is on the screen (on
 # macOS every window's: below the menu bar).
-if [[ $term == gui ]]; then
+if [[ $term == gui && $display != windows ]]; then
   for w in "$@"; do [[ $w == */temzdf-gui ]] && gui_bin=$w && break; done
   temzdf=$(dirname "$gui_bin")/temzdf
 fi
