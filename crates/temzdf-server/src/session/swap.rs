@@ -65,9 +65,12 @@ pub(super) fn swap_dir() -> Option<PathBuf> {
 }
 
 /// The names a swap file of `file` may have in `dir`, in the order taken:
-/// `.swp`, `.swo`, `.swn`, ... `.swa` (as Vim's).
+/// `.swp`, `.swo`, `.swn`, ... `.swa` (as Vim's). Each path separator
+/// becomes `%`; on Windows `/`, `\` and the drive's `:` (as Neovim's
+/// `make_percent_swname` there: `C%%Users%me%notes.txt.swp`).
 pub(super) fn candidates(dir: &Path, file: &Path) -> Vec<PathBuf> {
-    let base = file.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "%");
+    let sep = |c: char| std::path::is_separator(c) || (cfg!(windows) && c == ':');
+    let base = file.to_string_lossy().replace(sep, "%");
     ('a'..='p').rev().map(|c| dir.join(format!("{base}.sw{c}"))).collect()
 }
 
@@ -353,10 +356,13 @@ mod tests {
 
     #[test]
     fn names_are_neovims_and_go_on_when_taken() {
-        let c = candidates(Path::new("/s"), Path::new("/home/me/notes.txt"));
-        assert_eq!(c[0], Path::new("/s/%home%me%notes.txt.swp"));
-        assert_eq!(c[1], Path::new("/s/%home%me%notes.txt.swo"));
-        assert_eq!(c.last().unwrap(), Path::new("/s/%home%me%notes.txt.swa"));
+        let dir = Path::new("/s");
+        let c = candidates(dir, Path::new("/home/me/notes.txt"));
+        assert_eq!(c[0], dir.join("%home%me%notes.txt.swp"));
+        assert_eq!(c[1], dir.join("%home%me%notes.txt.swo"));
+        assert_eq!(c.last().unwrap(), &dir.join("%home%me%notes.txt.swa"));
+        #[cfg(windows)]
+        assert_eq!(candidates(dir, Path::new(r"C:\Users\me\notes.txt"))[0], dir.join("C%%Users%me%notes.txt.swp"));
     }
 
     #[test]
