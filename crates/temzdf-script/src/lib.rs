@@ -12,6 +12,8 @@ mod host;
 pub mod link;
 pub mod native_fs;
 #[cfg(feature = "host")]
+mod paths;
+#[cfg(feature = "host")]
 pub mod strip;
 pub mod types;
 

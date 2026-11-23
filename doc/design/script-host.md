@@ -46,7 +46,11 @@ take the session down:
   linked by home-manager) and Windows' drive paths. It reads only, only
   absolute paths, only regular files (a FIFO would block), at most 64 MiB
   a file and 100k entries a directory, and its errors say the same on
-  every OS.
+  every OS. The guest is one build for every OS and its `std::path` is
+  Unix's, so the module loader joins and normalises paths with
+  `typed-path` (`crates/temzdf-script/src/paths.rs`) in the style the
+  session names in `ToHost::Load` (Windows': drive letters, UNC, `\`
+  and `/`), testable on any OS.
 - Its memory is capped at 1 GiB; growing past it traps (and ends it).
 - `ScriptHost::stop` ends it whatever it is doing: the engine's epoch is
   advanced, and the guest's deadline callback traps at its next function

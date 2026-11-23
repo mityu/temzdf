@@ -9,7 +9,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -20,10 +20,12 @@ use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::promise::PromiseState;
 use rquickjs::{Context, Ctx, Exception, Function, Module, Persistent, Runtime, Value};
 use temzdf_protocol::script::{
-    Code, CodeResult, Fallback, FromHost, FuncId, HostOp, Keepalive, Printed, ScriptError, ScriptValue, TaskId, ToHost,
-    Token,
+    Code, CodeResult, Fallback, FromHost, FuncId, HostOp, Keepalive, PathStyle, Printed, ScriptError, ScriptValue,
+    TaskId, ToHost, Token,
 };
 use temzdf_protocol::script_fs::{FsOp, FsReply};
+
+use crate::paths;
 
 use crate::link::{Files, Link, Received, StreamLink};
 
@@ -113,7 +115,8 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         }
     })));
     let files = link.files();
-    rt.set_loader(Resolve { files: files.clone() }, Load { files: files.clone() });
+    let paths = Rc::new(Cell::new(PathStyle::default()));
+    rt.set_loader(Resolve { files: files.clone(), paths: paths.clone() }, Load { files: files.clone() });
     let context = Context::full(&rt).map_err(|e| e.to_string())?;
     let st = Rc::new(State {
         link: RefCell::new(link),
@@ -141,6 +144,7 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         stopped,
         log,
         files,
+        paths,
     });
     context.with(|ctx| install(&ctx, &st)).map_err(|e| format!("cannot start the scripting API: {e}"))?;
     while !st.gone.get() {
@@ -176,8 +180,9 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         let next = st.timers.borrow().keys().next().map(|(at, _)| *at);
         let timeout = next.map_or(Duration::from_secs(3600), |at| at.saturating_duration_since(Instant::now()));
         match st.recv(Some(timeout)) {
-            Ok(ToHost::Load { config, commands }) => {
+            Ok(ToHost::Load { config, commands, paths }) => {
                 *st.commands.borrow_mut() = commands;
+                st.paths.set(paths);
                 let result = context.with(|ctx| load_config(&ctx, &st, config.as_deref()));
                 st.send(&FromHost::Ready(result));
             }
@@ -293,6 +298,8 @@ struct State {
     log: Box<dyn Fn(&str)>,
     /// File access ([`Link::files`]).
     files: Files,
+    /// How the session's OS writes paths (`ToHost::Load`).
+    paths: Rc<Cell<PathStyle>>,
 }
 
 /// A `temzdf eval` running as a task: its request's number, what it
@@ -306,7 +313,7 @@ struct EvalRun {
 thread_local! {
     /// The directories relative imports of `temzdf eval`'s steps start
     /// from, by step name (`-c 1`, `[stdin]`; a file's is its own).
-    static EVAL_BASES: RefCell<std::collections::HashMap<String, PathBuf>> = RefCell::default();
+    static EVAL_BASES: RefCell<std::collections::HashMap<String, String>> = RefCell::default();
 }
 
 /// Why the interrupt handler stopped the interpreter.
@@ -540,8 +547,8 @@ fn eval_error(run: &EvalRun, e: &EvalError) -> String {
 fn run_code(ctx: &Ctx<'_>, st: &Rc<State>, id: u64, code: Code) {
     EVAL_BASES.with(|bases| {
         let mut bases = bases.borrow_mut();
-        for s in code.steps.iter().filter(|s| !Path::new(&s.name).is_absolute()) {
-            bases.insert(s.name.clone(), code.base.clone());
+        for s in code.steps.iter().filter(|s| !paths::is_absolute(st.paths.get(), &s.name)) {
+            bases.insert(s.name.clone(), code.base.display().to_string());
         }
     });
     let steps = json(&code.steps);
@@ -1142,8 +1149,9 @@ fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: Option<&Path>) -> Result<(),
         fill.call::<_, ()>(()).map_err(|e| error_of(ctx, e))?;
         evaluate(ctx, DEFAULTS_NAME, DEFAULTS.to_owned())?;
         let Some(path) = path else { return Ok(()) };
-        let source = read_module(&st.files, path).map_err(ScriptError::new)?;
-        evaluate(ctx, &path.display().to_string(), source)
+        let path = path.display().to_string();
+        let source = read_module(&st.files, &path).map_err(ScriptError::new)?;
+        evaluate(ctx, &path, source)
     })();
     st.tokens.borrow_mut().pop();
     st.interrupt.clear();
@@ -1185,19 +1193,13 @@ fn evaluate(ctx: &Ctx<'_>, name: &str, source: String) -> Result<(), ScriptError
 }
 
 /// A module's JavaScript: TypeScript is stripped of its types.
-fn read_module(files: &Files, path: &Path) -> Result<String, String> {
-    let text = match files(&FsOp::ReadFile(path.display().to_string())) {
-        Ok(FsReply::Bytes(b)) => {
-            String::from_utf8(b).map_err(|_| format!("cannot read {}: not UTF-8", path.display()))?
-        }
-        Ok(_) => return Err(format!("cannot read {}", path.display())),
+fn read_module(files: &Files, path: &str) -> Result<String, String> {
+    let text = match files(&FsOp::ReadFile(path.to_owned())) {
+        Ok(FsReply::Bytes(b)) => String::from_utf8(b).map_err(|_| format!("cannot read {path}: not UTF-8"))?,
+        Ok(_) => return Err(format!("cannot read {path}")),
         Err(e) => return Err(format!("cannot read {}", e.message)),
     };
-    if path.extension().is_some_and(|e| e == "ts" || e == "mts") {
-        crate::strip::strip(&path.display().to_string(), &text)
-    } else {
-        Ok(text)
-    }
+    if path.ends_with(".ts") || path.ends_with(".mts") { crate::strip::strip(path, &text) } else { Ok(text) }
 }
 
 /// The property marking an error a command answered with (`prelude.ts`
@@ -1255,6 +1257,7 @@ fn from_script(v: &ScriptValue) -> serde_json::Value {
 /// Imports: `"temzdf"`, and paths relative to the importing module.
 struct Resolve {
     files: Files,
+    paths: Rc<Cell<PathStyle>>,
 }
 
 impl Resolver for Resolve {
@@ -1270,9 +1273,9 @@ impl Resolver for Resolve {
         }
         if name.starts_with("./") || name.starts_with("../") || name.starts_with('/') {
             // A `temzdf eval` step not named by a path: the caller's directory.
-            let eval_base = EVAL_BASES.with(|b| b.borrow().get(base).cloned());
-            let dir = eval_base.as_deref().unwrap_or_else(|| Path::new(base).parent().unwrap_or(Path::new(".")));
-            return Ok(module_file(&self.files, &normalize(&dir.join(name))).display().to_string());
+            let style = self.paths.get();
+            let dir = EVAL_BASES.with(|b| b.borrow().get(base).cloned()).unwrap_or_else(|| paths::parent(style, base));
+            return Ok(module_file(&self.files, style, &paths::join(style, &dir, name)));
         }
         Err(Exception::throw_message(
             ctx,
@@ -1288,22 +1291,9 @@ impl Resolver for Resolve {
 /// itself, `x.ts` for `x.js` (TypeScript sources import each other by their
 /// output's name), `x.ts` or `x.js` for `x`, or a directory's `index.ts` or
 /// `index.js`. Nothing found: the path, for the loader to report.
-fn module_file(files: &Files, path: &Path) -> PathBuf {
-    let is_file = |p: &Path| matches!(files(&FsOp::Stat(p.display().to_string())), Ok(FsReply::Info(i)) if i.is_file);
-    if is_file(path) {
-        return path.to_owned();
-    }
-    let with = |ext: &str| {
-        let mut p = path.as_os_str().to_owned();
-        p.push(ext);
-        PathBuf::from(p)
-    };
-    let mut candidates = Vec::new();
-    if path.extension().is_some_and(|e| e == "js") {
-        candidates.push(path.with_extension("ts"));
-    }
-    candidates.extend([with(".ts"), with(".js"), path.join("index.ts"), path.join("index.js")]);
-    candidates.into_iter().find(|p| is_file(p)).unwrap_or_else(|| path.to_owned())
+fn module_file(files: &Files, style: PathStyle, path: &str) -> String {
+    let is_file = |p: &str| matches!(files(&FsOp::Stat(p.to_owned())), Ok(FsReply::Info(i)) if i.is_file);
+    paths::module_candidates(style, path).into_iter().find(|p| is_file(p)).unwrap_or_else(|| path.to_owned())
 }
 
 struct Load {
@@ -1322,25 +1312,10 @@ impl Loader for Load {
         } else if let Some((_, source)) = BUNDLED.iter().find(|(n, _)| *n == name) {
             (*source).to_owned()
         } else {
-            read_module(&self.files, Path::new(name)).map_err(|e| Exception::throw_message(ctx, &e))?
+            read_module(&self.files, name).map_err(|e| Exception::throw_message(ctx, &e))?
         };
         Module::declare(ctx.clone(), name, source)
     }
-}
-
-/// `a/./b/../c` as `a/c`, without touching the file system.
-fn normalize(p: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for c in p.components() {
-        match c {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 #[cfg(test)]

@@ -10,7 +10,9 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use temzdf_protocol::script::{Code, CodeResult, CodeStep, FromHost, HostOp, Printed, ScriptValue, ToHost, Token};
+use temzdf_protocol::script::{
+    Code, CodeResult, CodeStep, FromHost, HostOp, PathStyle, Printed, ScriptValue, ToHost, Token,
+};
 
 pub(crate) struct Session {
     to_host: UnixStream,
@@ -56,7 +58,7 @@ impl Session {
     pub(crate) fn load(&mut self, file: &str) {
         let config = Some(self.dir.join(file));
         let commands = command_names().into_iter().collect();
-        self.send(ToHost::Load { config, commands });
+        self.send(ToHost::Load { config, commands, paths: PathStyle::Posix });
     }
 
     /// Answer requests with `null` until the host sends something else.

@@ -106,6 +106,22 @@ impl std::fmt::Display for ScriptError {
     }
 }
 
+/// How paths are written: the module loader's and `temzdf/path`'s rules.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PathStyle {
+    #[default]
+    Posix,
+    /// Drive letters, UNC, `\` and `/` both separators.
+    Windows,
+}
+
+impl PathStyle {
+    /// This OS's.
+    pub fn native() -> Self {
+        if cfg!(windows) { Self::Windows } else { Self::Posix }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ToHost {
     /// Evaluate the shipped defaults, then the user's configuration (none
@@ -114,6 +130,9 @@ pub enum ToHost {
         config: Option<PathBuf>,
         /// The actions scripts may call (`action.<name>(...)`), by name.
         commands: Vec<String>,
+        /// How the session's OS writes paths (the guest is one build for
+        /// every OS).
+        paths: PathStyle,
     },
     /// Run a registered function; answered by [`FromHost::Done`].
     Call {
@@ -349,7 +368,11 @@ mod tests {
         ]);
         assert_eq!(v.get("pane").and_then(ScriptValue::as_num), Some(3.0));
         round_trip(&ToHost::Call { id: 7, func: 2, args: vec![v.clone()], nested: false });
-        round_trip(&ToHost::Load { config: Some("config.ts".into()), commands: vec!["split".into()] });
+        round_trip(&ToHost::Load {
+            config: Some("config.ts".into()),
+            commands: vec!["split".into()],
+            paths: PathStyle::Windows,
+        });
         round_trip(&FromHost::Request {
             req: 1,
             token: Token::Task(4),

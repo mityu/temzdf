@@ -284,6 +284,7 @@ impl Session {
         self.script.send(&ToHost::Load {
             config: s.config.clone(),
             commands: super::commands::action_names().iter().map(|n| (*n).to_owned()).collect(),
+            paths: temzdf_protocol::script::PathStyle::native(),
         })
     }
 

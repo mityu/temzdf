@@ -8,7 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use temzdf_protocol::script::{FromHost, HostOp, ScriptValue, ToHost};
+use temzdf_protocol::script::{FromHost, HostOp, PathStyle, ScriptValue, ToHost};
 use temzdf_script_runner::{Event, Options, ScriptHost};
 
 #[path = "../../temzdf-script/tests/host/cases.rs"]
@@ -51,7 +51,7 @@ fn start(config: &str, options: Options) -> (ScriptHost, mpsc::Receiver<Event>, 
     })
     .unwrap();
     let commands = cases::command_names().into_iter().collect();
-    assert!(host.send(ToHost::Load { config: Some(path), commands }));
+    assert!(host.send(ToHost::Load { config: Some(path), commands, paths: PathStyle::Posix }));
     (host, rx, dir)
 }
 
@@ -170,7 +170,11 @@ fn keys_and_startup() {
             let _ = tx.send(e);
         })
         .unwrap();
-        host.send(ToHost::Load { config: Some(dir.join("config.js")), commands: commands.clone() });
+        host.send(ToHost::Load {
+            config: Some(dir.join("config.js")),
+            commands: commands.clone(),
+            paths: PathStyle::Posix,
+        });
         maps.clear();
         match until_answer(&host, &rx, &mut maps) {
             FromHost::Ready(Ok(())) => {}
