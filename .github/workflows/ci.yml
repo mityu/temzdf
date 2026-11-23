@@ -134,6 +134,15 @@ jobs:
       - run: npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund
       # The version of biome.jsonc's `$schema` and of the dev shell.
       - run: npm i -g @biomejs/biome@2.6.8
+      # Which tools the gate gets (the runner image also has rustup's MSVC
+      # toolchain), in the same shell.
+      - run: |
+          command -v cargo rustc gcc clang make node
+          cargo -vV
+          rustc -vV
+          gcc --version | head -n 1
+          clang --version | head -n 1
+        shell: msys2 {0}
       - run: cargo xtask check --stream --no-miri
         shell: msys2 {0}
         env:
