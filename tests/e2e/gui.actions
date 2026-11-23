@@ -1,7 +1,11 @@
-# The GUI client on a PDF session, under xfwm4 on Xvfb (lavapipe).
+# The GUI client on a PDF session, under xfwm4 on Xvfb (lavapipe), or on
+# Windows.
 # Used with:
 #   cargo build -p temzdf -p temzdf-gui
 #   scripts/e2e.sh -t gui -o target/e2e-gui tests/e2e/gui.actions -- target/debug/temzdf-gui --clean target/fixtures/sample.pdf
+# In the Windows VM (release builds in its C:/t, "Windows in a VM" in
+# doc/dev/testing.md):
+#   scripts/e2e.sh -d windows -t gui -o target/e2e-gui-windows tests/e2e/gui.actions -- C:/t/target/release/temzdf-gui.exe --clean target/fixtures/sample.pdf
 # Judged (expect: the window against temzdf-gui --render-frame on the same
 # session): the first page (start), after a flick of the wheel (wheel), Ctrl
 # and the wheel zooming in at the pointer (zoom), page 3 after 3G (page3),

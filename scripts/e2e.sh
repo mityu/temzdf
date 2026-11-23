@@ -33,7 +33,14 @@
 #             QMP's screendump, commands and files over SSH. COMMAND is
 #             the guest's temzdf-gui.exe (e.g.
 #             C:/t/target/release/temzdf-gui.exe --clean FILE); arguments
-#             naming files of this host are copied into the guest first
+#             naming files of this host are copied into the guest first.
+#             The window is dragged by its title bar to the middle of the
+#             screen (which focuses it), `expect` renders in the guest and
+#             masks the pointer (screendumps show it), the clipboard is
+#             PowerShell's on the desktop; no other_window or focus_window
+#             yet. The guest's logs come back into OUTDIR; how to build
+#             there and why it works so: "Windows in a VM" in
+#             doc/dev/testing.md
 #   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no pane
 #             frames, a single pane; its config and layout go to OUTDIR/zellij;
 #             tmux: a private server with passthrough and mouse on, no status)

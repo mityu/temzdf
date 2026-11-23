@@ -256,7 +256,12 @@ server on one `Session`). Next and open:
     with UCRT64 against the list above; TeX in the VM, or fixtures built
     there otherwise, for `temzdf-pdfcore`'s tests; `temzdf-pdfcore` into
     `WINDOWS_CRATES`.
-    Still to do: fonts, the e2e. The ConPTY
+    Still to do: fonts. The e2e of the GUI runs there
+    (`scripts/e2e.sh -d windows`, "Windows in a VM" in
+    `doc/dev/testing.md`; `gui.actions` passes, 2026-11-23); still to do
+    for it: CI, the other GUI scenarios (`other_window`, `focus_window`,
+    `-I`), links not opened, a command that builds the tree in the VM.
+    The ConPTY
     experiment with the in-box ConPTY is done (`doc/terminals/conpty.md`,
     `experiments/conpty/`): kitty graphics are dropped, the kitty
     keyboard, the SGR-pixel mouse and OSC 52 pass, the pass-through flag
@@ -302,8 +307,9 @@ server on one `Session`). Next and open:
     of the gate there, and the fixture tests of `temzdf-pdfview` and
     `temzdf-server` are ignored); test fonts without fontconfig; the gate's lock test; `cargo xtask miri`
     (also cross-target from Linux);
-    a Windows backend for `scripts/e2e.sh` (WezTerm, Windows Terminal,
-    the GUI). Done: the script host tests on `temzdf_protocol::Stream`
+    `scripts/e2e.sh` on Windows for terminals (WezTerm, Windows
+    Terminal). Done: the GUI's (`-d windows`, from the Linux host over
+    QMP and SSH); the script host tests on `temzdf_protocol::Stream`
     pairs (Unix domain sockets on Windows too, keeping the read timeout
     `std::io::pipe` lacks); the mock terminal tests of `temzdf-pdfview`
     and `temzdf-server` are Unix only (termpix).
@@ -480,7 +486,10 @@ server on one `Session`). Next and open:
   display at scale 1; `doc/terminals/macos.md`), every terminal and the GUI. Left:
   kitty's `viewer` zoom on macOS (three wheel reports per notch make it
   deeper than its pause allows), and:
-  4. Windows: no bash, so then one small Rust driver for every platform
+  4. Windows: done for the GUI from the Linux host (`-d windows`: QMP
+     through socat, SSH; `doc/dev/testing.md`), no bash in the guest
+     needed. For CI or a Windows machine without a Linux host: no bash,
+     so then one small Rust driver for every platform
      (`crates/wlinput` is its Wayland part), `enigo` (input; Wayland and
      libei still experimental behind feature flags) with `xcap` (screen and
      window capture on X11, Wayland, macOS, Windows), and the action files

@@ -573,7 +573,8 @@ and Wayland too). Wayland: 683 s before. With `gui-focus`, `gui-ime` and
 `scripts/windows-vm.sh` runs one disposable Windows 11 VM (QEMU/KVM) through
 vitro, pinned in the script, as `scripts/macos-vm.sh` does for macOS. It
 builds the golden image from an ISO, provisions it, starts, stops and
-resets the VM from it, and runs the gate there (no e2e runs yet):
+resets the VM from it, runs the gate there, and is where
+`scripts/e2e.sh -d windows` runs the GUI's e2e scenarios (below):
 
 ```sh
 scripts/windows-vm.sh build Win11_x64_en-us.iso  # about 20 minutes
@@ -584,6 +585,7 @@ scripts/windows-vm.sh cp-in FILE guest.bin   # cp-out GUEST HOST
 scripts/windows-vm.sh screenshot             # target/windows-vm/*.png
 scripts/windows-vm.sh reset                  # a fresh overlay; stop: delete it
 scripts/windows-vm.sh check [REV]            # the gate on REV in the guest
+scripts/windows-vm.sh cursor hidden          # a transparent pointer; default: back
 ```
 
 - `build` takes an English x64 ISO (vitro's answer file is en-US). With
@@ -638,8 +640,82 @@ scripts/windows-vm.sh check [REV]            # the gate on REV in the guest
 The nix build links of vitro and the OVMF firmware, and the config vitro
 reads (one per VM name, written on every call; `XDG_CONFIG_HOME` points
 there, so `~/.config/vitro/config.toml` is not used), are in
-`~/.local/state/temzdf/windows-vm/`, outside `target/`. The header of the
-script lists the known problems of vitro and their workarounds.
+`~/.local/state/temzdf/windows-vm/`, outside `target/`, with the VM's
+second QMP socket (`NAME.qmp`, short: a socket's path has room for about
+108 bytes). The header of the script lists the known problems of vitro
+and their workarounds.
+
+### e2e runs on Windows
+
+`scripts/e2e.sh -d windows -t gui ACTIONS -- C:/t/target/release/temzdf-gui.exe
+--clean FILE` runs a GUI scenario in the running VM
+(`TEMZDF_WINDOWS_VM`), driven from the Linux host; arguments naming files
+of the host (the fixture) are copied into the guest. Build first, in the
+guest (about 14 minutes; afterwards copy only the files that changed and
+build again):
+
+```sh
+mkdir -p target/windows-vm && git ls-files -z | tar --null -T - -cf target/windows-vm/tree.tar
+scripts/windows-vm.sh cp-in target/windows-vm/tree.tar tree.tar
+scripts/windows-vm.sh run 'New-Item -ItemType Directory -Force C:/t > $null; tar -xf tree.tar -C C:/t; Set-Location C:/t;
+  npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund; $env:MSYSTEM="UCRT64";
+  $env:MSYS2_PATH_TYPE="inherit"; $env:CHERE_INVOKING="1";
+  C:/msys64/usr/bin/bash.exe -lc "cargo xtask fetch-fonts && cargo build --release -p temzdf -p temzdf-gui"'
+```
+
+How it works, and why:
+
+- Input: QEMU's USB tablet and keyboard through QMP's
+  `input-send-event`, raw JSON lines through `socat` (in the dev shell)
+  on a second QMP socket of the VM's (`scripts/windows-vm.sh qmp-socket`;
+  vitro keeps its own). As vitro's `src/qmp.rs` does: a press and its
+  release in separate calls (together they are one HID report, which the
+  guest ignores), modifiers 150 ms apart from what they modify (the
+  keyboard and the tablet are read separately). Every move waits 30 ms
+  before the next event: the guest reads one tablet report per poll and
+  QEMU merges a move into a report not read yet whose buttons are the
+  same (`hw/input/hid.c`), so a press right after the move to a drag's
+  start sometimes took the drag's first step as its place, and the
+  selection lost its first characters (once in six runs without the
+  wait, none with it).
+- Screenshots: QMP's `screendump`, written on the host; the waits for a
+  still screen compare the drawing area only (the desktop has a clock).
+- Commands: one PowerShell in the guest over SSH for the whole run (one
+  per command took 1.5 s; `scripts/windows-vm.sh ssh-config`, one
+  connection), files with scp. The run's sessions are in `C:/e2e`
+  (`XDG_RUNTIME_DIR`, `XDG_STATE_HOME`), made anew each run; the guest's
+  logs come back into OUTDIR.
+- The desktop: SSH's session has no windows and no clipboard. The GUI
+  starts from a scheduled task of the user's (`schtasks /it`) without a
+  console window (`conhost.exe --headless`), through a batch file with
+  the run's environment that waits for it and writes its exit status (an
+  SSH command on the host waits for that file and stands for the GUI's
+  process). The clipboard is PowerShell's `Get-Clipboard` and
+  `Set-Clipboard` run the same way.
+- The window: `temzdf-gui` writes where its drawing area is to the file
+  `TEMZDF_GUI_GEOMETRY` names (`X Y W H SCALE`); the run waits for it
+  (starting took over 5 s). Windows opens each new window lower and
+  further right than the last (the third reached under the taskbar), and
+  does not give the focus to a window a scheduled task opens: the harness
+  drags the title bar so that the drawing area is in the middle of the
+  screen, which focuses it too, then parks the pointer at the screen's
+  right edge, off the window.
+- The pointer: the screendumps show it. `expect` blackens a 48 px square
+  around it (scale 1; the hot spot 16 px in) on both sides of the
+  comparison: moving it off the window would change the drawing (temzdf
+  sees it leave). `scripts/windows-vm.sh cursor hidden` makes it
+  transparent (`scripts/windows/cursor.ps1`, `SetSystemCursor` until the
+  next logon or `cursor default`; not in the golden image, which is also
+  used by hand); the mask stays.
+- `expect` runs `temzdf-gui --render-frame` in the guest at the window's
+  scale and copies the picture back. PowerShell does not wait for a GUI
+  program unless its output is piped, so the command is.
+
+`tests/e2e/gui.actions` passes with the pointer visible and transparent
+(2026-11-23, Windows 11 build 26300 at 1280x800 and 96 dpi, WARP): all
+five `expect`s, and `clipboard.txt` holds the whole title. A run takes
+about 37 s. Not there yet: `other_window`, `focus_window`, `-I`, links
+(they would open in the guest), and the other GUI scenarios.
 
 ## Judged e2e scenarios
 

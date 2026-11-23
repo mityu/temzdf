@@ -103,6 +103,17 @@ On Wayland (headless sway, `scripts/e2e.sh -d wayland`) the same scenarios
 pass, Japanese input included: fcitx5 attaches through input-method-v2,
 the GUI gets preedit and commits through text-input-v3 (winit), and
 fcitx5's candidate window opens below the cursor (2026-10-29).
+
+On Windows `temzdf-gui` is a GUI program (`windows_subsystem`): no
+console window of its own. Standard handles it lacks are opened on the
+console it was started from (`AttachConsole`), so `ls-fonts`,
+`--render-frame`'s errors and clap's messages show in a terminal, and
+redirected ones are kept. Consoles do not wait for a GUI program: in
+cmd and PowerShell the output comes after the next prompt (PowerShell's
+line editor can draw over it), and PowerShell waits only when the
+output is piped; batch files, bash and programs that start it (`temzdf
+ls-fonts`) wait. `scripts/e2e.sh -d windows` runs `gui.actions` in the
+Windows VM (2026-11-23, "Windows in a VM" in `doc/dev/testing.md`).
 Underlines take the text colour (the scene's cells carry no SGR 58 colour,
 in the terminal frontend too); curly, dotted and dashed ones are drawn as
 fills in `drawlist.rs`, their pattern following the window's x so
