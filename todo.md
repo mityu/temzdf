@@ -106,9 +106,9 @@ server on one `Session`). Next and open:
 - Session timers still on the wall clock (`Instant::now()`) rather than
   the session's (113f4b2 moved notices): the clipboard wait
   (`crates/temzdf-server/src/session/registers.rs`), `updatetime` before
-  swap files are written (`swap.rs`) and `busy_since` for "running a
-  script" (`script.rs`). None is judged by a replay now; a replay that
-  reaches them depends on how fast it runs.
+  swap files are written (`swap.rs`) and `busy_since` for the "Script is
+  running" notice (`script.rs`). None is judged by a replay now; a replay
+  that reaches them depends on how fast it runs.
 - `tests/e2e/scroll_demo.actions` in WezTerm on X11: `wheel6` scrolled
   372 px instead of 360 in 2 of 6 runs (2026-11-23), one step accelerated
   as if two arrived within the 80 ms flick window, with the steps sent
@@ -126,7 +126,7 @@ server on one `Session`). Next and open:
   `a_markdown_text_screen_renders_to_pixels`,
   `inside_a_session_temzdf_means_that_session`, `a_pdf_screen_renders_to_pixels`,
   `cmdline_completion_popup_stays_in_every_frame_while_typing`. Most failing
-  screens show the "running a script; <C-c> interrupts it" notice (the
+  screens show the "Script is running.  Type <C-c> to interrupt." notice (the
   script host busy for about a second), which the tests read as part of the
   screen; the completion test once saw a partly published list. Make the
   tests wait the notice out or ignore it.

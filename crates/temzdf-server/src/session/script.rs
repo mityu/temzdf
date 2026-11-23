@@ -968,7 +968,7 @@ impl Session {
             && self.script.busy_since.is_some_and(|t| now >= t + BUSY_NOTICE)
         {
             self.script.notice_shown = true;
-            self.notify(super::notices::Kind::Info, "running a script; <C-c> interrupts it");
+            self.notify(super::notices::Kind::Info, "Script is running.  Type <C-c> to interrupt.");
             return Outcome::Redraw;
         }
         Outcome::None
