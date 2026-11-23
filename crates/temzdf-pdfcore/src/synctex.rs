@@ -185,7 +185,6 @@ impl Scanner {
     /// The SyncTeX file it read (which of `.synctex` and `.synctex.gz`, next
     /// to the PDF or, opened through a symlink, to the real one).
     pub fn file(&self) -> Option<PathBuf> {
-        use std::os::unix::ffi::OsStrExt;
         // SAFETY: valid scanner; the name is owned by it and NUL-terminated.
         let p = unsafe { synctex_scanner_get_synctex(self.ptr) };
         if p.is_null() {
@@ -193,7 +192,7 @@ impl Scanner {
         }
         // SAFETY: as above.
         let name = unsafe { CStr::from_ptr(p) }.to_bytes();
-        (!name.is_empty()).then(|| PathBuf::from(std::ffi::OsStr::from_bytes(name)))
+        (!name.is_empty()).then(|| path_from_c(name))
     }
 
     /// Input file names recorded in the SyncTeX file (tags start at 1).
@@ -280,6 +279,22 @@ fn normalize(p: &Path) -> PathBuf {
     p.components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect()
 }
 
+/// A path SyncTeX's C code gives back: the bytes we passed in (an
+/// `OsStr`'s encoded bytes) with an ASCII suffix changed.
+#[cfg(unix)]
+fn path_from_c(name: &[u8]) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    PathBuf::from(std::ffi::OsStr::from_bytes(name))
+}
+
+/// On Windows the encoded bytes of a path made of valid UTF-16 are UTF-8.
+/// SyncTeX opens files with the C runtime's narrow `fopen` (the ANSI code
+/// page), so a path outside ASCII does not reach here anyway.
+#[cfg(not(unix))]
+fn path_from_c(name: &[u8]) -> PathBuf {
+    PathBuf::from(String::from_utf8_lossy(name).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,8 +323,10 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     fn relative_names_are_relative_to_where_tex_ran() {
-        let inputs = ["/proj/./main.tex".to_owned(), "./ch1.tex".to_owned()];
-        assert_eq!(tex_dir(&inputs), Some(PathBuf::from("/proj")));
+        // An absolute directory: on Windows one needs a drive.
+        let proj = if cfg!(windows) { "C:/proj" } else { "/proj" };
+        let inputs = [format!("{proj}/./main.tex"), "./ch1.tex".to_owned()];
+        assert_eq!(tex_dir(&inputs), Some(PathBuf::from(proj)));
         assert_eq!(tex_dir(&["main.tex".to_owned()]), None);
         // The fixture is built with -outdir target/fixtures from the
         // repository root: that is where TeX ran, not the PDF's directory.
