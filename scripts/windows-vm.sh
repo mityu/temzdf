@@ -6,6 +6,20 @@
 # and "Windows in a VM" in doc/dev/testing.md.
 #
 # Usage: scripts/windows-vm.sh COMMAND [ARGS...]
+#
+# The VMs are shared by every worktree of the host, one at a time: a hand-held
+# lock (scripts/lib/vm-lease.sh; no expiry, never released by itself) says who
+# uses them. Every command that touches the VM (all but tools, status, lock,
+# unlock, hold) is refused (status 3) unless this worktree holds the lock:
+#   lock --as NAME --why TEXT [--wait]   take it (--wait: until it is free);
+#                    NAME and TEXT are shown to whoever finds it taken
+#   unlock [--force] release it; --force removes another worktree's, a
+#                    leftover one a person has checked
+#   hold --as NAME --why TEXT [--wait] -- CMD...   take it, run CMD, release
+#                    it (also on INT and TERM); CMD runs in the repository's
+#                    top directory (the script changes there), and a lock this
+#                    worktree held already stays held
+# The commands:
 #   tools            build vitro and the OVMF firmware (pinned; nix build) into
 #                    the state directory, and write vitro's config; the other
 #                    commands do this themselves when it is missing
@@ -25,7 +39,7 @@
 #   cp-out GUEST HOST  copy one back
 #   screenshot [PATH]  the guest's screen as a PNG
 #                    (default target/windows-vm/screen-TIME.png)
-#   status           the VM, the golden image, the tools
+#   status           the lock's holder, the VM, the golden image, the tools
 #   ssh-config       an ssh_config block for the running VM (its host name
 #                    first), as vitro prints it; for scripts/e2e.sh -d windows
 #   qmp-socket       the path of the VM's second QMP socket, which is
@@ -93,6 +107,8 @@
 # Requires /dev/kvm, QEMU and OpenSSH on PATH (in the dev shell) and nix.
 set -euo pipefail
 cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")"
+# shellcheck source=SCRIPTDIR/lib/vm-lease.sh
+source scripts/lib/vm-lease.sh
 
 vm=${TEMZDF_WINDOWS_VM:-temzdf-windows}
 image=windows
@@ -211,8 +227,14 @@ run() {
 cmd=${1:-}
 [[ -n $cmd ]] || usage
 shift
+# Before anything calls vitro or builds the tools.
+case $cmd in
+  tools | status | lock | unlock | hold | -h | --help | help) ;;
+  *) lease_require ;;
+esac
 case $cmd in
   tools) tools ;;
+  lock | unlock | hold) lease_cli "$cmd" "$@" ;;
   start) start ;;
   stop | destroy) destroy ;;
   reset)
@@ -334,6 +356,7 @@ case $cmd in
       if (-not (Test-Path \$d)) { Write-Error 'cursor.ps1 did not finish'; cmd /c exit 1 }"
     ;;
   status)
+    lease_status
     echo "state directory: $state"
     echo "vitro: $([[ -e $state/vitro/bin/vitro ]] && echo "$vitro_rev built" || echo "not built (tools)")"
     echo "ovmf: $([[ -e $ovmf ]] && echo built || echo "not built (tools)")"

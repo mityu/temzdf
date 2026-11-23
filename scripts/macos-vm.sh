@@ -5,6 +5,20 @@
 # doc/terminals/macos.md.
 #
 # Usage: scripts/macos-vm.sh COMMAND [ARGS...]
+#
+# The VMs are shared by every worktree of the host, one at a time: a hand-held
+# lock (scripts/lib/vm-lease.sh; no expiry, never released by itself) says who
+# uses them. Every command that touches the VM (all but status, lock, unlock,
+# hold) is refused (status 3) unless this worktree holds the lock:
+#   lock --as NAME --why TEXT [--wait]   take it (--wait: until it is free);
+#                 NAME and TEXT are shown to whoever finds it taken
+#   unlock [--force]  release it; --force removes another worktree's, a
+#                 leftover one a person has checked
+#   hold --as NAME --why TEXT [--wait] -- CMD...   take it, run CMD, release
+#                 it (also on INT and TERM); CMD runs in the repository's top
+#                 directory (the script changes there), and a lock this
+#                 worktree held already stays held
+# The commands:
 #   create        clone the base image ($TEMZDF_VM_IMAGE, pinned below) into
 #                 the VM ($TEMZDF_VM, default temzdf-e2e) and size it
 #   start         start it headless with the repository shared, wait until
@@ -27,13 +41,15 @@
 #   e2e-all ARGS...  the same with scripts/e2e-all.sh: every judged scenario
 #                 in one go (one copy, dev shell and build for all)
 #   shell         an interactive shell in the guest's work tree
-#   stop, status
+#   stop, status  (status also shows the lock's holder)
 #
 # Nothing but `stop` (and `save`, `reset`, `permissions`) stops the VM: runs
 # leave it up for the next one, and for looking into a failure.
 # Requires Apple Silicon and Tart (in the dev shell on macOS).
 set -euo pipefail
 cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")"
+# shellcheck source=SCRIPTDIR/lib/vm-lease.sh
+source scripts/lib/vm-lease.sh
 
 [[ $(uname) == Darwin ]] || { echo "macos-vm.sh: macOS only" >&2; exit 2; }
 
@@ -141,6 +157,11 @@ cmd=${1:-}
 [[ -n $cmd ]] || usage
 shift
 case $cmd in
+  status | lock | unlock | hold | -h | --help | help) ;;
+  *) lease_require ;;
+esac
+case $cmd in
+  lock | unlock | hold) lease_cli "$cmd" "$@" ;;
   create) create ;;
   start) start ;;
   stop) stop ;;
@@ -192,6 +213,7 @@ EOF
     tart exec -i -t "$vm" /bin/zsh -lc "cd $guest_tree && exec zsh -l"
     ;;
   status)
+    lease_status
     echo "vm $vm: $(state "$vm" || true)${image:+ (image $image)}"
     echo "golden $golden: $(exists "$golden" && echo present || echo none)"
     running && echo "ip $(tart ip "$vm")" && guest "cat ~/temzdf-vm-versions.txt 2>/dev/null" || true
