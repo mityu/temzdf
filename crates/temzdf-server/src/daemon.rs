@@ -736,14 +736,16 @@ fn detach(clients: &mut HashMap<ClientId, Client>, id: ClientId) -> Outcome {
 fn start_reader(id: ClientId, stream: &Stream, tx: Sender<Event>) -> Result<()> {
     // A connection that says nothing goes after a while (each holds a
     // thread); once it spoke, it may stay quiet as long as it likes.
-    stream.set_read_timeout(Some(FIRST_MESSAGE_WITHIN))?;
-    let quiet = stream.try_clone()?;
+    // On the handle it reads through: on Windows a clone of the socket
+    // (uds_windows) has a timeout of its own, so clearing it on another
+    // clone left this one timing out.
     let mut r = BufReader::new(stream.try_clone()?);
+    r.get_ref().set_read_timeout(Some(FIRST_MESSAGE_WITHIN))?;
     std::thread::Builder::new().name(format!("temzdf-client-{id}")).spawn(move || {
         loop {
             match proto::recv::<ClientMsg>(&mut r) {
                 Ok(Some(msg)) => {
-                    let _ = quiet.set_read_timeout(None);
+                    let _ = r.get_ref().set_read_timeout(None);
                     if tx.send(Event::Msg(id, msg)).is_err() {
                         return;
                     }
