@@ -105,14 +105,16 @@ the GUI gets preedit and commits through text-input-v3 (winit), and
 fcitx5's candidate window opens below the cursor (2026-10-29).
 
 On Windows `temzdf-gui` is a GUI program (`windows_subsystem`): no
-console window of its own. Standard handles it lacks are opened on the
-console it was started from (`AttachConsole`), so `ls-fonts`,
-`--render-frame`'s errors and clap's messages show in a terminal, and
-redirected ones are kept. Consoles do not wait for a GUI program: in
-cmd and PowerShell the output comes after the next prompt (PowerShell's
-line editor can draw over it), and PowerShell waits only when the
-output is piped; batch files, bash and programs that start it (`temzdf
-ls-fonts`) wait. `scripts/e2e.sh -d windows` runs `gui.actions` in the
+console window of its own, and, as is the custom there, no output to the
+console it was started from. Shells do not wait for a GUI program, so
+output attached to that console (`AttachConsole`, tried first) came
+after the next prompt, and PowerShell's line editor drew over it.
+Output that is redirected or piped is written there (`ls-fonts`,
+`--render-frame`'s errors; `scripts/e2e.sh` and SSH runs). Without a
+standard error, errors and clap's help show in a message box; other
+output is dropped. The terminal's program is `temzdf`, as `wezterm` is
+for `wezterm-gui`: `temzdf ls-fonts` pipes `temzdf-gui ls-fonts` and
+prints it. `scripts/e2e.sh -d windows` runs `gui.actions` in the
 Windows VM (2026-11-23, "Windows in a VM" in `doc/dev/testing.md`).
 Underlines take the text colour (the scene's cells carry no SGR 58 colour,
 in the terminal frontend too); curly, dotted and dashed ones are drawn as

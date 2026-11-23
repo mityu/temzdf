@@ -27,10 +27,10 @@ unicode-script = "0.5.8"
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 x11rb = "0.14.0"
 
-# The console of the program that started it (src/main.rs); where the
-# drawing area is on the screen (src/app.rs).
+# Whether there is a standard error, and a message box for errors when there
+# is none (src/main.rs); where the drawing area is on the screen (src/app.rs).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_Graphics_Gdi"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 serde = { version = "1.0.229", features = ["derive"] }

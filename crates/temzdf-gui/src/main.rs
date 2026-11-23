@@ -1,7 +1,9 @@
 //! `temzdf-gui`: show a temzdf session in a window (doc/design/gui-client.md).
 
-// No console window of its own on Windows; output goes to the console of
-// whoever started it (`attach_console`).
+// No console window on Windows, and no output to the console it was started
+// from (the shell would not wait for it): output goes where it is
+// redirected, errors without anywhere to go into a message box
+// (doc/design/gui-client.md).
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use anyhow::{Context, Result};
@@ -9,16 +11,38 @@ use clap::Parser;
 use temzdf_gui::cli::{Cli, Command, font_entry};
 use temzdf_gui::connection::session_for;
 
-fn main() -> Result<()> {
-    #[cfg(windows)]
-    attach_console();
+fn main() -> std::process::ExitCode {
     // SAFETY: the first thing the program does, before any other thread
     // exists.
     #[cfg(all(unix, not(target_os = "macos")))]
     unsafe {
         temzdf_gui::x11scale::default_scale()
     };
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        #[cfg(windows)]
+        Err(e) if !stderr_present() => {
+            let info = matches!(e.kind(), clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion);
+            message_box(&e.render().to_string(), !info);
+            return u8::try_from(e.exit_code()).unwrap_or(2).into();
+        }
+        Err(e) => e.exit(),
+    };
+    match run(&cli) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            #[cfg(windows)]
+            if !stderr_present() {
+                message_box(&format!("{e:#}"), true);
+                return std::process::ExitCode::FAILURE;
+            }
+            eprintln!("Error: {e:?}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(cli: &Cli) -> Result<()> {
     if let Some(Command::LsFonts(a)) = &cli.command {
         let font: Vec<_> = a.font.iter().map(|f| font_entry(f)).collect();
         let wide: Vec<_> = a.font_wide.iter().map(|f| font_entry(f)).collect();
@@ -44,37 +68,26 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Output where a console program's would go: a GUI program on Windows
-/// starts without the standard handles of the console it was started from
-/// (redirected ones it does get, and keeps). The missing ones are opened on
-/// that console (`ls-fonts`, `--render-frame`'s errors, clap's help and
-/// the line after the window closes), if there is one: none when started
-/// from Explorer or the Start menu. The console does not wait for a GUI
-/// program, so in an interactive shell the output can come after the next
-/// prompt.
+/// Whether this process has a standard error to write to: a GUI program on
+/// Windows has none unless it was redirected (or inherited from a program
+/// that has one, as over SSH).
 #[cfg(windows)]
-fn attach_console() {
-    use std::os::windows::io::IntoRawHandle;
+fn stderr_present() -> bool {
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-    use windows_sys::Win32::System::Console::{
-        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_HANDLE, STD_OUTPUT_HANDLE,
-        SetStdHandle,
-    };
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
     // SAFETY: reads this process's standard handle table.
-    let missing = |which: STD_HANDLE| unsafe {
-        let h = GetStdHandle(which);
-        h.is_null() || h == INVALID_HANDLE_VALUE
-    };
-    let missing: Vec<_> = [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].into_iter().filter(|&w| missing(w)).collect();
-    // SAFETY: a plain Win32 call; it fails without a parent console.
-    if missing.is_empty() || unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } == 0 {
-        return;
-    }
-    for which in missing {
-        if let Ok(f) = std::fs::OpenOptions::new().read(true).write(true).open("CONOUT$") {
-            // SAFETY: a handle of ours, given to the process for good (the
-            // standard handles are never closed).
-            unsafe { SetStdHandle(which, f.into_raw_handle()) };
-        }
-    }
+    let h = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+    !h.is_null() && h != INVALID_HANDLE_VALUE
+}
+
+/// Show `text` in a message box: an error's, or information (help).
+#[cfg(windows)]
+fn message_box(text: &str, error: bool) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW};
+    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let (text, title) = (wide(text.trim_end()), wide("temzdf-gui"));
+    let icon = if error { MB_ICONERROR } else { MB_ICONINFORMATION };
+    // SAFETY: both strings are NUL-terminated UTF-16 and outlive the call;
+    // no owner window.
+    unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_OK | icon) };
 }
