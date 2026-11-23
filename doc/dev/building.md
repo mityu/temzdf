@@ -50,15 +50,19 @@ there yet). Windows builds with MSYS2's UCRT64, not MSVC
 (`doc/survey/windows-port.md`, "The toolchain"): the job installs MSYS2
 with `msys2/setup-msys2` and its packages `mingw-w64-ucrt-x86_64-rust`
 (clippy and rustfmt included), `-rust-wasm`, `-gcc` and `-clang`
-(bindgen's libclang, `LIBCLANG_PATH`), `-pkgconf` and `make`, puts
-UCRT64's `bin` on `PATH`, runs the gate in UCRT64's shell (`shell:
-msys2`, which also has MSYS2's `usr/bin` with `make`) and keeps the
-build in `Swatinem/rust-cache`. MSYS2's packages
+(bindgen's libclang, `LIBCLANG_PATH`), `-pkgconf` and `make`, and the
+WASI sysroot, builtins, `lld` and `llvm` that QuickJS's C in the script
+guest is compiled with (`WASI_SDK` points rquickjs-sys at UCRT64, instead
+of the wasi-sdk it downloads, whose clang needs the MSVC runtime). It
+builds libghostty-vt with Zig 0.15.2 for `x86_64-windows-gnu` at
+`nix/libghostty-vt.nix`'s commit into UCRT64, where pkgconf finds it
+(Ghostty's build picks the MSVC ABI unless told), and links with lld
+(`.cargo/config.toml`; GNU ld cannot link that static library). It puts
+UCRT64's `bin` on `PATH`, prints the tools it found, runs the gate in
+UCRT64's shell (`shell: msys2`, which also has MSYS2's `usr/bin` with
+`make`) and keeps the build in `Swatinem/rust-cache`. MSYS2's packages
 are not pinned: each run takes the current ones. It also installs
-Node 24, runs `npm ci` and installs Biome 2.6.8 globally. It has not run on a runner yet: the first run (a dispatch of
-the branch `windows-port`, `gh workflow run CI --ref windows-port`) is
-the first check of `cargo xtask check` itself on Windows, `xtask` having
-been cross-checked only as far as `ring`'s C code allows. The Linux gate
+Node 24, runs `npm ci` and installs Biome 2.6.8 globally. The Linux gate
 also checks those crates for `x86_64-pc-windows-gnu` (step `windows`, a
 clippy run with `-D warnings`), where the Nix dev shells' toolchain
 carries that standard library (`flake.nix`), so `check-with-nix` runs it
