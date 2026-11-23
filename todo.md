@@ -272,8 +272,10 @@ server on one `Session`). Next and open:
     terminal frontend. Done: the transport, directories and the
     server's start-up for `temzdf-protocol`, `temzdf-client` and
     `temzdf-gui` (cross-checked; their tests not run on Windows yet),
-    and the server moved to them (not built for Windows yet; gaps in
-    `doc/design/session-server.md`, "Windows").
+    and the server moved to them (gaps in
+    `doc/design/session-server.md`, "Windows"). Terminal panes are off
+    on Windows for now (`temzdf-term`'s pty is Unix only; the pane
+    tests that start programs are ignored there): ConPTY later.
   - The tests: a helper program instead of `sh` in the pty tests; test
     fonts without fontconfig; the gate's lock test; `cargo xtask miri`
     (also cross-target from Linux);

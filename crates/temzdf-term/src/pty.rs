@@ -12,10 +12,19 @@
 //!   end-of-file: jobs left in the background may keep the pty open).
 //! - Dropping [`Pty`] hangs the program's process group up and kills it a
 //!   second later if it is still there; the threads end on their own.
+//!
+//! Unix only for now: on Windows [`Pty::start`] fails (terminal panes need
+//! ConPTY there, a later step of the port; doc/design/session-server.md,
+//! "Windows"), which leaves the threads' code unused.
+#![cfg_attr(not(unix), allow(dead_code))]
 
 use std::collections::VecDeque;
+#[cfg(unix)]
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io;
+#[cfg(unix)]
+use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::fd::{AsFd, BorrowedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -23,7 +32,9 @@ use std::time::Duration;
 
 use portable_pty::{Child, MasterPty, PtySize};
 
-use crate::{Sink, TermEvent};
+use crate::Sink;
+#[cfg(unix)]
+use crate::TermEvent;
 
 /// Input queued for the program at most; more is dropped.
 const INPUT_LIMIT: usize = 16 << 20;
@@ -48,8 +59,29 @@ pub(crate) struct Pty {
     pid: Option<i32>,
 }
 
+/// Whether terminal panes can start here: not on Windows yet.
+pub(crate) fn supported() -> io::Result<()> {
+    if cfg!(unix) {
+        Ok(())
+    } else {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "terminal panes are not supported on Windows yet"))
+    }
+}
+
 impl Pty {
     /// Drive `child` on `master`; events go to `sink`.
+    #[cfg(not(unix))]
+    pub(crate) fn start(
+        _master: Box<dyn MasterPty + Send>,
+        _child: Box<dyn Child + Send + Sync>,
+        _sink: Sink,
+    ) -> io::Result<Self> {
+        supported()?;
+        unreachable!("terminal panes are Unix only")
+    }
+
+    /// Drive `child` on `master`; events go to `sink`.
+    #[cfg(unix)]
     pub(crate) fn start(
         master: Box<dyn MasterPty + Send>,
         child: Box<dyn Child + Send + Sync>,
@@ -126,20 +158,24 @@ impl Drop for Pty {
         self.stop.store(true, Ordering::SeqCst);
         self.input.close();
         self.backlog.wake();
-        let Some(pid) = self.pid.filter(|_| !self.reaped.load(Ordering::SeqCst)) else { return };
-        signal(pid, rustix::process::Signal::HUP);
-        let reaped = self.reaped.clone();
-        let _ = std::thread::Builder::new().name("temzdf-pty-kill".into()).spawn(move || {
-            std::thread::sleep(KILL_AFTER);
-            if !reaped.load(Ordering::SeqCst) {
-                signal(pid, rustix::process::Signal::KILL);
-            }
-        });
+        #[cfg(unix)]
+        {
+            let Some(pid) = self.pid.filter(|_| !self.reaped.load(Ordering::SeqCst)) else { return };
+            signal(pid, rustix::process::Signal::HUP);
+            let reaped = self.reaped.clone();
+            let _ = std::thread::Builder::new().name("temzdf-pty-kill".into()).spawn(move || {
+                std::thread::sleep(KILL_AFTER);
+                if !reaped.load(Ordering::SeqCst) {
+                    signal(pid, rustix::process::Signal::KILL);
+                }
+            });
+        }
     }
 }
 
 /// Send `sig` to the program's process group (the pty's session leader
 /// leads it), and to the program itself.
+#[cfg(unix)]
 fn signal(pid: i32, sig: rustix::process::Signal) {
     if let Some(pid) = rustix::process::Pid::from_raw(pid) {
         let _ = rustix::process::kill_process_group(pid, sig);
@@ -214,6 +250,7 @@ impl Queue {
 /// never reads) would keep this thread, and with it the master, forever,
 /// and the master open keeps that job from seeing the terminal hang up.
 /// (Non-blocking holds for the reader's descriptor too: they share it.)
+#[cfg(unix)]
 fn write_loop(mut pty: impl Write + AsFd, input: &Queue, stop: &AtomicBool) {
     if rustix::io::ioctl_fionbio(&pty, true).is_err() {
         return;
@@ -271,6 +308,7 @@ impl Backlog {
     }
 }
 
+#[cfg(unix)]
 fn read_loop(mut pty: File, sink: &Sink, backlog: &Backlog, stop: &AtomicBool) {
     let mut buf = vec![0u8; 64 << 10];
     while !stop.load(Ordering::SeqCst) {
@@ -316,6 +354,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[cfg_attr(miri, ignore = "Miri cannot poll file descriptors")]
     fn a_writer_held_up_by_a_program_not_reading_ends_with_the_terminal() {
         // A pipe nobody reads stands in for the pty of such a program.

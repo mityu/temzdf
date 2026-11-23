@@ -1058,6 +1058,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
     fn moves_by_characters_rows_and_words() {
         let mut t = term("hello world\n  foo-bar baz\n日本語 text");
         assert_eq!(at(&t), (2, 11), "it starts at the program's cursor");
@@ -1101,6 +1102,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
     fn selections_copy_characters_rows_and_blocks() {
         let mut t = term("abc def\nghi jkl\nmno pqr");
         assert_eq!(t.visual_label(), Some("VISUAL"));
@@ -1164,6 +1166,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
     fn copies_join_soft_wrapped_rows() {
         let long = "0123456789".repeat(5);
         let mut t = term(&format!("{long}\nend"));
@@ -1176,6 +1179,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
     fn the_view_follows_the_cursor_through_the_scrollback() {
         let lines: String = (1..=30).map(|i| format!("line {i}\n")).collect();
         let mut t = term(&lines);
@@ -1203,6 +1207,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
     fn prompts_are_found_by_their_marks() {
         let mut t = term("\x1b]133;A\x07$ one\nout\n\x1b]133;A\x07$ two\nout 2");
         go(&mut t, Op::PrevPrompt);
@@ -1217,6 +1222,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
     fn searches_wrap_ignore_case_and_preview() {
         let mut t = term("apple\nbanana\n日本 Apple pie\ncherry");
         assert!(t.visual_search("apple", false, false));
@@ -1266,6 +1272,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
     fn the_mouse_moves_and_selects_without_copying() {
         let mut t = term("hello world\nsecond line");
         let left = MouseButton::Left;
@@ -1288,6 +1295,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
     fn suspended_visual_modes_go_on_or_end_with_typing() {
         let mut t = term("one\ntwo");
         go(&mut t, Op::Top);

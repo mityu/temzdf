@@ -329,7 +329,13 @@ git log), and why:
   the same path by its volume serial number and file index
   (`winapi-util`, the file opened as a reparse point; not yet run on
   Windows). Logs get no mode. `file:` links do not open, and path
-  comparisons are not case-insensitive yet.
+  comparisons are not case-insensitive yet. There are no terminal panes
+  on Windows yet (decided with the user, 2026-11-23; ConPTY comes
+  later, `doc/terminals/conpty.md`): `temzdf-term` keeps Ghostty's
+  emulation but starts no program (`TermBuffer::spawn` fails with
+  `Unsupported`, "terminal panes are not supported on Windows yet"),
+  so a split, float or tab with a program reports that error to the
+  client, as any pane that cannot start does.
 - **Nesting.** A client says which session's pane it runs in (`Hello`), and
   a session lists those of its clients (`SessionInfo::shown_in`); `attach`
   from a pane refuses that session and every session showing it, directly
