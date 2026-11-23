@@ -15,6 +15,11 @@ termpix-core.workspace = true
 # Keeping its own standard handles from the programs it starts
 # (std_handles_not_inherited).
 [target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
+
+# The test's look at the process's real standard handles
+# (standard_handles_are_not_inherited_after).
+[target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console"] }
 
 [lints]

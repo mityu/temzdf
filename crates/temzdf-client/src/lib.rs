@@ -350,18 +350,15 @@ pub fn resolve(name: Option<&str>) -> Result<String> {
 pub fn std_handles_not_inherited() {
     #[cfg(windows)]
     {
+        use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation};
-        use windows_sys::Win32::System::Console::{
-            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
-        };
-        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-            // SAFETY: plain Win32 calls on this process's own handles; a
-            // missing or invalid one makes them fail, which is ignored.
-            unsafe {
-                let h = GetStdHandle(which);
-                if !h.is_null() && h != INVALID_HANDLE_VALUE {
-                    SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
-                }
+        let handles =
+            [std::io::stdin().as_raw_handle(), std::io::stdout().as_raw_handle(), std::io::stderr().as_raw_handle()];
+        for h in handles {
+            if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                // SAFETY: a plain Win32 call on this process's own handle;
+                // a handle that is not valid makes it fail, which is ignored.
+                unsafe { SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0) };
             }
         }
     }
@@ -548,6 +545,8 @@ mod tests {
     fn standard_handles_are_not_inherited_after() {
         use windows_sys::Win32::Foundation::{GetHandleInformation, HANDLE_FLAG_INHERIT, SetHandleInformation};
         use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
+        // Reads the handles through GetStdHandle, not std, so this checks that what the
+        // function set through std reaches the process's real standard handles.
         let handles = [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(|w| unsafe { GetStdHandle(w) });
         let inherited = |h| {
             let mut flags = 0;

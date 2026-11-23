@@ -70,13 +70,14 @@ fn run(cli: &Cli) -> Result<()> {
 
 /// Whether this process has a standard error to write to: a GUI program on
 /// Windows has none unless it was redirected (or inherited from a program
-/// that has one, as over SSH).
+/// that has one, as over SSH). std documents a null handle for a missing
+/// one; INVALID_HANDLE_VALUE is checked too, as std does not document
+/// mapping it.
 #[cfg(windows)]
 fn stderr_present() -> bool {
+    use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
-    // SAFETY: reads this process's standard handle table.
-    let h = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+    let h = std::io::stderr().as_raw_handle();
     !h.is_null() && h != INVALID_HANDLE_VALUE
 }
 
