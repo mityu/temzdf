@@ -61,6 +61,7 @@ const work = join(root, "target/ts-types");
 const runtime = join(root, "crates/temzdf-script/runtime");
 rmSync(work, { recursive: true, force: true });
 mkdirSync(join(work, "node_modules/temzdf"), { recursive: true });
+mkdirSync(join(work, "node_modules/@types/temzdf-globals"), { recursive: true });
 mkdirSync(join(work, "out"));
 
 // The modules: the ("NAME", "ENTRY") lines of build.rs's MODULES.
@@ -98,11 +99,12 @@ function body(file: string): string[] {
 }
 // The globals, referred to from there: the bundler's programs start from
 // the entries alone (no `files`), and the npm packages' types use them too
-// (zod's URL).
+// (zod's URL, @std/path's). A types package, not a file of the program: the
+// bundler would copy a file's declarations into each module using them.
 writeFileSync(
   join(work, "node_modules/temzdf/index.d.ts"),
   text([
-    '/// <reference path="../../globals.d.ts" />',
+    '/// <reference types="temzdf-globals" />',
     ...body(`${types}/temzdf-core.d.ts`),
     ...body(`${types}/temzdf-actions.d.ts`),
   ]),
@@ -110,7 +112,7 @@ writeFileSync(
 {
   const core = lines(`${types}/temzdf-core.d.ts`);
   const i = core.indexOf(start);
-  writeFileSync(join(work, "globals.d.ts"), text(i < 0 ? core : core.slice(0, i)));
+  writeFileSync(join(work, "node_modules/@types/temzdf-globals/index.d.ts"), text(i < 0 ? core : core.slice(0, i)));
 }
 // A junction on Windows: it needs no privilege there, unlike a symbolic link.
 symlinkSync(runtime, join(work, "node_modules/temzdf/runtime"), process.platform === "win32" ? "junction" : "dir");
@@ -130,11 +132,11 @@ const tsconfig = {
     moduleResolution: "bundler",
     allowImportingTsExtensions: true,
     noEmit: true,
-    types: [],
+    types: ["temzdf-globals"],
     lib: ["es2022"],
     paths,
   },
-  files: ["./globals.d.ts", ...modules.map((m) => join(runtime, m.entry))],
+  files: modules.map((m) => join(runtime, m.entry)),
 };
 writeFileSync(join(work, "tsconfig.json"), `${JSON.stringify(tsconfig, null, 2)}\n`);
 const bundle = {
@@ -143,7 +145,8 @@ const bundle = {
     filePath: join(runtime, m.entry),
     outFile: outFile(m.name),
     output: { exportReferencedTypes: false, noBanner: true },
-    libraries: { importedLibraries: ["temzdf"] },
+    // JSR's @std/path (temzdf/path): users have no node_modules.
+    libraries: { importedLibraries: ["temzdf"], inlinedLibraries: ["@std/path"] },
   })),
 };
 writeFileSync(join(work, "bundle.json"), `${JSON.stringify(bundle, null, 2)}\n`);
@@ -167,8 +170,10 @@ let result =
   readFileSync(`${types}/temzdf-actions.d.ts`, "utf8");
 for (const m of modules) {
   const ls = lines(outFile(m.name))
-    .filter((l) => l !== "export {};")
-    .map((l) => l.replace(/^(export )?declare /, "$1"));
+    // The globals are at the top of the result already.
+    .filter((l) => l !== "export {};" && l !== '/// <reference types="temzdf-globals" />')
+    // (@std/path's declarations follow a doc comment's end on its line.)
+    .map((l) => l.replace(/^(\s*\*\/ )?(export )?declare /, "$1$2"));
   const first = ls.findIndex((l) => l !== "");
   result += `\ndeclare module "temzdf/${m.name}" {\n${text(first < 0 ? [] : ls.slice(first))}}\n`;
 }

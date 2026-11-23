@@ -183,6 +183,9 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
             Ok(ToHost::Load { config, commands, paths }) => {
                 *st.commands.borrow_mut() = commands;
                 st.paths.set(paths);
+                // For temzdf/path, before any module loads (runtime/path.ts).
+                let style = if paths == PathStyle::Windows { "windows" } else { "posix" };
+                context.with(|ctx| ctx.globals().set("__temzdfPathStyle", style)).ok();
                 let result = context.with(|ctx| load_config(&ctx, &st, config.as_deref()));
                 st.send(&FromHost::Ready(result));
             }

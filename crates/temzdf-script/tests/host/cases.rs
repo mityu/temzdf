@@ -56,9 +56,14 @@ impl Session {
     }
 
     pub(crate) fn load(&mut self, file: &str) {
+        self.load_as(file, PathStyle::Posix);
+    }
+
+    /// As a session whose OS writes paths in `paths`' style.
+    fn load_as(&mut self, file: &str, paths: PathStyle) {
         let config = Some(self.dir.join(file));
         let commands = command_names().into_iter().collect();
-        self.send(ToHost::Load { config, commands, paths: PathStyle::Posix });
+        self.send(ToHost::Load { config, commands, paths });
     }
 
     /// Answer requests with `null` until the host sends something else.
@@ -633,6 +638,21 @@ fn a_configuration_linked_to_an_absolute_path_loads_with_its_imports() {
     let mut log = Vec::new();
     ready_ok(s.serve(&mut log));
     assert_eq!(log, ["load message(linked)"]);
+}
+
+/// The session names its style; temzdf/path follows it (the configuration
+/// itself is read natively, whatever the style).
+#[test]
+fn temzdf_path_takes_the_sessions_style() {
+    let config = r#"import { action } from "temzdf";
+import { join, SEPARATOR } from "temzdf/path";
+action.message(`${SEPARATOR} ${join("C:\\a", "..\\b", "c")}`);
+"#;
+    let mut s = Session::start(&[("config.js", config)]);
+    s.load_as("config.js", PathStyle::Windows);
+    let mut log = Vec::new();
+    ready_ok(s.serve(&mut log));
+    assert_eq!(log, [r"load message(\ C:\b\c)"]);
 }
 
 #[test]

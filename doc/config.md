@@ -79,6 +79,19 @@ as TypeScript's do: `./util` finds `util.ts` or `util.js`, `./util.js` finds
 log, as do promise rejections nothing handled (by the time the promise jobs
 waiting to run have run: a handler added later in the same turn counts).
 
+Paths: `temzdf/path` is JSR's [`@std/path`](https://jsr.io/@std/path)
+(its functions and constants, with its documentation in the declarations)
+in the style of the OS temzdf runs on (Windows': drive letters, `\` and
+`/`); `temzdf/path/posix` and `temzdf/path/windows` are either style on any
+OS. There is no `resolve`: scripts have no working directory, and what
+reaches one (`relative` between relative paths) throws a `TypeError`.
+
+```ts
+import { basename, join } from "temzdf/path";
+join("/home/me/doc", "..", "notes.md"); // "/home/me/notes.md"
+basename("/home/me/doc/main.tex", ".tex"); // "main"
+```
+
 A value the API may leave out (no count typed, no focused pane, an unset
 option) is `undefined`, never `null`; `x == null` checks for either.
 
