@@ -304,8 +304,8 @@ Decided (the whole model was settled with the user on 2026-10-26):
   so the first half is always instant.
 
 - **No timeout interrupts a function** (as in Vim): `<C-c>` is the way. A
-  function running longer than about a second shows "running; `<C-c>` to
-  interrupt" in the message area. The startup wait for the configuration keeps
+  function running longer than 8 s shows "Script is running.  Type
+  `<C-c>` to interrupt." in a floating notice. The startup wait for the configuration keeps
   its own timeout, so an endless loop at the top level cannot stop startup.
 - **CLI requests always time out on the client side**: `temzdf action` (and
   other requests) give up after 10 s by default, adjustable with an option;

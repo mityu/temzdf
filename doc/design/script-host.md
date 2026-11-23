@@ -79,8 +79,8 @@ dependencies are cached apart from the server.
   is an error. Their commands are synchronous requests: the host waits for
   the answer. Meanwhile the session holds user input (keys, mouse, paste,
   `temzdf action` requests) and replays it afterwards; documents and
-  terminals go on. Frames wait too, for up to a second; after that a message
-  says that `<C-c>` interrupts.
+  terminals go on. Frames wait too, for up to a second, then show what the
+  script has done so far; after 8 s a message says that `<C-c>` interrupts.
 - **`<C-c>` interrupts** a running function (QuickJS's interrupt handler
   raises an uncatchable error; it sees the interrupt as soon as the session
   sends it, through the import `interrupts`, a count of those sent) and drops the held typeahead, as Vim's CTRL-C.

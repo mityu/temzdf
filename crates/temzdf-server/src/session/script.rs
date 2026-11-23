@@ -35,8 +35,12 @@ pub struct ScriptSettings {
 
 /// How long startup (and a reload) waits for the configuration.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(5);
-/// After this, a running script shows how to interrupt it, and frames resume.
-const BUSY_NOTICE: Duration = Duration::from_secs(1);
+/// How long frames wait for a running script (counted from `busy_since`):
+/// after this, what it has done so far shows.
+const FRAME_HOLD: Duration = Duration::from_secs(1);
+/// After this (counted from `busy_since`), a script that has not come back
+/// shows how to interrupt it.
+const BUSY_NOTICE: Duration = Duration::from_secs(8);
 /// Nesting limit for hooks that cause hooks (Vim's is 10, E218).
 const MAX_HOOK_DEPTH: usize = 10;
 
@@ -370,9 +374,9 @@ impl Session {
         self.script.busy()
     }
 
-    /// Frames wait while a script runs, for up to [`BUSY_NOTICE`].
+    /// Frames wait while a script runs, for up to [`FRAME_HOLD`].
     pub fn holds_frames(&self) -> bool {
-        self.script.busy() && self.script.busy_since.is_some_and(|t| t.elapsed() < BUSY_NOTICE)
+        self.script.busy() && self.script.busy_since.is_some_and(|t| t.elapsed() < FRAME_HOLD)
     }
 
     /// Hold input that arrives while a script runs. `<C-c>` interrupts it
@@ -1314,11 +1318,16 @@ mod tests {
         s.script.tasks.insert(1);
         let _ = s.handle_script(FromHost::AtomicBegin(Token::Task(1)));
         assert!(s.holds_frames(), "frames wait for the section");
-        // A second on, they show, with the notice.
-        s.script.busy_since = Some(Instant::now() - BUSY_NOTICE - Duration::from_millis(1));
-        assert!(!s.holds_frames(), "not past the notice");
+        // A second on, they show, without a notice yet.
+        let started = Instant::now() - FRAME_HOLD - Duration::from_millis(1);
+        s.script.busy_since = Some(started);
+        assert!(!s.holds_frames(), "not past the hold");
         let notices = s.notices.len();
-        assert_eq!(s.poll(Instant::now()), Outcome::Redraw);
+        let _ = s.poll(Instant::now());
+        assert!(!s.script.notice_shown && s.notices.len() == notices, "no notice before {BUSY_NOTICE:?}");
+        assert_eq!(s.script_deadline(), Some(started + BUSY_NOTICE), "the next deadline is the notice's");
+        // Later on, the notice says how to interrupt it.
+        assert_eq!(s.poll(started + BUSY_NOTICE), Outcome::Redraw);
         assert!(s.script.notice_shown && s.notices.len() == notices + 1, "the notice says so");
         // Once nothing runs, no clock is left over.
         let _ = s.handle_script(FromHost::AtomicEnd(Token::Task(1)));
