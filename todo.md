@@ -490,12 +490,15 @@ server on one `Session`). Next and open:
   deeper than its pause allows), and:
   4. Windows: done for the GUI from the Linux host (`-d windows`: QMP
      through socat, SSH; `doc/dev/testing.md`), no bash in the guest
-     needed. For CI or a Windows machine without a Linux host: no bash,
-     so then one small Rust driver for every platform
-     (`crates/wlinput` is its Wayland part), `enigo` (input; Wayland and
-     libei still experimental behind feature flags) with `xcap` (screen and
-     window capture on X11, Wayland, macOS, Windows), and the action files
-     as one action per line read by a Rust runner.
+     needed. For CI or a Windows machine without a Linux host: the
+     harness moves to TypeScript on Node ("The e2e harness in
+     TypeScript" below; the VM has Node), with only an input and
+     screenshot backend of Windows' own (PowerShell, or a small native
+     helper). Until then `scripts/e2e.sh` grows small `be_*` functions
+     with plain arguments for `-d windows`, for a mechanical port. Hard
+     to port as it is: the socat coprocess for QMP and the one guest
+     PowerShell over SSH, fed through fifos, and their state in shell
+     globals (`GPS`, the QMP coprocess).
   Considered and set aside: VNC as the one layer (vncdotool; Xvnc, wayvnc,
   macOS screen sharing, a Windows server; tends to need a logged-in
   desktop on macOS and Windows), PyAutoGUI and nut.js (no Wayland), openQA
