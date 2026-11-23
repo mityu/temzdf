@@ -31,8 +31,8 @@
 #                    directory, the older ones are kept
 #   provision        start a fresh VM, run scripts/windows/provision.ps1 in
 #                    it (Git, Node, Zig, Python, MSYS2's UCRT64 with Rust,
-#                    GCC, Clang and the WASI toolchain, Biome, esbuild; no sleep or screen
-#                    lock; UTC),
+#                    GCC, Clang, the WASI toolchain and libghostty-vt, Biome,
+#                    esbuild; no sleep or screen lock; UTC),
 #                    restart it and keep it as the next golden image
 #                    (vitro promote); the versions go to
 #                    target/windows-vm/provision-versions.txt
@@ -229,6 +229,7 @@ case $cmd in
       C:/msys64/usr/bin/pacman.exe -Q mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-rust-wasm mingw-w64-ucrt-x86_64-gcc \
         mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-pkgconf make \
         mingw-w64-ucrt-x86_64-wasi-libc mingw-w64-ucrt-x86_64-wasi-compiler-rt mingw-w64-ucrt-x86_64-lld mingw-w64-ucrt-x86_64-llvm; \
+      C:/msys64/ucrt64/bin/pkg-config.exe --modversion libghostty-vt-static; \
       rustc -vV; cargo -vV | Select-Object -First 1; gcc --version | Select-Object -First 1; clang --version | Select-Object -First 1; \
       Get-ChildItem \"\$(rustc --print sysroot)/lib/rustlib\" -Directory | ForEach-Object Name; \
       Get-Command cargo, rustc, gcc, clang, python, git -ErrorAction SilentlyContinue | ForEach-Object Source; \

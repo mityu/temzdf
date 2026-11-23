@@ -113,6 +113,31 @@ $rest = ($machinePath -split ';') | Where-Object { $_ -and $_ -ne $ucrt64 }
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
   [Environment]::GetEnvironmentVariable('Path', 'User')
 
+# libghostty-vt (the terminal emulator of temzdf-tty and tuitest). Ghostty's
+# build forces the MSVC ABI on Windows when no target is given
+# (src/build/Config.zig), and libghostty-vt-sys passes -Dtarget only when
+# cross-compiling, so build it once with the GNU target and install it into
+# UCRT64: pkgconf then finds libghostty-vt-static (the crates' `pkg-config`
+# feature), as Nix provides it on Linux. The commit is nix/libghostty-vt.nix's
+# `rev`; keep the two equal. The static library links only with lld (GNU ld
+# fails on Zig's compiler_rt `___chkstk_ms`): .cargo/config.toml sets it.
+Step 'libghostty-vt'
+$ghosttyRev = 'a887df42c56f6de86c0fe6da9c4eeca37931e083'
+$ghosttySrc = 'C:/ghostty-src'
+$env:MSYS2_PATH_TYPE = 'inherit'
+$code = Msys ("set -e; rm -rf $ghosttySrc; " +
+  "git clone --filter=blob:none --no-checkout https://github.com/ghostty-org/ghostty.git $ghosttySrc; " +
+  "git -C $ghosttySrc checkout $ghosttyRev; cd $ghosttySrc; " +
+  'zig build -Demit-lib-vt=true -Doptimize=ReleaseFast -Dcpu=baseline ' +
+  '-Demit-xcframework=false -Dapp-runtime=none -Dtarget=x86_64-windows-gnu ' +
+  '--prefix C:/msys64/ucrt64; ' +
+  'pkg-config --modversion libghostty-vt-static')
+Remove-Item Env:MSYS2_PATH_TYPE
+if ($code -ne 0) { throw "libghostty-vt: $code" }
+# Neither the clone nor Zig's package cache is needed any more.
+Remove-Item -Recurse -Force $ghosttySrc -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force (Join-Path $env:LOCALAPPDATA 'zig') -ErrorAction SilentlyContinue
+
 # The version of biome.jsonc's `$schema`, as the CI installs it.
 Step 'biome'
 npm i -g --no-audit --no-fund '@biomejs/biome@2.6.8'

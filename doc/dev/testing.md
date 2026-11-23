@@ -607,7 +607,13 @@ scripts/windows-vm.sh check [REV]            # the gate on REV in the guest
   `rquickjs-sys` (QuickJS for the script guest, `wasm32-wasip1`) downloads
   wasi-sdk, whose `clang.exe` needs the MSVC runtime (absent; exit
   `0xc0000135`), and with it uses UCRT64's `bin/clang`, `bin/ar` and
-  `share/wasi-sysroot`. MSYS2's `usr/bin` stays off it (its
+  `share/wasi-sysroot`. libghostty-vt is built once with Zig (Ghostty at
+  the commit of `nix/libghostty-vt.nix`, target `x86_64-windows-gnu`) and
+  installed into `C:/msys64/ucrt64`, so that pkgconf finds
+  `libghostty-vt-static` as Nix provides it on Linux: Ghostty's build
+  forces the MSVC ABI on Windows without a target, and
+  `libghostty-vt-sys` passes `-Dtarget` only when cross-compiling. The
+  static library links only with lld (see `.cargo/config.toml`). MSYS2's `usr/bin` stays off it (its
   `link.exe`, `find` and others would hide Windows' tools), so `make`,
   which `mupdf-sys` runs, is only on `PATH` in UCRT64's login shell
   (`$env:MSYSTEM='UCRT64'; $env:MSYS2_PATH_TYPE='inherit';
