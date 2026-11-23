@@ -595,14 +595,19 @@ scripts/windows-vm.sh check [REV]            # the gate on REV in the guest
 - `provision` runs `scripts/windows/provision.ps1` in a fresh VM: Git,
   Node 24, Zig 0.15.2, Python 3.14 (`stylo`'s build script, for
   `temzdf-mdview`; winget), MSYS2 with UCRT64's Rust (clippy, rustfmt,
-  and `wasm32-wasip1` from `-rust-wasm`), GCC, Clang, pkgconf and make
-  (pacman; no MSVC, no rustup; see "The toolchain" in
+  and `wasm32-wasip1` from `-rust-wasm`), GCC, Clang, pkgconf, make and
+  the WASI toolchain (`-wasi-libc`, `-wasi-compiler-rt`, `-lld`, `-llvm`;
+  pacman; no MSVC, no rustup; see "The toolchain" in
   `doc/survey/windows-port.md`), Biome and esbuild 0.27.2
   (`temzdf-script`'s build script; npm, as in CI); the time zone UTC
   (QEMU's clock is UTC, and Windows reads it as local time), no sleep or
   screen lock, PowerShell scripts allowed (npm's shims). UCRT64's `bin`
   goes first on the machine's `PATH` and `LIBCLANG_PATH` points there
-  (bindgen, for `mupdf-sys`). MSYS2's `usr/bin` stays off it (its
+  (bindgen, for `mupdf-sys`). `WASI_SDK` is `C:/msys64/ucrt64`: without it
+  `rquickjs-sys` (QuickJS for the script guest, `wasm32-wasip1`) downloads
+  wasi-sdk, whose `clang.exe` needs the MSVC runtime (absent; exit
+  `0xc0000135`), and with it uses UCRT64's `bin/clang`, `bin/ar` and
+  `share/wasi-sysroot`. MSYS2's `usr/bin` stays off it (its
   `link.exe`, `find` and others would hide Windows' tools), so `make`,
   which `mupdf-sys` runs, is only on `PATH` in UCRT64's login shell
   (`$env:MSYSTEM='UCRT64'; $env:MSYS2_PATH_TYPE='inherit';

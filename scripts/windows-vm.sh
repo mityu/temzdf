@@ -31,7 +31,7 @@
 #                    directory, the older ones are kept
 #   provision        start a fresh VM, run scripts/windows/provision.ps1 in
 #                    it (Git, Node, Zig, Python, MSYS2's UCRT64 with Rust,
-#                    GCC and Clang, Biome, esbuild; no sleep or screen
+#                    GCC, Clang and the WASI toolchain, Biome, esbuild; no sleep or screen
 #                    lock; UTC),
 #                    restart it and keep it as the next golden image
 #                    (vitro promote); the versions go to
@@ -227,12 +227,13 @@ case $cmd in
     vitro exec "$vm" "chcp 65001 > \$null; [Console]::OutputEncoding=[Text.Encoding]::UTF8; \
       git --version; node --version; npm --version; zig version; python --version; biome --version; esbuild --version; \
       C:/msys64/usr/bin/pacman.exe -Q mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-rust-wasm mingw-w64-ucrt-x86_64-gcc \
-        mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-pkgconf make; \
+        mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-pkgconf make \
+        mingw-w64-ucrt-x86_64-wasi-libc mingw-w64-ucrt-x86_64-wasi-compiler-rt mingw-w64-ucrt-x86_64-lld mingw-w64-ucrt-x86_64-llvm; \
       rustc -vV; cargo -vV | Select-Object -First 1; gcc --version | Select-Object -First 1; clang --version | Select-Object -First 1; \
       Get-ChildItem \"\$(rustc --print sysroot)/lib/rustlib\" -Directory | ForEach-Object Name; \
       Get-Command cargo, rustc, gcc, clang, python, git -ErrorAction SilentlyContinue | ForEach-Object Source; \
       if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) { 'no rustup' }; \
-      \"LIBCLANG_PATH=\$env:LIBCLANG_PATH\"; \
+      \"LIBCLANG_PATH=\$env:LIBCLANG_PATH\"; \"WASI_SDK=\$env:WASI_SDK\"; \
       Get-TimeZone | Select-Object -ExpandProperty Id; Get-Date -Format o" 2>&1 | tee "$out/provision-versions.txt"
     vitro promote "$vm"
     ;;

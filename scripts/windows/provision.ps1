@@ -88,7 +88,9 @@ $code = Msys 'pacman -Syuu --noconfirm'
 if ($code -ne 0) { throw "pacman -Syuu: $code" }
 $code = Msys ('pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-rust ' +
   'mingw-w64-ucrt-x86_64-rust-wasm mingw-w64-ucrt-x86_64-gcc ' +
-  'mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-pkgconf make')
+  'mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-pkgconf make ' +
+  'mingw-w64-ucrt-x86_64-wasi-libc mingw-w64-ucrt-x86_64-wasi-compiler-rt ' +
+  'mingw-w64-ucrt-x86_64-lld mingw-w64-ucrt-x86_64-llvm')
 if ($code -ne 0) { throw "pacman -S: $code" }
 if (-not (Test-Path (Join-Path $msys 'ucrt64\lib\rustlib\wasm32-wasip1\lib'))) {
   throw 'no standard library for wasm32-wasip1 in C:\msys64\ucrt64\lib\rustlib'
@@ -101,6 +103,11 @@ $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 $rest = ($machinePath -split ';') | Where-Object { $_ -and $_ -ne $ucrt64 }
 [Environment]::SetEnvironmentVariable('Path', (@($ucrt64) + $rest) -join ';', 'Machine')
 [Environment]::SetEnvironmentVariable('LIBCLANG_PATH', $ucrt64, 'Machine')
+# rquickjs-sys (QuickJS for the script guest, wasm32-wasip1) downloads
+# wasi-sdk on Windows, whose clang.exe needs the MSVC runtime, absent here.
+# With WASI_SDK set it uses UCRT64's bin/clang, bin/ar and share/wasi-sysroot
+# (the wasi-libc, compiler-rt, lld and llvm packages above) and downloads nothing.
+[Environment]::SetEnvironmentVariable('WASI_SDK', 'C:/msys64/ucrt64', 'Machine')
 
 # A new process sees the machine's and the user's PATH as winget left them.
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
