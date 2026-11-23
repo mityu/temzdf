@@ -616,6 +616,23 @@ keymap.add("normal", "x", () => action.message("ran"));
     assert!(matches!(s.serve(&mut Vec::new()), FromHost::Done { id: 2, result: Ok(ScriptValue::Null) }));
 }
 
+/// As home-manager links configurations into ~/.config. WASI's sandbox
+/// refused links to absolute paths; files are read natively now.
+#[test]
+fn a_configuration_linked_to_an_absolute_path_loads_with_its_imports() {
+    let config = "import { v } from \"./lib.ts\";\nimport { action } from \"temzdf\";\naction.message(v);\n";
+    let mut s = Session::start(&[("lib.ts", "export const v: string = \"linked\";\n")]);
+    let store = s.dir.join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    std::fs::write(store.join("config.ts"), config).unwrap();
+    // Imports start from where the link is, as the path was given.
+    std::os::unix::fs::symlink(store.join("config.ts"), s.dir.join("config.ts")).unwrap();
+    s.load("config.ts");
+    let mut log = Vec::new();
+    ready_ok(s.serve(&mut log));
+    assert_eq!(log, ["load message(linked)"]);
+}
+
 #[test]
 fn imports_find_typescript_files_as_tsc_does() {
     let config = r#"import { action } from "temzdf";

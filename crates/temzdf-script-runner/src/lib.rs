@@ -6,8 +6,8 @@
 //! `temzdf_protocol::script`.
 //!
 //! The sandbox: the guest sees only its linear memory (capped,
-//! [`Options::memory_limit`]), the imports below, stderr, clocks and the file
-//! system read-only. A fault in it (QuickJS's C code included) is a trap that
+//! [`Options::memory_limit`]), the imports below, stderr and clocks; no file
+//! system (files are read here, natively: `fs_call`). A fault in it (QuickJS's C code included) is a trap that
 //! ends the guest, not the server. See doc/design/script-host.md.
 
 mod engine_config;
@@ -19,9 +19,10 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use temzdf_protocol::script::{FromHost, ToHost};
+use temzdf_protocol::script_fs::FsOp;
 use wasmtime::{Caller, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, Trap, UpdateDeadline};
+use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::WasiP1Ctx;
-use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 /// The guest, compiled for this target by build.rs.
 static GUEST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/guest.cwasm"));
@@ -87,6 +88,8 @@ struct Data {
     rx: Receiver<ToHost>,
     /// The message `recv` announced, for `recv_into`.
     pending: Vec<u8>,
+    /// The answer `fs_call` announced, for `fs_reply_into`.
+    fs_reply: Vec<u8>,
     interrupts: Arc<AtomicU64>,
     events: Box<dyn FnMut(Event) + Send>,
 }
@@ -100,13 +103,21 @@ impl ScriptHost {
         let interrupts = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         let mut wasi = WasiCtxBuilder::new();
-        wasi.inherit_stderr()
-            .preopened_dir("/", "/", FsPerms::ReadOnly)
-            .map_err(|e| format!("cannot open / for the script host: {e}"))?;
+        // No preopened directory: files are read natively (`fs_call`), as
+        // WASI's sandboxing refuses Windows' drive paths and symbolic links
+        // to absolute paths.
+        wasi.inherit_stderr();
         let wasi = wasi.build_p1();
         let limits = StoreLimitsBuilder::new().memory_size(options.memory_limit).trap_on_grow_failure(true).build();
-        let data =
-            Data { wasi, limits, rx, pending: Vec::new(), interrupts: interrupts.clone(), events: Box::new(events) };
+        let data = Data {
+            wasi,
+            limits,
+            rx,
+            pending: Vec::new(),
+            fs_reply: Vec::new(),
+            interrupts: interrupts.clone(),
+            events: Box::new(events),
+        };
         let mut store = Store::new(engine, data);
         store.limiter(|d| &mut d.limits);
         let stopped = stop.clone();
@@ -230,6 +241,35 @@ fn linker(engine: &Engine) -> wasmtime::Result<Linker<Data>> {
     linker.func_wrap("temzdf", "interrupts", |caller: Caller<'_, Data>| -> u64 {
         caller.data().interrupts.load(Ordering::SeqCst)
     })?;
+    linker.func_wrap(
+        "temzdf",
+        "fs_call",
+        |mut caller: Caller<'_, Data>, ptr: u32, len: u32| -> wasmtime::Result<i64> {
+            let mem = memory(&mut caller)?;
+            let frame = frame_at(mem.data(&caller), ptr, len)
+                .ok_or_else(|| wasmtime::Error::msg("fs_call: a frame outside the guest's memory"))?;
+            let Ok(Some(op)) = temzdf_protocol::recv::<FsOp>(&mut &frame[..]) else { return Ok(-1) };
+            let result = temzdf_script::native_fs::run(&op);
+            let data = caller.data_mut();
+            data.fs_reply.clear();
+            Ok(match temzdf_protocol::send(&mut data.fs_reply, &result) {
+                Ok(()) => data.fs_reply.len() as i64,
+                Err(_) => -1,
+            })
+        },
+    )?;
+    linker.func_wrap(
+        "temzdf",
+        "fs_reply_into",
+        |mut caller: Caller<'_, Data>, ptr: u32, len: u32| -> wasmtime::Result<()> {
+            let reply = std::mem::take(&mut caller.data_mut().fs_reply);
+            if reply.len() != len as usize {
+                return Err(wasmtime::Error::msg("fs_reply_into: not the announced length"));
+            }
+            memory(&mut caller)?.write(&mut caller, ptr as usize, &reply)?;
+            Ok(())
+        },
+    )?;
     Ok(linker)
 }
 

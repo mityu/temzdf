@@ -5,10 +5,12 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-/// `$XDG_CONFIG_HOME/temzdf` (falling back to `~/.config/temzdf`).
+/// `$XDG_CONFIG_HOME/temzdf` (falling back to `~/.config/temzdf`). A
+/// relative `$XDG_CONFIG_HOME` is ignored, as the XDG specification says
+/// (the script host reads absolute paths only).
 fn config_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
+        .filter(|v| std::path::Path::new(v).is_absolute())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
     Some(base.join("temzdf"))

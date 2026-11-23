@@ -4,12 +4,17 @@
 //! runs the host natively).
 
 use std::io::{self, Read, Write};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use temzdf_protocol::script::{FromHost, ToHost};
+use temzdf_protocol::script_fs::{FsOp, FsResult};
+
+/// Synchronous file access ([`Link::files`]).
+pub type Files = Rc<dyn Fn(&FsOp) -> FsResult>;
 
 /// What [`Link::recv`] got.
 #[derive(Debug)]
@@ -32,6 +37,9 @@ pub trait Link {
     /// as they are sent, before their messages are read: QuickJS's interrupt
     /// handler calls it while JavaScript runs, often, so it must be cheap.
     fn interrupts(&self) -> Box<dyn Fn() -> u64>;
+    /// File access done where the OS's paths are understood
+    /// ([`crate::native_fs`]), waited for: the module loader's.
+    fn files(&self) -> Files;
 }
 
 /// A [`Link`] over a byte stream with `temzdf_protocol`'s framing: a thread
@@ -87,5 +95,9 @@ impl Link for StreamLink {
     fn interrupts(&self) -> Box<dyn Fn() -> u64> {
         let n = self.interrupts.clone();
         Box::new(move || n.load(Ordering::SeqCst))
+    }
+
+    fn files(&self) -> Files {
+        Rc::new(crate::native_fs::run)
     }
 }

@@ -10,6 +10,7 @@ mod eval;
 mod host;
 #[cfg(feature = "host")]
 pub mod link;
+pub mod native_fs;
 #[cfg(feature = "host")]
 pub mod strip;
 pub mod types;

@@ -23,8 +23,9 @@ use temzdf_protocol::script::{
     Code, CodeResult, Fallback, FromHost, FuncId, HostOp, Keepalive, Printed, ScriptError, ScriptValue, TaskId, ToHost,
     Token,
 };
+use temzdf_protocol::script_fs::{FsOp, FsReply};
 
-use crate::link::{Link, Received, StreamLink};
+use crate::link::{Files, Link, Received, StreamLink};
 
 const PRELUDE: &str = include_str!(concat!(env!("OUT_DIR"), "/prelude.js"));
 /// The shipped default configuration, loaded before the user's.
@@ -111,7 +112,8 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
             tracker.unhandled.borrow_mut().push(entry);
         }
     })));
-    rt.set_loader(Resolve, Load);
+    let files = link.files();
+    rt.set_loader(Resolve { files: files.clone() }, Load { files: files.clone() });
     let context = Context::full(&rt).map_err(|e| e.to_string())?;
     let st = Rc::new(State {
         link: RefCell::new(link),
@@ -138,6 +140,7 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         rejections,
         stopped,
         log,
+        files,
     });
     context.with(|ctx| install(&ctx, &st)).map_err(|e| format!("cannot start the scripting API: {e}"))?;
     while !st.gone.get() {
@@ -288,6 +291,8 @@ struct State {
     stopped: Rc<Cell<Option<Stop>>>,
     /// Where log lines go (stderr, the session's log file, but in tests).
     log: Box<dyn Fn(&str)>,
+    /// File access ([`Link::files`]).
+    files: Files,
 }
 
 /// A `temzdf eval` running as a task: its request's number, what it
@@ -1137,7 +1142,7 @@ fn load_config(ctx: &Ctx<'_>, st: &Rc<State>, path: Option<&Path>) -> Result<(),
         fill.call::<_, ()>(()).map_err(|e| error_of(ctx, e))?;
         evaluate(ctx, DEFAULTS_NAME, DEFAULTS.to_owned())?;
         let Some(path) = path else { return Ok(()) };
-        let source = read_module(path).map_err(ScriptError::new)?;
+        let source = read_module(&st.files, path).map_err(ScriptError::new)?;
         evaluate(ctx, &path.display().to_string(), source)
     })();
     st.tokens.borrow_mut().pop();
@@ -1180,8 +1185,14 @@ fn evaluate(ctx: &Ctx<'_>, name: &str, source: String) -> Result<(), ScriptError
 }
 
 /// A module's JavaScript: TypeScript is stripped of its types.
-fn read_module(path: &Path) -> Result<String, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+fn read_module(files: &Files, path: &Path) -> Result<String, String> {
+    let text = match files(&FsOp::ReadFile(path.display().to_string())) {
+        Ok(FsReply::Bytes(b)) => {
+            String::from_utf8(b).map_err(|_| format!("cannot read {}: not UTF-8", path.display()))?
+        }
+        Ok(_) => return Err(format!("cannot read {}", path.display())),
+        Err(e) => return Err(format!("cannot read {}", e.message)),
+    };
     if path.extension().is_some_and(|e| e == "ts" || e == "mts") {
         crate::strip::strip(&path.display().to_string(), &text)
     } else {
@@ -1242,7 +1253,9 @@ fn from_script(v: &ScriptValue) -> serde_json::Value {
 }
 
 /// Imports: `"temzdf"`, and paths relative to the importing module.
-struct Resolve;
+struct Resolve {
+    files: Files,
+}
 
 impl Resolver for Resolve {
     fn resolve<'js>(
@@ -1259,7 +1272,7 @@ impl Resolver for Resolve {
             // A `temzdf eval` step not named by a path: the caller's directory.
             let eval_base = EVAL_BASES.with(|b| b.borrow().get(base).cloned());
             let dir = eval_base.as_deref().unwrap_or_else(|| Path::new(base).parent().unwrap_or(Path::new(".")));
-            return Ok(module_file(&normalize(&dir.join(name))).display().to_string());
+            return Ok(module_file(&self.files, &normalize(&dir.join(name))).display().to_string());
         }
         Err(Exception::throw_message(
             ctx,
@@ -1275,8 +1288,9 @@ impl Resolver for Resolve {
 /// itself, `x.ts` for `x.js` (TypeScript sources import each other by their
 /// output's name), `x.ts` or `x.js` for `x`, or a directory's `index.ts` or
 /// `index.js`. Nothing found: the path, for the loader to report.
-fn module_file(path: &Path) -> PathBuf {
-    if path.is_file() {
+fn module_file(files: &Files, path: &Path) -> PathBuf {
+    let is_file = |p: &Path| matches!(files(&FsOp::Stat(p.display().to_string())), Ok(FsReply::Info(i)) if i.is_file);
+    if is_file(path) {
         return path.to_owned();
     }
     let with = |ext: &str| {
@@ -1289,10 +1303,12 @@ fn module_file(path: &Path) -> PathBuf {
         candidates.push(path.with_extension("ts"));
     }
     candidates.extend([with(".ts"), with(".js"), path.join("index.ts"), path.join("index.js")]);
-    candidates.into_iter().find(|p| p.is_file()).unwrap_or_else(|| path.to_owned())
+    candidates.into_iter().find(|p| is_file(p)).unwrap_or_else(|| path.to_owned())
 }
 
-struct Load;
+struct Load {
+    files: Files,
+}
 
 impl Loader for Load {
     fn load<'js>(
@@ -1306,7 +1322,7 @@ impl Loader for Load {
         } else if let Some((_, source)) = BUNDLED.iter().find(|(n, _)| *n == name) {
             (*source).to_owned()
         } else {
-            read_module(Path::new(name)).map_err(|e| Exception::throw_message(ctx, &e))?
+            read_module(&self.files, Path::new(name)).map_err(|e| Exception::throw_message(ctx, &e))?
         };
         Module::declare(ctx.clone(), name, source)
     }

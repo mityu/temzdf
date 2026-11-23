@@ -34,11 +34,19 @@ to be a child process, `temzdf script-host`, over pipes). The server never
 runs QuickJS's C code natively, so a runaway or crashing script still cannot
 take the session down:
 
-- The guest sees its own linear memory, stderr, clocks, the file system
-  read-only (WASI, `/` preopened: the configuration and what it imports),
-  and four imports (`temzdf.send`, `recv`, `recv_into`, `interrupts`).
-  A fault in it (QuickJS's C code included) is a trap: the guest ends, the
-  server goes on.
+- The guest sees its own linear memory, stderr, clocks and six imports
+  (`temzdf.send`, `recv`, `recv_into`, `interrupts`, `fs_call`,
+  `fs_reply_into`). A fault in it (QuickJS's C code included) is a trap:
+  the guest ends, the server goes on.
+- No file system: WASI preopens nothing. Files (the configuration, what it
+  imports) are read on the server's side of `fs_call`
+  (`crates/temzdf-script/src/native_fs.rs`), with the OS's own paths:
+  WASI's sandboxing (wasmtime-wasi under a `/` preopen, as it was until
+  2026-11-23) refused symbolic links to absolute paths (a configuration
+  linked by home-manager) and Windows' drive paths. It reads only, only
+  absolute paths, only regular files (a FIFO would block), at most 64 MiB
+  a file and 100k entries a directory, and its errors say the same on
+  every OS.
 - Its memory is capped at 1 GiB; growing past it traps (and ends it).
 - `ScriptHost::stop` ends it whatever it is doing: the engine's epoch is
   advanced, and the guest's deadline callback traps at its next function

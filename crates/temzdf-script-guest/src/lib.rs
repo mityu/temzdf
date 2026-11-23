@@ -2,15 +2,18 @@
 //! runs it over a [`Link`] made of the imports `temzdf.*`, which
 //! crates/temzdf-script-runner implements in the server. Messages cross as
 //! `temzdf_protocol`'s frames (a length, then postcard). WASI gives it
-//! stderr (the session's log), clocks and the file system read-only (the
-//! configuration and what it imports). See doc/design/script-host.md.
+//! stderr (the session's log) and clocks; files are read on the server's
+//! side (`temzdf.fs_call`, crates/temzdf-script/src/native_fs.rs). See
+//! doc/design/script-host.md.
 #![cfg(target_family = "wasm")]
 
 use std::io;
+use std::rc::Rc;
 use std::time::Duration;
 
 use temzdf_protocol::script::{FromHost, ToHost};
-use temzdf_script::link::{Link, Received};
+use temzdf_protocol::script_fs::{FsError, FsErrorKind, FsOp, FsResult};
+use temzdf_script::link::{Files, Link, Received};
 
 #[link(wasm_import_module = "temzdf")]
 unsafe extern "C" {
@@ -28,6 +31,31 @@ unsafe extern "C" {
     /// The interrupts sent so far ([`Link::interrupts`]).
     #[link_name = "interrupts"]
     fn host_interrupts() -> u64;
+    /// Do one file operation (a framed `FsOp`) and wait for it: the length
+    /// of its framed `FsResult` (then `fs_reply_into` copies it), negative
+    /// when the operation was not understood.
+    #[link_name = "fs_call"]
+    fn host_fs_call(ptr: *const u8, len: usize) -> i64;
+    /// Copy the answer `fs_call` announced (exactly its length).
+    #[link_name = "fs_reply_into"]
+    fn host_fs_reply_into(ptr: *mut u8, len: usize);
+}
+
+/// [`Link::files`] over `fs_call`.
+fn fs_call(op: &FsOp) -> FsResult {
+    let broken = || FsError { kind: FsErrorKind::Other, message: "the file access failed".into() };
+    let mut frame = Vec::new();
+    temzdf_protocol::send(&mut frame, op).map_err(|_| broken())?;
+    // SAFETY: the pointer and length describe `frame`, alive for the call.
+    let len = unsafe { host_fs_call(frame.as_ptr(), frame.len()) };
+    let len = usize::try_from(len).map_err(|_| broken())?;
+    let mut reply = vec![0u8; len];
+    // SAFETY: `reply` has exactly the announced length, alive for the call.
+    unsafe { host_fs_reply_into(reply.as_mut_ptr(), len) };
+    match temzdf_protocol::recv::<FsResult>(&mut reply.as_slice()) {
+        Ok(Some(result)) => result,
+        _ => Err(broken()),
+    }
 }
 
 struct GuestLink;
@@ -63,6 +91,10 @@ impl Link for GuestLink {
     fn interrupts(&self) -> Box<dyn Fn() -> u64> {
         // SAFETY: an import without pointers.
         Box::new(|| unsafe { host_interrupts() })
+    }
+
+    fn files(&self) -> Files {
+        Rc::new(fs_call)
     }
 }
 

@@ -12,6 +12,7 @@
 //! [`ClientMsg::Kill`], [`ClientMsg::Action`]) answered once.
 
 pub mod script;
+pub mod script_fs;
 
 // Everything but the script host's messages and the framing: the guest
 // (crates/temzdf-script-guest, WebAssembly) builds without it.
