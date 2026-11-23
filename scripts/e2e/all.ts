@@ -1,8 +1,8 @@
 // Runs the judged e2e scenarios (tests/e2e/NAME.ts) in one or more
 // terminals, and sums up: each run is `node scripts/e2e/main.ts` of its
-// own, as scripts/e2e-all.sh ran scripts/e2e.sh.
+// own (scripts/e2e-all.sh runs this in the dev shell).
 //
-// Usage: node scripts/e2e/all.ts [-t TERM]... [-d DISP] [-P PATH] [-o DIR] [-j N] [-R] [SCENARIO...]
+// Usage: scripts/e2e-all.sh [-t TERM]... [-d DISP] [-P PATH] [-o DIR] [-j N] [-R] [SCENARIO...]
 //   -t TERM   kitty, ghostty, wezterm or gui (repeatable; default: every one
 //             that can run here: in a macOS VM not kitty, which needs OpenGL)
 //   -d DISP   display server, passed on (x11, wayland; macos; windows)
@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } 
 import path from "node:path";
 import { parseArgs } from "node:util";
 
-const usage = "usage: node scripts/e2e/all.ts [-t TERM]... [-d DISP] [-P PATH] [-o DIR] [-j N] [-R] [SCENARIO...]";
+const usage = "usage: scripts/e2e-all.sh [-t TERM]... [-d DISP] [-P PATH] [-o DIR] [-j N] [-R] [SCENARIO...]";
 
 // The terminal scenarios, in a stable order, and the GUI's. Not on macOS:
 // gui-focus (AppKit sends no presses for keys held on focus-in) and gui-ime

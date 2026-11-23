@@ -8,16 +8,18 @@ Layers of verification, cheapest first. All of them run without a human.
 | Miri | `scripts/miri.sh` (`cargo xtask check --miri`) | Undefined behaviour, data races and leaked threads or memory in the unit tests' Rust code (ours and the Rust dependencies). See "Miri" below. |
 | Headless frames | `target/debug/temzdf standalone pdf FILE.pdf --render-frame out.png [--size 100x30] [--cell 10x20] [--page N] [--scale S] [--keys=...]` | What a screen looks like: runs the real `Session` with the shipped default configuration (keys in Vim feedkeys notation, e.g. `jjj<C-b>%`) and compositor, replays the bytes through the mock terminal (images only: `--text FILE` writes the status line's text, `--mask PNG` where it is, `--ansi FILE` its cells as bytes for a terminal to draw, `--cells PNG` which of them a terminal's drawing can be compared in). Read the PNG to check it. `scripts/frames.sh` renders a fixed set, with the `shots` scenes of `tui.rs` (sessions, Markdown, terminal panes, tabs), and compares two sets pixel by pixel (for refactorings). |
 | Script tests | `target/debug/temzdf test [-j N] [--timeout SECS] FILE...` (part of `cargo xtask check` for `crates/temzdf-script/runtime/**/*.test.ts`) | temzdf's behaviour driven from TypeScript (`temzdf/test`, QUnit): keys typed into a session and what the scripting API then sees (buffers, modes, registers). Each file runs in a session of its own in a process of its own, its `XDG_*`, `TEMZDF_LOG_DIR` and `TMPDIR` in a temporary directory; TAP out, a file printing nothing for `--timeout` (30 s) stopped and failed. |
-| Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.actions` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
+| Sessions | `Session` unit tests (`crates/temzdf-server`), `tests/e2e/session.ts` | Splitting, focus, composition, shared rendering; detach, list, re-attach, actions from other processes, kill. |
 | Simulated terminal | `crates/temzdf/tests/tui.rs` on `crates/tuitest` (part of `cargo xtask check`) | The real binary behind Ghostty's terminal emulation: what the screen says (text, colours, cursor, image placements), keys in both keyboard modes, session commands end to end (`-s`, detach, `attach`, `ls`, `action`, `kill-session`, exit messages), resizing, and the same inside a private tmux. No X server; about a second for all. |
-| Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland\|macos] [-m zellij\|tmux] ACTIONS -- COMMAND` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
-| Judged e2e | `expect NAME [KEYS]` in an action file (e.g. `tests/e2e/expect.actions`, `viewer.actions`) | The screen matches what `--render-frame` draws after the same input, keys or a replay of the keys and mouse input temzdf handled (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending, wheel, drag, clicks, hover. Not PDF rendering itself (both sides use MuPDF). |
-| GUI client | `crates/temzdf-gui` unit tests and `--test gpu` (offscreen on lavapipe), `scripts/e2e.sh -t gui [-I]` with `tests/e2e/gui*.actions` | The draw list and key translation; layers and text drawn on a GPU; the window under xfwm4 against `temzdf-gui --render-frame` on the same session; Japanese input through fcitx5 and Mozc; the clipboard. |
-| Real terminal (macOS, by hand) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | Poking at a terminal step by step (`doc/terminals/macos.md`); `launch app` runs `temzdf-gui`, and `tests/macos/*.sh` are scripted scenarios. `scripts/e2e.sh` runs the action files on macOS too. |
+| Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland\|macos] [-m zellij\|tmux] SCENARIO [-- COMMAND]` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
+| Judged e2e | `expect(NAME, KEYS?)` in a scenario (e.g. `tests/e2e/expect.ts`, `viewer.ts`) | The screen matches what `--render-frame` draws after the same input, keys or a replay of the keys and mouse input temzdf handled (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending, wheel, drag, clicks, hover. Not PDF rendering itself (both sides use MuPDF). |
+| GUI client | `crates/temzdf-gui` unit tests and `--test gpu` (offscreen on lavapipe), `scripts/e2e.sh -t gui [-I]` with `tests/e2e/gui*.ts` | The draw list and key translation; layers and text drawn on a GPU; the window under xfwm4 against `temzdf-gui --render-frame` on the same session; Japanese input through fcitx5 and Mozc; the clipboard. |
+| Real terminal (macOS, by hand) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | Poking at a terminal step by step (`doc/terminals/macos.md`); `launch app` runs `temzdf-gui`, and `tests/macos/*.sh` are scripted scenarios. `scripts/e2e.sh` runs the scenarios on macOS too (not run since the move to TypeScript: `todo.md`). |
 | User | Ghostty / WezTerm on a real desktop | The feel of scrolling and zooming. |
 
-Action files live in `tests/e2e/`; each starts with a comment saying how to run it
-and what the screenshots should show. To look at many screenshots at once:
+Scenarios live in `tests/e2e/` (`NAME.ts`, on the harness in
+`scripts/e2e/`, Node TypeScript run on `node:test`); each holds its command
+and starts with a comment saying what it judges and what the screenshots
+should show. To look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 
 ## Where to start
@@ -31,15 +33,15 @@ End-to-end checks in a real kitty (virtual X server, no display needed):
 
 ```sh
 cargo build --example scroll_demo
-scripts/e2e.sh tests/e2e/scroll_demo.actions -- target/debug/examples/scroll_demo
+scripts/e2e.sh tests/e2e/scroll_demo.ts
 ```
 
-Action files in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
+Scenarios in `tests/e2e/` drive the app (wheel, drag, click, keys) and save
 screenshots to `target/e2e/`; read the PNGs or measure pixels to verify. For
 key-driven checks prefer `expect NAME KEYS`, which compares the terminal with
-a headless render and fails the run on a mismatch (`tests/e2e/expect.actions`,
-"Judged e2e scenarios" below). See the `scripts/e2e.sh` header for the
-helpers. `temzdf standalone pdf FILE --render-frame out.png` renders one
+a headless render and fails the run on a mismatch (`tests/e2e/expect.ts`,
+"Judged e2e scenarios" below). `scripts/e2e/helpers.ts` documents the
+helpers, `scripts/e2e/main.ts` the options. `temzdf standalone pdf FILE --render-frame out.png` renders one
 screen headlessly. `scripts/build-fixtures.sh` builds `target/fixtures/`
 from `tests/fixtures/*.tex` (tests do it automatically; e2e scenarios
 need it first; "Fixtures" below).
@@ -68,7 +70,8 @@ Every judged scenario in every terminal and the GUI, summed up:
 sway; `-R` renders the comparisons with release builds, `-j` runs
 scenarios at once); the GUI's `gui-focus` and `gui-ime` (`-I`) included,
 not on macOS. On macOS, read `doc/terminals/macos.md` ("Checking GUI
-terminals on a Mac without a human"): the same action files run there,
+terminals on a Mac without a human"): the same scenarios run there (not run since
+the move to TypeScript: `todo.md`),
 best in a VM (`scripts/macos-vm.sh e2e ARGS...`).
 
 ## The gate
@@ -460,7 +463,7 @@ the PDF pane's side is tested with `PdfPane::search_preview`,
 `search_for` and `search_cancel` (incremental search, Enter before
 results, going back), the prompt's in the session's tests (typed text,
 the cursor, hooks), the whole in `tui.rs` and the e2e searches
-(`tests/e2e/search.actions`, `expect.actions`' `search` and `next`).
+(`tests/e2e/search.ts`, `expect.ts`' `search` and `next`).
 
 What a terminal shows *between* frames (a flicker) does not show on the
 screen a test reads at the end. For those, record what temzdf wrote
@@ -478,15 +481,18 @@ renders.
 
 ## X11, Wayland and macOS
 
-Action files use the helpers only (`keys`, `type`, `click`, `down`/`up`,
-`move`, `wheel`, `hold`, `clipboard`, `focus_window`, ...); the helpers
-drive the display server through a few `be_*` functions in
-`scripts/e2e.sh`. `-d x11` (the default): Xvfb, xdotool, `import`, xclip,
+Scenarios use the helpers only (`keys`, `type`, `click`, `down`/`up`,
+`move`, `wheel`, `hold`, `clipboard`, `focusWindow`, ...); the helpers
+drive the display server through a backend each (`scripts/e2e/backends/`).
+They are handed to the scenario bound to its test's abort signal: after a
+timeout (180 s by default) or Ctrl+C nothing more is sent, and everything
+the run started ends (`scripts/e2e/procs.ts`). `-d x11` (the default): Xvfb, xdotool, `import`, xclip,
 xwininfo, xfwm4 for the GUI. `-d wayland`: headless sway
 (`WLR_BACKENDS=headless`, the pixman renderer, one output of the window's
 size, no borders, so the window starts at 0,0), screenshots with grim,
 windows through `swaymsg`, the clipboard with wl-clipboard, and keys and
-the pointer through `crates/wlinput` (built by the script). Headless sway
+the pointer through `crates/wlinput` (built by the harness, or
+`E2E_WLINPUT`). Headless sway
 has no input devices, so its own `seat cursor` commands reach no client;
 wtype and wlrctl make a virtual device per call, which lost clicks and
 wheel steps and made every key a focus change. wlinput keeps one virtual
@@ -506,7 +512,8 @@ WezTerm on X11 failed `viewer`'s wheel and
 zoom once in a long run and passed the reruns (it delivers wheel steps
 unevenly).
 
-`-d macos` (the default on macOS): a virtual display at scale 1 beside the
+`-d macos` (the default on macOS; not run since the move to TypeScript:
+`todo.md`): a virtual display at scale 1 beside the
 real screen (`vdisp`), so screenshot pixels are the terminal's as on Xvfb;
 windows start through `open` and move there (the command waits until they
 did, so temzdf starts at scale 1); keys and the pointer through `termctl
@@ -525,15 +532,15 @@ Wayland's synthetic presses on focus-in) is not run there; `-I` and multiplexers
 the host's pointer stays free ("Running in a VM" in `doc/terminals/macos.md`).
 
 `scripts/e2e-all.sh [-t TERM]... [-d DISP] [-P PATH] [-j N] [-R] [SCENARIO...]`
-runs the judged scenarios (each with its "Used with:" command, kept in the
-script) in the given terminals and sums up PASS/FAIL/SKIP per scenario;
+runs the judged scenarios (each with the command in its module) in the
+given terminals and sums up PASS/FAIL/SKIP per scenario;
 `scripts/macos-vm.sh e2e-all` runs it in the VM in one go. Each run writes
 when its phases began to `OUTDIR/timing.txt` (launch, window, written,
 ready, actions, `expect NAME` and `expected NAME` around each headless
 render, quit, done; milliseconds), for seeing where the time goes. The
 screens after leaving temzdf (`session`, `terminal`: detached, killed) are
 judged as images against the same terminal's own drawing of the messages
-(`draw_lines` types them with `printf` at the end; `screen_restored`
+(`drawLines` types them with `printf` at the end; `screenRestored`
 compares cell rows: the message, nothing below but the prompt, above it the
 screen from before): the screen came back and nothing of temzdf's is left,
 in Ghostty too, whose text cannot be read. (Images left on the alternate
@@ -556,9 +563,10 @@ What makes the runs quick, on every display:
 - `-R`: `expect`'s headless renders with release builds
   (`E2E_RENDERER`, `E2E_GUI_RENDERER` of `scripts/e2e.sh`; `-R` builds
   them), about 300 ms each instead of 630 on Linux.
-- `-j N` (Linux): N scenarios at once, each with its own Xvfb (display
-  300 + slot: `xvfb-run -a` gave two runs started together the same
-  display, and kitty crashed) or sway. A scenario runs in its terminals
+- `-j N` (Linux): N scenarios at once, each with its own Xvfb (started
+  with `-displayfd`, which picks a free display itself: `xvfb-run -a` once
+  gave two runs started together the same display, and kitty crashed) or
+  sway. A scenario runs in its terminals
   one after another, as some use fixed paths (`target/e2e-sync`, ...).
 
 X11, kitty, Ghostty, WezTerm and the GUI (46 runs, 175 checks; 28 hardware
@@ -662,7 +670,7 @@ and their workarounds.
 
 ### e2e runs on Windows
 
-`scripts/e2e.sh -d windows -t gui ACTIONS -- C:/t/target/release/temzdf-gui.exe
+`scripts/e2e.sh -d windows -t gui SCENARIO -- C:/t/target/release/temzdf-gui.exe
 --clean FILE` runs a GUI scenario in the running VM
 (`TEMZDF_WINDOWS_VM`), driven from the Linux host; arguments naming files
 of the host (the fixture) are copied into the guest. Build first, in the
@@ -681,20 +689,19 @@ scripts/windows-vm.sh run 'New-Item -ItemType Directory -Force C:/t > $null; tar
 How it works, and why:
 
 - Input: QEMU's USB tablet and keyboard through QMP's
-  `input-send-event`, raw JSON lines through `socat` (in the dev shell)
-  on a second QMP socket of the VM's (`scripts/windows-vm.sh qmp-socket`;
+  `input-send-event`, raw JSON lines over a second QMP socket of the VM's (`scripts/windows-vm.sh qmp-socket`;
   vitro keeps its own). As vitro's `src/qmp.rs` does: a press and its
   release in separate calls (together they are one HID report, which the
   guest ignores), modifiers 150 ms apart from what they modify (the
   keyboard and the tablet are read separately). Every move waits 30 ms
   before the next event, a precaution: once, without that wait, the
-  selection of `gui.actions`' drag lost its first characters (the
+  selection of `gui.ts`' drag lost its first characters (the
   clipboard held "df sample document"; vitro's drag did it in the
   survey). That fits QEMU merging a move into a tablet report the guest
   has not read yet whose buttons are the same (`hw/input/hid.c`,
   `hid_pointer_sync`; the guest reads one report per poll): a press
   still queued when the drag's first move comes takes that move's
-  place. It did not happen again: 5 more runs of `gui.actions` and 20
+  place. It did not happen again: 5 more runs of `gui.ts` and 20
   drags in a row without the wait, 3 runs and 20 drags with it, all
   whole (2026-11-23). `expect` cannot see it (both sides show the same
   session); the clipboard can.
@@ -731,15 +738,15 @@ How it works, and why:
   scale and copies the picture back. PowerShell does not wait for a GUI
   program unless its output is piped, so the command is.
 
-`tests/e2e/gui.actions` passes with the pointer visible and transparent
+`tests/e2e/gui.ts` passes with the pointer visible and transparent
 (2026-11-23, Windows 11 build 26300 at 1280x800 and 96 dpi, WARP): all
 five `expect`s, and `clipboard.txt` holds the whole title. A run takes
-about 37 s. Not there yet: `other_window`, `focus_window`, `-I`, links
+about 37 s. Not there yet: `otherWindow`, `focusWindow`, `-I`, links
 (they would open in the guest), and the other GUI scenarios.
 
 ## Judged e2e scenarios
 
-`expect` (see the `scripts/e2e.sh` header) takes a screenshot, reads the
+`expect` (see it in `scripts/e2e/helpers.ts`) takes a screenshot, reads the
 geometry temzdf logged at startup (`OUTDIR/state/temzdf/temzdf.log`), renders
 the same input headlessly and compares with ImageMagick (`-fuzz 3%`, no pixel
 may differ). The cells the terminal draws itself (the pane's status line,
@@ -751,11 +758,11 @@ own drawing of them (`NAME.cells`, below). Results go to `OUTDIR/expect.txt`;
 `NAME.actual.png`, `NAME.expected.png`, `NAME.diff.png` and
 `NAME.text.diff` show a mismatch. Two forms:
 
-- `expect NAME KEYS`: `--render-frame --keys=KEYS`, the whole key sequence
+- `expect(NAME, KEYS)`: `--render-frame --keys=KEYS`, the whole key sequence
   since startup, each key run to its end. Send scrolling keys one at a time
   with a pause: quick repeats accelerate in the real terminal (flick) but
   not here.
-- `expect NAME`: a replay of all the input since startup with its timing
+- `expect(NAME)`: a replay of all the input since startup with its timing
   (`--render-frame --events`): keys, the mouse and forward searches. The input is what temzdf itself handled,
   recorded through `TEMZDF_RECORD_INPUT` (`OUTDIR/input.txt`), not what the
   harness sent: terminals deliver late and in bursts (WezTerm turned wheel
@@ -767,7 +774,7 @@ own drawing of them (`NAME.cells`, below). Results go to `OUTDIR/expect.txt`;
   (after 300 ms resting) come out as in the terminal. It ends as long after temzdf's last
   input as the screenshot came after the last one sent; pause before
   `expect` until animations end, or wait for the screen to stand still
-  (`wait_still`, for motion of unknown length such as autoscroll). The first screen is up, its pages loaded,
+  (`waitStill`, for motion of unknown length such as autoscroll). The first screen is up, its pages loaded,
   before the first input (as in the terminal, where the scenario starts
   seconds later).
 
@@ -781,14 +788,15 @@ Rules for scenarios:
   (`expect` passes it on to `--render-frame`); `scripts/e2e.sh` refuses a
   COMMAND running temzdf with neither. Inside `sh -c 'COMMAND; exec sh'`
   for the shell `NAME.cells` needs (the harness reads COMMAND out of it).
-- Forward searches go through the `forward LINE:FILE PDF` helper (`temzdf
+- Forward searches go through the `forward("LINE:FILE", PDF)` helper (`temzdf
   --forward` from another process): temzdf records the search it got, the
   replay sends it at the same time, and the helper's record times the
   screenshot. `tests/e2e/configs/forward.ts` keeps the highlight until the
   next input, so it is there at the screenshot on both sides
-  (`synctex.actions`, `synctex-reload.actions`).
+  (`synctex.ts`, `synctex-reload.ts`).
 - Use the helpers (`wheel`, `dragto`, `click`, `move`, `keys`, `type`), not
-  raw xdotool: their input is what reaches temzdf either way, but the
+  input tools of your own (Biome refuses `node:child_process`,
+  `node:timers` and `node:fs` in scenarios): their input is what reaches temzdf either way, but the
   harness's own record (`OUTDIR/events.txt`) times the screenshot from it.
 - A moment that depends on rendering speed (the old tiles scaled right
   after a zoom, before new ones arrive) cannot be judged: the replay waits
@@ -817,9 +825,9 @@ wide characters, images of programs in terminal panes, tab lines and
 floats as drawn. Both sides see the same session, so what the session
 decides (layout, focus, what a reload keeps) is not judged by it; that is
 for `crates/temzdf/tests/tui.rs` and unit tests. Not inside multiplexers;
-Ghostty's text is judged through `NAME.cells` (below). `tests/e2e/session.actions`,
-`terminal.actions`, `terminal-extras.actions`, `tabs.actions`,
-`floats.actions`, `resize.actions` and `float-wide.actions` (WezTerm's
+Ghostty's text is judged through `NAME.cells` (below). `tests/e2e/session.ts`,
+`terminal.ts`, `terminal-extras.ts`, `tabs.ts`,
+`floats.ts`, `resize.ts` and `float-wide.ts` (WezTerm's
 wide characters under images, `doc/terminals/terminal-compat.md`) use it.
 
 The cells the terminal draws itself are also judged against the same
@@ -838,7 +846,7 @@ left) and, in the shell COMMAND leaves behind (`sh -c '...; exec sh'`;
 `scripts/e2e-all.sh` runs every viewer scenario so), types `r NAME` for
 each expect: a shell function that clears the screen, `cat`s `NAME.ansi`
 and waits in `read` (no prompt over the cells). Once the screen stands
-still (`wait_still`) it takes `NAME.ref.png` and compares the screenshot of
+still (`waitStill`) it takes `NAME.ref.png` and compares the screenshot of
 the expect with it inside `NAME.cells.png` (`-fuzz 3%`, no pixel may
 differ): `PASS NAME.cells (N cells)` or `FAIL NAME.cells` in
 `OUTDIR/expect.txt` (`NAME.cells.actual.png`, `NAME.cells.ref.png`,
@@ -849,16 +857,17 @@ Dropping inverse from `--ansi` fails `terminal-extras`' `selected.cells`
 and `scrolled.cells` (the selection and the scrollback position), which the
 text and the pixels outside the mask pass.
 
-`screen_contains TEXT` (kitty, WezTerm) tells whether the screen shows TEXT, for
-moments outside a session (`check detached screen_contains "[detached from
-session e2e]"`); elsewhere it exits 77 and `check` records SKIP.
+`screenContains(TEXT)` (kitty, WezTerm) tells whether the screen shows
+TEXT, for moments outside a session (`check("detached-text", () =>
+screenContains("[detached from session e2e]"))`); elsewhere it returns
+`"skip"` and `check` records SKIP.
 
-`tests/e2e/reload.actions` judges the reload with `expect NAME "2G"`: the
+`tests/e2e/reload.ts` judges the reload with `expect(NAME, "2G")`: the
 headless side opens the file as it is on disk at that moment, so the
 screens match only if the reload kept the place.
 
-`check NAME CMD...` judges what a screenshot cannot: a command's exit
-status or a file it wrote (`tests/e2e/synctex.actions`: the forward search
+`check(NAME, FN)` judges what a screenshot cannot: a command's exit
+status or a file it wrote (FN returns true or false, or `"skip"`) (`tests/e2e/synctex.ts`: the forward search
 is sent, Ctrl+click runs the editor on the title's lines). Its results go to
 `OUTDIR/expect.txt` too, and a failure exits 4 as well.
 
@@ -868,7 +877,7 @@ both and passes: zooming anchored at the top-left instead of the pointer did
 (e.g. `ctrl_wheel_zooms_around_the_pointer` in
 `crates/temzdf-pdfview/src/pane.rs`).
 
-`tests/e2e/expect.actions` passes in kitty, WezTerm, tmux and zellij
+`tests/e2e/expect.ts` passes in kitty, WezTerm, tmux and zellij
 (2026-10-25) and Ghostty (2026-10-28); `search`, `viewer`, `links`,
 `select` and `preview` (mouse input) pass in kitty, WezTerm and Ghostty
 (2026-10-28). Comparing against

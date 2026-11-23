@@ -100,7 +100,7 @@ Known problems:
   pixels compressed by Python's zlib, by miniz_oxide, or by zlib-rs at levels
   2, 3 or 6 are fine. termpix therefore compresses at level 2
   (`crates/termpix/src/graphics.rs`). Reproduce with
-  `TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf`
+  `TERMPIX_MEDIUM=direct scripts/e2e.sh -t ghostty tests/e2e/viewer-stress.ts -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf`
   after switching the level back to 1. Not yet reported upstream.
 - Ghostty 1.3.1 (Xvfb, 2026-10-28) blends translucent images in linear
   light, as kitty does (a search highlight over the page matched
@@ -109,7 +109,7 @@ Known problems:
   the window's top left, so `scripts/e2e.sh`'s `expect` works there.
 - Ghostty 1.4.0 (Xvfb, 2026-11-23) reports three wheel steps for each X
   button 4/5 click; kitty 0.51.0 and WezTerm 0-unstable-2026-11-08 report one
-  (`tests/e2e/scroll_demo.actions`: six clicks well apart scroll
+  (`tests/e2e/scroll_demo.ts`: six clicks well apart scroll
   scroll_demo 1296 px in Ghostty, each click's three steps arriving
   together and accelerating, 360 px in the others).
 - kitty 0.51.0, WezTerm 0-unstable-2026-11-08 and Ghostty 1.4.0 (Xvfb,
@@ -149,7 +149,7 @@ Known problems:
   to their keys (`crates/temzdf-term/src/keys.rs`).
 - Ghostty 1.3.1 (GTK, on Xvfb) ignores that Linefeed keysym altogether: a
   command typed with `xdotool type "...\n"` never ran
-  (`tests/e2e/session.actions` reattached nothing). `scripts/e2e.sh`'s
+  (`tests/e2e/session.ts` reattached nothing). `scripts/e2e.sh`'s
   `type` sends each newline as the Return key instead (2026-10-29).
 - In a terminal pane's pty `C-s` is XOFF while the program leaves flow control
   on (`stty ixon`, the default; interactive shells' line editors usually turn
@@ -282,7 +282,7 @@ version) Unicode placeholders through passthrough (`Placeholders`, strips of
 are sent, since zellij forwards images uncompressed); WezTerm whole-frame
 `Composited`; everything else `Layered`.
 - kitty 0.49.2: OSC 52 clipboard writes work (verified with `xclip` in
-  `tests/e2e/select.actions`); OSC 22 pointer shapes are accepted.
+  `tests/e2e/select.ts`); OSC 22 pointer shapes are accepted.
 - SGR-pixel (1016) coordinates are zero-based in kitty 0.49.2 and Ghostty 1.3.1
   (a click at window pixel 300 reports 300), unlike SGR cell coordinates, which
   are one-based. Check with `cargo run -p termpix --example events -- log`.
@@ -358,7 +358,7 @@ are sent, since zellij forwards images uncompressed); WezTerm whole-frame
   a floating pane's title on its frame) was hidden. The session now cuts
   the images out under such text (`Session::covers`); kitty and Ghostty
   look the same either way (cells with a background hide images below
-  text there). Seen in `tests/e2e/floats.actions` (`notice.png`).
+  text there). Seen in `tests/e2e/floats.ts` (`notice.png`).
 - WezTerm 0-unstable-2026-10-10 and wide characters under images (user
   report, 2026-10-29; reproduced on Xvfb with `printf` and kitty graphics
   alone): placing an image (`a=T` or `a=p`) over cells drops the wide
@@ -372,7 +372,7 @@ are sent, since zellij forwards images uncompressed); WezTerm whole-frame
   frame placed images on (`Compositor::present_with`): our text that goes
   away is blanked before the images (`TextScreen::clear_gone`), and the
   wide characters under new placements are written again after them
-  (`TextScreen::redraw_wide`). `tests/e2e/float-wide.actions`.
+  (`TextScreen::redraw_wide`). `tests/e2e/float-wide.ts`.
 - WezTerm 0-unstable-2026-11-08 (Xvfb, 2026-11-23) shapes text over cells
   an image was placed on (temzdf's Composited frame covers the screen) one
   cell at a time: its default font's ligatures and contextual alternates

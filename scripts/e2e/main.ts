@@ -1,14 +1,76 @@
-// The e2e harness's command line: runs a scenario (tests/e2e/NAME.ts) in a
-// real terminal (kitty, Ghostty, WezTerm) or the GUI on a display server
-// of its own, and judges it.
+// The e2e harness: runs a scenario (tests/e2e/NAME.ts) in a real terminal
+// (kitty, Ghostty or WezTerm) or the GUI on a display server of its own,
+// drives it with the scenario's helpers (scripts/e2e/helpers.ts says what
+// each does), judges it (expect, check, NAME.cells: OUTDIR/expect.txt) and
+// saves screenshots. scripts/e2e.sh runs this in the dev shell.
 //
-// Usage: node scripts/e2e/main.ts [-t kitty|ghostty|wezterm|gui] [-d x11|wayland|macos|windows]
+// Usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-d x11|wayland|macos|windows]
 //          [-m zellij|tmux] [-I] [-P shared|socket] [-s WxH] [-o OUTDIR] SCENARIO [-- COMMAND...]
 //   SCENARIO  a scenario module (tests/e2e/NAME.ts, or NAME)
-//   COMMAND   instead of the scenario's command
-// The options are scripts/e2e.sh's. Exit status: 0; 1 when the run could
-// not start or stopped (a helper failed outside `check`); 3 when the
-// terminal died; 4 when a judgement failed (OUTDIR/expect.txt).
+//   COMMAND   instead of the scenario's own (its first word made absolute
+//             when it names a file)
+//   -t TERM   terminal to run (default kitty); gui: COMMAND is temzdf-gui
+//             itself, run under the xfwm4 window manager (X11; sway on
+//             Wayland) on lavapipe ($TEMZDF_LAVAPIPE_ICD); on X11 the screen
+//             is 100 px larger each way for its decorations
+//   -I        (gui) Japanese input: fcitx5 with Mozc (its HOME in OUTDIR,
+//             ended with the run), over XIM on X11 (XMODIFIERS), over
+//             input-method-v2 and text-input-v3 on Wayland; `ime` switches
+//             it (the scenario may ask for it: `ime: true`)
+//   -d DISP   display server: x11 (default; Xvfb, xdotool, import), wayland
+//             (headless sway; keys and pointer through crates/wlinput,
+//             $E2E_WLINPUT or built here; screenshots with grim), macos (the
+//             default there; not run since the move to TypeScript, todo.md):
+//             the terminal or the GUI on a virtual display at scale 1 beside
+//             the real screen (in a VM, scripts/macos-vm.sh: on its own
+//             screen), keys and the pointer through `termctl serve`
+//             (scripts/macos/termctl.swift), screenshots with screencapture;
+//             needs the accessibility and screen recording permissions and
+//             the screen unlocked (doc/terminals/macos.md); windows (-t gui
+//             only): temzdf-gui in the Windows VM of scripts/windows-vm.sh
+//             ($TEMZDF_WINDOWS_VM, running, with temzdf and temzdf-gui built
+//             in it), driven from this host: the pointer and keys through
+//             QEMU's QMP, screenshots with QMP's screendump, commands and
+//             files over SSH. COMMAND is the guest's temzdf-gui.exe (e.g.
+//             C:/t/target/release/temzdf-gui.exe --clean FILE); arguments
+//             naming files of this host are copied into the guest first.
+//             How it works and why: "Windows in a VM" in doc/dev/testing.md
+//   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no
+//             pane frames, a single pane, its config and layout in
+//             OUTDIR/zellij; tmux: a private server with passthrough and
+//             mouse on, no status)
+//   -P PATH   how temzdf's clients take frames' pixels from the session:
+//             shared (memory, the default) or socket (inside the messages);
+//             sets TEMZDF_PIXELS for COMMAND
+//   -s WxH    window/screen size in pixels (default the scenario's, or 900x600)
+//   -o OUTDIR where screenshots and logs go (default: target/e2e)
+//
+// temzdf's log (geometry, warnings) goes to OUTDIR/state/temzdf/temzdf.log,
+// when each phase began to OUTDIR/timing.txt (milliseconds), the input sent
+// to OUTDIR/events.txt, COMMAND to OUTDIR/command.txt. It waits for the
+// first screen (temzdf's log says a complete frame was written, then the
+// screen stands still for 150 ms; at most 3 s, 6 s for Ghostty and WezTerm,
+// 5 s for the GUI; inside a multiplexer that long, 3 s more in zellij, 1 s
+// in tmux) and sends `q` at the end, waiting up to half a second for the
+// terminal to go. E2E_RENDERER (a temzdf) and E2E_GUI_RENDERER (a
+// temzdf-gui) draw `expect`'s headless renders instead of COMMAND's builds
+// (release builds are quicker; scripts/e2e-all.sh -R). E2E_INPUT_LOG names
+// a file for when each command to an input helper went out.
+//
+// COMMAND runs without ZELLIJ/TMUX in its environment, so a multiplexer
+// around the harness does not leak into terminal detection, without
+// TEMZDF_SESSION_NAME (a session around the harness would refuse to show
+// the run's of the same name inside itself), and with its own
+// XDG_RUNTIME_DIR (also for the scenario's commands), so its sessions stay
+// apart from the user's and end with the run; links are not opened, only
+// noted in OUTDIR/opened.txt. A COMMAND that runs temzdf must pass --clean
+// or --config FILE (checked). A run ends after the scenario's timeout (180
+// s by default); everything it started ends with it, also on Ctrl+C.
+//
+// Exit status: 0; 1 when the run could not start or stopped (a helper
+// failed outside `check`, a timeout); 3 when the terminal died ("TERMINAL
+// CRASHED"); 4 when a judgement failed ("EXPECTATIONS FAILED", see
+// OUTDIR/expect.txt); 2 for a bad command line.
 
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
@@ -18,8 +80,9 @@ import { parseArgs } from "node:util";
 import { defaultDisplay, type Display, type Mux, type Options, optionsVar, type Term } from "./options.ts";
 import type { RunResult, Scenario } from "./scenario.ts";
 
-const usage = `usage: node scripts/e2e/main.ts [-t kitty|ghostty|wezterm|gui] [-d x11|wayland|macos|windows]
-  [-m zellij|tmux] [-I] [-P shared|socket] [-s WxH] [-o OUTDIR] SCENARIO [-- COMMAND...]`;
+const usage = `usage: scripts/e2e.sh [-t kitty|ghostty|wezterm|gui] [-d x11|wayland|macos|windows]
+  [-m zellij|tmux] [-I] [-P shared|socket] [-s WxH] [-o OUTDIR] SCENARIO [-- COMMAND...]
+(scripts/e2e/main.ts says more)`;
 
 function fail(message: string): never {
   console.error(`e2e: ${message}`);
@@ -51,7 +114,11 @@ async function main(argv: string[]): Promise<number> {
       h: { type: "boolean" },
     },
   });
-  if (values.h || positionals.length !== 1) fail(values.h ? "" : "one SCENARIO");
+  if (values.h) {
+    console.log(usage);
+    process.exit(0);
+  }
+  if (positionals.length !== 1) fail("one SCENARIO");
   const file = scenarioPath(positionals[0]!);
   const { def } = ((await import(pathToFileURL(file).href)) as { default: Scenario }).default;
   const term = values.t as Term;

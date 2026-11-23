@@ -109,7 +109,7 @@ server on one `Session`). Next and open:
   swap files are written (`swap.rs`) and `busy_since` for the "Script is
   running" notice (`script.rs`). None is judged by a replay now; a replay
   that reaches them depends on how fast it runs.
-- `tests/e2e/scroll_demo.actions` in WezTerm on X11: `wheel6` scrolled
+- `tests/e2e/scroll_demo.ts` in WezTerm on X11: `wheel6` scrolled
   372 px instead of 360 in 2 of 6 runs (2026-11-23), one step accelerated
   as if two arrived within the 80 ms flick window, with the steps sent
   0.34 s apart and with each sent once the screen stood still (1.1 s
@@ -258,8 +258,8 @@ server on one `Session`). Next and open:
     `WINDOWS_CRATES`.
     Still to do: fonts. The e2e of the GUI runs there
     (`scripts/e2e.sh -d windows`, "Windows in a VM" in
-    `doc/dev/testing.md`; `gui.actions` passes, 2026-11-23); still to do
-    for it: CI, the other GUI scenarios (`other_window`, `focus_window`,
+    `doc/dev/testing.md`; `gui.ts` passes, 2026-11-23); still to do
+    for it: CI, the other GUI scenarios (`otherWindow`, `focusWindow`,
     `-I`), links not opened, a command that builds the tree in the VM.
     The ConPTY
     experiment with the in-box ConPTY is done (`doc/terminals/conpty.md`,
@@ -501,8 +501,8 @@ server on one `Session`). Next and open:
   is still slow (zellij 0.45.1 forwards images uncompressed; a half-resolution
   mode could help), and tmux master's native kitty support (z=0 only) is untested.
 - e2e beyond X11 (Wayland, macOS, maybe Windows) without rewriting the
-  action files (discussed 2026-10-29). Done: 1. action files use helpers
-  only, the display server behind `be_*` functions in `scripts/e2e.sh`;
+  scenarios (discussed 2026-10-29). Done: 1. scenarios use helpers
+  only, the display server behind a backend each (`scripts/e2e/backends/`);
   2. `-d wayland` on headless sway with `crates/wlinput` (wtype and
   wlrctl did not do: a virtual device per call), kitty and the GUI
   (`doc/dev/testing.md`, "X11, Wayland and macOS"), every terminal and the
@@ -511,16 +511,12 @@ server on one `Session`). Next and open:
   kitty's `viewer` zoom on macOS (three wheel reports per notch make it
   deeper than its pause allows), and:
   4. Windows: done for the GUI from the Linux host (`-d windows`: QMP
-     through socat, SSH; `doc/dev/testing.md`), no bash in the guest
+     over node:net, SSH; `doc/dev/testing.md`), no bash in the guest
      needed. For CI or a Windows machine without a Linux host: the
-     harness moves to TypeScript on Node ("The e2e harness in
-     TypeScript" below; the VM has Node), with only an input and
-     screenshot backend of Windows' own (PowerShell, or a small native
-     helper). Until then `scripts/e2e.sh` grows small `be_*` functions
-     with plain arguments for `-d windows`, for a mechanical port. Hard
-     to port as it is: the socat coprocess for QMP and the one guest
-     PowerShell over SSH, fed through fifos, and their state in shell
-     globals (`GPS`, the QMP coprocess).
+     harness is TypeScript on Node now (the VM has Node); left is an
+     input and screenshot backend of Windows' own (PowerShell, or a
+     small native helper) and an image comparison there (ImageMagick in
+     the guest, or comparisons without it).
   Considered and set aside: VNC as the one layer (vncdotool; Xvnc, wayvnc,
   macOS screen sharing, a Windows server; tends to need a logged-in
   desktop on macOS and Windows), PyAutoGUI and nut.js (no Wayland), openQA
@@ -546,24 +542,31 @@ server on one `Session`). Next and open:
     workers, ahead of the pane, through the tile schedule PDF tiles use).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
-- The e2e harness in TypeScript (decided with the user on 2026-11-23; in
-  progress since `windows-port` was merged): `scripts/e2e.sh`,
-  `scripts/e2e-all.sh` and the action files (`tests/e2e/*.actions`) as
-  Node TypeScript under `scripts/e2e/`, the scenarios as modules in
-  `tests/e2e/`. The survey and the decisions:
-  `doc/survey/e2e-harness-typescript.md`. In short:
-  - every judgement keeps running, skipping and failing where it does
-    now, on the same input and comparison;
-  - scenarios run on `node:test`, each judgement a subtest; a wrapper
-    around `test` hands the scenario its helpers, all bound to the
-    test's abort signal (nothing goes on after a timeout or Ctrl+C);
-  - a scenario's command is data in its module; external commands run
-    from argument lists, no shell helper; ImageMagick stays behind a
-    thin typed wrapper;
-  - `scripts/e2e.sh` and `scripts/e2e-all.sh` stay as thin shims;
-  - the move goes scenario by scenario, each compared with a baseline
-    of the bash harness (X11, Wayland, Windows; macOS cannot run e2e at
-    the moment and is ported unverified).
+- The e2e harness in TypeScript: done on 2026-11-24 (`scripts/e2e/`,
+  `tests/e2e/*.ts`; the survey and the decisions:
+  `doc/survey/e2e-harness-typescript.md`). Every judgement agreed with
+  the bash harness's, with the input sent, the commands and the keyed
+  expected screens (`scripts/e2e/compare.ts`), on X11 and Wayland (three
+  runs of each harness, 70 runs each) and Windows (`gui`, five and
+  three runs). Left:
+  - macOS is not checked: it could not run e2e then. Check it against
+    the bash harness's last commit, 6ff9abb (`scripts/e2e.sh` and
+    `tests/e2e/*.actions` there): run `scripts/macos-vm.sh e2e-all`
+    there into one directory and here into another, then
+    `node scripts/e2e/compare.ts BASE -- NEW`. A review found what to
+    look at first: timing (Ghostty, WezTerm and the GUI go through
+    `termctl serve` with a 2 ms settle, so the bash harness's subshells
+    were most of the gap between events, as they were on Windows and on
+    Wayland: compare with `E2E_INPUT_LOG`), and whether starting
+    `termctl serve`, `vdisp` and the GUI in a session of their own
+    (`detached`) matters to macOS's permissions.
+  - `gui-ime`'s `pasted` has 3.5 ms to spare: the Return after
+    Ctrl+Shift+V must come after the GUI got the text from wl-copy
+    (Wayland). The harness keeps the bash harness's timing; a pause in
+    the scenario between the two would make it sure (it changes the
+    scenario: ask the user).
+  - Both harnesses leave zellij's server running after `-m zellij`
+    (removing the runtime directory does not end it): end it at cleanup.
 - A lock on the Windows VM in `scripts/windows-vm.sh` (asked by the user,
   2026-11-24): it only checks whether the VM runs, so two sessions using
   it agree by hand (C:\t and C:/e2e would be shared). `flock` on a file
@@ -571,7 +574,7 @@ server on one `Session`). Next and open:
   (`start`, `check`, `run`, `cp-in`/`cp-out`, `e2e.sh -d windows`), saying
   who holds it (PID, what for) and waiting, or failing with `--no-wait`;
   `lock REASON`/`unlock` to hold it across commands by hand.
-- Judged e2e (`expect` in `scripts/e2e.sh`, `doc/dev/testing.md`) covers keys and
+- Judged e2e (`expect` in `scripts/e2e/helpers.ts`, `doc/dev/testing.md`) covers keys and
   mouse input in kitty, WezTerm and Ghostty (keys also in tmux and zellij);
   sessions are judged against `temzdf render-session` (the text too in kitty
   and WezTerm; all pass in both, 2026-10-29), reload against fresh renders,
@@ -590,10 +593,10 @@ server on one `Session`). Next and open:
   text) are judged against the terminal's own drawing of them
   (`NAME.cells`, 2026-11-23). Left unjudged: IME composing, sessions
   inside multiplexers, and Ghostty's text outside expects
-  (`screen_contains` SKIPs there).
-- `screen_contains TEXT` in Ghostty (it cannot report its text): have the
-  shell draw TEXT (as `draw_lines` does) and look for that row's pixels in
-  the screenshot (an image sub-search, as `screen_restored` compares rows),
+  (`screenContains` SKIPs there).
+- `screenContains(TEXT)` in Ghostty (it cannot report its text): have the
+  shell draw TEXT (as `drawLines` does) and look for that row's pixels in
+  the screenshot (an image sub-search, as `screenRestored` compares rows),
   instead of SKIP.
 - MuPDF's allocation lock makes text rendering slower with more threads (see
   `doc/dev/performance.md`). `fz_malloc`/`fz_free` take `FZ_LOCK_ALLOC` around the

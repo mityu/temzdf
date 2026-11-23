@@ -78,10 +78,44 @@ export interface Helpers {
   forward(spec: string, pdf: string): Promise<void>;
   /** (-I) Switches the input method. */
   ime(state: "on" | "off"): Promise<void>;
-  /** Saves OUTDIR/NAME.png and compares it with what temzdf draws headless
-   * for the same geometry: after KEYS (Vim notation, the whole sequence
-   * since startup), or after the input temzdf handled, replayed with its
-   * timing (scripts/e2e/README: the forms and what each judges). */
+  /** Saves OUTDIR/NAME.png and judges it (a line of OUTDIR/expect.txt;
+   * mismatches in NAME.diff.png and NAME.text.diff):
+   *
+   * - `expect(NAME, KEYS)`, in the standalone viewer: against the screen
+   *   `temzdf standalone pdf --render-frame` draws for the same geometry
+   *   after KEYS (Vim feedkeys notation, e.g. "3G" or "/needle<CR>"; the
+   *   whole sequence since startup; "" for the first screen).
+   * - `expect(NAME)` there: the same after all the input temzdf handled
+   *   since startup, replayed with its timing (--render-frame --events of
+   *   what temzdf recorded through TEMZDF_RECORD_INPUT, so the terminal's
+   *   own delivery times and coordinates count): mouse actions too. Pause
+   *   before it until animations end. Mouse actions are not judged inside
+   *   multiplexers (they report cells).
+   *
+   *   Both for COMMAND = temzdf standalone pdf [--page N] [--scale S]
+   *   [--config FILE] FILE (the headless side loads that configuration
+   *   too; else --clean) and terminals drawing from the window's top-left
+   *   (kitty, WezTerm, Ghostty without decorations). The images are
+   *   compared by pixels outside the cells the terminal draws itself (the
+   *   status line; NAME.mask.png), and in kitty and WezTerm the text too
+   *   (NAME.expected.txt).
+   * - In a session (`temzdf --clean -s NAME ...`): against `temzdf
+   *   render-session` attached to the session at that moment (its only
+   *   one, or $E2E_SESSION), the images and the text as above. Not inside
+   *   multiplexers.
+   * - With the GUI (-t gui): the window against `temzdf-gui --render-frame`
+   *   attached to the same session at that moment (the window's drawing,
+   *   not the session's input handling).
+   *
+   * The first two forms and sessions (not inside multiplexers) also write
+   * the cells the terminal draws itself as bytes (NAME.ansi) and which of
+   * them to judge (NAME.cells.png). After the scenario, temzdf is ended
+   * (Esc until the viewer quits; a session's killed) and the shell COMMAND
+   * leaves behind (`sh -c '...; exec sh'`) draws each NAME.ansi on a
+   * cleared screen (NAME.ref.png, once it stands still): NAME.png inside
+   * NAME.cells.png against it is PASS or FAIL NAME.cells (the attributes
+   * and colours of those cells, and their text in Ghostty too), SKIP
+   * without such a shell or when the terminal changed size since. */
   expect(name: string, keys?: string): Promise<void>;
   /** A judgement of what a screenshot cannot judge: FN returning true (or
    * nothing) passes, false or throwing fails, "skip" or throwing Skip

@@ -63,7 +63,7 @@ configuration script, as `temzdf --clean`. Closing the window detaches. `--rende
   Keys held as the window gains the focus (winit reports them as synthetic
   presses on X11 and Windows) were pressed for another window: they, their
   repeats and their release are dropped (`Input::keyboard`;
-  `tests/e2e/gui-focus.actions`: Ctrl+D ending a shell in another window).
+  `tests/e2e/gui-focus.ts`: Ctrl+D ending a shell in another window).
 - **Scale on X11**: winit takes it from `WINIT_X11_SCALE_FACTOR`, else the
   DPI in XSETTINGS (`Xft/DPI`) or the X resources (`Xft.dpi`), else the
   monitor's pixels per millimetre (17/12 on the user's 3840-pixel, 698 mm
@@ -95,8 +95,8 @@ Where it departs from the design below:
 Tests: `crates/temzdf-gui/tests/gpu.rs` (offscreen on lavapipe: layers
 against the CPU reference, text in its cells), unit tests of the draw list,
 palette, fonts and key translation, `scripts/e2e.sh -t gui` with
-`tests/e2e/gui.actions` (judged against `--render-frame`) and
-`tests/e2e/gui-ime.actions` (`-I`: fcitx5 with Mozc, committed Japanese and
+`tests/e2e/gui.ts` (judged against `--render-frame`) and
+`tests/e2e/gui-ime.ts` (`-I`: fcitx5 with Mozc, committed Japanese and
 a paste reach a shell).
 
 On Wayland (headless sway, `scripts/e2e.sh -d wayland`) the same scenarios
@@ -114,7 +114,7 @@ Output that is redirected or piped is written there (`ls-fonts`,
 standard error, errors and clap's help show in a message box; other
 output is dropped. The terminal's program is `temzdf`, as `wezterm` is
 for `wezterm-gui`: `temzdf ls-fonts` pipes `temzdf-gui ls-fonts` and
-prints it. `scripts/e2e.sh -d windows` runs `gui.actions` in the
+prints it. `scripts/e2e.sh -d windows` runs `gui.ts` in the
 Windows VM (2026-11-23, "Windows in a VM" in `doc/dev/testing.md`).
 Underlines take the text colour (the scene's cells carry no SGR 58 colour,
 in the terminal frontend too); curly, dotted and dashed ones are drawn as
@@ -361,7 +361,7 @@ Besides the (decide) items above:
   input-method-v2. Preedit drawing, cursor area updates and commit timing
   are where GUI terminals have had bugs; the user types Japanese, so this
   must be tested early on each platform. Checked on headless sway 1.12
-  with fcitx5 5.1.23 and Mozc (`tests/e2e/gui-ime.actions -d wayland`):
+  with fcitx5 5.1.23 and Mozc (`tests/e2e/gui-ime.ts -d wayland`):
   preedit at the cursor, the candidate window below it, the commit and a
   paste reach the shell.
 - **Fonts**: CJK fallback, wide cells (a CJK glyph spans two cells, the

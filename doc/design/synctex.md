@@ -105,7 +105,7 @@ any compile hook can do the same with `temzdf --forward LINE:FILE doc.pdf`.
   (`doc/config.md`) so nothing scribbles over the screen
   (`termpix::tty::StdioRedirect`).
 - Tests: `synctex::tests` (forward and inverse on the fixture) and
-  `tests/e2e/synctex.actions` (a second process sends a forward search to a
+  `tests/e2e/synctex.ts` (a second process sends a forward search to a
   running viewer; Ctrl+click runs the editor command) and
-  `tests/e2e/synctex-reload.actions` (a forward search sent right after the
+  `tests/e2e/synctex-reload.ts` (a forward search sent right after the
   PDF and SyncTeX data were replaced lands in the new version).

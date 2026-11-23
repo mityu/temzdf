@@ -77,7 +77,7 @@ memcpy into a fresh buffer, about what shared memory would still cost
 into a fresh buffer is as slow as the socket per byte.
 
 In use: `TEMZDF_TIMING=1` makes the server and the clients log `timing:`
-lines; `tests/e2e/perf.actions` (the first screen, zoom steps, the last page
+lines; `tests/e2e/perf.ts` (the first screen, zoom steps, the last page
 and back, paging, the wheel, a reload) under `scripts/e2e.sh`, and
 `scripts/timing.sh OUTDIR` joins them by frame. Release builds, Xvfb
 (lavapipe draws the GUI on the CPU), 2026-10-29; ms:
@@ -116,7 +116,7 @@ is the server's part, `total` until the client has read every byte once):
 | 12 | 12.6 | 7.8 / 10.1 | 7.4 / 8.4 | 3.6 |
 | 30 | 31.5 | 26.0 / 29.9 | 6.9 / 8.2 | 3.3 |
 
-`tests/e2e/perf.actions`, release builds, Xvfb with lavapipe, 2026-10-29, ms
+`tests/e2e/perf.ts`, release builds, Xvfb with lavapipe, 2026-10-29, ms
 (maxima over frames with pixels, and the median acknowledgement):
 
 | Client | Path | send max | recv max | upload / present max | ack median / max |
@@ -157,7 +157,7 @@ own figures are medians of 7):
 
 The 3 runs of 30 tiles spanned 29.5 to 30.1 ms before and 7.8 to 8.0 after.
 
-| `perf.actions -P socket` | send max | recv max | heaviest 5 frames, send + recv | ack median / max |
+| `perf.ts -P socket` | send max | recv max | heaviest 5 frames, send + recv | ack median / max |
 |---|---:|---:|---:|---:|
 | GUI 900x600, before | 17.5 | 11.2 | 15.2 | 5.7 / 34.6 |
 | GUI 900x600, after | 8.7 | 8.6 | 8.4 | 5.4 / 25.0 |

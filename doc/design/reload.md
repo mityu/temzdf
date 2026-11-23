@@ -96,5 +96,5 @@ The SyncTeX worker reads the `.synctex.gz` again whenever its modification
 time or size changed (pdfTeX writes it after the PDF).
 
 Tests: unit tests in `crates/temzdf-pdfview/src/pane.rs` (`reload_*`) and the end-to-end scenario
-`tests/e2e/reload.actions` (in-place truncation, rename-over with fewer pages,
+`tests/e2e/reload.ts` (in-place truncation, rename-over with fewer pages,
 delete and recreate).

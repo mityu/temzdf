@@ -274,8 +274,6 @@
                           wlr-randr
                           dbus
                           (kdePackages.fcitx5-with-addons.override { addons = [ fcitx5-mozc ]; })
-                          # QMP of the Windows VM (scripts/e2e.sh -d windows).
-                          socat
                         ]
                       )
                       ++ lib.optionals (isDarwin && !skipTart) [ pkgs.tart ];

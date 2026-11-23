@@ -81,9 +81,11 @@ is fine for now.
 ## Checking GUI terminals on a Mac without a human
 
 In short: on macOS `scripts/e2e.sh` (`-d macos`, the default there) runs
-the same action files and judgements in kitty, Ghostty, WezTerm and the
+the same scenarios and judgements in kitty, Ghostty, WezTerm and the
 GUI on a virtual display beside the real screen; it takes the front and
-the pointer for the run and needs the screen unlocked.
+the pointer for the run and needs the screen unlocked. Not run since the
+e2e harness moved to TypeScript (2026-11-24; macOS could not run e2e then):
+`todo.md` says how to check it against the bash harness's last commit.
 `scripts/macos-vm.sh e2e ARGS...` runs it in a macOS VM (Tart) instead,
 leaving the host alone (set up once: "Running in a VM" below); that is the
 way to run them on macOS. `scripts/e2e-all.sh` (in the VM:
@@ -96,7 +98,7 @@ scenarios are in `tests/macos/` (`gui-redraw.sh`: the GUI redraws after
 its window was covered).
 
 Two tools share the Swift helpers in `scripts/macos/` (built into
-`target/macos-gui/`): `scripts/e2e.sh` runs the action files of
+`target/macos-gui/`): `scripts/e2e.sh` runs the scenarios of
 `tests/e2e/` with their judgements, as on Linux; `scripts/macos-gui.sh`
 drives one terminal step by step, for looking into something by hand.
 Both need the screen recording and accessibility permissions for the
@@ -105,11 +107,11 @@ screenshots).
 
 ### scripts/e2e.sh -d macos
 
-The default on macOS. The same command lines as on Linux (each action
-file's "Used with:"), e.g.
+The default on macOS. The same command lines as on Linux (a scenario has
+its command; one given after `--` replaces it), e.g.
 
 ```sh
-scripts/e2e.sh -t ghostty tests/e2e/expect.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
+scripts/e2e.sh -t ghostty tests/e2e/expect.ts -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
 ```
 
 It takes the front and the pointer while it runs (pointer events go to the
@@ -134,7 +136,7 @@ why:
   command, so temzdf starts at scale 1 (it would otherwise log the main
   screen's geometry first). Window sizes follow the macOS cell sizes
   (Ghostty 8x17 px, WezTerm 7x16 px), so the window is about the size asked
-  for and the coordinates of the action files hit what they aim at. The GUI
+  for and the coordinates of the scenarios hit what they aim at. The GUI
   runs directly.
 - Input: `termctl serve PID` reads one command per line (as `crates/wlinput`
   on Wayland): pointer moves, button presses, wheel notches (without the
@@ -171,7 +173,7 @@ scripts/macos-vm.sh create        # clone the base image, 4 CPUs, 6 GB, 1600x100
 scripts/macos-vm.sh provision     # Nix, the terminals; no sleep or screen lock
 scripts/macos-vm.sh check         # permissions, display, tools
 scripts/macos-vm.sh save          # keep this state as temzdf-e2e-golden
-scripts/macos-vm.sh e2e -t ghostty tests/e2e/expect.actions -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
+scripts/macos-vm.sh e2e -t ghostty tests/e2e/expect.ts -- target/debug/temzdf standalone pdf --clean target/fixtures/sample.pdf
 scripts/macos-vm.sh e2e-all -t ghostty -t wezterm -t gui   # every judged scenario, summed up
 scripts/macos-vm.sh reset         # back to the golden copy, permissions included
 ```

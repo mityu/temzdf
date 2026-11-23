@@ -149,7 +149,7 @@ impl Env {
     /// Wait until the client's latest frame is complete (every page in
     /// sight painted) and on the screen, and `done` holds: the client's log
     /// (`temzdf.log`) past `from` bytes (a [`Env::log_mark`]) says so last,
-    /// as scripts/e2e.sh's `wait_complete` reads it. No new line counts
+    /// as the e2e harness's `waitComplete` reads it (scripts/e2e/judge.ts). No new line counts
     /// too: the frontend writes one only when a frame shown was incomplete,
     /// before its bytes reach the terminal, so with `done` seeing the new
     /// frame none means it came complete (and frames of text alone never
