@@ -53,37 +53,58 @@ if ((Get-ExecutionPolicy -Scope LocalMachine) -ne 'RemoteSigned') { throw 'the e
 
 Install Git.Git
 Install OpenJS.NodeJS.24
-# The C/C++ compiler and the Windows SDK that rustc's MSVC target links with
-# (the Community license, accepted by the user for this VM).
-Install Microsoft.VisualStudio.2022.BuildTools @('--override',
-  '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended')
-Install LLVM.LLVM
-# Its installer leaves PATH alone (the CI's runner image has it on PATH).
-$llvm = Join-Path $env:ProgramFiles 'LLVM\bin'
-$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-if (($machinePath -split ';') -notcontains $llvm) {
-  [Environment]::SetEnvironmentVariable('Path', "$machinePath;$llvm", 'Machine')
-}
 # As in CI (.github/workflows/ci.yml) and the dev shell.
 Install zig.zig @('--version', '0.15.2')
-Install Rustlang.Rustup
 # stylo's build script (temzdf-mdview, through blitz-dom) runs python.exe
 # (its Python packages come with it); the CI's runner image has Python. For
-# all users and first on the machine's PATH, ahead of the Store's python.exe
-# stub in the user's.
+# all users and on the machine's PATH, ahead of the Store's python.exe stub
+# in the user's.
 Install Python.Python.3.14 @('--scope', 'machine', '--override',
   '/quiet InstallAllUsers=1 PrependPath=1 Include_test=0')
+
+# Windows builds with MSYS2's UCRT64 (doc/survey/windows-port.md), as the
+# CI's `check-windows` job does: its Rust (clippy and rustfmt included, the
+# standard library for wasm32-wasip1 in -rust-wasm), GCC (the C compiler and
+# the linker), Clang (libclang for bindgen), make and pkgconf (mupdf-sys's
+# build; make is MSYS2's own, in usr\bin, which only UCRT64's shell puts on
+# PATH: scripts/windows-vm.sh runs the gate there). No MSVC, no rustup.
+Install MSYS2.MSYS2
+$msys = 'C:\msys64'
+$ucrt64 = Join-Path $msys 'ucrt64\bin'
+$msysBash = Join-Path $msys 'usr\bin\bash.exe'
+if (-not (Test-Path $msysBash)) { throw "no $msysBash after installing MSYS2" }
+function Msys($what) {
+  Step "msys2: $what" | Out-Host
+  $env:MSYSTEM = 'UCRT64'
+  & $msysBash -lc $what | Out-Host
+  $code = $LASTEXITCODE
+  Remove-Item Env:MSYSTEM
+  return $code
+}
+# The first update replaces MSYS2's core (its runtime, pacman) and may end
+# the shell before it is done; the second updates the rest.
+Msys 'pacman -Syuu --noconfirm' | Out-Null
+$code = Msys 'pacman -Syuu --noconfirm'
+if ($code -ne 0) { throw "pacman -Syuu: $code" }
+$code = Msys ('pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-rust ' +
+  'mingw-w64-ucrt-x86_64-rust-wasm mingw-w64-ucrt-x86_64-gcc ' +
+  'mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-pkgconf make')
+if ($code -ne 0) { throw "pacman -S: $code" }
+if (-not (Test-Path (Join-Path $msys 'ucrt64\lib\rustlib\wasm32-wasip1\lib'))) {
+  throw 'no standard library for wasm32-wasip1 in C:\msys64\ucrt64\lib\rustlib'
+}
+# UCRT64 first on the machine's PATH (cargo, rustc, gcc, clang; ahead of
+# Python's and Git's). C:\msys64\usr\bin stays off it: its link.exe, find
+# and the other POSIX tools would hide Windows' and Git's. bindgen
+# (mupdf-sys) takes the first libclang.dll it finds unless told.
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$rest = ($machinePath -split ';') | Where-Object { $_ -and $_ -ne $ucrt64 }
+[Environment]::SetEnvironmentVariable('Path', (@($ucrt64) + $rest) -join ';', 'Machine')
+[Environment]::SetEnvironmentVariable('LIBCLANG_PATH', $ucrt64, 'Machine')
 
 # A new process sees the machine's and the user's PATH as winget left them.
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
   [Environment]::GetEnvironmentVariable('Path', 'User')
-
-Step 'rustup stable, wasm32-wasip1'
-rustup toolchain install stable --profile minimal --component clippy,rustfmt
-if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install: $LASTEXITCODE" }
-rustup default stable
-rustup target add wasm32-wasip1
-if ($LASTEXITCODE -ne 0) { throw "rustup target add: $LASTEXITCODE" }
 
 # The version of biome.jsonc's `$schema`, as the CI installs it.
 Step 'biome'

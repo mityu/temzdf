@@ -30,15 +30,18 @@
 #                    image lands beside the others in vitro's golden
 #                    directory, the older ones are kept
 #   provision        start a fresh VM, run scripts/windows/provision.ps1 in
-#                    it (Git, Node, VS Build Tools, LLVM, Zig, rustup,
-#                    Python, Biome, esbuild; no sleep or screen lock; UTC),
+#                    it (Git, Node, Zig, Python, MSYS2's UCRT64 with Rust,
+#                    GCC and Clang, Biome, esbuild; no sleep or screen
+#                    lock; UTC),
 #                    restart it and keep it as the next golden image
 #                    (vitro promote); the versions go to
 #                    target/windows-vm/provision-versions.txt
 #   check [REV] [-- ARGS...]  copy REV (default HEAD; `git archive`, so only
 #                    committed files; a one-commit repository, for the
 #                    gate's `git diff`) into a fresh VM's C:\t, npm ci, and run
-#                    `cargo xtask check --no-miri ARGS` there; the output
+#                    `cargo xtask check --no-miri ARGS` there in UCRT64's
+#                    login shell (as the CI's `shell: msys2`: MSYS2's
+#                    usr/bin, with make for mupdf-sys, on PATH); the output
 #                    goes to target/windows-vm/check.log, exits with its
 #                    status
 #
@@ -217,15 +220,19 @@ case $cmd in
     destroy
     start
     vitro exec --script scripts/windows/provision.ps1 "$vm" 2>&1 | tee "$out/provision.log"
-    # Installers (VS Build Tools) leave a reboot pending, and promote waits
+    # Installers can leave a reboot pending, and promote waits
     # 180 s at most for the shutdown: get it over with first.
     vitro restart --desktop --timeout 15m "$vm"
     # PATH as a new logon sees it.
     vitro exec "$vm" "chcp 65001 > \$null; [Console]::OutputEncoding=[Text.Encoding]::UTF8; \
-      git --version; node --version; npm --version; zig version; clang --version | Select-Object -First 1; \
-      rustup --version 2>&1 | Select-Object -First 1; rustc --version; cargo --version; rustup target list --installed; biome --version; \
-      python --version; esbuild --version; \
-      & \"\${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe\" -products * -format text | Select-String '^(displayName|catalog_productDisplayVersion):'; \
+      git --version; node --version; npm --version; zig version; python --version; biome --version; esbuild --version; \
+      C:/msys64/usr/bin/pacman.exe -Q mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-rust-wasm mingw-w64-ucrt-x86_64-gcc \
+        mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-pkgconf make; \
+      rustc -vV; cargo -vV | Select-Object -First 1; gcc --version | Select-Object -First 1; clang --version | Select-Object -First 1; \
+      Get-ChildItem \"\$(rustc --print sysroot)/lib/rustlib\" -Directory | ForEach-Object Name; \
+      Get-Command cargo, rustc, gcc, clang, python, git -ErrorAction SilentlyContinue | ForEach-Object Source; \
+      if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) { 'no rustup' }; \
+      \"LIBCLANG_PATH=\$env:LIBCLANG_PATH\"; \
       Get-TimeZone | Select-Object -ExpandProperty Id; Get-Date -Format o" 2>&1 | tee "$out/provision-versions.txt"
     vitro promote "$vm"
     ;;
@@ -246,7 +253,8 @@ case $cmd in
       git init -q; git add -A; git -c user.name=vm -c user.email=vm@localhost commit -q -m $sha; \
       npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund; \
       if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }; \
-      cargo xtask check --stream --no-miri $*" 2>&1 | tee -a "$out/check.log"
+      \$env:MSYSTEM='UCRT64'; \$env:MSYS2_PATH_TYPE='inherit'; \$env:CHERE_INVOKING='1'; \
+      C:/msys64/usr/bin/bash.exe -lc 'cargo xtask check --stream --no-miri $*'" 2>&1 | tee -a "$out/check.log"
     status=${PIPESTATUS[0]}
     set -e
     # The gate's own logs (target/check/ in the guest).
