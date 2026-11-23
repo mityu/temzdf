@@ -674,6 +674,26 @@ window_edges_mask() {
       "$outdir/$name.window-mask.png"
   fi
 }
+# Where the screenshots show the pointer and the harness knows where it is
+# (ptr_x, ptr_y on the screen: the Windows backend sets them; X11, Wayland
+# and macOS take screenshots without it): a square around it goes black on
+# both sides of NAME's comparison, 48 px at scale 1 with the hot spot 16 px
+# in from its top-left, which holds Windows' standard pointers (the arrow
+# is 12x19 from its hot spot down to the right; the hand, the I-beam and
+# the resizing arrows reach left of it and above). Moving the pointer off
+# the window instead would change the drawing (temzdf sees it leave). A
+# transparent pointer (scripts/windows-vm.sh cursor hidden) is masked too.
+ptr_x='' ptr_y=''
+mask_pointer() {
+  [[ -n $ptr_x ]] || return 0
+  local name=$1 x=$((ptr_x - origin_x)) y=$((ptr_y - origin_y)) a b f
+  read -r a b <<<"$(awk -v s="${win_scale:-1}" 'BEGIN { print int(16 * s + 0.999), int(32 * s + 0.999) }')"
+  ((x + b > 0 && y + b > 0 && x - a < win_w && y - a < win_h)) || return 0
+  for f in actual expected; do
+    magick "$outdir/$name.$f.png" -fill black -draw "rectangle $((x - a)),$((y - a)) $((x + b - 1)),$((y + b - 1))" \
+      "$outdir/$name.$f.png"
+  done
+}
 # Wait until the first screen is up, at most LIMIT seconds (what a fixed wait
 # took before): temzdf's log saying it wrote a complete frame (when
 # the command runs temzdf in the terminal), then the screen unchanged over
@@ -895,6 +915,7 @@ expect_gui() {
   phase "expected $name"
   magick "$outdir/$name.png" -crop "${win_w}x${win_h}+$origin_x+$origin_y" +repage "$outdir/$name.actual.png"
   mask_window_edges "$name" "$win_w" "$win_h"
+  mask_pointer "$name"
   out=$(magick compare -metric AE -fuzz 3% "$outdir/$name.actual.png" "$outdir/$name.expected.png" \
     "$outdir/$name.diff.png" 2>&1 || true)
   out=${out%% *}

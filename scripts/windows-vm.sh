@@ -24,6 +24,10 @@
 #   screenshot [PATH]  the guest's screen as a PNG
 #                    (default target/windows-vm/screen-TIME.png)
 #   status           the VM, the golden image, the tools
+#   cursor hidden|default  make the mouse pointer on the guest's desktop
+#                    transparent, or bring the usual pointers back (until the
+#                    next logon; scripts/windows/cursor.ps1), for e2e runs
+#                    whose screenshots should not show it
 #   build [ISO]      build a new golden image from a Windows 11 ISO (default
 #                    $TEMZDF_WINDOWS_ISO; English, x64) with vitro's unattended
 #                    install, plus scripts/windows/build-prepare.ps1; the
@@ -262,6 +266,19 @@ case $cmd in
     # The gate's own logs (target/check/ in the guest).
     vitro cp "$vm:C:/t/target/check" "$out/check" >/dev/null 2>&1 || true
     exit "$status"
+    ;;
+  cursor)
+    (($# == 1)) && [[ $1 == hidden || $1 == default ]] || usage
+    start
+    vitro cp scripts/windows/cursor.ps1 "$vm:cursor.ps1"
+    # On the desktop (the pointers are its), without a console window.
+    run "\$d = Join-Path \$HOME cursor.done; Remove-Item \$d -ErrorAction SilentlyContinue; \
+      schtasks /create /tn temzdf-cursor /tr \"conhost.exe --headless powershell.exe -NoProfile -ExecutionPolicy Bypass \
+        -File \$(Join-Path \$HOME cursor.ps1) $1 \$d\" /sc once /st 00:00 /it /f > \$null 2>&1; \
+      schtasks /run /tn temzdf-cursor > \$null; \
+      for (\$i = 0; \$i -lt 100 -and -not (Test-Path \$d); \$i++) { Start-Sleep -Milliseconds 100 }; \
+      schtasks /delete /tn temzdf-cursor /f > \$null; \
+      if (-not (Test-Path \$d)) { Write-Error 'cursor.ps1 did not finish'; cmd /c exit 1 }"
     ;;
   status)
     echo "state directory: $state"
