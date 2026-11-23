@@ -1,0 +1,63 @@
+name: Advanced CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+    paths-ignore:
+      - 'doc/**'
+      - 'experiments/**'
+      - '*.md'
+  pull_request:
+
+permissions:
+  contents: read
+
+# Cancel previous run (when not on main branch)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # The unit tests under Miri (scripts/miri.sh), with the nightly toolchain of
+  # the `ci-miri` dev shell.
+  miri-with-nix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - run: |
+          # The single quote after `bash -c` is intentional.
+          # shellcheck disable=SC2016
+          nix develop .#ci-miri --command bash -c 'dirname "$(command -v cargo)"' >>"$GITHUB_PATH"
+      # As in `check-with-nix` in ci.yml.
+      - run: rustup self uninstall -y
+      # Also Miri's standard library, built by `cargo miri setup`.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          # Keys are `v0-rust-miri-Linux-X64-...`; `prune-cache-miri-with-nix` matches `v0-rust-miri-`.
+          shared-key: miri
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
+          cache-directories: ~/.cache/miri
+      - run: nix develop .#ci-miri --command scripts/miri.sh
+      - name: Show failed test's log
+        if: failure()
+        run: tail -n +1 target/miri-logs/*.log
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: miri-logs
+          path: target/miri-logs/
+          if-no-files-found: ignore
+
+  prune-cache-miri-with-nix:
+    needs: miri-with-nix
+    if: ${{ !cancelled() && github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/prune-rust-cache.yml
+    with:
+      key-prefix: v0-rust-miri-

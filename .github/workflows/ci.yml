@@ -15,8 +15,7 @@ on:
 permissions:
   contents: read
 
-# A newer push to a branch cancels its runs still going; on main every
-# run finishes.
+# Cancel previous run (when not on main branch)
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -38,8 +37,8 @@ jobs:
           target: wasm32-wasip1
           cache-shared-key: without-nix
           cache-save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
-      # libghostty-vt-sys builds libghostty-vt from source with Zig.
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      - name: Setup zig for libghostty-vt builds
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.15.2
           use-cache: false
@@ -51,7 +50,6 @@ jobs:
 
   # rustfmt, clippy (warnings are errors) and tests, fixtures built with TeX
   # from the `ci` dev shell. End-to-end terminal tests stay local (doc/dev/testing.md).
-  # Miri runs in a job of its own, beside this one.
   check-with-nix:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -64,7 +62,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       # The shell's cargo and rustc on PATH: rust-cache runs outside the shell.
-      - run: nix develop .#ci --command bash -c 'dirname "$(command -v cargo)"; dirname "$(command -v rustc)"' >>"$GITHUB_PATH"
+      - run: |
+          # The single quote after `bash -c` is intentional.
+          # shellcheck disable=SC2016
+          nix develop .#ci --command bash -c 'dirname "$(command -v cargo)"; dirname "$(command -v rustc)"' >>"$GITHUB_PATH"
       # rust-cache keys by every toolchain rustup lists, and the runner
       # image's own stable differs between images; without rustup it keys
       # by the shell's rustc alone.
@@ -75,48 +76,18 @@ jobs:
           # Keys are `v0-rust-check-Linux-X64-...`; `prune-cache-check-with-nix` matches `v0-rust-check-`.
           shared-key: check
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
-      # The shipped scripts' npm packages (tsc reads their types).
-      - run: nix develop .#ci --command npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund
+      - name: Install npm dependencies
+        run: nix develop .#ci --command npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund
       # Each step's output as it comes, in a log group of its own.
-      - run: nix develop .#ci --command cargo xtask check --stream --no-miri
-      # What a failure leaves: the whole outputs, and the screens of failed
-      # simulated-terminal waits.
-      - if: failure()
+      - run: nix develop .#ci --command cargo xtask check --stream
+      - name: Upload logs of check and tuitest on failure
+        if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: check-logs
           path: |
             target/check/
             target/tuitest/
-          if-no-files-found: ignore
-
-  # The unit tests under Miri (scripts/miri.sh), with the nightly toolchain of
-  # the `ci-miri` dev shell.
-  miri-with-nix:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
-      - run: nix develop .#ci-miri --command bash -c 'dirname "$(command -v cargo)"' >>"$GITHUB_PATH"
-      # As in `check-with-nix`.
-      - run: rustup self uninstall -y
-      # Also Miri's standard library, built by `cargo miri setup`.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          # Keys are `v0-rust-miri-Linux-X64-...`; `prune-cache-miri-with-nix` matches `v0-rust-miri-`.
-          shared-key: miri
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
-          cache-directories: ~/.cache/miri
-      - run: nix develop .#ci-miri --command scripts/miri.sh
-      # Each failed test's log (named on its FAIL line).
-      - if: failure()
-        run: tail -n +1 target/miri-logs/*.log
-      - if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: miri-logs
-          path: target/miri-logs/
           if-no-files-found: ignore
 
   # The package output (`nix build`).
@@ -152,12 +123,3 @@ jobs:
     uses: ./.github/workflows/prune-rust-cache.yml
     with:
       key-prefix: v0-rust-check-
-
-  prune-cache-miri-with-nix:
-    needs: miri-with-nix
-    if: ${{ !cancelled() && github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
-    permissions:
-      actions: write
-    uses: ./.github/workflows/prune-rust-cache.yml
-    with:
-      key-prefix: v0-rust-miri-

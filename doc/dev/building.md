@@ -35,12 +35,16 @@ rust-cache's restores fail with it (`todo.md`).
 
 CI (`.github/workflows/ci.yml`) runs `npm ci` and
 `cargo xtask check --stream` in `nix develop .#ci` (job
-`check-with-nix`), `scripts/miri.sh` in `.#ci-miri` as a job of its own
-(`miri-with-nix`; both keep built dependencies with
-`Swatinem/rust-cache`), and `nix build` on Linux and macOS
+`check-with-nix`, without Miri) and `nix build` on Linux and macOS
 (`build-with-nix`). Its job `build` builds `temzdf` and `temzdf-gui` on
 Ubuntu without Nix and starts them (`scripts/smoke-session.sh`: a session
 splits its pane on `<C-b>%`).
+
+The slower checks are a workflow of their own, Advanced CI
+(`.github/workflows/advanced-ci.yml`), on the same events:
+`scripts/miri.sh` in `.#ci-miri` (job `miri-with-nix`). Both
+`check-with-nix` and `miri-with-nix` keep built dependencies with
+`Swatinem/rust-cache`.
 
 The Rust caches (of `build`, `check-with-nix` and `miri-with-nix`) are
 saved only by pushes to `dev` and `main`, and a job after each
