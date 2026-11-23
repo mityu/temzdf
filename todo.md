@@ -430,6 +430,23 @@ server on one `Session`). Next and open:
     workers, ahead of the pane, through the tile schedule PDF tiles use).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
+- The e2e harness in TypeScript (decided with the user on 2026-11-23; not
+  before `windows-port`, whose `-d windows` backend adds about 400 lines
+  to `scripts/e2e.sh`, is merged): `scripts/e2e.sh`, `scripts/e2e-all.sh`
+  and the action files (`tests/e2e/*.actions`, sourced by the harness, so
+  moved together) as Node TypeScript under `scripts/`, type-checked by
+  `tsc -p scripts`. The action files become plain TypeScript (`await
+  keys("q")`), for type checks of helper names and arguments; the few
+  shell lines (line numbers by `grep | cut`, `check ... sh -c`, pipes into
+  `magick`) become TypeScript or a small `` sh`...` `` helper. ImageMagick
+  stays, behind a thin typed wrapper for the shapes used (crop to the cell
+  grid, composite a mask, count differing pixels, a few queries, a
+  gradient; anything else as raw arguments), which also tells `compare`'s
+  "differ" (exit 1) from its failures (exit 2), both swallowed by `|| true`
+  today. The hard part: cleanup (traps, children, Xvfb/sway re-execution);
+  Windows' QMP can then be spoken over `node:net` instead of a socat
+  coprocess. Linux is checked by `scripts/e2e-all.sh` here; macOS and
+  Windows need their VMs.
 - Judged e2e (`expect` in `scripts/e2e.sh`, `doc/dev/testing.md`) covers keys and
   mouse input in kitty, WezTerm and Ghostty (keys also in tmux and zellij);
   sessions are judged against `temzdf render-session` (the text too in kitty
