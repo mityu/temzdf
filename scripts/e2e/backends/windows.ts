@@ -8,7 +8,7 @@
 // scheduled task on it (onDesktop): SSH's session has none. "Windows in a
 // VM" in doc/dev/testing.md says why each thing is so.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { charKey, isModifierQcode, qcodes, tablet } from "../keys.ts";
@@ -67,6 +67,10 @@ export class Qmp {
 
   /** A JSON line to QMP; its answer, skipping the events in between. */
   async command(json: string, signal: AbortSignal): Promise<void> {
+    // E2E_QMP_LOG: when each command went out (milliseconds since the
+    // epoch), for comparing the timing of input.
+    const log = process.env.E2E_QMP_LOG;
+    if (log) appendFileSync(log, `${Date.now() / 1000} ${json}\n`);
     this.#sock.write(`${json}\n`);
     for (;;) {
       const line = await this.#line(10, signal);
@@ -168,6 +172,19 @@ export function windows(procs: Procs, st: WinState): Backend {
     return names[btn];
   };
   const press = (down: boolean, b: string) => events(`{"type":"btn","data":{"down":${down},"button":"${b}"}}`);
+  // When the last event went out (performance.now()).
+  let last = 0;
+  // A press or a release 50 ms or more after what came before, and the
+  // next event 50 ms after it, as scripts/e2e.sh's took them (measured
+  // there: 54 ms from a move to a press, 48 ms from a press to the drag's
+  // first move; its 30 ms waits plus the time its subshells took). With 30
+  // ms the guest read a press still queued when the drag's first move came
+  // at that move's position: the selection of gui's drag lost its first
+  // characters every time ("Windows in a VM", doc/dev/testing.md).
+  const settle = async (ms: number) => {
+    const wait = last + ms - performance.now();
+    if (wait > 0) await pause(wait / 1000, signal);
+  };
   const key = (down: boolean, q: string) =>
     events(`{"type":"key","data":{"down":${down},"key":{"type":"qcode","data":"${q}"}}}`);
   // A modifier and the key or button after it reach the guest as separate
@@ -192,13 +209,16 @@ export function windows(procs: Procs, st: WinState): Backend {
         `{"type":"abs","data":{"axis":"x","value":${tablet(x, st.screen.w)}}},{"type":"abs","data":{"axis":"y","value":${tablet(y, st.screen.h)}}}`,
       );
       st.ptr = { x, y };
+      last = performance.now();
       // A precaution: a press still queued when a drag's first move comes
       // can take that move's position (QEMU merges reports not read yet).
       await gap();
     },
     async button(state, btn) {
+      await settle(50);
       await press(state === "down", qmpButton(btn));
-      await gap();
+      last = performance.now();
+      await settle(50);
     },
     // A wheel notch is a press and a release of a button, too.
     async clicks(btn, n, delayMs) {
