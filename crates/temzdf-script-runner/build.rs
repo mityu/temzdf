@@ -41,7 +41,14 @@ fn main() {
     config.target(&env("TARGET")).expect("a target wasmtime can compile for");
     engine_config::configure(&mut config);
     let engine = wasmtime::Engine::new(&config).expect("wasmtime's engine");
-    let compiled = engine.precompile_module(&wasm).expect("precompiling the script host's guest");
+    // On a thread of its own: Cranelift overflowed the main thread's stack
+    // on Windows (1 MiB there, 8 MiB on Linux) in a release build.
+    let compiled = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || engine.precompile_module(&wasm).expect("precompiling the script host's guest"))
+        .expect("a thread for precompiling")
+        .join()
+        .expect("precompiling the script host's guest");
     std::fs::write(&dest, compiled).unwrap();
 }
 
