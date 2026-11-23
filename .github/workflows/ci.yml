@@ -100,8 +100,11 @@ jobs:
       # Windows builds with MSYS2's UCRT64 (doc/survey/windows-port.md), as
       # scripts/windows/provision.ps1 sets up the VM: its Rust (clippy and
       # rustfmt included, wasm32-wasip1 in -rust-wasm), GCC, Clang for
-      # bindgen's libclang, pkgconf and make (mupdf-sys's build). MSYS2's
-      # packages cannot be pinned: each run takes the current ones.
+      # bindgen's libclang, pkgconf and make (mupdf-sys's build), and its
+      # WASI sysroot, builtins, wasm-ld and llvm for QuickJS's C in the
+      # script guest (WASI_SDK below, instead of the wasi-sdk rquickjs-sys
+      # downloads, whose clang needs the MSVC runtime). MSYS2's packages
+      # cannot be pinned: each run takes the current ones.
       - uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c # v2.34.0
         id: msys2
         with:
@@ -114,6 +117,10 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-clang
             mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-wasi-libc
+            mingw-w64-ucrt-x86_64-wasi-compiler-rt
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-llvm
             make
       # UCRT64's bin on PATH for the PowerShell steps after (rust-cache asks
       # rustc for its version), not MSYS2's usr/bin (whose link.exe and
@@ -122,6 +129,7 @@ jobs:
       - run: |
           "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin" >> $env:GITHUB_PATH
           "LIBCLANG_PATH=${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin" >> $env:GITHUB_ENV
+          "WASI_SDK=${{ steps.msys2.outputs.msys2-location }}/ucrt64" >> $env:GITHUB_ENV
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Keys are `v0-rust-windows-Windows-X64-...`; `prune-cache-windows` matches `v0-rust-windows-`.
