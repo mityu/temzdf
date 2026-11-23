@@ -332,6 +332,8 @@ impl Session {
         self.script.loading = None;
         self.script.tasks.clear();
         self.script.atomic = None;
+        // Nothing runs any more (a host started next starts its own clock).
+        self.script.busy_since = None;
         // Their Promises went with the host.
         self.test.drop_waiters();
         let mut out = Outcome::None;
@@ -428,18 +430,34 @@ impl Session {
         true
     }
 
+    /// Work starts (a call, an evaluation, a task's atomic section): the
+    /// clock of how long frames may wait starts unless it already runs.
+    fn begin_busy(&mut self) {
+        if !self.script.busy() || self.script.busy_since.is_none() {
+            self.script.busy_since = Some(Instant::now());
+            self.script.notice_shown = false;
+        }
+    }
+
+    /// A call that never started leaves no clock behind when nothing else
+    /// runs: hooks queued before their call (which find the session busy)
+    /// would count from it.
+    fn idle_clock(&mut self) {
+        if !self.script.busy() {
+            self.script.busy_since = None;
+        }
+    }
+
     /// Send a call to the host and wait for it on the frame stack.
     pub(super) fn call(&mut self, func: FuncId, args: Vec<ScriptValue>, hook: bool) {
         let id = self.script.next_call;
         self.script.next_call += 1;
-        if self.script.frames.is_empty() && self.script.atomic.is_none() {
-            self.script.busy_since = Some(Instant::now());
-            self.script.notice_shown = false;
-        }
+        self.begin_busy();
         let nested = self.script.answering();
         self.script.frames.push(Frame::Call { id, hook });
         if !self.script.send(&ToHost::Call { id, func, args, nested }) {
             self.script.frames.pop();
+            self.idle_clock();
         }
     }
 
@@ -449,14 +467,12 @@ impl Session {
     pub(super) fn eval(&mut self, funcs: Vec<FuncId>, args: Vec<ScriptValue>) {
         let id = self.script.next_call;
         self.script.next_call += 1;
-        if self.script.frames.is_empty() && self.script.atomic.is_none() {
-            self.script.busy_since = Some(Instant::now());
-            self.script.notice_shown = false;
-        }
+        self.begin_busy();
         let nested = self.script.answering();
         self.script.frames.push(Frame::Eval { id, funcs: funcs.clone() });
         if !self.script.send(&ToHost::Eval { id, funcs: funcs.clone(), args, nested }) {
             self.script.frames.pop();
+            self.idle_clock();
             // No host: no condition holds.
             self.matcher.set_conditions(funcs.into_iter().map(|f| (f, false)));
         }
@@ -684,7 +700,6 @@ impl Session {
 
     /// Nothing runs any more: deferred hooks, then held input.
     fn after_scripts(&mut self) -> Outcome {
-        self.script.busy_since = None;
         let mut out = Outcome::Redraw;
         if !self.script.deferred_events.is_empty() {
             let events = std::mem::take(&mut self.script.deferred_events);
@@ -717,6 +732,9 @@ impl Session {
         if self.script.busy() {
             return out.merge(scrolled);
         }
+        // Only now does nothing run: hooks that followed one another
+        // counted from when the first began.
+        self.script.busy_since = None;
         let now = self.now();
         // Keys the matcher still holds came before the held ones.
         out = out.merge(self.drive(now));
@@ -832,10 +850,7 @@ impl Session {
             }
             FromHost::AtomicBegin(token) => {
                 if self.script.token_valid(token) && self.script.atomic.is_none() {
-                    if self.script.frames.is_empty() {
-                        self.script.busy_since = Some(Instant::now());
-                        self.script.notice_shown = false;
-                    }
+                    self.begin_busy();
                     self.script.atomic = Some(token);
                 }
                 Outcome::None
@@ -1280,6 +1295,48 @@ mod tests {
         s.script.atomic = Some(Token::Task(2));
         let _ = s.handle_script(FromHost::TaskDone { task: 2, result: Err(ScriptError::new("interrupted")) });
         assert!(!s.holds_input());
+    }
+
+    #[test]
+    fn frames_wait_for_a_script_that_starts_under_queued_hooks() {
+        let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
+        let settings = super::super::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let geometry = termpix_core::geom::Geometry {
+            cols: 80,
+            rows: 24,
+            cell: termpix_core::geom::CellSize { width: 10, height: 20 },
+        };
+        let mut s = Session::new("t".into(), geometry, Default::default(), settings, sink);
+        let queued = || Frame::Hooks { queue: VecDeque::new(), depth: 0, pre: false };
+        // Hooks were queued (an event flushed, a "before" hook) and a task
+        // began an atomic section under them: frames wait for it.
+        s.script.frames.push(queued());
+        s.script.tasks.insert(1);
+        let _ = s.handle_script(FromHost::AtomicBegin(Token::Task(1)));
+        assert!(s.holds_frames(), "frames wait for the section");
+        // A second on, they show, with the notice.
+        s.script.busy_since = Some(Instant::now() - BUSY_NOTICE - Duration::from_millis(1));
+        assert!(!s.holds_frames(), "not past the notice");
+        let notices = s.notices.len();
+        assert_eq!(s.poll(Instant::now()), Outcome::Redraw);
+        assert!(s.script.notice_shown && s.notices.len() == notices + 1, "the notice says so");
+        // Once nothing runs, no clock is left over.
+        let _ = s.handle_script(FromHost::AtomicEnd(Token::Task(1)));
+        assert!(!s.holds_input());
+        assert!(s.script.busy_since.is_none(), "the clock stops when nothing runs");
+        // Work that starts after a pause counts from its own start, even
+        // over a clock somehow left behind.
+        s.script.busy_since = Some(Instant::now() - BUSY_NOTICE - Duration::from_millis(1));
+        let _ = s.handle_script(FromHost::AtomicBegin(Token::Task(1)));
+        assert!(s.holds_frames(), "a new start, a new clock");
+        assert!(!s.script.notice_shown);
+        let _ = s.handle_script(FromHost::AtomicEnd(Token::Task(1)));
+        // What starts while something runs counts from the first start.
+        let started = Instant::now() - Duration::from_millis(500);
+        s.script.frames.push(queued());
+        s.script.busy_since = Some(started);
+        let _ = s.handle_script(FromHost::AtomicBegin(Token::Task(1)));
+        assert_eq!(s.script.busy_since, Some(started), "the clock runs on");
     }
 
     #[test]
