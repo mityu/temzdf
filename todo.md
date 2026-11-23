@@ -268,8 +268,20 @@ server on one `Session`). Next and open:
     changes nothing. A side-loaded `conpty.dll` + `OpenConsole.exe`
     (NuGet `Microsoft.Windows.Console.ConPTY` 1.25.261109001) passes kitty
     graphics, XTGETTCAP, DA1 and DECRQM through, with either flag. Still
-    to try: the probes inside Windows Terminal and WezTerm, and shipping
-    `conpty.dll` with temzdf (portable-pty loading it).
+    to try: the probes inside Windows Terminal and WezTerm.
+    Terminal panes on Windows start with the in-box ConPTY through
+    portable-pty, not a shipped one (the user, 2026-11-23): only images
+    from programs in terminal panes are lost, PDF panes and the GUI draw
+    without ConPTY, and the tty frontend's own images depend on the
+    terminal it runs in (its ConPTY). Shipping `conpty.dll` +
+    `OpenConsole.exe` (pinned from NuGet at build time, as the Ghostty
+    fork noctty does) waits; perhaps Windows gets the newer ConPTY
+    itself (microsoft/terminal#17510 passes the program's output
+    through unchanged; the in-box conhost of 25H2 does not yet). The
+    survey of what the server lacks on Windows (inverse search quoting
+    for cmd, no `CREATE_NO_WINDOW`, OSC 7's `/C:/` paths, `ls-fonts`
+    without a session, a Job Object to end a pane's process tree, the
+    pty tests needing `sh`) is to go into `doc/survey/windows-port.md`.
   - The product: compile (gate `rustix`, `signal-hook`, `libc`;
     build tooling), the transport
     (`uds_windows`), directories and processes (the GUI attached to a
