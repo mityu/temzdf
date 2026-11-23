@@ -63,7 +63,8 @@ UCRT64's `bin` on `PATH`, prints the tools it found, runs the gate in
 UCRT64's shell (`shell: msys2`, which also has MSYS2's `usr/bin` with
 `make`) and keeps the build in `Swatinem/rust-cache`. MSYS2's packages
 are not pinned: each run takes the current ones. It also installs
-Node 24, runs `npm ci` and installs Biome 2.6.8 globally. The Linux gate
+Node 24, runs `npm ci` and installs Biome 2.6.8 and esbuild 0.27.2
+globally. The Linux gate
 also checks the crates of `WINDOWS_CRATES` for `x86_64-pc-windows-gnu`
 (step `windows`, a clippy run with `-D warnings`; those of
 `WINDOWS_ONLY_CRATES` build C for the target, which the dev shell has no
