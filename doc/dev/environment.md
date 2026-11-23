@@ -42,7 +42,9 @@ them; tsc and editors read the packages' types there).
 
 To add one: `npm install PKG` in `runtime/` (widely used, maintained,
 plain ES code: it runs in QuickJS; its install scripts never run,
-`runtime/.npmrc`).
+`runtime/.npmrc`). JSR's packages come through its npm registry
+(`runtime/.npmrc` points `@jsr` there): `npm install
+@std/NAME@npm:@jsr/std__NAME`, as `@std/path`.
 
 `nix build` has Nix build the same lock file into `$TEMZDF_NODE_MODULES`
 (no network in builds; the dev shells set it too, used where

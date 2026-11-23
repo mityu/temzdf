@@ -280,6 +280,10 @@ server on one `Session`). Next and open:
   with it. Without one, `nix build` builds crane's `.#deps` and the guest
   every run, and the dev shells build libghostty-vt. Cachix would keep the
   store outside GitHub's cache (an account and a signing key needed).
+- Watch the maintenance of JSR's `@std/path` (the planned `temzdf/path`,
+  2026-11-23): Deno the company announced the end of its maintenance of
+  Deno next year; a community may carry on, but what becomes of `@std/path`
+  is unknown. Path handling is mature, so this may never matter.
 - libtexprintf as a crate of its own (like a `libtexprintf-sys`) compiling
   its C with `cc`: builds without Nix would need neither autotools nor a
   pkg-config file of ours (`scripts/deps-without-nix.sh`). Not now.
