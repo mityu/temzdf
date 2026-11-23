@@ -262,7 +262,7 @@ panes and the Markdown graphics mode do not fire it.
 | `pdf` | `n` / `N` | next / previous match of the search (`searchFor`; counts) |
 | `pdf` | `y` | copy the selection (into the copy history and the clipboard) |
 | `pdf` | `<Tab>` | outline |
-| `input` | `<BS>` `<C-h>` / `<Del>` `<C-d>` | delete the character before / after the caret |
+| `input` | `<BS>` `<C-h>` / `<Del>` `<C-d>` | delete the character before / after the caret; `<BS>` `<C-h>` on an empty `<C-b>:` command line cancels it, as the Vim mode's `:` does |
 | `input` | `<Left>` / `<Right>` / `<Home>` `<C-a>` / `<End>` `<C-e>` | caret: a character left / right, the start / end |
 | `input` | `<M-b>` `<C-Left>` / `<M-f>` `<C-Right>` | caret: a word left / right |
 | `input` | `<Up>` / `<Down>` | caret: a line up / down |

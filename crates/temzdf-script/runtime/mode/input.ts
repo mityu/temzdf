@@ -3,6 +3,7 @@
 // Defined when enabled: `import input from "temzdf/mode/input";
 // input.enable();`.
 import { acceptPrompt, action, cancelPrompt } from "temzdf";
+import { isCmdline } from "temzdf/command";
 import { keyset } from "temzdf/keyset";
 import { prefix } from "../lib/prefix";
 
@@ -10,7 +11,15 @@ import { prefix } from "../lib/prefix";
 export default keyset("builtin-mode-input", (d) => {
   // The input mode (prompts): editing with readline's keys, <CR> runs the
   // cursor's line, <Esc> cancels, the prefix. Pasted lines go in as they are.
-  d.map("input", ["<BS>", "<C-h>"], () => action.text.erase("grapheme", -1));
+  // <BS> on an empty Ex command line (<C-b>:) cancels it, as Vim's.
+  d.map("input", ["<BS>", "<C-h>"], () => {
+    // As the Vim mode's (vim/cmdline.ts backspace): one line, and empty.
+    if (isCmdline() && action.text.lineCount() === 1 && action.text.line(0) === "") {
+      cancelPrompt();
+    } else {
+      action.text.erase("grapheme", -1);
+    }
+  });
   d.map("input", ["<Del>", "<C-d>"], () => action.text.erase("grapheme", 1));
   // (Not readline's <C-b> and <C-f>: <C-b> is the prefix.)
   d.map("input", ["<Left>"], () => action.text.move("grapheme", -1));
