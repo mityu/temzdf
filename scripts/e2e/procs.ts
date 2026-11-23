@@ -8,6 +8,7 @@
 
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
 import { once } from "node:events";
+import { closeSync, openSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 export interface Result {
@@ -43,6 +44,10 @@ export class Procs {
   exec(cmd: string, args: readonly string[], opts: ExecOptions = {}): Promise<Result> {
     this.signal.throwIfAborted();
     return new Promise((resolve, reject) => {
+      // Ends at once on an abort, whatever the command left holding its
+      // output.
+      const onAbort = () => reject(this.signal.reason);
+      this.signal.addEventListener("abort", onAbort, { once: true });
       const child = execFile(
         cmd,
         args,
@@ -55,6 +60,7 @@ export class Procs {
           encoding: "utf8",
         },
         (err, stdout, stderr) => {
+          this.signal.removeEventListener("abort", onAbort);
           if (this.signal.aborted) return reject(this.signal.reason);
           if (err && typeof err.code !== "number" && !err.killed) return reject(err);
           resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr });
@@ -72,6 +78,24 @@ export class Procs {
     const child = spawn(cmd, args, { env: env ?? this.env, stdio: ["pipe", "ignore", "ignore"], signal: this.signal });
     child.on("error", () => {});
     child.stdin!.end(input);
+    const [code] = (await once(child, "exit", { signal: this.signal })) as [number | null];
+    return code ?? 1;
+  }
+
+  /** Runs a command to its exit with its output appended to the file LOG,
+   * not read: for one that goes into the background holding it (`fcitx5
+   * -d`, `ssh -f`; reading its output would wait for that process). Its
+   * exit status. */
+  async logged(cmd: string, args: readonly string[], log: string, env?: NodeJS.ProcessEnv): Promise<number> {
+    this.signal.throwIfAborted();
+    const fd = openSync(log, "a");
+    let child: ChildProcess;
+    try {
+      child = spawn(cmd, args, { env: env ?? this.env, stdio: ["ignore", fd, fd], signal: this.signal });
+    } finally {
+      closeSync(fd);
+    }
+    child.on("error", () => {});
     const [code] = (await once(child, "exit", { signal: this.signal })) as [number | null];
     return code ?? 1;
   }

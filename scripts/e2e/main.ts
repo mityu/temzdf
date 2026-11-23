@@ -90,7 +90,23 @@ async function main(argv: string[]): Promise<number> {
   };
   if (opts.command?.length === 0) fail("an empty COMMAND");
   process.env[optionsVar] = JSON.stringify([opts]);
-  const stream = run({ files: [file], concurrency: 1, isolation: "process" });
+  // forceExit: the scenario's process ends with its tests, whatever a
+  // command it ran left behind.
+  // Ctrl+C or SIGTERM here ends the scenario's process with its cleanup
+  // (scenario.ts), then this one.
+  const abort = new AbortController();
+  let stopped: number | undefined;
+  for (const [sig, n] of [
+    ["SIGINT", 2],
+    ["SIGTERM", 15],
+    ["SIGHUP", 1],
+  ] as const) {
+    process.on(sig, () => {
+      stopped ??= 128 + n;
+      abort.abort();
+    });
+  }
+  const stream = run({ files: [file], concurrency: 1, isolation: "process", forceExit: true, signal: abort.signal });
   stream.on("test:stdout", (e) => process.stdout.write(e.message));
   stream.on("test:stderr", (e) => process.stderr.write(e.message));
   stream.on("test:fail", (e) => {
@@ -105,6 +121,7 @@ async function main(argv: string[]): Promise<number> {
   // The stream has to be read for the run to go on.
   for await (const _ of stream) {
   }
+  if (stopped !== undefined) return stopped;
   let result: RunResult | undefined;
   try {
     result = JSON.parse(readFileSync(path.join(outdir, "result.json"), "utf8")) as RunResult;

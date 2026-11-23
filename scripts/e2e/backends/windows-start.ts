@@ -36,7 +36,9 @@ export async function startWindows(r: Run): Promise<void> {
     "-o",
     "ControlPersist=yes",
   ];
-  await r.procs.run("ssh", [...sshOpts, "-MNf", host]);
+  if ((await r.procs.logged("ssh", [...sshOpts, "-MNf", host], r.path("guest.log"))) !== 0) {
+    throw new StartError("e2e: no SSH connection to the guest (see guest.log)");
+  }
   r.procs.defer(() => r.procs.exec("ssh", [...sshOpts, "-O", "exit", host]));
   const qmpSocket = (await r.procs.run("scripts/windows-vm.sh", ["qmp-socket"])).trim();
   const qmp = await Qmp.connect(qmpSocket, r.signal);

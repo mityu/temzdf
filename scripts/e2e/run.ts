@@ -301,9 +301,12 @@ export class Run {
 
   /** A session bus (an input method needs one), as dbus-run-session gives. */
   async startSessionBus(): Promise<void> {
+    // With the runtime directory the harness was given (scripts/e2e.sh
+    // started its bus before making the run's): what the bus starts (gvfs,
+    // the document portal) mounts there, not in the run's.
     const bus = this.procs.start("dbus-daemon", ["--session", "--nofork", "--print-address=3"], {
       stdio: ["ignore", "ignore", "ignore", "pipe"],
-      env: this.env,
+      env: { ...this.env, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR },
     });
     const address = await readLine(bus, 3, 10, this.signal);
     if (!address) throw new StartError("e2e: no session bus");
@@ -526,8 +529,7 @@ export class Run {
       "[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=mozc\n\n[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n[Groups/0/Items/1]\nName=mozc\nLayout=\n\n[GroupOrder]\n0=Default\n",
     );
     const env = { ...this.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config") };
-    const r = await this.procs.exec("fcitx5", ["-d", "--replace"], { env });
-    writeFileSync(this.path("ime.log"), r.stdout + r.stderr);
+    await this.procs.logged("fcitx5", ["-d", "--replace"], this.path("ime.log"), env);
     this.procs.defer(async () => {
       await this.procs.exec("fcitx5-remote", ["-e"], { env: this.env }).catch(() => {});
       killByEnv(`HOME=${home}`);

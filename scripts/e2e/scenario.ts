@@ -58,9 +58,21 @@ async function runScenario(t: TestContext, o: Options, def: ScenarioDef, body: B
   const result: RunResult = { done: false, crashed: false };
   const write = () => writeFileSync(r.path("result.json"), `${JSON.stringify(result)}\n`);
   t.after(() => r.procs.cleanup());
+  // A signal (Ctrl+C reaches this process, main.ts passes SIGTERM on)
+  // ends the run with its cleanup: what it started is in process groups of
+  // its own, which the signal does not reach. The exit handler is the last
+  // resort.
+  const signals = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 } as const;
+  const onSignal = (sig: keyof typeof signals) => {
+    void r.procs.cleanup().finally(() => process.exit(128 + signals[sig]));
+  };
+  for (const sig of Object.keys(signals) as (keyof typeof signals)[]) process.once(sig, onSignal);
   const onExit = () => r.procs.killAllSync();
   process.on("exit", onExit);
-  t.after(() => process.off("exit", onExit));
+  t.after(() => {
+    process.off("exit", onExit);
+    for (const sig of Object.keys(signals) as (keyof typeof signals)[]) process.off(sig, onSignal);
+  });
   r.report = async (verdict, name, line) => {
     await t.test(name, (s) => {
       if (verdict === "SKIP") s.skip(line);
