@@ -65,12 +65,12 @@ or did differently there. "Since" notes what was done afterwards.
 |---|---|---|
 | Terminal panes | `crates/temzdf-term/src/pty.rs` | Off (`Unsupported`). Since: in the in-box ConPTY (below) |
 | `ls-fonts` without a session | `crates/temzdf/src/lsfonts.rs` | Starts a pane running `true` so that the configuration is read (it is read before the first pane opens); Windows has no `true`. A way to read the configuration without a pane would fix it; postponed, as the user may stop resolving the configuration's fonts there |
-| A console window for inverse search | `run_shell` in `crates/temzdf-client/src/lib.rs` | The server (`DETACHED_PROCESS`) and `temzdf-gui` have no console, so the `cmd` that runs the command opens a window of its own; `CREATE_NO_WINDOW` avoids it |
+| A console window for inverse search | `run_shell` in `crates/temzdf-client/src/lib.rs` | The server (`DETACHED_PROCESS`) and `temzdf-gui` have no console, so the `cmd` that runs the command opens a window of its own. Since: `CREATE_NO_WINDOW` |
 | The default shell | `default_shell` in `crates/temzdf-term/src/lib.rs` | `%COMSPEC%` (cmd.exe) already; it stays the default (the user, 2026-11-23) |
 | An external editor | none | Nothing opens `$EDITOR` yet. If something does: `CreateProcess` completes only `.exe`, so `.cmd` and `.bat` editors need cmd |
 | The clipboard | `session/registers.rs` | The server has none: clients get OSC 52 or `ClientMsg::Clipboard`; the GUI's works on Windows (`gui.actions` copies) |
 | Signals | `pty.rs` (the panes' hang-up and kill) | Nothing else in the server uses signals; `kill-session` goes over the socket. Ctrl+C and Ctrl+Break of a server were not looked at (it runs detached) |
-| OSC 7 working directories | `path_of_url` in `crates/temzdf-term/src/lib.rs` | `file:///C:/x` became `/C:/x`. cmd and PowerShell do not send OSC 7 unless configured to |
+| OSC 7 working directories | `path_of_url` in `crates/temzdf-term/src/lib.rs` | `file:///C:/x` became `/C:/x`. Since: `C:/x`. cmd and PowerShell do not send OSC 7 unless configured to |
 | Images from programs by file, temporary file or shared memory | `TermBuffer::spawn` | Moot with the in-box ConPTY (APC is dropped). With a shipped `conpty.dll`: Windows paths in `t=f` and `t=t` are untried, `t=s` names POSIX shared memory |
 | Shared-memory pixels | `crates/temzdf-protocol/src/shared.rs` | None on Windows: every image travels on the socket (known; only speed) |
 | The host name of swap files | `host` in `crates/temzdf-server/src/session/swap.rs` | Reads `/proc/sys/kernel/hostname`, `/etc/hostname` and `HOSTNAME`, none of which Windows has (`COMPUTERNAME` is), so the host is empty there |

@@ -65,6 +65,12 @@ pub struct Spawn {
 /// The path in what OSC 7 carries: a `file://host/path` URL, percent-encoded
 /// (spaces, non-ASCII names), or (some shells) a bare path.
 fn path_of_url(url: &str) -> PathBuf {
+    path_from_bytes(url_path(url, cfg!(windows)))
+}
+
+/// The bytes of [`path_of_url`]'s path, decoded. With `drives` (Windows)
+/// the slash before a drive goes: a URL's `/C:/x` is `C:/x`.
+fn url_path(url: &str, drives: bool) -> Vec<u8> {
     let path = url.strip_prefix("file://").map_or(url, |rest| rest.find('/').map_or(rest, |i| &rest[i..]));
     let bytes = path.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -82,7 +88,10 @@ fn path_of_url(url: &str) -> PathBuf {
             }
         }
     }
-    path_from_bytes(out)
+    if drives && matches!(out[..], [b'/', drive, b':', b'/', ..] if drive.is_ascii_alphabetic()) {
+        out.remove(0);
+    }
+    out
 }
 
 #[cfg(unix)]
@@ -990,6 +999,14 @@ mod tests {
         assert_eq!(path_of_url("file:///tmp/a"), PathBuf::from("/tmp/a"));
         assert_eq!(path_of_url("/plain/path"), PathBuf::from("/plain/path"));
         assert_eq!(path_of_url("file://h/50%"), PathBuf::from("/50%"), "a lone % stays");
+    }
+
+    #[test]
+    fn windows_paths_from_osc7_lose_the_slash_before_the_drive() {
+        assert_eq!(url_path("file:///C:/Users/me/my%20docs", true), b"C:/Users/me/my docs");
+        assert_eq!(url_path("file://host/d:/x", true), b"d:/x");
+        assert_eq!(url_path("file:///tmp/a", true), b"/tmp/a", "no drive");
+        assert_eq!(url_path("file:///C:/x", false), b"/C:/x", "not on Unix");
     }
     use std::sync::mpsc;
     use std::time::Duration;

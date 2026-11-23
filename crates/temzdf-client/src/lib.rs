@@ -414,12 +414,15 @@ fn shell(cmd: &str) -> std::process::Command {
 }
 
 /// `cmd /S /C "CMD"`, CMD as written: cmd.exe parses it, not the C
-/// runtime's quoting rules (`/S`: only the outer quotes go).
+/// runtime's quoting rules (`/S`: only the outer quotes go). Without a
+/// window: started by the server or the GUI, which have no console, cmd
+/// would open a console window of its own.
 #[cfg(windows)]
 fn shell(cmd: &str) -> std::process::Command {
     use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut c = std::process::Command::new("cmd");
-    c.args(["/S", "/C"]).raw_arg(format!("\"{cmd}\""));
+    c.args(["/S", "/C"]).raw_arg(format!("\"{cmd}\"")).creation_flags(CREATE_NO_WINDOW);
     c
 }
 
