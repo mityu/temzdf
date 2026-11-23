@@ -298,8 +298,16 @@ server on one `Session`). Next and open:
     guest reading files on Windows: the runner preopens `/` only, so
     `C:\...` paths are refused (WASI's `EPERM`, os error 63): no user
     configuration, no imports, no `temzdf test` (the shipped defaults
-    load); a mapping of Windows paths (drives, UNC) into the guest is to
-    be decided. Then `temzdf-script-runner` (3 of its 30 tests pass on
+    load). Preopening each drive was tried and dropped (junctions and
+    symlinks with absolute targets still count as escapes, UNC paths and
+    drives added later are not covered). Waits for `node:fs` and
+    `node:path` on `dev`: then the module loader reads through the same
+    host functions (native paths, std::fs on the host), the `/` preopen
+    goes, and the guest's path code learns Windows semantics from a flag
+    the host sends. Likely on Unix too, unchecked: a configuration that
+    is a symlink with an absolute target (home-manager's
+    `xdg.configFile`) fails the same way under the `/` preopen.
+    Then `temzdf-script-runner` (3 of its 30 tests pass on
     Windows now) and the js tests join the gate there. `ls-fonts`
     without a session starts a terminal pane for the configuration.
   - The tests: a helper program instead of `sh` in the pty tests; the
