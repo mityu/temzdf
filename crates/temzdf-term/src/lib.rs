@@ -1527,7 +1527,7 @@ mod tests {
             unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 1) };
             let (mut pane, rx) = cmd();
             pane.send_text("ping -t 127.0.0.1\r");
-            let replies = |r: &[String]| r.iter().filter(|l| l.starts_with("Reply")).count() >= 2;
+            let replies = |r: &[String]| r.iter().filter(|l| l.contains("TTL=")).count() >= 2;
             assert!(replies(&wait(&mut pane, &rx, replies)), "ping runs");
             pane.key(&KeyEvent::new(KeyCode::Char('c'), Modifiers::CTRL));
             // ping ends (its summary), and cmd prompts again.

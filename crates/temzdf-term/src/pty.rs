@@ -93,7 +93,7 @@ pub(crate) fn supported() -> io::Result<()> {
 /// Ready this process to start a program in a pane. On Windows: a
 /// program inherits whether its process ignores Ctrl+C, and the server
 /// does (a client starts it with `CREATE_NEW_PROCESS_GROUP`, which sets
-/// that; so does OpenSSH), so without this Ctrl+C typed in a pane would
+/// that; the tests' processes under OpenSSH in the VM did too), so without this Ctrl+C typed in a pane would
 /// end nothing. The server has no console, so the change does not reach
 /// it otherwise.
 #[cfg(windows)]

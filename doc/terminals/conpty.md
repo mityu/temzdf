@@ -116,17 +116,18 @@ PowerShell 5.1 in `temzdf-gui`):
 
 - portable-pty passes `PSEUDOCONSOLE_INHERIT_CURSOR | RESIZE_QUIRK |
   WIN32_INPUT_MODE`. With the inherited cursor ConPTY starts by asking
-  `CSI 6 n` and shows nothing until it is answered; the pane's terminal
+  `CSI 6 n`, which portable-pty's users must answer (it waits for the
+  reply; not tried here without one); the pane's terminal
   (libghostty) answers it as any query (`tests::conpty` in
   `crates/temzdf-term/src/lib.rs`). ConPTY also asks for win32-input-mode
-  (`CSI ? 9001 h`), which libghostty does not know: keys go as plain VT
-  bytes, and ConPTY takes them. Typing, Backspace, the arrows (cmd's and
+  (`CSI ? 9001 h`); the pane's keys still went as plain VT bytes, and
+  ConPTY took them. Typing, Backspace, the arrows (cmd's and
   PowerShell's history), Tab completion, PowerShell's colours, resizing
   (`mode con`, `$Host.UI.RawUI.WindowSize`) and `exit` worked.
 - Ctrl+C: ConPTY turns the byte 0x03 into a Ctrl+C event for the
   console, but a process ignores it when its parent did and it inherited
   that. A server a client starts with `CREATE_NEW_PROCESS_GROUP` ignores
-  Ctrl+C (and so did the tests' processes under OpenSSH), so `ping -t`
+  Ctrl+C (and so did the tests' processes under OpenSSH in the VM), so `ping -t`
   in a pane went on. The server clears the flag before starting a pane's
   program (`SetConsoleCtrlHandler(NULL, FALSE)`, `pty::before_spawn`);
   since then Ctrl+C ends it.

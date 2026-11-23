@@ -22,8 +22,8 @@ termpix-core.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", features = ["event", "process"] }
 
-# Whether ConPTY is there, and the Job Object a pane's program runs in
-# (`src/pty.rs`).
+# Whether ConPTY is there, the Job Object a pane's program runs in, and
+# Ctrl+C for it (`src/pty.rs`).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
 
