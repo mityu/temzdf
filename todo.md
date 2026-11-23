@@ -96,6 +96,19 @@ server on one `Session`). Next and open:
   a hook caused while a request is being answered goes `nested: true`; a
   key's call while a dispatched task runs and asks nothing goes `nested:
   false`.
+- Replays (`--render-frame --events`, `crates/temzdf/src/headless.rs`)
+  open the document in no simulated time, while the real viewer took up
+  to ~370 ms (2026-11-23). The recording starts before the open, so
+  anything timed from the first screen runs early in a replay by the open
+  time. Nothing judged depends on it yet; to line the clocks up, temzdf
+  would record when the document opened and the replay start its clock
+  there.
+- Session timers still on the wall clock (`Instant::now()`) rather than
+  the session's (113f4b2 moved notices): the clipboard wait
+  (`crates/temzdf-server/src/session/registers.rs`), `updatetime` before
+  swap files are written (`swap.rs`) and `busy_since` for "running a
+  script" (`script.rs`). None is judged by a replay now; a replay that
+  reaches them depends on how fast it runs.
 - `tests/e2e/scroll_demo.actions` in WezTerm on X11: `wheel6` scrolled
   372 px instead of 360 in 2 of 6 runs (2026-11-23), one step accelerated
   as if two arrived within the 80 ms flick window, with the steps sent
