@@ -96,6 +96,42 @@ panes, (5) SyncTeX, (6) shared memory, (7) the terminal frontend.
   `cargo check --target x86_64-pc-windows-msvc` on those crates in the
   Linux job.
 
+## The toolchain: MSYS2 UCRT64, not MSVC
+
+Decided with the user on 2026-11-23, after the first builds in the VM:
+Windows builds with MSYS2's UCRT64 environment (its Rust package, the
+`x86_64-pc-windows-gnu` target, GCC for C), not with MSVC; the VM, CI
+and the Linux gate's cross-check follow. Not MINGW64, which MSYS2 is
+retiring. What led to it:
+
+- With MSVC the vendored C needed fixes of its own: SyncTeX's
+  `synctex_parser_utils.h` expands `SYNCTEX_ATTRIBUTE_FORMAT_PRINTF` to
+  `ATTRIBUTE_FORMAT_PRINTF` under `_MSC_VER`, which only TeX Live's
+  headers define (syntax errors at `synctex_parser.c` 8449 and 8486),
+  and `cl`'s `/D` cannot define a macro with parameters (a header forced
+  in with `/FI` worked). libtexprintf's `AddChild` wrote one element
+  past its array (`STATUS_HEAP_CORRUPTION`), MSVC reading the index
+  after the call (fixed in the vendored copy,
+  `crates/texprintf/vendor/libtexprintf/README.md`).
+- With UCRT64's GCC 16.2 and Clang 23.1 both libraries built unmodified
+  and their tests passed (`temzdf-pdfcore` after a Rust-side fix in
+  `synctex.rs`, `OsStrExt` being Unix-only).
+- The order of evaluation in `a[i] = f()` (with `f` incrementing `i`)
+  differs: GCC reads the index first; Clang reads it after the call
+  when `f` returns an `int` but first when it returns an 80-byte struct
+  (as `InitBox` does); MSVC reads it after the call in both. So the
+  libtexprintf fix stays with GCC too.
+- Rust's `x86_64-pc-windows-gnu` with UCRT64's C linked and ran without
+  trouble (tried with rustup's toolchain; MSYS2's own Rust package is
+  the one used now). bindgen (`mupdf-sys`) needs `LIBCLANG_PATH` set to
+  UCRT64's `bin`, or it takes another libclang that does not match
+  UCRT64's headers. MSYS2's `usr/bin` stays off `PATH` (its `link.exe`
+  and others shadow tools).
+
+Open: whether the executables need MSYS2's DLLs (`libwinpthread-1.dll`,
+`libgcc_s_seh-1.dll`) beside them, and MSYS2's Rust following its own
+release schedule, not the dev shell's.
+
 ## End-to-end tests in a VM
 
 - `/dev/kvm` is usable without setup on the maintainer's machine;

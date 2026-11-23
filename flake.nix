@@ -141,10 +141,11 @@
             ];
           };
           # The dev shells' toolchain also has Windows' standard library, for
-          # `cargo check --target x86_64-pc-windows-msvc` (the Windows port,
-          # doc/survey/windows-port.md); `nix build` keeps stableToolchain.
+          # `cargo clippy --target x86_64-pc-windows-gnu` (the Windows port,
+          # built with MSYS2's UCRT64 there, doc/survey/windows-port.md);
+          # `nix build` keeps stableToolchain.
           shellToolchain = pkgs.rust-bin.stable.latest.minimal.override {
-            targets = wasmTargets ++ [ "x86_64-pc-windows-msvc" ];
+            targets = wasmTargets ++ [ "x86_64-pc-windows-gnu" ];
             extensions = [
               "clippy"
               "rustfmt"

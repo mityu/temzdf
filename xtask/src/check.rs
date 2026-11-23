@@ -30,12 +30,13 @@ const RUNTIME: &str = "crates/temzdf-script/runtime";
 /// The crates that build and test on Windows so far, and the gate runs
 /// there (`windows-latest` in CI), `xtask` among them. On Unix all of them
 /// but `xtask` (whose `ring` is C) are also checked for
-/// `x86_64-pc-windows-msvc` ("windows" step), where
+/// `x86_64-pc-windows-gnu` ("windows" step; Windows builds with MSYS2's
+/// UCRT64), where
 /// the standard library for it is installed. Left out, and why
 /// (`todo.md`, "The Windows port"): texprintf and tuitest only
 /// cross-check because pkg-config finds the Linux libraries; temzdf-script-guest
 /// is empty off wasm; the rest use Unix APIs (`std::os::unix`, rustix) or C
-/// that is not built for MSVC yet. temzdf-gui's GPU and font tests skip
+/// that is not built for Windows yet. temzdf-gui's GPU and font tests skip
 /// there (no `TEMZDF_TEST_FONTS`, no built-in fonts).
 const WINDOWS_CRATES: &[&str] = &[
     "temzdf-client",
@@ -53,7 +54,7 @@ const WINDOWS_CRATES: &[&str] = &[
     "xtask",
 ];
 /// The target of the cross-check ("windows" step).
-const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
+const WINDOWS_TARGET: &str = "x86_64-pc-windows-gnu";
 /// The generated declarations, committed.
 const DECLARATIONS: &str = "crates/temzdf-script/ts-types/temzdf-all.d.ts";
 
