@@ -5,7 +5,8 @@
 // run's environment, `termctl serve`, and macOS's window edges masked in
 // comparisons. Not run since the move to TypeScript (todo.md).
 
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import type { ChildProcess } from "node:child_process";
+import { chmodSync, closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Lines } from "../lines.ts";
 import { magick } from "../magick.ts";
@@ -72,7 +73,7 @@ export async function launchMacos(r: Run, argv: string[]): Promise<number> {
   const go = path.join(r.runtimeDir, "go");
   const q = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
   const keep =
-    /^(PATH|TERM|TERM_PROGRAM.*|COLORTERM|TERMINFO|KITTY_.*|WEZTERM_.*|GHOSTTY_.*|WINDOWID|_|SHLVL|PWD|OLDPWD)$/;
+    /^(PATH|TERM|TERM_PROGRAM.*|COLORTERM|TERMINFO|KITTY_.*|WEZTERM_.*|GHOSTTY_.*|WINDOWID|_|SHLVL|PWD|OLDPWD|E2E_OPTS|NODE_TEST_CONTEXT)$/;
   const lines = ["#!/usr/bin/env bash", `export PATH=${q(r.cleanEnv.PATH ?? "")}`];
   for (const [k, v] of Object.entries(r.env).sort()) {
     if (v === undefined || keep.test(k) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) continue;
@@ -195,8 +196,23 @@ export async function launchMacos(r: Run, argv: string[]): Promise<number> {
   if (term !== "gui") {
     // -g: not to the front (Ghostty opens its window only once activated).
     const log = r.path("terminal.log");
-    await r.procs.run("open", ["-g", "-n", "-a", app, "--stdout", log, "--stderr", log, "--args", ...targs, ...argv]);
+    // (Its output to the log: launchd starts the app, `open` itself ends.)
+    const code = await r.procs.logged(
+      "open",
+      ["-g", "-n", "-a", app, "--stdout", log, "--stderr", log, "--args", ...targs, ...argv],
+      log,
+    );
+    if (code !== 0) throw new StartError(`e2e: open -a ${app} failed (see terminal.log)`);
   }
+  // Not our child: ended at the end, also when its window never came
+  // (registered before waiting for it; termPid is set below).
+  r.procs.defer(async () => {
+    if (r.termPid <= 0) return;
+    try {
+      process.kill(r.termPid);
+    } catch {}
+    for (let i = 0; i < 100 && r.alive(); i++) await new Promise((res) => setTimeout(res, 50));
+  });
   const windows = async () =>
     r.termPid > 0 && (await r.procs.exec(termctl, ["windows", String(r.termPid)])).stdout.trim() !== "";
   for (let i = 0; i < 150; i++) {
@@ -208,13 +224,6 @@ export async function launchMacos(r: Run, argv: string[]): Promise<number> {
     await r.sleep(0.1);
   }
   if (!(await windows())) throw new StartError(`e2e: ${term} did not open a window`);
-  // Not our child: ended at the end.
-  r.procs.defer(async () => {
-    try {
-      process.kill(r.termPid);
-    } catch {}
-    for (let i = 0; i < 100 && r.alive(); i++) await new Promise((res) => setTimeout(res, 50));
-  });
   r.rec.phase("window");
   // Below the menu bar; at scale 1 it draws again at that density, then the
   // command starts.
@@ -229,10 +238,17 @@ export async function launchMacos(r: Run, argv: string[]): Promise<number> {
  * character), and the window in front for the run, as on Linux, where it
  * has the focus (unfocused, Ghostty draws a hollow cursor over the images). */
 export async function serveMacos(r: Run): Promise<void> {
-  const child = r.procs.start(termctl, ["serve", String(r.termPid), r.opts.term === "wezterm" ? "global" : "pid"], {
-    stdio: ["pipe", "pipe", "ignore"],
-    env: { ...r.env, TERMCTL_SETTLE_MS: process.env.E2E_SETTLE_MS || "2" },
-  });
+  // Its errors to OUTDIR/termctl.log, as scripts/e2e.sh had them.
+  const log = openSync(r.path("termctl.log"), "a");
+  let child: ChildProcess;
+  try {
+    child = r.procs.start(termctl, ["serve", String(r.termPid), r.opts.term === "wezterm" ? "global" : "pid"], {
+      stdio: ["pipe", "pipe", log],
+      env: { ...r.env, TERMCTL_SETTLE_MS: process.env.E2E_SETTLE_MS || "2" },
+    });
+  } finally {
+    closeSync(log);
+  }
   const tc = new Lines(child);
   r.mac!.tc = tc;
   // The front and the pointer back to where they were.

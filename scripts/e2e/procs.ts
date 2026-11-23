@@ -39,29 +39,38 @@ export class Procs {
     this.signal = signal;
   }
 
+  /** What commands end on: the run's signal, and once cleanup began a
+   * signal of its own (at most 60 s), as the run's has fired by then after a
+   * timeout or Ctrl+C and the cleanup still has commands to run (tmux
+   * kill-server, the guest's cleanup, the clipboard given back). */
+  #cleanupSignal: AbortSignal | undefined;
+  get #active(): AbortSignal {
+    return this.#cleanupSignal ?? this.signal;
+  }
+
   /** Runs a command to its end: its exit status and output. Throws only
    * when it cannot start or the run is aborted. */
   exec(cmd: string, args: readonly string[], opts: ExecOptions = {}): Promise<Result> {
-    this.signal.throwIfAborted();
+    this.#active.throwIfAborted();
     return new Promise((resolve, reject) => {
       // Ends at once on an abort, whatever the command left holding its
       // output.
-      const onAbort = () => reject(this.signal.reason);
-      this.signal.addEventListener("abort", onAbort, { once: true });
+      const onAbort = () => reject(this.#active.reason);
+      this.#active.addEventListener("abort", onAbort, { once: true });
       const child = execFile(
         cmd,
         args,
         {
           env: opts.env ?? this.env,
           cwd: opts.cwd,
-          signal: this.signal,
+          signal: this.#active,
           maxBuffer: 256 << 20,
           timeout: opts.timeout ? opts.timeout * 1000 : 0,
           encoding: "utf8",
         },
         (err, stdout, stderr) => {
-          this.signal.removeEventListener("abort", onAbort);
-          if (this.signal.aborted) return reject(this.signal.reason);
+          this.#active.removeEventListener("abort", onAbort);
+          if (this.#active.aborted) return reject(this.#active.reason);
           if (err && typeof err.code !== "number" && !err.killed) return reject(err);
           resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr });
         },
@@ -74,11 +83,11 @@ export class Procs {
    * output not read: for one that leaves a process behind holding it
    * (xclip and wl-copy stay to serve the clipboard). Its exit status. */
   async feed(cmd: string, args: readonly string[], input: string, env?: NodeJS.ProcessEnv): Promise<number> {
-    this.signal.throwIfAborted();
-    const child = spawn(cmd, args, { env: env ?? this.env, stdio: ["pipe", "ignore", "ignore"], signal: this.signal });
+    this.#active.throwIfAborted();
+    const child = spawn(cmd, args, { env: env ?? this.env, stdio: ["pipe", "ignore", "ignore"], signal: this.#active });
     child.on("error", () => {});
     child.stdin!.end(input);
-    const [code] = (await once(child, "exit", { signal: this.signal })) as [number | null];
+    const [code] = (await once(child, "exit", { signal: this.#active })) as [number | null];
     return code ?? 1;
   }
 
@@ -87,16 +96,16 @@ export class Procs {
    * -d`, `ssh -f`; reading its output would wait for that process). Its
    * exit status. */
   async logged(cmd: string, args: readonly string[], log: string, env?: NodeJS.ProcessEnv): Promise<number> {
-    this.signal.throwIfAborted();
+    this.#active.throwIfAborted();
     const fd = openSync(log, "a");
     let child: ChildProcess;
     try {
-      child = spawn(cmd, args, { env: env ?? this.env, stdio: ["ignore", fd, fd], signal: this.signal });
+      child = spawn(cmd, args, { env: env ?? this.env, stdio: ["ignore", fd, fd], signal: this.#active });
     } finally {
       closeSync(fd);
     }
     child.on("error", () => {});
-    const [code] = (await once(child, "exit", { signal: this.signal })) as [number | null];
+    const [code] = (await once(child, "exit", { signal: this.#active })) as [number | null];
     return code ?? 1;
   }
 
@@ -110,7 +119,7 @@ export class Procs {
   /** Starts a process that stays, in a group of its own, ended (with its
    * group) by `cleanup`. */
   start(cmd: string, args: readonly string[], opts: SpawnOptions = {}): ChildProcess {
-    this.signal.throwIfAborted();
+    this.#active.throwIfAborted();
     const child = spawn(cmd, args, { stdio: "ignore", env: this.env, ...opts, detached: true });
     this.#children.add(child);
     child.on("error", () => {});
@@ -156,6 +165,7 @@ export class Procs {
   async cleanup(): Promise<void> {
     if (this.#cleaned) return;
     this.#cleaned = true;
+    this.#cleanupSignal = AbortSignal.timeout(60_000);
     while (this.#cleanups.length > 0) {
       const fn = this.#cleanups.pop()!;
       try {

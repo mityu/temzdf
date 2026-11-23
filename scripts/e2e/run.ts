@@ -663,6 +663,11 @@ export class Run {
         console.error(e instanceof Error ? e.message : e);
       }
       this.rec.record(["key", notation]);
+      // As long as scripts/e2e.sh took recording it (key_notation in a
+      // subshell): measured on Wayland, 3.5 ms from Ctrl+Shift+V to the
+      // Return after it, 1 ms here. gui-ime's paste raced the Return (the
+      // GUI asks wl-copy for the text) and lost every time.
+      await this.sleep(0.003);
     }
   }
 

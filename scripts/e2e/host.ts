@@ -49,6 +49,9 @@ const unset = [
   "ZELLIJ_PANE_ID",
   "TMUX",
   "TMUX_PANE",
+  // The harness's own (scripts/e2e/options.ts, node:test's child process).
+  "E2E_OPTS",
+  "NODE_TEST_CONTEXT",
 ];
 
 /** The environment COMMAND runs in: the harness's without `unset`, its

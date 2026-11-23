@@ -3,7 +3,15 @@
 // guest's PowerShell). One command at a time.
 
 import type { ChildProcess } from "node:child_process";
+import { appendFileSync } from "node:fs";
 import { createInterface, type Interface } from "node:readline";
+
+/** E2E_INPUT_LOG: when each command to an input helper (wlinput, termctl,
+ * QMP) went out, for comparing the timing of input. */
+export function inputLog(who: string, line: string): void {
+  const log = process.env.E2E_INPUT_LOG;
+  if (log) appendFileSync(log, `${Date.now() / 1000} ${who} ${line}\n`);
+}
 
 export class Lines {
   readonly #child: ChildProcess;
@@ -63,6 +71,9 @@ export class Lines {
 
   /** Sends a command and expects `ok` (wlinput, termctl). */
   async ok(line: string, who: string, signal: AbortSignal): Promise<void> {
+    // Nothing goes out after an abort.
+    signal.throwIfAborted();
+    inputLog(who, line);
     this.send(line);
     const answer = await this.next(30, signal);
     if (answer !== "ok") throw new Error(`${who}: ${answer ?? "no answer"} (${line})`);

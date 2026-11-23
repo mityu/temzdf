@@ -8,11 +8,11 @@
 // scheduled task on it (onDesktop): SSH's session has none. "Windows in a
 // VM" in doc/dev/testing.md says why each thing is so.
 
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { charKey, isModifierQcode, qcodes, tablet } from "../keys.ts";
-import type { Lines } from "../lines.ts";
+import { inputLog, type Lines } from "../lines.ts";
 import { type Procs, pause } from "../procs.ts";
 import type { Backend, WindowRect } from "./backend.ts";
 
@@ -67,10 +67,9 @@ export class Qmp {
 
   /** A JSON line to QMP; its answer, skipping the events in between. */
   async command(json: string, signal: AbortSignal): Promise<void> {
-    // E2E_QMP_LOG: when each command went out (milliseconds since the
-    // epoch), for comparing the timing of input.
-    const log = process.env.E2E_QMP_LOG;
-    if (log) appendFileSync(log, `${Date.now() / 1000} ${json}\n`);
+    // Nothing goes out after an abort.
+    signal.throwIfAborted();
+    inputLog("qmp", json);
     this.#sock.write(`${json}\n`);
     for (;;) {
       const line = await this.#line(10, signal);

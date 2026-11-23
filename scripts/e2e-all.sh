@@ -157,7 +157,7 @@ scenario() {
 }
 
 # The displays the TypeScript harness has so far.
-ts_displays=(x11)
+ts_displays=(x11 wayland)
 run_display=${display:-$([[ $(uname) == Darwin ]] && echo macos || echo x11)}
 
 # Scenarios that need the CPU to themselves (smooth scrolling and tiles
