@@ -1,9 +1,16 @@
+// The terminal frontend (termpix, temzdf-tty) is Unix only: on Windows
+// `temzdf` runs servers and talks to them, and temzdf-gui shows sessions.
+#[cfg(unix)]
 mod app;
+#[cfg(unix)]
+mod attach;
 mod client;
 mod config;
+#[cfg(unix)]
 mod headless;
 mod lsfonts;
 mod script_tests;
+#[cfg(unix)]
 mod snapshot;
 
 use temzdf_server::forward as ipc;
@@ -12,6 +19,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+#[cfg(unix)]
 use termpix::geom::{CellSize, Geometry};
 
 /// Terminal PDF viewer drawn with the kitty graphics protocol, in sessions.
@@ -53,6 +61,7 @@ struct Cli {
 }
 
 /// What `temzdf standalone pdf` takes.
+#[cfg(unix)]
 #[derive(clap::Args, Debug)]
 struct PdfArgs {
     /// PDF file to open.
@@ -109,6 +118,7 @@ struct PdfArgs {
 }
 
 /// Viewers that run in this terminal, without a session.
+#[cfg(unix)]
 #[derive(Subcommand, Debug)]
 enum Standalone {
     /// The PDF viewer.
@@ -118,11 +128,13 @@ enum Standalone {
 #[derive(Subcommand, Debug)]
 enum Cmd {
     /// Run a viewer in this terminal, without a session.
+    #[cfg(unix)]
     Standalone {
         #[command(subcommand)]
         kind: Standalone,
     },
     /// Attach to a session (the only one when NAME is left out).
+    #[cfg(unix)]
     #[command(alias = "a")]
     Attach {
         name: Option<String>,
@@ -256,6 +268,7 @@ enum Cmd {
     },
     /// Draw session NAME's frame as a terminal client of this geometry would
     /// show it, into a PNG (scripts/e2e.sh compares terminals against it).
+    #[cfg(unix)]
     #[command(hide = true)]
     RenderSession {
         name: String,
@@ -308,6 +321,7 @@ enum Cmd {
 
 /// `COLSxROWS` and `WIDTHxHEIGHT` (a cell, in pixels) as a geometry; a count
 /// that does not fit is an error.
+#[cfg(unix)]
 fn parse_geometry(size: &str, cell: &str) -> Result<Geometry> {
     let (cols, rows) = parse_pair(size)?;
     let (width, height) = parse_pair(cell)?;
@@ -317,6 +331,7 @@ fn parse_geometry(size: &str, cell: &str) -> Result<Geometry> {
     Ok(Geometry { cols: fit(cols, "columns")?, rows: fit(rows, "rows")?, cell: CellSize { width, height } })
 }
 
+#[cfg(unix)]
 fn parse_pair(s: &str) -> Result<(u32, u32)> {
     let (a, b) = s.split_once('x').with_context(|| format!("expected AxB, got {s:?}"))?;
     Ok((a.parse()?, b.parse()?))
@@ -343,6 +358,7 @@ fn main() -> Result<()> {
     // Flags for starting a session, for warnings when it exists already.
     let start_flags = session_only_options(&cli, false);
     match cli.command.take() {
+        #[cfg(unix)]
         Some(Cmd::Standalone { kind: Standalone::Pdf(args) }) => {
             // A frame is drawn with the shipped configuration (or
             // --config's), and no viewer runs to search.
@@ -436,6 +452,7 @@ fn main() -> Result<()> {
             print!("{}", temzdf_script::types::DECLARATIONS);
             return Ok(());
         }
+        #[cfg(unix)]
         Some(Cmd::RenderSession {
             name,
             out,
@@ -460,6 +477,7 @@ fn main() -> Result<()> {
             };
             return snapshot::render_session(&name, &out, &opts);
         }
+        #[cfg(unix)]
         Some(Cmd::Attach { name, create, file }) => {
             if file.is_some() && !create {
                 bail!("a FILE is for a new session: attach -c NAME FILE");
@@ -478,7 +496,7 @@ fn main() -> Result<()> {
             }
             let name = match (name, create, file) {
                 (Some(n), true, file) if temzdf_server::daemon::list()?.iter().all(|s| s.name != n) => {
-                    client::need_terminal()?;
+                    attach::need_terminal()?;
                     client::spawn_server(
                         &n,
                         &client::first_pane(file.as_deref())?,
@@ -490,15 +508,18 @@ fn main() -> Result<()> {
                 }
                 (name, ..) => client::resolve(name.as_deref())?,
             };
-            println!("{}", client::attach(&name)?);
+            println!("{}", attach::attach(&name)?);
             return Ok(());
         }
         Some(Cmd::Server { name, log, pane }) => {
             // Leave the terminal's session, so closing it does not end ours.
+            // (On Windows the client starts the server detached already.)
+            #[cfg(unix)]
             let _ = rustix::process::setsid();
             let spec = temzdf_server::action::parse_new_pane(&pane)?.spec;
-            let script = app::script_settings(cli.clean, cli.config.as_deref())?;
-            return temzdf_server::daemon::run(&name, &spec, log, app::settings(true, script, cli.editor.as_deref()));
+            let script = config::script_settings(cli.clean, cli.config.as_deref())?;
+            let settings = config::settings(true, script, cli.editor.as_deref());
+            return temzdf_server::daemon::run(&name, &spec, log, settings);
         }
         None => {}
     }
@@ -551,6 +572,7 @@ fn main() -> Result<()> {
 }
 
 /// How a new session is named.
+#[cfg_attr(not(unix), allow(dead_code))] // no sessions started on Windows
 enum Naming {
     /// By the user (`-s NAME`): taken already is an error.
     Given(String),
@@ -562,10 +584,11 @@ enum Naming {
 
 /// Start a session showing `file` (a shell without), run `started` once its
 /// server listens, and attach to it.
+#[cfg(unix)]
 fn start_session(naming: Naming, file: Option<&std::path::Path>, cli: &Cli, started: impl FnOnce()) -> Result<()> {
     // A missing file first: the more useful error.
     let pane = client::first_pane(file)?;
-    client::need_terminal()?;
+    attach::need_terminal()?;
     let spawn = |n: &str| client::spawn_server(n, &pane, cli.config.as_deref(), cli.editor.as_deref(), cli.clean);
     let name = match &naming {
         Naming::Given(n) => temzdf_client::spawn_named(|| Ok(n.clone()), false, spawn)?,
@@ -573,11 +596,21 @@ fn start_session(naming: Naming, file: Option<&std::path::Path>, cli: &Cli, star
         Naming::AfterFile(f) => temzdf_client::spawn_named(|| client::name_for(f), true, spawn)?,
     };
     started();
-    println!("{}", client::attach(&name)?);
+    println!("{}", attach::attach(&name)?);
     Ok(())
 }
 
+/// No terminal client on Windows yet: temzdf-gui starts and shows sessions.
+#[cfg(not(unix))]
+fn start_session(_: Naming, file: Option<&std::path::Path>, _: &Cli, _: impl FnOnce()) -> Result<()> {
+    // A missing file first: the more useful error.
+    client::first_pane(file)?;
+    let file = file.map_or_else(String::new, |f| format!(" {}", f.display()));
+    bail!("no terminal client on Windows yet: show the session in a window with `temzdf-gui{file}`")
+}
+
 /// `temzdf standalone pdf`: the viewer in this terminal, or one frame of it.
+#[cfg(unix)]
 fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
     let page = args.page.map(|p| p.saturating_sub(1));
     let file = args.file;
@@ -627,7 +660,8 @@ fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
     )
 }
 
-#[cfg(test)]
+// Standalone, attach and the geometry: Unix only.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

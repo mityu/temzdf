@@ -311,10 +311,10 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
     // The shipped default configuration maps the keys (no user
     // configuration), with --config's script if given.
     let script = match &opts.config {
-        Some(config) => crate::app::script_settings(false, Some(config))?,
-        None => crate::app::script_settings(true, None)?,
+        Some(config) => crate::config::script_settings(false, Some(config))?,
+        None => crate::config::script_settings(true, None)?,
     };
-    let settings = crate::app::settings(false, script, None);
+    let settings = crate::config::settings(false, script, None);
     // A Layered terminal over inline transfers, like the mock terminal.
     let mut session = Session::new(name, opts.geometry, Hints::default(), settings, sink);
     session.start(temzdf_server::action::PaneSpec::File(pdf_path.to_owned()), None)?;

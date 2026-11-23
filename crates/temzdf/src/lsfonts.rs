@@ -11,7 +11,7 @@ use temzdf_protocol::{ClientMsg, ServerMsg};
 use temzdf_scene::{Appearance, FontEntry, Hints};
 use temzdf_server::action::PaneSpec;
 use temzdf_server::session::Session;
-use termpix::geom::{CellSize, Geometry};
+use termpix_core::geom::{CellSize, Geometry};
 
 /// How long loading the configuration may take.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
@@ -28,8 +28,8 @@ pub fn from_session(name: &str) -> Result<Appearance> {
 /// session of this process, as `temzdf` would start one.
 pub fn from_configuration(clean: bool, config: Option<&Path>) -> Result<Appearance> {
     let (tx, rx) = mpsc::channel();
-    let sink = crate::app::sink(&tx, |e| e);
-    let settings = crate::app::settings(false, crate::app::script_settings(clean, config)?, None);
+    let sink = temzdf_scene::sink::channel_sink(tx, |e| e);
+    let settings = crate::config::settings(false, crate::config::script_settings(clean, config)?, None);
     let geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
     let mut session = Session::new("ls-fonts".into(), geometry, Hints::default(), settings, sink);
     // The configuration loads before the first pane opens: a program that

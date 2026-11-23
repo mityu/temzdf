@@ -9,11 +9,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use temzdf_server::action::PaneSpec;
 use temzdf_server::forward::Forward;
-use temzdf_server::session::{EventSink, Outcome, ScriptSettings, Session, SessionEvent, Settings};
+use temzdf_server::session::{EventSink, Outcome, Session, SessionEvent};
 use temzdf_tty::{Input, Presented, TtyFrontend};
 use termpix::tty::TermEvent;
-
-use temzdf_protocol::script::ScriptValue;
 
 const FRAME: Duration = Duration::from_millis(16);
 
@@ -37,25 +35,6 @@ pub enum AppEvent {
     Session(SessionEvent),
     /// Opening an external link failed.
     OpenFailed(String),
-}
-
-/// How the session runs the script host: the shipped defaults, then the
-/// configuration (`explicit`, else `config.ts`/`config.js`) unless `clean`.
-pub fn script_settings(clean: bool, explicit: Option<&Path>) -> Result<Option<ScriptSettings>> {
-    let config = match (clean, explicit) {
-        (true, _) => None,
-        (false, Some(p)) if !p.is_file() => bail!("no configuration file {}", p.display()),
-        (false, Some(p)) => Some(std::path::absolute(p)?),
-        (false, None) => crate::config::script_path()?,
-    };
-    Ok(Some(ScriptSettings { config }))
-}
-
-/// Session settings; `editor` (`--editor`) wins over the configuration's.
-pub fn settings(serve_forward: bool, script: Option<ScriptSettings>, editor: Option<&str>) -> Settings {
-    let overrides =
-        editor.map(|e| vec![("synctexeditor".to_owned(), ScriptValue::Str(e.to_owned()))]).unwrap_or_default();
-    Settings { serve_forward, script, overrides }
 }
 
 /// The zlib level for inline image transfers: `$TEMZDF_ZLIB_LEVEL`, else
@@ -104,7 +83,8 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     let (tx, rx) = mpsc::channel::<AppEvent>();
     front.spawn_input(tx.clone(), AppEvent::Term)?;
     let name = session_name(path);
-    let settings = settings(true, script_settings(opts.clean, opts.config.as_deref())?, opts.editor.as_deref());
+    let script = crate::config::script_settings(opts.clean, opts.config.as_deref())?;
+    let settings = crate::config::settings(true, script, opts.editor.as_deref());
     let mut session = Session::new(name, front.geometry(), front.hints(), settings, sink(&tx, AppEvent::Session));
     session.start(PaneSpec::File(path.to_owned()), None)?;
     // TEMZDF_RECORD_INPUT=FILE: what this viewer handles, for replaying

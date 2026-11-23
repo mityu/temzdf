@@ -1,6 +1,7 @@
 //! `temzdf standalone pdf --render-frame` with `--events`: a recorded timeline replayed on a
 //! simulated clock gives what the keys give, and timing matters where it
 //! does in a terminal (wheel acceleration, link previews).
+#![cfg(unix)] // `standalone` is the terminal frontend: Unix only
 
 use std::path::Path;
 use std::process::Command;

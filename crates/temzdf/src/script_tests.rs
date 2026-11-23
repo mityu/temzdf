@@ -26,7 +26,7 @@ use anyhow::{Context, Result, bail};
 use temzdf_scene::{Effect, Hints};
 use temzdf_server::action::PaneSpec;
 use temzdf_server::session::{Outcome, ScriptSettings, Session, Settings, TestReport};
-use termpix::geom::{CellSize, Geometry};
+use termpix_core::geom::{CellSize, Geometry};
 
 /// The child's private directory (set for `--one` by the parent).
 const DIR_VAR: &str = "TEMZDF_TEST_DIR";
@@ -171,7 +171,9 @@ impl Job {
 
 /// `dir`, made readable by us alone (XDG_RUNTIME_DIR must be).
 fn private_dir(dir: &Path) -> Result<()> {
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut b = std::fs::DirBuilder::new();
+    // (Windows: the profile's ACL, as for the session directories.)
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
     b.create(dir).with_context(|| format!("cannot create {}", dir.display()))

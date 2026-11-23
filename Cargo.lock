@@ -5699,6 +5699,7 @@ dependencies = [
  "temzdf-server",
  "temzdf-tty",
  "termpix",
+ "termpix-core",
  "tuitest",
 ]
 

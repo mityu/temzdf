@@ -1,9 +1,11 @@
 //! Where the configuration script lives: `$XDG_CONFIG_HOME/temzdf/config.ts`
-//! or `config.js` (see doc/config.md).
+//! or `config.js` (see doc/config.md), and the settings a session gets.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
+use temzdf_protocol::script::ScriptValue;
+use temzdf_server::session::{ScriptSettings, Settings};
 
 /// `$XDG_CONFIG_HOME/temzdf` (falling back to `~/.config/temzdf`). A
 /// relative `$XDG_CONFIG_HOME` is ignored, as the XDG specification says
@@ -24,6 +26,25 @@ pub fn script_path() -> Result<Option<PathBuf>> {
     match found.as_slice() {
         [] => Ok(None),
         [one] => Ok(Some(one.clone())),
-        _ => anyhow::bail!("both config.ts and config.js in {}: keep one", dir.display()),
+        _ => bail!("both config.ts and config.js in {}: keep one", dir.display()),
     }
+}
+
+/// How the session runs the script host: the shipped defaults, then the
+/// configuration (`explicit`, else `config.ts`/`config.js`) unless `clean`.
+pub fn script_settings(clean: bool, explicit: Option<&Path>) -> Result<Option<ScriptSettings>> {
+    let config = match (clean, explicit) {
+        (true, _) => None,
+        (false, Some(p)) if !p.is_file() => bail!("no configuration file {}", p.display()),
+        (false, Some(p)) => Some(std::path::absolute(p)?),
+        (false, None) => script_path()?,
+    };
+    Ok(Some(ScriptSettings { config }))
+}
+
+/// Session settings; `editor` (`--editor`) wins over the configuration's.
+pub fn settings(serve_forward: bool, script: Option<ScriptSettings>, editor: Option<&str>) -> Settings {
+    let overrides =
+        editor.map(|e| vec![("synctexeditor".to_owned(), ScriptValue::Str(e.to_owned()))]).unwrap_or_default();
+    Settings { serve_forward, script, overrides }
 }

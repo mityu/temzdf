@@ -275,7 +275,16 @@ server on one `Session`). Next and open:
     and the server moved to them (gaps in
     `doc/design/session-server.md`, "Windows"). Terminal panes are off
     on Windows for now (`temzdf-term`'s pty is Unix only; the pane
-    tests that start programs are ignored there): ConPTY later.
+    tests that start programs are ignored there): ConPTY later. The
+    terminal frontend (`termpix`, `temzdf-tty`; `attach`, `standalone`,
+    `render-session`) is Unix only: on Windows `temzdf` is the server
+    and the client commands, `temzdf FILE` points at `temzdf-gui`,
+    inverse search runs `cmd /S /C` and links open through rundll32's
+    `url.dll`. With that, `cargo check --workspace --all-targets
+    --exclude termpix --exclude temzdf-tty` passes in the VM
+    (2026-11-23). Still to do: the server run there, and the tests
+    (the server's terminal pane tests run `sh`; `ls-fonts` without a
+    session starts a terminal pane for the configuration).
   - The tests: a helper program instead of `sh` in the pty tests; test
     fonts without fontconfig; the gate's lock test; `cargo xtask miri`
     (also cross-target from Linux);

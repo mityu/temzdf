@@ -3,6 +3,7 @@
 //! PDF panes, and the session commands. Each test has its own runtime,
 //! config, state and log directories, so it never sees the user's sessions.
 //! See doc/dev/testing.md.
+#![cfg(unix)] // the terminal frontend: Unix only
 
 use std::path::PathBuf;
 use std::process::Command;

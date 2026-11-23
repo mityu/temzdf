@@ -335,7 +335,14 @@ git log), and why:
   emulation but starts no program (`TermBuffer::spawn` fails with
   `Unsupported`, "terminal panes are not supported on Windows yet"),
   so a split, float or tab with a program reports that error to the
-  client, as any pane that cannot start does.
+  client, as any pane that cannot start does. The terminal frontend
+  (`termpix`, `temzdf-tty`) is Unix only too: there `temzdf` runs
+  servers (`temzdf server`, which temzdf-gui starts) and the client
+  commands (`ls`, `kill-session`, `action`, `eval`, ...), and
+  `temzdf FILE` says to use `temzdf-gui FILE`. Inverse search runs
+  `cmd /S /C "COMMAND"`, and links open with `rundll32
+  url.dll,FileProtocolHandler` (`explorer` exits with 1 when it worked;
+  `cmd /C start` would take `&` in a link as its own).
 - **Nesting.** A client says which session's pane it runs in (`Hello`), and
   a session lists those of its clients (`SessionInfo::shown_in`); `attach`
   from a pane refuses that session and every session showing it, directly

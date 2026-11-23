@@ -10,14 +10,20 @@ repository.workspace = true
 temzdf-client.workspace = true
 anyhow.workspace = true
 clap = { version = "4.6.7", features = ["derive"] }
-rustix = { version = "1.1.5", features = ["process"] }
-termpix.workspace = true
 temzdf-pdfview.workspace = true
 temzdf-protocol = { workspace = true, features = ["session"] }
 temzdf-scene.workspace = true
 temzdf-script.workspace = true
 temzdf-server.workspace = true
+termpix-core.workspace = true
+
+# The terminal frontend (attach, standalone, render-session): Unix only. On
+# Windows `temzdf` is the server and the client commands; temzdf-gui shows
+# sessions there.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.5", features = ["process"] }
 temzdf-tty.workspace = true
+termpix.workspace = true
 
 [dev-dependencies]
 temzdf-pdfcore = { workspace = true, features = ["test-support"] }

@@ -364,16 +364,38 @@ pub fn log_path() -> Option<PathBuf> {
     Some(path)
 }
 
-/// The system's handler for links (`OpenUri` without a command).
+/// The system's handler for links (`OpenUri` without a command). On
+/// Windows `url.dll`'s handler through rundll32: `explorer URI` exits with 1
+/// when it worked (reported as a failure here), and `cmd /C start` would
+/// read `&` and `|` in a link as cmd's own.
 fn default_opener() -> Vec<String> {
+    if cfg!(windows) {
+        return vec!["rundll32".to_owned(), "url.dll,FileProtocolHandler".to_owned()];
+    }
     vec![if cfg!(target_os = "macos") { "open" } else { "xdg-open" }.to_owned()]
+}
+
+/// `sh -c CMD`.
+#[cfg(unix)]
+fn shell(cmd: &str) -> std::process::Command {
+    let mut c = std::process::Command::new("sh");
+    c.arg("-c").arg(cmd);
+    c
+}
+
+/// `cmd /S /C "CMD"`, CMD as written: cmd.exe parses it, not the C
+/// runtime's quoting rules (`/S`: only the outer quotes go).
+#[cfg(windows)]
+fn shell(cmd: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut c = std::process::Command::new("cmd");
+    c.args(["/S", "/C"]).raw_arg(format!("\"{cmd}\""));
+    c
 }
 
 /// Run a shell command detached from the terminal (inverse search).
 pub fn run_shell(cmd: &str) {
-    let child = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
+    let child = shell(cmd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
