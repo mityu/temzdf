@@ -216,44 +216,46 @@ server on one `Session`). Next and open:
 - The Windows port (`doc/survey/windows-port.md`, 2026-11-22). Work
   happens on the branch `windows-port`. On Windows the GUI client is the
   frontend; the terminal frontend comes last. Order:
+  - The toolchain: MSYS2's UCRT64 (its Rust, `x86_64-pc-windows-gnu`,
+    GCC), not MSVC, since 2026-11-23 ("The toolchain" in
+    `doc/survey/windows-port.md`). Still to do: check whether the
+    executables need MSYS2's DLLs (`libwinpthread-1.dll`,
+    `libgcc_s_seh-1.dll`) and link them statically or ship them; once
+    the port has settled, build and test with UCRT64's Clang too, besides
+    GCC (in CI or the VM): the order of evaluation differs between them
+    (libtexprintf's `AddChild`).
   - First steps, no VM. Done: the `windows` step of the gate (clippy for
-    `x86_64-pc-windows-msvc` over `WINDOWS_CRATES` in
+    `x86_64-pc-windows-gnu` over `WINDOWS_CRATES` in
     `xtask/src/check.rs`, also in the Linux CI job) and a
-    `windows-latest` job `check-windows` (written, not run yet:
-    dispatch the branch). texprintf and tuitest only cross-check because
-    pkg-config finds the Linux libraries, so they are left out;
-    `.gitattributes` with LF; `cfg(unix)` on
+    `windows-latest` job `check-windows` (MSYS2 through
+    `msys2/setup-msys2`; passes, 2026-11-23). texprintf and tuitest only
+    cross-check because pkg-config finds the Linux libraries, so they
+    are left out; `.gitattributes` with LF; `cfg(unix)` on
     the symlink and mode tests and on `mutate.rs`'s shell tests (not yet
     compiled for Windows); esbuild found as an exe in
     `crates/temzdf-script/build.rs`; `pdf::fixture` builds the fixtures
-    in Rust (`crates/temzdf-fixtures`, `cargo xtask fixtures`). Still to
-    do: the first run of `check-windows`, and the test code it finds
-    still to gate.
+    in Rust (`crates/temzdf-fixtures`, `cargo xtask fixtures`).
   - The VM: vitro with a local Windows 11 ISO (OVMF firmware).
     `scripts/windows-vm.sh` (a thin wrapper, "Windows in a VM" in
     `doc/dev/testing.md`) starts, stops, resets, runs commands in,
     copies to and from, and takes screenshots of a VM from the golden
     image; `build` (an English ISO, unattended, 20 minutes), `provision`
-    (Git, Node, VS Build Tools, LLVM, Zig, rustup, Python, esbuild;
-    promoted to the next golden image) and `check` (the gate on a commit
-    in the guest) too.
-    The first `check` (2026-11-23, at 2d734c9): fmt, Biome, the
-    declarations and docs pass; clippy and the tests stop at `stylo`'s
-    build script, which needs Python (the CI runner has it), so clippy
-    has not run on the other crates there either. `cargo check
-    --workspace` there besides: the VM lacked Python and esbuild
-    (`temzdf-script`, and through its nested build
-    `temzdf-script-runner`); the
-    product: `termpix`, `temzdf-protocol`, `temzdf-term` (Unix APIs),
-    `temzdf-pdfcore` (MSVC rejects `synctex_parser.c`'s
-    `SYNCTEX_ATTRIBUTE_FORMAT_PRINTF`) fail; `texprintf` builds, but its
-    tests die with `STATUS_HEAP_CORRUPTION`; `tuitest`'s pty tests need
-    `sh`. With Python and esbuild in the image (a 120 GB disk), `check`
-    at 7ed00b8 passes (clippy and 208 tests over `WINDOWS_CRATES`);
-    `cargo check --workspace` there: `termpix`, `temzdf-term` (Unix
-    APIs), `temzdf-pdfcore` (as above) and the script host tests of
-    `temzdf-script` and `temzdf-script-runner` (`UnixStream`) fail,
-    `temzdf-protocol` builds; `tuitest`'s pty tests still need `sh`.
+    (Git, Node, Zig, Python, MSYS2 with UCRT64's Rust, GCC, Clang, make,
+    esbuild; promoted to the next golden image) and `check` (the gate on
+    a commit in the guest, in UCRT64's shell) too. `check` passes (at
+    d14dc45: clippy and 208 tests over `WINDOWS_CRATES`). Earlier, with
+    MSVC (at 7ed00b8), `cargo check --workspace` there: `termpix`,
+    `temzdf-term` (Unix APIs), `temzdf-pdfcore` (SyncTeX's macro under
+    MSVC, and `OsStrExt` in `synctex.rs`) and the script host tests of
+    `temzdf-script` and `temzdf-script-runner` (`UnixStream`) failed;
+    `tuitest`'s pty tests need `sh`. Since then: libtexprintf's
+    `AddChild` fixed (`STATUS_HEAP_CORRUPTION` with MSVC; its 6 tests
+    pass), `synctex.rs` fixed, and with UCRT64 `temzdf-pdfcore` builds;
+    its tests pass but for 2 that compare paths in SyncTeX files built
+    on Linux (the VM has no TeX). Still to do: `cargo check --workspace`
+    with UCRT64 against the list above; TeX in the VM, or fixtures built
+    there otherwise, for `temzdf-pdfcore`'s tests; `temzdf-pdfcore` into
+    `WINDOWS_CRATES`.
     Still to do: fonts, the e2e. The ConPTY
     experiment with the in-box ConPTY is done (`doc/terminals/conpty.md`,
     `experiments/conpty/`): kitty graphics are dropped, the kitty

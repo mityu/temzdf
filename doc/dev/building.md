@@ -50,8 +50,10 @@ there yet). Windows builds with MSYS2's UCRT64, not MSVC
 (`doc/survey/windows-port.md`, "The toolchain"): the job installs MSYS2
 with `msys2/setup-msys2` and its packages `mingw-w64-ucrt-x86_64-rust`
 (clippy and rustfmt included), `-rust-wasm`, `-gcc` and `-clang`
-(bindgen's libclang, `LIBCLANG_PATH`), puts only UCRT64's `bin` on
-`PATH`, and keeps the build in `Swatinem/rust-cache`. MSYS2's packages
+(bindgen's libclang, `LIBCLANG_PATH`), `-pkgconf` and `make`, puts
+UCRT64's `bin` on `PATH`, runs the gate in UCRT64's shell (`shell:
+msys2`, which also has MSYS2's `usr/bin` with `make`) and keeps the
+build in `Swatinem/rust-cache`. MSYS2's packages
 are not pinned: each run takes the current ones. It also installs
 Node 24, runs `npm ci` and installs Biome 2.6.8 globally. It has not run on a runner yet: the first run (a dispatch of
 the branch `windows-port`, `gh workflow run CI --ref windows-port`) is

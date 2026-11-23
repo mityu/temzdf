@@ -125,8 +125,11 @@ retiring. What led to it:
   trouble (tried with rustup's toolchain; MSYS2's own Rust package is
   the one used now). bindgen (`mupdf-sys`) needs `LIBCLANG_PATH` set to
   UCRT64's `bin`, or it takes another libclang that does not match
-  UCRT64's headers. MSYS2's `usr/bin` stays off `PATH` (its `link.exe`
-  and others shadow tools).
+  UCRT64's headers. MSYS2's `usr/bin` stays off the machine's `PATH`
+  (its `link.exe` and others shadow tools), but `make`, which `mupdf-sys`
+  runs, is only there: the gate runs in UCRT64's login shell (CI's
+  `shell: msys2`, `scripts/windows-vm.sh check`), which puts `usr/bin` on
+  `PATH` after UCRT64's `bin`.
 
 Open: whether the executables need MSYS2's DLLs (`libwinpthread-1.dll`,
 `libgcc_s_seh-1.dll`) beside them, and MSYS2's Rust following its own
