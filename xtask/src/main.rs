@@ -17,7 +17,8 @@ tasks:
   check [--fix] [--miri] [--no-miri] [--all] [--verbose] [--stream] [CARGO TEST ARGS...]
       The pre-commit gate: rustfmt check, Biome (the scripts' formatting
       and lints), the generated declarations (node scripts/ts-types.ts),
-      the Node scripts' types (tsc -p scripts), shellcheck, references to
+      the Node scripts' types (tsc -p scripts, tsc -p tests/e2e) and tests
+      (node --test on scripts/**/*.test.ts), shellcheck, references to
       documents (node scripts/check-docs.ts), clippy (warnings are errors),
       the workspace's tests and the scripts' (temzdf test on
       crates/temzdf-script/runtime/**/*.test.ts), then, with --miri, the

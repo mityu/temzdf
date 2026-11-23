@@ -567,6 +567,15 @@ server on one `Session`). Next and open:
     scenario: ask the user).
   - Both harnesses leave zellij's server running after `-m zellij`
     (removing the runtime directory does not end it): end it at cleanup.
+  - `terminal-extras`' `scrolled` (and `scrolled.cells`) is judged
+    about 3 s after the selection before it was copied, when the "Copied
+    6 characters" notice goes: the screenshot can show it and the
+    session's frame, rendered a moment later, not. On Wayland it fails
+    so in kitty, Ghostty and WezTerm with both harnesses (2.86 s after
+    the copy, three runs each); on X11 the bash harness took 3.05 s and
+    passed, this one 3.02 s and failed under `-j 8` (2026-11-24). Fix:
+    wait for the notice to go first, as `markdown` does (it changes the
+    scenario: ask the user).
 - A lock on the Windows VM in `scripts/windows-vm.sh` (asked by the user,
   2026-11-24): it only checks whether the VM runs, so two sessions using
   it agree by hand (C:\t and C:/e2e would be shared). `flock` on a file

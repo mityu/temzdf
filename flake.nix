@@ -258,6 +258,8 @@
                           # End-to-end testing: run kitty on a virtual X server and drive it.
                           kitty
                           xvfb-run
+                          # Xvfb itself: scripts/e2e/run.ts starts it (-displayfd).
+                          xvfb
                           xdotool
                           xclip
 

@@ -90,7 +90,9 @@ cargo build --workspace
 `cargo xtask check` (`xtask/src/check.rs`) is the pre-commit gate:
 rustfmt, Biome, the generated declarations (`node scripts/ts-types.ts`
 writes `temzdf-all.d.ts` again into `target/check/` and compares), the
-Node scripts' types (`tsc -p scripts`), shellcheck, references to
+Node scripts' types (`tsc -p scripts`, and the e2e scenarios' with
+`tsc -p tests/e2e`) and tests (`node --test` on `scripts/**/*.test.ts`:
+what the e2e harness computes without a terminal), shellcheck, references to
 documents (`node scripts/check-docs.ts`), clippy, a clippy run for
 `x86_64-pc-windows-gnu` over the crates that build there (step
 `windows`, Unix only; `SKIP windows` without that standard library),
@@ -502,9 +504,11 @@ pointer for the run. Links are not opened on any display: `xdg-open` (`open`
 on macOS) is replaced for the command by a script that notes the URI in
 `OUTDIR/opened.txt` (`links` checks it), since through D-Bus a real one
 could reach the desktop of whoever runs the tests, past Xvfb and sway.
-kitty, Ghostty, WezTerm and the GUI pass every judged
+kitty, Ghostty, WezTerm and the GUI passed every judged
 scenario on both (2026-10-29; Ghostty cannot tell its text, so those checks
-SKIP). `-I` (fcitx5 with Mozc) works on both: over XIM on X11, over
+SKIP); on Wayland `terminal-extras`' `scrolled` and its cells fail in
+every terminal (2026-11-24, with the bash harness and the TypeScript one
+alike: it is judged as a notice goes, `todo.md`). `-I` (fcitx5 with Mozc) works on both: over XIM on X11, over
 input-method-v2 (sway) and text-input-v3 (the GUI) on Wayland; the run
 ends the fcitx5 and mozc_server it started (Mozc's server daemonizes; a
 leftover one kept a pipe open, see `scripts/lib/devshell.sh`'s NIX_CONFIG note).

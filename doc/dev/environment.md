@@ -55,9 +55,12 @@ plain ES code: it runs in QuickJS; its install scripts never run,
 
 The repository's own Node scripts are TypeScript that Node runs as it is
 (type stripping, Node 22.18 or later): `node scripts/ts-types.ts`,
-`node scripts/check-docs.ts`; erasable syntax only, `.ts` in imports,
-type-checked by the gate with `tsc -p scripts` (`scripts/tsconfig.json`;
-`@types/node` is a devDependency of `runtime/`).
+`node scripts/check-docs.ts`, the e2e harness (`scripts/e2e/`, its
+scenarios in `tests/e2e/*.ts`); erasable syntax only, `.ts` in imports,
+type-checked by the gate with `tsc -p scripts` and `tsc -p tests/e2e`
+(`scripts/tsconfig.json`, `tests/e2e/tsconfig.json`; `@types/node` is a
+devDependency of `runtime/`), their tests (`scripts/**/*.test.ts`) run
+with `node --test`.
 
 The scripts (TypeScript and the script host's `prelude.ts` and
 `temzdf.ts`) are formatted and linted by Biome (`biome.jsonc`;
