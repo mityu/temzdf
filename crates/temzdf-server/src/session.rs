@@ -350,7 +350,7 @@ pub struct Session {
     /// Counts invocations (keys, text, pastes, CLI requests): a text
     /// buffer's undo step ends when a new one edits it.
     invocation: u64,
-    /// What a new shell pane runs; `None`: `$SHELL`.
+    /// What a new shell pane runs; `None`: `$SHELL` (`%COMSPEC%` on Windows).
     shell: Option<Vec<String>>,
     panes: HashMap<PaneId, PaneEntry>,
     layout: Option<Layout>,
@@ -488,7 +488,8 @@ impl Session {
         }
     }
 
-    /// What new shell panes run (`None`: `$SHELL`, the default).
+    /// What new shell panes run (`None`: `$SHELL`, `%COMSPEC%` on Windows, the
+    /// default).
     pub fn set_shell(&mut self, argv: Option<Vec<String>>) {
         self.shell = argv;
     }

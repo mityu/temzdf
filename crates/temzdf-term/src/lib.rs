@@ -194,7 +194,8 @@ pub struct TermBuffer {
 impl TermBuffer {
     /// Start `spawn` on a new pty of `geometry`'s size.
     pub fn spawn(spawn: &Spawn, geometry: Geometry, sink: Sink) -> io::Result<Self> {
-        // Before anything starts: no terminal panes on Windows yet.
+        // Before anything starts: no terminal panes on Windows without
+        // ConPTY (portable-pty would panic).
         pty::supported()?;
         let pair = native_pty_system().openpty(pty_size(geometry)).map_err(io::Error::other)?;
         let argv = match &spawn.argv {
@@ -1044,7 +1045,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open ptys")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn a_synchronized_update_shows_when_it_ends() {
         let (mut pane, _rx) = start(&["sleep", "10"]);
         pane.feed(b"old");
@@ -1096,7 +1097,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn shows_program_output_with_colours() {
         let (mut pane, rows) = run(
             &helper(&["print", "hello \\e[31mred\\e[0m\\n\\e[38;2;1;2;3mrgb", "sleep", "5000"]),
@@ -1113,7 +1114,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn keys_reach_the_program() {
         // Keys only once echo is off: typed while stty ran, some would be
         // echoed and some not, and "got:hi" could land on the row of an
@@ -1131,7 +1132,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn smaller_views_show_the_bottom_left() {
         let (mut term, _) = run(&helper(&["print", "a\\nb\\nc\\nd\\ne\\nf", "sleep", "5000"]), |_| {}, |r| r[5] == "f");
         let small = TermView::new(Geometry { cols: 3, rows: 2, ..GEOMETRY });
@@ -1148,7 +1149,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn a_wide_character_cut_at_the_views_edge_goes_blank() {
         // "ab数" in a view 3 wide (on the last row: small views show the
         // bottom left): the wide character's first half is the last cell;
@@ -1182,7 +1183,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn dragging_selects_and_releasing_copies() {
         let (mut term, _) =
             run(&["sh", "-c", "printf 'hello world\\nsecond line'; sleep 5"], |_| {}, |r| r[1] == "second line");
@@ -1211,7 +1212,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn programs_tracking_the_mouse_get_plain_drags_and_shift_selects() {
         // Mouse tracking (button events, SGR), then echo what arrives.
         let argv = helper(&["raw", "print", "ready\\e[?1002h\\e[?1006h\\r\\n", "hex"]);
@@ -1236,7 +1237,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn clicking_a_link_opens_it() {
         let argv = helper(&["print", "see \\e]8;;https://example.org/a\\e\\\\here\\e]8;;\\e\\\\ now", "sleep", "5000"]);
         let (mut term, _) = run(&argv, |_| {}, |r| r[0] == "see here now");
@@ -1266,7 +1267,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn images_from_programs_become_layers() {
         // A 2x2 RGBA image shown over 4x2 cells after "ab", then a 1x1 PNG.
         let rgba = "/wAA/wD/AP8AAP///////w==";
@@ -1298,7 +1299,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn the_wheel_sends_arrows_to_programs_on_the_alternate_screen() {
         // Alternate screen, alternate scroll on, no mouse tracking (as less).
         // "ready" once stty ran: raw mode is on for the arrows.
@@ -1313,7 +1314,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn scrolled_back_views_say_how_far() {
         // Until the newline after 20 is in too (the output may come in pieces).
         let (mut term, _) = run(&["sh", "-c", "seq 1 20; sleep 5"], |_| {}, |r| r[4] == "20");
@@ -1354,7 +1355,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn amounts_scroll_history_by_rows_adding_up_fractions() {
         let (mut term, _) = run(&["sh", "-c", "seq 1 20; sleep 5"], |_| {}, |r| r[4] == "20");
         let view = TermView::new(GEOMETRY);
@@ -1378,7 +1379,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "no terminal panes on Windows yet")]
+    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn the_pane_reports_its_program_exiting() {
         let (pane, _) = run(&helper(&["exit", "0"]), |_| {}, |_| false);
         assert!(pane.exited());
@@ -1403,5 +1404,101 @@ mod tests {
         // Linefeed keysym xdotool types for "\n").
         assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('\n'), Modifiers::NONE)).unwrap().key, key::Key::Enter);
         assert_eq!(keys::translate(&KeyEvent::new(KeyCode::Char('\t'), Modifiers::NONE)).unwrap().key, key::Key::Tab);
+    }
+
+    /// Terminal panes on Windows: cmd in the in-box ConPTY.
+    #[cfg(windows)]
+    mod conpty {
+        use super::*;
+
+        /// cmd with the prompt `>`, waited for.
+        fn cmd() -> (TermBuffer, mpsc::Receiver<TermEvent>) {
+            let (mut pane, rx) = start(&["cmd", "/k", "prompt $g"]);
+            let rows = wait(&mut pane, &rx, |r| r.iter().any(|l| l == ">"));
+            assert!(rows.iter().any(|l| l == ">"), "no prompt: {rows:?}");
+            (pane, rx)
+        }
+
+        #[test]
+        fn output_arrives_once_the_pane_answers_conptys_query() {
+            let (mut pane, rx) = start(&["cmd", "/c", "echo", "hello-conpty"]);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut raw = Vec::new();
+            while !pane.exited() && Instant::now() < deadline {
+                match rx.recv_timeout(Duration::from_millis(200)) {
+                    Ok(TermEvent::Output(b)) => {
+                        raw.extend_from_slice(&b);
+                        pane.feed(&b);
+                    }
+                    Ok(TermEvent::Exited) => pane.set_exited(),
+                    Err(_) => {}
+                }
+            }
+            // ConPTY inherits the cursor: it asks where it is and shows
+            // nothing before the terminal answers.
+            assert!(contains(&raw, b"\x1b[6n"), "ConPTY asked for the cursor: {:?}", String::from_utf8_lossy(&raw));
+            let rows = text(&mut pane);
+            assert!(rows.iter().any(|l| l == "hello-conpty"), "{rows:?}");
+            assert!(pane.exited(), "the program's exit was reported");
+        }
+
+        #[test]
+        fn typed_input_reaches_the_program() {
+            let (mut pane, rx) = cmd();
+            // The line typed shows `^`, cmd's output does not.
+            pane.send_text("echo ab^cd\r");
+            let rows = wait(&mut pane, &rx, |r| r.iter().any(|l| l == "abcd"));
+            assert!(rows.iter().any(|l| l == "abcd"), "{rows:?}");
+        }
+
+        #[test]
+        fn the_program_sees_the_new_size() {
+            let (mut pane, rx) = cmd();
+            pane.resize(Geometry { cols: 70, rows: 20, ..GEOMETRY });
+            // `mode con` shows the console's lines and columns, a number
+            // closing each row.
+            pane.send_text("mode con\r");
+            let last = |l: &String, n| l.split_whitespace().last() == Some(n);
+            let rows = wait(&mut pane, &rx, |r| r.iter().any(|l| last(l, "70")) && r.iter().any(|l| last(l, "20")));
+            assert!(rows.iter().any(|l| last(l, "70")) && rows.iter().any(|l| last(l, "20")), "{rows:?}");
+        }
+
+        #[test]
+        fn the_programs_tree_ends_with_the_pane() {
+            use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+            use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+            use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+
+            let (mut pane, rx) = cmd();
+            // A grandchild on a console of its own: closing ConPTY leaves
+            // it alone, only ending the job ends it.
+            pane.send_text("start \"\" /min ping -n 100 127.0.0.1\r");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut pids = pane.pty.processes();
+            while pids.len() < 2 && Instant::now() < deadline {
+                if let Ok(TermEvent::Output(b)) = rx.recv_timeout(Duration::from_millis(100)) {
+                    pane.feed(&b);
+                }
+                pids = pane.pty.processes();
+            }
+            assert!(pids.len() >= 2, "cmd and ping in the job: {pids:?}");
+            let processes: Vec<OwnedHandle> = pids
+                .iter()
+                .map(|&pid| {
+                    // SAFETY: on success the handle is ours to own.
+                    let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+                    assert!(!h.is_null(), "process {pid}: {}", io::Error::last_os_error());
+                    // SAFETY: a valid handle nothing else owns.
+                    unsafe { OwnedHandle::from_raw_handle(h) }
+                })
+                .collect();
+            drop(pane);
+            let timeout = (pty::KILL_AFTER + Duration::from_secs(3)).as_millis() as u32;
+            for (p, pid) in processes.iter().zip(&pids) {
+                // SAFETY: a valid process handle.
+                let ended = unsafe { WaitForSingleObject(p.as_raw_handle(), timeout) } == WAIT_OBJECT_0;
+                assert!(ended, "process {pid} still runs");
+            }
+        }
     }
 }

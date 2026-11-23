@@ -277,11 +277,16 @@ server on one `Session`). Next and open:
     `OpenConsole.exe` (pinned from NuGet at build time, as the Ghostty
     fork noctty does) waits; perhaps Windows gets the newer ConPTY
     itself (microsoft/terminal#17510 passes the program's output
-    through unchanged; the in-box conhost of 25H2 does not yet). The
-    survey of what the server lacks on Windows (inverse search quoting
-    for cmd, no `CREATE_NO_WINDOW`, OSC 7's `/C:/` paths, `ls-fonts`
-    without a session, a Job Object to end a pane's process tree, the
-    pty tests needing `sh`) is to go into `doc/survey/windows-port.md`.
+    through unchanged; the in-box conhost of 25H2 does not yet). Done
+    (2026-11-23): terminal panes on Windows, in the in-box ConPTY, the
+    program in a Job Object that ends its tree with the pane and with the
+    server (`doc/design/session-server.md`, "Windows"); cmd.exe stays
+    the default shell. Still to do for them: a program started by the
+    pane's program before it joins the job escapes it (portable-pty
+    starts it unsuspended; starting it ourselves, suspended or with
+    `PROC_THREAD_ATTRIBUTE_JOB_LIST`, would close that). What the server
+    lacks on Windows otherwise: "The server on Windows" in
+    `doc/survey/windows-port.md`.
   - The product: compile (gate `rustix`, `signal-hook`, `libc`;
     build tooling), the transport
     (`uds_windows`), directories and processes (the GUI attached to a
@@ -290,9 +295,10 @@ server on one `Session`). Next and open:
     server's start-up for `temzdf-protocol`, `temzdf-client` and
     `temzdf-gui` (cross-checked; their tests not run on Windows yet),
     and the server moved to them (gaps in
-    `doc/design/session-server.md`, "Windows"). Terminal panes are off
-    on Windows for now (`temzdf-term`'s pty is Unix only; the pane
-    tests that start programs are ignored there): ConPTY later. The
+    `doc/design/session-server.md`, "Windows"). Terminal panes run in
+    the in-box ConPTY (2026-11-23); the pane tests that start programs
+    are still ignored there ("pane tests not ported to Windows yet"),
+    tests of their own run cmd (`temzdf-term`'s `tests::conpty`). The
     terminal frontend (`termpix`, `temzdf-tty`; `attach`, `standalone`,
     `render-session`) is Unix only: on Windows `temzdf` is the server
     and the client commands, `temzdf FILE` points at `temzdf-gui`,
@@ -315,7 +321,10 @@ server on one `Session`). Next and open:
     an administrator or developer mode). Open: import specifiers on
     Windows (`.\`, `C:\`), and whether `./Lib.ts` and `./lib.ts` are one
     module on case-insensitive file systems. `ls-fonts`
-    without a session starts a terminal pane for the configuration.
+    without a session starts a terminal pane running `true` for the
+    configuration, which fails on Windows; postponed: the user may stop
+    resolving the configuration's fonts there, which changes what the
+    command does.
   - The tests: a helper program instead of `sh` in the pty tests; the
     PDF fixtures on Windows (built with TeX; `temzdf-pdfcore` stays out
     of the gate there, and the fixture tests of `temzdf-pdfview` and

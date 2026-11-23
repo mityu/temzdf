@@ -329,13 +329,28 @@ git log), and why:
   the same path by its volume serial number and file index
   (`winapi-util`, the file opened as a reparse point; not yet run on
   Windows). Logs get no mode. `file:` links do not open, and path
-  comparisons are not case-insensitive yet. There are no terminal panes
-  on Windows yet (decided with the user, 2026-11-23; ConPTY comes
-  later, `doc/terminals/conpty.md`): `temzdf-term` keeps Ghostty's
-  emulation but starts no program (`TermBuffer::spawn` fails with
-  `Unsupported`, "terminal panes are not supported on Windows yet"),
-  so a split, float or tab with a program reports that error to the
-  client, as any pane that cannot start does. The terminal frontend
+  comparisons are not case-insensitive yet. Terminal panes run their
+  programs in Windows' in-box ConPTY through portable-pty, as on Unix
+  through its pty (decided with the user, 2026-11-23; no `conpty.dll`
+  shipped, so images from programs in panes are lost:
+  `doc/terminals/conpty.md`). `temzdf-term`'s `pty.rs` reads and writes
+  ConPTY's pipes on blocking threads (no `poll`: the reader and the
+  writer end when ConPTY is closed), and reaps the program as on Unix
+  (ConPTY's output does not end with the program, so the exit is
+  reported `LAST_OUTPUT` after it). The program runs in a Job Object
+  with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: deleting the pane closes
+  ConPTY (the console's programs get `CTRL_CLOSE_EVENT`, the hang-up)
+  and a second later, or once the program is reaped, ends the job,
+  programs it started on consoles of their own too; when the server
+  ends, however it ends, the job's handle closes and the panes'
+  programs end with it (the user's choice; on Unix the pty's hang-up
+  ends them). Processes the program starts before it is put into the
+  job (right after it starts; portable-pty starts it unsuspended)
+  would be outside it. Without ConPTY (before Windows 10 1809) a pane
+  that runs a program fails with `Unsupported` before portable-pty is
+  asked (it would panic), and the split, float or tab reports that to
+  the client, as any pane that cannot start does. The shell is
+  `%COMSPEC%` (cmd.exe; the user, 2026-11-23). The terminal frontend
   (`termpix`, `temzdf-tty`) is Unix only too: there `temzdf` runs
   servers (`temzdf server`, which temzdf-gui starts) and the client
   commands (`ls`, `kill-session`, `action`, `eval`, ...), and
