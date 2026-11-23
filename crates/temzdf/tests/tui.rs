@@ -2783,6 +2783,13 @@ fn cmdline_completion_popup_stays_in_every_frame_while_typing() {
     // again, a flicker on every key) nor a mix of the two (the new size
     // with the old lines); erased back to nothing, the popup grows to all
     // its rows again (not three lines written, as many as rows it had).
+    // Frames wait for the script updating the list for up to a second
+    // (`FRAME_HOLD` in crates/temzdf-server/src/session/script.rs); past
+    // that (a loaded machine) the session draws the list half updated, as
+    // designed: frames read a second or more after the key are not judged
+    // (read no earlier than drawn, and the update starts no earlier than
+    // the key, so no such frame is one the session should have held).
+    const HOLD: std::time::Duration = std::time::Duration::from_secs(1);
     let env = Env::new("cmdline-completion-frames");
     let file = env.path("c.txt");
     std::fs::write(&file, "one\ntwo\n").unwrap();
@@ -2815,9 +2822,17 @@ fn cmdline_completion_popup_stays_in_every_frame_while_typing() {
         steps.push(("BS", "", &all));
     }
     for (key, typed, after) in steps {
+        let sent = std::time::Instant::now();
         t.key(key);
-        let frames = t.frames_until(&format!(":{typed} and {after:?}"), |s| cmdline(s, typed) && names(s) == *after);
-        for f in &frames {
+        let read = std::cell::RefCell::new(Vec::new());
+        let frames = t.frames_until(&format!(":{typed} and {after:?}"), |s| {
+            read.borrow_mut().push(std::time::Instant::now());
+            cmdline(s, typed) && names(s) == *after
+        });
+        for (f, at) in frames.iter().zip(read.borrow().iter()) {
+            if at.duration_since(sent) >= HOLD {
+                continue;
+            }
             let n = names(f);
             if n != before && n != *after {
                 t.fail(&format!("at {typed:?}: a frame with {n:?}, neither {before:?} nor {after:?}"), f);

@@ -124,12 +124,18 @@ server on one `Session`). Next and open:
   `the_markdown_viewer_copies_follows_links_and_lists_its_headings`,
   `the_markdown_viewers_graphics_mode_is_pixels_or_says_why_not`,
   `a_markdown_text_screen_renders_to_pixels`,
-  `inside_a_session_temzdf_means_that_session`, `a_pdf_screen_renders_to_pixels`,
-  `cmdline_completion_popup_stays_in_every_frame_while_typing`. Most failing
-  screens show the "Script is running.  Type <C-c> to interrupt." notice (the
-  script host busy for about a second), which the tests read as part of the
-  screen; the completion test once saw a partly published list. Make the
-  tests wait the notice out or ignore it.
+  `inside_a_session_temzdf_means_that_session` and
+  `a_pdf_screen_renders_to_pixels`. Most failing screens showed the busy
+  notice (then shown after a script ran for a second; now after 8 s, as
+  "Script is running.  Type <C-c> to interrupt."), which the tests read
+  as part of the screen. Check whether they still fail under load; if so,
+  make them wait the notice out or ignore it.
+  `cmdline_completion_popup_stays_in_every_frame_while_typing` (also in
+  CI) saw partly updated completion lists because frames did not wait for
+  scripts started under queued hooks (fixed: `begin_busy` in
+  `crates/temzdf-server/src/session/script.rs`); its check now skips
+  frames read a second or more after the key, when the session draws
+  what the script has done so far, as designed.
 - Whether `temzdf action` goes, now that `temzdf eval` runs the
   configuration's language from the command line, or shrinks to what a
   shell needs (opening a file: `new-pane FILE` resolves paths against the
