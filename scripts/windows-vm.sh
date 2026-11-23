@@ -10,7 +10,9 @@
 #                    the state directory, and write vitro's config; the other
 #                    commands do this themselves when it is missing
 #   start            start the VM from the golden image (a fresh disposable
-#                    overlay) and wait until it answers and has a desktop
+#                    overlay) and wait until it answers and has a desktop;
+#                    a VM it starts gets Defender exclusions for the builds
+#                    and no search indexer (`tune`)
 #   stop             shut the VM down and delete its overlay (the same as
 #                    destroy: the overlay is the VM)
 #   destroy          the same
@@ -44,14 +46,16 @@
 #                    restart it and keep it as the next golden image
 #                    (vitro promote); the versions go to
 #                    target/windows-vm/provision-versions.txt
-#   check [REV] [-- ARGS...]  copy REV (default HEAD; `git archive`, so only
-#                    committed files; a one-commit repository, for the
-#                    gate's `git diff`) into a fresh VM's C:\t, npm ci, and run
+#   check [--fresh] [REV] [-- ARGS...]  check out REV (default HEAD; only
+#                    committed files, through a git bundle) in the guest's
+#                    C:\t, npm ci when its lock changed, and run
 #                    `cargo xtask check --no-miri ARGS` there in UCRT64's
 #                    login shell (as the CI's `shell: msys2`: MSYS2's
-#                    usr/bin, with make for mupdf-sys, on PATH); the output
-#                    goes to target/windows-vm/check.log, exits with its
-#                    status
+#                    usr/bin, with make for mupdf-sys, on PATH). The running
+#                    VM and its C:\t/target are reused (started if none is
+#                    running); --fresh starts a new VM and builds from
+#                    nothing. The output goes to target/windows-vm/check.log,
+#                    exits with its status; the VM is left running
 #
 # Environment: TEMZDF_WINDOWS_VM (the VM's name, default temzdf-windows),
 # TEMZDF_WINDOWS_GOLDEN (the golden image, default the newest
@@ -177,8 +181,22 @@ start() {
     # A stopped record of the same name would refuse the new VM.
     vitro destroy "$vm" >/dev/null 2>&1 || true
     vitro run --name "$vm" "$image" >>"$out/run.log" 2>&1 || die "vitro run failed (see $out/run.log)"
+    vitro wait --desktop --timeout 180s "$vm"
+    tune
+  else
+    vitro wait --desktop --timeout 180s "$vm"
   fi
-  vitro wait --desktop --timeout 180s "$vm"
+}
+
+# Builds in a VM just started: Defender scans what the build writes and
+# runs, and the search indexer reads it too. Before these, during a build
+# MsMpEng had used about 480 s of CPU and the indexer 140 s, against 40 s
+# of cargo and rustc (2026-11-23). Set on each start, not in the golden
+# image, which is also used by hand.
+tune() {
+  vitro exec "$vm" "Add-MpPreference -ExclusionPath C:\\t, C:\\msys64, \"\$env:USERPROFILE\\.cargo\", \$env:TEMP; \
+    Add-MpPreference -ExclusionProcess cargo.exe, rustc.exe, clippy-driver.exe, ld.lld.exe, gcc.exe, cc1.exe, clang.exe, as.exe, ar.exe; \
+    Stop-Service WSearch -Force -ErrorAction SilentlyContinue; Set-Service WSearch -StartupType Disabled" >/dev/null
 }
 
 destroy() { vitro destroy "$vm" 2>/dev/null || true; }
@@ -253,22 +271,38 @@ case $cmd in
     vitro promote "$vm"
     ;;
   check)
+    fresh=
+    if [[ ${1:-} == --fresh ]]; then fresh=1; shift; fi
     rev=HEAD
     if (($# > 0)) && [[ $1 != -- ]]; then rev=$1; shift; fi
     [[ ${1:-} != -- ]] || shift
     sha=$(git rev-parse --verify "$rev^{commit}")
     mkdir -p "$out"
-    git archive --format=tar -o "$out/tree.tar" "$sha"
-    destroy
+    # A bundle, checked out over the last check's tree: only the files
+    # that changed get new times, so cargo rebuilds only what they touch
+    # (an archive unpacked anew would rebuild every crate of ours).
+    # (A bundle takes refs, not commits: one for the moment.)
+    rm -f "$out/check.bundle"
+    git update-ref refs/windows-vm/check "$sha"
+    git bundle create -q "$out/check.bundle" refs/windows-vm/check
+    git update-ref -d refs/windows-vm/check
+    [[ -z $fresh ]] || destroy
     start
-    vitro cp "$out/tree.tar" "$vm:tree.tar"
+    vitro cp "$out/check.bundle" "$vm:check.bundle"
     echo "windows-vm.sh: checking $sha in the guest's C:/t" | tee "$out/check.log"
+    lock=crates/temzdf-script/runtime/package-lock.json
     set +e
-    run "Remove-Item -Recurse -Force C:/t -ErrorAction SilentlyContinue; New-Item -ItemType Directory C:/t | Out-Null; \
-      tar -xf tree.tar -C C:/t; Set-Location C:/t; \
-      git init -q; git add -A; git -c user.name=vm -c user.email=vm@localhost commit -q -m $sha; \
-      npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund; \
-      if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }; \
+    # npm ci only when the lock changed: it remakes node_modules, which
+    # makes temzdf-script's build script build the script guest again.
+    # The files as committed (LF), whatever Git for Windows' autocrlf says.
+    run "if (-not (Test-Path C:/t/.git)) { git init -q C:/t }; Set-Location C:/t; git config core.autocrlf false; \
+      \$old = git rev-parse -q --verify HEAD 2>\$null; \
+      git fetch -q \$HOME/check.bundle refs/windows-vm/check; if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }; \
+      git checkout -q -f --detach $sha; if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }; \
+      git clean -q -fd; \
+      if (-not (Test-Path crates/temzdf-script/runtime/node_modules) -or -not \$old -or (git diff --name-only \$old $sha -- $lock)) { \
+        npm ci --prefix crates/temzdf-script/runtime --no-audit --no-fund; \
+        if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE } }; \
       \$env:MSYSTEM='UCRT64'; \$env:MSYS2_PATH_TYPE='inherit'; \$env:CHERE_INVOKING='1'; \
       C:/msys64/usr/bin/bash.exe -lc 'cargo xtask check --stream --no-miri $*'" 2>&1 | tee -a "$out/check.log"
     status=${PIPESTATUS[0]}

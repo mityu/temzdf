@@ -584,7 +584,7 @@ scripts/windows-vm.sh run 'cmd /c exit 3'    # PowerShell; exits 3
 scripts/windows-vm.sh cp-in FILE guest.bin   # cp-out GUEST HOST
 scripts/windows-vm.sh screenshot             # target/windows-vm/*.png
 scripts/windows-vm.sh reset                  # a fresh overlay; stop: delete it
-scripts/windows-vm.sh check [REV]            # the gate on REV in the guest
+scripts/windows-vm.sh check [--fresh] [REV]  # the gate on REV in the guest
 scripts/windows-vm.sh cursor hidden          # a transparent pointer; default: back
 ```
 
@@ -627,12 +627,27 @@ scripts/windows-vm.sh cursor hidden          # a transparent pointer; default: b
   20 GB (2026-11-23). The guest's disk is 120 GB: after the gate and a
   `cargo check --workspace` in it, about 75 GB of C: were still free
   (measured with the earlier MSVC image).
-- `check` copies a commit (`git archive`, so not the uncommitted changes)
-  to the guest's `C:\t`, runs `npm ci` and `cargo xtask check --no-miri`
-  (in UCRT64's login shell) there; the output is `target/windows-vm/check.log`. It passes
-  (2026-11-23, over `WINDOWS_CRATES` and `WINDOWS_ONLY_CRATES`); the
-  crates outside them do not build or pass there yet (why: the comment
-  on those lists in `xtask/src/check.rs`, and `todo.md`).
+- `check` checks a commit out in the guest's `C:\t` (a git bundle, so
+  not the uncommitted changes), runs `npm ci` when the lock changed and
+  `cargo xtask check --no-miri` (in UCRT64's login shell) there; the
+  output is `target/windows-vm/check.log`. It uses the running VM and
+  keeps `C:\t` and its `target` between runs, and leaves the VM running:
+  checked out over the last tree, only the files that changed get new
+  times, so cargo rebuilds only what they touch (an archive unpacked
+  anew rebuilt every crate of ours, and a new VM everything. In a VM
+  that had built the dependencies, the gate with every crate of ours
+  rebuilt took 4 m 49 s, and over an unchanged tree 1 m 14 s;
+  2026-11-23).
+  `--fresh` starts a new VM first. It passes (2026-11-23, over
+  `WINDOWS_CRATES` and `WINDOWS_ONLY_CRATES`); the crates outside them do
+  not build or pass there yet (why: the comment on those lists in
+  `xtask/src/check.rs`, and `todo.md`).
+- A VM `start` starts gets Defender exclusions for the build
+  (`C:\t`, `C:\msys64`, `.cargo`, Temp; cargo, rustc, the linkers and
+  compilers) and no search indexer: during a build Defender had used
+  about 480 s of CPU and the indexer 140 s, against 40 s of cargo and
+  rustc (2026-11-23). Set on each start, not in the golden image, which
+  is also used by hand.
 - Each image is a new dated file in `~/.local/share/vitro/golden/`; the
   newest is used unless `TEMZDF_WINDOWS_GOLDEN` names another. Old ones are
   not deleted.
