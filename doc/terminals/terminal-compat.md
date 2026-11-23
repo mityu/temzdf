@@ -364,6 +364,18 @@ are sent, since zellij forwards images uncompressed); WezTerm whole-frame
   away is blanked before the images (`TextScreen::clear_gone`), and the
   wide characters under new placements are written again after them
   (`TextScreen::redraw_wide`). `tests/e2e/float-wide.actions`.
+- WezTerm 0-unstable-2026-11-08 (Xvfb, 2026-11-23) shapes text over cells
+  an image was placed on (temzdf's Composited frame covers the screen) one
+  cell at a time: its default font's ligatures and contextual alternates
+  (JetBrains Mono: the colon of "1:1" raised between digits, "~~", "##",
+  "//") do not apply there, while the same bytes on a plain screen are
+  shaped in runs. Not the bytes: the status line's run was the same in
+  temzdf's output and in `NAME.ansi`, and with `TERMPIX_GRAPHICS=off` both
+  drew alike. Presumably the image's piece of each cell is part of the
+  cell's attributes, and WezTerm shapes runs of equal attributes. So
+  `NAME.cells` (`doc/dev/testing.md`) failed by 4 to 170 px in `edit`,
+  `markdown` and `resize`; `scripts/e2e.sh` turns `calt`, `clig` and
+  `liga` off in WezTerm (`harfbuzz_features`), and they pass.
 - tmux 3.8 inside kitty 0.49.2 (`scripts/e2e.sh -m tmux`, passthrough on, mouse
   on): works with the Placeholders backend. Frames are composited as strips
   and sent as `U=1` virtual images through passthrough (`ESC P tmux; ...`), and

@@ -1575,11 +1575,15 @@ case $term in
   wezterm)
     # -n: ignore the user's wezterm config. The software renderer works on Xvfb.
     # WezTerm sizes windows in cells: 10x22 px at its defaults (more rows would
-    # run past the bottom of the virtual screen).
+    # run past the bottom of the virtual screen). No ligatures nor contextual
+    # alternates: over temzdf's images WezTerm shapes each cell alone, while
+    # NAME.cells' reference (a cat on a plain screen) would be shaped in runs
+    # ("1:1"'s colon, "~~", "##", "//"; doc/terminals/terminal-compat.md).
     "${clean_env[@]}" wezterm -n --config 'front_end="Software"' \
       --config "enable_wayland=$([[ $display == wayland ]] && echo true || echo false)" \
       --config 'window_decorations="NONE"' --config enable_tab_bar=false \
       --config 'window_padding={left=0,right=0,top=0,bottom=0}' \
+      --config 'harfbuzz_features={"calt=0","clig=0","liga=0"}' \
       --config "initial_cols=$((width / 10))" --config "initial_rows=$((height / 22))" \
       start --always-new-process --cwd "$PWD" -- "$@" >"$outdir/terminal.log" 2>&1 &
     startup=6
