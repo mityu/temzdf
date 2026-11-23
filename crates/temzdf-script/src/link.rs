@@ -11,7 +11,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use temzdf_protocol::script::{FromHost, ToHost};
-use temzdf_protocol::script_fs::{FsOp, FsResult};
+use temzdf_protocol::script_fs::{FsOp, FsResult, ToGuest};
+
+use crate::native_fs::Workers;
 
 /// Synchronous file access ([`Link::files`]).
 pub type Files = Rc<dyn Fn(&FsOp) -> FsResult>;
@@ -20,6 +22,11 @@ pub type Files = Rc<dyn Fn(&FsOp) -> FsResult>;
 #[derive(Debug)]
 pub enum Received {
     Msg(ToHost),
+    /// An operation [`Link::fs_start`] started is done.
+    FsDone {
+        id: u64,
+        result: FsResult,
+    },
     /// Nothing came in time.
     Timeout,
     /// The session went away.
@@ -40,20 +47,29 @@ pub trait Link {
     /// File access done where the OS's paths are understood
     /// ([`crate::native_fs`]), waited for: the module loader's.
     fn files(&self) -> Files;
+    /// Start a file operation without waiting for it: [`Link::recv`]
+    /// gives its result ([`Received::FsDone`]) once done, among the
+    /// session's messages.
+    fn fs_start(&mut self, id: u64, op: FsOp);
 }
 
 /// A [`Link`] over a byte stream with `temzdf_protocol`'s framing: a thread
 /// reads the messages (and counts interrupts as they come).
 pub struct StreamLink {
     out: Box<dyn Write>,
-    rx: Receiver<ToHost>,
+    rx: Receiver<ToGuest>,
     interrupts: Arc<AtomicU64>,
+    workers: Workers,
 }
 
 impl StreamLink {
     pub fn new(input: impl Read + Send + 'static, output: impl Write + 'static) -> io::Result<Self> {
         let interrupts = Arc::new(AtomicU64::new(0));
         let (tx, rx) = mpsc::channel();
+        let done = tx.clone();
+        let workers = Workers::new(move |id, result| {
+            let _ = done.send(ToGuest::FsDone { id, result });
+        });
         let count = interrupts.clone();
         let mut input = io::BufReader::new(input);
         std::thread::Builder::new().name("script-host-in".into()).spawn(move || {
@@ -66,12 +82,12 @@ impl StreamLink {
                     count.fetch_add(1, Ordering::SeqCst);
                 }
                 let last = msg == ToHost::Shutdown;
-                if tx.send(msg).is_err() || last {
+                if tx.send(ToGuest::Msg(msg)).is_err() || last {
                     return;
                 }
             }
         })?;
-        Ok(Self { out: Box::new(output), rx, interrupts })
+        Ok(Self { out: Box::new(output), rx, interrupts, workers })
     }
 }
 
@@ -86,7 +102,8 @@ impl Link for StreamLink {
             None => self.rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
         match got {
-            Ok(m) => Received::Msg(m),
+            Ok(ToGuest::Msg(m)) => Received::Msg(m),
+            Ok(ToGuest::FsDone { id, result }) => Received::FsDone { id, result },
             Err(RecvTimeoutError::Timeout) => Received::Timeout,
             Err(RecvTimeoutError::Disconnected) => Received::Closed,
         }
@@ -99,5 +116,9 @@ impl Link for StreamLink {
 
     fn files(&self) -> Files {
         Rc::new(crate::native_fs::run)
+    }
+
+    fn fs_start(&mut self, id: u64, op: FsOp) {
+        self.workers.start(id, op);
     }
 }

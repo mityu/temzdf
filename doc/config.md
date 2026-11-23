@@ -92,6 +92,31 @@ join("/home/me/doc", "..", "notes.md"); // "/home/me/notes.md"
 basename("/home/me/doc/main.tex", ".tex"); // "main"
 ```
 
+Files: `temzdf/fs` reads them asynchronously, as Deno's API and JSR's
+`@std/fs` do: `readTextFile`, `readFile` (a `Uint8Array`), `stat`, `lstat`,
+`readDir` (an async iterable of `{ name, isFile, isDirectory, isSymlink }`),
+`realPath` and `exists(path, { isFile?, isDirectory? })`. Read-only;
+absolute paths only (a relative one is a `TypeError`); regular files of at
+most 64 MiB, directories of at most 100k entries. Failures are classes of
+`errors` (`NotFound`, `PermissionDenied`, `IsADirectory`, `NotADirectory`,
+`NotAFile`, `TooLarge`, `TooMany`, `Other`), whose messages are the same on
+every OS. They are read on threads of their own, and settle once nothing
+runs (after the promise jobs already queued).
+
+```ts
+import { dispatch } from "temzdf";
+import { exists, readDir, readTextFile } from "temzdf/fs";
+import { join } from "temzdf/path";
+dispatch(async (ctx) => {
+  const dir = "/home/me/doc";
+  if (await exists(join(dir, "main.tex"), { isFile: true })) {
+    const text = await readTextFile(join(dir, "main.tex"));
+    ctx.action.message(`${text.length} characters`);
+  }
+  for await (const e of readDir(dir)) if (e.name.endsWith(".pdf")) console.log(e.name);
+});
+```
+
 A value the API may leave out (no count typed, no focused pane, an unset
 option) is `undefined`, never `null`; `x == null` checks for either.
 

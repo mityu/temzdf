@@ -19,7 +19,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use temzdf_protocol::script::{FromHost, ToHost};
-use temzdf_protocol::script_fs::FsOp;
+use temzdf_protocol::script_fs::{FsOp, ToGuest};
+use temzdf_script::native_fs::Workers;
 use wasmtime::{Caller, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, Trap, UpdateDeadline};
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::WasiP1Ctx;
@@ -55,7 +56,7 @@ pub enum Event {
 
 /// A running guest. Dropping it stops it.
 pub struct ScriptHost {
-    tx: Option<Sender<ToHost>>,
+    tx: Option<Sender<ToGuest>>,
     interrupts: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -85,7 +86,10 @@ fn loaded() -> Result<&'static (Engine, Module), String> {
 struct Data {
     wasi: WasiP1Ctx,
     limits: StoreLimits,
-    rx: Receiver<ToHost>,
+    rx: Receiver<ToGuest>,
+    /// The asynchronous file operations (`fs_start`): their results join
+    /// the session's messages in `rx`.
+    workers: Workers,
     /// The message `recv` announced, for `recv_into`.
     pending: Vec<u8>,
     /// The answer `fs_call` announced, for `fs_reply_into`.
@@ -100,6 +104,12 @@ impl ScriptHost {
     pub fn start(options: Options, events: impl FnMut(Event) + Send + 'static) -> Result<Self, String> {
         let (engine, module) = loaded()?;
         let (tx, rx) = mpsc::channel();
+        let done = tx.clone();
+        // Never joined: `stop` sends `Shutdown` itself, so a worker stuck on
+        // a hung file system (keeping the channel open) holds nothing up.
+        let workers = Workers::new(move |id, result| {
+            let _ = done.send(ToGuest::FsDone { id, result });
+        });
         let interrupts = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         let mut wasi = WasiCtxBuilder::new();
@@ -113,6 +123,7 @@ impl ScriptHost {
             wasi,
             limits,
             rx,
+            workers,
             pending: Vec::new(),
             fs_reply: Vec::new(),
             interrupts: interrupts.clone(),
@@ -149,7 +160,7 @@ impl ScriptHost {
         if msg == ToHost::Interrupt {
             self.interrupts.fetch_add(1, Ordering::SeqCst);
         }
-        tx.send(msg).is_ok()
+        tx.send(ToGuest::Msg(msg)).is_ok()
     }
 
     /// Stop the guest whatever it is doing (a wait ends, running code traps
@@ -157,7 +168,7 @@ impl ScriptHost {
     /// follows.
     pub fn stop(&mut self) {
         if let Some(tx) = self.tx.take() {
-            let _ = tx.send(ToHost::Shutdown);
+            let _ = tx.send(ToGuest::Msg(ToHost::Shutdown));
         }
         self.stop.store(true, Ordering::SeqCst);
         if let Ok((engine, _)) = loaded() {
@@ -256,6 +267,18 @@ fn linker(engine: &Engine) -> wasmtime::Result<Linker<Data>> {
                 Ok(()) => data.fs_reply.len() as i64,
                 Err(_) => -1,
             })
+        },
+    )?;
+    linker.func_wrap(
+        "temzdf",
+        "fs_start",
+        |mut caller: Caller<'_, Data>, id: u64, ptr: u32, len: u32| -> wasmtime::Result<i32> {
+            let mem = memory(&mut caller)?;
+            let frame = frame_at(mem.data(&caller), ptr, len)
+                .ok_or_else(|| wasmtime::Error::msg("fs_start: a frame outside the guest's memory"))?;
+            let Ok(Some(op)) = temzdf_protocol::recv::<FsOp>(&mut &frame[..]) else { return Ok(1) };
+            caller.data().workers.start(id, op);
+            Ok(0)
         },
     )?;
     linker.func_wrap(

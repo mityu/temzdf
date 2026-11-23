@@ -7,6 +7,8 @@
 use std::fs::{self, File, Metadata};
 use std::io::{self, Read};
 use std::path::Path;
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use temzdf_protocol::script_fs::{DirEntry, FileInfo, FsError, FsErrorKind, FsOp, FsReply, FsResult};
@@ -33,6 +35,54 @@ pub fn run_with(op: &FsOp, read_limit: u64, dir_limit: usize) -> FsResult {
             let real = fs::canonicalize(absolute(p)?).map_err(|e| error(p, &e))?;
             Ok(FsReply::Path(plain(&real.to_string_lossy()).into_owned()))
         }
+    }
+}
+
+/// Threads doing operations as they are started ([`Workers::start`]), each
+/// result handed to the function given (from that thread). Dropped, they
+/// end once their current operation does; nobody waits for them (one stuck
+/// on a hung file system must not hold up a reload).
+pub struct Workers {
+    jobs: Option<Sender<(u64, FsOp)>>,
+    done: Arc<dyn Fn(u64, FsResult) + Send + Sync>,
+}
+
+impl Workers {
+    /// How many operations run at once.
+    pub const THREADS: usize = 4;
+
+    pub fn new(done: impl Fn(u64, FsResult) + Send + Sync + 'static) -> Self {
+        let done: Arc<dyn Fn(u64, FsResult) + Send + Sync> = Arc::new(done);
+        let (tx, rx) = mpsc::channel::<(u64, FsOp)>();
+        let rx = Arc::new(Mutex::new(rx));
+        let mut started = 0;
+        for i in 0..Self::THREADS {
+            let (rx, done) = (rx.clone(), done.clone());
+            let spawned = std::thread::Builder::new().name(format!("temzdf-script-fs-{i}")).spawn(move || {
+                loop {
+                    // One thread waits for the next job, the others for the lock.
+                    let job = match rx.lock() {
+                        Ok(rx) => rx.recv(),
+                        Err(_) => return,
+                    };
+                    let Ok((id, op)) = job else { return };
+                    done(id, run(&op));
+                }
+            });
+            started += usize::from(spawned.is_ok());
+        }
+        // No thread: done where started (still answered, later than asked).
+        Self { jobs: (started > 0).then_some(tx), done }
+    }
+
+    /// Start operation `id`.
+    pub fn start(&self, id: u64, op: FsOp) {
+        if let Some(jobs) = &self.jobs
+            && jobs.send((id, op.clone())).is_ok()
+        {
+            return;
+        }
+        (self.done)(id, run(&op));
     }
 }
 
@@ -229,6 +279,23 @@ mod tests {
         assert_eq!(flags, [("f", true, false), ("sub", false, true)]);
         assert_eq!(kind(run_with(&FsOp::ReadDir(s(&d)), 10, 1)), FsErrorKind::TooMany);
         assert_eq!(kind(run(&FsOp::ReadDir(s(&d.join("f"))))), FsErrorKind::NotADirectory);
+    }
+
+    #[test]
+    fn workers_answer_every_operation_started() {
+        let d = dir("workers");
+        fs::write(d.join("a"), "x").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let w = Workers::new(move |id, r| tx.send((id, r)).unwrap());
+        for id in 0..20 {
+            let p = if id % 2 == 0 { d.join("a") } else { d.join("none") };
+            w.start(id, FsOp::ReadFile(s(&p)));
+        }
+        let mut got: Vec<_> = (0..20).map(|_| rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).collect();
+        got.sort_by_key(|(id, _)| *id);
+        for (id, r) in got {
+            assert_eq!(r.is_ok(), id % 2 == 0, "{id}: {r:?}");
+        }
     }
 
     #[test]

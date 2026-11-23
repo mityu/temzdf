@@ -40,6 +40,7 @@ const MODULES: &[(&str, &str)] = &[
     ("ff", "ff/index.ts"),
     ("ff/builtin", "ff/builtin/index.ts"),
     ("ff/completion", "ff/completion/index.ts"),
+    ("fs", "fs.ts"),
     ("path", "path.ts"),
     ("path/posix", "path/posix.ts"),
     ("path/windows", "path/windows.ts"),

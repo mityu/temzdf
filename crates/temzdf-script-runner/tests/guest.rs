@@ -82,6 +82,26 @@ fn stop_ends_a_guest_that_ignores_interrupts() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// File operations (temzdf/fs) run on threads of their own, which keep a
+/// sender of the guest's queue: stopping still ends the guest at once, and
+/// dropping it waits for no worker.
+#[test]
+fn stop_ends_a_guest_with_file_operations_running() {
+    let config = r#"import { dispatch } from "temzdf";
+import { readDir } from "temzdf/fs";
+dispatch(async () => { for (;;) { for await (const _ of readDir("/")) {} } });
+"#;
+    let (mut host, rx, dir) = start(config, Options::default());
+    std::thread::sleep(Duration::from_millis(200));
+    let t = Instant::now();
+    host.stop();
+    let why = exited(&host, &rx);
+    assert!(why == "it was stopped" || why == "it ended", "{why}");
+    drop(host);
+    assert!(t.elapsed() < Duration::from_secs(2), "took {:?}", t.elapsed());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn the_memory_cap_ends_the_guest() {
     // Low, so the test is quick: the guest starts in a few MiB.

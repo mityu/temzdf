@@ -184,17 +184,18 @@ server on one `Session`). Next and open:
     typed at once types `split` into the finder's query (the action
     picker is not open yet).
   - The fuzzy finder: a previewer's UI (previewers are types only), a
-    files finder (needs `fs.readDir`), help topics (no help yet),
+    files finder (`readDir` of `temzdf/fs` is there now), help topics (no help yet),
     clicking a candidate, closing with `<C-c>` (reserved by the server:
     a Rust change), remembering the last query or resuming the last
     finder.
   - Narrowing only the previous matches when the new query extends the
     old one (as fzf does): measured, one query over 100k items takes
     seconds with npm `fzf` in the script host ("Speed" there).
-  - Reading directories from scripts (`fs.readDir(path)`, maybe `cwd()`;
-    in the guest only, beside `read_module` in
-    `crates/temzdf-script/src/host.rs`), for path completion and a files
-    finder: left for after the framework (2026-11-22).
+  - Path completion and a files finder on `temzdf/fs` and `temzdf/path`
+    (built 2026-11-23). Still open: a working directory for scripts
+    (`cwd()`, `temzdf/path`'s `resolve`, left out until where one is
+    comes from is settled: "Absolute paths only" below); an
+    `AbortSignal` for long reads; writing files.
   - Floats with `focusable: false` (popups, the list) are also left out
     of `toggleFloats` and of its count. If a float ever should not take
     the focus yet still hide and show with the user's floats (a small

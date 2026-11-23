@@ -11,8 +11,8 @@ use std::io;
 use std::rc::Rc;
 use std::time::Duration;
 
-use temzdf_protocol::script::{FromHost, ToHost};
-use temzdf_protocol::script_fs::{FsError, FsErrorKind, FsOp, FsResult};
+use temzdf_protocol::script::FromHost;
+use temzdf_protocol::script_fs::{FsError, FsErrorKind, FsOp, FsResult, ToGuest};
 use temzdf_script::link::{Files, Link, Received};
 
 #[link(wasm_import_module = "temzdf")]
@@ -39,6 +39,10 @@ unsafe extern "C" {
     /// Copy the answer `fs_call` announced (exactly its length).
     #[link_name = "fs_reply_into"]
     fn host_fs_reply_into(ptr: *mut u8, len: usize);
+    /// Start file operation `id` (a framed `FsOp`) without waiting: its
+    /// result comes through `recv`. 0 when it started.
+    #[link_name = "fs_start"]
+    fn host_fs_start(id: u64, ptr: *const u8, len: usize) -> i32;
 }
 
 /// [`Link::files`] over `fs_call`.
@@ -58,7 +62,11 @@ fn fs_call(op: &FsOp) -> FsResult {
     }
 }
 
-struct GuestLink;
+#[derive(Default)]
+struct GuestLink {
+    /// File operations that could not start, answered by the next `recv`.
+    failed: Vec<(u64, FsResult)>,
+}
 
 impl Link for GuestLink {
     fn send(&mut self, msg: &FromHost) -> io::Result<()> {
@@ -72,6 +80,9 @@ impl Link for GuestLink {
     }
 
     fn recv(&mut self, timeout: Option<Duration>) -> Received {
+        if let Some((id, result)) = self.failed.pop() {
+            return Received::FsDone { id, result };
+        }
         // Rounded up: a timer due in 0.4 ms must not spin on 0 ms waits.
         let ms = timeout.map_or(-1, |t| i64::try_from(t.as_micros().div_ceil(1000)).unwrap_or(i64::MAX));
         // SAFETY: an import without pointers.
@@ -82,8 +93,9 @@ impl Link for GuestLink {
         let mut frame = vec![0u8; len];
         // SAFETY: `frame` has exactly the announced length, alive for the call.
         unsafe { host_recv_into(frame.as_mut_ptr(), len) };
-        match temzdf_protocol::recv::<ToHost>(&mut frame.as_slice()) {
-            Ok(Some(msg)) => Received::Msg(msg),
+        match temzdf_protocol::recv::<ToGuest>(&mut frame.as_slice()) {
+            Ok(Some(ToGuest::Msg(msg))) => Received::Msg(msg),
+            Ok(Some(ToGuest::FsDone { id, result })) => Received::FsDone { id, result },
             _ => Received::Closed,
         }
     }
@@ -96,6 +108,18 @@ impl Link for GuestLink {
     fn files(&self) -> Files {
         Rc::new(fs_call)
     }
+
+    fn fs_start(&mut self, id: u64, op: FsOp) {
+        let mut frame = Vec::new();
+        // SAFETY: the pointer and length describe `frame`, alive for the call.
+        let started = temzdf_protocol::send(&mut frame, &op).is_ok()
+            && unsafe { host_fs_start(id, frame.as_ptr(), frame.len()) } == 0;
+        if !started {
+            // Answered still, as a failure, so that nobody waits forever.
+            let result = Err(FsError { kind: FsErrorKind::Other, message: "the file access failed".into() });
+            self.failed.push((id, result));
+        }
+    }
 }
 
 /// Run the host until the session goes away or says `Shutdown`, with
@@ -103,7 +127,7 @@ impl Link for GuestLink {
 /// normally; otherwise why it could not run is in stderr.
 #[unsafe(no_mangle)]
 pub extern "C" fn run(unattended_ms: u64) -> i32 {
-    match temzdf_script::run_link(Box::new(GuestLink), Duration::from_millis(unattended_ms)) {
+    match temzdf_script::run_link(Box::new(GuestLink::default()), Duration::from_millis(unattended_ms)) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("temzdf script: {e}");

@@ -23,7 +23,7 @@ use temzdf_protocol::script::{
     Code, CodeResult, Fallback, FromHost, FuncId, HostOp, Keepalive, PathStyle, Printed, ScriptError, ScriptValue,
     TaskId, ToHost, Token,
 };
-use temzdf_protocol::script_fs::{FsOp, FsReply};
+use temzdf_protocol::script_fs::{FileInfo, FsOp, FsReply, FsResult};
 
 use crate::paths;
 
@@ -138,6 +138,8 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         queued_calls: RefCell::default(),
         promises: RefCell::default(),
         settled: RefCell::default(),
+        fs_waiting: RefCell::default(),
+        next_fs: Cell::new(1),
         replies: RefCell::default(),
         gone: Cell::new(false),
         rejections,
@@ -198,7 +200,9 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
                 st.interrupt.clear();
             }
             Ok(ToHost::Reply { .. }) => {}
-            Ok(ToHost::Resolve { promise, result }) => st.settled.borrow_mut().push_back((promise, result)),
+            Ok(ToHost::Resolve { promise, result }) => {
+                st.settled.borrow_mut().push_back(Settled::Command(promise, result))
+            }
             Ok(ToHost::Shutdown) | Err(true) => break,
             Err(false) => {}
         }
@@ -287,7 +291,11 @@ struct State {
     /// Promises commands answered with, by number: the function settling
     /// each (`(ok, json)`), and answers that came while code ran.
     promises: RefCell<std::collections::HashMap<u64, Persistent<Function<'static>>>>,
-    settled: RefCell<std::collections::VecDeque<(u64, Result<ScriptValue, String>)>>,
+    settled: RefCell<std::collections::VecDeque<Settled>>,
+    /// File operations started (`temzdf/fs`), by number: the function
+    /// settling each, and what it reads.
+    fs_waiting: RefCell<std::collections::HashMap<u64, (Persistent<Function<'static>>, FsRead)>>,
+    next_fs: Cell<u64>,
     /// Answers to requests waited for further out: a call run while one
     /// request waits (a hook) can be waiting for its own when the outer
     /// one's answer comes.
@@ -350,12 +358,24 @@ impl State {
 
     /// The next message; `Err(true)` when the session went away,
     /// `Err(false)` when nothing came in time. (A function, not a borrow
-    /// kept over the caller's `match`: handling a message sends.)
+    /// kept over the caller's `match`: handling a message sends.) A file
+    /// operation's result is kept to settle once nothing runs, as
+    /// [`ToHost::Resolve`]'s answers are; with a timeout it ends the wait
+    /// (`Err(false)`), so that the event loop settles it.
     fn recv(&self, timeout: Option<Duration>) -> Result<ToHost, bool> {
-        match self.link.borrow_mut().recv(timeout) {
-            Received::Msg(m) => Ok(m),
-            Received::Timeout => Err(false),
-            Received::Closed => Err(true),
+        loop {
+            let got = self.link.borrow_mut().recv(timeout);
+            match got {
+                Received::Msg(m) => return Ok(m),
+                Received::FsDone { id, result } => {
+                    self.settled.borrow_mut().push_back(Settled::Fs(id, result));
+                    if timeout.is_some() {
+                        return Err(false);
+                    }
+                }
+                Received::Timeout => return Err(false),
+                Received::Closed => return Err(true),
+            }
         }
     }
 }
@@ -452,6 +472,26 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
         "awaitPromise",
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: f64, settle: Function<'js>| {
             s.promises.borrow_mut().insert(id as u64, Persistent::save(&ctx, settle));
+        })?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "fsStart",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, op: String, path: String, settle: Function<'js>| {
+            let (op, read) = match op.as_str() {
+                "readFile" => (FsOp::ReadFile(path), FsRead::Bytes),
+                "readTextFile" => (FsOp::ReadFile(path), FsRead::Text),
+                "stat" => (FsOp::Stat(path), FsRead::Json),
+                "lstat" => (FsOp::Lstat(path), FsRead::Json),
+                "readDir" => (FsOp::ReadDir(path), FsRead::Json),
+                "realPath" => (FsOp::RealPath(path), FsRead::Json),
+                _ => return Err(Exception::throw_message(&ctx, &format!("internal: no file operation {op:?}"))),
+            };
+            let id = s.next_fs.get();
+            s.next_fs.set(id + 1);
+            s.fs_waiting.borrow_mut().insert(id, (Persistent::save(&ctx, settle), read));
+            s.link.borrow_mut().fs_start(id, op);
+            Ok(())
         })?,
     )?;
     let s = st.clone();
@@ -844,7 +884,9 @@ fn request<'js>(ctx: &Ctx<'js>, st: &Rc<State>, token: &str, op: &str, payload: 
                 // Started once nothing runs.
                 Ok(ToHost::RunCode { id, code }) => st.queued_code.borrow_mut().push_back((id, code)),
                 // Settled once nothing runs (as timers fire).
-                Ok(ToHost::Resolve { promise, result }) => st.settled.borrow_mut().push_back((promise, result)),
+                Ok(ToHost::Resolve { promise, result }) => {
+                    st.settled.borrow_mut().push_back(Settled::Command(promise, result));
+                }
                 // One that already stopped a timer is not for this call.
                 Ok(ToHost::Interrupt) if !st.take_interrupt_message() => {}
                 // The flag is set too: if the script catches this error, the
@@ -949,19 +991,94 @@ fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {
 /// answer for no Promise (one nobody awaits any more) is dropped.
 fn settle_promises(ctx: &Ctx<'_>, st: &Rc<State>) {
     loop {
-        let Some((id, result)) = st.settled.borrow_mut().pop_front() else { return };
-        let Some(f) = st.promises.borrow_mut().remove(&id) else { continue };
-        let (ok, json) = match result {
-            Ok(v) => (true, json(&from_script(&v))),
-            Err(e) => (false, e),
+        let Some(settled) = st.settled.borrow_mut().pop_front() else { return };
+        let (f, ok, value) = match settled {
+            Settled::Command(id, result) => {
+                let Some(f) = st.promises.borrow_mut().remove(&id) else { continue };
+                let (ok, text) = match result {
+                    Ok(v) => (true, json(&from_script(&v))),
+                    Err(e) => (false, e),
+                };
+                (f, ok, FsValue::Text(text))
+            }
+            Settled::Fs(id, result) => {
+                let Some((f, read)) = st.fs_waiting.borrow_mut().remove(&id) else { continue };
+                let (ok, value) = fs_value(read, result);
+                (f, ok, value)
+            }
         };
         st.unattended(|| {
-            if let Err(e) = f.restore(ctx).and_then(|f| f.call::<_, ()>((ok, json))) {
+            let value = match value {
+                FsValue::Text(t) => rquickjs::String::from_str(ctx.clone(), &t).map(|s| s.into_value()),
+                FsValue::Bytes(b) => rquickjs::ArrayBuffer::new(ctx.clone(), b).map(|b| b.into_value()),
+            };
+            if let Err(e) = value.and_then(|v| f.restore(ctx).and_then(|f| f.call::<_, ()>((ok, v)))) {
                 st.log(&format!("temzdf script: settling a promise failed: {}", error_of(ctx, e)));
             }
         });
         run_jobs(ctx, st);
     }
+}
+
+/// An answer to settle a promise with, once nothing runs.
+enum Settled {
+    /// A command's later answer (`{ "$promise": n }`).
+    Command(u64, Result<ScriptValue, String>),
+    /// A file operation's (`temzdf/fs`).
+    Fs(u64, FsResult),
+}
+
+/// What a file operation reads, and so what it settles with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FsRead {
+    /// The bytes, as an ArrayBuffer.
+    Bytes,
+    /// The bytes as UTF-8 text (malformed bytes replaced, as Deno's
+    /// `readTextFile` does).
+    Text,
+    /// Anything else: JSON (a path is a JSON string too).
+    Json,
+}
+
+/// A value a promise is settled with: a string, or the bytes as an
+/// ArrayBuffer (never as JSON: a file may take 64 MiB).
+enum FsValue {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+/// A file operation's result as the settling function takes it: whether
+/// it succeeded, then the value (the error as JSON, `{ kind, message }`).
+fn fs_value(read: FsRead, result: FsResult) -> (bool, FsValue) {
+    let to_json = |v: serde_json::Value| FsValue::Text(v.to_string());
+    match (read, result) {
+        (FsRead::Bytes, Ok(FsReply::Bytes(b))) => (true, FsValue::Bytes(b)),
+        (FsRead::Text, Ok(FsReply::Bytes(b))) => (true, FsValue::Text(String::from_utf8_lossy(&b).into_owned())),
+        (FsRead::Json, Ok(FsReply::Path(p))) => (true, to_json(p.into())),
+        (FsRead::Json, Ok(FsReply::Info(i))) => (true, to_json(file_info_json(&i))),
+        (FsRead::Json, Ok(FsReply::Entries(es))) => (
+            true,
+            to_json(serde_json::Value::Array(
+                es.iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "name": e.name, "isFile": e.is_file,
+                            "isDirectory": e.is_directory, "isSymlink": e.is_symlink,
+                        })
+                    })
+                    .collect(),
+            )),
+        ),
+        (_, Ok(_)) => (false, to_json(serde_json::json!({ "kind": "Other", "message": "an unexpected answer" }))),
+        (_, Err(e)) => (false, to_json(serde_json::json!({ "kind": format!("{:?}", e.kind), "message": e.message }))),
+    }
+}
+
+fn file_info_json(i: &FileInfo) -> serde_json::Value {
+    serde_json::json!({
+        "isFile": i.is_file, "isDirectory": i.is_directory, "isSymlink": i.is_symlink,
+        "size": i.size, "mtime": i.mtime, "atime": i.atime, "birthtime": i.birthtime,
+    })
 }
 
 /// Run the pending promise jobs, each on its own time, then report the

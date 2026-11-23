@@ -2505,6 +2505,89 @@ export const commandLine: Keyset;
 
 }
 
+declare module "temzdf/fs" {
+/** What a path is (as Deno's `FileInfo`). */
+export interface FileInfo {
+	isFile: boolean;
+	isDirectory: boolean;
+	/** Only from `lstat`: `stat` follows links. */
+	isSymlink: boolean;
+	size: number;
+	/** Null where the OS does not tell. */
+	mtime: Date | null;
+	atime: Date | null;
+	birthtime: Date | null;
+}
+/** One entry of a directory (as Deno's `DirEntry`; a link not followed). */
+export interface DirEntry {
+	/** The name alone; one that is not UTF-8 has replacement characters. */
+	name: string;
+	isFile: boolean;
+	isDirectory: boolean;
+	isSymlink: boolean;
+}
+/** Why an operation failed, by class (as Deno's `Deno.errors`). Relative
+ * paths throw a `TypeError` instead. */
+export class FsError extends Error {
+}
+class NotFound extends FsError {
+	name: string;
+}
+class PermissionDenied extends FsError {
+	name: string;
+}
+class IsADirectory extends FsError {
+	name: string;
+}
+class NotADirectory extends FsError {
+	name: string;
+}
+class NotAFile extends FsError {
+	name: string;
+}
+class TooLarge extends FsError {
+	name: string;
+}
+class TooMany extends FsError {
+	name: string;
+}
+class Other extends FsError {
+	name: string;
+}
+/** The error classes: `e instanceof errors.NotFound`. */
+export const errors: {
+	readonly NotFound: typeof NotFound;
+	readonly PermissionDenied: typeof PermissionDenied;
+	readonly IsADirectory: typeof IsADirectory;
+	readonly NotADirectory: typeof NotADirectory;
+	readonly NotAFile: typeof NotAFile;
+	readonly TooLarge: typeof TooLarge;
+	readonly TooMany: typeof TooMany;
+	readonly Other: typeof Other;
+};
+/** A file's bytes (links followed). */
+export function readFile(path: string): Promise<Uint8Array>;
+/** A file's text, as UTF-8 (malformed bytes replaced). */
+export function readTextFile(path: string): Promise<string>;
+/** What `path` is, links followed. */
+export function stat(path: string): Promise<FileInfo>;
+/** What `path` is, a link itself. */
+export function lstat(path: string): Promise<FileInfo>;
+/** A directory's entries, in the order the OS gives them (read at once,
+ * then given one by one). */
+export function readDir(path: string): AsyncIterable<DirEntry>;
+/** `path` with every link resolved. */
+export function realPath(path: string): Promise<string>;
+/** Whether `path` exists (links followed), and, when asked, is a file or a
+ * directory (as `@std/fs`'s `exists`). Errors other than not finding it
+ * are thrown. */
+export function exists(path: string, options?: {
+	isFile?: boolean;
+	isDirectory?: boolean;
+}): Promise<boolean>;
+
+}
+
 declare module "temzdf/path" {
 function basename(path: string | URL, suffix?: string): string;
 function dirname(path: string | URL): string;

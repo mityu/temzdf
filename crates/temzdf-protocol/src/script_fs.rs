@@ -1,8 +1,9 @@
 //! File access for the script host: what the guest asks of the server's
 //! side (crates/temzdf-script/src/native_fs.rs does it, with the OS's own
-//! paths) and the answers. They cross the guest's imports `temzdf.fs_*`,
-//! framed as [`crate::send`] frames them; the guest has no file system of
-//! its own (doc/design/script-host.md, "The sandbox").
+//! paths) and the answers. They cross the guest's imports `temzdf.fs_*`
+//! (waited for) and `temzdf.recv` (asynchronous ones, [`ToGuest`]), framed
+//! as [`crate::send`] frames them; the guest has no file system of its own
+//! (doc/design/script-host.md, "The sandbox").
 
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +33,15 @@ pub enum FsReply {
 }
 
 pub type FsResult = Result<FsReply, FsError>;
+
+/// What the guest's `temzdf.recv` hands it: the session's messages, and
+/// the asynchronous file operations' results (`temzdf.fs_start`) as they
+/// complete, in one queue.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ToGuest {
+    Msg(crate::script::ToHost),
+    FsDone { id: u64, result: FsResult },
+}
 
 /// As Deno's `FileInfo`, what every OS has.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -107,5 +117,7 @@ mod tests {
         round_trip::<FsResult>(&Ok(FsReply::Info(info)));
         round_trip::<FsResult>(&Ok(FsReply::Bytes(vec![0, 255])));
         round_trip::<FsResult>(&Err(FsError { kind: FsErrorKind::TooLarge, message: "x".into() }));
+        round_trip(&ToGuest::FsDone { id: 7, result: Ok(FsReply::Path("/a".into())) });
+        round_trip(&ToGuest::Msg(crate::script::ToHost::Interrupt));
     }
 }

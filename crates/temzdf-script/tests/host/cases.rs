@@ -451,6 +451,66 @@ dispatch(async (ctx) => {
     );
 }
 
+/// temzdf/fs reads on the host's threads while scripts go on; the results
+/// settle once nothing runs, after the promise jobs queued before them.
+#[test]
+fn temzdf_fs_reads_files_asynchronously() {
+    let config = r#"import { dispatch } from "temzdf";
+import { errors, exists, lstat, readDir, readFile, readTextFile, realPath, stat } from "temzdf/fs";
+import { join } from "temzdf/path";
+const dir = DIR;
+dispatch(async (ctx) => {
+  const order = [];
+  const read = readTextFile(join(dir, "a.txt")).then((t) => order.push(`read ${t}`));
+  Promise.resolve().then(() => order.push("job"));
+  order.push("sync");
+  await read;
+  ctx.action.message(order.join(", "));
+  const bytes = await readFile(join(dir, "a.txt"));
+  ctx.action.message(`${bytes.constructor.name} ${Array.from(bytes).join(" ")}`);
+  const names = [];
+  for await (const e of readDir(dir)) names.push(`${e.name}:${e.isFile ? "f" : e.isDirectory ? "d" : "l"}`);
+  ctx.action.message(names.sort().join(" "));
+  const i = await stat(join(dir, "link"));
+  const l = await lstat(join(dir, "link"));
+  ctx.action.message(`${i.isFile} ${i.size} ${i.mtime instanceof Date} ${l.isSymlink}`);
+  ctx.action.message(String((await realPath(join(dir, "link"))) === (await realPath(join(dir, "a.txt")))));
+  ctx.action.message(`${await exists(join(dir, "sub"), { isDirectory: true })} ${await exists(join(dir, "none"))}`);
+  try { await readTextFile(join(dir, "sub")); } catch (e) { ctx.action.message(`${e instanceof errors.IsADirectory}`); }
+});
+"#;
+    let mut s = Session::start(&[("a.txt", "hi")]);
+    std::fs::create_dir(s.dir.join("sub")).unwrap();
+    std::os::unix::fs::symlink(s.dir.join("a.txt"), s.dir.join("link")).unwrap();
+    let config = config.replace("DIR", &format!("{:?}", s.dir.display().to_string()));
+    std::fs::write(s.dir.join("config.js"), config).unwrap();
+    s.load("config.js");
+    let mut log = Vec::new();
+    loop {
+        match s.serve(&mut log) {
+            FromHost::Ready(r) => assert!(r.is_ok(), "{r:?}"),
+            FromHost::TaskStart(_) => {}
+            FromHost::TaskDone { result, .. } => {
+                assert!(result.is_ok(), "{result:?}");
+                break;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(
+        log,
+        [
+            "task1 message(sync, job, read hi)",
+            "task1 message(Uint8Array 104 105)",
+            "task1 message(a.txt:f config.js:f link:l sub:d)",
+            "task1 message(true 2 true true)",
+            "task1 message(true)",
+            "task1 message(true false)",
+            "task1 message(true)",
+        ]
+    );
+}
+
 #[test]
 fn commands_answering_later_give_promises_and_atomic_lends_action_the_task() {
     // A command answering `{ $promise: n }` is a Promise, settled by

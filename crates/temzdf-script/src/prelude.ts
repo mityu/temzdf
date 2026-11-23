@@ -39,6 +39,11 @@ type Host = {
   clearTimer(id: number): void;
   /** Settle a command's later answer (`{ $promise: id }`) with `settle`. */
   awaitPromise(id: number, settle: (ok: boolean, json: string) => void): void;
+  /** Start a file operation (`temzdf/fs`: readFile, readTextFile, stat,
+   * lstat, readDir, realPath) on `path`; `settle` gets its result once
+   * nothing runs: the bytes (readFile), the text (readTextFile), else JSON
+   * (an error: `{ kind, message }`). */
+  fsStart(op: string, path: string, settle: (ok: boolean, value: string | ArrayBuffer) => void): void;
   /** Write a line to the log. */
   print(level: string, text: string): void;
   /** A line `temzdf eval`'s code printed (task `task`), to stderr when `err`. */
@@ -87,6 +92,11 @@ function noNull(v: unknown): unknown {
   return v;
 }
 const fromSession = (json: string): unknown => noNull(JSON.parse(json));
+
+// File operations for runtime/fs.ts (`temzdf/fs`), which turns the
+// rejections' `{ kind, message }` into its error classes.
+g.__temzdfFs = (op: string, path: string): Promise<string | ArrayBuffer> =>
+  new Promise((resolve, reject) => host.fsStart(op, path, (ok, value) => (ok ? resolve(value) : reject(value))));
 
 // A command answering later answers `{ $promise: n }`: a Promise, settled
 // when the session sends ToHost::Resolve.
