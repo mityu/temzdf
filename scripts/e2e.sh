@@ -1523,6 +1523,9 @@ timing0=$(usec)
 : >"$outdir/timing.txt"
 phase() { echo "$((($(usec) - timing0) / 1000)) $*" >>"$outdir/timing.txt"; }
 phase launch
+# COMMAND as run (before a multiplexer wraps it), one word a line: for
+# comparing runs of the harness (scripts/e2e/compare.ts).
+printf '%s\n' "$@" >"$outdir/command.txt"
 # temzdf runs in the terminal (not the GUI): its log says when its first
 # screen is shown (wait_ready). Decided before a multiplexer wraps COMMAND.
 temzdf_in_terminal=
