@@ -1,0 +1,19 @@
+{
+  // The e2e scenarios (tests/e2e/*.ts, Node code driving the harness in
+  // scripts/e2e/): `tsc -p tests/e2e`, run by `cargo xtask check`. Not
+  // configs/, which are temzdf configurations with a tsconfig of their own.
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "typeRoots": ["../../crates/temzdf-script/runtime/node_modules/@types"],
+    "types": ["node"]
+  },
+  "include": ["*.ts", "lib/*.ts"]
+}

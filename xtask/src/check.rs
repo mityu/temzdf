@@ -1,7 +1,8 @@
 //! The pre-commit gate (`cargo xtask check`) and the tests alone
 //! (`cargo xtask test`): rustfmt, Biome, the generated declarations
 //! (`node scripts/ts-types.ts`), the Node scripts' types (`tsc -p
-//! scripts`), shellcheck, references to documents (`node
+//! scripts`, `tsc -p tests/e2e`) and tests (`node --test` on
+//! `scripts/**/*.test.ts`), shellcheck, references to documents (`node
 //! scripts/check-docs.ts`), clippy, the workspace's tests and the scripts'
 //! (`temzdf test` on `runtime/**/*.test.ts`), a cross-check of the crates
 //! that build for Windows (on Unix), then the unit tests under
@@ -208,11 +209,27 @@ pub fn check(o: &Options) -> Result<i32> {
     // them. The TypeScript of the npm packages (the lock's version).
     gate.header("scripts");
     let tsc = format!("{NODE_MODULES}/typescript/bin/tsc");
-    if !gate.run(tools.node().args([tsc.as_str(), "-p", "scripts", "--pretty", "false"]), "scripts")? {
-        gate.failed("scripts", "scripts", |l| l.contains("error"), 40);
+    // Also the e2e scenarios (tests/e2e/tsconfig.json), Node code on the
+    // harness in scripts/e2e/.
+    for (project, log) in [("scripts", "scripts"), ("tests/e2e", "scripts-e2e")] {
+        if !gate.run(tools.node().args([tsc.as_str(), "-p", project, "--pretty", "false"]), log)? {
+            gate.failed("scripts", log, |l| l.contains("error"), 40);
+        }
     }
     gate.end();
     ran.push("scripts");
+
+    // The Node scripts' own tests (scripts/**/*.test.ts, node:test): what
+    // the e2e harness computes without a terminal.
+    let node_test_files = node_tests(Path::new("scripts"));
+    if !node_test_files.is_empty() {
+        gate.header("script tests");
+        if !gate.run(tools.node().arg("--test").args(&node_test_files), "script-tests")? {
+            gate.failed("script tests", "script-tests", |l| l.starts_with('✖') || l.contains("Error"), 40);
+        }
+        gate.end();
+        ran.push("script tests");
+    }
 
     match &tools.shellcheck {
         Some(shellcheck) => {
@@ -374,6 +391,22 @@ fn shell_scripts(dir: &Path, depth: usize) -> Vec<PathBuf> {
     }
     dirs.iter()
         .flat_map(|d| sorted_entries(d).into_iter().filter(|p| p.is_file() && p.extension() == Some(OsStr::new("sh"))))
+        .collect()
+}
+
+/// The Node scripts' tests under DIR (`*.test.ts`, at any depth).
+fn node_tests(dir: &Path) -> Vec<PathBuf> {
+    sorted_entries(&Path::new(".").join(dir))
+        .into_iter()
+        .flat_map(|p| {
+            if p.is_dir() {
+                node_tests(&p)
+            } else if p.to_string_lossy().ends_with(".test.ts") {
+                vec![p]
+            } else {
+                vec![]
+            }
+        })
         .collect()
 }
 

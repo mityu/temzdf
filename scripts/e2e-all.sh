@@ -23,6 +23,11 @@
 #   SCENARIO  action file names without .actions (default: every judged one
 #             for the terminal; gui is the GUI's only)
 #
+# A scenario moved to TypeScript (tests/e2e/SCENARIO.ts, with its command
+# in it) runs with that harness (node scripts/e2e/main.ts) on the displays
+# it has (ts_displays below); elsewhere, and with E2E_BASH set, its
+# .actions with scripts/e2e.sh, while the move goes on (todo.md).
+#
 # Prints PASS/FAIL/SKIP counts per terminal and scenario and their sum;
 # exits 1 if anything failed or crashed. Builds nothing but -R's renderers
 # and termpix's scroll_demo example (the scroll_demo scenario's command):
@@ -151,6 +156,10 @@ scenario() {
   esac
 }
 
+# The displays the TypeScript harness has so far.
+ts_displays=(x11)
+run_display=${display:-$([[ $(uname) == Darwin ]] && echo macos || echo x11)}
+
 # Scenarios that need the CPU to themselves (smooth scrolling and tiles
 # arriving within their pauses): after the others, one at a time.
 alone=()
@@ -160,13 +169,18 @@ run_one() {
   local t=$1 s=$2 out=$outdir/$1/$2 t0=$SECONDS rc p=0 f=0 k=0
   rm -rf "$out"
   mkdir -p "$out"
-  if ! scenario "$s"; then
-    echo "$t $s: no command" >"$out.line"
-    ((jobs > 1)) || cat "$out.line"
-    return
+  if [[ -f tests/e2e/$s.ts && -z ${E2E_BASH:-} && " ${ts_displays[*]} " == *" $run_display "* ]]; then
+    node scripts/e2e/main.ts -t "$t" "${pass[@]}" -o "$out" "tests/e2e/$s.ts" >"$out.log" 2>&1
+    rc=$?
+  else
+    if ! scenario "$s"; then
+      echo "$t $s: no command" >"$out.line"
+      ((jobs > 1)) || cat "$out.line"
+      return
+    fi
+    scripts/e2e.sh -t "$t" "${pass[@]}" "${opts[@]}" -o "$out" "tests/e2e/$s.actions" -- "${cmd[@]}" >"$out.log" 2>&1
+    rc=$?
   fi
-  scripts/e2e.sh -t "$t" "${pass[@]}" "${opts[@]}" -o "$out" "tests/e2e/$s.actions" -- "${cmd[@]}" >"$out.log" 2>&1
-  rc=$?
   if [[ -f $out/expect.txt ]]; then
     p=$(grep -c '^PASS' "$out/expect.txt") f=$(grep -c '^FAIL' "$out/expect.txt") k=$(grep -c '^SKIP' "$out/expect.txt")
   fi
