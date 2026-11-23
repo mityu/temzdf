@@ -23,6 +23,51 @@ use temzdf_client::{Connection, FromServer, exit_message, lost_message};
 /// The window's size before the system says otherwise (logical pixels).
 const INITIAL_SIZE: (u32, u32) = (900, 600);
 
+/// A file to keep up to date with where the drawing area is on the screen
+/// (for a harness that drives the window from outside, `scripts/e2e.sh -d
+/// windows`).
+const PLACEMENT_VAR: &str = "TEMZDF_GUI_GEOMETRY";
+
+/// Write "X Y W H SCALE" (physical pixels: the drawing area's top-left on
+/// the screen, its size; the scale factor) to `path`, through a file
+/// renamed into place so a reader never sees half of it. Nothing where the
+/// system does not tell a window's position (Wayland).
+fn write_placement(path: &std::path::Path, window: &dyn Window) {
+    let Some((x, y)) = surface_origin(window) else { return };
+    let size = window.surface_size();
+    let line = format!("{x} {y} {} {} {}\n", size.width, size.height, window.scale_factor());
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    if let Err(e) = std::fs::write(&tmp, line).and_then(|()| std::fs::rename(&tmp, path)) {
+        eprintln!("temzdf-gui: cannot write {}: {e}", path.display());
+    }
+}
+
+/// The drawing area's top-left on the screen.
+#[cfg(not(windows))]
+fn surface_origin(window: &dyn Window) -> Option<(i32, i32)> {
+    let outer = window.outer_position().ok()?;
+    let inner = window.surface_position();
+    Some((outer.x + inner.x, outer.y + inner.y))
+}
+
+/// The drawing area's top-left on the screen: the client area's, which
+/// winit's `surface_position` does not give on Windows (it is always 0, 0
+/// there, from `GetClientRect`), and `outer_position` includes the
+/// invisible resizing borders.
+#[cfg(windows)]
+fn surface_origin(window: &dyn Window) -> Option<(i32, i32)> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let RawWindowHandle::Win32(h) = window.window_handle().ok()?.as_raw() else { return None };
+    let mut p = POINT { x: 0, y: 0 };
+    // SAFETY: the window's own handle, alive while `window` is; `p` is a
+    // POINT of ours.
+    let ok = unsafe { ClientToScreen(h.hwnd.get() as _, &mut p) };
+    (ok != 0).then_some((p.x, p.y))
+}
+
 struct Gpu {
     window: Arc<dyn Window>,
     /// For a new surface when the old one is lost.
@@ -132,6 +177,8 @@ pub struct App {
     /// A redraw to try then (see `on_skip`).
     retry_at: Option<Instant>,
     pointer: Pointer,
+    /// `TEMZDF_GUI_GEOMETRY`'s file (see `write_placement`).
+    placement: Option<std::path::PathBuf>,
     /// Why the window closes, for the message after.
     ended: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     pub input: crate::input::Input,
@@ -187,10 +234,18 @@ impl App {
         let geometry = view.geometry((config.width, config.height));
         crate::input::enable_ime(window.as_ref());
         self.gpu = Some(Gpu { window, instance, surface, config, view, geometry });
+        self.placed();
         if self.conn.hello(geometry, crate::connection::HINTS, None).is_err() {
             self.end(lost_message(&self.name));
         }
         Ok(())
+    }
+
+    /// The window was made, moved or resized: say where it is now, if asked to.
+    fn placed(&self) {
+        if let (Some(path), Some(g)) = (&self.placement, &self.gpu) {
+            write_placement(path, g.window.as_ref());
+        }
     }
 
     /// The window or the cell size changed: tell the session.
@@ -400,14 +455,17 @@ impl ApplicationHandler for App {
                     g.surface.configure(g.view.renderer.device(), &g.config);
                     g.window.request_redraw();
                 }
+                self.placed();
                 self.refit();
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(g) = &mut self.gpu {
                     g.view.set_scale(scale_factor);
                 }
+                self.placed();
                 self.refit();
             }
+            WindowEvent::Moved(_) => self.placed(),
             WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::Occluded(hidden) => {
                 let ack = self.acks.set_hidden(hidden);
@@ -447,6 +505,7 @@ pub fn run(name: String) -> Result<String> {
         skipped: 0,
         retry_at: None,
         pointer: Pointer::Default,
+        placement: std::env::var_os(PLACEMENT_VAR).filter(|v| !v.is_empty()).map(Into::into),
         ended: ended.clone(),
         input,
     };
