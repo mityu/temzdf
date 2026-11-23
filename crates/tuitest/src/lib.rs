@@ -1180,6 +1180,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(not(unix), ignore = "runs sh on a pty: not on Windows yet")]
     fn shows_output_colours_and_wide_characters() {
         let mut t = Term::spawn(&["sh", "-c", "printf 'a \\033[31mred\\033[0m 数式\\n'; sleep 5"], &Options::default());
         let s = t.wait_text("red");
@@ -1190,6 +1191,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(unix), ignore = "runs sh on a pty: not on Windows yet")]
     fn keys_follow_the_programs_keyboard_mode() {
         // `od` shows what arrives: legacy C-h is 0x08; with the kitty keyboard
         // protocol on, `CSI 104;5u`.
@@ -1207,6 +1209,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(unix), ignore = "runs sh on a pty: not on Windows yet")]
     fn renders_backgrounds_and_images() {
         // A 2x2 RGB image (red, green / blue, white), placed: at (0, 0)
         // offset by (3, 4) px; at row 4 scaled to 2x1 cells; under the
@@ -1244,6 +1247,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(unix), ignore = "runs sh on a pty: not on Windows yet")]
     fn renders_text() {
         // Row 0: red ASCII, then blank cells. Rows 1 and 2: the same text,
         // regular and bold. Row 3: wide characters. Row 4: inverse, in the
@@ -1331,6 +1335,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(unix), ignore = "runs sh on a pty: not on Windows yet")]
     fn exit_codes() {
         let mut t = Term::spawn(&["sh", "-c", "exit 3"], &Options::default());
         assert_eq!(t.wait_exit(), 3);

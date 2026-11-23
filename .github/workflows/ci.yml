@@ -91,7 +91,7 @@ jobs:
           if-no-files-found: ignore
 
   # The gate (`cargo xtask check`) on Windows, for the crates that build there
-  # so far (`WINDOWS_CRATES` in xtask/src/check.rs).
+  # so far (`WINDOWS_CRATES` and `WINDOWS_ONLY_CRATES` in xtask/src/check.rs).
   check-windows:
     runs-on: windows-latest
     timeout-minutes: 60

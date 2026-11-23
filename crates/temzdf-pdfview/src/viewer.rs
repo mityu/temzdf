@@ -925,6 +925,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_resize_does_not_drop_a_scroll_on_its_way() {
         // A forward search to page 3 of a new session, then its first client
         // attaching at another size (as on a single CPU, where the PDF opens
@@ -941,6 +942,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn resizing_keeps_the_top_left_doc_point() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::doc_info(&doc).unwrap().bounds;
@@ -955,6 +957,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_view_state_restores_in_a_pane_of_another_width() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::doc_info(&doc).unwrap().bounds;
@@ -980,6 +983,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn display_lists_far_from_the_view_are_dropped_and_reloaded() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::doc_info(&doc).unwrap().bounds;
@@ -1001,6 +1005,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn what_failed_is_not_asked_for_again_until_the_document_changes() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::doc_info(&doc).unwrap().bounds;

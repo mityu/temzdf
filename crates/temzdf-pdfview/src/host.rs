@@ -410,6 +410,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn work_asked_for_twice_is_claimed_once() {
         use crate::doc_cache::{TileKey, TileKind};
         use crate::pdf::PixelRect;
@@ -441,6 +442,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn work_still_queued_survives_the_next_frame() {
         use std::sync::mpsc;
         use termpix_core::geom::{CellSize, Geometry};
@@ -480,6 +482,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_forgotten_document_drops_its_queued_work() {
         use std::sync::mpsc;
         use termpix_core::geom::{CellSize, Geometry};

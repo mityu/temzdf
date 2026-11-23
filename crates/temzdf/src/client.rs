@@ -244,7 +244,8 @@ mod tests {
         // FILE is relative to --cwd DIR, itself relative to the caller.
         let mut words = w(&["open-float", "--cwd", "sub", "b.pdf"]);
         resolve_paths(&mut words, &tmp).unwrap();
-        assert_eq!(words, [w(&["open-float", "--cwd"]), vec![t("sub"), t("sub/b.pdf")]].concat());
+        let b = tmp.join("sub").join("b.pdf").display().to_string();
+        assert_eq!(words, [w(&["open-float", "--cwd"]), vec![t("sub"), b]].concat());
         let mut words = w(&["open-float", "--", "htop"]);
         resolve_paths(&mut words, &tmp).unwrap();
         assert_eq!(words, [w(&["open-float", "--cwd"]), vec![here], w(&["--", "htop"])].concat());

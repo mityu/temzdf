@@ -230,7 +230,7 @@ server on one `Session`). Next and open:
     `windows-latest` job `check-windows` (MSYS2 through
     `msys2/setup-msys2`; passes, 2026-11-23). texprintf and tuitest only
     cross-check because pkg-config finds the Linux libraries, so they
-    are left out; `.gitattributes` with LF; `cfg(unix)` on
+    are left out of the cross-check; `.gitattributes` with LF; `cfg(unix)` on
     the symlink and mode tests and on `mutate.rs`'s shell tests (not yet
     compiled for Windows); esbuild found as an exe in
     `crates/temzdf-script/build.rs`; `pdf::fixture` builds the fixtures
@@ -282,11 +282,25 @@ server on one `Session`). Next and open:
     inverse search runs `cmd /S /C` and links open through rundll32's
     `url.dll`. With that, `cargo check --workspace --all-targets
     --exclude termpix --exclude temzdf-tty` passes in the VM
-    (2026-11-23). Still to do: the server run there, and the tests
-    (the server's terminal pane tests run `sh`; `ls-fonts` without a
-    session starts a terminal pane for the configuration).
-  - The tests: a helper program instead of `sh` in the pty tests; test
-    fonts without fontconfig; the gate's lock test; `cargo xtask miri`
+    (2026-11-23). Since then the gate on Windows also tests `temzdf`,
+    `temzdf-pdfview`, `temzdf-script`, `temzdf-server`, `temzdf-term`,
+    `texprintf`, `tuitest` and `xtask` (`WINDOWS_ONLY_CRATES` in
+    `xtask/src/check.rs`: not cross-checked from Linux, as they build C
+    for the target), with the tests that start programs in panes or on a
+    pty, read the TeX fixtures, or have the script guest read files
+    ignored there; swap file names on Windows are Neovim's
+    (`C%%Users%...`). Still to do: the server run there; the script
+    guest reading files on Windows: the runner preopens `/` only, so
+    `C:\...` paths are refused (WASI's `EPERM`, os error 63): no user
+    configuration, no imports, no `temzdf test` (the shipped defaults
+    load); a mapping of Windows paths (drives, UNC) into the guest is to
+    be decided. Then `temzdf-script-runner` (3 of its 30 tests pass on
+    Windows now) and the js tests join the gate there. `ls-fonts`
+    without a session starts a terminal pane for the configuration.
+  - The tests: a helper program instead of `sh` in the pty tests; the
+    PDF fixtures on Windows (built with TeX; `temzdf-pdfcore` stays out
+    of the gate there, and the fixture tests of `temzdf-pdfview` and
+    `temzdf-server` are ignored); test fonts without fontconfig; the gate's lock test; `cargo xtask miri`
     (also cross-target from Linux);
     a Windows backend for `scripts/e2e.sh` (WezTerm, Windows Terminal,
     the GUI). Done: the script host tests on `temzdf_protocol::Stream`

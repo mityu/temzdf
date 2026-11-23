@@ -1551,6 +1551,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn forward_search_scrolls_as_search_does_only_outside_10_to_85_percent() {
         let mut s = session();
         let h = s.viewer.view.screen_h;
@@ -1572,6 +1573,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn forward_results_past_the_last_page_are_ignored() {
         let mut s = session();
         let pages = s.viewer.page_count();
@@ -1594,6 +1596,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn forward_highlights_last_as_long_as_configured() {
         let mut s = session();
         let rect = PageRect { x0: 10.0, y0: 10.0, x1: 50.0, y1: 20.0 };
@@ -1627,6 +1630,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn next_match_before_the_search_finished_waits_for_it() {
         let mut s = session();
         let now = Instant::now();
@@ -1646,6 +1650,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn next_match_does_not_wrap_while_later_pages_are_searched() {
         let mut s = session();
         let now = Instant::now();
@@ -1672,6 +1677,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_search_that_finished_empty_says_so() {
         // Right after searching, after next-match, and after prev-match.
         for step in [None, Some(Command::NextMatch), Some(Command::PrevMatch)] {
@@ -1697,6 +1703,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn the_status_bar_is_not_the_page_under_it() {
         let mut s = session();
         let y = s.viewer.view.screen_h + 5.0;
@@ -1718,6 +1725,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn frames_name_no_overlay_image_trimmed_from_the_cache() {
         let mut s = session();
         assert!(s.text_of_page(0).is_some(), "text the selection covers");
@@ -1737,6 +1745,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn copies_say_when_pages_not_loaded_were_left_out() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let info = pdf::doc_info(&doc).unwrap();
@@ -1754,6 +1763,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn tiny_panes_draw_without_panicking() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let info = pdf::doc_info(&doc).unwrap();
@@ -1768,6 +1778,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn page_view_commands_take_counts() {
         let mut s = session();
         let now = Instant::now();
@@ -1797,6 +1808,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_selection_released_over_the_sidebar_ends_and_copies() {
         let mut s = session();
         let a = char_pos(&mut s, "temzdf sample", 0);
@@ -1814,6 +1826,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn drag_over_text_selects_and_copies() {
         let mut s = session();
         let a = char_pos(&mut s, "temzdf sample", 0);
@@ -1838,6 +1851,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn reload_keeps_the_reading_position() {
         let mut s = session();
         let mut c = comp();
@@ -1854,6 +1868,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn text_anchor_keeps_the_line_in_place_when_text_is_inserted_above() {
         let mut s = session();
         s.anchor_by_text = true;
@@ -1887,6 +1902,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn input_cancels_a_pending_text_anchor() {
         let mut s = session();
         s.anchor_by_text = true;
@@ -1899,6 +1915,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn reload_clamps_to_the_last_page_and_keeps_the_fraction() {
         let mut s = session();
         let mut c = comp();
@@ -1917,6 +1934,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn reload_reruns_the_search_and_keeps_the_sidebar() {
         let mut s = session();
         let mut c = comp();
@@ -1953,6 +1971,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn fingers_move_the_page_exactly_and_wheel_amounts_ease() {
         let mut s = session();
         let now = Instant::now();
@@ -1974,6 +1993,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn wheel_notches_add_up_to_wheel_steps() {
         let (mut a, mut b) = (session(), session());
         let now = Instant::now();
@@ -1993,6 +2013,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn ctrl_wheel_zooms_around_the_pointer() {
         let mut s = session();
         let ctrl_wheel = |s: &mut PdfPane, dir, at: (f32, f32)| {
@@ -2024,6 +2045,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_pinch_zooms_by_its_amount_around_the_pointer() {
         use termpix_core::input::PinchPhase;
         let mut s = session();
@@ -2072,6 +2094,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_cleared_search_stops_in_the_search_thread() {
         let mut s = session();
         let now = Instant::now();
@@ -2094,6 +2117,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_preview_does_not_wrap_to_an_earlier_hit_before_the_rest_is_searched() {
         let mut s = session();
         let now = Instant::now();
@@ -2113,6 +2137,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_preview_goes_back_when_cancelled_emptied_or_not_found() {
         let mut s = session();
         let later = Instant::now() + Duration::from_secs(10);
@@ -2159,6 +2184,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn a_preview_confirmed_keeps_its_hit_and_where_it_began() {
         let mut s = session();
         let now = Instant::now();
@@ -2184,6 +2210,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn confirming_a_preview_before_the_results_arrive_still_selects_the_first_hit() {
         let mut s = session();
         let now = Instant::now();
@@ -2204,6 +2231,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn search_for_searches_and_selects_the_first_hit() {
         let mut s = session();
         let now = Instant::now();
@@ -2227,6 +2255,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn selection_drag_at_the_edge_scrolls_by_itself() {
         let mut s = session();
         let a = char_pos(&mut s, "temzdf sample", 0);
@@ -2249,6 +2278,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn drag_in_margin_pans() {
         let mut s = session();
         let before = s.viewer.view.scroll_y;
@@ -2294,6 +2324,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn resting_on_a_link_previews_its_target_with_clickable_urls() {
         let mut s = session();
         open_back_link_preview(&mut s, 0.33);
@@ -2334,6 +2365,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn previews_go_below_the_link_or_above_it_near_the_bottom() {
         let mut s = session();
         let (_, y) = open_back_link_preview(&mut s, 0.33);
@@ -2346,6 +2378,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn the_wheel_over_a_preview_scrolls_it_not_the_page() {
         let mut s = session();
         open_back_link_preview(&mut s, 0.33);
@@ -2360,6 +2393,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn clicking_a_preview_jumps_there_and_keys_close_it() {
         let mut s = session();
         open_back_link_preview(&mut s, 0.33);
@@ -2381,6 +2415,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn previews_wait_for_the_pointer_and_close_after_it_leaves() {
         let mut s = session();
         let at = open_back_link_preview(&mut s, 0.33);
@@ -2430,6 +2465,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn panes_on_one_document_share_its_tiles_and_links() {
         let mut a = session();
         let mut images = comp();

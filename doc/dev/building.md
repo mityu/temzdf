@@ -43,10 +43,11 @@ Ubuntu without Nix and starts them (`scripts/smoke-session.sh`: a session
 splits its pane on `<C-b>%`).
 
 Its job `check-windows` runs the same gate on `windows-latest`, without
-Nix, for the crates that build on Windows so far (`WINDOWS_CRATES` in
-`xtask/src/check.rs`: clippy and the tests of those packages instead of
-the workspace; the js tests are skipped, as `temzdf` does not build
-there yet). Windows builds with MSYS2's UCRT64, not MSVC
+Nix, for the crates that build and pass on Windows so far
+(`WINDOWS_CRATES` and `WINDOWS_ONLY_CRATES` in `xtask/src/check.rs`:
+clippy and the tests of those packages instead of the workspace; the js
+tests are skipped, as the script guest cannot read files on Windows
+yet). Windows builds with MSYS2's UCRT64, not MSVC
 (`doc/survey/windows-port.md`, "The toolchain"): the job installs MSYS2
 with `msys2/setup-msys2` and its packages `mingw-w64-ucrt-x86_64-rust`
 (clippy and rustfmt included), `-rust-wasm`, `-gcc` and `-clang`
@@ -63,8 +64,10 @@ UCRT64's shell (`shell: msys2`, which also has MSYS2's `usr/bin` with
 `make`) and keeps the build in `Swatinem/rust-cache`. MSYS2's packages
 are not pinned: each run takes the current ones. It also installs
 Node 24, runs `npm ci` and installs Biome 2.6.8 globally. The Linux gate
-also checks those crates for `x86_64-pc-windows-gnu` (step `windows`, a
-clippy run with `-D warnings`), where the Nix dev shells' toolchain
+also checks the crates of `WINDOWS_CRATES` for `x86_64-pc-windows-gnu`
+(step `windows`, a clippy run with `-D warnings`; those of
+`WINDOWS_ONLY_CRATES` build C for the target, which the dev shell has no
+compiler for), where the Nix dev shells' toolchain
 carries that standard library (`flake.nix`), so `check-with-nix` runs it
 too; it prints `SKIP windows` without it.
 

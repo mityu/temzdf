@@ -628,8 +628,9 @@ scripts/windows-vm.sh check [REV]            # the gate on REV in the guest
 - `check` copies a commit (`git archive`, so not the uncommitted changes)
   to the guest's `C:\t`, runs `npm ci` and `cargo xtask check --no-miri`
   (in UCRT64's login shell) there; the output is `target/windows-vm/check.log`. It passes
-  (2026-11-23); of the crates outside `WINDOWS_CRATES`, some do not
-  build yet (`todo.md` lists what fails).
+  (2026-11-23, over `WINDOWS_CRATES` and `WINDOWS_ONLY_CRATES`); the
+  crates outside them do not build or pass there yet (why: the comment
+  on those lists in `xtask/src/check.rs`, and `todo.md`).
 - Each image is a new dated file in `~/.local/share/vitro/golden/`; the
   newest is used unless `TEMZDF_WINDOWS_GOLDEN` names another. Old ones are
   not deleted.

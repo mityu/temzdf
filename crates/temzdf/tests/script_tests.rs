@@ -29,6 +29,7 @@ test("passes", (assert) => assert.equal(1 + 1, 2));
 
 #[test]
 #[cfg_attr(miri, ignore = "runs processes")]
+#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn passing_files_exit_with_zero() {
     let (code, out) = run(&[], &[("a.test.ts", PASSES)]);
     assert_eq!(code, Some(0), "{out}");
@@ -38,6 +39,7 @@ fn passing_files_exit_with_zero() {
 
 #[test]
 #[cfg_attr(miri, ignore = "runs processes")]
+#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn a_stuck_file_is_stopped_and_the_others_run() {
     let fails = r#"
 import { test } from "temzdf/test";

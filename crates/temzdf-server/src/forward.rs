@@ -171,8 +171,10 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri isolates the file system (canonicalize, the runtime directory)")]
     fn socket_names_stay_as_they_were() {
         // Viewers of other builds must find each other: the name is the
-        // FNV-1a of the canonical (here: absolute, missing) path.
+        // FNV-1a of the canonical (here: absolute, missing) path (on
+        // Windows it is on the current drive, so another hash).
         let socket = socket_path(Path::new("/nonexistent-temzdf/doc.pdf"));
+        #[cfg(unix)]
         assert_eq!(socket.file_name().unwrap(), "3af4a6028ebd1343.sock");
         assert_eq!(socket.parent().unwrap(), temzdf_protocol::runtime_dir().join("temzdf"));
     }

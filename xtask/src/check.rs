@@ -28,16 +28,11 @@ const NODE_MODULES: &str = "crates/temzdf-script/runtime/node_modules";
 /// The shipped scripts, beside their tests (`*.test.ts`).
 const RUNTIME: &str = "crates/temzdf-script/runtime";
 /// The crates that build and test on Windows so far, and the gate runs
-/// there (`windows-latest` in CI), `xtask` among them. On Unix all of them
-/// but `xtask` (whose `ring` is C) are also checked for
-/// `x86_64-pc-windows-gnu` ("windows" step; Windows builds with MSYS2's
-/// UCRT64), where
-/// the standard library for it is installed. Left out, and why
-/// (`todo.md`, "The Windows port"): texprintf and tuitest only
-/// cross-check because pkg-config finds the Linux libraries; temzdf-script-guest
-/// is empty off wasm; the rest use Unix APIs (`std::os::unix`, rustix) or C
-/// that is not built for Windows yet. temzdf-gui's GPU and font tests skip
-/// there (no `TEMZDF_TEST_FONTS`, no built-in fonts).
+/// there (`windows-latest` in CI): these and WINDOWS_ONLY_CRATES. On Unix
+/// these are also checked for `x86_64-pc-windows-gnu` ("windows" step;
+/// Windows builds with MSYS2's UCRT64), where the standard library for it
+/// is installed. temzdf-gui's GPU and font tests skip on Windows (no
+/// `TEMZDF_TEST_FONTS`, no built-in fonts).
 const WINDOWS_CRATES: &[&str] = &[
     "temzdf-client",
     "temzdf-fixtures",
@@ -51,8 +46,21 @@ const WINDOWS_CRATES: &[&str] = &[
     "termpix-core",
     "termpix-ui",
     "wlinput",
-    "xtask",
 ];
+/// The crates the gate on Windows also covers but the "windows" step does
+/// not: they build C for the target (texprintf, mupdf-sys, wasmtime's
+/// helpers, QuickJS, xtask's `ring`; libghostty-vt through pkg-config,
+/// which finds the Linux one), and the dev shell has no MinGW compiler.
+/// Windows itself checks them. Their tests that start programs in terminal
+/// panes or on a pty, that read the PDF fixtures (built with TeX), or whose
+/// script guest reads files are ignored there (`cfg_attr(not(unix),
+/// ignore = ...)`). Left out of both lists, and why (`todo.md`, "The
+/// Windows port"): termpix and temzdf-tty are the terminal frontend, Unix
+/// only; temzdf-pdfcore's tests need the fixtures, built with TeX; most of
+/// temzdf-script-runner's tests are scripts its guest reads from files,
+/// which it cannot on Windows yet; temzdf-script-guest is empty off wasm.
+const WINDOWS_ONLY_CRATES: &[&str] =
+    &["temzdf", "temzdf-pdfview", "temzdf-script", "temzdf-server", "temzdf-term", "texprintf", "tuitest", "xtask"];
 /// The target of the cross-check ("windows" step).
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-gnu";
 /// The generated declarations, committed.
@@ -536,7 +544,7 @@ impl<'a> Gate<'a> {
         if extra.is_empty() {
             select_packages(&mut cmd);
         } else {
-            for p in WINDOWS_CRATES.iter().filter(|p| **p != "xtask") {
+            for p in WINDOWS_CRATES {
                 cmd.args(["-p", p]);
             }
         }
@@ -576,7 +584,7 @@ impl<'a> Gate<'a> {
             return Ok("js tests skipped (cargo test arguments given)".to_owned());
         }
         if cfg!(windows) {
-            return Ok("js tests skipped (temzdf does not build on Windows yet)".to_owned());
+            return Ok("js tests skipped (the script guest cannot read files on Windows yet)".to_owned());
         }
         let files = js_test_files(Path::new(RUNTIME));
         if files.is_empty() {
@@ -648,11 +656,12 @@ impl<'a> Gate<'a> {
     }
 }
 
-/// The packages cargo works on: the workspace, but only WINDOWS_CRATES on
-/// Windows (the others do not build there yet).
+/// The packages cargo works on: the workspace, but only WINDOWS_CRATES and
+/// WINDOWS_ONLY_CRATES on Windows (the others do not build or pass there
+/// yet).
 fn select_packages(cmd: &mut Command) {
     if cfg!(windows) {
-        for p in WINDOWS_CRATES {
+        for p in WINDOWS_CRATES.iter().chain(WINDOWS_ONLY_CRATES) {
             cmd.args(["-p", p]);
         }
     } else {
