@@ -516,6 +516,8 @@ fn main() -> Result<()> {
             // (On Windows the client starts the server detached already.)
             #[cfg(unix)]
             let _ = rustix::process::setsid();
+            // Nor the log's handles to what the session starts (Windows).
+            temzdf_client::std_handles_not_inherited();
             let spec = temzdf_server::action::parse_new_pane(&pane)?.spec;
             let script = config::script_settings(cli.clean, cli.config.as_deref())?;
             let settings = config::settings(true, script, cli.editor.as_deref());

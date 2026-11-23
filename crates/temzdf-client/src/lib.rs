@@ -139,6 +139,7 @@ pub fn spawn_server(
     editor: Option<&str>,
     clean: bool,
 ) -> Result<()> {
+    std_handles_not_inherited();
     if !proto::valid_name(name) {
         bail!("invalid session name {name:?} (letters, digits, '.', '_' and '-', not first '.' or '-')");
     }
@@ -337,6 +338,35 @@ pub fn resolve(name: Option<&str>) -> Result<String> {
     }
 }
 
+/// Keep this process's standard handles from the programs it starts (a
+/// server, a link's handler, inverse search) on Windows, where a program
+/// starts with every inheritable handle of its parent, whatever its own
+/// standard handles are: a session server started by a client would hold
+/// the client's output open as long as it runs (a pipe a script or an
+/// editor waits on for its end, a file redirected to). The programs that
+/// are meant to get them still do (`Stdio::inherit` duplicates them for
+/// the child). Nothing to do on Unix, where a child's standard handles
+/// replace the parent's.
+pub fn std_handles_not_inherited() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation};
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            // SAFETY: plain Win32 calls on this process's own handles; a
+            // missing or invalid one makes them fail, which is ignored.
+            unsafe {
+                let h = GetStdHandle(which);
+                if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                    SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
+    }
+}
+
 /// The executable `name` next to the running one, if there is a file.
 pub fn sibling_exe(name: &str) -> Option<PathBuf> {
     std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(name))).filter(|p| p.is_file())
@@ -395,6 +425,7 @@ fn shell(cmd: &str) -> std::process::Command {
 
 /// Run a shell command detached from the terminal (inverse search).
 pub fn run_shell(cmd: &str) {
+    std_handles_not_inherited();
     let child = shell(cmd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -482,6 +513,7 @@ pub fn open_uri(command: Option<Vec<String>>, uri: &str, on_failure: impl Fn(Str
     }
     let command = command.filter(|c| !c.is_empty()).unwrap_or_else(default_opener);
     let Some((program, args)) = command.split_first() else { return };
+    std_handles_not_inherited();
     let child = std::process::Command::new(program)
         .args(args)
         .arg(uri)
@@ -507,6 +539,30 @@ pub fn open_uri(command: Option<Vec<String>>, uri: &str, on_failure: impl Fn(Str
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[cfg(windows)]
+    #[test]
+    fn standard_handles_are_not_inherited_after() {
+        use windows_sys::Win32::Foundation::{GetHandleInformation, HANDLE_FLAG_INHERIT, SetHandleInformation};
+        use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
+        let handles = [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(|w| unsafe { GetStdHandle(w) });
+        let inherited = |h| {
+            let mut flags = 0;
+            // SAFETY: this process's own standard handle.
+            assert_ne!(unsafe { GetHandleInformation(h, &mut flags) }, 0);
+            flags & HANDLE_FLAG_INHERIT != 0
+        };
+        // Inheritable first, as a parent's redirection leaves them.
+        for h in handles {
+            // SAFETY: as above.
+            assert_ne!(unsafe { SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) }, 0);
+            assert!(inherited(h));
+        }
+        std_handles_not_inherited();
+        for h in handles {
+            assert!(!inherited(h));
+        }
+    }
 
     #[test]
     fn unnamed_sessions_take_the_first_free_word() {
