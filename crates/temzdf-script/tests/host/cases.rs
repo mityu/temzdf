@@ -452,7 +452,9 @@ dispatch(async (ctx) => {
 }
 
 /// temzdf/fs reads on the host's threads while scripts go on; the results
-/// settle once nothing runs, after the promise jobs queued before them.
+/// settle once nothing runs, after the promise jobs queued before them
+/// (not in any order with timers: when a result comes depends on the
+/// thread).
 #[test]
 fn temzdf_fs_reads_files_asynchronously() {
     let config = r#"import { dispatch } from "temzdf";
@@ -477,9 +479,12 @@ dispatch(async (ctx) => {
   ctx.action.message(String((await realPath(join(dir, "link"))) === (await realPath(join(dir, "a.txt")))));
   ctx.action.message(`${await exists(join(dir, "sub"), { isDirectory: true })} ${await exists(join(dir, "none"))}`);
   try { await readTextFile(join(dir, "sub")); } catch (e) { ctx.action.message(`${e instanceof errors.IsADirectory}`); }
+  // More than run at once (the rest wait their turn), all settled, in order.
+  const many = await Promise.all(Array.from({ length: 20 }, (_, i) => readTextFile(join(dir, i % 2 ? "a.txt" : "b.txt"))));
+  ctx.action.message(many.join(""));
 });
 "#;
-    let mut s = Session::start(&[("a.txt", "hi")]);
+    let mut s = Session::start(&[("a.txt", "hi"), ("b.txt", "b")]);
     std::fs::create_dir(s.dir.join("sub")).unwrap();
     std::os::unix::fs::symlink(s.dir.join("a.txt"), s.dir.join("link")).unwrap();
     let config = config.replace("DIR", &format!("{:?}", s.dir.display().to_string()));
@@ -502,11 +507,12 @@ dispatch(async (ctx) => {
         [
             "task1 message(sync, job, read hi)",
             "task1 message(Uint8Array 104 105)",
-            "task1 message(a.txt:f config.js:f link:l sub:d)",
+            "task1 message(a.txt:f b.txt:f config.js:f link:l sub:d)",
             "task1 message(true 2 true true)",
             "task1 message(true)",
             "task1 message(true false)",
             "task1 message(true)",
+            "task1 message(bhibhibhibhibhibhibhibhibhibhi)",
         ]
     );
 }

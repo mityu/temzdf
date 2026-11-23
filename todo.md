@@ -136,6 +136,9 @@ server on one `Session`). Next and open:
   `crates/temzdf-server/src/session/script.rs`); its check now skips
   frames read a second or more after the key, when the session draws
   what the script has done so far, as designed.
+  `a_fuzzy_finder_shows_its_prompt_above_its_list_in_a_frame` failed once
+  in a full gate (2026-11-23) and passed alone three times; not looked
+  into.
 - Whether `temzdf action` goes, now that `temzdf eval` runs the
   configuration's language from the command line, or shrinks to what a
   shell needs (opening a file: `new-pane FILE` resolves paths against the

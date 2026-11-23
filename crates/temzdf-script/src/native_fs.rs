@@ -243,6 +243,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot start mkfifo")]
     fn a_fifo_is_not_opened() {
         let d = dir("fifo");
         let f = d.join("pipe");

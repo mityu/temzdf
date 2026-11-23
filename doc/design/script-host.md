@@ -43,8 +43,10 @@ take the session down:
   (`crates/temzdf-script/src/native_fs.rs`), with the OS's own paths, and
   so are `temzdf/fs`'s, asynchronously: `fs_start` hands an operation to
   four threads, whose results come back through `recv` among the
-  session's messages (`ToGuest`), settled once nothing runs as commands'
-  later answers are. `stop` sends `Shutdown` itself and never joins the
+  session's messages (`ToGuest`); the host starts at most four at once
+  (the rest wait in the guest), so results waiting on the server's side
+  take at most four times the largest read. They settle once nothing
+  runs, as commands' later answers do. `stop` sends `Shutdown` itself and never joins the
   threads, so one stuck on a hung file system holds nothing up:
   WASI's sandboxing (wasmtime-wasi under a `/` preopen, as it was until
   2026-11-23) refused symbolic links to absolute paths (a configuration

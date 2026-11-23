@@ -28,6 +28,21 @@ test("either style is there on any OS", (assert) => {
   assert.true(posix.globToRegExp("**/*.ts").test("a/b/c.ts"));
 });
 
+// The module loader's cases (crates/temzdf-script/src/paths.rs), so that
+// the two implementations agree on them.
+test("the module loader's path cases come out the same", (assert) => {
+  assert.equal(posix.dirname("/home/u/.config/temzdf/config.ts"), "/home/u/.config/temzdf");
+  assert.equal(posix.join("/a/b", "./c.ts"), "/a/b/c.ts");
+  assert.equal(posix.join("/a/b", "../c/./d.ts"), "/a/c/d.ts");
+  assert.equal(windows.dirname("C:\\Users\\x\\AppData\\temzdf\\config.ts"), "C:\\Users\\x\\AppData\\temzdf");
+  assert.equal(windows.join("C:\\Users\\x", "./lib.ts"), "C:\\Users\\x\\lib.ts");
+  assert.equal(windows.join("C:\\Users\\x", "../y/./z.ts"), "C:\\Users\\y\\z.ts");
+  assert.equal(windows.join("\\\\server\\share\\x", "../lib/a.ts"), "\\\\server\\share\\lib\\a.ts");
+  assert.true(windows.isAbsolute("C:\\a") && windows.isAbsolute("C:/a") && windows.isAbsolute("\\\\server\\share\\x"));
+  assert.false(windows.isAbsolute("a\\b") || windows.isAbsolute("C:a"));
+  assert.false(posix.isAbsolute("C:\\a"));
+});
+
 test("there is no resolve: scripts have no working directory", (assert) => {
   for (const m of [path, posix, windows]) {
     assert.false("resolve" in m);

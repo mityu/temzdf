@@ -140,6 +140,8 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         settled: RefCell::default(),
         fs_waiting: RefCell::default(),
         next_fs: Cell::new(1),
+        fs_queued: RefCell::default(),
+        fs_running: Cell::new(0),
         replies: RefCell::default(),
         gone: Cell::new(false),
         rejections,
@@ -296,6 +298,10 @@ struct State {
     /// settling each, and what it reads.
     fs_waiting: RefCell<std::collections::HashMap<u64, (Persistent<Function<'static>>, FsRead)>>,
     next_fs: Cell<u64>,
+    /// At most [`FS_RUNNING`] operations are started at once; the others
+    /// wait here, in order.
+    fs_queued: RefCell<std::collections::VecDeque<(u64, FsOp)>>,
+    fs_running: Cell<usize>,
     /// Answers to requests waited for further out: a call run while one
     /// request waits (a hook) can be waiting for its own when the outer
     /// one's answer comes.
@@ -356,6 +362,20 @@ impl State {
         }
     }
 
+    /// Start file operation `id`, or queue it while [`FS_RUNNING`] run.
+    fn fs_start(&self, id: u64, op: FsOp) {
+        self.fs_queued.borrow_mut().push_back((id, op));
+        self.fs_start_queued();
+    }
+
+    fn fs_start_queued(&self) {
+        while self.fs_running.get() < FS_RUNNING {
+            let Some((id, op)) = self.fs_queued.borrow_mut().pop_front() else { return };
+            self.fs_running.set(self.fs_running.get() + 1);
+            self.link.borrow_mut().fs_start(id, op);
+        }
+    }
+
     /// The next message; `Err(true)` when the session went away,
     /// `Err(false)` when nothing came in time. (A function, not a borrow
     /// kept over the caller's `match`: handling a message sends.) A file
@@ -369,6 +389,8 @@ impl State {
                 Received::Msg(m) => return Ok(m),
                 Received::FsDone { id, result } => {
                     self.settled.borrow_mut().push_back(Settled::Fs(id, result));
+                    self.fs_running.set(self.fs_running.get().saturating_sub(1));
+                    self.fs_start_queued();
                     if timeout.is_some() {
                         return Err(false);
                     }
@@ -490,7 +512,7 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
             let id = s.next_fs.get();
             s.next_fs.set(id + 1);
             s.fs_waiting.borrow_mut().insert(id, (Persistent::save(&ctx, settle), read));
-            s.link.borrow_mut().fs_start(id, op);
+            s.fs_start(id, op);
             Ok(())
         })?,
     )?;
@@ -1019,6 +1041,12 @@ fn settle_promises(ctx: &Ctx<'_>, st: &Rc<State>) {
         run_jobs(ctx, st);
     }
 }
+
+/// How many file operations run on the server's side at once: their
+/// results wait there until the guest reads them, outside its memory cap,
+/// so at most this many times the largest read
+/// ([`crate::native_fs::READ_LIMIT`]).
+const FS_RUNNING: usize = crate::native_fs::Workers::THREADS;
 
 /// An answer to settle a promise with, once nothing runs.
 enum Settled {

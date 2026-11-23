@@ -49,6 +49,8 @@ pub(crate) fn module_candidates(style: PathStyle, p: &str) -> Vec<String> {
     out
 }
 
+// runtime/path.test.ts checks temzdf/path (JSR's @std/path) on the same
+// cases, so that the two agree.
 #[cfg(test)]
 mod tests {
     use super::*;
