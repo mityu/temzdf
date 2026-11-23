@@ -92,9 +92,8 @@ without a timeout, which end only when ConPTY is closed
 (`ClosePseudoConsole`, which on older Windows can wait until its last
 output was read). Unix hangs the program's process group up and kills it
 a second later; Windows has no process groups, and portable-pty's `kill`
-ends only the program, so a Job Object with
-`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` holds the tree (assigned after
-portable-pty started the program, which it does unsuspended).
+ends only the program (what ends a pane's programs instead: "Closing a
+pane" below).
 
 The options weighed:
 
@@ -102,17 +101,56 @@ The options weighed:
 |---|---|---|
 | portable-pty with the in-box ConPTY | dropped (`doc/terminals/conpty.md`) | M: `pty.rs` only |
 | the same with `conpty.dll` and `OpenConsole.exe` beside the executable (portable-pty loads a `conpty.dll` it finds first) | passed | the above, and shipping the two from NuGet |
-| ConPTY through `windows-sys`, without portable-pty | either | L: the pipes, `STARTUPINFOEX`, the command line and environment block by hand; the program could start suspended, inside the job |
+| ConPTY through `windows-sys`, without portable-pty | either | L: the pipes, `STARTUPINFOEX`, the command line and environment block by hand |
 | other crates (`conpty`, `conpty-oxide`) | either | small, little-used crates |
 
 The in-box ConPTY through portable-pty was chosen (the user,
 2026-11-23); shipping `conpty.dll` waits (`todo.md`). Done the same
-day: `pty.rs` on Windows, the Job Object, `supported` asking kernel32
-for `CreatePseudoConsole` first (portable-pty panics without it), and
-tests with cmd in a pane (`tests::conpty` in
-`crates/temzdf-term/src/lib.rs`): output after ConPTY's start-up query
-for the cursor (answered by the pane's terminal), input, resizing, and
-the tree ending with the pane.
+day: `pty.rs` on Windows, `supported` asking kernel32 for
+`CreatePseudoConsole` first (portable-pty panics without it), and tests
+with cmd in a pane (`tests::conpty` in `crates/temzdf-term/src/lib.rs`):
+output after ConPTY's start-up query for the cursor (answered by the
+pane's terminal), input, resizing, and which programs end with the pane.
+
+### Closing a pane
+
+At first the pane's program ran in a Job Object with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, ended a second after ConPTY was
+closed: everything the pane started ended, programs off its console too,
+and console programs had a second (none when the server crashed) for
+`CTRL_CLOSE_EVENT`. The user chose Windows Terminal's behaviour instead
+(2026-11-23), so it was looked up and measured:
+
+- Windows Terminal (`src/cascadia/TerminalConnection/ConptyConnection.cpp`,
+  `ConptyConnection::Close`, the same in v1.24.11911.0, v1.25.3131.0 and
+  main at cf5e6bf) only closes the pseudoconsole, for a tab, a pane or a
+  window: no job, no `TerminateProcess`. When the terminal dies, the
+  console host sees its control pipe break
+  (`PtySignalInputThread::_Shutdown`) and does the same. The console
+  host then sends `CTRL_CLOSE_EVENT` to each process attached to the
+  console, newest first (`CloseConsoleProcessState`,
+  `ProcessCtrlEvents` in `src/host`); Windows ends one that has not
+  ended after about five seconds. Processes not attached to the console
+  get nothing.
+- Measured in the VM (Windows 11 build 26300, the in-box console host;
+  a process "stays" when it still ran 22 s later):
+
+| Process | Job Object (before) | ConPTY closed only (now): pane deleted, `kill-session`, server killed | Windows Terminal 1.24: window closed, killed |
+|---|---|---|---|
+| the program in front (ping) and the cmd that started it | ends | ends | ends |
+| `start /b ping` (same console, background) | ends | ends | ends |
+| a program slow on `CTRL_CLOSE_EVENT` | killed after 1 s; no event when the server died | gets it, ended after about 5 s | the same |
+| charmap (a GUI program) | ends | stays | stays |
+| cmd on a console of its own | ends | stays | stays |
+
+  Windows 11's Notepad stayed in every case, the job's included (not
+  understood); `start "" cmd` went to Windows Terminal, the VM's default
+  terminal.
+- So the job went: closing ConPTY alone matches Windows Terminal, when
+  the pane is deleted and however the server ends. Not tried: Windows
+  before 24H2, where `ClosePseudoConsole` waits until its output was
+  read (the reader thread keeps reading, and the close runs on a thread
+  of its own) and the five-second end may not be there.
 
 ## Tests and tooling
 

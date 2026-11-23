@@ -337,19 +337,18 @@ git log), and why:
   ConPTY's pipes on blocking threads (no `poll`: the reader and the
   writer end when ConPTY is closed), and reaps the program as on Unix
   (ConPTY's output does not end with the program, so the exit is
-  reported `LAST_OUTPUT` after it). The program runs in a Job Object
-  with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: deleting the pane closes
-  ConPTY (the console's programs get `CTRL_CLOSE_EVENT`, the hang-up)
-  and a second later, or once the program is reaped, ends the job,
-  programs it started on consoles of their own too; when the server
-  ends, however it ends, the job's handle closes and the panes'
-  programs end with it (the user's choice; on Unix the pty's hang-up
-  ends them). A server a client started ignores Ctrl+C
+  reported `LAST_OUTPUT` after it). Deleting the pane closes ConPTY
+  and nothing more, as Windows Terminal does when a tab or window
+  closes (the user's choice, 2026-11-23): the programs on the pane's
+  console get `CTRL_CLOSE_EVENT` (the hang-up) and Windows ends those
+  that stay after about five seconds; programs off it (a GUI program,
+  one on a console of its own) go on, as programs started with
+  `setsid` or `xdg-open` do on Unix. The server ending, however it
+  ends, closes ConPTY the same way (measured, and why no Job Object:
+  "Closing a pane" in `doc/survey/windows-port.md`). A server a client started ignores Ctrl+C
   (`CREATE_NEW_PROCESS_GROUP`), which programs inherit; it clears that
   before starting a pane's program, so Ctrl+C typed in a pane reaches
-  it. Processes the program starts before it is put into the
-  job (right after it starts; portable-pty starts it unsuspended)
-  would be outside it. Without ConPTY (before Windows 10 1809) a pane
+  it. Without ConPTY (before Windows 10 1809) a pane
   that runs a program fails with `Unsupported` before portable-pty is
   asked (it would panic), and the split, float or tab reports that to
   the client, as any pane that cannot start does. The shell is

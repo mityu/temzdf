@@ -16,10 +16,13 @@
 //!
 //! On Windows the pty is the in-box ConPTY (portable-pty's; terminal panes
 //! need Windows 10 1809 or later, [`supported`]), whose pipes block: the
-//! threads read and write them blocking and end when ConPTY is closed. The
-//! program runs in a Job Object that ends its process tree with the
-//! terminal, and with the server (`doc/design/session-server.md`,
-//! "Windows"; `doc/terminals/conpty.md`).
+//! threads read and write them blocking and end when ConPTY is closed.
+//! Dropping [`Pty`] closes ConPTY and nothing more, as Windows Terminal
+//! does when a tab closes: the programs on its console get
+//! `CTRL_CLOSE_EVENT`, and Windows ends those that stay after about five
+//! seconds; programs off it (a GUI program, one with a console of its own)
+//! go on. The server ending, however it ends, closes ConPTY too
+//! (`doc/design/session-server.md`, "Windows"; `doc/terminals/conpty.md`).
 
 use std::collections::VecDeque;
 #[cfg(unix)]
@@ -45,9 +48,9 @@ const OUTPUT_LIMIT: usize = 4 << 20;
 const POLL: Duration = Duration::from_millis(200);
 /// After the program exits, how long its last output may take to arrive.
 const LAST_OUTPUT: Duration = Duration::from_millis(300);
-/// From the hang-up to the kill, for programs ignoring SIGHUP (on
-/// Windows: from closing ConPTY to ending the Job Object).
-pub(crate) const KILL_AFTER: Duration = Duration::from_secs(1);
+/// From the hang-up to the kill, for programs ignoring SIGHUP.
+#[cfg(unix)]
+const KILL_AFTER: Duration = Duration::from_secs(1);
 
 pub(crate) struct Pty {
     /// `None` only while dropped (Windows closes it on a thread of its own).
@@ -56,12 +59,10 @@ pub(crate) struct Pty {
     backlog: Arc<Backlog>,
     /// The terminal is gone: threads stop.
     stop: Arc<AtomicBool>,
-    /// The program was reaped.
+    /// The program was reaped (for Unix's kill after the hang-up).
+    #[cfg_attr(not(unix), allow(dead_code))]
     reaped: Arc<AtomicBool>,
     pid: Option<i32>,
-    /// The program's process tree; `None` only while dropped.
-    #[cfg(windows)]
-    job: Option<job::Job>,
 }
 
 /// Whether terminal panes can start here.
@@ -113,14 +114,6 @@ impl Pty {
         sink: Sink,
     ) -> io::Result<Self> {
         let (reader, writer) = streams(&*master)?;
-        #[cfg(windows)]
-        let job = match job::Job::holding(&*child) {
-            Ok(job) => job,
-            Err(e) => {
-                let _ = child.kill();
-                return Err(e);
-            }
-        };
         let input = Arc::new(Queue::default());
         let backlog = Arc::new(Backlog::default());
         let stop = Arc::new(AtomicBool::new(false));
@@ -157,16 +150,7 @@ impl Pty {
                 }
             })?;
         }
-        Ok(Self {
-            master: Some(master),
-            input,
-            backlog,
-            stop,
-            reaped,
-            pid,
-            #[cfg(windows)]
-            job: Some(job),
-        })
+        Ok(Self { master: Some(master), input, backlog, stop, reaped, pid })
     }
 
     /// Where input for the program goes (cloneable: the terminal's replies
@@ -188,12 +172,6 @@ impl Pty {
 
     pub(crate) fn pid(&self) -> Option<i32> {
         self.pid
-    }
-
-    /// The processes of the program's tree (for tests).
-    #[cfg(all(windows, test))]
-    pub(crate) fn processes(&self) -> Vec<u32> {
-        self.job.as_ref().map_or_else(Vec::new, job::Job::processes)
     }
 }
 
@@ -239,112 +217,9 @@ impl Drop for Pty {
             // CTRL_CLOSE_EVENT, and its pipes end, which ends the reader
             // and the writer. It can wait until the reader has read what
             // ConPTY still had to write (older Windows), so not here.
-            // Ending the job ends the tree, programs off the console too;
-            // the job's handle closing would do the same (as when the
-            // server ends), so it is held until then. (Should the thread
-            // not start, both go now: the tree ends at once.)
-            let (master, job, reaped) = (self.master.take(), self.job.take(), self.reaped.clone());
-            let _ = std::thread::Builder::new().name("temzdf-pty-kill".into()).spawn(move || {
-                let since = std::time::Instant::now();
-                drop(master);
-                while !reaped.load(Ordering::SeqCst) && since.elapsed() < KILL_AFTER {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                if let Some(job) = job {
-                    job.terminate();
-                }
-            });
-        }
-    }
-}
-
-/// The Job Object a program on Windows runs in: its process tree, ended
-/// together. `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` ends it when the job's
-/// last handle closes, so when the server ends, however it ends, its panes'
-/// programs end too, as a pty's hang-up ends them on Unix.
-#[cfg(windows)]
-mod job {
-    use std::io;
-    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-
-    use portable_pty::Child;
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
-        TerminateJobObject,
-    };
-
-    pub(super) struct Job(OwnedHandle);
-
-    impl Job {
-        /// A new job holding `child`. Processes it started before this are
-        /// outside the job: it was just started, so in practice none.
-        pub(super) fn holding(child: &dyn Child) -> io::Result<Self> {
-            let process = child.as_raw_handle().ok_or_else(|| io::Error::other("no process handle"))?;
-            // SAFETY: a new job, no name or security attributes; on success
-            // the handle is ours to own.
-            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-            if handle.is_null() {
-                return Err(io::Error::last_os_error());
-            }
-            // SAFETY: `handle` is a valid handle nothing else owns.
-            let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) });
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            // SAFETY: the job's handle is valid, and `limits` is the struct
-            // the class names, its size given.
-            let set = unsafe {
-                SetInformationJobObject(
-                    handle,
-                    JobObjectExtendedLimitInformation,
-                    (&raw const limits).cast(),
-                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                )
-            };
-            if set == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            // SAFETY: both handles are valid: the job's, and the child's
-            // process handle, which `child` keeps open.
-            if unsafe { AssignProcessToJobObject(handle, process) } == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(job)
-        }
-
-        /// End every process left in the job, and close it.
-        pub(super) fn terminate(self) {
-            // SAFETY: the job's handle is valid.
-            unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) };
-        }
-
-        /// The ids of the processes in the job (at most 64).
-        #[cfg(test)]
-        pub(super) fn processes(&self) -> Vec<u32> {
-            use windows_sys::Win32::System::JobObjects::{JobObjectBasicProcessIdList, QueryInformationJobObject};
-            /// `JOBOBJECT_BASIC_PROCESS_ID_LIST` with room for 64 ids.
-            #[repr(C)]
-            struct List {
-                assigned: u32,
-                listed: u32,
-                ids: [usize; 64],
-            }
-            let mut list = List { assigned: 0, listed: 0, ids: [0; 64] };
-            // SAFETY: the job's handle is valid, and `list` has the class's
-            // layout with room for 64 ids, its size given.
-            let ok = unsafe {
-                QueryInformationJobObject(
-                    self.0.as_raw_handle(),
-                    JobObjectBasicProcessIdList,
-                    (&raw mut list).cast(),
-                    size_of::<List>() as u32,
-                    std::ptr::null_mut(),
-                )
-            };
-            if ok == 0 {
-                return Vec::new();
-            }
-            list.ids[..(list.listed as usize).min(64)].iter().map(|&id| id as u32).collect()
+            // (Should the thread not start, it closes here.)
+            let master = self.master.take();
+            let _ = std::thread::Builder::new().name("temzdf-pty-close".into()).spawn(move || drop(master));
         }
     }
 }

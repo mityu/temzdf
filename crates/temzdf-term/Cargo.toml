@@ -22,10 +22,13 @@ termpix-core.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", features = ["event", "process"] }
 
-# Whether ConPTY is there, the Job Object a pane's program runs in, and
-# Ctrl+C for it (`src/pty.rs`).
+# Whether ConPTY is there, and Ctrl+C for a pane's program (`src/pty.rs`).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_LibraryLoader"] }
+
+# The tests' look at a pane's processes (`src/lib.rs`, `conpty`).
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
 
 [dev-dependencies]
 temzdf-testhelper.workspace = true

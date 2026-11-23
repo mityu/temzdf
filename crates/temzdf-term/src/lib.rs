@@ -1481,42 +1481,91 @@ mod tests {
             assert!(rows.iter().any(|l| last(l, "70")) && rows.iter().any(|l| last(l, "20")), "{rows:?}");
         }
 
-        #[test]
-        fn the_programs_tree_ends_with_the_pane() {
-            use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        /// The ids of the processes `parent` started that run `exe`.
+        fn children(parent: u32, exe: &str) -> Vec<u32> {
+            use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+            use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+            };
+            let mut found = Vec::new();
+            // SAFETY: a snapshot of every process; closed below.
+            let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+            assert!(snap != INVALID_HANDLE_VALUE, "{}", io::Error::last_os_error());
+            let mut e = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+            // SAFETY: `snap` is a valid snapshot and `e` an entry with its
+            // size set, as the calls require.
+            let mut more = unsafe { Process32FirstW(snap, &mut e) } != 0;
+            while more {
+                let len = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+                let name = String::from_utf16_lossy(&e.szExeFile[..len]);
+                if e.th32ParentProcessID == parent && name.eq_ignore_ascii_case(exe) {
+                    found.push(e.th32ProcessID);
+                }
+                // SAFETY: as above.
+                more = unsafe { Process32NextW(snap, &mut e) } != 0;
+            }
+            // SAFETY: the snapshot's handle, closed once.
+            unsafe { CloseHandle(snap) };
+            found
+        }
+
+        /// A process by its id, to wait for or end.
+        fn process(pid: u32) -> std::os::windows::io::OwnedHandle {
+            use std::os::windows::io::FromRawHandle;
+            use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE};
+            // SAFETY: on success the handle is ours to own.
+            let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+            assert!(!h.is_null(), "process {pid}: {}", io::Error::last_os_error());
+            // SAFETY: a valid handle nothing else owns.
+            unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(h) }
+        }
+
+        /// Whether `p` ends within `ms` milliseconds.
+        fn ends(p: &std::os::windows::io::OwnedHandle, ms: u32) -> bool {
+            use std::os::windows::io::AsRawHandle;
             use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
-            use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+            use windows_sys::Win32::System::Threading::WaitForSingleObject;
+            // SAFETY: a valid process handle.
+            unsafe { WaitForSingleObject(p.as_raw_handle(), ms) == WAIT_OBJECT_0 }
+        }
+
+        /// As Windows Terminal closing a tab: the programs on the pane's
+        /// console end (CTRL_CLOSE_EVENT, or Windows ending them after
+        /// about 5 s), those off it go on.
+        #[test]
+        fn closing_the_pane_ends_its_console_programs_only() {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::System::Threading::TerminateProcess;
 
             let (mut pane, rx) = cmd();
-            // A grandchild on a console of its own: closing ConPTY leaves
-            // it alone, only ending the job ends it.
-            pane.send_text("start \"\" /min ping -n 100 127.0.0.1\r");
-            let deadline = Instant::now() + Duration::from_secs(10);
-            let mut pids = pane.pty.processes();
-            while pids.len() < 2 && Instant::now() < deadline {
-                if let Ok(TermEvent::Output(b)) = rx.recv_timeout(Duration::from_millis(100)) {
-                    pane.feed(&b);
+            let shell = pane.pid().expect("cmd's pid") as u32;
+            let until = |pane: &mut TermBuffer, n: usize| {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while children(shell, "PING.EXE").len() < n && Instant::now() < deadline {
+                    if let Ok(TermEvent::Output(b)) = rx.recv_timeout(Duration::from_millis(100)) {
+                        pane.feed(&b);
+                    }
                 }
-                pids = pane.pty.processes();
-            }
-            assert!(pids.len() >= 2, "cmd and ping in the job: {pids:?}");
-            let processes: Vec<OwnedHandle> = pids
-                .iter()
-                .map(|&pid| {
-                    // SAFETY: on success the handle is ours to own.
-                    let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
-                    assert!(!h.is_null(), "process {pid}: {}", io::Error::last_os_error());
-                    // SAFETY: a valid handle nothing else owns.
-                    unsafe { OwnedHandle::from_raw_handle(h) }
-                })
-                .collect();
+                children(shell, "PING.EXE")
+            };
+            // On the pane's console, in the background.
+            pane.send_text("start /b ping -n 100 127.0.0.1 > nul\r");
+            let first = until(&mut pane, 1);
+            assert_eq!(first.len(), 1, "the background ping: {first:?}");
+            // On a console of its own.
+            pane.send_text("start \"\" /min ping -n 100 127.0.0.1\r");
+            let both = until(&mut pane, 2);
+            let own = *both.iter().find(|p| !first.contains(p)).expect("the ping on its own console");
+            let (shell_p, background, own) = (process(shell), process(first[0]), process(own));
             drop(pane);
-            let timeout = (pty::KILL_AFTER + Duration::from_secs(3)).as_millis() as u32;
-            for (p, pid) in processes.iter().zip(&pids) {
-                // SAFETY: a valid process handle.
-                let ended = unsafe { WaitForSingleObject(p.as_raw_handle(), timeout) } == WAIT_OBJECT_0;
-                assert!(ended, "process {pid} still runs");
-            }
+            // CTRL_CLOSE_EVENT goes to one process after the other, each
+            // given up to 5 s.
+            assert!(ends(&background, 12_000), "the background ping still runs");
+            assert!(ends(&shell_p, 12_000), "cmd still runs");
+            let stayed = !ends(&own, 1_000);
+            // SAFETY: a valid process handle with PROCESS_TERMINATE.
+            unsafe { TerminateProcess(own.as_raw_handle(), 1) };
+            assert!(stayed, "the ping on its own console ended with the pane");
         }
 
         #[test]

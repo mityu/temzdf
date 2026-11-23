@@ -131,6 +131,9 @@ PowerShell 5.1 in `temzdf-gui`):
   in a pane went on. The server clears the flag before starting a pane's
   program (`SetConsoleCtrlHandler(NULL, FALSE)`, `pty::before_spawn`);
   since then Ctrl+C ends it.
+- Closing: deleting a pane closes ConPTY only, as Windows Terminal does;
+  the programs on its console get `CTRL_CLOSE_EVENT` and those off it
+  go on ("Closing a pane" in `doc/survey/windows-port.md`).
 - portable-pty loads a `conpty.dll` it finds on the DLL search path (the
   executable's directory first) in place of kernel32's functions, so
   one placed beside `temzdf.exe` would be used (not tried with temzdf).

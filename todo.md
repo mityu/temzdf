@@ -278,13 +278,14 @@ server on one `Session`). Next and open:
     fork noctty does) waits; perhaps Windows gets the newer ConPTY
     itself (microsoft/terminal#17510 passes the program's output
     through unchanged; the in-box conhost of 25H2 does not yet). Done
-    (2026-11-23): terminal panes on Windows, in the in-box ConPTY, the
-    program in a Job Object that ends its tree with the pane and with the
-    server (`doc/design/session-server.md`, "Windows"); cmd.exe stays
-    the default shell. Still to do for them: a program started by the
-    pane's program before it joins the job escapes it (portable-pty
-    starts it unsuspended; starting it ourselves, suspended or with
-    `PROC_THREAD_ATTRIBUTE_JOB_LIST`, would close that). What the server
+    (2026-11-23): terminal panes on Windows, in the in-box ConPTY;
+    closing one closes ConPTY only, as Windows Terminal does (no Job
+    Object: "Closing a pane" in `doc/survey/windows-port.md`); cmd.exe
+    stays the default shell. Still to do for them: Windows before 24H2
+    (`ClosePseudoConsole` waits there, and the five-second end may be
+    missing); why a `start /b` program ended after about 1.3 s when the
+    pane was deleted but after 4 to 7 s on `kill-session`, a killed
+    server and in Windows Terminal. What the server
     lacks on Windows otherwise: "The server on Windows" in
     `doc/survey/windows-port.md`.
   - The product: compile (gate `rustix`, `signal-hook`, `libc`;
