@@ -74,7 +74,7 @@ fn a_replayed_timeline_renders_as_its_input_did() {
 fn a_replayed_autoscroll_selects_onto_the_pages_it_reaches() {
     let dir = TempDir::new("render-autoscroll");
     let d = dir.path();
-    // As tests/e2e/select-autoscroll.actions: from the title into the bottom
+    // As tests/e2e/select-autoscroll.ts: from the title into the bottom
     // edge, held there until the end of the two pages. At x = 480 the
     // selection ends after page 2's number (in view there), at x = 300
     // before it: the screens differ only if the replay extended the

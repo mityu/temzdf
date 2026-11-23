@@ -5,7 +5,7 @@
 # doc/dev/performance.md, "Session socket", has the measurement this is for.
 #
 # Usage: scripts/timing.sh OUTDIR
-#   OUTDIR: an e2e run of tests/e2e/perf.actions (or any) with TEMZDF_TIMING=1.
+#   OUTDIR: an e2e run of tests/e2e/perf.ts (or any) with TEMZDF_TIMING=1.
 #   The server's log is OUTDIR/state/temzdf/NAME.log; the client's is
 #   OUTDIR/terminal.log for the GUI (its stderr), else
 #   OUTDIR/state/temzdf/temzdf.log.
