@@ -1674,6 +1674,24 @@ fn a_pane_copy_notice_says_what_was_left_out() {
     assert!(s.notices.iter().any(|n| n.text == "Copied 3 characters; 1 page(s) not loaded were left out"));
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+fn a_notice_fades_on_the_session_clock() {
+    // A replay's clock is simulated and runs ahead of the wall clock: the
+    // notice of a copy made at its time stays 3 s of that clock.
+    let (mut s, rx) = session();
+    settle(&mut s, &rx);
+    let t = Instant::now() + Duration::from_secs(60);
+    s.poll(t);
+    let buf = s.panes[&s.focus].buffer();
+    s.pane_copied(buf, "abc".into(), temzdf_scene::CopyKind::Char, None);
+    let shown = |s: &Session| s.notices.iter().any(|n| n.text == "Copied 3 characters");
+    s.poll(t + Duration::from_millis(2900));
+    assert!(shown(&s), "still there before 3 s");
+    s.poll(t + Duration::from_millis(3000));
+    assert!(!shown(&s), "gone after 3 s");
+}
+
 /// What the session copied (OSC 52 in a terminal client).
 fn copied(s: &mut Session) -> Vec<String> {
     s.take_effects()

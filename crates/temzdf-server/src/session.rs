@@ -1609,6 +1609,7 @@ impl Session {
     /// [`Session::tick`], plus scripting's timers (the configuration's load
     /// timeout, the "running a script" notice). For event loops.
     pub fn poll(&mut self, now: Instant) -> Outcome {
+        self.clock = self.clock.max(now);
         self.test_hold_timeout(now);
         self.expire_clipboard_reads(now);
         self.write_due_swaps(now);

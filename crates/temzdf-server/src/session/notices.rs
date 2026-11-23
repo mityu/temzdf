@@ -29,14 +29,16 @@ pub struct Notice {
 }
 
 impl Session {
-    /// Show a floating message.
+    /// Show a floating message. Information fades [`INFO_FOR`] after the
+    /// session's clock ([`Session::now`]), not the wall clock: a replay's
+    /// clock is simulated and runs ahead of it.
     pub(super) fn notify(&mut self, kind: Kind, text: &str) {
         eprintln!("temzdf: {text}");
         self.test.note_message(kind != Kind::Info, text);
         if kind == Kind::Host {
             self.notices.retain(|n| n.kind != Kind::Host);
         }
-        let until = (kind == Kind::Info).then(|| Instant::now() + INFO_FOR);
+        let until = (kind == Kind::Info).then(|| self.now() + INFO_FOR);
         self.notices.push(Notice { kind, text: text.to_owned(), until });
         // Keep a handful: the newest.
         while self.notices.len() > 5 {
