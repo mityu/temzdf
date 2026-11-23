@@ -151,3 +151,7 @@ branch (design notes and research lived there until it was merged in on
   Code's npm libraries (`vscode-jsonrpc`,
   `vscode-languageserver-protocol`), where its parts would live (Rust or
   scripts), checked against the script host and the editor framework.
+- [survey/e2e-harness-typescript.md](survey/e2e-harness-typescript.md):
+  moving the e2e harness and its action files to TypeScript on Node:
+  what they use, what is POSIX-only, facts checked in Node, and the
+  decisions left.
