@@ -101,6 +101,8 @@ impl Session {
         args: &[ScriptValue],
         now: Instant,
     ) -> Result<(ScriptValue, Outcome), String> {
+        // What it shows counts from here (a notice's 3 s, `message`).
+        self.clock = self.clock.max(now);
         let text = |i: usize| args.get(i).and_then(ScriptValue::as_str).map(str::to_owned);
         // Numbers come as strings from `temzdf action`.
         let id = |i: usize| match args.get(i) {

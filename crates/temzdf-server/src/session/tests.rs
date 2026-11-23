@@ -1692,6 +1692,22 @@ fn a_notice_fades_on_the_session_clock() {
     assert!(!shown(&s), "gone after 3 s");
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+fn a_message_fades_3_s_after_the_command() {
+    // A command after an idle spell (`temzdf action message`): its notice
+    // counts from the command's time, not from the last input's.
+    let (mut s, rx) = session();
+    settle(&mut s, &rx);
+    let t = Instant::now() + Duration::from_secs(60);
+    s.run_command("message", &[ScriptValue::Str("hi".into())], t).unwrap();
+    let shown = |s: &Session| s.notices.iter().any(|n| n.text == "hi");
+    s.poll(t + Duration::from_millis(2900));
+    assert!(shown(&s), "still there before 3 s");
+    s.poll(t + Duration::from_millis(3000));
+    assert!(!shown(&s), "gone after 3 s");
+}
+
 /// What the session copied (OSC 52 in a terminal client).
 fn copied(s: &mut Session) -> Vec<String> {
     s.take_effects()
