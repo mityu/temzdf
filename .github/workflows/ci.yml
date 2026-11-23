@@ -130,6 +130,26 @@ jobs:
           "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin" >> $env:GITHUB_PATH
           "LIBCLANG_PATH=${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin" >> $env:GITHUB_ENV
           "WASI_SDK=${{ steps.msys2.outputs.msys2-location }}/ucrt64" >> $env:GITHUB_ENV
+      # libghostty-vt (terminal panes, tuitest), built once for the GNU
+      # target and installed into UCRT64, where pkgconf finds it, as
+      # scripts/windows/provision.ps1 does in the VM and Nix on Linux:
+      # Ghostty's build picks the MSVC ABI on Windows unless told, and
+      # libghostty-vt-sys tells it only when cross-compiling. The commit is
+      # nix/libghostty-vt.nix's rev.
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+          use-cache: false
+      - run: |
+          rev=$(sed -n 's/^ *rev = "\([0-9a-f]*\)";/\1/p' nix/libghostty-vt.nix)
+          dir=$(cygpath -m "$RUNNER_TEMP")/ghostty
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/ghostty-org/ghostty.git "$dir"
+          git -C "$dir" checkout --quiet "$rev"
+          cd "$dir"
+          zig build -Demit-lib-vt=true -Doptimize=ReleaseFast -Dcpu=baseline -Demit-xcframework=false \
+            -Dapp-runtime=none -Dtarget=x86_64-windows-gnu --prefix "$(cygpath -m "$MINGW_PREFIX")"
+          pkg-config --modversion libghostty-vt-static
+        shell: msys2 {0}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Keys are `v0-rust-windows-Windows-X64-...`; `prune-cache-windows` matches `v0-rust-windows-`.
@@ -154,7 +174,9 @@ jobs:
       - run: cargo xtask check --stream --no-miri
         shell: msys2 {0}
         env:
-          RUSTFLAGS: -D warnings
+          # RUSTFLAGS replaces .cargo/config.toml's target rustflags: lld
+          # again (the static libghostty-vt links only with it).
+          RUSTFLAGS: -D warnings -C link-arg=-fuse-ld=lld
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

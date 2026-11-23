@@ -5,6 +5,13 @@
 # parser, so the warning is noise.
 NIX_CC_WRAPPER_SUPPRESS_TARGET_WARNING = "1"
 
+# Windows (MSYS2's UCRT64, doc/survey/windows-port.md): link with lld. The
+# static libghostty-vt Zig builds does not link with GNU ld (its
+# compiler_rt's weak `___chkstk_ms` stays unresolved). A RUSTFLAGS in the
+# environment replaces this (CI repeats it).
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
 [alias]
 # Repository tasks (xtask/): `cargo xtask help`.
 xtask = "run --quiet --package xtask --"
