@@ -39,6 +39,10 @@ typed-path = { version = "0.13.0", optional = true }
 # runtime/node_modules checked against the lock file.
 serde_json = "1.0.149"
 
+[dev-dependencies]
+# The host tests' socket pairs (`Stream`, Unix domain sockets on Windows too).
+temzdf-protocol = { workspace = true, features = ["session"] }
+
 [[test]]
 name = "host"
 required-features = ["host"]

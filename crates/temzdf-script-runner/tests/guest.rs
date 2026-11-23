@@ -1,13 +1,13 @@
 //! The script host as the server runs it: the guest in wasmtime. The host's
 //! cases (crates/temzdf-script/tests/host/cases.rs) run against it through a
-//! [`ScriptHost`] bridged to Unix sockets; then what only the runner does:
+//! [`ScriptHost`] bridged to a pair of sockets; then what only the runner does:
 //! stopping a guest that ignores everything, and the memory cap.
 
 use std::io::BufReader;
-use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use temzdf_protocol::Stream;
 use temzdf_protocol::script::{FromHost, HostOp, PathStyle, ScriptValue, ToHost};
 use temzdf_script_runner::{Event, Options, ScriptHost};
 
@@ -16,7 +16,7 @@ mod cases;
 
 /// The cases' transport: messages from `host_in` go to the guest, the
 /// guest's to `host_out`; when the guest ends, `host_out` closes.
-fn spawn_host(host_in: UnixStream, mut host_out: UnixStream, limit: Duration) {
+fn spawn_host(host_in: Stream, mut host_out: Stream, limit: Duration) {
     let options = Options { unattended_limit: limit, ..Options::default() };
     let host = ScriptHost::start(options, move |e| match e {
         Event::Msg(msg) => {

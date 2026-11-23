@@ -274,11 +274,14 @@ server on one `Session`). Next and open:
     `temzdf-gui` (cross-checked; their tests not run on Windows yet),
     and the server moved to them (not built for Windows yet; gaps in
     `doc/design/session-server.md`, "Windows").
-  - The tests: a helper program instead of `sh` in the pty tests; script
-    host tests on `std::io::pipe`; test fonts without fontconfig; the
-    gate's lock test; `cargo xtask miri` (also cross-target from Linux);
+  - The tests: a helper program instead of `sh` in the pty tests; test
+    fonts without fontconfig; the gate's lock test; `cargo xtask miri`
+    (also cross-target from Linux);
     a Windows backend for `scripts/e2e.sh` (WezTerm, Windows Terminal,
-    the GUI).
+    the GUI). Done: the script host tests on `temzdf_protocol::Stream`
+    pairs (Unix domain sockets on Windows too, keeping the read timeout
+    `std::io::pipe` lacks); the mock terminal tests of `temzdf-pdfview`
+    and `temzdf-server` are Unix only (termpix).
 - Absolute paths only (the user's direction, 2026-11-22): actions that
   take a path accept only absolute ones, as the session's working
   directory (where it started) is not obvious to anyone; relative paths

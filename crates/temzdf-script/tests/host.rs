@@ -1,17 +1,17 @@
 //! The script host's cases (tests/host/cases.rs), run natively: the host on a
-//! thread of its own over Unix sockets. Then what only the native host shows
+//! thread of its own over a pair of sockets. Then what only the native host shows
 //! a test: its log lines.
 
-use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use temzdf_protocol::Stream;
 use temzdf_protocol::script::{FromHost, ScriptValue, ToHost};
 
 #[path = "host/cases.rs"]
 mod cases;
 
-fn spawn_host(host_in: UnixStream, host_out: UnixStream, limit: Duration) {
+fn spawn_host(host_in: Stream, host_out: Stream, limit: Duration) {
     std::thread::spawn(move || temzdf_script::run_with_limit(host_in, host_out, limit).unwrap());
 }
 

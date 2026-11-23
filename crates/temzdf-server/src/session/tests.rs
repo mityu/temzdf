@@ -507,6 +507,7 @@ fn opening_a_missing_file_fails_the_session() {
 }
 
 /// Present `frame` through `comp`, appending the terminal bytes to `out`.
+#[cfg(unix)] // termpix
 fn present(
     s: &mut Session,
     frame: &Frame,
@@ -519,6 +520,7 @@ fn present(
 }
 
 #[test]
+#[cfg(unix)] // termpix
 #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
 fn resizing_split_panes_redraws_like_a_fresh_start() {
     use termpix::compositor::{Backend, Compositor};

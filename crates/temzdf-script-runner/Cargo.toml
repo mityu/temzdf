@@ -17,6 +17,10 @@ temzdf-script.workspace = true
 wasmtime = { version = "50.0.1", default-features = false, features = ["runtime", "std"] }
 wasmtime-wasi = { version = "50.0.1", default-features = false, features = ["p1"] }
 
+[dev-dependencies]
+# The guest tests' socket pairs (`Stream`, Unix domain sockets on Windows too).
+temzdf-protocol = { workspace = true, features = ["session"] }
+
 [build-dependencies]
 wasmtime = { version = "50.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
 

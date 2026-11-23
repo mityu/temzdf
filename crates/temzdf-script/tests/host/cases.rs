@@ -3,20 +3,21 @@
 //! atomic sections and context tokens. Shared by the native host's tests
 //! (crates/temzdf-script/tests/host.rs) and the WebAssembly guest's
 //! (crates/temzdf-script-runner/tests/guest.rs): each starts the host its own
-//! way (`crate::spawn_host`), over a pair of Unix sockets.
+//! way (`crate::spawn_host`), over a pair of connected sockets (Unix domain
+//! sockets on Windows too, `temzdf_protocol::Stream`).
 
 use std::io::BufReader;
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use temzdf_protocol::Stream;
 use temzdf_protocol::script::{
     Code, CodeResult, CodeStep, FromHost, HostOp, PathStyle, Printed, ScriptValue, ToHost, Token,
 };
 
 pub(crate) struct Session {
-    to_host: UnixStream,
-    from_host: BufReader<UnixStream>,
+    to_host: Stream,
+    from_host: BufReader<Stream>,
     dir: PathBuf,
 }
 
@@ -31,7 +32,7 @@ impl Session {
     }
 
     /// With the host started by `spawn` (given its input and output).
-    pub(crate) fn start_with(files: &[(&str, &str)], spawn: impl FnOnce(UnixStream, UnixStream)) -> Self {
+    pub(crate) fn start_with(files: &[(&str, &str)], spawn: impl FnOnce(Stream, Stream)) -> Self {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("temzdf-script-test-{}-{n}", std::process::id()));
@@ -40,8 +41,8 @@ impl Session {
         for (name, text) in files {
             std::fs::write(dir.join(name), text).unwrap();
         }
-        let (server_in, host_out) = UnixStream::pair().unwrap();
-        let (host_in, server_out) = UnixStream::pair().unwrap();
+        let (server_in, host_out) = Stream::pair().unwrap();
+        let (host_in, server_out) = Stream::pair().unwrap();
         spawn(host_in, host_out);
         server_in.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
         Self { to_host: server_out, from_host: BufReader::new(server_in), dir }
