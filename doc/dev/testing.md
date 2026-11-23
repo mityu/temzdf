@@ -672,12 +672,17 @@ How it works, and why:
   release in separate calls (together they are one HID report, which the
   guest ignores), modifiers 150 ms apart from what they modify (the
   keyboard and the tablet are read separately). Every move waits 30 ms
-  before the next event: the guest reads one tablet report per poll and
-  QEMU merges a move into a report not read yet whose buttons are the
-  same (`hw/input/hid.c`), so a press right after the move to a drag's
-  start sometimes took the drag's first step as its place, and the
-  selection lost its first characters (once in six runs without the
-  wait, none with it).
+  before the next event, a precaution: once, without that wait, the
+  selection of `gui.actions`' drag lost its first characters (the
+  clipboard held "df sample document"; vitro's drag did it in the
+  survey). That fits QEMU merging a move into a tablet report the guest
+  has not read yet whose buttons are the same (`hw/input/hid.c`,
+  `hid_pointer_sync`; the guest reads one report per poll): a press
+  still queued when the drag's first move comes takes that move's
+  place. It did not happen again: 5 more runs of `gui.actions` and 20
+  drags in a row without the wait, 3 runs and 20 drags with it, all
+  whole (2026-11-23). `expect` cannot see it (both sides show the same
+  session); the clipboard can.
 - Screenshots: QMP's `screendump`, written on the host; the waits for a
   still screen compare the drawing area only (the desktop has a clock).
 - Commands: one PowerShell in the guest over SSH for the whole run (one

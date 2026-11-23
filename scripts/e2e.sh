@@ -548,12 +548,13 @@ if [[ $display == windows ]]; then
   be_move() {
     qmp_events "{\"type\":\"abs\",\"data\":{\"axis\":\"x\",\"value\":$(tablet "$1" "$screen_w")}},{\"type\":\"abs\",\"data\":{\"axis\":\"y\",\"value\":$(tablet "$2" "$screen_h")}}"
     ptr_x=$1 ptr_y=$2
-    # The guest reads the tablet's reports one per poll, and QEMU merges a
+    # A precaution: once, with a press right after the move, a drag's
+    # selection lost its first characters (vitro's drag did too). The
+    # guest reads the tablet's reports one per poll, and QEMU merges a
     # move into a report not read yet whose buttons are the same
-    # (hw/input/hid.c, hid_pointer_sync): with a press right after a move,
-    # the press waited behind it, and the first move of the drag replaced
-    # its position. The selection of a drag lost its first characters
-    # (vitro's drag did too). Read before the next event, a move cannot.
+    # (hw/input/hid.c, hid_pointer_sync): a press still queued when the
+    # drag's first move comes takes that move's position. Not seen again,
+    # with the wait or without it ("Windows in a VM", doc/dev/testing.md).
     qmp_gap
   }
   qmp_button() {

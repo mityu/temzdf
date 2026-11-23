@@ -132,7 +132,7 @@ tools() {
   [[ -e $ovmf ]] || nix build nixpkgs#OVMF.fd --inputs-from . -o "$state/ovmf"
   [[ -e $ovmf ]] || die "$ovmf is not there after building OVMF"
   [[ -e $ssh_key ]] || die "no SSH key $ssh_key (the golden image carries it; vitro keygen makes one for new images)"
-  local g='' build=''
+  local g='' build='' qmp_arg=''
   if [[ -n $iso ]]; then
     # Without `golden`, vitro takes the newest image it built.
     build="
@@ -145,6 +145,8 @@ build_timeout = \"90m\"
 provision = \"$PWD/scripts/windows/build-prepare.ps1\""
   else
     g="golden = \"$(golden)\""
+    # Not for a build: its VM would take the socket of a running one.
+    qmp_arg=", \"-qmp\", \"unix:$qmp,server=on,wait=off\""
   fi
   cat >"$config/vitro/config.toml" <<TOML
 # Written by scripts/windows-vm.sh on every call; do not edit.
@@ -157,7 +159,7 @@ guest = "windows"
 $g
 cpus = ${TEMZDF_WINDOWS_CPUS:-4}
 memory = "8G"
-extra_args = ["-bios", "$ovmf", "-vga", "none", "-qmp", "unix:$qmp,server=on,wait=off"]
+extra_args = ["-bios", "$ovmf", "-vga", "none"$qmp_arg]
 $build
 TOML
 }
