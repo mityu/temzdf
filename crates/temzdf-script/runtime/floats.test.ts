@@ -1,6 +1,7 @@
 // Floating panes' options `border` and `focusable` (`temzdf test`,
 // doc/dev/testing.md, doc/design/floating-panes.md). Frames drawn and
 // clicks are tested in crates/temzdf-server/src/session/tests.rs.
+import { SEPARATOR } from "temzdf/path";
 import { test } from "temzdf/test";
 import type { TestContext } from "temzdf/test";
 
@@ -72,31 +73,35 @@ test("a float that never takes the focus", (assert, t) => {
   assert.equal(pane(t, other).focusable, false);
 });
 
-test("toggleFloats neither hides nor counts a float that never takes the focus", async (assert, t) => {
-  const text = t.openText("main\n");
-  const popup = float(t, "list\n", { width: 10, height: 3, focusable: false });
-  const shown = () => t.action.text.screenPosition({ line: 0, character: 0 }, { pane: popup }) !== undefined;
-  assert.ok(shown());
-  // The only float: as if there were none, a floating shell opens.
-  const before = t.action.panes().map((p) => p.id);
-  t.action.toggleFloats();
-  const shells = t.action.panes().filter((p) => !before.includes(p.id));
-  assert.deepEqual(
-    shells.map((p) => [p.kind, p.floating]),
-    [["terminal", true]],
-  );
-  const shell = shells[0]?.id ?? -1;
-  t.after(() => {
-    if (t.action.panes().some((p) => p.id === shell)) t.action.closePane(shell);
+// It opens a terminal pane, which Windows has none of yet (`temzdf/test`
+// has no skip, so the test is not registered there).
+if (SEPARATOR !== "\\") {
+  test("toggleFloats neither hides nor counts a float that never takes the focus", async (assert, t) => {
+    const text = t.openText("main\n");
+    const popup = float(t, "list\n", { width: 10, height: 3, focusable: false });
+    const shown = () => t.action.text.screenPosition({ line: 0, character: 0 }, { pane: popup }) !== undefined;
+    assert.ok(shown());
+    // The only float: as if there were none, a floating shell opens.
+    const before = t.action.panes().map((p) => p.id);
+    t.action.toggleFloats();
+    const shells = t.action.panes().filter((p) => !before.includes(p.id));
+    assert.deepEqual(
+      shells.map((p) => [p.kind, p.floating]),
+      [["terminal", true]],
+    );
+    const shell = shells[0]?.id ?? -1;
+    t.after(() => {
+      if (t.action.panes().some((p) => p.id === shell)) t.action.closePane(shell);
+    });
+    assert.equal(t.action.focusedPane(), shell);
+    // Hidden with the others, it stays.
+    const tile = float(t, "tile\n", { width: 10, height: 3 });
+    t.action.toggleFloats();
+    assert.equal(t.action.focusedPane(), text, "back to the tiled pane");
+    assert.equal(t.action.text.screenPosition({ line: 0, character: 0 }, { pane: tile }), undefined, "hidden");
+    assert.ok(shown(), "still shown");
+    t.action.toggleFloats();
+    assert.notEqual(t.action.focusedPane(), popup, "showing them focuses the top one that takes the focus");
+    await t.settle();
   });
-  assert.equal(t.action.focusedPane(), shell);
-  // Hidden with the others, it stays.
-  const tile = float(t, "tile\n", { width: 10, height: 3 });
-  t.action.toggleFloats();
-  assert.equal(t.action.focusedPane(), text, "back to the tiled pane");
-  assert.equal(t.action.text.screenPosition({ line: 0, character: 0 }, { pane: tile }), undefined, "hidden");
-  assert.ok(shown(), "still shown");
-  t.action.toggleFloats();
-  assert.notEqual(t.action.focusedPane(), popup, "showing them focuses the top one that takes the focus");
-  await t.settle();
-});
+}

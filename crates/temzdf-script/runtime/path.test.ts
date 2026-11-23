@@ -1,12 +1,23 @@
 // temzdf/path (runtime/path.ts, runtime/path/): JSR's @std/path in the
-// session's style, but `resolve`. The Windows style as the default is
-// checked by the host's tests (crates/temzdf-script/tests/host/cases.rs).
+// session's style, but `resolve`: the Windows style where the tests run on
+// Windows (the host's tests check it everywhere:
+// crates/temzdf-script/tests/host/cases.rs).
 import * as path from "temzdf/path";
 import * as posix from "temzdf/path/posix";
 import * as windows from "temzdf/path/windows";
 import { test } from "temzdf/test";
 
-test("temzdf/path is the session's style (POSIX here)", (assert) => {
+test("temzdf/path is the session's style", (assert) => {
+  if (path.SEPARATOR === "\\") {
+    assert.equal(path.DELIMITER, ";");
+    assert.equal(path.join("C:\\a\\b", "..\\c", "d.ts"), "C:\\a\\c\\d.ts");
+    assert.equal(path.dirname("C:\\Users\\u\\AppData\\temzdf\\config.ts"), "C:\\Users\\u\\AppData\\temzdf");
+    assert.true(path.isAbsolute("C:\\a"));
+    assert.false(path.isAbsolute("a\\b"));
+    assert.deepEqual(path.parse("C:\\a\\b.ts"), { root: "C:\\", dir: "C:\\a", base: "b.ts", ext: ".ts", name: "b" });
+    assert.true(path.SEPARATOR_PATTERN.test("\\"));
+    return;
+  }
   assert.equal(path.SEPARATOR, "/");
   assert.equal(path.DELIMITER, ":");
   assert.equal(path.join("/a/b", "../c", "d.ts"), "/a/c/d.ts");

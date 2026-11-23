@@ -1,5 +1,6 @@
 // The Vim mode's Ex commands on panes, buffers and tab pages, typed on
 // its command line (`temzdf test`, doc/dev/testing.md).
+import { dirname, join } from "temzdf/path";
 import { test } from "temzdf/test";
 import type { TestContext } from "temzdf/test";
 
@@ -35,12 +36,12 @@ test("Ex commands split, switch and close panes, buffers and tab pages", async (
   const a = t.action;
   const first = a.text.info();
   assert.ok(first.path !== undefined, "the session starts on a file");
-  const dir = (first.path ?? "").replace(/\/[^/]*$/, "");
+  const dir = dirname(first.path ?? "");
   const before = new Set(a.buffers({ all: true }).map((b) => b.id));
   t.after(() => t.run(() => restore(t, first.buffer, first.attrs, before)));
   const file = t.run(() => {
     a.setBufferAttrs(first.buffer, [...first.attrs, "unlisted"]);
-    const b = a.newBuffer({ path: `${dir}/case.txt`, text: "one\n" });
+    const b = a.newBuffer({ path: join(dir, "case.txt"), text: "one\n" });
     a.write({ buffer: b });
     a.showBuffer(b);
     return b;

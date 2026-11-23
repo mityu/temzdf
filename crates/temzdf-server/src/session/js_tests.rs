@@ -97,7 +97,6 @@ fn result(run: &Run, name: &str) -> Option<bool> {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn tests_report_tap_with_failures_shown_by_loupe() {
     let run = run_tests(
         "tap",
@@ -135,7 +134,6 @@ test("throws", () => { throw new Error("boom"); });
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn keys_drive_the_vim_mode_one_at_a_time() {
     let run = run_tests(
         "vim",
@@ -179,7 +177,6 @@ test("test.reset goes back to the base mode", async (assert, t) => {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn keys_flush_a_prefix_unless_told_not_to() {
     let run = run_tests(
         "flush",
@@ -218,7 +215,6 @@ test("settle flushes too", async (assert, t) => {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn keys_wait_for_each_other_however_long_the_session_takes() {
     // A slow KeyTyped hook (as the Vim mode's while recording a macro)
     // takes longer than timeoutlen: the prefix still waits for its next
@@ -267,7 +263,6 @@ test("a task a mapping dispatched is waited for", async (assert, t) => {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn errors_of_mapped_functions_come_back_and_fail_the_test() {
     let run = run_tests(
         "errors",
@@ -298,7 +293,6 @@ test("failing", async (assert, t) => {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn after_runs_last_registered_first_even_on_failure() {
     let run = run_tests(
         "after",
@@ -324,7 +318,6 @@ test("saw them", (assert) => assert.deepEqual(steps, ["second", "first", "third"
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn a_timed_out_test_is_stopped_before_its_next_keys() {
     let run = run_tests(
         "timeout",
@@ -357,7 +350,6 @@ test("then", async (assert, t) => {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn waiting_actions_are_refused_while_loading_and_from_the_command_line() {
     // `temzdf action` runs commands through run_command.
     let sink: EventSink = std::sync::Arc::new(|_| true);

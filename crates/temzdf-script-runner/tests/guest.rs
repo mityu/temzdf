@@ -51,7 +51,7 @@ fn start(config: &str, options: Options) -> (ScriptHost, mpsc::Receiver<Event>, 
     })
     .unwrap();
     let commands = cases::command_names().into_iter().collect();
-    assert!(host.send(ToHost::Load { config: Some(path), commands, paths: PathStyle::Posix }));
+    assert!(host.send(ToHost::Load { config: Some(path), commands, paths: PathStyle::native() }));
     (host, rx, dir)
 }
 
@@ -193,7 +193,7 @@ fn keys_and_startup() {
         host.send(ToHost::Load {
             config: Some(dir.join("config.js")),
             commands: commands.clone(),
-            paths: PathStyle::Posix,
+            paths: PathStyle::native(),
         });
         maps.clear();
         match until_answer(&host, &rx, &mut maps) {

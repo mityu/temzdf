@@ -45,9 +45,7 @@ splits its pane on `<C-b>%`).
 Its job `check-windows` runs the same gate on `windows-latest`, without
 Nix, for the crates that build and pass on Windows so far
 (`WINDOWS_CRATES` and `WINDOWS_ONLY_CRATES` in `xtask/src/check.rs`:
-clippy and the tests of those packages instead of the workspace; the js
-tests are skipped, as the script guest cannot read files on Windows
-yet). Windows builds with MSYS2's UCRT64, not MSVC
+clippy and the tests of those packages instead of the workspace). Windows builds with MSYS2's UCRT64, not MSVC
 (`doc/survey/windows-port.md`, "The toolchain"): the job installs MSYS2
 with `msys2/setup-msys2` and its packages `mingw-w64-ucrt-x86_64-rust`
 (clippy and rustfmt included), `-rust-wasm`, `-gcc` and `-clang`

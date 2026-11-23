@@ -52,15 +52,22 @@ const WINDOWS_CRATES: &[&str] = &[
 /// helpers, QuickJS, xtask's `ring`; libghostty-vt through pkg-config,
 /// which finds the Linux one), and the dev shell has no MinGW compiler.
 /// Windows itself checks them. Their tests that start programs in terminal
-/// panes or on a pty, that read the PDF fixtures (built with TeX), or whose
-/// script guest reads files are ignored there (`cfg_attr(not(unix),
-/// ignore = ...)`). Left out of both lists, and why (`todo.md`, "The
-/// Windows port"): termpix and temzdf-tty are the terminal frontend, Unix
-/// only; temzdf-pdfcore's tests need the fixtures, built with TeX; most of
-/// temzdf-script-runner's tests are scripts its guest reads from files,
-/// which it cannot on Windows yet; temzdf-script-guest is empty off wasm.
-const WINDOWS_ONLY_CRATES: &[&str] =
-    &["temzdf", "temzdf-pdfview", "temzdf-script", "temzdf-server", "temzdf-term", "texprintf", "tuitest", "xtask"];
+/// panes or on a pty, or that read the PDF fixtures (built with TeX), are
+/// ignored there (`cfg_attr(not(unix), ignore = ...)`). Left out of both
+/// lists, and why (`todo.md`, "The Windows port"): termpix and temzdf-tty
+/// are the terminal frontend, Unix only; temzdf-pdfcore's tests need the
+/// fixtures, built with TeX; temzdf-script-guest is empty off wasm.
+const WINDOWS_ONLY_CRATES: &[&str] = &[
+    "temzdf",
+    "temzdf-pdfview",
+    "temzdf-script",
+    "temzdf-script-runner",
+    "temzdf-server",
+    "temzdf-term",
+    "texprintf",
+    "tuitest",
+    "xtask",
+];
 /// The target of the cross-check ("windows" step).
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-gnu";
 /// The generated declarations, committed.
@@ -582,9 +589,6 @@ impl<'a> Gate<'a> {
         // The arguments pick Rust tests: the binary may not be built.
         if !args.is_empty() {
             return Ok("js tests skipped (cargo test arguments given)".to_owned());
-        }
-        if cfg!(windows) {
-            return Ok("js tests skipped (the script guest cannot read files on Windows yet)".to_owned());
         }
         let files = js_test_files(Path::new(RUNTIME));
         if files.is_empty() {

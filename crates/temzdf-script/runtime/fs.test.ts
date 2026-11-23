@@ -1,7 +1,11 @@
 // temzdf/fs (runtime/fs.ts): its errors. Reading files the host's tests
 // make (crates/temzdf-script/tests/host/cases.rs) is checked there.
 import { errors, exists, FsError, readTextFile, stat } from "temzdf/fs";
+import { SEPARATOR } from "temzdf/path";
 import { test } from "temzdf/test";
+
+/** An absolute path on the session's OS: `/`, or a drive's root. */
+const root = SEPARATOR === "\\" ? "C:\\" : "/";
 
 /** What `p` rejects with. */
 async function rejection(p: Promise<unknown>): Promise<unknown> {
@@ -14,7 +18,7 @@ async function rejection(p: Promise<unknown>): Promise<unknown> {
 }
 
 test("a path that is not there is NotFound, and does not exist", async (assert) => {
-  const missing = "/temzdf-fs-test/certainly/not/here.txt";
+  const missing = `${root}temzdf-fs-test${SEPARATOR}certainly${SEPARATOR}not${SEPARATOR}here.txt`;
   const e = await rejection(readTextFile(missing));
   assert.true(e instanceof errors.NotFound);
   assert.true(e instanceof FsError);
@@ -28,5 +32,5 @@ test("relative paths and non-strings are TypeErrors", async (assert) => {
   assert.true(relative instanceof TypeError);
   assert.equal((relative as Error).message, "stat: config.ts: not an absolute path");
   assert.true((await rejection(stat(1 as unknown as string))) instanceof TypeError);
-  assert.true((await rejection(exists("/", { isFile: true, isDirectory: true }))) instanceof TypeError);
+  assert.true((await rejection(exists(root, { isFile: true, isDirectory: true }))) instanceof TypeError);
 });

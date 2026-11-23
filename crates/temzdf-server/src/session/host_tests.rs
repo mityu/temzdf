@@ -432,7 +432,6 @@ fn the_normal_mode_stays_for_sizes_and_goes_with_the_focus() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn conditions_may_read_and_hooks_may_also_show_messages() {
     // Conditions (when) may call every command that only reads; message
     // shows something, which only hooks may (session/script.rs: read_only,
@@ -466,7 +465,6 @@ keymap.add("vim/normal", "<F7>", () => action.switchMode("normal"));
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn the_mouse_wheel_is_heard_as_pane_scrolled() {
     // Script tests cannot turn the wheel (runtime/scrolled.test.ts has the
     // rest): a notch scrolls three rows, heard once; a touchpad's fraction

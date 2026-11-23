@@ -57,7 +57,7 @@ impl Session {
     }
 
     pub(crate) fn load(&mut self, file: &str) {
-        self.load_as(file, PathStyle::Posix);
+        self.load_as(file, PathStyle::native());
     }
 
     /// As a session whose OS writes paths in `paths`' style.
@@ -459,7 +459,7 @@ dispatch(async (ctx) => {
 #[test]
 fn temzdf_fs_reads_files_asynchronously() {
     let config = r#"import { dispatch } from "temzdf";
-import { errors, exists, lstat, readDir, readFile, readTextFile, realPath, stat } from "temzdf/fs";
+import { errors, exists, readDir, readFile, readTextFile, stat } from "temzdf/fs";
 import { join } from "temzdf/path";
 const dir = DIR;
 dispatch(async (ctx) => {
@@ -474,10 +474,8 @@ dispatch(async (ctx) => {
   const names = [];
   for await (const e of readDir(dir)) names.push(`${e.name}:${e.isFile ? "f" : e.isDirectory ? "d" : "l"}`);
   ctx.action.message(names.sort().join(" "));
-  const i = await stat(join(dir, "link"));
-  const l = await lstat(join(dir, "link"));
-  ctx.action.message(`${i.isFile} ${i.size} ${i.mtime instanceof Date} ${l.isSymlink}`);
-  ctx.action.message(String((await realPath(join(dir, "link"))) === (await realPath(join(dir, "a.txt")))));
+  const i = await stat(join(dir, "a.txt"));
+  ctx.action.message(`${i.isFile} ${i.size} ${i.mtime instanceof Date} ${i.isSymlink}`);
   ctx.action.message(`${await exists(join(dir, "sub"), { isDirectory: true })} ${await exists(join(dir, "none"))}`);
   try { await readTextFile(join(dir, "sub")); } catch (e) { ctx.action.message(`${e instanceof errors.IsADirectory}`); }
   // More than run at once (the rest wait their turn), all settled, in order.
@@ -487,7 +485,51 @@ dispatch(async (ctx) => {
 "#;
     let mut s = Session::start(&[("a.txt", "hi"), ("b.txt", "b")]);
     std::fs::create_dir(s.dir.join("sub")).unwrap();
+    let log = run_dispatched(&mut s, config);
+    assert_eq!(
+        log,
+        [
+            "task1 message(sync, job, read hi)",
+            "task1 message(Uint8Array 104 105)",
+            "task1 message(a.txt:f b.txt:f config.js:f sub:d)",
+            "task1 message(true 2 true false)",
+            "task1 message(true false)",
+            "task1 message(true)",
+            "task1 message(bhibhibhibhibhibhibhibhibhibhi)",
+        ]
+    );
+}
+
+/// Symbolic links through temzdf/fs: `stat` follows them, `lstat` and
+/// `readDir` do not, `realPath` resolves them. Unix only: making one on
+/// Windows needs an administrator or developer mode.
+#[cfg(unix)]
+#[test]
+fn temzdf_fs_sees_symbolic_links() {
+    let config = r#"import { dispatch } from "temzdf";
+import { lstat, readDir, realPath, stat } from "temzdf/fs";
+import { join } from "temzdf/path";
+const dir = DIR;
+dispatch(async (ctx) => {
+  const names = [];
+  for await (const e of readDir(dir)) names.push(`${e.name}:${e.isFile ? "f" : e.isSymlink ? "l" : "?"}`);
+  ctx.action.message(names.sort().join(" "));
+  const i = await stat(join(dir, "link"));
+  const l = await lstat(join(dir, "link"));
+  ctx.action.message(`${i.isFile} ${i.size} ${l.isSymlink}`);
+  ctx.action.message(String((await realPath(join(dir, "link"))) === (await realPath(join(dir, "a.txt")))));
+});
+"#;
+    let mut s = Session::start(&[("a.txt", "hi")]);
     std::os::unix::fs::symlink(s.dir.join("a.txt"), s.dir.join("link")).unwrap();
+    let log = run_dispatched(&mut s, config);
+    assert_eq!(log, ["task1 message(a.txt:f config.js:f link:l)", "task1 message(true 2 true)", "task1 message(true)"]);
+}
+
+/// Load `config` as `config.js` in the session's directory (`DIR` in it
+/// replaced by that directory, as a string literal) and serve it until its
+/// one dispatched task is done: what it did.
+fn run_dispatched(s: &mut Session, config: &str) -> Vec<String> {
     let config = config.replace("DIR", &format!("{:?}", s.dir.display().to_string()));
     std::fs::write(s.dir.join("config.js"), config).unwrap();
     s.load("config.js");
@@ -498,24 +540,11 @@ dispatch(async (ctx) => {
             FromHost::TaskStart(_) => {}
             FromHost::TaskDone { result, .. } => {
                 assert!(result.is_ok(), "{result:?}");
-                break;
+                return log;
             }
             other => panic!("{other:?}"),
         }
     }
-    assert_eq!(
-        log,
-        [
-            "task1 message(sync, job, read hi)",
-            "task1 message(Uint8Array 104 105)",
-            "task1 message(a.txt:f b.txt:f config.js:f link:l sub:d)",
-            "task1 message(true 2 true true)",
-            "task1 message(true)",
-            "task1 message(true false)",
-            "task1 message(true)",
-            "task1 message(bhibhibhibhibhibhibhibhibhibhi)",
-        ]
-    );
 }
 
 #[test]
@@ -691,7 +720,9 @@ keymap.add("normal", "x", () => action.message("ran"));
 }
 
 /// As home-manager links configurations into ~/.config. WASI's sandbox
-/// refused links to absolute paths; files are read natively now.
+/// refused links to absolute paths; files are read natively now. Unix
+/// only, as `temzdf_fs_sees_symbolic_links`.
+#[cfg(unix)]
 #[test]
 fn a_configuration_linked_to_an_absolute_path_loads_with_its_imports() {
     let config = "import { v } from \"./lib.ts\";\nimport { action } from \"temzdf\";\naction.message(v);\n";

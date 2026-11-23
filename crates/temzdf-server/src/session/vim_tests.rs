@@ -231,7 +231,6 @@ macro_rules! case_files {
             $(
                 #[test]
                 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-                #[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
                 fn $name() {
                     super::run_file(stringify!($name));
                 }
@@ -286,7 +285,6 @@ fn recording_a_macro_hooks_keys_only_while_it_records() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn the_recursion_guard_counts_how_deep_mappings_feed_keys() {
     let config = r#"import { action, defineMode, feedkeys, keymap } from "temzdf";
 import vim from "temzdf/edit/vim";
@@ -335,7 +333,6 @@ keymap.add("vim/normal", "<F10>", () => action.switchMode("bounce"));
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "the script guest cannot read files on Windows yet")]
 fn invoking_a_command_target_again_answers_as_the_command_does() {
     let config = r#"import { action, keymap } from "temzdf";
 import vim from "temzdf/edit/vim";
