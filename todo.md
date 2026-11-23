@@ -564,6 +564,13 @@ server on one `Session`). Next and open:
   - the move goes scenario by scenario, each compared with a baseline
     of the bash harness (X11, Wayland, Windows; macOS cannot run e2e at
     the moment and is ported unverified).
+- A lock on the Windows VM in `scripts/windows-vm.sh` (asked by the user,
+  2026-11-24): it only checks whether the VM runs, so two sessions using
+  it agree by hand (C:\t and C:/e2e would be shared). `flock` on a file
+  per VM in its state directory, taken by every command that uses the VM
+  (`start`, `check`, `run`, `cp-in`/`cp-out`, `e2e.sh -d windows`), saying
+  who holds it (PID, what for) and waiting, or failing with `--no-wait`;
+  `lock REASON`/`unlock` to hold it across commands by hand.
 - Judged e2e (`expect` in `scripts/e2e.sh`, `doc/dev/testing.md`) covers keys and
   mouse input in kitty, WezTerm and Ghostty (keys also in tmux and zellij);
   sessions are judged against `temzdf render-session` (the text too in kitty

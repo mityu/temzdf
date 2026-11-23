@@ -35,7 +35,8 @@ export class Records {
 
   /** WHAT at the time given (milliseconds since the start) or now. */
   record(what: (string | number | undefined)[], at?: number): void {
-    const words = what.filter((w) => w !== undefined && w !== "");
+    // (Absent words are left out; an empty one stays, as `echo "$*"` kept it.)
+    const words = what.filter((w) => w !== undefined);
     appendFileSync(this.events, `${at ?? this.now()} ${words.join(" ")}\n`);
   }
 

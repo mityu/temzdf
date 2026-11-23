@@ -67,8 +67,9 @@ export function inputs(text: string, dir = ""): string[] {
 /** A run's command as the harness reads it: its words, whether a shell
  * follows, its variables (outside and inside `sh -c`), quoting and the
  * first word's absolute path aside. */
-export function commandKey(text: string): string {
-  const argv = text.replace(/\n$/, "").split("\n");
+export function commandKey(text: string, dir = ""): string {
+  let argv = text.replace(/\n$/, "").split("\n");
+  if (dir) argv = argv.map((w) => w.replaceAll(path.resolve(dir), "OUTDIR"));
   const isVar = (w: string) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(w);
   const env: string[] = [];
   let i = 0;

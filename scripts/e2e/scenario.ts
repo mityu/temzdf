@@ -23,7 +23,9 @@ export interface ScenarioDef extends CommandSpec {
   size?: { width: number; height: number };
   /** Japanese input (`-I`). */
   ime?: boolean;
-  /** Seconds before the run is ended as failed (default 600). */
+  /** Seconds before the run is ended as failed (default 180: the longest
+   * scenario takes about 25 s, scroll_demo may wait for a still screen six
+   * times, 20 s at most each). */
   timeout?: number;
 }
 
@@ -46,7 +48,7 @@ export interface RunResult {
 
 export function scenario(def: ScenarioDef, body: Body): Scenario {
   for (const o of received() ?? []) {
-    test(`${o.name ?? "scenario"} (${o.term})`, { timeout: (def.timeout ?? 600) * 1000 }, (t) =>
+    test(`${o.name ?? "scenario"} (${o.term})`, { timeout: (def.timeout ?? 180) * 1000 }, (t) =>
       runScenario(t, o, def, body),
     );
   }

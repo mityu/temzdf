@@ -595,20 +595,20 @@ export class Run {
       n = -n;
     }
     await this.moveAt(x, y);
-    this.rec.record(["move", x, y, mods]);
+    this.rec.record(["move", x, y, mods || undefined]);
     await this.modsDown(mods);
     const first = this.rec.now();
     await this.be.clicks(btn, n, 30);
-    for (let i = 0; i < n; i++) this.rec.record(["wheel", dir, x, y, mods], first + 30 * i);
+    for (let i = 0; i < n; i++) this.rec.record(["wheel", dir, x, y, mods || undefined], first + 30 * i);
     await this.modsUp(mods);
   }
 
   async down(x: number, y: number, btn = 1, mods = ""): Promise<void> {
     await this.moveAt(x, y);
-    this.rec.record(["move", x, y, mods]);
+    this.rec.record(["move", x, y, mods || undefined]);
     await this.modsDown(mods);
     await this.be.button("down", btn);
-    this.rec.record(["press", x, y, buttonName(btn), mods]);
+    this.rec.record(["press", x, y, buttonName(btn), mods || undefined]);
     this.held = { btn, mods };
     this.pointerAt = { x, y };
   }
@@ -617,7 +617,7 @@ export class Run {
     const b = btn ?? this.held?.btn ?? 1;
     const mods = this.held?.mods ?? "";
     await this.be.button("up", b);
-    this.rec.record(["release", this.pointerAt.x, this.pointerAt.y, buttonName(b), mods]);
+    this.rec.record(["release", this.pointerAt.x, this.pointerAt.y, buttonName(b), mods || undefined]);
     await this.modsUp(mods);
     this.held = undefined;
   }
@@ -626,7 +626,7 @@ export class Run {
   async move(x: number, y: number): Promise<void> {
     await this.moveAt(x, y);
     this.pointerAt = { x, y };
-    if (this.held) this.rec.record(["drag", x, y, buttonName(this.held.btn), this.held.mods]);
+    if (this.held) this.rec.record(["drag", x, y, buttonName(this.held.btn), this.held.mods || undefined]);
     else this.rec.record(["move", x, y]);
   }
 
@@ -642,18 +642,27 @@ export class Run {
   async click(x: number, y: number, btn = 1, mods = ""): Promise<void> {
     const b = buttonName(btn);
     await this.moveAt(x, y);
-    this.rec.record(["move", x, y, mods]);
+    this.rec.record(["move", x, y, mods || undefined]);
     await this.modsDown(mods);
     await this.be.clicks(btn, 1, 0);
-    this.rec.record(["press", x, y, b, mods]);
-    this.rec.record(["release", x, y, b, mods]);
+    this.rec.record(["press", x, y, b, mods || undefined]);
+    this.rec.record(["release", x, y, b, mods || undefined]);
     await this.modsUp(mods);
   }
 
   async keys(keys: string[]): Promise<void> {
     for (const k of keys) {
       await this.be.key(k);
-      this.rec.record(["key", keyNotation(k)]);
+      // A key without a Vim notation (F5, W, bracketleft) is recorded
+      // without one, as scripts/e2e.sh did (its key_notation failed inside
+      // $(...), which did not stop the run): sessions do not replay it.
+      let notation = "";
+      try {
+        notation = keyNotation(k);
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : e);
+      }
+      this.rec.record(["key", notation]);
     }
   }
 
