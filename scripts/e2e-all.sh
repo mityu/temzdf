@@ -130,7 +130,9 @@ scenario() {
       cp target/fixtures/sample.pdf target/e2e-reload/doc.pdf
       pdf target/e2e-reload/doc.pdf
       ;;
-    scroll_demo) cmd=(target/debug/examples/scroll_demo) ;;
+    # What it receives, with times, until WezTerm's 372 px is caught (todo.md);
+    # $out is run_one's.
+    scroll_demo) cmd=(env "SCROLL_DEMO_LOG=$PWD/$out/scroll_demo.log" target/debug/examples/scroll_demo) ;;
     gui) cmd=(target/debug/temzdf-gui --clean target/fixtures/sample.pdf) ;;
     gui-focus | gui-ime)
       cmd=(env SHELL=/bin/sh 'PS1=$ ' target/debug/temzdf-gui --clean)

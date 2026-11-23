@@ -102,8 +102,9 @@ server on one `Session`). Next and open:
   0.34 s apart and with each sent once the screen stood still (1.1 s
   apart). The cause is not known: 6 later runs with `SCROLL_DEMO_LOG=FILE`
   (what scroll_demo receives, with times) all gave 360, each click one
-  report 2 to 5 ms after it was sent. Run it with the log until a 372 is
-  caught; to decide then: accept 372 in WezTerm, SKIP the check there, or
+  report 2 to 5 ms after it was sent. `scripts/e2e-all.sh` writes the log
+  (OUTDIR/TERM/scroll_demo/scroll_demo.log) until a 372 is caught, then
+  stops (the user's decision); to decide then: accept 372 in WezTerm, SKIP the check there, or
   change how e2e sends or how scroll_demo takes its time.
 - Simulated-terminal tests that fail under heavy load (seen 2026-11-23 while
   `cargo test --workspace` and many `temzdf test` runs loaded the machine):
