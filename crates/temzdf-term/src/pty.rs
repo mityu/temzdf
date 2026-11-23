@@ -90,6 +90,21 @@ pub(crate) fn supported() -> io::Result<()> {
     }
 }
 
+/// Ready this process to start a program in a pane. On Windows: a
+/// program inherits whether its process ignores Ctrl+C, and the server
+/// does (a client starts it with `CREATE_NEW_PROCESS_GROUP`, which sets
+/// that; so does OpenSSH), so without this Ctrl+C typed in a pane would
+/// end nothing. The server has no console, so the change does not reach
+/// it otherwise.
+#[cfg(windows)]
+pub(crate) fn before_spawn() {
+    // SAFETY: no handler, `FALSE`: only the inherited flag is cleared.
+    unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 0) };
+}
+
+#[cfg(unix)]
+pub(crate) fn before_spawn() {}
+
 impl Pty {
     /// Drive `child` on `master`; events go to `sink`.
     pub(crate) fn start(

@@ -5,6 +5,7 @@ programs in its terminal panes write and read. On Windows every terminal
 talks to its programs through ConPTY (Windows Terminal, WezTerm, and
 portable-pty, which temzdf's terminal panes use), so what it drops is lost
 in all of them. Why it matters for the port: `doc/survey/windows-port.md`.
+How temzdf's terminal panes use it: "In temzdf's terminal panes" below.
 
 ## How it was measured
 
@@ -103,3 +104,35 @@ It needs `conpty.dll` and `OpenConsole.exe` shipped beside temzdf, and
 portable-pty (or temzdf's own wrapper) to load `conpty.dll` instead of
 kernel32's functions. Not checked: whether a real terminal then shows the
 image, and what an unmatched `conpty.dll` / `OpenConsole.exe` pair does.
+
+## In temzdf's terminal panes
+
+Since 2026-11-23 terminal panes on Windows run their programs in the
+in-box ConPTY through portable-pty 0.9.0 (no `conpty.dll` shipped, the
+user's choice; design: `doc/design/session-server.md`, "Windows"), so
+images from programs in panes are lost, as above. What portable-pty does
+and what was seen in the VM (Windows 11 build 26300, cmd.exe and Windows
+PowerShell 5.1 in `temzdf-gui`):
+
+- portable-pty passes `PSEUDOCONSOLE_INHERIT_CURSOR | RESIZE_QUIRK |
+  WIN32_INPUT_MODE`. With the inherited cursor ConPTY starts by asking
+  `CSI 6 n` and shows nothing until it is answered; the pane's terminal
+  (libghostty) answers it as any query (`tests::conpty` in
+  `crates/temzdf-term/src/lib.rs`). ConPTY also asks for win32-input-mode
+  (`CSI ? 9001 h`), which libghostty does not know: keys go as plain VT
+  bytes, and ConPTY takes them. Typing, Backspace, the arrows (cmd's and
+  PowerShell's history), Tab completion, PowerShell's colours, resizing
+  (`mode con`, `$Host.UI.RawUI.WindowSize`) and `exit` worked.
+- Ctrl+C: ConPTY turns the byte 0x03 into a Ctrl+C event for the
+  console, but a process ignores it when its parent did and it inherited
+  that. A server a client starts with `CREATE_NEW_PROCESS_GROUP` ignores
+  Ctrl+C (and so did the tests' processes under OpenSSH), so `ping -t`
+  in a pane went on. The server clears the flag before starting a pane's
+  program (`SetConsoleCtrlHandler(NULL, FALSE)`, `pty::before_spawn`);
+  since then Ctrl+C ends it.
+- portable-pty loads a `conpty.dll` it finds on the DLL search path (the
+  executable's directory first) in place of kernel32's functions, so
+  one placed beside `temzdf.exe` would be used (not tried with temzdf).
+- Not tried yet: the kitty keyboard protocol and the mouse from a
+  program in a pane (measured through ConPTY with flags 0 and 8 above,
+  not with portable-pty's).

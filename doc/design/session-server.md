@@ -344,7 +344,10 @@ git log), and why:
   programs it started on consoles of their own too; when the server
   ends, however it ends, the job's handle closes and the panes'
   programs end with it (the user's choice; on Unix the pty's hang-up
-  ends them). Processes the program starts before it is put into the
+  ends them). A server a client started ignores Ctrl+C
+  (`CREATE_NEW_PROCESS_GROUP`), which programs inherit; it clears that
+  before starting a pane's program, so Ctrl+C typed in a pane reaches
+  it. Processes the program starts before it is put into the
   job (right after it starts; portable-pty starts it unsuspended)
   would be outside it. Without ConPTY (before Windows 10 1809) a pane
   that runs a program fails with `Unsupported` before portable-pty is

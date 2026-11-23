@@ -227,6 +227,7 @@ impl TermBuffer {
         for (k, v) in &spawn.env {
             cmd.env(k, v);
         }
+        pty::before_spawn();
         let child = pair.slave.spawn_command(cmd).map_err(io::Error::other)?;
         drop(pair.slave);
         let pty = pty::Pty::start(pair.master, child, sink)?;
@@ -1516,6 +1517,22 @@ mod tests {
                 let ended = unsafe { WaitForSingleObject(p.as_raw_handle(), timeout) } == WAIT_OBJECT_0;
                 assert!(ended, "process {pid} still runs");
             }
+        }
+
+        #[test]
+        fn ctrl_c_ends_the_running_program() {
+            // As in a server a client started (`CREATE_NEW_PROCESS_GROUP`):
+            // Ctrl+C ignored, which programs inherit.
+            // SAFETY: no handler, `TRUE`: Ctrl+C ignored.
+            unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 1) };
+            let (mut pane, rx) = cmd();
+            pane.send_text("ping -t 127.0.0.1\r");
+            let replies = |r: &[String]| r.iter().filter(|l| l.starts_with("Reply")).count() >= 2;
+            assert!(replies(&wait(&mut pane, &rx, replies)), "ping runs");
+            pane.key(&KeyEvent::new(KeyCode::Char('c'), Modifiers::CTRL));
+            // ping ends (its summary), and cmd prompts again.
+            let rows = wait(&mut pane, &rx, |r| r.last().is_some_and(|l| l == ">"));
+            assert_eq!(rows.last().map(String::as_str), Some(">"), "{rows:?}");
         }
     }
 }
