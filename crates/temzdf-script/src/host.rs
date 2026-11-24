@@ -181,6 +181,11 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
             }
             context.with(|ctx| settle_promises(&ctx, &st));
         }
+        // Code run just now may have read the session's Shutdown while it
+        // waited for an answer: no message follows it.
+        if st.gone.get() {
+            break;
+        }
         let next = st.timers.borrow().keys().next().map(|(at, _)| *at);
         let timeout = next.map_or(Duration::from_secs(3600), |at| at.saturating_duration_since(Instant::now()));
         match st.recv(Some(timeout)) {

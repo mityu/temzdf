@@ -8,7 +8,7 @@
 
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use temzdf_protocol::Stream;
 use temzdf_protocol::script::{
@@ -1232,6 +1232,50 @@ fn eval_code(s: &mut Session, id: u64, steps: &[&str], print: bool) -> (Vec<Stri
         }
     }
     (log, done.expect("CodeDone before TaskDone"))
+}
+
+/// Code that came while other code waited for an answer runs after it; a
+/// Shutdown that comes while that code waits for its own answer ends the
+/// host, rather than leaving it waiting for the next message (none comes:
+/// CI saw test sessions hang so as they were dropped).
+#[test]
+fn a_shutdown_while_code_run_later_waits_ends_the_host() {
+    let mut s = Session::start(&[("config.js", "")]);
+    s.load("config.js");
+    ready_ok(s.serve(&mut Vec::new()));
+    let code = |id: u64, text: &str| ToHost::RunCode {
+        id,
+        code: Code {
+            steps: vec![CodeStep { name: "-c 1".into(), code: format!("temzdf.action.message({text:?})") }],
+            base: s.dir.clone(),
+            print: false,
+        },
+    };
+    let (first, second) = (code(1, "first"), code(2, "second"));
+    // The next message request (other messages, as a task starting, pass).
+    let message = |s: &mut Session| loop {
+        match s.recv() {
+            FromHost::Request { req, op: HostOp::Command { name, .. }, .. } if name == "message" => return req,
+            FromHost::Request { req, .. } => s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) }),
+            _ => {}
+        }
+    };
+    s.send(first);
+    let req = message(&mut s);
+    // Comes while the first waits: run once it is done.
+    s.send(second);
+    s.send(ToHost::Reply { req, result: Ok(ScriptValue::Null) });
+    message(&mut s);
+    s.send(ToHost::Shutdown);
+    // The host ends: its side of the socket closes (not the 10 s read timeout).
+    let start = Instant::now();
+    loop {
+        match temzdf_protocol::recv::<FromHost>(&mut s.from_host) {
+            Ok(None) => break,
+            Ok(Some(_)) => {}
+            Err(e) => panic!("the host did not end: {e} after {:?}", start.elapsed()),
+        }
+    }
 }
 
 #[test]

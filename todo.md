@@ -88,20 +88,6 @@ server on one `Session`). Next and open:
 
 ## Deferred
 
-- A test session that never ends, on CI only (check-with-nix): since
-  ee131d1 (2026-11-24) `session::js_tests::keys_drive_the_vim_mode_one_at_a_time`
-  hung past its own 60 s deadline three times until the job's timeout,
-  and once a `temzdf test` child (screen-position.test.ts) hung after
-  reporting every test. Not seen before in 40 runs, not reproduced
-  locally (96 runs, and the crate's tests on two CPUs). The only thread
-  join on the way out is `ScriptHost::drop`. Both loops now have a
-  watchdog (`crates/temzdf-server/src/watchdog.rs`) that names the step
-  stuck and aborts. On 2026-11-24 (78e03ed) it said "stuck in dropping
-  the session": `ScriptHost::drop` waiting for the guest's thread, which a
-  stop (Shutdown, then the epoch trap) should always end. The thread now
-  records where it is, and a drop still waiting after 10 s logs it
-  ("temzdf script: the script host's thread did not end ..."): read that
-  line on the next hang. Not reproduced locally under load either.
 - Guard the `nested` flag of `ToHost::Call`/`Eval` (d0f9464): nothing
   checks `Bridge::answering()` (`crates/temzdf-server/src/session/script.rs`).
   If it always said true, calls typed while a task holds an atomic section

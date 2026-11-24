@@ -214,12 +214,15 @@ impl ScriptHost {
     /// at its next function call or loop iteration); [`Event::Exited`]
     /// follows.
     pub fn stop(&mut self) {
-        if let Some(tx) = self.tx.take() {
-            let _ = tx.send(ToGuest::Msg(ToHost::Shutdown));
-        }
+        // The trap first: a guest woken by the Shutdown must not run on (a
+        // stopping thread put off between the two let it read the Shutdown,
+        // then wait in `recv` where no epoch reaches it).
         self.stop.store(true, Ordering::SeqCst);
         if let Ok((engine, _)) = loaded() {
             engine.increment_epoch();
+        }
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(ToGuest::Msg(ToHost::Shutdown));
         }
     }
 }
