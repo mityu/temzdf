@@ -21,6 +21,7 @@ removing the hooks), `enabled` says which:
 | `temzdf/mode/normal` | `builtin-mode-normal` | the normal mode: panes, tab pages, floating panes, `<C-b>]` put, detach, kill |
 | `temzdf/mode/input` | `builtin-mode-input` | prompts' `input` mode (readline's keys, `<CR>`, `<Esc>`) |
 | `temzdf/buffers` | `builtin-buffers` | hooks: unsaved changes kept, files changed elsewhere read again |
+| `temzdf/preview` | `builtin-preview` | `:preview FILE`: a PDF or Markdown file in its viewer, in a pane split off beside (as `:vsplit`) |
 | `temzdf/edit/vim` | `builtin-edit-vim` | text panes edit as Vim does (the default) |
 | `temzdf/edit/notepad` | `builtin-edit-notepad` | text panes edit without modes, as Notepad does (not enabled by default) |
 
@@ -1044,7 +1045,9 @@ Previewers are accepted (`previewers`) but nothing previews yet.
 `markdown.open(path, { pane? })` shows a Markdown file (GitHub-flavoured:
 tables, task lists, strikethrough, autolinks, footnotes, alerts; `$`,
 `$$` and ```` ```math ```` math) in a new pane, or in `pane`. `.md` files
-still open in the text editor; the viewer is opened with the function. The
+still open in the text editor; the viewer is opened with the function, or
+with `:preview FILE` (`temzdf/preview`: a `.md`, `.markdown` or `.pdf`
+file in its viewer, split off the focused pane as `:vsplit` does). The
 file is read again when it changes, each pane keeping its place. Two
 modes, per pane, switched in place with `markdown.setMode("text" |
 "graphics", { pane? })` (`markdown.mode()` says which; `o.markdownmode`

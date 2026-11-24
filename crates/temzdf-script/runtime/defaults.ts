@@ -10,6 +10,7 @@
 // `edit` (text panes: typed characters go in), `visual` (a terminal's
 // visual mode).
 import buffers from "temzdf/buffers";
+import preview from "temzdf/preview";
 import vim from "temzdf/edit/vim";
 import input from "temzdf/mode/input";
 import normal from "temzdf/mode/normal";
@@ -28,6 +29,8 @@ buffers.enable();
 vim.enable();
 // After vim: its text-mode keys (<CR> on a link) are tried first.
 markdown.enable();
+// :preview FILE: a PDF or Markdown file in its viewer, split off beside.
+preview.enable();
 // Completion's keys in the modes where text is typed: <C-n>/<C-p> select
 // (starting a completion), <C-y> accepts, <C-e> cancels; <Tab>/<S-Tab> in
 // the command line.

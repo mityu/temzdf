@@ -1156,6 +1156,25 @@ export {
 
 }
 
+declare module "temzdf/preview" {
+interface Keyset {
+	/** Define the mappings and hooks (again: nothing more). */
+	enable(): void;
+	/** Remove them. */
+	disable(): void;
+	readonly enabled: boolean;
+}
+/** The viewer FILE opens in, by its extension; undefined for neither. */
+export function previewKind(file: string): "pdf" | "markdown" | undefined;
+/** `:preview FILE`: a PDF or Markdown file in its viewer, split off beside as :vsplit (namespace builtin-preview). */
+const _default: Keyset;
+
+export {
+	_default as default,
+};
+
+}
+
 declare module "temzdf/command" {
 import { KeyContext } from 'temzdf';
 

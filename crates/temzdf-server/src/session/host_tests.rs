@@ -386,6 +386,27 @@ fn the_prefix_and_a_colon_run_ex_commands_in_any_pane() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+#[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
+fn preview_opens_a_pdf_split_off_to_the_right() {
+    // From a terminal: the split shows the PDF, and no second shell starts.
+    let dir = TempDir::new("preview");
+    let (mut s, rx) = open(Open::Terminal, &dir.0);
+    let first = s.focus;
+    let pdf = temzdf_pdfcore::pdf::fixture("sample.pdf");
+    let keys = format!("<C-b>:preview {}<CR>", pdf.display());
+    assert_eq!(type_keys(&mut s, &rx, &keys, None).unwrap(), Vec::<String>::new());
+    settle(&mut s, &rx, true, None);
+    assert_eq!(s.pane_count(), 2);
+    assert_ne!(s.focus, first, "the new pane has the focus");
+    assert!(matches!(s.panes[&s.focus].kind, Kind::Pdf { .. }), "a PDF pane");
+    assert_eq!(s.current_mode(), "pdf");
+    assert_eq!(s.terms.len(), 1, "the one shell");
+    let (left, right) = (s.panes[&first].rect, s.panes[&s.focus].rect);
+    assert!(right.x > left.x && right.y == left.y, "to the right: {left:?} {right:?}");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn the_prefix_twice_reaches_the_program() {
     let argv = helper(&["raw", "print", "ready\\r\\n", "read-line", "said", "sleep", "30000"]);
     let (mut s, rx) = host_session(PaneSpec::Command(argv.into_iter().map(String::from).collect()), None).unwrap();
