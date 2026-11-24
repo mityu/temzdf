@@ -5872,6 +5872,7 @@ dependencies = [
  "image",
  "png",
  "resvg",
+ "rustix",
  "serde",
  "serde_json",
  "swc_common",

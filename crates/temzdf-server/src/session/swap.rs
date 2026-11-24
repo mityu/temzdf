@@ -74,15 +74,18 @@ pub(super) fn candidates(dir: &Path, file: &Path) -> Vec<PathBuf> {
     ('a'..='p').rev().map(|c| dir.join(format!("{base}.sw{c}"))).collect()
 }
 
-/// This host's name (an owner on another host cannot be checked).
+/// This host's name (an owner on another host cannot be checked): uname's
+/// node name on Unix (macOS has no `/etc/hostname`, and `HOSTNAME` is a
+/// shell variable seldom exported), `COMPUTERNAME` on Windows; empty when
+/// there is none.
 pub(super) fn host() -> String {
-    ["/proc/sys/kernel/hostname", "/etc/hostname"]
-        .iter()
-        .find_map(|p| std::fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("HOSTNAME").ok())
-        .unwrap_or_default()
+    #[cfg(unix)]
+    let name = rustix::system::uname().nodename().to_string_lossy().into_owned();
+    #[cfg(windows)]
+    let name = std::env::var("COMPUTERNAME").unwrap_or_default();
+    #[cfg(not(any(unix, windows)))]
+    let name = String::new();
+    name.trim().to_owned()
 }
 
 pub(super) fn now_ms() -> u64 {
@@ -353,6 +356,16 @@ fn info_value(f: &Found) -> ScriptValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_host_has_a_name() {
+        let host = host();
+        assert!(!host.is_empty());
+        #[cfg(unix)]
+        assert_eq!(host, rustix::system::uname().nodename().to_string_lossy());
+        #[cfg(windows)]
+        assert_eq!(host, std::env::var("COMPUTERNAME").unwrap());
+    }
 
     #[test]
     fn names_are_neovims_and_go_on_when_taken() {
