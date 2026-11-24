@@ -1,9 +1,10 @@
-// SyncTeX both ways (forward.ts: the forward search's highlight stays until
-// the next input). Judged: `temzdf --forward` from another process succeeds
+// SyncTeX both ways (configs/synctex.ts: the forward search's highlight
+// stays until the next input; a SynctexInverse hook writes what an inverse
+// search found). Judged: `temzdf --forward` from another process succeeds
 // (forward-sent, check) and shows page 2 with the "Back to Section 1" line
 // highlighted in red (forward, expect: the replay sends the same search;
 // forward-page, check: the status line, kitty and WezTerm); Ctrl+click on
-// the title on page 1 runs the editor on sample.tex at a line of the title,
+// the title on page 1 hands the hook sample.tex at a line of the title,
 // from \title to the line after \maketitle (inverse, check). Also judged:
 // each expect's cells against this terminal's own drawing of them, once
 // temzdf ended (NAME.cells).
@@ -18,9 +19,7 @@ export default scenario(
       "standalone",
       "pdf",
       "--config",
-      "tests/e2e/configs/forward.ts",
-      "--editor",
-      "echo %{input}:%{line} > target/e2e-sync/inverse.txt",
+      "tests/e2e/configs/synctex.ts",
       "target/e2e-sync/sample.pdf",
     ],
     shellAfter: true,

@@ -260,8 +260,7 @@ pub fn run_one(file: &Path) -> Result<i32> {
     let watchdog = Watchdog::new(format!("temzdf test {}", file.display()), STEPS, Duration::from_secs(20));
     let (tx, rx) = mpsc::channel();
     let sink = temzdf_scene::sink::channel_sink(tx, |e| e);
-    let settings =
-        Settings { serve_forward: false, script: Some(ScriptSettings { config: Some(file) }), overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: Some(ScriptSettings { config: Some(file) }) };
     let name = format!("test-{}", std::process::id());
     let mut s = Session::new(name, GEOMETRY, Hints::default(), settings, sink);
     // Terminal panes run a known shell, not the user's $SHELL.

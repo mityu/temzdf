@@ -33,33 +33,57 @@ so a forward search sent right after a compile lands in the new version.
 
 ## Inverse search (viewer -> editor)
 
-Ctrl+click on the page. The viewer looks up the source location and runs the
-configured command with `sh -c`, replacing `%{input}` (shell-quoted absolute
-path), `%{line}` and `%{column}` (1-based; usually 0, TeX rarely records
-columns). Configure it in the configuration (`doc/config.md`):
+Ctrl+click on the page. The viewer looks up the source location and hands
+it to the configuration's `SynctexInverse` hooks (`doc/config.md`) with the
+pane clicked: `{ file, line, column }`, the file's absolute path, the line
+(1-based) and the column when TeX recorded one (rarely; else undefined).
+The hook does what it likes: start an editor with `temzdf/process`, open the
+file in a text pane of temzdf's own. Without a hook, the location is shown in
+the pane's status bar. (It replaced the shell command template
+`o.synctexeditor` and `--editor`, 2026-11-25: a function may do anything,
+and the server runs it, so it needs no shell on the client's side.)
 
-```ts
-import { o } from "temzdf";
-o.synctexeditor = "...";
-```
-
-or per invocation with `--editor '...'`. Without a command, the location is
-shown in the status bar.
+The command runs on the session server's machine, with the server's
+environment (where it was started), not the client's.
 
 ### Vim (with `+clientserver`)
 
-```ts
-o.synctexeditor = "vim --servername VIM --remote-silent +%{line} %{input}";
-```
+Start Vim with `vim --servername VIM`, then:
 
-Start Vim with `vim --servername VIM`.
+```ts
+import { dispatch, on } from "temzdf";
+import { run } from "temzdf/process";
+on("SynctexInverse", (_pane, { file, line }) => {
+  dispatch(() => run(["vim", "--servername", "VIM", "--remote-silent", `+${line}`, file]).then(() => {}));
+});
+```
 
 ### Neovim
 
 Start Neovim with a server socket (`nvim --listen /tmp/nvim-tex.sock`), then:
 
 ```ts
-o.synctexeditor = "nvim --server /tmp/nvim-tex.sock --remote %{input} && nvim --server /tmp/nvim-tex.sock --remote-send '<C-\\><C-n>:%{line}<CR>'";
+import { dispatch, on } from "temzdf";
+import { run } from "temzdf/process";
+const sock = "/tmp/nvim-tex.sock";
+on("SynctexInverse", (_pane, { file, line }) => {
+  dispatch(async () => {
+    await run(["nvim", "--server", sock, "--remote", file]);
+    await run(["nvim", "--server", sock, "--remote-send", `<C-\\><C-n>:${line}<CR>`]);
+  });
+});
+```
+
+### temzdf's own text panes
+
+In a tab page of its own (`action.edit` would replace the PDF pane):
+
+```ts
+import { action, on } from "temzdf";
+on("SynctexInverse", (_pane, { file, line }) => {
+  const pane = action.newTab({ file });
+  if (pane !== undefined) action.text.setCursor({ line: line - 1, character: 0 }, { pane });
+});
 ```
 
 ### vimtex

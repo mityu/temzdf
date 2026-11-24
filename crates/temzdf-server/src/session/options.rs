@@ -92,8 +92,6 @@ pub struct Options {
     pub reloaddebounce: Duration,
     /// Keep the line being read across reloads (else the position).
     pub reloadanchor_text: bool,
-    /// The inverse-search command (`%{input}`, `%{line}`, `%{column}`).
-    pub synctexeditor: Option<String>,
     /// A shown terminal whose program ended keeps its panes (tmux's
     /// `remain-on-exit`).
     pub remainonexit: bool,
@@ -171,7 +169,6 @@ impl Default for Options {
             forwardflash: temzdf_pdfview::pane::DEFAULT_FLASH,
             reloaddebounce: Duration::from_millis(200),
             reloadanchor_text: false,
-            synctexeditor: None,
             remainonexit: false,
             showtabline: ShowTabline::Auto,
             // Off in this crate's tests, which count panes' rows; the window
@@ -205,11 +202,7 @@ impl Options {
     }
 
     pub(super) fn host(&self) -> HostOptions {
-        HostOptions {
-            debounce: self.reloaddebounce,
-            editor: self.synctexeditor.clone(),
-            ignore_case: self.fileignorecase,
-        }
+        HostOptions { debounce: self.reloaddebounce, ignore_case: self.fileignorecase }
     }
 }
 
@@ -265,7 +258,6 @@ impl Session {
                 o.reloadanchor_text =
                     by_name(RELOADANCHOR, value.as_str()).ok_or("o.reloadanchor: expected \"position\" or \"text\"")?
             }
-            "synctexeditor" => o.synctexeditor = text()?,
             "remainonexit" => o.remainonexit = flag()?,
             "foreground" => o.foreground = color(value).map_err(|e| format!("o.foreground: {e}"))?,
             "background" => o.background = color(value).map_err(|e| format!("o.background: {e}"))?,
@@ -387,7 +379,6 @@ impl Session {
             },
             "reloaddebounce" => ms(o.reloaddebounce),
             "reloadanchor" => name_in(RELOADANCHOR, &o.reloadanchor_text),
-            "synctexeditor" => o.synctexeditor.clone().map_or(ScriptValue::Null, ScriptValue::Str),
             "remainonexit" => ScriptValue::Bool(o.remainonexit),
             "showtabline" => name_in(SHOWTABLINE, &o.showtabline),
             "showstatusline" => name_in(SHOWSTATUSLINE, &o.showstatusline),

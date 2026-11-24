@@ -473,8 +473,9 @@ server on one `Session`). Next and open:
   too big for the script host's memory cap. Expose the queries as
   primitives (`document.synctex.forward(file, line)` returning positions,
   `document.synctex.inverse(page, x, y)` returning file and line) and let
-  scripts decide which pane shows a result, how it is marked, and how the
-  editor is called (a function instead of `o.synctexeditor`).
+  scripts decide which pane shows a result and how it is marked (how the
+  editor is called is a function now: the `SynctexInverse` event, which
+  hands scripts the location a Ctrl+click found).
   `temzdf --forward` keeps working without scripts (decision 27 in
   `doc/design/scripting.md`). Not urgent (the user, 2026-11-17).
 - How `temzdf --forward` finds its viewer (2026-11-19). Today it connects

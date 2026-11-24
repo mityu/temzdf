@@ -276,7 +276,9 @@ declarations. In short, `import { ... } from "temzdf"`:
   (before `deleteBuffer`), `SessionEndPre()` (before `kill-session` and
   before closing the last pane), `InvokePre(info)` and `InvokePost(info)`
   (around each invocation), `TextChanged(buffer, change)`,
-  `PaneScrolled(pane, lines)`, `KeyTyped(key)`.
+  `PaneScrolled(pane, lines)`, `KeyTyped(key)`, `SynctexInverse(pane,
+  { file, line, column })` (a Ctrl+click's inverse search; its hooks may
+  act, as `SessionReady`'s and `InvokePost`'s).
 - **Invocations** (doc/design/text-editor.md section 9): a key sequence
   that runs a mapping, text typed into a text pane (keys no
   mapping took, input methods, pastes), a mode's fallback function, a

@@ -131,14 +131,7 @@ pub fn first_pane(file: Option<&Path>) -> Result<Vec<String>> {
 /// Start a server for session `name` whose first pane shows `pane` (see
 /// [`first_pane`]) with the `temzdf` executable, in the background, and wait
 /// until it listens. Its output goes to `<log dir>/<name>.log`.
-pub fn spawn_server(
-    temzdf: &Path,
-    name: &str,
-    pane: &[String],
-    config_path: Option<&Path>,
-    editor: Option<&str>,
-    clean: bool,
-) -> Result<()> {
+pub fn spawn_server(temzdf: &Path, name: &str, pane: &[String], config_path: Option<&Path>, clean: bool) -> Result<()> {
     std_handles_not_inherited();
     if !proto::valid_name(name) {
         bail!("invalid session name {name:?} (letters, digits, '.', '_' and '-', not first '.' or '-')");
@@ -178,9 +171,6 @@ pub fn spawn_server(
     // As the log: the server is told absolute paths.
     if let Some(c) = config_path {
         cmd.arg("--config").arg(std::path::absolute(c)?);
-    }
-    if let Some(e) = editor {
-        cmd.arg("--editor").arg(e);
     }
     if clean {
         cmd.arg("--clean");
@@ -400,41 +390,6 @@ fn default_opener() -> Vec<String> {
         return vec!["rundll32".to_owned(), "url.dll,FileProtocolHandler".to_owned()];
     }
     vec![if cfg!(target_os = "macos") { "open" } else { "xdg-open" }.to_owned()]
-}
-
-/// `sh -c CMD`.
-#[cfg(unix)]
-fn shell(cmd: &str) -> std::process::Command {
-    let mut c = std::process::Command::new("sh");
-    c.arg("-c").arg(cmd);
-    c
-}
-
-/// `cmd /S /C "CMD"`, CMD as written: cmd.exe parses it, not the C
-/// runtime's quoting rules (`/S`: only the outer quotes go). Without a
-/// window: started by the server or the GUI, which have no console, cmd
-/// would open a console window of its own.
-#[cfg(windows)]
-fn shell(cmd: &str) -> std::process::Command {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let mut c = std::process::Command::new("cmd");
-    c.args(["/S", "/C"]).raw_arg(format!("\"{cmd}\"")).creation_flags(CREATE_NO_WINDOW);
-    c
-}
-
-/// Run a shell command detached from the terminal (inverse search).
-pub fn run_shell(cmd: &str) {
-    std_handles_not_inherited();
-    let child = shell(cmd)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    // Reaped when it ends (every inverse search left a zombie before).
-    if let Ok(mut child) = child {
-        std::thread::spawn(move || child.wait());
-    }
 }
 
 /// What following a link does.

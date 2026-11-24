@@ -302,7 +302,6 @@ impl App {
             Effect::OpenUri { uri, command } => {
                 temzdf_client::open_uri(command, &uri, report);
             }
-            Effect::RunShell(cmd) => temzdf_client::run_shell(&cmd),
             Effect::Copy(text) | Effect::Copied { text, .. } => {
                 if let Err(e) = self.input.clipboard_set(&text, false) {
                     report(format!("cannot copy: {e}"));

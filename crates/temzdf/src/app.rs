@@ -23,8 +23,6 @@ pub struct Options {
     pub config: Option<PathBuf>,
     /// Forward search to perform once the document is shown.
     pub forward: Option<Forward>,
-    /// Inverse search command (overrides the config file).
-    pub editor: Option<String>,
     /// Do not run the configuration script.
     pub clean: bool,
 }
@@ -68,7 +66,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     front.spawn_input(tx.clone(), AppEvent::Term)?;
     let name = session_name(path);
     let script = crate::config::script_settings(opts.clean, opts.config.as_deref())?;
-    let settings = crate::config::settings(true, script, opts.editor.as_deref());
+    let settings = crate::config::settings(true, script);
     let mut session = Session::new(name, front.geometry(), front.hints(), settings, sink(&tx, AppEvent::Session));
     session.start(PaneSpec::File(path.to_owned()), None)?;
     // TEMZDF_RECORD_INPUT=FILE: what this viewer handles, for replaying

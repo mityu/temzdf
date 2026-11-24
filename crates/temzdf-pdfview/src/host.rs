@@ -2,7 +2,8 @@
 //! SyncTeX, file watching), auto-reload scheduling and SyncTeX routing, shared
 //! by every pane showing the file. The caller owns the event loop: it feeds
 //! [`DocEvent`]s in, collects the panes' work with [`DocumentHost::dispatch`]
-//! and performs the returned [`Effect`]s. See doc/design/reload.md and doc/design/synctex.md.
+//! and performs the returned [`Effect`]s (and hands an inverse search's
+//! [`SourceLocation`] to the scripts). See doc/design/reload.md and doc/design/synctex.md.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
@@ -17,6 +18,8 @@ use crate::pane::{PdfPane, Request};
 use crate::pdf::{self, DocInfo};
 use crate::workers::{self, DocCmd, DocEvent, RasterPool, SearchCmd, Sink, SynctexCmd};
 
+pub use crate::synctex::SourceLocation;
+
 /// Retry interval while the file is incomplete or fails to open.
 const RELOAD_RETRY: Duration = Duration::from_millis(300);
 /// Give up retrying after this many attempts (about 30 s); a new change event
@@ -28,8 +31,6 @@ const RELOAD_MAX_ATTEMPTS: u32 = 100;
 pub struct HostOptions {
     /// Wait this long after the file last changed before reloading.
     pub debounce: Duration,
-    /// Inverse search command template (`%{input}`, `%{line}`, `%{column}`).
-    pub editor: Option<String>,
     /// Whether a forward search's file not there is compared to the ones
     /// SyncTeX recorded ignoring case (`o.fileIgnoreCase`).
     pub ignore_case: temzdf_paths::IgnoreCase,
@@ -156,20 +157,22 @@ impl DocumentHost {
 
     /// Handle an event of this file's threads. `panes` are the panes showing it;
     /// SyncTeX results go to the first one (the caller puts the pane that asked
-    /// first). Returns whether they need redrawing, and what the frontend should do.
+    /// first). Returns whether they need redrawing, and where an inverse
+    /// search found the source (for the caller to hand on: the scripts'
+    /// `SynctexInverse`).
     pub fn handle(
         &mut self,
         ev: DocEvent,
         panes: &mut [&mut PdfPane],
         images: &mut Images,
         now: Instant,
-    ) -> (bool, Option<Effect>) {
+    ) -> (bool, Option<SourceLocation>) {
         let message = |panes: &mut [&mut PdfPane], m: String| {
             for p in panes.iter_mut() {
                 p.message = Some(m.clone());
             }
         };
-        let mut effect = None;
+        let mut found = None;
         match ev {
             DocEvent::Opened(_) => return (false, None),
             DocEvent::PageText(generation, p, text) => {
@@ -241,19 +244,7 @@ impl DocumentHost {
             }
             DocEvent::InverseResult(loc) => {
                 self.synctex_pending = self.synctex_pending.saturating_sub(1);
-                match self.options.editor.as_deref().and_then(|t| editor_command(t, &loc.file, loc.line, loc.column)) {
-                    Some(cmd) => effect = Some(Effect::RunShell(cmd)),
-                    None => {
-                        let m = format!(
-                            "{}:{} (set o.synctexeditor in the config to open it)",
-                            loc.file.display(),
-                            loc.line
-                        );
-                        if let Some(pane) = panes.first_mut() {
-                            pane.message = Some(m);
-                        }
-                    }
-                }
+                found = Some(loc);
             }
             DocEvent::SynctexFailed(e) => {
                 self.synctex_pending = self.synctex_pending.saturating_sub(1);
@@ -287,7 +278,7 @@ impl DocumentHost {
                 }
             }
         }
-        (true, effect)
+        (true, found)
     }
 
     /// Start a due reload (only once the file looks completely written) and
@@ -419,26 +410,6 @@ fn claim(cache: &mut DocCache, needs: Vec<Need>) -> (Vec<usize>, Vec<Want<Render
     (loads, tiles::claim(wants, |job| cache.tiles.mark_in_flight(job.key)))
 }
 
-/// The inverse-search shell command for a source location: `template` with
-/// `%{input}`, `%{line}` and `%{column}` replaced (the file shell-quoted).
-/// `None` for an empty template.
-pub fn editor_command(template: &str, file: &Path, line: u32, column: u32) -> Option<String> {
-    if template.trim().is_empty() {
-        return None;
-    }
-    Some(
-        template
-            .replace("%{input}", &shell_quote(&file.to_string_lossy()))
-            .replace("%{line}", &line.to_string())
-            .replace("%{column}", &column.to_string()),
-    )
-}
-
-/// Quote for POSIX sh: wrap in single quotes, escaping embedded ones.
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
 /// Auto-reload scheduling: a trailing debounce after change events, then
 /// retries while the file is incomplete or fails to open (as Okular does).
 #[derive(Default)]
@@ -471,14 +442,6 @@ impl ReloadState {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn editor_command_substitutes_and_quotes() {
-        let t = "nvim --server /tmp/nv --remote-send ':e %{input}<CR>:%{line}<CR>'";
-        let cmd = editor_command(t, Path::new("/doc/it's.tex"), 12, 0).unwrap();
-        assert_eq!(cmd, "nvim --server /tmp/nv --remote-send ':e '/doc/it'\\''s.tex'<CR>:12<CR>'");
-        assert!(editor_command(" ", Path::new("a.tex"), 1, 0).is_none());
-    }
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]

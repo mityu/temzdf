@@ -314,7 +314,7 @@ pub fn render_frame(pdf_path: &Path, out: &Path, opts: &FrameOptions) -> Result<
         Some(config) => crate::config::script_settings(false, Some(config))?,
         None => crate::config::script_settings(true, None)?,
     };
-    let settings = crate::config::settings(false, script, None);
+    let settings = crate::config::settings(false, script);
     // A Layered terminal over inline transfers, like the mock terminal.
     let mut session = Session::new(name, opts.geometry, Hints::default(), settings, sink);
     session.start(temzdf_server::action::PaneSpec::File(pdf_path.to_owned()), None)?;

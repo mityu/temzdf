@@ -29,7 +29,7 @@ pub fn from_session(name: &str) -> Result<Appearance> {
 pub fn from_configuration(clean: bool, config: Option<&Path>) -> Result<Appearance> {
     let (tx, rx) = mpsc::channel();
     let sink = temzdf_scene::sink::channel_sink(tx, |e| e);
-    let settings = crate::config::settings(false, crate::config::script_settings(clean, config)?, None);
+    let settings = crate::config::settings(false, crate::config::script_settings(clean, config)?);
     let geometry = Geometry { cols: 80, rows: 24, cell: CellSize { width: 10, height: 20 } };
     let mut session = Session::new("ls-fonts".into(), geometry, Hints::default(), settings, sink);
     // The configuration loads before the first pane opens: a program that

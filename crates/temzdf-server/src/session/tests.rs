@@ -45,7 +45,7 @@ const GEOMETRY: Geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width
 #[test]
 fn font_size_changes_guifont_and_goes_back_to_the_configured_one() {
     let sink: EventSink = Arc::new(|_| true);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     // Each list's sizes, `None` where a font names none.
     let sizes = |s: &Session| {
@@ -114,7 +114,7 @@ fn font_size_changes_guifont_and_goes_back_to_the_configured_one() {
 fn session() -> (Session, Receiver<SessionEvent>) {
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
     default_mappings(&mut s.modes);
     s.open(&pdf::fixture("sample.pdf")).unwrap();
@@ -303,7 +303,7 @@ fn a_float_for_another_tab_page_does_not_take_the_focus_here() {
 fn a_tab_opened_while_the_configuration_loads_leaves_no_tab_page_empty() {
     let (tx, _rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     s.shell = Some(test_shell());
     // config.ts: action.newTab({ command: [...] }) at the top level.
@@ -326,7 +326,7 @@ fn a_tab_opened_while_the_configuration_loads_leaves_no_tab_page_empty() {
 fn a_forward_search_sent_while_the_document_opens_is_kept() {
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
     s.open(&pdf::fixture("sample.pdf")).unwrap();
     // Before it has opened (line 44 is on the last page).
@@ -508,7 +508,7 @@ fn closing_a_pane_hides_its_document_until_it_is_shown_again() {
 fn opening_a_missing_file_fails_the_session() {
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     s.open(Path::new("/nonexistent/x.pdf")).unwrap();
     let ev = rx.recv_timeout(Duration::from_secs(20)).unwrap();
@@ -596,7 +596,7 @@ fn hex_of(bytes: &str) -> String {
 fn terminal_session(argv: &[&str]) -> (Session, Receiver<SessionEvent>) {
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("term".into(), GEOMETRY, Hints::default(), settings, sink);
     // Splits start this instead of the user's $SHELL.
     s.shell = Some(test_shell());
@@ -899,7 +899,7 @@ fn float(s: &mut Session, argv: &[&str], opts: &[(&str, ScriptValue)]) -> PaneId
 fn a_pdf_opened_by_a_relative_path_that_does_not_resolve_is_known_by_its_absolute_one() {
     let (tx, _rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     // Not there (yet): named after the directory that is there, made
     // canonical.
@@ -917,7 +917,7 @@ fn a_pdf_opened_by_a_relative_path_that_does_not_resolve_is_known_by_its_absolut
 fn a_float_opened_while_the_first_document_fails_leaves_a_session_that_shows() {
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     // The configuration opens a float; then the first pane's PDF fails.
     let f = float(&mut s, &helper(&["sleep", "30000"]), &[]);
@@ -1272,7 +1272,7 @@ fn deleting_a_terminal_ends_a_program_that_ignores_hangups_without_waiting() {
 fn a_float_opened_while_the_configuration_loads_leaves_the_first_pane_tiled() {
     let (tx, _rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     s.shell = Some(test_shell());
     float(&mut s, &helper(&["sleep", "30000"]), &[]);
@@ -1355,7 +1355,7 @@ fn panes_waiting_for_a_document_go_to_the_tab_they_were_asked_for() {
 #[test]
 fn tab_numbers_out_of_range_do_not_wrap_around() {
     let sink: EventSink = Arc::new(|_| true);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     s.open_tab();
     let huge = (1u64 << 32) + 1;
@@ -2753,7 +2753,7 @@ fn text_session(name: &str, content: &str) -> (Session, PathBuf) {
     let path = dir.join(name);
     std::fs::write(&path, content).unwrap();
     let sink: EventSink = Arc::new(|_| true);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
     default_mappings(&mut s.modes);
     s.start(PaneSpec::File(path.clone()), None).unwrap();
@@ -2966,7 +2966,7 @@ fn markdown_remote_images_come_when_asked_for() {
     std::fs::write(&md, src).unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     s.start(PaneSpec::File(md.clone()), None).unwrap();
     let p = ScriptValue::Str(md.to_str().unwrap().into());
@@ -3703,7 +3703,7 @@ fn swap_files_follow_the_buffer_and_a_gone_sessions_is_recovered() {
     // (`listen`) or not.
     let session = |name: &str, listen: bool| {
         let sink: EventSink = Arc::new(|_| true);
-        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = Settings { serve_forward: false, script: None };
         let mut s = Session::new(name.into(), GEOMETRY, Hints::default(), settings, sink);
         s.swap_dir = Some(swaps.clone());
         if listen {
@@ -3763,7 +3763,7 @@ fn swap_files_follow_the_buffer_and_a_gone_sessions_is_recovered() {
     // o.swapfile off: none.
     std::fs::remove_file(&names[0]).unwrap();
     let sink: EventSink = Arc::new(|_| true);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut d = Session::new("fourth".into(), GEOMETRY, Hints::default(), settings, sink);
     d.swap_dir = Some(swaps.clone());
     d.options.swapfile = false;
@@ -3786,7 +3786,7 @@ fn options_choose_where_undo_and_swap_files_go() {
     let dir = path.parent().unwrap().to_owned();
     let str = |v: &str| ScriptValue::Str(v.into());
     let sink: EventSink = Arc::new(|_| true);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("dirs".into(), GEOMETRY, Hints::default(), settings, sink);
     let (undo, swaps) = (dir.join("my-undo"), dir.join("my-swap"));
     s.set_option("undodir", &str(undo.to_str().unwrap())).unwrap();
@@ -3834,7 +3834,7 @@ fn undo_trees_are_kept_in_files_when_written_and_read_back() {
     // A session on `path` with undo files in `undo_dir` (o.undofile).
     let session = |undofile: bool| {
         let sink: EventSink = Arc::new(|_| true);
-        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = Settings { serve_forward: false, script: None };
         let mut s = Session::new("test".into(), GEOMETRY, Hints::default(), settings, sink);
         s.undo_dir = Some(undo_dir.clone());
         s.options.undofile = undofile;
@@ -4141,7 +4141,7 @@ fn every_declared_action_has_a_handler() {
     let mut unhandled = Vec::new();
     for name in commands::action_names() {
         let sink: EventSink = Arc::new(|_| true);
-        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = Settings { serve_forward: false, script: None };
         let mut s = Session::new("actions".into(), GEOMETRY, Hints::default(), settings, sink);
         s.shell = Some(vec!["true".into()]);
         if let Err(e) = s.run_command(name, &[], Instant::now())
@@ -4165,7 +4165,7 @@ fn every_declared_option_reads_and_writes_back() {
     // It round-trips from a path, below.
     const NOT_FROM_THE_START: &[&str] = &["directory"];
     let sink: EventSink = Arc::new(|_| true);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("options".into(), GEOMETRY, Hints::default(), settings, sink);
     let mut failed = Vec::new();
     for name in options::OPTIONS.iter().filter(|n| !NOT_FROM_THE_START.contains(n)) {

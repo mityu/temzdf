@@ -65,8 +65,9 @@ enum Held {
 type Queued = (FuncId, Vec<ScriptValue>, bool);
 
 /// Events whose hooks may change things themselves (the others are told to
-/// `schedule`): they run at the safe point.
-const ACTING_EVENTS: &[&str] = &["SessionReady", "InvokePost"];
+/// `schedule`): they run at the safe point. `SynctexInverse` is a click
+/// asking for something done (the source opened).
+const ACTING_EVENTS: &[&str] = &["SessionReady", "InvokePost", "SynctexInverse"];
 
 /// Work waiting for the host, innermost (top of the stack) last.
 enum Frame {
@@ -242,7 +243,6 @@ impl Session {
             self.script.first = Some((first, cwd));
             return Ok(());
         }
-        self.apply_overrides();
         self.new_pane(&first, cwd.as_deref())?;
         if self.settings.script.is_some() {
             let why = self.script.startup_error.take().unwrap_or_else(|| "the script host could not start".into());
@@ -500,6 +500,11 @@ impl Session {
     }
 
     /// Record an event for hooks.
+    /// Whether a script hooks event `name`.
+    pub(super) fn hooked(&self, name: &str) -> bool {
+        self.script.hooks.get(name).is_some_and(|h| !h.is_empty())
+    }
+
     pub(super) fn event(&mut self, name: &str, args: Vec<ScriptValue>) {
         if self.script.hooks.contains_key(name) {
             self.script_events.push((name.to_owned(), args));
@@ -946,18 +951,8 @@ impl Session {
         out.merge(self.pump())
     }
 
-    /// Command-line options win over the configuration's.
-    pub(super) fn apply_overrides(&mut self) {
-        for (name, value) in self.settings.overrides.clone() {
-            if let Err(e) = self.set_option(&name, &value) {
-                eprintln!("temzdf: {e}");
-            }
-        }
-    }
-
     /// Open the first pane (startup) once the configuration has loaded.
     pub(super) fn open_first(&mut self) -> Outcome {
-        self.apply_overrides();
         if let Some((spec, cwd)) = self.script.first.take() {
             // The configuration may have opened tab pages (`newTab`): the
             // first pane goes into the first one without a pane, which it
@@ -1322,7 +1317,7 @@ mod tests {
     #[test]
     fn ctrl_c_releases_a_tasks_atomic_section_the_host_never_ended() {
         let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
-        let settings = super::super::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = super::super::Settings { serve_forward: false, script: None };
         let geometry = termpix_core::geom::Geometry {
             cols: 80,
             rows: 24,
@@ -1345,7 +1340,7 @@ mod tests {
     #[test]
     fn frames_wait_for_a_script_that_starts_under_queued_hooks() {
         let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
-        let settings = super::super::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = super::super::Settings { serve_forward: false, script: None };
         let geometry = termpix_core::geom::Geometry {
             cols: 80,
             rows: 24,
@@ -1392,7 +1387,7 @@ mod tests {
     #[test]
     fn deadlines_that_wait_for_a_script_do_not_spin_the_event_loop() {
         let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
-        let settings = super::super::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = super::super::Settings { serve_forward: false, script: None };
         let geometry = termpix_core::geom::Geometry {
             cols: 80,
             rows: 24,
@@ -1421,7 +1416,7 @@ mod tests {
     #[test]
     fn tab_entered_numbers_the_tab_as_it_is_after_a_close() {
         let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
-        let settings = super::super::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = super::super::Settings { serve_forward: false, script: None };
         let geometry = termpix_core::geom::Geometry {
             cols: 80,
             rows: 24,

@@ -461,8 +461,6 @@ pub enum Effect {
     /// Open an external link: with `command` (the URI appended), else the
     /// system handler (`xdg-open`, `open`).
     OpenUri { uri: String, command: Option<Vec<String>> },
-    /// Run a shell command detached from the terminal (SyncTeX inverse search).
-    RunShell(String),
     /// Paste what the client's clipboard holds (`primary`: the X11/Wayland
     /// primary selection), answered with `ClientMsg::Clipboard` carrying
     /// `ticket` (the text, or why there is none). The session holds the

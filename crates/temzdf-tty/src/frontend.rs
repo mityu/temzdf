@@ -414,7 +414,6 @@ impl TtyFrontend {
         match effect {
             Effect::Copy(text) => self.tty.write_all(&copy_sequence(&text, self.caps.in_tmux))?,
             Effect::OpenUri { uri, command } => temzdf_client::open_uri(command, &uri, on_failure),
-            Effect::RunShell(cmd) => temzdf_client::run_shell(&cmd),
             // Only the session sees these; a copy all the same.
             Effect::Copied { text, .. } => self.tty.write_all(&copy_sequence(&text, self.caps.in_tmux))?,
             Effect::ReadClipboard { ticket, primary } => {

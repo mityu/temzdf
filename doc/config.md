@@ -47,7 +47,6 @@ defaults).
 import { action, defineMode, keymap, o, on } from "temzdf";
 
 o.timeoutlen = 500;
-o.synctexeditor = "nvim --server /tmp/nvim.sock --remote-send ':e %{input}<CR>%{line}G'";
 
 // Page view: J scrolls down (3J: three times; counts are arguments).
 keymap.add("pdf", "J", (ctx) => action.scrollDown(ctx.count), { desc: "scroll" });
@@ -274,6 +273,24 @@ A command that fails throws; uncaught, its message shows as it is
 `on(event, fn)` returns a function that removes the hook; a `KeyTyped`
 hook holds every key until it ran, so hook it only while needed.
 
+`SynctexInverse(pane, { file, line, column })` hears an inverse search: a
+Ctrl+click on a PDF page whose SyncTeX file says what source produced it
+(`file` absolute, `line` 1-based, `column` 1-based when TeX recorded one,
+rarely; else undefined). Its hooks may act themselves (open the source),
+as `SessionReady`'s and `InvokePost`'s; without one, the pane shows the
+location. An editor is started with `temzdf/process` (on the session
+server's machine); doc/design/synctex.md has Vim's and Neovim's:
+
+```ts
+import { dispatch, on } from "temzdf";
+import { run } from "temzdf/process";
+on("SynctexInverse", (_pane, { file, line }) => {
+  dispatch(async () => {
+    await run(["nvim", "--server", "/tmp/nvim.sock", "--remote-send", `:e ${file}<CR>${line}G`]);
+  });
+});
+```
+
 `PaneScrolled(pane, { buffer, first, last, previous })` hears a text
 pane (a Markdown viewer's text mode too) show other lines, as Vim's
 `WinScrolled`: `first` and `last` are the buffer lines of its top and
@@ -433,7 +450,6 @@ unsets it.
 | `forwardflash` | `1500` | how long a forward search's highlight stays: milliseconds (`0`: no highlight), or `"input"`: until the next key or mouse input (a click, a wheel step, a drag; a key's release, a modifier alone and the pointer moving do not count) |
 | `reloaddebounce` | `200` | milliseconds after the PDF last changed before reloading |
 | `reloadanchor` | `"position"` | `"position"` keeps the page and place on it (as Skim, Okular); `"text"` finds the line read a third down the screen in the new PDF (falling back to the position) |
-| `synctexeditor` | unset | inverse search (Ctrl+click), run with `sh -c`; `%{input}` (shell-quoted path), `%{line}`, `%{column}`; see doc/design/synctex.md. `--editor` overrides it |
 | `remainonexit` | `false` | a shown terminal whose program ended keeps its panes (tmux's `remain-on-exit`) |
 | `showtabline` | `"auto"` | when the tab line shows (Vim's): `"never"`, `"auto"` (with two tab pages or more), `"always"` |
 | `showstatusline` | `"always"` | whether the window's status line shows (its bottom row: the mode, the session, the tab page): `"always"`, `"never"` |

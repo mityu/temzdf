@@ -15,7 +15,7 @@ const GEOMETRY: Geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width
 
 fn session() -> Session {
     let sink: EventSink = Arc::new(|_| true);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     Session::new("paths".into(), GEOMETRY, Hints::default(), settings, sink)
 }
 

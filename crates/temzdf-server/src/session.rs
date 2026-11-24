@@ -106,9 +106,6 @@ pub struct Settings {
     /// The configuration script and how to run the script host; `None`
     /// runs no scripts.
     pub script: Option<ScriptSettings>,
-    /// Options set on the command line (`--editor`): they win over the
-    /// configuration's.
-    pub overrides: Vec<(String, ScriptValue)>,
 }
 
 /// What the caller should do after an event.
@@ -1272,9 +1269,10 @@ impl Session {
                 let here = self.here_panes();
                 let Some(host) = self.docs.get_mut(&id).and_then(|d| d.host.as_mut()) else { return Outcome::None };
                 let mut panes = Self::panes_of(&mut self.panes, id, self.focus, &here);
-                let (changed, effect) = host.handle(ev, &mut panes, &mut self.images, now);
-                self.effects.extend(effect);
-                Outcome::None.or(changed)
+                let (changed, found) = host.handle(ev, &mut panes, &mut self.images, now);
+                let Some(loc) = found else { return Outcome::None.or(changed) };
+                self.inverse_found(id, loc);
+                Outcome::Redraw
             }
             SessionEvent::Forward(id, req) => {
                 let here = self.here_panes();

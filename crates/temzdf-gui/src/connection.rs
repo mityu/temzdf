@@ -26,7 +26,7 @@ pub fn session_for(name: Option<&str>, file: Option<&Path>, clean: bool) -> Resu
     // is picked again.
     let start = |choose: &dyn Fn() -> Result<String>, retry: bool| -> Result<(String, bool)> {
         let pane = temzdf_client::first_pane(file)?;
-        let spawn = |n: &str| temzdf_client::spawn_server(&temzdf_exe(), n, &pane, None, None, clean);
+        let spawn = |n: &str| temzdf_client::spawn_server(&temzdf_exe(), n, &pane, None, clean);
         Ok((temzdf_client::spawn_named(choose, retry, spawn)?, true))
     };
     match (name, file) {

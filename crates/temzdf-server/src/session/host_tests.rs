@@ -75,7 +75,7 @@ pub(super) fn host_session(
 ) -> Result<(Session, Receiver<SessionEvent>), String> {
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings = Settings { serve_forward: false, script: Some(ScriptSettings { config }), overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: Some(ScriptSettings { config }) };
     let mut s = Session::new("host".into(), GEOMETRY, Hints::default(), settings, sink);
     s.shell = Some(super::tests::test_shell());
     s.start(spec, None).map_err(|e| format!("{e:#}"))?;
@@ -403,6 +403,58 @@ fn preview_opens_a_pdf_split_off_to_the_right() {
     assert_eq!(s.terms.len(), 1, "the one shell");
     let (left, right) = (s.panes[&first].rect, s.panes[&s.focus].rect);
     assert!(right.x > left.x && right.y == left.y, "to the right: {left:?} {right:?}");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+#[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
+fn inverse_search_goes_to_the_synctex_inverse_hooks() {
+    let dir = TempDir::new("inverse");
+    let (mut s, rx) = open(Open::Pdf, &dir.0);
+    let pane = s.focus;
+    // A Ctrl+click on the title (page 1).
+    let click = |s: &mut Session| {
+        let press = MouseEvent {
+            kind: MouseEventKind::Press(termpix_core::input::MouseButton::Left),
+            x: 300,
+            y: 167,
+            unit: CoordUnit::Pixel,
+            modifiers: Modifiers::CTRL,
+        };
+        s.mouse(&press, Instant::now());
+        settle(s, &rx, true, None);
+    };
+    // Nothing hooks it: the pane says where it is.
+    click(&mut s);
+    let said = pdf_message(&mut s, pane);
+    assert!(said.contains("sample.tex:") && said.contains("SynctexInverse"), "{said:?}");
+    // A hook gets the pane and the location, and may act itself.
+    // (`on` under the eval's task: `atomic` lends it the task's context.)
+    let hook = r#"temzdf.atomic(() => temzdf.on("SynctexInverse", (pane, loc) => {
+        globalThis.got = { pane, file: loc.file, line: loc.line, column: loc.column ?? null };
+        // Changing something (not only a message): the configuration's
+        // `action` (the eval's `temzdf.action` is its task's).
+        globalThis.__temzdf.action.setVar("pane", "inverse", loc.line);
+    })); null"#;
+    assert_eq!(eval(&mut s, &rx, hook), Ok(Some("null".into())));
+    click(&mut s);
+    let got = eval(&mut s, &rx, "JSON.stringify(globalThis.got ?? null)").unwrap().unwrap();
+    let got: serde_json::Value = serde_json::from_str(&serde_json::from_str::<String>(&got).unwrap()).unwrap();
+    assert_eq!(got["pane"], pane as u64, "{got}");
+    assert!(got["file"].as_str().unwrap().ends_with("sample.tex"), "{got}");
+    assert!(got["line"].as_u64().unwrap() >= 1, "{got}");
+    assert!(got["column"].is_null(), "TeX recorded no column: {got}");
+    let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("inverse".into())];
+    let var = s.run_command("get-var", &args, Instant::now()).unwrap().0;
+    assert_eq!(var, ScriptValue::Num(got["line"].as_f64().unwrap()), "the hook acted");
+}
+
+/// What PDF pane `pane` says (its message), empty when nothing.
+fn pdf_message(s: &mut Session, pane: PaneId) -> String {
+    match &s.panes[&pane].kind {
+        Kind::Pdf { pane, .. } => pane.message.clone().unwrap_or_default(),
+        _ => panic!("not a PDF pane"),
+    }
 }
 
 /// Run `code` as `temzdf eval -p` does: its value as JSON, or its error.

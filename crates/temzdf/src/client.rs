@@ -16,14 +16,8 @@ pub use temzdf_client::{auto_name, name_for, resolve};
 
 /// Start a server for session `name` (see [`temzdf_client::spawn_server`])
 /// with this executable.
-pub fn spawn_server(
-    name: &str,
-    pane: &[String],
-    config_path: Option<&Path>,
-    editor: Option<&str>,
-    clean: bool,
-) -> Result<()> {
-    temzdf_client::spawn_server(&std::env::current_exe()?, name, pane, config_path, editor, clean)
+pub fn spawn_server(name: &str, pane: &[String], config_path: Option<&Path>, clean: bool) -> Result<()> {
+    temzdf_client::spawn_server(&std::env::current_exe()?, name, pane, config_path, clean)
 }
 
 pub fn list_sessions(verbose: bool) -> Result<()> {

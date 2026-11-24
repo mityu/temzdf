@@ -279,8 +279,6 @@ declare module "temzdf" {
     reloaddebounce: number;
     /** What a reload keeps in place: the position or the line being read. */
     reloadanchor: "position" | "text";
-    /** The inverse-search command (`%{input}`, `%{line}`, `%{column}`). */
-    synctexeditor: string | undefined;
     /** A shown terminal whose program ended keeps its panes. */
     remainonexit: boolean;
     /** When the tab line shows: "auto" with two tab pages or more. */
@@ -361,6 +359,13 @@ declare module "temzdf" {
     PaneScrolled: [pane: number, lines: ScrollInfo];
     FileChangedOnDisk: [buffer: number];
     Copied: [entry: Copied];
+    SynctexInverse: [pane: number, source: SourceLocation];
+  }
+  /** Where SyncTeX's inverse search (a Ctrl+click on a PDF page) found the source: the file's absolute path, the line (1-based) and, when TeX recorded one (rarely), the column (1-based). */
+  export interface SourceLocation {
+    file: string;
+    line: number;
+    column: number | undefined;
   }
   /** What a "before" hook (PaneClosePre, BufferDeletePre, SessionEndPre) may answer: cancel the operation, saying why (to whoever asked). */
   export interface HookAnswer {

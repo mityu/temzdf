@@ -43,10 +43,6 @@ struct Cli {
     /// session.
     #[arg(long, value_name = "LINE[:COLUMN]:FILE", requires = "file")]
     forward: Option<String>,
-    /// SyncTeX inverse search command (Ctrl+click), with %{input}, %{line} and
-    /// %{column} placeholders. Overrides `o.synctexeditor` of the configuration.
-    #[arg(long, value_name = "COMMAND", global = true)]
-    editor: Option<String>,
     /// Configuration script (default: $XDG_CONFIG_HOME/temzdf/config.ts or
     /// config.js).
     #[arg(long, value_name = "FILE", global = true)]
@@ -332,7 +328,7 @@ fn parse_pair(s: &str) -> Result<(u32, u32)> {
 
 /// Options that apply only when a session starts, given (`file`: a FILE).
 fn session_only_options(cli: &Cli, file: bool) -> Vec<&'static str> {
-    [(file, "FILE"), (cli.editor.is_some(), "--editor"), (cli.config.is_some(), "--config"), (cli.clean, "--clean")]
+    [(file, "FILE"), (cli.config.is_some(), "--config"), (cli.clean, "--clean")]
         .into_iter()
         .filter_map(|(given, name)| given.then_some(name))
         .collect()
@@ -488,13 +484,7 @@ fn main() -> Result<()> {
             let name = match (name, create, file) {
                 (Some(n), true, file) if temzdf_server::daemon::list()?.iter().all(|s| s.name != n) => {
                     attach::need_terminal()?;
-                    client::spawn_server(
-                        &n,
-                        &client::first_pane(file.as_deref())?,
-                        cli.config.as_deref(),
-                        cli.editor.as_deref(),
-                        cli.clean,
-                    )?;
+                    client::spawn_server(&n, &client::first_pane(file.as_deref())?, cli.config.as_deref(), cli.clean)?;
                     n
                 }
                 (name, ..) => client::resolve(name.as_deref())?,
@@ -511,7 +501,7 @@ fn main() -> Result<()> {
             temzdf_client::std_handles_not_inherited();
             let spec = temzdf_server::action::parse_new_pane(&pane)?.spec;
             let script = config::script_settings(cli.clean, cli.config.as_deref())?;
-            let settings = config::settings(true, script, cli.editor.as_deref());
+            let settings = config::settings(true, script);
             return temzdf_server::daemon::run(&name, &spec, log, settings);
         }
         None => {}
@@ -580,7 +570,7 @@ fn start_session(naming: Naming, file: Option<&std::path::Path>, cli: &Cli, star
     // A missing file first: the more useful error.
     let pane = client::first_pane(file)?;
     attach::need_terminal()?;
-    let spawn = |n: &str| client::spawn_server(n, &pane, cli.config.as_deref(), cli.editor.as_deref(), cli.clean);
+    let spawn = |n: &str| client::spawn_server(n, &pane, cli.config.as_deref(), cli.clean);
     let name = match &naming {
         Naming::Given(n) => temzdf_client::spawn_named(|| Ok(n.clone()), false, spawn)?,
         Naming::Auto => temzdf_client::spawn_named(client::auto_name, true, spawn)?,
@@ -629,17 +619,7 @@ fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
     {
         return Ok(());
     }
-    app::run(
-        &file,
-        app::Options {
-            page,
-            scale: args.scale,
-            config: cli.config.clone(),
-            forward,
-            editor: cli.editor.clone(),
-            clean: cli.clean,
-        },
-    )
+    app::run(&file, app::Options { page, scale: args.scale, config: cli.config.clone(), forward, clean: cli.clean })
 }
 
 #[cfg(test)]
@@ -663,8 +643,8 @@ mod tests {
         #[cfg(unix)]
         assert!(Cli::try_parse_from(["temzdf", "standalone", "pdf", "a.pdf", "--page", "3", "--clean"]).is_ok());
         assert_eq!(
-            session_only_options(&cli(&["attach", "x", "--clean", "--editor", "vi"]), true),
-            ["FILE", "--editor", "--clean"]
+            session_only_options(&cli(&["attach", "x", "--clean", "--config", "c.ts"]), true),
+            ["FILE", "--config", "--clean"]
         );
         assert!(session_only_options(&cli(&["attach", "x"]), false).is_empty());
     }

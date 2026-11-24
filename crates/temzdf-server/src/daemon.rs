@@ -943,7 +943,7 @@ mod tests {
     #[test]
     fn a_starting_session_waits_instead_of_spinning() {
         let sink: crate::session::EventSink = std::sync::Arc::new(|_| true);
-        let settings = crate::session::Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = crate::session::Settings { serve_forward: false, script: None };
         let geometry = Geometry { cols: 80, rows: 24, cell: termpix_core::geom::CellSize { width: 10, height: 20 } };
         // No pane yet: starting.
         let session = Session::new("t".into(), geometry, Hints::default(), settings, sink);
@@ -1016,7 +1016,7 @@ mod tests {
     #[test]
     fn the_remaining_client_takes_over_size_and_effects() {
         let sink: EventSink = Arc::new(|_| true);
-        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = Settings { serve_forward: false, script: None };
         let mut session = Session::new("t".into(), DEFAULT_GEOMETRY, Hints::default(), settings, sink);
         let client = |cols, rows| Client {
             tx: mpsc::channel().0,
@@ -1048,7 +1048,7 @@ mod tests {
     #[test]
     fn resizing_a_client_does_not_make_it_the_latest() {
         let sink: EventSink = Arc::new(|_| true);
-        let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+        let settings = Settings { serve_forward: false, script: None };
         let mut session = Session::new("t".into(), DEFAULT_GEOMETRY, Hints::default(), settings, sink);
         let client = |cols| Client {
             tx: mpsc::channel().0,

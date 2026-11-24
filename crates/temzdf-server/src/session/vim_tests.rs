@@ -393,8 +393,7 @@ fn a_gone_sessions_swap_file_is_asked_about_as_neovim_does() {
     super::swap::write(&names[0], &gone).unwrap();
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings =
-        Settings { serve_forward: false, script: Some(ScriptSettings { config: None }), overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: Some(ScriptSettings { config: None }) };
     let mut s = Session::new("asks".into(), GEOMETRY, Hints::default(), settings, sink);
     s.swap_dir = Some(swaps.clone());
     s.start(PaneSpec::File(file.clone()), None).unwrap();

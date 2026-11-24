@@ -24,6 +24,35 @@ fn is_pdf(path: &Path) -> bool {
 }
 
 impl Session {
+    /// An inverse search (a Ctrl+click) on document `doc` found `loc`: the
+    /// scripts' `SynctexInverse` hooks get it with the pane that asked (the
+    /// first `panes_of` gives: the focused one), or that pane says where
+    /// it is when nothing hooks it.
+    pub(super) fn inverse_found(&mut self, doc: DocId, loc: temzdf_pdfview::host::SourceLocation) {
+        let here = self.here_panes();
+        let mut ids: Vec<PaneId> = self
+            .panes
+            .iter()
+            .filter_map(|(id, e)| matches!(&e.kind, Kind::Pdf { doc: d, .. } if *d == doc).then_some(*id))
+            .collect();
+        ids.sort_by_key(|id| (*id != self.focus, !here.contains(id), *id));
+        let Some(&pane) = ids.first() else { return };
+        let file = loc.file.display().to_string();
+        if self.hooked("SynctexInverse") {
+            let mut info = vec![
+                ("file".to_owned(), ScriptValue::Str(file)),
+                ("line".to_owned(), ScriptValue::Num(loc.line.into())),
+            ];
+            // 0: unknown (TeX rarely records columns), left out.
+            if loc.column > 0 {
+                info.push(("column".to_owned(), ScriptValue::Num(loc.column.into())));
+            }
+            self.event("SynctexInverse", vec![ScriptValue::Num(pane as f64), ScriptValue::Map(info)]);
+        } else if let Some(PaneEntry { kind: Kind::Pdf { pane, .. }, .. }) = self.panes.get_mut(&pane) {
+            pane.message = Some(format!("{file}:{} (hook SynctexInverse in the config to open it)", loc.line));
+        }
+    }
+
     /// Open `path` in a new pane: the first one, or beside the focused pane.
     /// A file already open is shared, not opened again.
     pub fn open(&mut self, path: &Path) -> Result<()> {

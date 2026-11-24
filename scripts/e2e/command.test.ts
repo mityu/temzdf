@@ -24,7 +24,7 @@ const session = ["sh", "-c", 'SHELL=/bin/sh PS1="$ " target/debug/temzdf --clean
 const synctex = [
   "sh",
   "-c",
-  "target/debug/temzdf standalone pdf --config tests/e2e/configs/forward.ts \\\n        --editor 'echo %{input}:%{line} > target/e2e-sync/inverse.txt' target/e2e-sync/sample.pdf; exec sh",
+  "target/debug/temzdf standalone pdf --config tests/e2e/configs/synctex.ts target/e2e-sync/sample.pdf; exec sh",
 ];
 const gui = ["target/debug/temzdf-gui", "--clean", "target/fixtures/sample.pdf"];
 const env = ["env", "TERMPIX_MEDIUM=direct", ...pdf];
@@ -47,7 +47,7 @@ test("parse: the words of what runs, and a shell after it", () => {
 test("standalone: what expect renders with", () => {
   assert.deepEqual(standalone(parse(synctex).words), {
     renderer: "target/debug/temzdf",
-    options: ["--config", "tests/e2e/configs/forward.ts"],
+    options: ["--config", "tests/e2e/configs/synctex.ts"],
     file: "target/e2e-sync/sample.pdf",
   });
 });

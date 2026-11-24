@@ -41,8 +41,7 @@ fn run_tests(name: &str, text: &str, tests: &str) -> Run {
     std::fs::write(&file, text).unwrap();
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
-    let settings =
-        Settings { serve_forward: false, script: Some(ScriptSettings { config: Some(config) }), overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: Some(ScriptSettings { config: Some(config) }) };
     // Each step returns at once; one that does not (CI saw this loop hang
     // past its deadline) is named before the process aborts.
     let watchdog = crate::watchdog::Watchdog::new(format!("run_tests({name})"), STEPS, Duration::from_secs(45));
@@ -377,7 +376,7 @@ test("then", async (assert, t) => {
 fn waiting_actions_are_refused_while_loading_and_from_the_command_line() {
     // `temzdf action` runs commands through run_command.
     let sink: EventSink = std::sync::Arc::new(|_| true);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("cli".into(), GEOMETRY, Hints::default(), settings, sink);
     for name in test_actions::WAITING {
         let e = s.run_command(name, &[ScriptValue::Str("x".into())], Instant::now()).unwrap_err();
@@ -396,7 +395,7 @@ fn waiting_actions_are_refused_while_loading_and_from_the_command_line() {
 #[test]
 fn reports_go_to_the_log_unless_collected() {
     let sink: EventSink = std::sync::Arc::new(|_| true);
-    let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
+    let settings = Settings { serve_forward: false, script: None };
     let mut s = Session::new("reports".into(), GEOMETRY, Hints::default(), settings, sink);
     let run = |s: &mut Session, name: &str, args: &[ScriptValue]| s.run_command(name, args, Instant::now()).unwrap().0;
     let summary = ScriptValue::map([("failed", ScriptValue::Num(1.0)), ("total", ScriptValue::Num(3.0))]);

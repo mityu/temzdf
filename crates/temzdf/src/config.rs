@@ -4,7 +4,6 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use temzdf_protocol::script::ScriptValue;
 use temzdf_server::session::{ScriptSettings, Settings};
 
 /// `$XDG_CONFIG_HOME/temzdf` (falling back to `~/.config/temzdf`). A
@@ -42,9 +41,7 @@ pub fn script_settings(clean: bool, explicit: Option<&Path>) -> Result<Option<Sc
     Ok(Some(ScriptSettings { config }))
 }
 
-/// Session settings; `editor` (`--editor`) wins over the configuration's.
-pub fn settings(serve_forward: bool, script: Option<ScriptSettings>, editor: Option<&str>) -> Settings {
-    let overrides =
-        editor.map(|e| vec![("synctexeditor".to_owned(), ScriptValue::Str(e.to_owned()))]).unwrap_or_default();
-    Settings { serve_forward, script, overrides }
+/// Session settings.
+pub fn settings(serve_forward: bool, script: Option<ScriptSettings>) -> Settings {
+    Settings { serve_forward, script }
 }
