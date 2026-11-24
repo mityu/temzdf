@@ -441,8 +441,10 @@ fn read_console(input: HANDLE, buf: &mut [u8], timeout: Option<Duration>) -> io:
     if !wait_characters(input, timeout)? {
         return Ok(None);
     }
-    // A UTF-16 unit is at most 3 bytes of UTF-8 (a pair is 4).
-    let mut units = vec![0u16; (buf.len() / 3).max(1)];
+    // A UTF-16 unit is at most 3 bytes of UTF-8 (a pair is 4), and the
+    // second half of a pair cut in two may come on top (below): room for
+    // one byte more than 3 per unit.
+    let mut units = vec![0u16; (buf.len().saturating_sub(1) / 3).max(1)];
     let mut n = 0;
     // SAFETY: `units` holds `units.len()` u16; `n` is a valid out pointer.
     check(unsafe { ReadConsoleW(input, units.as_mut_ptr().cast(), units.len() as u32, &mut n, std::ptr::null()) })?;
