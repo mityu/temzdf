@@ -155,6 +155,12 @@ pub fn attach(name: &str) -> Result<String> {
                 front.apply(updates);
                 pending = Some((seq, frame, complete));
             }
+            // The terminal holds the clipboard and pastes with its own key:
+            // the answer says so (and lets the input the session holds go).
+            Event::Server(ServerMsg::Effect(temzdf_scene::Effect::Paste { ticket, .. })) => {
+                let why = "in a terminal, paste with the terminal's own key (Ctrl+Shift+V, Cmd+V)";
+                let _ = conn.send(&ClientMsg::Clipboard { ticket, result: Err(why.into()) });
+            }
             Event::Server(ServerMsg::Effect(effect)) => {
                 let c = conn.clone();
                 front.perform(effect, move |m| {

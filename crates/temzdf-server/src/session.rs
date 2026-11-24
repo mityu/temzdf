@@ -1612,15 +1612,19 @@ impl Session {
     pub fn poll(&mut self, now: Instant) -> Outcome {
         self.clock = self.clock.max(now);
         self.test_hold_timeout(now);
-        self.expire_clipboard_reads(now);
+        let expired = self.expire_clipboard_reads(now);
         self.write_due_swaps(now);
-        let mut out =
-            self.script_tick(now).or(self.tick(now)).or(self.expire_notices(now)).or(self.expire_decorations(now));
+        let mut out = self
+            .script_tick(now)
+            .or(self.tick(now))
+            .or(self.expire_notices(now))
+            .or(self.expire_decorations(now))
+            .merge(expired);
         if self.matcher.deadline(self.options.timeoutlen).is_some_and(|d| now >= d) {
             out = out.merge(self.drive(now));
         }
         // A submode left alone for its timeout goes.
-        if self.submode_deadline().is_some_and(|d| now >= d) && !self.script.busy() {
+        if self.submode_deadline().is_some_and(|d| now >= d) && !self.holds_input() {
             self.leave_mode();
             self.last_key = now;
             out = out.merge(Outcome::Redraw);
@@ -1648,11 +1652,11 @@ impl Session {
             .chain(self.decorations_deadline())
             .chain(self.copies_deadline())
             .chain(self.swap_deadline())
-            // While a script runs, these wait for it (after_scripts and the
-            // next poll see to them): a deadline past meanwhile would spin
-            // the event loop.
-            .chain(self.matcher.deadline(self.options.timeoutlen).filter(|_| !self.script.busy()))
-            .chain(self.submode_deadline().filter(|_| !self.script.busy()))
+            // While a script runs or a paste is waited for, these wait for
+            // it (after_scripts, the answer and the next poll see to them): a
+            // deadline past meanwhile would spin the event loop.
+            .chain(self.matcher.deadline(self.options.timeoutlen).filter(|_| !self.holds_input()))
+            .chain(self.submode_deadline().filter(|_| !self.holds_input()))
             .chain(self.notice_deadline())
             .chain(self.test_deadline())
             .min()

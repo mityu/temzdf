@@ -15,7 +15,7 @@ use termpix_core::input::{KeyEvent, MouseEvent};
 use crate::{MAX_MESSAGE, Stream, recv_timed, shared};
 
 /// Bumped on incompatible changes; client and server must agree.
-pub const VERSION: u32 = 19;
+pub const VERSION: u32 = 20;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// Attach and show the session at this size, with this frontend.

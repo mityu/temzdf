@@ -446,8 +446,10 @@ pub enum Effect {
     /// Run a shell command detached from the terminal (SyncTeX inverse search).
     RunShell(String),
     /// Paste what the client's clipboard holds (`primary`: the X11/Wayland
-    /// primary selection), answered with `ClientMsg::Paste`.
-    Paste { primary: bool },
+    /// primary selection), answered with `ClientMsg::Clipboard` carrying
+    /// `ticket` (the text, or why there is none). The session holds the
+    /// input that follows until then, so that it comes after the text.
+    Paste { ticket: u64, primary: bool },
 }
 
 #[cfg(test)]

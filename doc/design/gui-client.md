@@ -204,8 +204,11 @@ in "As built" above.
    read the clipboard itself. The server cannot read a client's clipboard.
    Recommended: the key is a mapping like any other (`keymap.add("terminal",
    "<D-v>", () => action.paste())`, `<C-S-v>` on Linux), and `paste` is an effect
-   the client answers with `ClientMsg::Paste` (the primary selection too,
-   on X11 and Wayland, for middle click).
+   the client answers with `ClientMsg::Clipboard` carrying the effect's
+   ticket (the primary selection too, on X11 and Wayland, for middle
+   click). The session holds the input after it until the answer (or 10 s,
+   or `<C-c>`): `<C-S-v><CR>` fed at once would otherwise send the Return
+   before the text.
 7. **Focus.** The TTY client parses focus reports (`termpix::input::Event::
    Focus`) but does not forward them; terminal panes report focus only on
    pane changes. Needed: `ClientMsg::Focus(bool)` for both clients (programs

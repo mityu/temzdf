@@ -370,9 +370,10 @@ impl Session {
         self.script.exit_reason.as_deref()
     }
 
-    /// The host runs something: input is held and frames wait.
+    /// Input is held: the host runs something (frames wait too), or a
+    /// paste asked of the client has not been answered.
     pub fn holds_input(&self) -> bool {
-        self.script.busy()
+        self.script.busy() || self.awaits_paste()
     }
 
     /// Frames wait while a script runs, for up to [`FRAME_HOLD`].
@@ -380,13 +381,19 @@ impl Session {
         self.script.busy() && self.script.busy_since.is_some_and(|t| t.elapsed() < FRAME_HOLD)
     }
 
-    /// Hold input that arrives while a script runs. `<C-c>` interrupts it
-    /// instead. Returns true when the input was taken.
+    /// Hold input that arrives while a script runs or a paste is waited
+    /// for. `<C-c>` interrupts the script (or gives the paste up) instead.
+    /// Returns true when the input was taken.
     pub(super) fn hold_key(&mut self, k: &KeyEvent) -> bool {
-        if !self.script.busy() {
+        if !self.holds_input() {
             return false;
         }
-        if is_interrupt(k) {
+        if is_interrupt(k) && !self.script.busy() {
+            // Waiting for a paste only: it is given up, with the typeahead.
+            self.cancel_pastes();
+            self.matcher.cancel();
+            self.script.held.clear();
+        } else if is_interrupt(k) {
             // As Vim's CTRL-C: typeahead is dropped too.
             self.matcher.cancel();
             self.script.held.clear();
@@ -409,7 +416,7 @@ impl Session {
     }
 
     pub(super) fn hold_mouse(&mut self, m: &MouseEvent) -> bool {
-        if !self.script.busy() {
+        if !self.holds_input() {
             return false;
         }
         // Pointer motion is stale by the time it would be replayed.
@@ -420,7 +427,7 @@ impl Session {
     }
 
     pub(super) fn hold_paste(&mut self, text: &str) -> bool {
-        if !self.script.busy() {
+        if !self.holds_input() {
             return false;
         }
         self.script.held.push_back(Held::Paste(text.to_owned()));
@@ -428,7 +435,7 @@ impl Session {
     }
 
     pub(super) fn hold_text(&mut self, text: &str) -> bool {
-        if !self.script.busy() {
+        if !self.holds_input() {
             return false;
         }
         self.script.held.push_back(Held::Text(text.to_owned()));
@@ -705,7 +712,7 @@ impl Session {
 
     /// Nothing runs any more: deferred hooks, then held input.
     fn after_scripts(&mut self) -> Outcome {
-        let mut out = Outcome::Redraw;
+        let out = Outcome::Redraw;
         if !self.script.deferred_events.is_empty() {
             let events = std::mem::take(&mut self.script.deferred_events);
             let queue = self.hooks_for(&events, 0);
@@ -740,10 +747,16 @@ impl Session {
         // Only now does nothing run: hooks that followed one another
         // counted from when the first began.
         self.script.busy_since = None;
+        out.merge(self.release_input())
+    }
+
+    /// Input no longer waits (for a script or a paste): the keys the matcher
+    /// holds, then the held input, in turn, until something waits again.
+    fn release_input(&mut self) -> Outcome {
         let now = self.now();
         // Keys the matcher still holds came before the held ones.
-        out = out.merge(self.drive(now));
-        while !self.script.busy()
+        let mut out = self.drive(now);
+        while !self.holds_input()
             && let Some(h) = self.script.held.pop_front()
         {
             let o = match h {
@@ -754,6 +767,33 @@ impl Session {
                 Held::Text(t) => self.text(&t, now),
             };
             out = out.merge(o);
+        }
+        out
+    }
+
+    /// The client answered a paste (or did not in time): the text goes to
+    /// the focused pane before the input that came after the paste, which
+    /// then goes on unless another paste or a script holds it.
+    pub(super) fn paste_answered(&mut self, result: Result<String, String>) -> Outcome {
+        let mut out = match result {
+            // A script runs (it asked for the paste): the text comes first
+            // once it is done.
+            Ok(text) if self.script.busy() => {
+                self.script.held.push_front(Held::Paste(text));
+                Outcome::None
+            }
+            Ok(text) => {
+                self.invocation += 1;
+                let out = self.paste_inner(&text);
+                out.merge(self.flush_events())
+            }
+            Err(e) => {
+                self.message(&format!("cannot paste: {e}"));
+                Outcome::Redraw
+            }
+        };
+        if !self.holds_input() {
+            out = out.merge(self.release_input());
         }
         out
     }

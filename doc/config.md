@@ -1117,7 +1117,9 @@ terminal's pane, as the PDF search does),
 `statusLine(false)` hides the focused pane's, `statusLine(true, id)` shows
 pane `id`'s, `statusLine()` turns it the other way; the content gets or
 gives back the row; `temzdf action status-line off`), `sendText`, `paste` (the client's clipboard, or `"primary"`; GUI clients:
-terminal clients paste with the terminal's keys), `fontSize` (GUI
+terminal clients paste with the terminal's keys; keys, mouse and text that
+come after it, typed or fed, wait for the text, at most 10 s, `<C-c>`
+gives the paste up), `fontSize` (GUI
 clients' font: `fontSize(16)` sets the first font of `guifont` to 16 points
 and scales the other sizes given with it, `fontSize("+1")` / `fontSize("-1")`
 one point more or less for each, `fontSize()` back to the

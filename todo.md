@@ -474,7 +474,10 @@ server on one `Session`). Next and open:
   and fuzzy finding" under Deferred). Reading the clipboard
   (OSC 52 queries) is untried in real terminals and inside tmux: check
   kitty, Ghostty, WezTerm, tmux and record it in
-  doc/terminals/terminal-compat.md. The Vim mode
+  doc/terminals/terminal-compat.md. Input after `paste` waits for the
+  GUI client's text, but a script's own commands do not: `paste()` then
+  `sendText("\r")` in one function can send the Return first (untried; a `paste`
+  answering with a Promise would let it `await`). The Vim mode
   is built (`doc/design/vim-mode.md`), with marks, the jump list,
   macros, incsearch, `:s///c`, Ex commands for panes, buffers and tab
   pages, block `I`/`A`/`c` and `<C-r>{reg}` (2026-11-07); what that
@@ -561,11 +564,6 @@ server on one `Session`). Next and open:
     Wayland: compare with `E2E_INPUT_LOG`), and whether starting
     `termctl serve`, `vdisp` and the GUI in a session of their own
     (`detached`) matters to macOS's permissions.
-  - `gui-ime`'s `pasted` has 3.5 ms to spare: the Return after
-    Ctrl+Shift+V must come after the GUI got the text from wl-copy
-    (Wayland). The harness keeps the bash harness's timing; a pause in
-    the scenario between the two would make it sure (it changes the
-    scenario: ask the user).
   - Both harnesses leave zellij's server running after `-m zellij`
     (removing the runtime directory does not end it): end it at cleanup.
 - The VM lock (`scripts/lib/vm-lease.sh`, "Windows in a VM" in

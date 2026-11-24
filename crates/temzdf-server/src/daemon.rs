@@ -204,17 +204,26 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 }
             }
         }
+        // What a paste answered here let go (the input it held).
+        let mut answered = Outcome::None;
         for effect in session.take_effects() {
             match latest.and_then(|id| clients.get(&id)) {
                 Some(c) => {
                     let _ = c.tx.send(ServerMsg::Effect(effect));
                 }
-                // Nobody to read a clipboard from.
-                None => {
-                    if let temzdf_scene::Effect::ReadClipboard { ticket, .. } = effect {
+                // Nobody to read a clipboard from (a paste's answer lets
+                // the input it holds go).
+                None => match effect {
+                    temzdf_scene::Effect::ReadClipboard { ticket, .. } => {
                         session.clipboard_answer(ticket, Err("no client is attached to read the clipboard of".into()));
                     }
-                }
+                    temzdf_scene::Effect::Paste { ticket, .. } => {
+                        answered =
+                            answered.merge(session.clipboard_answer(ticket, Err("no client to paste from".into())));
+                        dirty = true;
+                    }
+                    _ => {}
+                },
             }
         }
         // The configuration changed how GUI clients look.
@@ -421,7 +430,7 @@ pub fn run(name: &str, first: &PaneSpec, log: Option<PathBuf>, settings: Setting
                 let _ = c.tx.send(ServerMsg::Evaluated(result));
             }
         }
-        outcome = outcome.merge(session.poll(Instant::now()));
+        outcome = outcome.merge(answered).merge(session.poll(Instant::now()));
         // The latest client left (went, detached): another takes over.
         dirty |= hand_over(&mut session, &mut latest, &clients);
         // Programs are told about focus as the clients together have it.

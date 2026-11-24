@@ -483,7 +483,7 @@ impl Session {
                     Some("primary") => true,
                     Some(other) => return Err(format!("paste: {other:?} is not clipboard or primary")),
                 };
-                self.effects.push(temzdf_scene::Effect::Paste { primary });
+                self.ask_paste(primary);
                 ok(Outcome::None)
             }
             "send-text" => match self.focused_term() {

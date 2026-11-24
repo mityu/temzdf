@@ -422,10 +422,9 @@ impl TtyFrontend {
                 self.clipboard_reads.push_back((ticket, Instant::now()));
                 self.tty.write_all(&crate::clipboard_query(primary))?;
             }
-            // The terminal holds the clipboard and pastes with its own key.
-            Effect::Paste { .. } => {
-                on_failure("in a terminal, paste with the terminal's own key (Ctrl+Shift+V, Cmd+V)".into())
-            }
+            // The terminal holds the clipboard and pastes with its own key:
+            // the caller answers the session (crates/temzdf/src/attach.rs).
+            Effect::Paste { .. } => {}
         }
         Ok(())
     }

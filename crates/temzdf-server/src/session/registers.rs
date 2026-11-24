@@ -11,8 +11,8 @@ use temzdf_scene::{CopyKind, Effect};
 use super::{BufferId, Kind, Outcome, Session};
 use crate::layout::PaneId;
 
-/// How long a clipboard read waits for the client.
-const CLIPBOARD_WAIT: Duration = Duration::from_secs(10);
+/// How long a clipboard read (or a paste) waits for the client.
+pub(super) const CLIPBOARD_WAIT: Duration = Duration::from_secs(10);
 
 /// Whether an entry was copied or taken out of the text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,6 +92,10 @@ pub(super) struct Copies {
     /// Clipboard reads asked of the client, by ticket (the Promise's
     /// number, `Bridge::new_promise`): when they give up.
     reads: HashMap<u64, Instant>,
+    /// Pastes asked of the client (`Effect::Paste`), by ticket: when they
+    /// give up. Input waits for them, so that what follows a paste comes
+    /// after it.
+    pastes: HashMap<u64, Instant>,
 }
 
 impl Copies {
@@ -101,7 +105,7 @@ impl Copies {
 
     /// When the next clipboard read gives up.
     pub fn deadline(&self) -> Option<Instant> {
-        self.reads.values().min().copied()
+        self.reads.values().chain(self.pastes.values()).min().copied()
     }
 }
 
@@ -293,21 +297,49 @@ impl Session {
         }
     }
 
-    /// The client answered a clipboard read.
+    /// The client answered a clipboard read or a paste.
     pub fn clipboard_answer(&mut self, ticket: u64, result: Result<String, String>) -> Outcome {
+        if self.copies.pastes.remove(&ticket).is_some() {
+            return self.paste_answered(result);
+        }
         if self.copies.reads.remove(&ticket).is_some() {
             self.resolve_promise(ticket, result.map(ScriptValue::Str));
         }
         Outcome::None
     }
 
-    /// Clipboard reads the client did not answer in time fail.
-    pub(super) fn expire_clipboard_reads(&mut self, now: Instant) {
+    /// Ask the client to paste its clipboard (`primary`: the primary
+    /// selection); input waits for the answer ([`Session::awaits_paste`]).
+    pub(super) fn ask_paste(&mut self, primary: bool) {
+        let ticket = self.script.new_promise();
+        self.copies.pastes.insert(ticket, Instant::now() + CLIPBOARD_WAIT);
+        self.effects.push(Effect::Paste { ticket, primary });
+    }
+
+    /// A paste asked of the client has not been answered: input waits.
+    pub(super) fn awaits_paste(&self) -> bool {
+        !self.copies.pastes.is_empty()
+    }
+
+    /// `<C-c>` while input waits for a paste: it is given up.
+    pub(super) fn cancel_pastes(&mut self) {
+        self.copies.pastes.clear();
+    }
+
+    /// Clipboard reads and pastes the client did not answer in time fail.
+    pub(super) fn expire_clipboard_reads(&mut self, now: Instant) -> Outcome {
         let late: Vec<u64> = self.copies.reads.iter().filter(|(_, at)| **at <= now).map(|(t, _)| *t).collect();
         for t in late {
             self.copies.reads.remove(&t);
             self.resolve_promise(t, Err("the clipboard could not be read: the client did not answer".into()));
         }
+        let late: Vec<u64> = self.copies.pastes.iter().filter(|(_, at)| **at <= now).map(|(t, _)| *t).collect();
+        let mut out = Outcome::None;
+        for t in late {
+            self.copies.pastes.remove(&t);
+            out = out.merge(self.paste_answered(Err("the client did not answer".into())));
+        }
+        out
     }
 
     pub(super) fn copies_deadline(&self) -> Option<Instant> {

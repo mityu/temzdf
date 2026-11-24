@@ -145,7 +145,9 @@ impl Session {
     /// keys, or while a script function runs).
     pub(super) fn drive(&mut self, now: Instant) -> Outcome {
         let mut out = Outcome::None;
-        while !self.script.busy() {
+        // A paste asked of the client stops it too: what follows comes after
+        // the text.
+        while !self.holds_input() {
             let layers = self.layers();
             match self.matcher.step(&self.modes, &layers, self.options.timeoutlen, now) {
                 Step::Wait(_) => {
@@ -558,7 +560,7 @@ impl Session {
         out.merge(self.flush_events())
     }
 
-    fn paste_inner(&mut self, text: &str) -> Outcome {
+    pub(super) fn paste_inner(&mut self, text: &str) -> Outcome {
         if let Some(t) = self.focused_term() {
             return Outcome::None.or(t.paste(text));
         }

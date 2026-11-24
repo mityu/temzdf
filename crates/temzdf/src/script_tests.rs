@@ -289,7 +289,7 @@ pub fn run_one(file: &Path) -> Result<i32> {
                 Effect::ReadClipboard { ticket, .. } => {
                     outcomes.push(s.clipboard_answer(ticket, Ok(clipboard.clone())))
                 }
-                Effect::Paste { .. } => outcomes.push(s.paste(&clipboard)),
+                Effect::Paste { ticket, .. } => outcomes.push(s.clipboard_answer(ticket, Ok(clipboard.clone()))),
                 // Links and inverse search are not followed in tests.
                 _ => {}
             }

@@ -308,11 +308,8 @@ impl App {
                     report(format!("cannot copy: {e}"));
                 }
             }
-            Effect::Paste { primary } => match self.input.clipboard_get(primary) {
-                Ok(text) => self.send(ClientMsg::Paste(text)),
-                Err(e) => report(format!("cannot paste: {e}")),
-            },
-            Effect::ReadClipboard { ticket, primary } => {
+            // The session reports a failure (and holds input until either).
+            Effect::Paste { ticket, primary } | Effect::ReadClipboard { ticket, primary } => {
                 let result = self.input.clipboard_get(primary);
                 self.send(ClientMsg::Clipboard { ticket, result });
             }

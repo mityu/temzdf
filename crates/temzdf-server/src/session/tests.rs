@@ -2578,9 +2578,13 @@ fn committed_text_is_typed_in_terminals_and_keys_elsewhere() {
     s.take_effects();
     s.run_command("paste", &[], Instant::now()).unwrap();
     s.run_command("paste", &[ScriptValue::Str("primary".into())], Instant::now()).unwrap();
-    assert_eq!(
-        s.take_effects(),
-        [temzdf_scene::Effect::Paste { primary: false }, temzdf_scene::Effect::Paste { primary: true }]
+    let effects = s.take_effects();
+    assert!(
+        matches!(
+            effects[..],
+            [temzdf_scene::Effect::Paste { primary: false, .. }, temzdf_scene::Effect::Paste { primary: true, .. }]
+        ),
+        "{effects:?}"
     );
 }
 
@@ -2656,7 +2660,84 @@ fn ctrl_shift_v_asks_the_client_to_paste() {
     // As the GUI reports it: the base letter with Ctrl and Shift.
     let k = KeyEvent::new(KeyCode::Char('v'), Modifiers::CTRL | Modifiers::SHIFT);
     s.key(&k, Instant::now());
-    assert_eq!(s.take_effects(), [temzdf_scene::Effect::Paste { primary: false }]);
+    paste_ticket(&mut s);
+}
+
+/// The ticket of the one paste the session asked of the client.
+fn paste_ticket(s: &mut Session) -> u64 {
+    match s.take_effects()[..] {
+        [temzdf_scene::Effect::Paste { ticket, primary: false }] => ticket,
+        ref e => panic!("not one paste: {e:?}"),
+    }
+}
+
+/// A terminal whose program shows, raw, the bytes it gets (in hex) on the
+/// row below "ready".
+fn bytes_session() -> (Session, Receiver<SessionEvent>) {
+    let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n", "hex"]));
+    wait_text(&mut s, &rx, |r| r[0].contains("ready"));
+    s.take_effects();
+    (s, rx)
+}
+
+/// What the program of [`bytes_session`] got, once it got `done` (not
+/// the notices drawn over the row's right end).
+fn bytes_got(s: &mut Session, rx: &Receiver<SessionEvent>, done: &str) -> String {
+    let (_, rows) = wait_text(s, rx, |r| r[1].contains(done));
+    rows[1].split("  ").next().unwrap_or_default().trim().to_owned()
+}
+
+fn feed(s: &mut Session, keys: &str) {
+    s.run_command("feedkeys", &[ScriptValue::Str(keys.into())], Instant::now()).unwrap();
+    let _ = s.drive(Instant::now());
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+fn what_follows_a_paste_waits_for_the_clients_answer() {
+    let (mut s, rx) = bytes_session();
+    // As a mapping or `feedkeys` sends them: no time in between.
+    feed(&mut s, "<C-S-v><CR>");
+    let ticket = paste_ticket(&mut s);
+    assert!(s.holds_input());
+    // Typed meanwhile: after the text too.
+    key(&mut s, "x");
+    let _ = s.clipboard_answer(ticket, Ok("pasted".into()));
+    assert!(!s.holds_input());
+    // "pasted", Return, x.
+    assert_eq!(bytes_got(&mut s, &rx, "78"), "70 61 73 74 65 64 0d 78");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+fn input_waiting_for_a_paste_goes_on_when_it_fails_or_is_not_answered() {
+    let (mut s, rx) = bytes_session();
+    feed(&mut s, "<C-S-v><CR>");
+    let ticket = paste_ticket(&mut s);
+    let _ = s.clipboard_answer(ticket, Err("no clipboard".into()));
+    assert!(!s.holds_input());
+    assert!(s.notices.iter().any(|n| n.text == "cannot paste: no clipboard"));
+    feed(&mut s, "<C-S-v><CR>");
+    paste_ticket(&mut s);
+    let _ = s.poll(Instant::now() + Duration::from_secs(11));
+    assert!(!s.holds_input());
+    assert!(s.notices.iter().any(|n| n.text == "cannot paste: the client did not answer"));
+    assert_eq!(bytes_got(&mut s, &rx, "0d 0d"), "0d 0d");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "Miri cannot open a pty")]
+fn ctrl_c_gives_up_a_paste_and_what_waited_for_it() {
+    let (mut s, rx) = bytes_session();
+    feed(&mut s, "<C-S-v><CR>");
+    let ticket = paste_ticket(&mut s);
+    key(&mut s, "<C-c>");
+    assert!(!s.holds_input());
+    // A late answer is dropped.
+    let _ = s.clipboard_answer(ticket, Ok("late".into()));
+    key(&mut s, "y");
+    // Neither Ctrl+C (03), the Return nor "late".
+    assert_eq!(bytes_got(&mut s, &rx, "79"), "79");
 }
 
 /// A session editing `name` (written with `content` first) in a
