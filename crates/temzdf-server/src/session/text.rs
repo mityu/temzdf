@@ -664,9 +664,9 @@ impl Session {
             return Err("a nofile buffer is written only to a path given (write({ path }))".into());
         }
         let mut info = match (path, &t.file) {
-            (Some(p), Some(f)) => FileInfo { path: std::path::absolute(&p).unwrap_or(p), mtime: None, ..f.clone() },
+            (Some(p), Some(f)) => FileInfo { path: crate::paths::canonical(&p), mtime: None, ..f.clone() },
             (Some(p), None) => FileInfo {
-                path: std::path::absolute(&p).unwrap_or(p),
+                path: crate::paths::canonical(&p),
                 encoding: "utf-8".into(),
                 line_ending: t.buf.line_ending,
                 ..FileInfo::default()
@@ -676,6 +676,10 @@ impl Session {
         };
         info.line_ending = t.buf.line_ending;
         info.mtime = file::write(t.buf.text(), &info, force)?;
+        // There now: its canonical name (a part that was missing, or the
+        // case the file system keeps), which its undo and swap files and
+        // other sessions go by.
+        info.path = crate::paths::canonical(&info.path);
         t.name = name_of(Some(&info.path));
         t.file = Some(info);
         t.buf.undo_tree_mut().mark_saved();
@@ -990,7 +994,7 @@ impl Session {
                 let text = opt_str("text").unwrap_or_default();
                 let path = opt_str("path").map(PathBuf::from);
                 let info = path.map(|p| FileInfo {
-                    path: std::path::absolute(&p).unwrap_or(p),
+                    path: crate::paths::canonical(&p),
                     encoding: "utf-8".into(),
                     ..FileInfo::default()
                 });

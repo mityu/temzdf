@@ -40,6 +40,8 @@ mod js_tests;
 mod markdown;
 mod notices;
 mod options;
+#[cfg(test)]
+mod path_tests;
 mod pdf;
 mod registers;
 mod script;
