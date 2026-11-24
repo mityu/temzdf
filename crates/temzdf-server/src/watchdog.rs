@@ -15,6 +15,7 @@ const LOOK: Duration = Duration::from_millis(200);
 /// Watches the steps of one loop; stops watching when dropped.
 pub struct Watchdog {
     shared: Arc<Shared>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 struct Shared {
@@ -48,7 +49,11 @@ impl Watchdog {
         let watched = shared.clone();
         let spawned = std::thread::Builder::new().name("temzdf-watchdog".into()).spawn(move || {
             while !watched.done.load(Ordering::SeqCst) {
-                std::thread::sleep(LOOK);
+                // Woken early by the drop.
+                std::thread::park_timeout(LOOK);
+                if watched.done.load(Ordering::SeqCst) {
+                    break;
+                }
                 let since = watched.since.load(Ordering::SeqCst);
                 let lasted = Duration::from_millis(watched.elapsed_ms().saturating_sub(since));
                 if lasted > limit && !watched.done.load(Ordering::SeqCst) {
@@ -65,8 +70,7 @@ impl Watchdog {
             }
         });
         // Without the thread, nothing is watched (the loop runs as before).
-        drop(spawned);
-        Self { shared }
+        Self { shared, thread: spawned.ok() }
     }
 
     /// The loop is in step `i` of its steps now.
@@ -80,6 +84,11 @@ impl Watchdog {
 impl Drop for Watchdog {
     fn drop(&mut self) {
         self.shared.done.store(true, Ordering::SeqCst);
+        // The thread goes with it (no thread is left behind).
+        if let Some(t) = self.thread.take() {
+            t.thread().unpark();
+            let _ = t.join();
+        }
     }
 }
 
