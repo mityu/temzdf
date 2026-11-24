@@ -366,8 +366,11 @@ server on one `Session`). Next and open:
     test`, `temzdf-script-runner` and the js tests in the gate there;
     symbolic links are tested on Unix only (making one on Windows needs
     an administrator or developer mode). Open: import specifiers on
-    Windows (`.\`, `C:\`), and whether `./Lib.ts` and `./lib.ts` are one
-    module on case-insensitive file systems. `ls-fonts`
+    Windows (`.\`, `C:\`). Decided (2026-11-24): imports keep the
+    spelling written, as Node does, so `./Lib.ts` and `./lib.ts` are two
+    modules even where the file system ignores case; TypeScript's type
+    check (`forceConsistentCasingInFileNames`, on by default) reports
+    the mismatch. `ls-fonts`
     without a session starts a terminal pane running `true` for the
     configuration, which fails on Windows; postponed: the user may stop
     resolving the configuration's fonts there, which changes what the
