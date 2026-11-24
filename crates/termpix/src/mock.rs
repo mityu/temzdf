@@ -355,6 +355,7 @@ impl MockTerminal {
         let medium = keys.get(&'t').and_then(|v| v.chars().next()).unwrap_or('d');
         let mut data = match medium {
             'd' => raw,
+            #[cfg(unix)]
             's' => {
                 let name = String::from_utf8(raw).map_err(|e| e.to_string())?;
                 let path = std::path::Path::new("/dev/shm").join(name.trim_start_matches('/'));

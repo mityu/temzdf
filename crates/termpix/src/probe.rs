@@ -5,7 +5,7 @@
 //!
 //! Environment overrides (for when detection is wrong):
 //! - `TERMPIX_BACKEND=layered|composited`
-//! - `TERMPIX_MEDIUM=direct|shm|file`
+//! - `TERMPIX_MEDIUM=direct|shm|file` (`shm` not on Windows)
 //! - `TERMPIX_GRAPHICS=off`: as a terminal without the kitty graphics
 //!   protocol
 
@@ -200,7 +200,7 @@ impl Capabilities {
         if let Some(m) = self.medium_override {
             return m;
         }
-        if self.shm {
+        if self.shm && Medium::SharedMemory.available() {
             Medium::SharedMemory
         } else if self.temp_file {
             Medium::TempFile
@@ -220,6 +220,7 @@ pub fn probe(tty: &mut Tty, timeout: Duration) -> io::Result<Capabilities> {
     let leftovers: Vec<_> = [Medium::SharedMemory, Medium::TempFile]
         .into_iter()
         .zip([ID_SHM, ID_FILE])
+        .filter(|(m, _)| m.available())
         .filter_map(|(m, id)| graphics::query(&mut q, id, m).ok().flatten())
         .collect();
     q.extend_from_slice(b"\x1b[?1016$p\x1b[?2026$p\x1b[?u\x1b[16t\x1b[c");
@@ -288,7 +289,8 @@ pub fn interpret(env: &Env, replies: &[Event], kernel: Option<Geometry>, grid: (
             Some("shm") => Some(Medium::SharedMemory),
             Some("file") => Some(Medium::TempFile),
             _ => None,
-        },
+        }
+        .filter(|m| m.available()),
     };
     let mut reported_cell = None;
     for ev in replies {
@@ -354,7 +356,7 @@ mod tests {
         assert_eq!(caps.keyboard_flags, Some(0));
         assert_eq!(caps.geometry.cell, CellSize { width: 10, height: 20 });
         assert_eq!(caps.backend(), Backend::Layered);
-        assert_eq!(caps.medium(), Medium::SharedMemory);
+        assert_eq!(caps.medium(), if cfg!(unix) { Medium::SharedMemory } else { Medium::TempFile });
     }
 
     #[test]

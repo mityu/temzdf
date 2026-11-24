@@ -991,6 +991,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot use shared memory")]
+    #[cfg_attr(not(unix), ignore = "no POSIX shared memory on Windows")]
     fn shared_memory_frames_are_not_fenced() {
         let mut c = Compositor::new(Backend::Layered, Medium::SharedMemory, geometry());
         let img = c.add_image(30, 30, test_image());

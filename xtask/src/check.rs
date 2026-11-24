@@ -45,6 +45,7 @@ const WINDOWS_CRATES: &[&str] = &[
     "temzdf-texteditor",
     "temzdf-watchfs",
     "temzdf-testhelper",
+    "termpix",
     "termpix-core",
     "termpix-ui",
     "wlinput",
@@ -57,9 +58,10 @@ const WINDOWS_CRATES: &[&str] = &[
 /// (built with TeX), or that need what the in-box ConPTY does not pass to
 /// programs in terminal panes, are ignored there
 /// (`cfg_attr(not(unix), ignore = ...)`). Left out of both
-/// lists, and why (`todo.md`, "The Windows port"): termpix and temzdf-tty
-/// are the terminal frontend, Unix only; temzdf-pdfcore's tests need the
-/// fixtures, built with TeX; temzdf-script-guest is empty off wasm.
+/// lists, and why (`todo.md`, "The Windows port"): temzdf-tty is the
+/// terminal frontend, Unix only (termpix builds on Windows, but its `Tty`
+/// is Unix only so far); temzdf-pdfcore's tests need the fixtures, built
+/// with TeX; temzdf-script-guest is empty off wasm.
 const WINDOWS_ONLY_CRATES: &[&str] = &[
     "temzdf",
     "temzdf-pdfview",

@@ -9,13 +9,16 @@ repository.workspace = true
 [dependencies]
 base64 = "0.23.1"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+termpix-core.workspace = true
+
+# The terminal (termios, signals) and POSIX shared memory: Unix only so far.
+[target.'cfg(unix)'.dependencies]
 memmap2 = "0.9.12"
 rustix = { version = "1.1.5", features = ["termios", "shm", "fs", "event", "stdio", "process", "mm"] }
 signal-hook = "0.4.5"
-termpix-core.workspace = true
 
-[dev-dependencies]
 # A pseudo-terminal for the panic hook's test.
+[target.'cfg(unix)'.dev-dependencies]
 rustix = { version = "1.1.5", features = ["pty"] }
 
 [lints]

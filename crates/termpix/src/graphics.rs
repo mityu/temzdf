@@ -46,10 +46,20 @@ impl PixelFormat {
 pub enum Medium {
     /// Inline base64 in the escape sequences (`t=d`), optionally zlib-compressed.
     Direct { compress: bool },
-    /// POSIX shared memory (`t=s`). Same host only.
+    /// POSIX shared memory (`t=s`). Same host only; Unix only (see
+    /// [`Medium::available`]).
     SharedMemory,
     /// A temporary file the terminal deletes after reading (`t=t`). Same host only.
     TempFile,
+}
+
+impl Medium {
+    /// Whether images can go this way here: there is no POSIX shared
+    /// memory on Windows (sending fails with
+    /// [`io::ErrorKind::Unsupported`]).
+    pub const fn available(self) -> bool {
+        cfg!(unix) || !matches!(self, Self::SharedMemory)
+    }
 }
 
 /// Borrowed raw pixels.
@@ -298,7 +308,7 @@ impl Leftover {
     /// Remove it, if the terminal did not (it removes what it consumed).
     pub fn remove(self) {
         match self {
-            Self::Shm(name) => drop(rustix::shm::unlink(name.as_str())),
+            Self::Shm(name) => shm_unlink(&name),
             Self::File(path) => drop(std::fs::remove_file(path)),
         }
     }
@@ -362,6 +372,7 @@ fn with_free_name<T>(mut create: impl FnMut(&str) -> io::Result<T>) -> io::Resul
 }
 
 /// Create a POSIX shared memory object holding `data`; returns its name.
+#[cfg(unix)]
 fn shm_create(data: &[u8]) -> io::Result<String> {
     use rustix::fs::Mode;
     use rustix::shm;
@@ -396,6 +407,20 @@ fn shm_create(data: &[u8]) -> io::Result<String> {
     Ok(name)
 }
 
+/// No POSIX shared memory on Windows.
+#[cfg(not(unix))]
+fn shm_create(_data: &[u8]) -> io::Result<String> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "no POSIX shared memory on Windows"))
+}
+
+/// Remove the shared memory object `name`, if it is still there.
+fn shm_unlink(name: &str) {
+    #[cfg(unix)]
+    let _ = rustix::shm::unlink(name);
+    #[cfg(not(unix))]
+    let _ = name;
+}
+
 /// Shared-memory objects and temporary files we created, oldest first,
 /// with the frame they were made for and when.
 #[derive(Debug, Default)]
@@ -419,7 +444,7 @@ impl ShmTracker {
         let n = self.names.iter().take_while(|(f, t, _)| old(*f, *t)).count();
         for (_, _, name) in self.names.drain(..n) {
             // The terminal unlinks objects it consumed; ENOENT is the normal case.
-            let _ = rustix::shm::unlink(name.as_str());
+            shm_unlink(&name);
         }
         let n = self.files.iter().take_while(|(f, t, _)| old(*f, *t)).count();
         for (_, _, path) in self.files.drain(..n) {
@@ -442,9 +467,13 @@ fn write_temp_file(data: &[u8]) -> io::Result<PathBuf> {
 }
 
 /// A new file only we can read; fails if anything (a symlink too) is there.
+/// On Windows the temporary directory is the user's own (in the profile).
 fn create_private(path: &std::path::Path) -> io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)
 }
 
 #[cfg(test)]
@@ -463,9 +492,14 @@ mod tests {
         assert!(path.exists());
         Leftover::File(path.clone()).remove();
         assert!(!path.exists());
-        let Some(Leftover::Shm(name)) = query(&mut out, 2, Medium::SharedMemory).unwrap() else { panic!() };
-        Leftover::Shm(name.clone()).remove();
-        assert!(rustix::shm::open(name.as_str(), rustix::shm::OFlags::RDONLY, rustix::fs::Mode::empty()).is_err());
+        #[cfg(unix)]
+        {
+            let Some(Leftover::Shm(name)) = query(&mut out, 2, Medium::SharedMemory).unwrap() else { panic!() };
+            Leftover::Shm(name.clone()).remove();
+            assert!(rustix::shm::open(name.as_str(), rustix::shm::OFlags::RDONLY, rustix::fs::Mode::empty()).is_err());
+        }
+        #[cfg(not(unix))]
+        assert_eq!(query(&mut out, 2, Medium::SharedMemory).unwrap_err().kind(), io::ErrorKind::Unsupported);
         assert!(query(&mut out, 3, Medium::Direct { compress: false }).unwrap().is_none());
         // Files a terminal did not take are cleaned up like shm objects.
         let mut enc = Encoder::new(Medium::TempFile);
@@ -479,11 +513,24 @@ mod tests {
 
     #[test]
     fn temp_files_are_new_and_private() {
-        use std::os::unix::fs::PermissionsExt;
         let path = write_temp_file(b"x").unwrap();
-        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // A file already under the name stays as it is.
+        assert!(create_private(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"x");
         std::fs::remove_file(&path).unwrap();
-        // A symlink planted under the name is not followed.
+        // A symlink planted under the name is not followed (making one on
+        // Windows needs a privilege or developer mode).
+        #[cfg(unix)]
+        temp_files_do_not_follow_symlinks();
+    }
+
+    #[cfg(unix)]
+    fn temp_files_do_not_follow_symlinks() {
         let planted = std::env::temp_dir().join(format!("termpix-planted-{}", std::process::id()));
         let target = std::env::temp_dir().join(format!("termpix-target-{}", std::process::id()));
         std::fs::write(&target, b"keep").unwrap();

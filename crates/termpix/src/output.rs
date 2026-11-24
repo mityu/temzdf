@@ -29,6 +29,7 @@ pub trait OutputSink: Write + Send + 'static {
     }
 }
 
+#[cfg(unix)]
 impl OutputSink for std::fs::File {
     fn wait_writable(&self, timeout: Duration) {
         use std::os::fd::AsFd;
