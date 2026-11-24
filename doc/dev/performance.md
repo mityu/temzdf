@@ -171,6 +171,50 @@ benchmark's 30 tiles: 7.8 ms against 8.2), as the copies left are the same
 size; shared memory still saves the kernel's buffers and the client's
 allocation.
 
+### Windows, and shared memory kept and reused
+
+Windows has no shared-memory path: every image travels on the socket
+(AF_UNIX through `uds_windows`). On 2026-11-24 the windows-port worktree
+measured other ways in the Windows VM (two processes, from the server's
+pixels to the client having touched every page and answered): the socket,
+a named pipe, a new unnamed section per image handed over with
+`DuplicateHandle` (`shared.rs` as it is, moved to Windows), a named
+section, a temporary file, a few sections reused and mapped again each
+time, and a few sections kept mapped on both sides (a memcpy and a short
+message).
+
+- A new section per image was slower than the socket; a named pipe was
+  a little faster; only the sections kept mapped and reused were much
+  faster.
+- The same benchmark on the Linux host found a new sealed memfd per
+  image slower than the socket at those sizes: its pages are fresh, so
+  both sides fault them in, while the socket's reader reuses a warm heap
+  (as "the copy into a fresh buffer" above).
+- The host was busy with other work meanwhile. A way that suffers only
+  under load (the socket waits for the other process to wake, fresh
+  pages fault) may compare differently on a quiet host: measure again
+  on a quiet host and under a set load, with p90, p99 and the maxima,
+  not only medians.
+- On Windows a section made without a security descriptor can be
+  duplicated from a read-only handle into a writable one
+  (`D:P(A;;0x4;;;OW)`, map-read for the owner only, prevents it);
+  nothing like Linux's seals lets the client check that the server
+  cannot write; and a handle duplicated into the client leaks when the
+  client never reads its message.
+
+Not taken (the user, 2026-11-25): reused sections give up what the seals
+guarantee, that pixels sent never change (`shared::map`'s safety). Either
+the client copies them out at once, which makes two copies as the socket
+does (little gained on Linux, where the socket without copies is about
+as fast as shared memory), or it reads the mapping in place while it
+uploads or encodes, trusting a promise between the processes (a lease
+type on the server and a generation check on the client could watch
+it). Both add a pool per connection, a message giving a section back, a
+socket fallback when none is free, and memory kept per client. Linux
+keeps the sealed memfd and the socket; Windows keeps the socket; a new
+section per image is not worth making. Measure again, as above, if the
+GUI on Windows feels slow on large redraws.
+
 ## Terminal panes under load
 
 Measured 2026-11-18 (i7-14700, release, the simulated terminal of

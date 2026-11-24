@@ -8,10 +8,12 @@
 //! hands the mapping on (to the GPU, or to the terminal's image store) as
 //! [`Pixels`], without copying.
 //!
-//! Unix only so far: on Windows no object is ever made ([`create`] fails,
+//! Unix only: on Windows no object is ever made ([`create`] fails,
 //! [`crate::shared_memory_wanted`] is false), so every image travels in the
-//! message; an unnamed file mapping handed over with `DuplicateHandle` would
-//! do there what the descriptor does here.
+//! message. An unnamed file mapping per image handed over with
+//! `DuplicateHandle` was measured slower than the socket there, and reused
+//! mappings were not taken ("Windows, and shared memory kept and reused" in
+//! doc/dev/performance.md).
 
 #[cfg(unix)]
 use std::collections::VecDeque;
