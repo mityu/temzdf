@@ -41,7 +41,6 @@ jobs:
         uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
         with:
           version: 0.15.2
-          use-cache: false
       - run: npm i -g esbuild
       - run: scripts/deps-without-nix.sh "$RUNNER_TEMP/deps" >>"$GITHUB_ENV"
       - run: cargo xtask fetch-fonts
@@ -139,7 +138,6 @@ jobs:
       - uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
         with:
           version: 0.15.2
-          use-cache: false
       - run: |
           rev=$(sed -n 's/^ *rev = "\([0-9a-f]*\)";/\1/p' nix/libghostty-vt.nix)
           dir=$(cygpath -m "$RUNNER_TEMP")/ghostty
