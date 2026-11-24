@@ -148,10 +148,6 @@ jobs:
             -Dapp-runtime=none -Dtarget=x86_64-windows-gnu --prefix "$(cygpath -m "$MINGW_PREFIX")"
           pkg-config --modversion libghostty-vt-static
         shell: msys2 {0}
-        env:
-          # Not setup-zig's .zig-cache in the checkout, where the gate's
-          # document check would read the packages' Markdown.
-          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Keys are `v0-rust-windows-Windows-X64-...`; `prune-cache-windows` matches `v0-rust-windows-`.
