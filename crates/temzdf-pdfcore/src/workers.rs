@@ -13,6 +13,7 @@ use temzdf_scene::tiles::{Job, WorkPool};
 
 use crate::doc_cache::{RenderJob, Rendered, TileKey};
 use crate::pdf::{self, DocInfo, Link, SearchHit};
+use crate::selection::PageText;
 use crate::synctex::{PdfBox, Scanner, SourceLocation};
 
 /// Where worker threads send their results. Returns false once nobody listens
@@ -24,6 +25,9 @@ pub enum DocEvent {
     /// A display list (and the page's links) for document generation `.0`.
     PageLoaded(u32, usize, Arc<DisplayList>, Vec<Link>),
     PageFailed(u32, usize, String),
+    /// A page's text alone (`DocCmd::LoadText`), for document generation
+    /// `.0`: its display list is not kept.
+    PageText(u32, usize, Result<PageText, String>),
     Rendered(Rendered),
     RenderFailed(TileKey, String),
     SearchHits {
@@ -323,6 +327,9 @@ pub fn spawn_search(snapshot: Snapshot, events: Sink) -> std::io::Result<Sender<
 /// Requests for the document thread.
 pub enum DocCmd {
     LoadPage(usize),
+    /// The page's text only (a copy of pages never shown): answered with
+    /// [`DocEvent::PageText`].
+    LoadText(usize),
     /// Open the file again; on success the new document replaces the old one.
     Reload,
 }
@@ -399,7 +406,14 @@ fn spawn_document_waiting(
         let mut generation = 0u32;
         for cmd in rx {
             let ev = match cmd {
-                DocCmd::LoadPage(p) if p >= bounds.len() => continue,
+                DocCmd::LoadPage(p) | DocCmd::LoadText(p) if p >= bounds.len() => continue,
+                DocCmd::LoadText(p) => DocEvent::PageText(
+                    generation,
+                    p,
+                    pdf::display_list(&doc, p)
+                        .and_then(|list| PageText::extract(&list, bounds[p]))
+                        .map_err(|e| format!("{e:#}")),
+                ),
                 DocCmd::LoadPage(p) => match pdf::display_list(&doc, p) {
                     // A page whose links cannot be read still renders.
                     Ok(list) => DocEvent::PageLoaded(
@@ -495,6 +509,30 @@ mod tests {
         let failed = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
         assert!(matches!(failed, DocEvent::Opened(Err(e)) if e.contains("no such file")));
         assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    fn a_pages_text_alone_is_its_display_lists_text() {
+        let path = pdf::fixture("sample.pdf");
+        let doc = pdf::open(&path).unwrap();
+        let bounds = pdf::page_bounds(&doc).unwrap();
+        let (tx, rx) = mpsc::channel::<DocEvent>();
+        let cmds = spawn_document(path, channel_sink(tx, |e| e), Snapshot::default()).unwrap();
+        let wait = || rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+        assert!(matches!(wait(), DocEvent::Opened(Ok(_))));
+        for (p, &b) in bounds.iter().enumerate() {
+            cmds.send(DocCmd::LoadText(p)).unwrap();
+            let DocEvent::PageText(0, page, Ok(text)) = wait() else { panic!("page {p}: no text") };
+            assert_eq!(page, p);
+            let shown = PageText::extract(&pdf::display_list(&doc, p).unwrap(), b).unwrap();
+            assert_eq!(text, shown, "page {p}");
+            assert!(!text.chars.is_empty(), "page {p} has text");
+        }
+        // A page past the end is not answered.
+        cmds.send(DocCmd::LoadText(bounds.len())).unwrap();
+        cmds.send(DocCmd::LoadText(0)).unwrap();
+        assert!(matches!(wait(), DocEvent::PageText(0, 0, Ok(_))));
     }
 
     #[test]

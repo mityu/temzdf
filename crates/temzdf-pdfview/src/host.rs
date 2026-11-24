@@ -165,6 +165,8 @@ impl DocumentHost {
         let mut effect = None;
         match ev {
             DocEvent::Opened(_) => return (false, None),
+            // Nothing asks for a page's text alone yet.
+            DocEvent::PageText(..) => return (false, None),
             DocEvent::PageLoaded(generation, p, list, links) => {
                 let mut d = self.doc.borrow_mut();
                 if generation != d.cache.generation() {
