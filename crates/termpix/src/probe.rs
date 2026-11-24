@@ -87,6 +87,11 @@ pub struct Env {
     pub backend_override: Option<String>,
     pub medium_override: Option<String>,
     pub graphics_off: bool,
+    /// Behind a Windows console (ConPTY), where a terminal that does not
+    /// name itself (XTVERSION) may make its cell size up: Windows Terminal
+    /// answers `CSI 16 t` with 10x20 whatever it draws
+    /// (`doc/terminals/conpty.md`, "Inside Windows Terminal and WezTerm").
+    pub conpty: bool,
 }
 
 impl Env {
@@ -101,6 +106,7 @@ impl Env {
             backend_override: var("TERMPIX_BACKEND"),
             medium_override: var("TERMPIX_MEDIUM"),
             graphics_off: var("TERMPIX_GRAPHICS").is_some_and(|v| v == "off"),
+            conpty: cfg!(windows),
         }
     }
 }
@@ -225,24 +231,7 @@ pub fn probe(tty: &mut Tty, timeout: Duration) -> io::Result<Capabilities> {
         .collect();
     q.extend_from_slice(b"\x1b[?1016$p\x1b[?2026$p\x1b[?u\x1b[16t\x1b[c");
     tty.write_all(&q)?;
-
-    let mut parser = Parser::new();
-    let mut replies = Vec::new();
-    let deadline = Instant::now() + timeout;
-    let mut buf = [0u8; 1024];
-    'outer: while let Some(left) = deadline.checked_duration_since(Instant::now()) {
-        let Some(n) = tty.read_timeout(&mut buf, Some(left))? else { break };
-        if n == 0 {
-            break;
-        }
-        for ev in parser.feed(&buf[..n]) {
-            let done = matches!(ev, Event::Reply(Reply::DeviceAttributes(_)));
-            replies.push(ev);
-            if done {
-                break 'outer;
-            }
-        }
-    }
+    let replies = read_replies(|buf, left| tty.read_timeout(buf, Some(left)), timeout, crate::tty::LATE_REPLIES)?;
     // Replies come in order: past the last one (or the deadline) the
     // terminal is done with the probe images. Those it took it removed.
     for l in leftovers {
@@ -261,6 +250,58 @@ pub fn probe(tty: &mut Tty, timeout: Duration) -> io::Result<Capabilities> {
         caps.graphics_off = true;
     }
     Ok(caps)
+}
+
+/// Read the replies to the probe's queries until the DA1 answer, the last
+/// (at most `timeout`; `read` reads as [`Tty::read_timeout`] does).
+///
+/// With `late` (Windows: [`crate::tty::LATE_REPLIES`]) a DA1 answer may come
+/// first, from an older ConPTY that answers it itself, with the terminal's
+/// answers to the rest after it: then reading goes on until the answer to
+/// `CSI 16 t` (the last query passed on), a second DA1 answer, or `late`
+/// without one. A DA1 answer after the `16 t` one ends it at once.
+fn read_replies(
+    mut read: impl FnMut(&mut [u8], Duration) -> io::Result<Option<usize>>,
+    timeout: Duration,
+    late: Duration,
+) -> io::Result<Vec<Event>> {
+    let mut parser = Parser::new();
+    let mut replies = Vec::new();
+    let deadline = Instant::now() + timeout;
+    let mut buf = [0u8; 1024];
+    // After an early DA1 answer: how long the terminal's answers may take.
+    let mut late_until: Option<Instant> = None;
+    let mut cell_size = false;
+    loop {
+        let end = late_until.map_or(deadline, |l| l.min(deadline));
+        let Some(left) = end.checked_duration_since(Instant::now()) else { break };
+        let Some(n) = read(&mut buf, left)? else { break };
+        if n == 0 {
+            break;
+        }
+        let mut done = false;
+        for ev in parser.feed(&buf[..n]) {
+            let da1 = matches!(ev, Event::Reply(Reply::DeviceAttributes(_)));
+            let cell = matches!(ev, Event::Reply(Reply::CellSize { .. }));
+            replies.push(ev);
+            if da1 && (late.is_zero() || cell_size || late_until.is_some()) {
+                // In order (or the second): every answer is in.
+                if late.is_zero() {
+                    return Ok(replies);
+                }
+                done = true;
+            } else if da1 {
+                late_until = Some(Instant::now() + late);
+            } else if cell && late_until.is_some() {
+                done = true;
+            }
+            cell_size |= cell;
+        }
+        if done {
+            break;
+        }
+    }
+    Ok(replies)
 }
 
 /// Turn probe replies into capabilities. Pure, for tests.
@@ -330,6 +371,10 @@ pub fn interpret(env: &Env, replies: &[Event], kernel: Option<Geometry>, grid: (
     // WezTerm answers DECRQM 2026 with "reset" although it implements it.
     if caps.terminal == TerminalKind::WezTerm {
         caps.sync_output = true;
+    }
+    // Windows Terminal makes its cell size up; it gives no XTVERSION.
+    if env.conpty && caps.version.is_none() {
+        reported_cell = None;
     }
     caps.geometry.cell = kernel.map(|g| g.cell).or(reported_cell).unwrap_or(FALLBACK_CELL);
     caps
@@ -405,6 +450,76 @@ mod tests {
         assert_eq!(caps.terminal, TerminalKind::Zellij);
         assert!(caps.in_zellij && !caps.pixel_mouse);
         assert!(matches!(caps.backend(), Backend::Composited { .. }));
+    }
+
+    /// Reads from `chunks` in turn (`None`: a timeout), recording the
+    /// timeouts asked for; past the end, timeouts.
+    fn scripted<'a>(
+        chunks: &'a [Option<&'a [u8]>],
+        asked: &'a mut Vec<Duration>,
+    ) -> impl FnMut(&mut [u8], Duration) -> io::Result<Option<usize>> + 'a {
+        let mut next = chunks.iter();
+        move |buf, timeout| {
+            asked.push(timeout);
+            Ok(next.next().copied().flatten().map(|c| {
+                buf[..c.len()].copy_from_slice(c);
+                c.len()
+            }))
+        }
+    }
+
+    /// What WezTerm's (older) ConPTY passed on, as it came: its own answers
+    /// at once, DA1 among them, the terminal's 30 ms later.
+    const EARLY_DA1: [Option<&[u8]>; 2] = [
+        Some(b"\x1b[?1016;0$y\x1b[?2026;0$y\x1b[?61;6;7;22;23;24;28;32;42c"),
+        Some(b"\x1bP>|WezTerm 20240203-110809-5046fc22\x1b\\\x1b[6;22;10t"),
+    ];
+    const LATE: Duration = Duration::from_millis(200);
+
+    #[test]
+    fn without_late_replies_the_probe_stops_at_da1() {
+        let mut asked = Vec::new();
+        let r = read_replies(scripted(&EARLY_DA1, &mut asked), Duration::from_secs(1), Duration::ZERO).unwrap();
+        assert_eq!(asked.len(), 1, "no read after the DA1 answer");
+        assert!(matches!(r.last(), Some(Event::Reply(Reply::DeviceAttributes(_)))), "{r:?}");
+    }
+
+    #[test]
+    fn the_probe_reads_past_an_early_da1() {
+        let mut asked = Vec::new();
+        let r = read_replies(scripted(&EARLY_DA1, &mut asked), Duration::from_secs(1), LATE).unwrap();
+        assert_eq!(asked.len(), 2, "stops at the 16t answer: {asked:?}");
+        assert!(asked[1] <= LATE);
+        let caps = interpret(&Env { conpty: true, ..Default::default() }, &r, None, (80, 24));
+        assert_eq!(caps.terminal, TerminalKind::WezTerm);
+        assert_eq!(caps.geometry.cell, CellSize { width: 10, height: 22 });
+        // No answer after the early DA1: `late` only.
+        let mut asked = Vec::new();
+        let r = read_replies(scripted(&EARLY_DA1[..1], &mut asked), Duration::from_secs(1), LATE).unwrap();
+        assert_eq!(asked.len(), 2);
+        assert!(asked[1] <= LATE, "{asked:?}");
+        assert_eq!(r.len(), 3);
+        // A second DA1 answer (the terminal's) ends it too.
+        let mut asked = Vec::new();
+        let chunks = [EARLY_DA1[0], Some(&b"\x1b[?65;4c"[..]), Some(b"\x1b[6;22;10t")];
+        let r = read_replies(scripted(&chunks, &mut asked), Duration::from_secs(1), LATE).unwrap();
+        assert_eq!((asked.len(), r.len()), (2, 4));
+    }
+
+    #[test]
+    fn a_da1_after_the_cell_size_ends_the_probe_at_once() {
+        // Windows Terminal, and ConPTY 1.25 passing everything on: in order.
+        let chunks =
+            [Some(&b"\x1b[?1016;0$y\x1b[?2026;2$y\x1b[6;20;10t\x1b[?61;4;6;7;14;21;22;23;24;28;32;42;52c"[..])];
+        let mut asked = Vec::new();
+        let r = read_replies(scripted(&chunks, &mut asked), Duration::from_secs(1), LATE).unwrap();
+        assert_eq!(asked.len(), 1);
+        // Windows Terminal: no name, and the cell size made up.
+        let caps = interpret(&Env { conpty: true, ..Default::default() }, &r, None, (120, 30));
+        assert_eq!(caps.version, None);
+        assert_eq!(caps.geometry.cell, FALLBACK_CELL);
+        // The same answers elsewhere are believed.
+        assert_eq!(interpret(&Env::default(), &r, None, (120, 30)).geometry.cell, CellSize { width: 10, height: 20 });
     }
 
     #[test]
