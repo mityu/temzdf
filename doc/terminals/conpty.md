@@ -155,8 +155,8 @@ committed).
   behaves as the in-box ConPTY above: kitty graphics (transmit and query)
   and XTGETTCAP dropped, DA1 and DECRQM answered by ConPTY, the text
   redrawn, 14t and 16t and the rest passed, input unchanged. So WezTerm's
-  missing image is its ConPTY's doing; whether WezTerm draws kitty
-  graphics on Windows through a newer `conpty.dll` was not tried. Windows
+  missing image is its ConPTY's doing; with a newer `conpty.dll` WezTerm
+  draws it ("WezTerm with the newer ConPTY" below). Windows
   Terminal's package has `OpenConsole.exe` but no `conpty.dll` to load
   that way.
 - termpix's probe (`crates/termpix/src/probe.rs`) writes its queries in
@@ -171,6 +171,51 @@ kitty graphics, so temzdf's terminal frontend shows no page in either;
 the GUI client is the frontend on Windows. WezTerm passes the SGR-pixel
 mouse and, when enabled, the kitty keyboard; Windows Terminal gives cell
 mouse reports, legacy keys and a made-up pixel size.
+
+### WezTerm with the newer ConPTY
+
+Measured on 2026-11-24 in the same VM: a copy of WezTerm's install
+directory with its `conpty.dll` and `OpenConsole.exe` replaced by the
+NuGet 1.25.261109001 ones (as in "Side-loaded conpty.dll"; WezTerm
+loads both from its own directory, and the pane's `OpenConsole.exe` was
+the copy's), the same probe, `--config "front_end='WebGpu'" --config
+enable_kitty_keyboard=true`. Two runs gave the same answers. The guest
+was busy (orphaned `OpenConsole.exe` processes of an earlier run used
+the CPU), so WezTerm's window took about a minute to appear and the
+probe's first write blocked until then; the times below are from after
+that. Raw logs and screenshots: `target/conpty-terminals/conpty125/`
+(not committed).
+
+| Item | WezTerm's `conpty.dll` | NuGet ConPTY 1.25 |
+|---|---|---|
+| kitty graphics `a=T,t=d` | not shown | **shown** (the four quadrants, 96x96 px) |
+| kitty graphics `a=q` | no answer | `APC G i=31;OK ST`, after 35 to 50 ms |
+| DA1 `CSI c` | ConPTY's `CSI ? 61;6;7;22;23;24;28;32;42 c`, at once | **WezTerm's** `CSI ? 65;4;6;18;22 c` (4: sixel), after 15 to 50 ms (once 1.4 s, while busy); the only answer |
+| XTVERSION | WezTerm's, after about 30 ms | WezTerm's, after 15 ms |
+| XTGETTCAP `TN` | no answer | `DCS 1 + r 544E=57657A5465726D ST` ("WezTerm"), after 15 ms |
+| DECRQM 2026 | `0` (ConPTY's) | `2` (WezTerm's) |
+| DECRQM 1016 | `0` (ConPTY's) | `2` (WezTerm's) |
+| kitty keyboard `CSI ? u` | `CSI ? 0 u`; `9` after `CSI > 9 u` | the same |
+| `CSI 14 t` / `16 t` / `18 t` | `4;528;800` / `6;22;10` / `8;24;80`, after about 30 ms (18t at once) | the same, all three after about 33 ms |
+| SGR mouse with 1016 | pixels | pixels: click `CSI < 0;257;205 M`/`m`, drag `32`, wheel `65` |
+| keys with kitty flags 9 | `a`, `CSI 57442;5 u`, `CSI 97;5 u`, `CSI 27;1 u`, `CSI 1;1 A` | the same |
+
+- termpix's one-write probe (`crates/termpix/src/probe.rs`'s queries):
+  every answer came within 3 ms (14 ms in the other run), in the order asked: XTVERSION in one
+  read, then the kitty graphics `OK`, DECRPM 1016 and 2026 (`2`),
+  `CSI ? 0 u`, `16 t` and DA1 last in the next. Nothing arrives before
+  the terminal's DA1 any more, so stopping at DA1 sees all of it.
+- So the NuGet ConPTY makes WezTerm on Windows a kitty-graphics terminal
+  for console programs, with everything termpix probes for. Shipping
+  `conpty.dll` and `OpenConsole.exe` with temzdf is not decided.
+- portable-pty 0.9.0 opens `conpty.dll` by name (`LoadLibrary`'s search
+  order, `PATH` included) before falling back to kernel32's functions. In
+  this VM WezTerm's directory is on the machine `PATH` (`where.exe
+  conpty.dll` finds WezTerm's), so a program using portable-pty there
+  gets WezTerm's `conpty.dll` and `OpenConsole.exe`, not the in-box
+  ConPTY. 59 orphaned `OpenConsole.exe` from WezTerm's directory (flags
+  `--inheritcursor --win32input --resizeQuirk`, portable-pty's), their
+  parents gone, were each using CPU.
 
 ## In temzdf's terminal panes
 

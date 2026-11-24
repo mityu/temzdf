@@ -94,6 +94,12 @@ Known problems:
   | `CSI 14 t` / `16 t` | answered, a fixed 10x20 cell, not the drawn one | the drawn sizes |
   | `CSI 18 t` | the grid | the grid |
 
+  WezTerm with the NuGet ConPTY 1.25 in its directory instead of its own
+  (`doc/terminals/conpty.md`, "WezTerm with the newer ConPTY") shows kitty
+  graphics and answers `a=q`, XTGETTCAP, DA1 (its own, the only one) and
+  DECRQM 2026 / 1016 (`2` / `2`) itself; the rest as above. termpix's
+  one-write probe gets every answer before DA1's.
+
 ## Verified in practice
 
 - kitty 0.49.2 (Xvfb, `scripts/e2e.sh`): Layered backend; one tall image
