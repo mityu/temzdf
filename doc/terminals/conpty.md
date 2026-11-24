@@ -61,8 +61,9 @@ for focus reports itself).
   APC never leaves ConPTY. Capability probes see ConPTY's DA1, which says
   nothing about the real terminal.
 - For temzdf's own terminal frontend on Windows the same holds: drawn with
-  kitty graphics, it cannot show anything through an in-box ConPTY,
-  whatever the terminal is. The GUI client stays the frontend there.
+  kitty graphics, it shows no page through an in-box ConPTY, whatever the
+  terminal is (it runs and says why: "temzdf in a terminal on Windows"
+  below). The GUI client stays the frontend there.
 - A side-loaded `conpty.dll` with its `OpenConsole.exe` changes this, see
   the next section.
 - Inside real terminals (Windows Terminal, WezTerm) the same holds:
@@ -164,7 +165,8 @@ committed).
   Terminal DECRQM 1016, 2026, `16 t` and DA1 came at once, nothing else;
   in WezTerm DECRQM 1016 and 2026 and DA1 came within 2 ms and XTVERSION
   and `16 t` 32 ms later, after DA1: the probe would miss WezTerm's
-  name and cell size.
+  name and cell size. Since 2026-11-24 it reads on after an early DA1
+  ("temzdf in a terminal on Windows" below).
 
 What follows: from a console program on Windows, neither terminal shows
 kitty graphics, so temzdf's terminal frontend shows no page in either;
@@ -216,6 +218,40 @@ that. Raw logs and screenshots: `target/conpty-terminals/conpty125/`
   ConPTY. 59 orphaned `OpenConsole.exe` from WezTerm's directory (flags
   `--inheritcursor --win32input --resizeQuirk`, portable-pty's), their
   parents gone, were each using CPU.
+
+### temzdf in a terminal on Windows
+
+Since 2026-11-24 `temzdf FILE` and `temzdf attach` run in a terminal on
+Windows (`standalone` stays Unix only). termpix's `Tty` there is the
+console (`crates/termpix/src/tty/windows.rs`): VT input and output
+modes, input read as UTF-16 (`ReadConsoleW`) once the records that give
+no characters are dropped, resizes noticed by comparing the console's
+window size whenever the input thread wakes (a size record wakes it; no
+signal), no pixel sizes from the console. On Windows the probe reads on
+for up to 200 ms after a DA1 answer, until the `16 t` answer or a second
+DA1 answer, and does not believe a cell size from a terminal that does
+not name itself (Windows Terminal).
+
+Checked in the VM (Windows 11 build 26300) with the release build and
+`sample.pdf`, started on the desktop by a scheduled task (`cmd /c` a
+batch file running `temzdf -s NAME FILE`) and driven through QMP as in
+the experiments above; screenshots in `target/conpty-terminals/stage2/`
+(not committed):
+
+| Terminal | What temzdf found (its log) | Seen |
+|---|---|---|
+| WezTerm 20240203 with the NuGet ConPTY 1.25 (a copy of its directory) | kitty graphics; WezTerm; 80x24 cells of 10x22 px; composited, over temp files | the pages as images; the wheel, a drag (a 200 px pan), `G`, `gg`, Down, maximizing (126x30, redrawn), Ctrl+C taken as a key; `C-b d` detached, the window closed, exit status 0 |
+| WezTerm 20240203 as installed (its own ConPTY) | no kitty graphics; WezTerm; 10x22 px (its answers, after ConPTY's DA1) | the message that this terminal does not support the kitty graphics protocol, the PDF pane's line; detaching |
+| Windows Terminal 1.24 | no kitty graphics; no name; 120x30 cells of 8x16 px (the fallback: its 10x20 not believed) | the message and the PDF pane's line; Down and `G` (3 / 3); maximizing (138x37); detaching |
+
+The boxes' lines and the title's em dash came out right (UTF-8 output).
+In the tests tuitest runs `temzdf` on the in-box ConPTY
+(`crates/temzdf/tests/attach_windows.rs`): with the probe stopping at
+DA1 the cell size there was the 8x16 fallback, now it is tuitest's 9x18.
+Not tried: closing the terminal's window while temzdf runs (on Unix
+SIGHUP; here no console control handler is set). Output written through
+a C runtime's `stdout`, set up at start, is not moved to the log by
+`StdioRedirect` (`SetStdHandle`); the client renders no PDFs.
 
 ## In temzdf's terminal panes
 

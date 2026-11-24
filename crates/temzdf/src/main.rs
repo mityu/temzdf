@@ -1,9 +1,7 @@
-// The terminal frontend (attach, standalone) is Unix only: on Windows
-// `temzdf` runs servers and talks to them, render-session draws a frame
-// into the mock terminal, and temzdf-gui shows sessions.
+// The standalone viewer (`standalone`, `app.rs`, `headless.rs`) is Unix
+// only; sessions and attaching them to this terminal work everywhere.
 #[cfg(unix)]
 mod app;
-#[cfg(unix)]
 mod attach;
 mod client;
 mod config;
@@ -133,7 +131,6 @@ enum Cmd {
         kind: Standalone,
     },
     /// Attach to a session (the only one when NAME is left out).
-    #[cfg(unix)]
     #[command(alias = "a")]
     Attach {
         name: Option<String>,
@@ -472,7 +469,6 @@ fn main() -> Result<()> {
             };
             return snapshot::render_session(&name, &out, &opts);
         }
-        #[cfg(unix)]
         Some(Cmd::Attach { name, create, file }) => {
             if file.is_some() && !create {
                 bail!("a FILE is for a new session: attach -c NAME FILE");
@@ -569,7 +565,6 @@ fn main() -> Result<()> {
 }
 
 /// How a new session is named.
-#[cfg_attr(not(unix), allow(dead_code))] // no sessions started on Windows
 enum Naming {
     /// By the user (`-s NAME`): taken already is an error.
     Given(String),
@@ -581,7 +576,6 @@ enum Naming {
 
 /// Start a session showing `file` (a shell without), run `started` once its
 /// server listens, and attach to it.
-#[cfg(unix)]
 fn start_session(naming: Naming, file: Option<&std::path::Path>, cli: &Cli, started: impl FnOnce()) -> Result<()> {
     // A missing file first: the more useful error.
     let pane = client::first_pane(file)?;
@@ -595,15 +589,6 @@ fn start_session(naming: Naming, file: Option<&std::path::Path>, cli: &Cli, star
     started();
     println!("{}", attach::attach(&name)?);
     Ok(())
-}
-
-/// No terminal client on Windows yet: temzdf-gui starts and shows sessions.
-#[cfg(not(unix))]
-fn start_session(_: Naming, file: Option<&std::path::Path>, _: &Cli, _: impl FnOnce()) -> Result<()> {
-    // A missing file first: the more useful error.
-    client::first_pane(file)?;
-    let file = file.map_or_else(String::new, |f| format!(" {}", f.display()));
-    bail!("no terminal client on Windows yet: show the session in a window with `temzdf-gui{file}`")
 }
 
 /// `temzdf standalone pdf`: the viewer in this terminal, or one frame of it.
@@ -670,13 +655,12 @@ mod tests {
         assert!(parse_geometry("80", "8x16").is_err());
     }
 
-    // Standalone and attach: Unix only.
-    #[cfg(unix)]
     #[test]
     fn options_that_do_not_apply_are_named() {
         let cli = |args: &[&str]| Cli::try_parse_from(std::iter::once("temzdf").chain(args.iter().copied())).unwrap();
-        // The viewer's options are the viewer's.
+        // The viewer's options are the viewer's (standalone: Unix only).
         assert!(Cli::try_parse_from(["temzdf", "-s", "x", "--page", "3"]).is_err());
+        #[cfg(unix)]
         assert!(Cli::try_parse_from(["temzdf", "standalone", "pdf", "a.pdf", "--page", "3", "--clean"]).is_ok());
         assert_eq!(
             session_only_options(&cli(&["attach", "x", "--clean", "--editor", "vi"]), true),

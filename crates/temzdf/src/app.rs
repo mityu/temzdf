@@ -10,7 +10,7 @@ use anyhow::{Result, bail};
 use temzdf_server::action::PaneSpec;
 use temzdf_server::forward::Forward;
 use temzdf_server::session::{EventSink, Outcome, Session, SessionEvent};
-use temzdf_tty::{Input, Presented, TtyFrontend};
+use temzdf_tty::{Input, Presented};
 use termpix::tty::TermEvent;
 
 const FRAME: Duration = Duration::from_millis(16);
@@ -35,22 +35,6 @@ pub enum AppEvent {
     Session(SessionEvent),
     /// Opening an external link failed.
     OpenFailed(String),
-}
-
-/// The zlib level for inline image transfers: `$TEMZDF_ZLIB_LEVEL`, else
-/// termpix's default (do not use 1 with Ghostty 1.3.1, see
-/// doc/terminals/terminal-compat.md).
-pub fn zlib_level() -> u32 {
-    std::env::var("TEMZDF_ZLIB_LEVEL")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .map_or(termpix::graphics::DEFAULT_ZLIB_LEVEL, |l| l.min(9))
-}
-
-/// Open this terminal as a frontend: what detection found (and the
-/// `TERMPIX_BACKEND`/`TERMPIX_MEDIUM` overrides).
-pub fn open_frontend() -> Result<TtyFrontend> {
-    TtyFrontend::open(|caps| (caps.backend(), caps.medium(), zlib_level()))
 }
 
 /// An event sink feeding `tx`.
@@ -79,7 +63,7 @@ pub fn run(path: &Path, mut opts: Options) -> Result<()> {
     // Libraries (MuPDF, SyncTeX) print warnings to stdout/stderr, which would
     // scribble over the screen; send them to a log file while the UI runs.
     let _stdio = log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
-    let mut front = open_frontend()?;
+    let mut front = crate::attach::open_frontend()?;
     let (tx, rx) = mpsc::channel::<AppEvent>();
     front.spawn_input(tx.clone(), AppEvent::Term)?;
     let name = session_name(path);

@@ -1,5 +1,5 @@
-//! Attaching this terminal to a session (the terminal frontend, Unix only:
-//! on Windows temzdf-gui shows sessions).
+//! Attaching this terminal to a session (the terminal frontend; on Windows
+//! the console, see `termpix::tty`).
 
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -28,11 +28,29 @@ impl Event {
     }
 }
 
+/// The zlib level for inline image transfers: `$TEMZDF_ZLIB_LEVEL`, else
+/// termpix's default (do not use 1 with Ghostty 1.3.1, see
+/// doc/terminals/terminal-compat.md).
+pub fn zlib_level() -> u32 {
+    std::env::var("TEMZDF_ZLIB_LEVEL")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .map_or(termpix::graphics::DEFAULT_ZLIB_LEVEL, |l| l.min(9))
+}
+
+/// Open this terminal as a frontend: what detection found (and the
+/// `TERMPIX_BACKEND`/`TERMPIX_MEDIUM` overrides).
+pub fn open_frontend() -> Result<temzdf_tty::TtyFrontend> {
+    temzdf_tty::TtyFrontend::open(|caps| (caps.backend(), caps.medium(), zlib_level()))
+}
+
 /// Fail unless there is a terminal to attach from (checked before starting
 /// a session: one started and never attached would stay behind, another on
-/// each try, e.g. from an editor's background job).
+/// each try, e.g. from an editor's background job). On Windows: a console
+/// (a program started without one, detached, has none).
 pub fn need_terminal() -> Result<()> {
-    std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty").map(drop).map_err(|e| {
+    let tty = if cfg!(windows) { "CONOUT$" } else { "/dev/tty" };
+    std::fs::OpenOptions::new().read(true).write(true).open(tty).map(drop).map_err(|e| {
         anyhow::anyhow!(
             "no terminal to show the session in ({e}): start temzdf in a terminal (or temzdf-gui); \
              --forward from an editor reaches a session that shows the PDF already"
@@ -75,8 +93,8 @@ pub fn attach(name: &str) -> Result<String> {
     {
         bail!("this terminal is in session {own:?}, which {name:?} shows: attaching would show it inside itself");
     }
-    let _stdio = crate::app::log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
-    let mut front = crate::app::open_frontend()?;
+    let _stdio = temzdf_client::log_path().and_then(|p| termpix::tty::StdioRedirect::to_file(&p).ok());
+    let mut front = open_frontend()?;
     let (tx, rx) = mpsc::channel::<Event>();
     front.spawn_input(tx.clone(), Event::Term)?;
     let conn = Connection::open(name, tx, Event::from_server, || {})?;

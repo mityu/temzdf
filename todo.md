@@ -275,8 +275,9 @@ server on one `Session`). Next and open:
     and turns pixel mouse reports into cells); WezTerm with the NuGet
     ConPTY 1.25 swapped in shows them and answers every query itself.
     So the terminal frontend on Windows needs WezTerm with a newer
-    ConPTY (or a Windows that ships one); with an old ConPTY termpix's
-    probe must not stop at the ConPTY's own early DA1.
+    ConPTY (or a Windows that ships one) for images; with an old ConPTY
+    termpix's probe reads on past the ConPTY's own early DA1 (done,
+    2026-11-24).
     Terminal panes on Windows start with the in-box ConPTY through
     portable-pty, not a shipped one (the user, 2026-11-23): only images
     from programs in terminal panes are lost, PDF panes and the GUI draw
@@ -323,15 +324,17 @@ server on one `Session`). Next and open:
     `temzdf-testhelper` and run there too (2026-11-24, but for those
     ignored with their reason), tests of their own run cmd
     (`temzdf-term`'s `tests::conpty`). The
-    terminal frontend's real terminal (termpix's `Tty`, so `attach` and
-    `standalone`) is Unix only; termpix and `temzdf-tty` build and test
-    on Windows and `render-session` works there (2026-11-24; the shared
-    memory medium is Unix only; next: a console `Tty` in
-    `crates/termpix/src/tty/windows.rs`). On Windows `temzdf` is the server
-    and the client commands, `temzdf FILE` points at `temzdf-gui`,
-    inverse search runs `cmd /S /C` and links open through rundll32's
-    `url.dll`. With that, `cargo check --workspace --all-targets
-    --exclude termpix --exclude temzdf-tty` passes in the VM
+    terminal frontend runs on Windows' console (termpix's `Tty` in
+    `crates/termpix/src/tty/windows.rs`, 2026-11-24): `temzdf FILE` and
+    `attach` in a terminal, pages as images in WezTerm with ConPTY 1.25,
+    the message about missing kitty graphics elsewhere ("temzdf in a
+    terminal on Windows" in `doc/terminals/conpty.md`; the shared memory
+    medium is Unix only). Still to do: `standalone` on Windows (Unix
+    only for now, the user's choice, 2026-11-24: `app.rs` and
+    `headless.rs` stay `cfg(unix)`). Inverse search runs `cmd /S /C` and
+    links open through rundll32's `url.dll`. With that, `cargo check
+    --workspace --all-targets --exclude termpix --exclude temzdf-tty`
+    passes in the VM
     (2026-11-23). Since then the gate on Windows also tests `temzdf`,
     `temzdf-pdfview`, `temzdf-script`, `temzdf-script-runner`,
     `temzdf-server`, `temzdf-term`,

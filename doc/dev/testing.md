@@ -436,6 +436,12 @@ particular program in the first pane points `SHELL` at a script
 hand-written expected screens may go to files next to them, but never record
 snapshots automatically.
 
+`tui.rs` is Unix only. On Windows `crates/temzdf/tests/attach_windows.rs`
+runs `temzdf` in tuitest there, which is the in-box ConPTY (no kitty
+graphics, its own early DA1 answer): the message about the missing
+graphics, keys, a resize, detaching and attaching again. Its PDF is
+written by the test (no TeX for the fixtures there).
+
 Clients take pixels in shared memory by default; tests whose frames carry
 pixels run both ways (`both_pixel_paths!`: `NAME::shared` and `NAME::socket`,
 through `Env::with_pixels` and `TEMZDF_PIXELS`), and

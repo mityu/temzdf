@@ -353,12 +353,15 @@ git log), and why:
   asked (it would panic), and the split, float or tab reports that to
   the client, as any pane that cannot start does. The shell is
   `%COMSPEC%` (cmd.exe; the user, 2026-11-23). The terminal frontend
-  (`termpix`'s `Tty`, so `attach` and `standalone`) is Unix only too:
-  `termpix` and `temzdf-tty` build there, but opening the terminal fails
-  with `Unsupported`. There `temzdf` runs servers (`temzdf server`,
-  which temzdf-gui starts), the client commands (`ls`, `kill-session`,
-  `action`, `eval`, ...) and `render-session` (the mock terminal), and
-  `temzdf FILE` says to use `temzdf-gui FILE`. Inverse search runs
+  runs on the console (`termpix`'s `Tty`, 2026-11-24): `temzdf FILE` and
+  `attach` work in a terminal, with images only where the terminal and
+  its ConPTY pass kitty graphics (WezTerm with a newer ConPTY; elsewhere
+  the message saying why, as on Unix; "temzdf in a terminal on Windows"
+  in `doc/terminals/conpty.md`). `standalone` is Unix only (the user,
+  2026-11-24). `temzdf` also runs servers (`temzdf server`, which
+  temzdf-gui starts), the client commands (`ls`, `kill-session`,
+  `action`, `eval`, ...) and `render-session` (the mock terminal).
+  Inverse search runs
   `cmd /S /C "COMMAND"`, and links open with `rundll32
   url.dll,FileProtocolHandler` (`explorer` exits with 1 when it worked;
   `cmd /C start` would take `&` in a link as its own).

@@ -11,13 +11,11 @@ use temzdf_server::daemon;
 
 use temzdf_client::{REQUEST_TIMEOUT, exit_message, utf8};
 pub use temzdf_client::{first_pane, request};
-// Starting sessions and attaching: the terminal frontend's (Unix only).
-#[cfg(unix)]
+// Starting sessions and attaching: the terminal frontend's.
 pub use temzdf_client::{auto_name, name_for, resolve};
 
 /// Start a server for session `name` (see [`temzdf_client::spawn_server`])
 /// with this executable.
-#[cfg(unix)]
 pub fn spawn_server(
     name: &str,
     pane: &[String],

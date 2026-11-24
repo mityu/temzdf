@@ -99,6 +99,14 @@ Known problems:
   graphics and answers `a=q`, XTGETTCAP, DA1 (its own, the only one) and
   DECRQM 2026 / 1016 (`2` / `2`) itself; the rest as above. termpix's
   one-write probe gets every answer before DA1's.
+- temzdf in those terminals (2026-11-24, termpix's console `Tty`;
+  `doc/terminals/conpty.md`, "temzdf in a terminal on Windows"): pages as
+  images, the wheel, drags, keys and resizes in WezTerm with ConPTY 1.25;
+  the message about missing kitty graphics in WezTerm with its own ConPTY
+  and in Windows Terminal. On Windows the probe reads on after an early
+  DA1 (an older ConPTY's own answer) until the `16 t` answer, and takes
+  no cell size from a terminal that does not answer XTVERSION (Windows
+  Terminal's is made up): there the 8x16 fallback.
 
 ## Verified in practice
 

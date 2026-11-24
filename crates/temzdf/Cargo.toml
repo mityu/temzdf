@@ -19,10 +19,8 @@ temzdf-tty.workspace = true
 termpix.workspace = true
 termpix-core.workspace = true
 
-# Leaving the terminal's session when a server starts. The terminal
-# frontend (attach, standalone) is Unix only: on Windows `temzdf` is the
-# server, the client commands and render-session (the mock terminal);
-# temzdf-gui shows sessions there.
+# Leaving the terminal's session when a server starts (Windows: the
+# client starts the server detached).
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", features = ["process"] }
 
