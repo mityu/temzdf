@@ -144,6 +144,10 @@ impl Pty {
         sink: Sink,
     ) -> io::Result<Self> {
         let (reader, writer) = streams(&*master)?;
+        // The reader answers ConPTY's startup query on the same pipe, also
+        // after the writer is gone ([`StartupQuery`]).
+        #[cfg(windows)]
+        let writer = Arc::new(Mutex::new(writer));
         let input = Arc::new(Queue::default());
         let backlog = Arc::new(Backlog::default());
         let stop = Arc::new(AtomicBool::new(false));
@@ -152,6 +156,8 @@ impl Pty {
         let pid = child.process_id().map(|p| p as i32);
         {
             let (input, stop) = (input.clone(), stop.clone());
+            #[cfg(windows)]
+            let writer = writer.clone();
             std::thread::Builder::new()
                 .name("temzdf-pty-write".into())
                 .spawn(move || write_loop(writer, &input, &stop))?;
@@ -159,7 +165,10 @@ impl Pty {
         {
             let (sink, backlog, stop, done) = (sink.clone(), backlog.clone(), stop.clone(), reader_done.clone());
             std::thread::Builder::new().name("temzdf-pty-read".into()).spawn(move || {
+                #[cfg(unix)]
                 read_loop(reader, &sink, &backlog, &stop);
+                #[cfg(windows)]
+                read_loop(reader, &sink, &backlog, &stop, &writer);
                 *done.0.lock().unwrap_or_else(|p| p.into_inner()) = true;
                 done.1.notify_all();
             })?;
@@ -365,9 +374,9 @@ fn write_loop(mut pty: impl Write + AsFd, input: &Queue, stop: &AtomicBool) {
 /// blocks: a program that stops reading holds this thread up, until
 /// closing ConPTY (Pty's drop) makes the write fail.
 #[cfg(windows)]
-fn write_loop(mut pty: impl Write, input: &Queue, stop: &AtomicBool) {
+fn write_loop(pty: Arc<Mutex<Box<dyn Write + Send>>>, input: &Queue, stop: &AtomicBool) {
     while let Some(chunk) = input.pop() {
-        if stop.load(Ordering::SeqCst) || pty.write_all(&chunk).is_err() {
+        if stop.load(Ordering::SeqCst) || pty.lock().unwrap_or_else(|p| p.into_inner()).write_all(&chunk).is_err() {
             return;
         }
     }
@@ -433,29 +442,135 @@ fn read_loop(mut pty: File, sink: &Sink, backlog: &Backlog, stop: &AtomicBool) {
 /// Read ConPTY's output until it is closed. Its pipe blocks and has no
 /// timeout, so the terminal going away is noticed only when the read
 /// ends; until then output is read and dropped: closing ConPTY can wait
-/// until what it still had to write was read.
+/// until what it still had to write was read. ConPTY's startup cursor
+/// query is answered here ([`StartupQuery`]).
 #[cfg(windows)]
-fn read_loop(mut pty: impl Read, sink: &Sink, backlog: &Backlog, stop: &AtomicBool) {
+fn read_loop(
+    mut pty: impl Read,
+    sink: &Sink,
+    backlog: &Backlog,
+    stop: &AtomicBool,
+    input: &Mutex<Box<dyn Write + Send>>,
+) {
     let mut buf = vec![0u8; 64 << 10];
     let mut sending = true;
+    let mut query = StartupQuery::default();
     loop {
         match pty.read(&mut buf) {
             // End of file, or a broken pipe once ConPTY is closed.
             Ok(0) => return,
-            Ok(n) if sending && !stop.load(Ordering::SeqCst) => {
-                backlog.reserve(n, stop);
-                sending = sink(TermEvent::Output(buf[..n].to_vec()));
+            Ok(n) => {
+                // Also once the pane is gone: a host still waiting for the
+                // answer would never end.
+                let (out, asked) = query.feed(&buf[..n]);
+                if asked {
+                    let _ = input.lock().unwrap_or_else(|p| p.into_inner()).write_all(StartupQuery::ANSWER);
+                }
+                if sending && !stop.load(Ordering::SeqCst) && !out.is_empty() {
+                    backlog.reserve(out.len(), stop);
+                    sending = sink(TermEvent::Output(out));
+                }
             }
-            Ok(_) => {}
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => return,
         }
     }
 }
 
+/// ConPTY's cursor query at its start, answered by the pty itself.
+///
+/// portable-pty opens ConPTY with `PSEUDOCONSOLE_INHERIT_CURSOR`, so the
+/// console host first asks for the cursor (`CSI 6 n`) and does nothing
+/// else until it is answered: neither the program's output nor closing
+/// the pseudoconsole. A pane closed (or a server ended) before the
+/// terminal emulator saw the query left the host and its program running
+/// for good (a Windows 11 26100 conhost waits; the 2023 OpenConsole of
+/// WezTerm spins a core). The query is answered here as it arrives, with
+/// the top left corner, where a new pane's cursor is, and taken out of the
+/// output so that the terminal emulator does not answer it again.
+///
+/// Only the start of the output is looked at (the first [`Self::WINDOW`]
+/// bytes, the query possibly split between reads), so a program's own
+/// query later reaches the terminal emulator. The answer goes only after
+/// the query: one sent ahead takes the program's first key under
+/// `WIN32_INPUT_MODE` (psmux#313). This works around portable-pty; it can
+/// go once portable-pty can open ConPTY without the flag (wezterm#8256),
+/// as Windows Terminal, Alacritty and VS Code do.
+#[derive(Default)]
+#[cfg_attr(not(windows), allow(dead_code))]
+struct StartupQuery {
+    /// Bytes of the output so far that may still be the start of the query.
+    held: Vec<u8>,
+    /// Bytes of the output looked at.
+    seen: usize,
+    done: bool,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl StartupQuery {
+    const QUERY: &'static [u8] = b"\x1b[6n";
+    const ANSWER: &'static [u8] = b"\x1b[1;1R";
+    const WINDOW: usize = 256;
+
+    /// The output to pass on for `chunk`, and whether the query came now.
+    fn feed(&mut self, chunk: &[u8]) -> (Vec<u8>, bool) {
+        if self.done {
+            return (chunk.to_vec(), false);
+        }
+        let start = self.seen - self.held.len();
+        self.seen += chunk.len();
+        let mut bytes = std::mem::take(&mut self.held);
+        bytes.extend_from_slice(chunk);
+        let look = bytes.len().min((Self::WINDOW + Self::QUERY.len()).saturating_sub(start));
+        if let Some(at) = bytes[..look].windows(Self::QUERY.len()).position(|w| w == Self::QUERY) {
+            self.done = true;
+            bytes.drain(at..at + Self::QUERY.len());
+            return (bytes, true);
+        }
+        if self.seen >= Self::WINDOW + Self::QUERY.len() {
+            self.done = true;
+            return (bytes, false);
+        }
+        // Hold back an end that may be the query's beginning.
+        let keep = (1..Self::QUERY.len()).rev().find(|&k| bytes.ends_with(&Self::QUERY[..k])).unwrap_or(0);
+        self.held = bytes.split_off(bytes.len() - keep);
+        (bytes, false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_startup_query_is_answered_and_taken_out_once() {
+        let mut q = StartupQuery::default();
+        assert_eq!(q.feed(b"\x1b[?9001h\x1b[6n\x1b[chello"), (b"\x1b[?9001h\x1b[chello".to_vec(), true));
+        // A program's own query later is the terminal emulator's.
+        assert_eq!(q.feed(b"\x1b[6n"), (b"\x1b[6n".to_vec(), false));
+    }
+
+    #[test]
+    fn the_startup_query_may_be_split_between_reads() {
+        let mut q = StartupQuery::default();
+        assert_eq!(q.feed(b"ab\x1b"), (b"ab".to_vec(), false));
+        assert_eq!(q.feed(b"["), (Vec::new(), false));
+        assert_eq!(q.feed(b"6nc"), (b"c".to_vec(), true));
+        let mut q = StartupQuery::default();
+        assert_eq!(q.feed(b"\x1b["), (Vec::new(), false));
+        assert_eq!(q.feed(b"1mx"), (b"\x1b[1mx".to_vec(), false), "not the query after all");
+    }
+
+    #[test]
+    fn only_the_start_of_the_output_is_looked_at() {
+        let mut q = StartupQuery::default();
+        let text = vec![b'x'; StartupQuery::WINDOW + 10];
+        assert_eq!(q.feed(&text), (text.clone(), false));
+        assert_eq!(q.feed(b"\x1b[6n"), (b"\x1b[6n".to_vec(), false));
+        let mut q = StartupQuery::default();
+        assert_eq!(q.feed(b"x"), (b"x".to_vec(), false));
+        assert_eq!(q.feed(b"\x1b[6n"), (Vec::new(), true), "still near the start");
+    }
 
     /// After `supported`, a DLL named without a path is not found on
     /// `PATH` (where WezTerm's `conpty.dll` was picked up). A copy of a

@@ -1418,6 +1418,27 @@ mod tests {
     mod conpty {
         use super::*;
 
+        /// The program's output comes without the terminal emulator ever
+        /// seeing ConPTY's output (nothing answers its cursor query but the
+        /// pty), and the query is not in it. Without the pty's answer the
+        /// console host waits for one, and a pane closed meanwhile left it
+        /// and the program running.
+        #[test]
+        fn the_program_starts_although_nobody_reads_its_terminal() {
+            let (_pane, rx) = start(&helper(&["print", "ready\\r\\n", "sleep", "30000"]));
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let mut out = Vec::new();
+            while !String::from_utf8_lossy(&out).contains("ready") {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                match rx.recv_timeout(left) {
+                    Ok(TermEvent::Output(bytes)) => out.extend(bytes),
+                    Ok(TermEvent::Exited) => panic!("exited: {:?}", String::from_utf8_lossy(&out)),
+                    Err(_) => panic!("no output in 10 s: {:?}", String::from_utf8_lossy(&out)),
+                }
+            }
+            assert!(!out.windows(4).any(|w| w == b"\x1b[6n"), "the query reached the terminal");
+        }
+
         /// cmd with the prompt `>`, waited for.
         fn cmd() -> (TermBuffer, mpsc::Receiver<TermEvent>) {
             let (mut pane, rx) = start(&["cmd", "/k", "prompt $g"]);
@@ -1427,7 +1448,7 @@ mod tests {
         }
 
         #[test]
-        fn output_arrives_once_the_pane_answers_conptys_query() {
+        fn a_programs_output_and_exit_reach_the_pane() {
             let (mut pane, rx) = start(&["cmd", "/c", "echo", "hello-conpty"]);
             let deadline = Instant::now() + Duration::from_secs(10);
             let mut raw = Vec::new();
@@ -1441,9 +1462,9 @@ mod tests {
                     Err(_) => {}
                 }
             }
-            // ConPTY inherits the cursor: it asks where it is and shows
-            // nothing before the terminal answers.
-            assert!(contains(&raw, b"\x1b[6n"), "ConPTY asked for the cursor: {:?}", String::from_utf8_lossy(&raw));
+            // ConPTY's cursor query was answered by the pty, not the pane
+            // (`the_program_starts_although_nobody_reads_its_terminal`).
+            assert!(!contains(&raw, b"\x1b[6n"), "{:?}", String::from_utf8_lossy(&raw));
             let rows = text(&mut pane);
             assert!(rows.iter().any(|l| l == "hello-conpty"), "{rows:?}");
             assert!(pane.exited(), "the program's exit was reported");
