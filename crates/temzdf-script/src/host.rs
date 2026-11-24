@@ -571,6 +571,32 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
             s.send(&FromHost::CodeDone { id: run.id, result: CodeResult { printed: run.printed, result } });
         })?,
     )?;
+    // UTF-8 for the prelude's TextEncoder and TextDecoder (text_codec.ts).
+    host.set(
+        "utf8Encode",
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, text: String| {
+            rquickjs::TypedArray::<u8>::new(ctx, text.into_bytes())
+        })?,
+    )?;
+    host.set(
+        "utf8Decode",
+        Function::new(
+            ctx.clone(),
+            |ctx: Ctx<'js>, bytes: rquickjs::TypedArray<'js, u8>, fatal: bool, stream: bool| {
+                // SAFETY: no JavaScript runs while the slice is alive (it is
+                // decoded into a string of its own first).
+                let decoded = crate::text_codec::decode(unsafe { bytes.as_slice() }, fatal, stream);
+                let Some((text, keep)) = decoded else {
+                    return Err(Exception::throw_type(&ctx, "The encoded data was not valid for encoding utf-8"));
+                };
+                // [the text, how many bytes at the end it left for later]
+                let out = rquickjs::Array::new(ctx)?;
+                out.set(0, text)?;
+                out.set(1, keep as f64)?;
+                Ok::<_, rquickjs::Error>(out)
+            },
+        )?,
+    )?;
     ctx.globals().set("__host", host)?;
     ctx.eval::<(), _>(PRELUDE)?;
     ctx.eval::<(), _>(POLYFILLS)

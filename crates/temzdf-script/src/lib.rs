@@ -15,6 +15,8 @@ pub mod native_fs;
 mod paths;
 #[cfg(feature = "host")]
 pub mod strip;
+#[cfg(feature = "host")]
+mod text_codec;
 pub mod types;
 
 #[cfg(feature = "host")]

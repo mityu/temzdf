@@ -36,6 +36,27 @@ declare class AbortController {
   abort(reason?: unknown): void;
 }
 
+// The WHATWG Encoding Standard's TextEncoder and TextDecoder, UTF-8 only
+// (src/text_codec.ts).
+declare class TextEncoder {
+  readonly encoding: "utf-8";
+  /** `input`'s UTF-8 bytes (lone surrogates as U+FFFD). */
+  encode(input?: string): Uint8Array;
+  /** As much of `source` as fits in `destination`, whole characters only: how many UTF-16 code units it read and bytes it wrote. */
+  encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
+}
+declare class TextDecoder {
+  /** `label`: a name of UTF-8 ("utf-8", "utf8", ...); any other is a RangeError. */
+  constructor(label?: string, options?: { fatal?: boolean; ignoreBOM?: boolean });
+  readonly encoding: "utf-8";
+  /** Invalid bytes throw a TypeError (else they are U+FFFD). */
+  readonly fatal: boolean;
+  /** A byte order mark at the start is kept (else dropped). */
+  readonly ignoreBOM: boolean;
+  /** `input` as text; with `stream`, an incomplete character at its end waits for the next call. */
+  decode(input?: ArrayBufferLike | ArrayBufferView, options?: { stream?: boolean }): string;
+}
+
 // The WHATWG URL Standard's URL and URLSearchParams (runtime/polyfills.ts).
 declare class URL {
   constructor(url: string | URL, base?: string | URL);

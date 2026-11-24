@@ -16,6 +16,7 @@ import type { Takes } from "../runtime/lib/validate";
 import * as z from "../runtime/lib/zod";
 import { focusedPaneInfo } from "../runtime/lib/panes";
 import { check, func, guard, isNullish, options, parse } from "../runtime/lib/validate";
+import { install as installTextCodec, type Utf8 } from "./text_codec";
 
 /** The native functions host.rs gives this prelude (`install`), and only
  * it: taken off the globals at once. */
@@ -53,7 +54,7 @@ type Host = {
   compile(task: number, name: string, code: string): (scope: object, view: object) => () => Promise<unknown>;
   /** `temzdf eval`'s code ended: `{ value }` or `{ error }` (JSON). */
   evalDone(task: number, outcome: string): void;
-};
+} & Utf8;
 type Temzdf = typeof import("temzdf");
 type Actions = Temzdf["action"];
 /** The session's context token, as it came in JSON (null: none). */
@@ -64,6 +65,7 @@ type Answer = unknown;
 const g = globalThis as unknown as Record<string, unknown>;
 const host = g.__host as Host;
 delete g.__host;
+installTextCodec(g, host);
 
 // A failed command's error (marked by the host) as the command said it.
 const errorJson = (e: unknown): string =>
