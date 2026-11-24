@@ -4171,6 +4171,7 @@ fn every_declared_option_reads_and_writes_back() {
         ("clipboard", &["all", "copies", "none"]),
         ("markdownmode", &["text", "graphics"]),
         ("forwardflash", &["input"]),
+        ("fileIgnoreCase", &["auto"]),
     ] {
         for v in values {
             let v = ScriptValue::Str((*v).into());
@@ -4178,6 +4179,12 @@ fn every_declared_option_reads_and_writes_back() {
             assert_eq!(s.get_option(name), Ok(v), "{name}");
         }
     }
+    // fileIgnoreCase takes true and false as well as "auto".
+    for v in [ScriptValue::Bool(true), ScriptValue::Bool(false)] {
+        s.set_option("fileIgnoreCase", &v).unwrap();
+        assert_eq!(s.get_option("fileIgnoreCase"), Ok(v));
+    }
+    assert!(s.set_option("fileIgnoreCase", &ScriptValue::Str("yes".into())).is_err());
     // forwardflash takes milliseconds as well as "input", nothing else.
     s.set_option("forwardflash", &ScriptValue::Num(250.0)).unwrap();
     assert_eq!(s.get_option("forwardflash"), Ok(ScriptValue::Num(250.0)));

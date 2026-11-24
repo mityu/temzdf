@@ -31,6 +31,8 @@ const SHOWTABLINE: &[(&str, ShowTabline)] =
     &[("never", ShowTabline::Never), ("auto", ShowTabline::Auto), ("always", ShowTabline::Always)];
 /// `reloadanchor`: whether reloads keep the line being read.
 const RELOADANCHOR: &[(&str, bool)] = &[("position", false), ("text", true)];
+/// `fileIgnoreCase`'s names (it takes true and false as well).
+const FILEIGNORECASE: &[(&str, temzdf_paths::IgnoreCase)] = &[("auto", temzdf_paths::IgnoreCase::Auto)];
 /// `showstatusline`: whether the window's status line shows.
 const SHOWSTATUSLINE: &[(&str, bool)] = &[("never", false), ("always", true)];
 
@@ -313,6 +315,14 @@ impl Session {
             "scrolloff" => o.text.scrolloff = num()? as usize,
             "undofile" => o.undofile = flag()?,
             "swapfile" => o.swapfile = flag()?,
+            "fileIgnoreCase" => {
+                o.fileignorecase = match value {
+                    ScriptValue::Bool(true) => temzdf_paths::IgnoreCase::Yes,
+                    ScriptValue::Bool(false) => temzdf_paths::IgnoreCase::No,
+                    v => by_name(FILEIGNORECASE, v.as_str())
+                        .ok_or("o.fileIgnoreCase: expected \"auto\", true or false")?,
+                }
+            }
             "markdownmode" => {
                 o.markdownmode = match text()?.as_deref() {
                     Some(m @ ("text" | "graphics")) => m.to_owned(),
@@ -380,6 +390,11 @@ impl Session {
             "scrolloff" => ScriptValue::Num(o.text.scrolloff as f64),
             "undofile" => ScriptValue::Bool(o.undofile),
             "swapfile" => ScriptValue::Bool(o.swapfile),
+            "fileIgnoreCase" => match o.fileignorecase {
+                temzdf_paths::IgnoreCase::Yes => ScriptValue::Bool(true),
+                temzdf_paths::IgnoreCase::No => ScriptValue::Bool(false),
+                auto => name_in(FILEIGNORECASE, &auto),
+            },
             "markdownmode" => ScriptValue::Str(o.markdownmode.clone()),
             "updatetime" => ScriptValue::Num(o.updatetime.as_millis() as f64),
             "undodir" => {

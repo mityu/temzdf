@@ -298,6 +298,12 @@ declare module "temzdf" {
     undofile: boolean;
     /** Keep text buffers' text in swap files while they are edited (recovering after a crash). */
     swapfile: boolean;
+    /**
+     * Whether names of files that differ only in case name the same file, for a file not there yet
+     * (two files that are there are the same file when they are one on disk): "auto" asks the file
+     * system of the nearest directory there (else: yes on Windows and macOS, no elsewhere).
+     */
+    fileIgnoreCase: "auto" | boolean;
     /** The mode Markdown viewers open in (markdown.open): as text, or in pixels like a PDF page. */
     markdownmode: "text" | "graphics";
     /** Milliseconds after the last change before the swap file is written. */
