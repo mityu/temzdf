@@ -21,7 +21,7 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
 | `termpix-ui` | - |
 | `temzdf-scene` | `termpix-core` |
 | `temzdf-protocol` | `temzdf-scene`, `termpix-core` |
-| `temzdf-client` | `temzdf-protocol`, `temzdf-scene`, `termpix-core` |
+| `temzdf-client` | `temzdf-paths`, `temzdf-protocol`, `temzdf-scene`, `termpix-core` |
 | `temzdf-paths` | - |
 | `temzdf-watchfs` | `temzdf-paths` (and `notify`) |
 | `temzdf-pdfcore` | `temzdf-scene`, `temzdf-paths`, `temzdf-watchfs` |

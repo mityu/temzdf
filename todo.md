@@ -355,7 +355,11 @@ server on one `Session`). Next and open:
     (`C%%Users%...`). The server runs there (the GUI's e2e, terminal
     panes, the pane tests); what it still lacks: the table in "The
     server on Windows" in `doc/survey/windows-port.md`, among them
-    `file:` links that do not open. Paths compare as the host's file
+    `file:` links that do not open (since 2026-11-24 documents open
+    and other files show in Explorer; next: a handler for `file:` links
+    written in the configuration, and a look at whether the Unix list
+    of what openers launch has the same gaps: association-run files,
+    `.exe` through Wine). Paths compare as the host's file
     system does since 2026-11-24 (`temzdf-paths`, `o.fileIgnoreCase`):
     tested on Linux and in the Windows VM; not checked on macOS yet
     (the default APFS should ignore case through `pathconf`, and

@@ -5708,6 +5708,7 @@ name = "temzdf-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "temzdf-paths",
  "temzdf-protocol",
  "temzdf-scene",
  "termpix-core",

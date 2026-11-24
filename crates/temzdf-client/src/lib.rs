@@ -437,86 +437,135 @@ pub fn run_shell(cmd: &str) {
     }
 }
 
+/// What following a link does.
+#[derive(Debug, PartialEq)]
+enum Link {
+    /// The opener gets this URI.
+    Open(String),
+    /// Windows: Explorer shows the file, selected, and does not open it.
+    #[cfg(windows)]
+    Reveal(PathBuf),
+    /// Nothing happens, for this reason.
+    Refuse(String),
+}
+
 /// Links that may be opened: URIs (a scheme first, so never something an
 /// opener could take for an option) of schemes meant for viewing. They come
 /// from documents and from programs in terminal panes, neither trusted, so a
 /// `file:` link must name a document, not something the opener would run
-/// (see [`viewable_file`]).
+/// (see [`file_link`]).
 pub fn openable(uri: &str) -> bool {
-    let Some((scheme, rest)) = uri.split_once(':') else { return false };
-    match scheme.to_ascii_lowercase().as_str() {
-        "http" | "https" | "mailto" | "ftp" => true,
-        // Not on Windows yet: neither `file:///C:/...` paths nor what an
-        // opener there would run are worked out, so none open.
-        "file" => cfg!(unix) && file_path(rest).is_some_and(|p| viewable_file(&p)),
-        _ => false,
-    }
+    matches!(link(uri), Link::Open(_))
 }
 
-/// The local path of a `file:` URI's rest (`///p`, `//localhost/p`, `/p`),
-/// percent-decoded; none for another host.
-fn file_path(rest: &str) -> Option<PathBuf> {
-    let path = match rest.strip_prefix("//") {
-        Some(r) => {
-            let (host, path) = r.split_at(r.find('/')?);
-            if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
-                return None;
-            }
-            path
-        }
-        None => rest,
+fn link(uri: &str) -> Link {
+    let refuse = || {
+        Link::Refuse(format!("not opening {uri}: only http, https, mailto, ftp links and file links to documents open"))
     };
-    let path = path.split(['?', '#']).next()?;
-    let mut bytes = Vec::new();
-    let mut it = path.bytes();
-    while let Some(b) = it.next() {
-        if b == b'%' {
-            let hex = [it.next()?, it.next()?];
-            bytes.push(u8::from_str_radix(std::str::from_utf8(&hex).ok()?, 16).ok()?);
-        } else {
-            bytes.push(b);
-        }
+    let Some((scheme, _)) = uri.split_once(':') else { return refuse() };
+    match scheme.to_ascii_lowercase().as_str() {
+        "http" | "https" | "mailto" | "ftp" => Link::Open(uri.to_owned()),
+        "file" => file_link(uri).unwrap_or_else(refuse),
+        _ => refuse(),
     }
-    #[cfg(unix)]
-    let path = <std::ffi::OsString as std::os::unix::ffi::OsStringExt>::from_vec(bytes);
-    #[cfg(not(unix))]
-    let path = String::from_utf8(bytes).ok()?;
-    Some(PathBuf::from(path))
 }
 
-/// Whether a local file is safe to hand to the opener: a regular file (not a
-/// directory: macOS `.app` bundles are those), not executable, and not of a
-/// kind openers launch (`.desktop` on Linux, `.command` on macOS, ...).
-fn viewable_file(path: &Path) -> bool {
+/// A `file:` link to a local file that is safe to hand to the opener: a
+/// regular file (not a directory: macOS `.app` bundles are those), not
+/// executable, and not of a kind openers launch (`.desktop` on Linux,
+/// `.command` on macOS, ...).
+#[cfg(unix)]
+fn file_link(uri: &str) -> Option<Link> {
     const LAUNCHED: &[&str] = &[
         "app", "appimage", "bat", "bin", "cmd", "com", "command", "desktop", "exe", "fish", "inetloc", "jar", "js",
         "lnk", "msi", "pkg", "pl", "ps1", "py", "rb", "run", "scpt", "sh", "terminal", "tool", "url", "vbs", "webloc",
         "workflow", "zsh", "bash",
     ];
-    let Ok(meta) = std::fs::metadata(path) else { return false };
-    #[cfg(unix)]
+    let path = temzdf_paths::file_uri_path(uri)?;
+    let meta = std::fs::metadata(&path).ok()?;
     let executable = std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o111 != 0;
-    // (No such bit: what runs is decided by the extension, `PATHEXT`.)
-    #[cfg(not(unix))]
-    let executable = true;
     let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
-    meta.is_file() && !executable && ext.is_none_or(|e| !LAUNCHED.contains(&e.as_str()))
+    let viewable = meta.is_file() && !executable && ext.is_none_or(|e| !LAUNCHED.contains(&e.as_str()));
+    viewable.then(|| Link::Open(uri.to_owned()))
+}
+
+/// A `file:` link on Windows: a document (by its extension, [`DOCUMENTS`])
+/// opens, anything else that is there is shown in Explorer. What Windows
+/// runs is up to the extension and what is associated with it, which no
+/// list of what runs keeps up with, hence a list of what views. The path
+/// is a plain drive path ([`temzdf_paths::file_uri_path`]) made canonical
+/// (links and short names resolved), and only that goes on, as a URI made
+/// again from it. One on another computer (UNC, a network drive) is
+/// refused: opening it would connect there, giving it the user's
+/// credentials. (The file can change between the look and the opener's;
+/// whoever can do that can run programs here anyway.)
+#[cfg(windows)]
+fn file_link(uri: &str) -> Option<Link> {
+    let path = temzdf_paths::canonical(&temzdf_paths::file_uri_path(uri)?);
+    if path.as_os_str().to_string_lossy().starts_with(r"\\") {
+        return None;
+    }
+    let meta = std::fs::metadata(&path).ok()?;
+    let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    Some(if meta.is_file() && ext.is_some_and(|e| DOCUMENTS.contains(&e.as_str())) {
+        Link::Open(temzdf_paths::file_uri(&path))
+    } else {
+        Link::Reveal(path)
+    })
+}
+
+/// What `file:` links open on Windows: documents and pictures, which
+/// viewers (or a browser, for HTML and SVG) show without running anything.
+/// Not documents with macros, disk images or XML (which can be associated
+/// with programs).
+#[cfg(windows)]
+const DOCUMENTS: &[&str] = &[
+    "pdf", "txt", "md", "markdown", "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg", "csv", "log",
+    "tex", "bib", "typ", "html", "htm",
+];
+
+/// Explorer's window on the folder of `path`, `path` selected.
+#[cfg(windows)]
+fn reveal(path: &Path, on_failure: impl Fn(String) + Send + 'static) {
+    use std::os::windows::process::CommandExt;
+    std_handles_not_inherited();
+    // `/select,"PATH"` as Explorer reads it, not quoted as a whole as std
+    // would (a path has no `"`). Its exit code says nothing (1 when it
+    // worked), so only a failure to start is reported.
+    let child = std::process::Command::new("explorer")
+        .raw_arg(format!("/select,\"{}\"", path.display()))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match child {
+        Err(e) => on_failure(format!("cannot show {} in Explorer: {e}", path.display())),
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+        }
+    }
 }
 
 /// Open a URI with the configured handler (none or empty: the system's), detached from the terminal. A
 /// handler that cannot start or exits with an error (e.g. `xdg-open` over SSH
-/// without a display) is reported through `on_failure`.
+/// without a display) is reported through `on_failure`. A `file:` link
+/// that is not a document is shown in Explorer on Windows, and said so.
 pub fn open_uri(command: Option<Vec<String>>, uri: &str, on_failure: impl Fn(String) + Send + 'static) {
-    if !openable(uri) {
-        on_failure(format!("not opening {uri}: only http, https, mailto, ftp links and file links to documents open"));
-        return;
-    }
+    let target = match link(uri) {
+        Link::Open(target) => target,
+        Link::Refuse(why) => return on_failure(why),
+        #[cfg(windows)]
+        Link::Reveal(path) => {
+            on_failure(format!("not opening {uri}, not a document: showing it in Explorer"));
+            return reveal(&path, on_failure);
+        }
+    };
     let command = command.filter(|c| !c.is_empty()).unwrap_or_else(default_opener);
     let Some((program, args)) = command.split_first() else { return };
     std_handles_not_inherited();
     let child = std::process::Command::new(program)
         .args(args)
-        .arg(uri)
+        .arg(target)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -681,6 +730,56 @@ mod tests {
             assert!(!openable(&bad), "{bad}");
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn file_links_on_windows_open_documents_and_reveal_the_rest() {
+        let dir = temzdf_paths::canonical(&std::env::temp_dir()).join(format!("temzdf-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("folder.pdf")).unwrap();
+        for name in ["paper #1.PDF", "evil.exe", "a.lnk", "a.hta", "a.docm", "noext", "long name.pdfx"] {
+            std::fs::write(dir.join(name), "x").unwrap();
+        }
+        let uri = |name: &str| temzdf_paths::file_uri(&dir.join(name));
+        // A document opens, by the URI of its canonical path.
+        let doc = uri("paper #1.PDF");
+        assert_eq!(link(&doc), Link::Open(doc.clone()));
+        let upper = doc.replacen("file:///", "file://LOCALHOST/", 1).replace("paper", "PAPER");
+        assert_eq!(link(&upper), Link::Open(doc), "the name as it is on disk");
+        assert!(openable("https://example.com"));
+        // Anything else there is shown, not opened.
+        for name in ["evil.exe", "a.lnk", "a.hta", "a.docm", "noext", "long name.pdfx", "folder.pdf"] {
+            assert_eq!(link(&uri(name)), Link::Reveal(dir.join(name)), "{name}");
+        }
+        // A short name is the long one (8.3 names may be off on the volume:
+        // then nothing is there).
+        let short = link(&uri("LONGNA~1.PDF"));
+        assert!(matches!(short, Link::Reveal(_) | Link::Refuse(_)), "{short:?}");
+        // What Windows would read as another name, or as another place:
+        // nothing at all.
+        let exe = uri("evil.exe");
+        for bad in [
+            format!("{exe}."),
+            format!("{exe}%20"),
+            format!("{exe}::$DATA"),
+            format!("{exe}%3A%3A%24DATA"),
+            uri("missing.pdf"),
+            uri("NUL.pdf"),
+            doc_on("//localhost/C$", &dir, "paper #1.PDF"),
+            doc_on("/", &dir, "paper #1.PDF").replacen("file:///", "file://elsewhere/", 1),
+            format!("file:///{}", dir.join("paper #1.PDF").display()).replace('#', "%23"),
+        ] {
+            assert!(matches!(link(&bad), Link::Refuse(_)), "{bad}: {:?}", link(&bad));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The URI of `dir/name` with its drive (`C:`) replaced by `root`.
+    #[cfg(windows)]
+    fn doc_on(root: &str, dir: &Path, name: &str) -> String {
+        let uri = temzdf_paths::file_uri(&dir.join(name));
+        format!("file://{root}{}", &uri["file:///C:".len()..])
     }
 
     #[test]

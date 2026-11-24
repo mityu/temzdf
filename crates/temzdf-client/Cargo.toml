@@ -10,6 +10,7 @@ repository.workspace = true
 anyhow.workspace = true
 temzdf-protocol = { workspace = true, features = ["session"] }
 temzdf-scene.workspace = true
+temzdf-paths.workspace = true
 termpix-core.workspace = true
 
 # Keeping its own standard handles from the programs it starts
