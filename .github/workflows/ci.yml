@@ -38,7 +38,7 @@ jobs:
           cache-shared-key: without-nix
           cache-save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
       - name: Setup zig for libghostty-vt builds
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
         with:
           version: 0.15.2
           use-cache: false
@@ -136,7 +136,7 @@ jobs:
       # Ghostty's build picks the MSVC ABI on Windows unless told, and
       # libghostty-vt-sys tells it only when cross-compiling. The commit is
       # nix/libghostty-vt.nix's rev.
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      - uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
         with:
           version: 0.15.2
           use-cache: false
