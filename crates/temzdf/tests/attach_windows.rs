@@ -155,3 +155,20 @@ fn a_pdf_session_without_images_takes_keys_and_resizes() {
     t.wait_text("[session w was killed]");
     assert_eq!(t.wait_exit(), 0);
 }
+
+#[test]
+fn ctrl_break_detaches_and_puts_the_console_back() {
+    let env = Env::new("win-break");
+    let pdf = env.path("one.pdf");
+    one_page_pdf(&pdf);
+    let mut t = Term::spawn(&[BIN, "-s", "b", pdf.to_str().unwrap()], &env.options());
+    t.wait_for("the message about images", no_images);
+    // Ctrl+Break as Windows Terminal sends it to ConPTY (win32-input-mode:
+    // VK_CANCEL, its scan code, no character, down, left Ctrl), which
+    // makes it the console's control event. Without a handler Windows
+    // ended the frontend at once, leaving its screen and modes behind.
+    t.write(b"\x1b[3;70;0;1;8;1_");
+    t.wait_text("[detached from session b]");
+    assert_eq!(t.wait_exit(), 0);
+    assert_eq!(env.run(&["ls"]), "b  (detached)\n");
+}

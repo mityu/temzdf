@@ -248,8 +248,15 @@ The boxes' lines and the title's em dash came out right (UTF-8 output).
 In the tests tuitest runs `temzdf` on the in-box ConPTY
 (`crates/temzdf/tests/attach_windows.rs`): with the probe stopping at
 DA1 the cell size there was the 8x16 fallback, now it is tuitest's 9x18.
-Not tried: closing the terminal's window while temzdf runs (on Unix
-SIGHUP; here no console control handler is set). Output written through
+Control events (2026-11-24, conhost's own window): without a handler
+Ctrl+Break ended the frontend at once, leaving its screen (the alternate
+screen not left, cmd's prompt drawn over it) and its input modes (VT
+input, window events) behind; closing the window ended it too, the
+session detached. Since, termpix's console control handler makes each
+event `TermEvent::Terminate`, as SIGTERM and SIGHUP on Unix: the frontend
+detaches and puts the console back (tested: Ctrl+Break sent through
+ConPTY as win32-input-mode, `ctrl_break_detaches_and_puts_the_console_back`).
+Ctrl+C stays a key. Output written through
 a C runtime's `stdout`, set up at start, is not moved to the log by
 `StdioRedirect` (`SetStdHandle`); the client renders no PDFs.
 

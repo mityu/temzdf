@@ -24,6 +24,11 @@
 //!   only, and the cell size comes from the terminal (`CSI 16 t`, see
 //!   [`crate::probe`]).
 //!
+//! - Control events: Ctrl+Break, the console's window closing, logging off
+//!   and shutting down end the program as SIGTERM and SIGHUP do on Unix
+//!   ([`super::TermEvent::Terminate`], [`spawn_input`]), not at once, so
+//!   that the console is put back (Ctrl+C is a key here, no event).
+//!
 //! The modes and code page are put back on drop and on a panic of the
 //! thread that opened the console, as on Unix.
 
@@ -42,9 +47,10 @@ use windows_sys::Win32::System::Console::{
     ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING, ENABLE_WINDOW_INPUT, FlushConsoleInputBuffer,
     GetConsoleMode, GetConsoleOutputCP, GetConsoleScreenBufferInfo, GetStdHandle, INPUT_RECORD, KEY_EVENT,
     PeekConsoleInputW, ReadConsoleInputW, ReadConsoleW, STD_ERROR_HANDLE, STD_HANDLE, STD_OUTPUT_HANDLE,
-    SetConsoleMode, SetConsoleOutputCP, SetStdHandle,
+    SetConsoleCtrlHandler, SetConsoleMode, SetConsoleOutputCP, SetStdHandle,
 };
 use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
+use windows_sys::core::BOOL;
 
 use super::{CLOSE_TIMEOUT, DA1, GRAPHICS_CLEANUP, InputSource, Modes, TermEvent, Winsize};
 use crate::output::{Output, OutputSink};
@@ -318,6 +324,9 @@ impl Tty {
 
 impl Drop for Tty {
     fn drop(&mut self) {
+        // Control events from now on end the program at once, as without a
+        // console to put back.
+        *CONTROL.lock().unwrap_or_else(|e| e.into_inner()) = None;
         // Stop the input thread first: the replies drained below are not input.
         super::stop_input();
         restore_now(true);
@@ -505,14 +514,55 @@ impl InputSource for TtyReader {
 
 /// Spawn the thread that reads and parses console input and notices
 /// resizes, sending events through `map(event)` into `tx`. It stops when
-/// the receiver is dropped.
+/// the receiver is dropped. The console's control events come as
+/// [`TermEvent::Terminate`] ([`on_control`]).
 pub fn spawn_input<T: Send + 'static>(
     reader: TtyReader,
     pixel_mouse: bool,
     tx: Sender<T>,
     map: impl Fn(TermEvent) -> T + Send + Sync + Clone + 'static,
 ) -> io::Result<()> {
+    {
+        let (tx, map) = (tx.clone(), map.clone());
+        *CONTROL.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(Box::new(move || tx.send(map(TermEvent::Terminate)).is_ok()));
+    }
+    static HANDLER: std::sync::Once = std::sync::Once::new();
+    let mut installed = Ok(());
+    HANDLER.call_once(|| {
+        // SAFETY: a handler with the signature Windows calls.
+        installed = check(unsafe { SetConsoleCtrlHandler(Some(on_control), 1) });
+    });
+    installed?;
     super::spawn_input_thread(reader, pixel_mouse, tx, map)
+}
+
+/// Tells the program to end, false when nobody listens any more.
+type Terminate = Box<dyn Fn() -> bool + Send>;
+
+/// Where [`on_control`] sends: set by [`spawn_input`], cleared when the
+/// [`Tty`] is dropped.
+static CONTROL: Mutex<Option<Terminate>> = Mutex::new(None);
+
+/// The console's control events (on a thread Windows starts for them):
+/// [`TermEvent::Terminate`] for each, so that the program ends as on
+/// SIGTERM, putting the console back; without it Windows ends the process
+/// at once, leaving the terminal in our modes and on our screen (seen with
+/// Ctrl+Break in conhost). With nobody to tell, Windows' default (the end).
+/// For a closing window, logoff and shutdown Windows ends the process
+/// when this returns, so it waits here for the program to exit first
+/// (Windows allows five seconds for a closing window).
+unsafe extern "system" fn on_control(event: u32) -> BOOL {
+    const CTRL_C_EVENT: u32 = 0;
+    const CTRL_BREAK_EVENT: u32 = 1;
+    let told = CONTROL.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|terminate| terminate());
+    if !told {
+        return 0;
+    }
+    if event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT {
+        std::thread::sleep(Duration::from_secs(4));
+    }
+    1
 }
 
 /// Points the process's standard output and error handles at a file while
