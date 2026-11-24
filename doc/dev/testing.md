@@ -163,6 +163,14 @@ they exercise:
   a key pressed N times against the key with the count N, so a mapping
   that drops `c.count` fails; add a row for a new counted key.
 
+Programs that tests run in terminal panes (and on tuitest's pty) are
+`temzdf-testhelper` (its commands: the documentation of
+`crates/temzdf-testhelper/src/lib.rs`), not `sh -c`, so that the tests run
+on Windows too: `helper(&[...])` in the tests builds its command line, and
+splits start `test_shell()`, which answers each line typed with
+`said:LINE`. Write a missing command into the helper rather than a script
+for `sh`; only tests about Unix itself (signals) run `sh`.
+
 ## Script tests
 
 Tests of temzdf's behaviour can be TypeScript files run in a real

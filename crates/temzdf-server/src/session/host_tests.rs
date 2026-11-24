@@ -235,7 +235,7 @@ const COUNT_CASES: &[CountCase] = &[
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
+#[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
 fn the_shipped_keys_take_counts_as_presses() {
     let dir = TempDir::new("counts");
     let mut failed = Vec::new();
@@ -317,7 +317,7 @@ fn q_closes_pdf_and_markdown_graphics_panes() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
+#[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
 fn counts_choose_the_tab_page_and_the_pdf_page() {
     let dir = TempDir::new("count-places");
     // {N}gt: tab page N.
@@ -344,7 +344,7 @@ fn counts_choose_the_tab_page_and_the_pdf_page() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
+#[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
 fn the_prefix_splits_terminal_and_pdf_panes() {
     let dir = TempDir::new("prefix");
     for (what, mode) in [(Open::Terminal, "terminal"), (Open::Pdf, "pdf")] {
@@ -386,7 +386,6 @@ fn the_prefix_and_a_colon_run_ex_commands_in_any_pane() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_prefix_twice_reaches_the_program() {
     let argv = helper(&["raw", "print", "ready\\r\\n", "read-line", "said", "sleep", "30000"]);
     let (mut s, rx) = host_session(PaneSpec::Command(argv.into_iter().map(String::from).collect()), None).unwrap();
@@ -410,7 +409,6 @@ fn the_prefix_twice_reaches_the_program() {
 
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_normal_mode_stays_for_sizes_and_goes_with_the_focus() {
     let dir = TempDir::new("normal-mode");
     let (mut s, rx) = open(Open::Terminal, &dir.0);

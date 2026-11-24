@@ -192,7 +192,6 @@ fn searches_go_to_the_pdf_pane_given() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn search_for_needs_a_pdf() {
     let (mut s, _rx) = terminal_session(&helper(&["sleep", "5000"]));
     let e = s.run_cli(&["search-for".into(), "x".into()]).unwrap_err();
@@ -285,7 +284,6 @@ fn panes_split_focus_close_detach_and_quit() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_float_for_another_tab_page_does_not_take_the_focus_here() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -302,7 +300,6 @@ fn a_float_for_another_tab_page_does_not_take_the_focus_here() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_tab_opened_while_the_configuration_loads_leaves_no_tab_page_empty() {
     let (tx, _rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
@@ -650,7 +647,7 @@ pub(super) fn screen_text(frame: &Frame, g: Geometry) -> Vec<String> {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
+#[cfg_attr(not(unix), ignore = "the in-box ConPTY holds back the text of an update left on (doc/terminals/conpty.md)")]
 fn a_synchronized_update_left_on_shows_after_its_time() {
     let (mut s, rx) = terminal_session(&helper(&[
         "print",
@@ -683,7 +680,6 @@ fn a_synchronized_update_left_on_shows_after_its_time() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn terminal_panes_show_output_take_keys_and_close_when_the_program_exits() {
     let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n", "read-line", "said", "read-line"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -701,7 +697,6 @@ fn terminal_panes_show_output_take_keys_and_close_when_the_program_exits() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn splitting_a_terminal_starts_another_shell_beside_it() {
     let (mut s, rx) = terminal_session(&helper(&["print", "left\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "left");
@@ -741,7 +736,6 @@ fn pump(s: &mut Session, rx: &Receiver<SessionEvent>, done: impl Fn(&Session) ->
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn closed_terminals_keep_running_hidden() {
     let (mut s, rx) = terminal_session(&helper(&["raw", "print", "first\\r\\n", "read-line", "said", "read-line"]));
     wait_text(&mut s, &rx, |r| r[0] == "first");
@@ -768,7 +762,6 @@ fn closed_terminals_keep_running_hidden() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_hidden_terminal_that_ended_stays_until_it_was_shown() {
     let (mut s, rx) = terminal_session(&helper(&["print", "started\\n", "sleep", "1000", "print", "bye\\n"]));
     wait_text(&mut s, &rx, |r| r[0] == "started");
@@ -795,7 +788,6 @@ fn a_hidden_terminal_that_ended_stays_until_it_was_shown() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_terminal_in_two_panes_is_as_large_as_the_larger() {
     let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n", "each-line", "size"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -821,7 +813,6 @@ fn a_terminal_in_two_panes_is_as_large_as_the_larger() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn dragging_a_border_resizes_panes_and_their_programs_on_release() {
     let (mut s, rx) = terminal_session(&helper(&["print", "ready\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -862,7 +853,6 @@ fn dragging_a_border_resizes_panes_and_their_programs_on_release() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn panes_move_to_edges_and_rotate() {
     let (mut s, rx) = terminal_session(&helper(&["print", "ready\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -924,7 +914,6 @@ fn a_pdf_opened_by_a_relative_path_that_does_not_resolve_is_known_by_its_absolut
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_float_opened_while_the_first_document_fails_leaves_a_session_that_shows() {
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
@@ -949,7 +938,6 @@ fn a_float_opened_while_the_first_document_fails_leaves_a_session_that_shows() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_float_covers_the_panes_below_it() {
     let zeros = format!("{}\\n", "0".repeat(80)).repeat(8);
     let (mut s, rx) = terminal_session(&helper(&["print", &zeros, "sleep", "30000"]));
@@ -987,7 +975,6 @@ fn a_float_covers_the_panes_below_it() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn floats_cascade_raise_take_turns_and_hide_together() {
     let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -1040,7 +1027,6 @@ fn floats_cascade_raise_take_turns_and_hide_together() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_last_tiled_pane_gives_way_to_a_shown_float() {
     let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -1070,7 +1056,6 @@ fn the_last_tiled_pane_gives_way_to_a_shown_float() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_floating_terminal_closes_when_its_program_exits() {
     let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -1099,7 +1084,6 @@ fn a_floating_terminal_closes_when_its_program_exits() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn dragging_a_float_moves_and_resizes_it_and_its_program_on_release() {
     let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -1163,7 +1147,6 @@ fn dragging_a_float_moves_and_resizes_it_and_its_program_on_release() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn floats_open_hide_and_embed() {
     let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -1186,7 +1169,6 @@ fn floats_open_hide_and_embed() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn no_image_lies_under_text_drawn_over_it() {
     // WezTerm draws images over text whatever their z: text over images
     // (messages, a float's title) needs the images cut out below it.
@@ -1216,7 +1198,6 @@ fn no_image_lies_under_text_drawn_over_it() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn recursive_mappings_stop_with_an_error() {
     let (mut s, rx) = terminal_session(&helper(&["print", "ready\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -1240,7 +1221,6 @@ fn recursive_mappings_stop_with_an_error() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn keys_fed_without_typing_do_not_add_up_to_a_recursive_mapping() {
     let (mut s, rx) = terminal_session(&helper(&["print", "ready\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -1257,7 +1237,6 @@ fn keys_fed_without_typing_do_not_add_up_to_a_recursive_mapping() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_terminal_closes_when_its_program_exits_although_jobs_hold_the_pty() {
     // The shell leaves a job behind that keeps the pty open. (Linux hangs
     // the pty up when its session leader exits, so its end of file came
@@ -1290,7 +1269,6 @@ fn deleting_a_terminal_ends_a_program_that_ignores_hangups_without_waiting() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_float_opened_while_the_configuration_loads_leaves_the_first_pane_tiled() {
     let (tx, _rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
@@ -1307,7 +1285,6 @@ fn a_float_opened_while_the_configuration_loads_leaves_the_first_pane_tiled() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn floats_on_tiny_screens_and_cells_do_not_overflow() {
     let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -1326,7 +1303,7 @@ fn floats_on_tiny_screens_and_cells_do_not_overflow() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
+#[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
 fn a_float_waiting_for_its_file_keeps_its_title_and_focus() {
     let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
@@ -1412,7 +1389,6 @@ fn labels(s: &mut Session) -> Vec<String> {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn tabs_open_switch_move_and_close() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -1469,7 +1445,6 @@ fn tabs_open_switch_move_and_close() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_tabs_last_pane_gives_way_to_its_own_float_else_the_tab_closes() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -1492,7 +1467,6 @@ fn a_tabs_last_pane_gives_way_to_its_own_float_else_the_tab_closes() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn panes_of_other_tabs_close_there() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -1519,7 +1493,6 @@ fn panes_of_other_tabs_close_there() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn toggle_floating_keeps_to_the_current_tab() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -1536,7 +1509,6 @@ fn toggle_floating_keeps_to_the_current_tab() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_tab_that_cannot_start_goes_back_where_it_was() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -1550,7 +1522,6 @@ fn a_tab_that_cannot_start_goes_back_where_it_was() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn break_pane_moves_a_pane_to_a_new_tab() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -1575,7 +1546,6 @@ fn break_pane_moves_a_pane_to_a_new_tab() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_terminal_in_two_tabs_is_as_large_as_the_larger() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -1606,16 +1576,19 @@ fn only_the_current_tabs_images_are_drawn() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_tab_line_takes_the_top_row_and_its_clicks_switch_and_close() {
-    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
+    // ConPTY titles the console with its program's path
+    // (doc/terminals/conpty.md): there the programs take the name a
+    // terminal without a title gets, for the same tab line.
+    let title = if cfg!(windows) { "\\e]0;shell\\x07" } else { "" };
+    let (mut s, rx) = terminal_session(&helper(&["print", &format!("{title}one\\n"), "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let one = s.focus;
     let buf = s.panes[&one].buffer();
     // (Less the pane's status line.)
     assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1, "one tab: no tab line");
-    new_tab(&mut s, &helper(&["print", "two\\n", "sleep", "30000"]));
-    let (_, rows) = wait_text(&mut s, &rx, |r| r[1] == "two");
+    new_tab(&mut s, &helper(&["print", &format!("{title}two\\n"), "sleep", "30000"]));
+    let (_, rows) = wait_text(&mut s, &rx, |r| r[1] == "two" && r[0] == " 1 shell  2 shell");
     assert_eq!(rows[0], " 1 shell  2 shell");
     assert_eq!(s.area(), Rect::new(0, 1, GEOMETRY.cols as u32, GEOMETRY.rows as u32 - 1));
     assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 2, "the other tab's terminal too");
@@ -1801,7 +1774,6 @@ fn copied(s: &mut Session) -> Vec<String> {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_visual_mode_moves_selects_and_copies() {
     // The terminal echoes what reaches the program: keys in the visual
     // mode must not.
@@ -1841,7 +1813,6 @@ fn the_visual_mode_moves_selects_and_copies() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_window_status_line_names_the_mode_and_the_session() {
     let (mut s, rx) = terminal_session(&helper(&["size", "sleep", "30000"]));
     // The pane's own status line takes a row.
@@ -1967,7 +1938,6 @@ fn prompt_row(s: &mut Session) -> (String, Option<(u16, u16)>) {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn prompts_are_text_panes_taking_typed_text() {
     let (mut s, _rx, buf, pane) = prompt_session();
     assert_eq!((s.current_mode(), s.panes[&pane].mode_kind()), ("input", "edit"));
@@ -1992,7 +1962,6 @@ fn prompts_are_text_panes_taking_typed_text() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_long_prompt_scrolls_sideways_to_keep_the_cursor_in_sight() {
     let (mut s, _rx, _buf, _pane) = prompt_session();
     let long: String = ('a'..='z').cycle().take(120).collect();
@@ -2009,7 +1978,6 @@ fn a_long_prompt_scrolls_sideways_to_keep_the_cursor_in_sight() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn hidden_buffers_reach_hooks() {
     let (mut s, _rx, buf, pane) = prompt_session();
     s.listen(&["BufferHidden", "BufferDeleted"]);
@@ -2042,7 +2010,6 @@ fn hidden_buffers_reach_hooks() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn split_shows_a_buffer_at_a_fixed_size_and_returns_the_pane() {
     let (mut s, rx) = terminal_session(&helper(&["print", "first\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "first");
@@ -2417,7 +2384,7 @@ fn frames_say_where_panes_and_their_images_are_for_frontends_without_images() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
+#[cfg_attr(not(unix), ignore = "kitty graphics do not pass the in-box ConPTY (doc/terminals/conpty.md)")]
 fn a_terminal_region_has_images_once_a_program_shows_one() {
     let img = "\\e_Ga=T,f=32,s=2,v=2,c=4,r=2,q=2;/wAA/wD/AP8AAP///////w==\\e\\\\\\n";
     let (mut s, rx) = terminal_session(&helper(&[
@@ -2460,7 +2427,6 @@ fn a_terminal_region_has_images_once_a_program_shows_one() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn hiding_a_status_line_gives_its_row_to_the_pane() {
     let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n", "each-line", "size"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -2487,7 +2453,6 @@ fn hiding_a_status_line_gives_its_row_to_the_pane() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_pane_one_row_high_shows_only_its_status_line() {
     let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n", "each-line", "print", "SAID"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
@@ -2525,7 +2490,6 @@ fn pane_info(s: &mut Session, pane: PaneId) -> ScriptValue {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn floats_show_on_their_tab_or_on_all_and_hide_per_tab() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -2578,7 +2542,6 @@ fn floats_show_on_their_tab_or_on_all_and_hide_per_tab() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn tabs_switch_and_break_out() {
     let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
@@ -2599,7 +2562,6 @@ fn tabs_switch_and_break_out() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn committed_text_is_typed_in_terminals_and_keys_elsewhere() {
     let (mut s, rx) = terminal_session(&helper(&["raw", "read-line", "said", "sleep", "30000"]));
     // In the terminal mode: typed as it is (not keys, not a paste).
@@ -2624,7 +2586,6 @@ fn committed_text_is_typed_in_terminals_and_keys_elsewhere() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_clients_focus_reaches_programs_that_asked() {
     let (mut s, rx) = terminal_session(&helper(&["print", "\\e[?1004h", "raw", "print", "ready\\r\\n", "hex"]));
     wait_text(&mut s, &rx, |r| r[0].contains("ready"));
@@ -2636,7 +2597,10 @@ fn the_clients_focus_reaches_programs_that_asked() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
+#[cfg_attr(
+    not(unix),
+    ignore = "no answer to OSC 4 or OSC 11 reaches the program through the in-box ConPTY (doc/terminals/conpty.md)"
+)]
 fn unthemed_terminals_report_the_gui_defaults() {
     let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n\\e]4;1;?\\e\\\\\\e]11;?\\e\\\\", "hex"]));
     // xterm's red and the GUI's default background (temzdf_scene::theme),
@@ -2650,7 +2614,10 @@ fn unthemed_terminals_report_the_gui_defaults() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
+#[cfg_attr(
+    not(unix),
+    ignore = "no answer to OSC 4 or OSC 11 reaches the program through the in-box ConPTY (doc/terminals/conpty.md)"
+)]
 fn the_theme_answers_programs_colour_queries() {
     let (mut s, rx) = terminal_session(&helper(&["sleep", "30000"]));
     s.set_option("background", &ScriptValue::Str("#102030".into())).unwrap();
@@ -2683,7 +2650,6 @@ fn the_theme_answers_programs_colour_queries() {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-#[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn ctrl_shift_v_asks_the_client_to_paste() {
     let (mut s, _rx) = terminal_session(&helper(&["sleep", "30000"]));
     s.take_effects();

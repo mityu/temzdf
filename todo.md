@@ -326,13 +326,15 @@ server on one `Session`). Next and open:
     configuration, which fails on Windows; postponed: the user may stop
     resolving the configuration's fonts there, which changes what the
     command does.
-  - The tests: a helper program instead of `sh` in the pty tests; the
-    PDF fixtures on Windows (built with TeX; `temzdf-pdfcore` stays out
+  - The tests: the PDF fixtures on Windows (built with TeX; `temzdf-pdfcore` stays out
     of the gate there, and the fixture tests of `temzdf-pdfview` and
     `temzdf-server` are ignored); test fonts without fontconfig; the gate's lock test; `cargo xtask miri`
     (also cross-target from Linux);
     `scripts/e2e.sh` on Windows for terminals (WezTerm, Windows
-    Terminal). Done: the GUI's (`-d windows`, from the Linux host over
+    Terminal). Done: the pty tests start `temzdf-testhelper` instead
+    of `sh` and run on Windows, except those that need what the in-box
+    ConPTY does not pass (kitty graphics, the answers to OSC 4 and 11, an
+    update left on; ignored with the reason); the GUI's (`-d windows`, from the Linux host over
     QMP and SSH); the script host tests on `temzdf_protocol::Stream`
     pairs (Unix domain sockets on Windows too, keeping the read timeout
     `std::io::pipe` lacks); the mock terminal tests of `temzdf-pdfview`

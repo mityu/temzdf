@@ -44,6 +44,7 @@ const WINDOWS_CRATES: &[&str] = &[
     "temzdf-scene",
     "temzdf-texteditor",
     "temzdf-watchfs",
+    "temzdf-testhelper",
     "termpix-core",
     "termpix-ui",
     "wlinput",
@@ -52,9 +53,10 @@ const WINDOWS_CRATES: &[&str] = &[
 /// not: they build C for the target (texprintf, mupdf-sys, wasmtime's
 /// helpers, QuickJS, xtask's `ring`; libghostty-vt through pkg-config,
 /// which finds the Linux one), and the dev shell has no MinGW compiler.
-/// Windows itself checks them. Their tests that start programs in terminal
-/// panes or on a pty, or that read the PDF fixtures (built with TeX), are
-/// ignored there (`cfg_attr(not(unix), ignore = ...)`). Left out of both
+/// Windows itself checks them. Their tests that read the PDF fixtures
+/// (built with TeX), or that need what the in-box ConPTY does not pass to
+/// programs in terminal panes, are ignored there
+/// (`cfg_attr(not(unix), ignore = ...)`). Left out of both
 /// lists, and why (`todo.md`, "The Windows port"): termpix and temzdf-tty
 /// are the terminal frontend, Unix only; temzdf-pdfcore's tests need the
 /// fixtures, built with TeX; temzdf-script-guest is empty off wasm.

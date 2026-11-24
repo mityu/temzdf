@@ -140,3 +140,17 @@ PowerShell 5.1 in `temzdf-gui`):
 - Not tried yet: the kitty keyboard protocol and the mouse from a
   program in a pane (measured through ConPTY with flags 0 and 8 above,
   not with portable-pty's).
+- Seen in the pane tests run on Windows (2026-11-24, `temzdf-testhelper`
+  as the program, same VM): kitty graphics from the program never reach
+  the pane (as above); a program's text written after `CSI ? 2026 h`
+  without the `l` did not reach the pane within 10 s, so an update left
+  on is held back by ConPTY before temzdf's own timeout can show it; the
+  program got no answer to the queries `OSC 4 ; 1 ; ?` and `OSC 11 ; ?`
+  (not measured above: whether ConPTY drops the query or the answer);
+  ConPTY titles the console with the program's path, so a terminal's
+  tab is named after it, not `shell`. The focus reports a program asks
+  for (`CSI ? 1004 h`), typed keys in raw mode (`hi`, Enter as CR,
+  Ctrl+B), the wheel's arrows on the alternate screen, the mouse
+  tracking modes, OSC 8, the kitty keyboard protocol's `CSI 104;5u`,
+  sizes after a resize and a background job left on the console all
+  behaved as on Unix.

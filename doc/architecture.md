@@ -138,9 +138,12 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
   driven by commands on stdin; `scripts/e2e.sh -d wayland` drives
   headless sway with it.
 - `temzdf-testhelper`: a program for tests to run instead of `sh -c`
-  (which is not on Windows): print bytes with escapes, set the terminal
-  raw, echo input as hex, sleep, exit. Its library's `path()` builds it
-  and returns the executable (`temzdf-term`'s tests use it).
+  (which is not on Windows): print bytes with escapes and numbered
+  lines, report the terminal's size, set the terminal raw, read lines and
+  answer them, echo input as hex, start itself in the background, sleep,
+  exit. Its library's `path()` builds it and returns the executable (the
+  terminal pane tests of `temzdf-term`, `temzdf-server` and `tuitest`
+  use it).
 - `temzdf-fixtures`: builds the test fixtures (`tests/fixtures/*.tex`
   into `target/fixtures/` with latexmk) when stale, for
   `temzdf_pdfcore::pdf::fixture` (feature `test-support`) and `cargo

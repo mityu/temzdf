@@ -1063,7 +1063,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open ptys")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn a_synchronized_update_shows_when_it_ends() {
         let (mut pane, _rx) = start(&helper(&["sleep", "10000"]));
         pane.feed(b"old");
@@ -1115,7 +1114,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn shows_program_output_with_colours() {
         let (mut pane, rows) = run(
             &helper(&["print", "hello \\e[31mred\\e[0m\\n\\e[38;2;1;2;3mrgb", "sleep", "5000"]),
@@ -1132,7 +1130,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn keys_reach_the_program() {
         // Keys only once echo is off: typed while stty ran, some would be
         // echoed and some not, and "got:hi" could land on the row of an
@@ -1150,7 +1147,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn smaller_views_show_the_bottom_left() {
         let (mut term, _) = run(&helper(&["print", "a\\nb\\nc\\nd\\ne\\nf", "sleep", "5000"]), |_| {}, |r| r[5] == "f");
         let small = TermView::new(Geometry { cols: 3, rows: 2, ..GEOMETRY });
@@ -1167,7 +1163,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn a_wide_character_cut_at_the_views_edge_goes_blank() {
         // "ab数" in a view 3 wide (on the last row: small views show the
         // bottom left): the wide character's first half is the last cell;
@@ -1201,7 +1196,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn dragging_selects_and_releasing_copies() {
         let (mut term, _) =
             run(&helper(&["print", "hello world\\nsecond line", "sleep", "5000"]), |_| {}, |r| r[1] == "second line");
@@ -1230,7 +1224,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn programs_tracking_the_mouse_get_plain_drags_and_shift_selects() {
         // Mouse tracking (button events, SGR), then echo what arrives.
         let argv = helper(&["raw", "print", "ready\\e[?1002h\\e[?1006h\\r\\n", "hex"]);
@@ -1255,7 +1248,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn clicking_a_link_opens_it() {
         let argv = helper(&["print", "see \\e]8;;https://example.org/a\\e\\\\here\\e]8;;\\e\\\\ now", "sleep", "5000"]);
         let (mut term, _) = run(&argv, |_| {}, |r| r[0] == "see here now");
@@ -1285,7 +1277,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
+    #[cfg_attr(not(unix), ignore = "kitty graphics do not pass the in-box ConPTY (doc/terminals/conpty.md)")]
     fn images_from_programs_become_layers() {
         // A 2x2 RGBA image shown over 4x2 cells after "ab", then a 1x1 PNG.
         let rgba = "/wAA/wD/AP8AAP///////w==";
@@ -1318,7 +1310,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn the_wheel_sends_arrows_to_programs_on_the_alternate_screen() {
         // Alternate screen, alternate scroll on, no mouse tracking (as less).
         // "ready" once raw mode is on for the arrows; then what arrives,
@@ -1333,7 +1324,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn scrolled_back_views_say_how_far() {
         // Until the newline after 20 is in too (the output may come in pieces).
         let (mut term, _) = run(&helper(&["lines", "20", "sleep", "5000"]), |_| {}, |r| r[4] == "20");
@@ -1374,7 +1364,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn amounts_scroll_history_by_rows_adding_up_fractions() {
         let (mut term, _) = run(&helper(&["lines", "20", "sleep", "5000"]), |_| {}, |r| r[4] == "20");
         let view = TermView::new(GEOMETRY);
@@ -1398,7 +1387,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
-    #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn the_pane_reports_its_program_exiting() {
         let (pane, _) = run(&helper(&["exit", "0"]), |_| {}, |_| false);
         assert!(pane.exited());
