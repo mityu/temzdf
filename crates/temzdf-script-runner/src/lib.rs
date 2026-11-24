@@ -12,11 +12,12 @@
 
 mod engine_config;
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use temzdf_protocol::script::{FromHost, ToHost};
 use temzdf_protocol::script_fs::{FsOp, ToGuest};
@@ -46,6 +47,37 @@ impl Default for Options {
     }
 }
 
+/// Where the guest's thread is ([`ScriptHost`]'s `at`): when a stop does
+/// not end it, the log says where it stayed.
+const AT_STARTING: u8 = 0;
+const AT_GUEST: u8 = 1;
+const AT_RECV: u8 = 2;
+const AT_SEND: u8 = 3;
+const AT_FS_CALL: u8 = 4;
+const AT_RETURNED: u8 = 5;
+const AT_EXITING: u8 = 6;
+const AT_DROPPING: u8 = 7;
+const AT_ENDED: u8 = 8;
+
+fn at_name(at: u8) -> &'static str {
+    match at {
+        AT_STARTING => "starting",
+        AT_GUEST => "in the guest's code or a WASI call",
+        AT_RECV => "in temzdf.recv",
+        AT_SEND => "in temzdf.send",
+        AT_FS_CALL => "in temzdf.fs_call",
+        AT_RETURNED => "back from the guest, dropping its store",
+        AT_EXITING => "telling the session it ended",
+        AT_DROPPING => "dropping its WASI context",
+        AT_ENDED => "ended",
+        _ => "?",
+    }
+}
+
+/// How long [`ScriptHost`]'s drop waits for the stopped thread before it
+/// says where the thread is (then it waits on).
+const STOP_REPORT: Duration = Duration::from_secs(10);
+
 /// What the guest tells the session.
 #[derive(Debug)]
 pub enum Event {
@@ -60,6 +92,8 @@ pub struct ScriptHost {
     interrupts: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    /// Where the thread is (`AT_*`).
+    at: Arc<AtomicU8>,
 }
 
 /// The engine and the guest, loaded once per process.
@@ -96,6 +130,8 @@ struct Data {
     fs_reply: Vec<u8>,
     interrupts: Arc<AtomicU64>,
     events: Box<dyn FnMut(Event) + Send>,
+    /// Where the thread is (`AT_*`), set around the imports.
+    at: Arc<AtomicU8>,
 }
 
 impl ScriptHost {
@@ -112,6 +148,7 @@ impl ScriptHost {
         });
         let interrupts = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
+        let at = Arc::new(AtomicU8::new(AT_STARTING));
         let mut wasi = WasiCtxBuilder::new();
         // No preopened directory: files are read natively (`fs_call`), as
         // WASI's sandboxing refuses Windows' drive paths and symbolic links
@@ -128,6 +165,7 @@ impl ScriptHost {
             fs_reply: Vec::new(),
             interrupts: interrupts.clone(),
             events: Box::new(events),
+            at: at.clone(),
         };
         let mut store = Store::new(engine, data);
         store.limiter(|d| &mut d.limits);
@@ -138,19 +176,28 @@ impl ScriptHost {
         });
         let linker = linker(engine).map_err(|e| format!("wasmtime: {e}"))?;
         let stopped = stop.clone();
+        let here = at.clone();
         let thread = std::thread::Builder::new()
             .name("temzdf-script".into())
             .spawn(move || {
-                let why = match run(&linker, module, &mut store, options.unattended_limit) {
+                here.store(AT_GUEST, Ordering::SeqCst);
+                let ran = run(&linker, module, &mut store, options.unattended_limit);
+                here.store(AT_RETURNED, Ordering::SeqCst);
+                let why = match ran {
                     Ok(0) => "it ended".to_owned(),
                     Ok(_) => "it failed (see above)".to_owned(),
                     Err(_) if stopped.load(Ordering::SeqCst) => "it was stopped".to_owned(),
                     Err(e) => format!("{e:?}"),
                 };
-                (store.into_data().events)(Event::Exited(why));
+                let mut data = store.into_data();
+                here.store(AT_EXITING, Ordering::SeqCst);
+                (data.events)(Event::Exited(why));
+                here.store(AT_DROPPING, Ordering::SeqCst);
+                drop(data);
+                here.store(AT_ENDED, Ordering::SeqCst);
             })
             .map_err(|e| format!("cannot start the script host's thread: {e}"))?;
-        Ok(Self { tx: Some(tx), interrupts, stop, thread: Some(thread) })
+        Ok(Self { tx: Some(tx), interrupts, stop, thread: Some(thread), at })
     }
 
     /// Send the guest a message; false when it is gone. An interrupt counts
@@ -181,6 +228,20 @@ impl Drop for ScriptHost {
     fn drop(&mut self) {
         self.stop();
         if let Some(thread) = self.thread.take() {
+            // A stop ends the thread at once; one that does not (seen on CI
+            // only) is said, with where the thread stayed, before waiting on.
+            let since = Instant::now();
+            while !thread.is_finished() && since.elapsed() < STOP_REPORT {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            if !thread.is_finished() {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "temzdf script: the script host's thread did not end {} s after it was stopped: it is {}",
+                    STOP_REPORT.as_secs(),
+                    at_name(self.at.load(Ordering::SeqCst))
+                );
+            }
             let _ = thread.join();
         }
     }
@@ -206,6 +267,7 @@ fn linker(engine: &Engine) -> wasmtime::Result<Linker<Data>> {
         |mut caller: Caller<'_, Data>, ptr: u32, len: u32| -> wasmtime::Result<i32> {
             // Read in place: a bogus length is a trap, not an allocation of
             // whatever size the guest names.
+            let _at = At::enter(&caller.data().at, AT_SEND);
             let mem = memory(&mut caller)?;
             let frame = frame_at(mem.data(&caller), ptr, len)
                 .ok_or_else(|| wasmtime::Error::msg("send: a frame outside the guest's memory"))?;
@@ -221,6 +283,7 @@ fn linker(engine: &Engine) -> wasmtime::Result<Linker<Data>> {
     )?;
     linker.func_wrap("temzdf", "recv", |mut caller: Caller<'_, Data>, timeout_ms: i64| -> i64 {
         let data = caller.data_mut();
+        let _at = At::enter(&data.at.clone(), AT_RECV);
         let got = match u64::try_from(timeout_ms) {
             Ok(ms) => data.rx.recv_timeout(Duration::from_millis(ms)),
             Err(_) => data.rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
@@ -256,6 +319,7 @@ fn linker(engine: &Engine) -> wasmtime::Result<Linker<Data>> {
         "temzdf",
         "fs_call",
         |mut caller: Caller<'_, Data>, ptr: u32, len: u32| -> wasmtime::Result<i64> {
+            let _at = At::enter(&caller.data().at, AT_FS_CALL);
             let mem = memory(&mut caller)?;
             let frame = frame_at(mem.data(&caller), ptr, len)
                 .ok_or_else(|| wasmtime::Error::msg("fs_call: a frame outside the guest's memory"))?;
@@ -294,6 +358,23 @@ fn linker(engine: &Engine) -> wasmtime::Result<Linker<Data>> {
         },
     )?;
     Ok(linker)
+}
+
+/// An import running: the thread's `at` while it runs, back in the
+/// guest's code after.
+struct At(Arc<AtomicU8>);
+
+impl At {
+    fn enter(at: &Arc<AtomicU8>, here: u8) -> Self {
+        at.store(here, Ordering::SeqCst);
+        Self(at.clone())
+    }
+}
+
+impl Drop for At {
+    fn drop(&mut self) {
+        self.0.store(AT_GUEST, Ordering::SeqCst);
+    }
 }
 
 /// The `len` bytes at `ptr` of the guest's memory, if they are inside it.
