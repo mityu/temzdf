@@ -14,7 +14,7 @@
 //! Text grids are laid over each other in order, the later winning, as on a
 //! terminal screen.
 
-use temzdf_scene::{Attrs, Cell, CursorShape, Frame, ImageKey, Rect, Underline};
+use temzdf_scene::{Attrs, Cell, CursorShape, Frame, GlyphOverflow, ImageKey, Rect, Underline};
 
 use crate::palette::Colors;
 
@@ -60,6 +60,9 @@ pub struct Glyph {
     pub text: String,
     /// Cells it spans (2 for wide characters).
     pub width: u8,
+    /// Cells it may be drawn into, from its own: its width, or two for a
+    /// narrow character spilling into the next cell (`GlyphOverflow`).
+    pub room: u8,
     pub color: [u8; 3],
     pub bold: bool,
     pub italic: bool,
@@ -200,7 +203,17 @@ fn curly(rect: Rect, y: i32, thick: u32, color: [u8; 3]) -> Vec<Fill> {
     out
 }
 
-pub fn build(frame: &Frame, grid: Grid, colors: &Colors) -> DrawList {
+/// Whether a cell shows no character (a narrow one before it may spill
+/// into it).
+fn blank(cell: Option<&Option<Cell>>) -> bool {
+    match cell {
+        Some(None) => true,
+        Some(Some(c)) => c.width == 1 && (c.text.is_empty() || c.text == " "),
+        None => false,
+    }
+}
+
+pub fn build(frame: &Frame, grid: Grid, colors: &Colors, overflow: GlyphOverflow) -> DrawList {
     let mut list = DrawList { background: colors.background, ..DrawList::default() };
     let mut layers = frame.layers.clone();
     layers.sort_by_key(|l| l.z);
@@ -225,11 +238,24 @@ pub fn build(frame: &Frame, grid: Grid, colors: &Colors) -> DrawList {
                 list.cells.push(Fill { rect, color: [bg[0], bg[1], bg[2], 255] });
             }
             if !c.text.is_empty() && c.text != " " && !c.attrs.invisible {
+                let width = c.width.max(1);
+                // The next cell, on this row (none at its end).
+                let next = (col + 1 < grid.cols)
+                    .then(|| cells.get(row as usize * grid.cols as usize + col as usize + 1))
+                    .flatten();
+                let spill = width == 1
+                    && next.is_some()
+                    && match overflow {
+                        GlyphOverflow::Never => false,
+                        GlyphOverflow::BeforeSpace => blank(next),
+                        GlyphOverflow::Always => true,
+                    };
                 list.glyphs.push(Glyph {
                     col,
                     row,
                     text: c.text.clone(),
-                    width: c.width.max(1),
+                    width,
+                    room: if spill { 2 } else { width },
                     color: fg,
                     bold: c.attrs.bold,
                     italic: c.attrs.italic,
@@ -256,7 +282,8 @@ pub fn build(frame: &Frame, grid: Grid, colors: &Colors) -> DrawList {
             CursorShape::Block { .. } | CursorShape::Default => {
                 if let Some(i) = under {
                     let g = list.glyphs.remove(i);
-                    list.cursor_glyph = Some(Glyph { color: colors.background, ..g });
+                    // Within the cursor: its colour is the background's.
+                    list.cursor_glyph = Some(Glyph { color: colors.background, room: g.width, ..g });
                 }
                 cell
             }
@@ -291,6 +318,7 @@ pub fn preedit(list: &mut DrawList, text: &str, at: (u16, u16), grid: Grid, colo
             row,
             text: c.to_owned(),
             width: w as u8,
+            room: w as u8,
             color: fg,
             bold: false,
             italic: false,
@@ -319,10 +347,60 @@ mod tests {
     }
 
     #[test]
+    fn narrow_glyphs_spill_into_the_next_cell_as_the_option_says() {
+        // A Nerd Font icon (one cell wide, its picture nearly two).
+        const ICON: &str = "\u{e5ff}";
+        let frame = Frame {
+            text: vec![
+                TextGrid {
+                    col: 0,
+                    row: 0,
+                    rows: vec![vec![
+                        cell(ICON, 1),
+                        cell(" ", 1),
+                        cell(ICON, 1),
+                        cell("x", 1),
+                        cell("数", 2),
+                        cell("", 0),
+                        cell(ICON, 1),
+                        cell(" ", 1),
+                        cell(" ", 1),
+                        cell(ICON, 1),
+                    ]],
+                },
+                // Nothing after it on its row.
+                TextGrid { col: 0, row: 1, rows: vec![vec![cell(ICON, 1)]] },
+            ],
+            ..Frame::default()
+        };
+        let rooms = |overflow| {
+            let list = build(&frame, GRID, &Colors::default(), overflow);
+            list.glyphs.iter().map(|g| (g.col, g.row, g.room)).collect::<Vec<_>>()
+        };
+        // Before a blank (none at the row's end); a wide character keeps its two.
+        assert_eq!(
+            rooms(GlyphOverflow::BeforeSpace),
+            [(0, 0, 2), (2, 0, 1), (3, 0, 1), (4, 0, 2), (6, 0, 2), (9, 0, 1), (0, 1, 2)]
+        );
+        assert_eq!(
+            rooms(GlyphOverflow::Always),
+            [(0, 0, 2), (2, 0, 2), (3, 0, 2), (4, 0, 2), (6, 0, 2), (9, 0, 1), (0, 1, 2)]
+        );
+        assert_eq!(
+            rooms(GlyphOverflow::Never),
+            [(0, 0, 1), (2, 0, 1), (3, 0, 1), (4, 0, 2), (6, 0, 1), (9, 0, 1), (0, 1, 1)]
+        );
+        // Under a block cursor it stays in its cell.
+        let on = Frame { cursor: Some((0, 0)), cursor_shape: CursorShape::Block { blink: false }, ..frame.clone() };
+        let list = build(&on, GRID, &Colors::default(), GlyphOverflow::Always);
+        assert_eq!(list.cursor_glyph.map(|g| (g.text, g.room)), Some((ICON.to_owned(), 1)));
+    }
+
+    #[test]
     fn a_preedit_takes_a_cell_per_character_as_seen() {
         let colors = Colors::default();
         let frame = Frame { cursor: Some((0, 0)), ..Frame::default() };
-        let mut list = build(&frame, GRID, &colors);
+        let mut list = build(&frame, GRID, &colors, GlyphOverflow::default());
         // e with a combining acute accent, a kana with a combining mark,
         // then a wide character.
         preedit(&mut list, "e\u{301}か\u{3099}数", (0, 0), GRID, &colors);
@@ -339,7 +417,7 @@ mod tests {
             layers: vec![layer(k[0], 5), layer(k[1], -1_073_741_900), layer(k[2], -10), layer(k[3], -1_073_741_800)],
             ..Frame::default()
         };
-        let list = build(&frame, GRID, &Colors::default());
+        let list = build(&frame, GRID, &Colors::default(), GlyphOverflow::default());
         let keys = |v: &[Image]| v.iter().map(|i| i.image).collect::<Vec<_>>();
         assert_eq!(keys(&list.under), [k[1]]);
         // -1_073_741_800 is above -2^30: between (the session's chrome).
@@ -362,7 +440,7 @@ mod tests {
             ],
             ..Frame::default()
         };
-        let list = build(&frame, GRID, &colors);
+        let list = build(&frame, GRID, &colors, GlyphOverflow::default());
         let glyphs: Vec<(&str, u16, u8, [u8; 3])> =
             list.glyphs.iter().map(|g| (g.text.as_str(), g.col, g.width, g.color)).collect();
         assert_eq!(
@@ -444,11 +522,16 @@ mod tests {
             cursor_shape: CursorShape::Block { blink: false },
             ..Frame::default()
         };
-        let list = build(&frame, GRID, &colors);
+        let list = build(&frame, GRID, &colors, GlyphOverflow::default());
         assert_eq!(list.cursor.map(|c| c.rect), Some(Rect::new(8, 16, 8, 16)));
         assert_eq!(list.cursor_glyph.as_ref().map(|g| (g.text.as_str(), g.color)), Some(("y", colors.background)));
         assert_eq!(list.glyphs.len(), 1, "y is drawn over the cursor, not under it");
-        let bar = build(&Frame { cursor_shape: CursorShape::Bar { blink: false }, ..frame }, GRID, &colors);
+        let bar = build(
+            &Frame { cursor_shape: CursorShape::Bar { blink: false }, ..frame },
+            GRID,
+            &colors,
+            GlyphOverflow::default(),
+        );
         assert_eq!(bar.cursor.map(|c| c.rect), Some(Rect::new(8, 16, 2, 16)));
         assert!(bar.cursor_glyph.is_none());
     }
@@ -465,11 +548,11 @@ mod tests {
         // The glyph is drawn in the background colour over the cursor: the
         // cursor must be under all of it, also from its right half.
         for col in [0, 1] {
-            let list = build(&frame(col), GRID, &colors);
+            let list = build(&frame(col), GRID, &colors, GlyphOverflow::default());
             assert_eq!(list.cursor_glyph.as_ref().map(|g| g.width), Some(2), "at {col}");
             assert_eq!(list.cursor.map(|c| c.rect), Some(Rect::new(0, 0, 16, 16)), "at {col}");
         }
-        let list = build(&frame(2), GRID, &colors);
+        let list = build(&frame(2), GRID, &colors, GlyphOverflow::default());
         assert_eq!(list.cursor.map(|c| c.rect), Some(Rect::new(16, 0, 8, 16)));
     }
 }

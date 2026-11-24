@@ -280,6 +280,8 @@ declare module "temzdf" {
     guifont: FontEntry[];
     /** Fonts tried first for wide (CJK) characters; []: none. */
     guifontwide: FontEntry[];
+    /** Whether a GUI client draws a character one cell wide into the next cell too (a Nerd Font icon wider than its cell): "beforespace" when that cell is blank, "always", or "never" (cut at its cell). WezTerm's allow_square_glyphs_to_overflow_width. */
+    guiglyphoverflow: "never" | "beforespace" | "always";
     /** The base mode (the bottom of the mode history) in panes of each kind, e.g. { edit: "vim/normal" }; set any time: the focused pane takes its new base at once, the others when focused. */
     basemode: { [kind: string]: string };
     /** Text panes wrap long lines (else they scroll sideways). */

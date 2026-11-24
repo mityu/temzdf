@@ -40,8 +40,11 @@ configuration script, as `temzdf --clean`. Closing the window detaches. `--rende
   cosmic-text's lists for the script and locale and every installed font.
   The first installed font sets the cell, so a missing one does not break
   the grid; each glyph takes the first font of the list that has all its
-  characters, at that font's size. The bundled fonts are the upstream
-  files listed with their URLs and sha256 in `crates/temzdf-gui/fonts.toml`
+  characters, at that font's size. A glyph is drawn within its cells,
+  but a character one cell wide may spill into the next cell
+  (`o.guiglyphoverflow`; by default when that cell is blank, as in
+  WezTerm): Nerd Font icons are often nearly two cells wide with an
+  advance of one. The bundled fonts are the upstream files listed with their URLs and sha256 in `crates/temzdf-gui/fonts.toml`
   (not nixpkgs' builds from source, which differ byte for byte), embedded
   by `build.rs` (about 14 MB, most of it the emoji font): Nix fetches them
   (`bundleFonts` in `flake.nix`, passed in `TEMZDF_BUNDLED_FONTS`); without

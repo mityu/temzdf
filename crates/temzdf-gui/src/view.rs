@@ -91,7 +91,7 @@ impl View {
     pub fn draw_list(&self, geometry: Geometry) -> DrawList {
         let grid = grid(geometry);
         match &self.frame {
-            Some((_, f)) => drawlist::build(f, grid, &self.colors),
+            Some((_, f)) => drawlist::build(f, grid, &self.colors, self.appearance.glyph_overflow),
             None => DrawList { background: self.colors.background, ..DrawList::default() },
         }
     }

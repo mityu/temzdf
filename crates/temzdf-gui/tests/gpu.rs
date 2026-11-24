@@ -6,7 +6,7 @@
 use temzdf_gui::drawlist::{self, Grid};
 use temzdf_gui::palette::Colors;
 use temzdf_gui::render::{Renderer, offscreen_device};
-use temzdf_scene::{Attrs, Cell, Color, CursorShape, Frame, Images, Layer, Rect, TextGrid};
+use temzdf_scene::{Attrs, Cell, Color, CursorShape, Frame, GlyphOverflow, Images, Layer, Rect, TextGrid};
 use termpix_core::raster::{Blending, RgbaImage, RgbaRef, blit_blended};
 
 fn main() {
@@ -32,7 +32,8 @@ fn main() {
     layers_match_the_cpu_reference(&mut r);
     text_lands_in_its_cells(&mut r);
     images_beyond_the_limit_do_not_crash(&mut r);
-    println!("gpu: 3 tests passed");
+    icons_spill_into_a_blank_cell(&mut r);
+    println!("gpu: 4 tests passed");
 }
 
 /// A program in a terminal pane may show an image wider than the GPU takes:
@@ -53,11 +54,23 @@ fn images_beyond_the_limit_do_not_crash(r: &mut Renderer) {
         ..Frame::default()
     };
     let grid = Grid { cols: 4, rows: 1, cell_w: 8, cell_h: 16 };
-    let px = r.draw_offscreen(&drawlist::build(&frame, grid, &Colors::default()), grid, (32, 16)).unwrap();
+    let px = r
+        .draw_offscreen(&drawlist::build(&frame, grid, &Colors::default(), GlyphOverflow::default()), grid, (32, 16))
+        .unwrap();
     assert_eq!(&px[..4], &[255, 255, 255, 255], "the image, scaled down");
     // Sizes the GPU cannot draw at are refused, not a crash.
-    assert!(r.draw_offscreen(&drawlist::build(&frame, grid, &Colors::default()), grid, (0, 16)).is_err());
-    assert!(r.draw_offscreen(&drawlist::build(&frame, grid, &Colors::default()), grid, (limit + 1, 16)).is_err());
+    assert!(
+        r.draw_offscreen(&drawlist::build(&frame, grid, &Colors::default(), GlyphOverflow::default()), grid, (0, 16))
+            .is_err()
+    );
+    assert!(
+        r.draw_offscreen(
+            &drawlist::build(&frame, grid, &Colors::default(), GlyphOverflow::default()),
+            grid,
+            (limit + 1, 16)
+        )
+        .is_err()
+    );
     println!("gpu: images beyond the limit are scaled down");
 }
 
@@ -82,7 +95,8 @@ fn layers_match_the_cpu_reference(r: &mut Renderer) {
     };
     let colors = Colors::default();
     let grid = Grid { cols: 8, rows: 3, cell_w: 8, cell_h: 16 };
-    let got = r.draw_offscreen(&drawlist::build(&frame, grid, &colors), grid, (w, h)).unwrap();
+    let got =
+        r.draw_offscreen(&drawlist::build(&frame, grid, &colors, GlyphOverflow::default()), grid, (w, h)).unwrap();
     let bg = colors.background;
     let mut want = RgbaImage::new(w, h, [bg[0], bg[1], bg[2], 255]);
     blit_blended(
@@ -132,7 +146,7 @@ fn text_lands_in_its_cells(r: &mut Renderer) {
         ..Frame::default()
     };
     let colors = Colors::default();
-    let px = r.draw_offscreen(&drawlist::build(&frame, grid, &colors), grid, size).unwrap();
+    let px = r.draw_offscreen(&drawlist::build(&frame, grid, &colors, GlyphOverflow::default()), grid, size).unwrap();
     let at = |x: u32, y: u32| -> [u8; 3] {
         let i = ((y * size.0 + x) * 4) as usize;
         [px[i], px[i + 1], px[i + 2]]
@@ -166,4 +180,44 @@ fn text_lands_in_its_cells(r: &mut Renderer) {
         .count();
     assert!(on > (m.width * m.height / 2) as usize && dark > 3, "cursor over x ({on} lit, {dark} dark)");
     assert!(cell_px(5, 3).all(|(x, y)| at(x, y) == bg), "nothing beyond");
+}
+
+/// A Nerd Font icon of UDEV Gothic NF (U+E5FF: one cell wide, its picture
+/// nearly two) is drawn whole before a blank cell, and cut at its own
+/// before a character or with `GlyphOverflow::Never`.
+fn icons_spill_into_a_blank_cell(r: &mut Renderer) {
+    let m = r.metrics();
+    let grid = Grid { cols: 4, rows: 1, cell_w: m.width, cell_h: m.height };
+    let size = (grid.cols as u32 * m.width, m.height);
+    let green = Color::Rgb([0, 255, 0]);
+    let cell = |text: &str, fg| Cell { text: text.into(), width: 1, fg, bg: Color::Default, attrs: Attrs::default() };
+    let colors = Colors::default();
+    // Green pixels in cell `col` with the icon followed by `next`.
+    let spilled = |r: &mut Renderer, next: &str, overflow| {
+        let frame = Frame {
+            text: vec![TextGrid {
+                col: 0,
+                row: 0,
+                rows: vec![vec![cell("\u{e5ff}", green), cell(next, Color::Rgb([255, 0, 0]))]],
+            }],
+            ..Frame::default()
+        };
+        let px = r.draw_offscreen(&drawlist::build(&frame, grid, &colors, overflow), grid, size).unwrap();
+        let greens = |col: u32| {
+            (col * m.width..(col + 1) * m.width)
+                .flat_map(|x| (0..m.height).map(move |y| (x, y)))
+                .filter(|&(x, y)| {
+                    let i = ((y * size.0 + x) * 4) as usize;
+                    px[i + 1] > 120 && px[i] < 100 && px[i + 2] < 100
+                })
+                .count()
+        };
+        (greens(0), greens(1))
+    };
+    let (own, next) = spilled(r, " ", GlyphOverflow::BeforeSpace);
+    assert!(own > 3 && next > 3, "drawn into the blank cell ({own} in its own, {next} in the next)");
+    let (own, next) = spilled(r, "x", GlyphOverflow::BeforeSpace);
+    assert!(own > 3 && next == 0, "cut before a character ({own}, {next})");
+    let (own, next) = spilled(r, " ", GlyphOverflow::Never);
+    assert!(own > 3 && next == 0, "cut with never ({own}, {next})");
 }

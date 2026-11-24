@@ -375,6 +375,24 @@ pub struct Appearance {
     pub font: Vec<FontEntry>,
     /// Fonts tried first for wide (CJK) characters; empty: none.
     pub font_wide: Vec<FontEntry>,
+    /// Whether a narrow character may be drawn into the next cell.
+    pub glyph_overflow: GlyphOverflow,
+}
+
+/// Whether a character one cell wide is drawn into the next cell too, as
+/// a Nerd Font icon whose picture is wider than its advance needs
+/// (`o.guiglyphoverflow`; WezTerm's `allow_square_glyphs_to_overflow_width`).
+/// The cells themselves stay as they are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum GlyphOverflow {
+    /// Cut at its own cell.
+    Never,
+    /// Into the next cell when that is blank.
+    #[default]
+    BeforeSpace,
+    /// Into the next cell whatever is there.
+    Always,
 }
 
 /// A font of a list (`o.guifont`).

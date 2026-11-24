@@ -33,6 +33,12 @@ const SHOWTABLINE: &[(&str, ShowTabline)] =
 const RELOADANCHOR: &[(&str, bool)] = &[("position", false), ("text", true)];
 /// `fileIgnoreCase`'s names (it takes true and false as well).
 const FILEIGNORECASE: &[(&str, temzdf_paths::IgnoreCase)] = &[("auto", temzdf_paths::IgnoreCase::Auto)];
+/// `guiglyphoverflow`: whether narrow characters may spill into the next cell.
+const GUIGLYPHOVERFLOW: &[(&str, temzdf_scene::GlyphOverflow)] = &[
+    ("never", temzdf_scene::GlyphOverflow::Never),
+    ("beforespace", temzdf_scene::GlyphOverflow::BeforeSpace),
+    ("always", temzdf_scene::GlyphOverflow::Always),
+];
 /// `showstatusline`: whether the window's status line shows.
 const SHOWSTATUSLINE: &[(&str, bool)] = &[("never", false), ("always", true)];
 
@@ -105,6 +111,8 @@ pub struct Options {
     /// characters.
     pub guifont: Vec<temzdf_scene::FontEntry>,
     pub guifontwide: Vec<temzdf_scene::FontEntry>,
+    /// Whether GUI clients draw narrow characters into a next cell.
+    pub guiglyphoverflow: temzdf_scene::GlyphOverflow,
     /// Text panes: wrapping, tabs, line numbers, the cursor line,
     /// `scrolloff`.
     pub text: TextOptions,
@@ -174,6 +182,7 @@ impl Default for Options {
             palette: Vec::new(),
             guifont: vec![temzdf_scene::FontEntry { family: "JetBrains Mono".into(), size: Some(14.0) }],
             guifontwide: Vec::new(),
+            guiglyphoverflow: temzdf_scene::GlyphOverflow::default(),
             text: TextOptions::default(),
             basemode: std::collections::BTreeMap::new(),
             copyhistory: 30,
@@ -283,6 +292,10 @@ impl Session {
             "guifontwide" => {
                 o.guifontwide = fonts(value).map_err(|e| format!("o.guifontwide: {e}"))?;
                 self.configured_fonts = None;
+            }
+            "guiglyphoverflow" => {
+                o.guiglyphoverflow = by_name(GUIGLYPHOVERFLOW, value.as_str())
+                    .ok_or("o.guiglyphoverflow: expected \"never\", \"beforespace\" or \"always\"")?
             }
             "showtabline" => {
                 o.showtabline = by_name(SHOWTABLINE, value.as_str())
@@ -409,6 +422,7 @@ impl Session {
             "palette" => ScriptValue::List(o.palette.iter().map(|c| ScriptValue::Str(hex(*c))).collect()),
             "guifont" => font_list(&o.guifont),
             "guifontwide" => font_list(&o.guifontwide),
+            "guiglyphoverflow" => name_in(GUIGLYPHOVERFLOW, &o.guiglyphoverflow),
             other => return Err(format!("no option {other:?}")),
         })
     }

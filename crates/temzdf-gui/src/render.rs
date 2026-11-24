@@ -423,7 +423,7 @@ impl Renderer {
                     bounds: TextBounds {
                         left: left as i32,
                         top: top as i32,
-                        right: left as i32 + (g.width as u32 * grid.cell_w) as i32,
+                        right: left as i32 + (g.room as u32 * grid.cell_w) as i32,
                         bottom: top as i32 + grid.cell_h as i32,
                     },
                     default_color: GlyphColor::rgb(g.color[0], g.color[1], g.color[2]),

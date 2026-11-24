@@ -1348,6 +1348,7 @@ impl Session {
             palette: o.palette.clone(),
             font: o.guifont.clone(),
             font_wide: o.guifontwide.clone(),
+            glyph_overflow: o.guiglyphoverflow,
         }
     }
 

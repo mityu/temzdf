@@ -2650,6 +2650,10 @@ fn the_theme_answers_programs_colour_queries() {
     let cjk = ScriptValue::Map(vec![("font".into(), ScriptValue::Str("Noto Sans CJK JP".into()))]);
     s.set_option("guifontwide", &ScriptValue::List(vec![cjk])).unwrap();
     assert_eq!(s.appearance().font_wide, [temzdf_scene::FontEntry { family: "Noto Sans CJK JP".into(), size: None }]);
+    assert_eq!(s.appearance().glyph_overflow, temzdf_scene::GlyphOverflow::BeforeSpace, "the default");
+    s.set_option("guiglyphoverflow", &ScriptValue::Str("never".into())).unwrap();
+    assert_eq!(s.appearance().glyph_overflow, temzdf_scene::GlyphOverflow::Never);
+    assert!(s.set_option("guiglyphoverflow", &ScriptValue::Str("WhenFollowedBySpace".into())).is_err());
 }
 
 #[test]
@@ -4191,6 +4195,7 @@ fn every_declared_option_reads_and_writes_back() {
     for (name, values) in [
         ("showtabline", &["never", "auto", "always"][..]),
         ("showstatusline", &["never", "always"]),
+        ("guiglyphoverflow", &["never", "beforespace", "always"]),
         ("reloadanchor", &["position", "text"]),
         ("number", &["off", "absolute", "relative", "both"]),
         ("clipboard", &["all", "copies", "none"]),
