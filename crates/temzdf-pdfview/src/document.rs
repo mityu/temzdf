@@ -50,6 +50,13 @@ impl Document {
         })
     }
 
+    /// A page's text, read alone (a copy of pages never shown).
+    pub fn set_text(&mut self, page: usize, text: PageText) {
+        if let Some(slot) = self.texts.get_mut(page) {
+            *slot = Some(text);
+        }
+    }
+
     /// The document is closed: drop its tiles from the image store.
     pub fn release(&mut self, images: &mut Images) {
         self.replace(images, Vec::new());

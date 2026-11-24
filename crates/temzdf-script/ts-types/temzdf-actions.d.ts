@@ -272,8 +272,8 @@ declare module "temzdf" {
     nextMatch(count?: number): void;
     /** Page view: prev-match in the focused PDF pane (`count` times, where that means something) */
     prevMatch(count?: number): void;
-    /** Page view: copy in the focused PDF pane (`count` times, where that means something) */
-    copy(count?: number): void;
+    /** Page view: copy the selection of the focused PDF pane into the copy history (and, as `o.clipboard` says, the clipboard). Always a Promise of the entry copied (as `Copied` hooks get it; undefined when nothing is selected): the text of pages never shown is read first, which can take a while; rejected when the copy is dropped (another copy took its place, the document was reloaded, the pane closed) */
+    copy(): Promise<Copied | undefined>;
     /** Page view: toggle-sidebar in the focused PDF pane (`count` times, where that means something) */
     toggleSidebar(count?: number): void;
     visual: {

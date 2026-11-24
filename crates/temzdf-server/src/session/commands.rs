@@ -148,6 +148,25 @@ impl Session {
             };
             return ok(if action == temzdf_pdfview::pane::Action::None { Outcome::None } else { Outcome::Redraw });
         }
+        // A Promise of the entry copied (undefined: nothing selected), always:
+        // pages never shown are read first, so it may take a while.
+        if name == "copy" {
+            let focus = self.focus;
+            let Some(pane) = self.panes.get_mut(&focus).and_then(PaneEntry::pdf) else {
+                return Err(format!("{name}: the focused pane is not a PDF"));
+            };
+            let id = pane.copy();
+            let ticket = self.script.new_promise();
+            match id {
+                Some(id) => {
+                    self.copies.pdf_copies.insert((focus, id), ticket);
+                }
+                None => self.resolve_promise(ticket, Ok(ScriptValue::Null)),
+            }
+            // A copy of pages all shown is in now.
+            let out = self.collect_pane_requests();
+            return Ok((ScriptValue::map([("$promise", ScriptValue::Num(ticket as f64))]), out));
+        }
         if let Some(cmd) = Command::from_name(name) {
             let Some(pane) = self.panes.get_mut(&self.focus).and_then(PaneEntry::pdf) else {
                 return Err(format!("{name}: the focused pane is not a PDF"));

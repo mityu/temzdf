@@ -86,6 +86,8 @@ impl Opening {
             reload: ReloadState::default(),
             deferred_forward: None,
             synctex_pending: 0,
+            texts_wanted: std::collections::VecDeque::new(),
+            text_in_flight: None,
         }
     }
 }
@@ -109,6 +111,11 @@ pub struct DocumentHost {
     deferred_forward: Option<Forward>,
     /// SyncTeX queries sent and not answered yet (each gets one answer).
     synctex_pending: usize,
+    /// Pages whose text alone copies wait for ([`Request::ReadText`]), to
+    /// ask for one at a time: page loads for the view go in between.
+    texts_wanted: std::collections::VecDeque<usize>,
+    /// The page whose text was asked for and has not come.
+    text_in_flight: Option<usize>,
 }
 
 impl DocumentHost {
@@ -165,8 +172,30 @@ impl DocumentHost {
         let mut effect = None;
         match ev {
             DocEvent::Opened(_) => return (false, None),
-            // Nothing asks for a page's text alone yet.
-            DocEvent::PageText(..) => return (false, None),
+            DocEvent::PageText(generation, p, text) => {
+                if self.text_in_flight == Some(p) {
+                    self.text_in_flight = None;
+                }
+                let ok = text.is_ok();
+                {
+                    let mut d = self.doc.borrow_mut();
+                    // Of an older version: its copies were dropped.
+                    if generation == d.cache.generation() {
+                        if let Ok(text) = text {
+                            d.set_text(p, text);
+                        }
+                    } else {
+                        drop(d);
+                        self.read_next_text();
+                        return (false, None);
+                    }
+                }
+                for pane in panes.iter_mut() {
+                    pane.text_arrived(p, ok);
+                }
+                self.read_next_text();
+                return (false, None);
+            }
             DocEvent::PageLoaded(generation, p, list, links) => {
                 let mut d = self.doc.borrow_mut();
                 if generation != d.cache.generation() {
@@ -234,6 +263,8 @@ impl DocumentHost {
             }
             DocEvent::Reloaded(info) => {
                 let _ = self.synctex.send(SynctexCmd::Reload);
+                // The copies waiting for them are dropped (before_reload).
+                self.texts_wanted.clear();
                 self.reload.in_flight = false;
                 self.reload.attempts = 0;
                 for pane in panes.iter_mut() {
@@ -330,10 +361,40 @@ impl DocumentHost {
                 None
             }
             Request::OpenUri(uri) => Some(Effect::OpenUri { uri, command: None }),
-            Request::Copy { text, note } => Some(Effect::Copied { text, kind: temzdf_scene::CopyKind::Char, note }),
+            Request::ReadText(pages) => {
+                for p in pages {
+                    if !self.texts_wanted.contains(&p) && self.text_in_flight != Some(p) {
+                        self.texts_wanted.push_back(p);
+                    }
+                }
+                self.read_next_text();
+                None
+            }
+            // The session's (it knows who waits for which copy).
+            Request::Copy { .. } | Request::Copying { .. } | Request::CopyDropped { .. } => None,
             // The session's to say, before it hands requests here.
             Request::NotFound(_) => None,
         }
+    }
+}
+
+impl DocumentHost {
+    /// Ask for the next page's text copies wait for, unless one is on its
+    /// way: one at a time, so that pages the view loads are not held up.
+    fn read_next_text(&mut self) {
+        if self.text_in_flight.is_some() {
+            return;
+        }
+        if let Some(p) = self.texts_wanted.pop_front()
+            && self.cmd.send(DocCmd::LoadText(p)).is_ok()
+        {
+            self.text_in_flight = Some(p);
+        }
+    }
+
+    /// Whether pages' text is asked for or on its way (for tests).
+    pub fn reading_texts(&self) -> bool {
+        self.text_in_flight.is_some() || !self.texts_wanted.is_empty()
     }
 }
 
@@ -489,6 +550,64 @@ mod tests {
         let renders = needs.iter().filter(|n| !matches!(n, Need::LoadPage(_))).count();
         assert_eq!(renders, 0, "tiles queued by the first frame were dropped");
         assert!(pane.viewer.is_complete());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
+    fn a_copy_reads_pages_never_shown_one_at_a_time() {
+        use std::sync::mpsc;
+        use termpix_core::geom::{CellSize, Geometry};
+        let path = pdf::fixture("sample.pdf");
+        let doc = pdf::open(&path).unwrap();
+        let info = pdf::doc_info(&doc).unwrap();
+        let geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
+        let selection = crate::selection::Selection { anchor: (0, 0), head: (2, 5) };
+        // What the copy is with every page shown.
+        let mut all = PdfPane::new("sample.pdf".into(), info.clone(), geometry);
+        for p in 0..3 {
+            all.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
+        }
+        all.set_selection(selection);
+        all.copy();
+        let [Request::Copy { text: expected, .. }] = &all.take_requests()[..] else { panic!("a copy") };
+
+        // Only page 0 shown.
+        let mut pane = PdfPane::new("sample.pdf".into(), info.clone(), geometry);
+        pane.viewer.page_loaded(0, 0, pdf::display_list(&doc, 0).unwrap());
+        let (tx, rx) = mpsc::channel();
+        let sink = temzdf_scene::sink::channel_sink(tx, |e| e);
+        let mut host =
+            Opening::start(&path, sink).unwrap().finish(info, pane.viewer.doc.clone(), HostOptions::default());
+        let mut images = Images::new();
+        pane.set_selection(selection);
+        let id = pane.copy().unwrap();
+        for req in pane.take_requests() {
+            host.request(req);
+        }
+        // One page asked for, the other waiting its turn.
+        assert_eq!((host.text_in_flight, Vec::from(host.texts_wanted.clone())), (Some(1), vec![2]));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut copied = None;
+        while copied.is_none() {
+            let wait = deadline.saturating_duration_since(Instant::now());
+            let ev = rx.recv_timeout(wait).expect("the text stopped arriving");
+            // Each answers the one page asked for; the next is asked for then.
+            if let DocEvent::PageText(_, p, _) = &ev {
+                assert_eq!(Some(*p), host.text_in_flight, "the page asked for");
+            }
+            host.handle(ev, &mut [&mut pane], &mut images, Instant::now());
+            for req in pane.take_requests() {
+                match req {
+                    Request::Copy { id: got, text, note } => copied = Some((got, text, note)),
+                    req => panic!("{req:?}"),
+                }
+            }
+        }
+        assert_eq!(copied, Some((id, expected.clone(), None)));
+        assert!(!host.reading_texts());
+        // The text read alone stays for the view (no extraction again).
+        assert!(host.doc.borrow().texts[1].is_some());
     }
 
     #[test]

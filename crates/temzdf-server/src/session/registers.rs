@@ -96,6 +96,11 @@ pub(super) struct Copies {
     /// give up. Input waits for them, so that what follows a paste comes
     /// after it.
     pastes: HashMap<u64, Instant>,
+    /// `copy` in a PDF pane: the Promise (ticket) waiting for each copy,
+    /// by pane and the pane's copy id ([`PdfPane::copy`]).
+    ///
+    /// [`PdfPane::copy`]: temzdf_pdfview::pane::PdfPane::copy
+    pub(super) pdf_copies: HashMap<(PaneId, u64), u64>,
 }
 
 impl Copies {
@@ -149,6 +154,10 @@ impl Entry {
 /// crates/temzdf-script/ts-types/temzdf-actions.d.ts).
 const NAMES: &[&str] =
     &["copy-text", "history", "register", "set-register", "registers", "forget-copy", "put", "read-clipboard"];
+
+/// What a pane copied, by which buffer: its text, kind and note, and the
+/// PDF copy (pane, id) it was, if any.
+type PaneCopy = (BufferId, String, CopyKind, Option<String>, Option<(PaneId, u64)>);
 
 impl Session {
     /// The source of a copy made in `buf` (the focused pane's buffer for
@@ -213,37 +222,75 @@ impl Session {
     /// nothing gets its notice; their other effects stay for the client. A
     /// redraw when there was a notice.
     pub(super) fn collect_pane_requests(&mut self) -> Outcome {
-        let mut copied: Vec<(BufferId, String, CopyKind, Option<String>)> = Vec::new();
+        use temzdf_pdfview::pane::{CopyDropped, Request};
+        let mut copied: Vec<PaneCopy> = Vec::new();
         let mut not_found = Vec::new();
+        let mut notices = Vec::new();
+        let mut dropped = Vec::new();
         let mut others = Vec::new();
         for (id, t) in &mut self.terms {
             for e in t.term.take_effects() {
                 match e {
-                    Effect::Copied { text, kind, note } => copied.push((*id, text, kind, note)),
+                    Effect::Copied { text, kind, note } => copied.push((*id, text, kind, note, None)),
                     e => others.push(e),
                 }
             }
         }
-        for e in self.panes.values_mut() {
+        for (pid, e) in &mut self.panes {
             if let Kind::Pdf { pane, doc } = &mut e.kind {
                 for req in pane.take_requests() {
-                    if let temzdf_pdfview::pane::Request::NotFound(query) = req {
-                        not_found.push(query);
-                    } else if let Some(host) = self.docs.get_mut(doc).and_then(|d| d.host.as_mut())
-                        && let Some(effect) = host.request(req)
-                    {
-                        match effect {
-                            Effect::Copied { text, kind, note } => copied.push((*doc, text, kind, note)),
-                            e => others.push(e),
+                    match req {
+                        Request::NotFound(query) => not_found.push(query),
+                        Request::Copy { id, text, note } => {
+                            copied.push((*doc, text, CopyKind::Char, note, Some((*pid, id))));
+                        }
+                        Request::Copying { pages, .. } => notices.push(format!("Copying: reading {pages} pages…")),
+                        Request::CopyDropped { id, why } => {
+                            if why == CopyDropped::Reloaded {
+                                notices.push(format!("Copy dropped: {why}"));
+                            }
+                            dropped.push(((*pid, id), why));
+                        }
+                        req => {
+                            if let Some(host) = self.docs.get_mut(doc).and_then(|d| d.host.as_mut())
+                                && let Some(effect) = host.request(req)
+                            {
+                                others.push(effect);
+                            }
                         }
                     }
                 }
             }
         }
         self.effects.extend(others);
-        let out = if copied.is_empty() && not_found.is_empty() { Outcome::None } else { Outcome::Redraw };
-        for (buf, text, kind, note) in copied {
-            self.pane_copied(buf, text, kind, note.as_deref());
+        let quiet = copied.is_empty() && not_found.is_empty() && notices.is_empty();
+        let out = if quiet { Outcome::None } else { Outcome::Redraw };
+        for (buf, text, kind, note, pdf) in copied {
+            // Nothing selected had text: nothing goes into the history.
+            let entry = if text.is_empty() && pdf.is_some() {
+                ScriptValue::Null
+            } else {
+                self.pane_copied(buf, text, kind, note.as_deref())
+            };
+            if let Some(ticket) = pdf.and_then(|k| self.copies.pdf_copies.remove(&k)) {
+                self.resolve_promise(ticket, Ok(entry));
+            }
+        }
+        for (key, why) in dropped {
+            if let Some(ticket) = self.copies.pdf_copies.remove(&key) {
+                self.resolve_promise(ticket, Err(format!("copy: {why}")));
+            }
+        }
+        // Copies of panes that closed meanwhile will not come.
+        let gone: Vec<(PaneId, u64)> =
+            self.copies.pdf_copies.keys().filter(|(p, _)| !self.panes.contains_key(p)).copied().collect();
+        for key in gone {
+            if let Some(ticket) = self.copies.pdf_copies.remove(&key) {
+                self.resolve_promise(ticket, Err("copy: the pane closed".into()));
+            }
+        }
+        for text in notices {
+            self.notify(super::notices::Kind::Info, &text);
         }
         for query in not_found {
             self.not_found(&query);
@@ -255,10 +302,17 @@ impl Session {
     /// selection; a program in a terminal through OSC 52): into the
     /// history, and a notice says so, `note` after the count. Text panes'
     /// copies (yanks) go through `copy-text` instead, without a notice.
-    pub(super) fn pane_copied(&mut self, buf: BufferId, text: String, kind: CopyKind, note: Option<&str>) {
+    /// Returns the entry, as `Copied` hooks get it.
+    pub(super) fn pane_copied(
+        &mut self,
+        buf: BufferId,
+        text: String,
+        kind: CopyKind,
+        note: Option<&str>,
+    ) -> ScriptValue {
         let n = text.chars().count();
         let source = self.copy_source(Some(buf));
-        self.record_copy(NewCopy {
+        let entry = self.record_copy(NewCopy {
             text,
             kind,
             how: How::Copy,
@@ -272,6 +326,7 @@ impl Session {
             None => format!("Copied {n} characters"),
         };
         self.notify(super::notices::Kind::Info, &notice);
+        entry.value()
     }
 
     /// `temzdf copy`.

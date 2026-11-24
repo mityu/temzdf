@@ -1721,8 +1721,8 @@ fn a_pane_copy_notice_says_what_was_left_out() {
     let (mut s, rx) = session();
     settle(&mut s, &rx);
     let buf = s.panes[&s.focus].buffer();
-    s.pane_copied(buf, "abc".into(), temzdf_scene::CopyKind::Char, Some("1 page(s) not loaded were left out"));
-    assert!(s.notices.iter().any(|n| n.text == "Copied 3 characters; 1 page(s) not loaded were left out"));
+    s.pane_copied(buf, "abc".into(), temzdf_scene::CopyKind::Char, Some("1 page(s) could not be read were left out"));
+    assert!(s.notices.iter().any(|n| n.text == "Copied 3 characters; 1 page(s) could not be read were left out"));
 }
 
 #[test]

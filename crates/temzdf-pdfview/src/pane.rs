@@ -109,11 +109,28 @@ pub enum Request {
     },
     /// Open an external link with the system handler.
     OpenUri(String),
-    /// Copied text, for the session's copy history and clipboard; `note`
-    /// says what was left out (the session's notice shows it).
+    /// Copy `id` ([`PdfPane::copy`]): the text, for the session's copy
+    /// history and clipboard (empty: nothing to copy); `note` says what was
+    /// left out (the session's notice shows it).
     Copy {
+        id: u64,
         text: String,
         note: Option<String>,
+    },
+    /// A copy waits for the text of these pages, never shown (the host
+    /// reads them one at a time, [`DocCmd::LoadText`]).
+    ///
+    /// [`DocCmd::LoadText`]: temzdf_pdfcore::workers::DocCmd::LoadText
+    ReadText(Vec<usize>),
+    /// Copy `id` reads `pages` pages first (the session's notice says so).
+    Copying {
+        id: u64,
+        pages: usize,
+    },
+    /// Copy `id` will not come.
+    CopyDropped {
+        id: u64,
+        why: CopyDropped,
     },
     /// The search found nothing (the session's notice says so).
     NotFound(String),
@@ -123,6 +140,36 @@ pub enum Request {
         x: f32,
         y: f32,
     },
+}
+
+/// Why a copy waiting for pages' text will not come.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyDropped {
+    /// A newer copy of the pane took its place.
+    Replaced,
+    /// The document was reloaded (its selection went too).
+    Reloaded,
+}
+
+impl std::fmt::Display for CopyDropped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Replaced => "another copy took its place",
+            Self::Reloaded => "the document changed",
+        })
+    }
+}
+
+/// A copy waiting for the text of pages never shown.
+#[derive(Debug)]
+struct PendingCopy {
+    id: u64,
+    /// The selection when it was asked for.
+    selection: Selection,
+    /// Pages whose text was asked for and has not come.
+    waiting: std::collections::BTreeSet<usize>,
+    /// Pages whose text could not be read: left out.
+    failed: std::collections::BTreeSet<usize>,
 }
 
 const HISTORY_LIMIT: usize = 100;
@@ -176,6 +223,10 @@ pub struct PdfPane {
     /// worker): select the first one after this position once it is found.
     pending_first_hit: Option<Target>,
     requests: Vec<Request>,
+    /// Copies made so far (each copy's id is the count then).
+    copies: u64,
+    /// A copy waiting for pages' text.
+    pending_copy: Option<PendingCopy>,
     /// The overlays' solid images.
     swatches: Swatches,
     selection: Option<Selection>,
@@ -237,6 +288,8 @@ impl PdfPane {
             previewing: false,
             pending_first_hit: None,
             requests: Vec::new(),
+            copies: 0,
+            pending_copy: None,
             swatches: Swatches::default(),
             selection: None,
             selecting: false,
@@ -1019,6 +1072,10 @@ impl PdfPane {
     /// call it on every pane while the old document is still there, then
     /// [`Document::replace`] once, then [`PdfPane::after_reload`] on every pane.
     pub fn before_reload(&mut self) {
+        // The pages it waits for are of the old version.
+        if let Some(old) = self.pending_copy.take() {
+            self.requests.push(Request::CopyDropped { id: old.id, why: CopyDropped::Reloaded });
+        }
         let collapsed = self.outline.collapsed_paths(&self.info.outline);
         let selected_title = self.outline.selected_entry().map(|i| self.info.outline[i].title.clone());
         // Remember the line being read while the old text is still there.
@@ -1219,17 +1276,72 @@ impl PdfPane {
         Some((page, self.text_of_page(page)?.caret_at(x, y)))
     }
 
-    fn copy_selection(&mut self) {
-        let Some(sel) = self.selection.filter(|s| !s.is_empty()) else { return };
-        let (p0, p1) = (sel.ordered().0.0, sel.ordered().1.0);
-        // Text comes from pages' display lists; those not loaded (far
-        // pages, evicted) are left out: say so rather than copy less quietly.
-        let missing = (p0..=p1).filter(|&p| self.text_of_page(p).is_none()).count();
-        let text = sel.text(&self.viewer.doc.borrow().texts);
-        if !text.is_empty() {
-            let note = (missing > 0).then(|| format!("{missing} page(s) not loaded were left out"));
-            self.requests.push(Request::Copy { text, note });
+    /// Copy the selection: its id, `None` when nothing is selected. The
+    /// text comes as [`Request::Copy`] with that id, at once when every
+    /// page of it was shown, else once the text of the others was read
+    /// ([`Request::ReadText`], [`PdfPane::text_arrived`]); a copy still
+    /// waiting is dropped ([`Request::CopyDropped`]).
+    pub fn copy(&mut self) -> Option<u64> {
+        let selection = self.selection.filter(|s| !s.is_empty())?;
+        self.copies += 1;
+        let id = self.copies;
+        if let Some(old) = self.pending_copy.take() {
+            self.requests.push(Request::CopyDropped { id: old.id, why: CopyDropped::Replaced });
         }
+        let empty = std::collections::BTreeSet::new();
+        self.pending_copy = Some(PendingCopy { id, selection, waiting: empty.clone(), failed: empty });
+        self.finish_copy();
+        Some(id)
+    }
+
+    /// The pending copy's text, if every page of it is there (or could not
+    /// be read); else the pages still missing are asked for.
+    fn finish_copy(&mut self) {
+        let Some(mut pending) = self.pending_copy.take() else { return };
+        let ((p0, _), (p1, _)) = pending.selection.ordered();
+        // Text comes from pages' display lists (shown pages) or was read
+        // alone; pages never shown are read first. (Again after the host
+        // forgot the text, which it does when nothing shows the document.)
+        let missing: std::collections::BTreeSet<usize> =
+            (p0..=p1).filter(|p| !pending.failed.contains(p) && self.text_of_page(*p).is_none()).collect();
+        if !missing.is_empty() {
+            self.requests.push(Request::ReadText(missing.iter().copied().collect()));
+            if pending.waiting.is_empty() {
+                self.requests.push(Request::Copying { id: pending.id, pages: missing.len() });
+            }
+            pending.waiting = missing;
+            self.pending_copy = Some(pending);
+            return;
+        }
+        let text = pending.selection.text(&self.viewer.doc.borrow().texts);
+        let failed = pending.failed.len();
+        let note = (failed > 0).then(|| format!("{failed} page(s) could not be read were left out"));
+        self.requests.push(Request::Copy { id: pending.id, text, note });
+    }
+
+    /// The text of `page` was read (`ok`), or could not be: a copy waiting
+    /// for it goes on.
+    pub fn text_arrived(&mut self, page: usize, ok: bool) {
+        let Some(pending) = &mut self.pending_copy else { return };
+        if !pending.waiting.remove(&page) {
+            return;
+        }
+        if !ok {
+            pending.failed.insert(page);
+        }
+        if pending.waiting.is_empty() {
+            self.finish_copy();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_selection(&mut self, selection: Selection) {
+        self.selection = Some(selection);
+    }
+
+    /// Whether a copy waits for pages' text (for tests).
+    pub fn copy_pending(&self) -> bool {
+        self.pending_copy.is_some()
     }
 
     /// The keys the pane handles itself, before mappings: any key closes a
@@ -1270,7 +1382,9 @@ impl PdfPane {
             Command::Cancel if self.selection.is_some() => self.selection = None,
             Command::Cancel if self.search.is_active() => self.clear_search(),
             Command::Cancel => return Action::Quit,
-            Command::Copy => self.copy_selection(),
+            Command::Copy => {
+                self.copy();
+            }
             Command::ToggleSidebar => self.toggle_sidebar(),
             Command::ScrollDown => wheel_n(v, 1.0, count, now),
             Command::ScrollUp => wheel_n(v, -1.0, count, now),
@@ -1488,7 +1602,7 @@ impl PdfPane {
                     if self.selection.is_some_and(|s| s.is_empty()) {
                         self.selection = None;
                     } else {
-                        self.copy_selection();
+                        self.copy();
                     }
                     return true;
                 }
@@ -1746,19 +1860,73 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
     #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
-    fn copies_say_when_pages_not_loaded_were_left_out() {
+    fn copies_of_pages_never_shown_wait_for_their_text() {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let info = pdf::doc_info(&doc).unwrap();
         let geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
-        let mut s = PdfPane::new("sample.pdf".into(), info, geometry);
-        // Page 1 not loaded.
-        for p in [0, 2] {
-            s.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
-        }
-        s.selection = Some(crate::selection::Selection { anchor: (0, 0), head: (2, 5) });
-        s.copy_selection();
-        let [Request::Copy { note: Some(note), .. }] = &s.take_requests()[..] else { panic!("a copy with a note") };
-        assert_eq!(note, "1 page(s) not loaded were left out");
+        let selection = crate::selection::Selection { anchor: (0, 0), head: (2, 5) };
+        // A pane whose `shown` pages were shown, the selection made.
+        let pane = |shown: &[usize]| {
+            let mut s = PdfPane::new("sample.pdf".into(), info.clone(), geometry);
+            for &p in shown {
+                s.viewer.page_loaded(0, p, pdf::display_list(&doc, p).unwrap());
+            }
+            s.selection = Some(selection);
+            s
+        };
+        let text_of = |p: usize| {
+            PageText::extract(&pdf::display_list(&doc, p).unwrap(), pdf::page_bounds(&doc).unwrap()[p]).unwrap()
+        };
+        // Every page shown: the copy is there at once.
+        let mut all = pane(&[0, 1, 2]);
+        let id = all.copy().unwrap();
+        let [Request::Copy { id: got, text: expected, note: None }] = &all.take_requests()[..] else {
+            panic!("a copy at once")
+        };
+        assert_eq!(*got, id);
+        assert!(!all.copy_pending());
+
+        // Page 1 never shown: its text is asked for, then the copy comes.
+        let mut s = pane(&[0, 2]);
+        let id = s.copy().unwrap();
+        assert_eq!(s.take_requests(), vec![Request::ReadText(vec![1]), Request::Copying { id, pages: 1 }]);
+        s.text_arrived(0, true);
+        assert!(s.take_requests().is_empty(), "not a page it waits for");
+        s.viewer.doc.borrow_mut().set_text(1, text_of(1));
+        s.text_arrived(1, true);
+        assert_eq!(s.take_requests(), vec![Request::Copy { id, text: expected.clone(), note: None }]);
+        assert!(!s.copy_pending());
+
+        // A page that could not be read is left out, and said so.
+        let mut s = pane(&[0, 2]);
+        let id = s.copy().unwrap();
+        s.take_requests();
+        s.text_arrived(1, false);
+        let [Request::Copy { id: got, note: Some(note), .. }] = &s.take_requests()[..] else {
+            panic!("a copy with a note")
+        };
+        assert_eq!((*got, note.as_str()), (id, "1 page(s) could not be read were left out"));
+
+        // A newer copy, or a reload, drops the one waiting.
+        let mut s = pane(&[0, 2]);
+        let first = s.copy().unwrap();
+        s.take_requests();
+        let second = s.copy().unwrap();
+        assert_eq!(
+            s.take_requests(),
+            vec![
+                Request::CopyDropped { id: first, why: CopyDropped::Replaced },
+                Request::ReadText(vec![1]),
+                Request::Copying { id: second, pages: 1 },
+            ]
+        );
+        s.before_reload();
+        assert_eq!(s.take_requests(), vec![Request::CopyDropped { id: second, why: CopyDropped::Reloaded }]);
+        s.text_arrived(1, true);
+        assert!(s.take_requests().is_empty(), "nothing waits any more");
+        // Nothing selected: no copy.
+        s.selection = None;
+        assert_eq!(s.copy(), None);
     }
 
     #[test]
@@ -1836,7 +2004,8 @@ mod tests {
         mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), ((a.0 + b.0) / 2.0, a.1));
         mouse(&mut s, MouseEventKind::Drag(MouseButton::Left), (b.0 + 4.0, b.1));
         mouse(&mut s, MouseEventKind::Release(MouseButton::Left), (b.0 + 4.0, b.1));
-        assert_eq!(s.take_requests(), vec![Request::Copy { text: "temzdf sample document".into(), note: None }]);
+        let [Request::Copy { text, note: None, .. }] = &s.take_requests()[..] else { panic!("a copy") };
+        assert_eq!(text, "temzdf sample document");
         // The session says it copied, not the status bar.
         assert_eq!(s.status().notice, None);
     }

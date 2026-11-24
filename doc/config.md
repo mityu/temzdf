@@ -495,6 +495,12 @@ most `o.copyhistory`): `{ id, text, kind, how, register, source, time }`,
   pane (lines go in before the cursor's line), a prompt too;
 - `forgetCopy(id?)` drops an entry, or everything; the hook `Copied(entry)`
   hears every new one;
+- `copy()` copies the focused PDF pane's selection and always returns a
+  Promise of the entry (undefined when nothing is selected): the text of
+  pages never shown is read first ("Copying: reading N pages…"), so the
+  entry is in only once it settles (`await action.copy()`). It is rejected
+  when the copy is dropped: another copy took its place, the document was
+  reloaded ("Copy dropped: the document changed") or the pane closed;
 - `readClipboard({ primary? })` reads the client's clipboard and returns a
   Promise: a terminal client asks its terminal (OSC 52; kitty and Ghostty
   may ask you first, WezTerm does not answer), the GUI reads its own; no

@@ -29,7 +29,8 @@ export default keyset("builtin-pane-pdf", (d) => {
   d.map("pdf", ["/"], () => openSearch());
   d.map("pdf", ["n"], (c) => action.nextMatch(c.count));
   d.map("pdf", ["N"], (c) => action.prevMatch(c.count));
-  d.map("pdf", ["y"], () => action.copy());
+  // The copy's Promise is not waited for: the notice says when it is in.
+  d.map("pdf", ["y"], () => void action.copy());
   d.map("pdf", ["<Tab>"], () => action.toggleSidebar());
   d.map("pdf", [prefix], () => action.switchMode("normal"));
 });

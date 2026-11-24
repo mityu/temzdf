@@ -405,6 +405,64 @@ fn preview_opens_a_pdf_split_off_to_the_right() {
     assert!(right.x > left.x && right.y == left.y, "to the right: {left:?} {right:?}");
 }
 
+/// Run `code` as `temzdf eval -p` does: its value as JSON, or its error.
+fn eval(s: &mut Session, rx: &Receiver<SessionEvent>, code: &str) -> Result<Option<String>, String> {
+    use temzdf_protocol::script::{Code, CodeStep};
+    let step = CodeStep { name: "-c 1".into(), code: code.into() };
+    let id = s.start_eval(Code { steps: vec![step], base: PathBuf::new(), print: true })?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Ok(ev) = rx.recv_timeout(Duration::from_millis(20)) {
+            s.handle(ev, Instant::now());
+        }
+        let _ = s.poll(Instant::now());
+        let _ = s.take_effects();
+        let _ = s.frame();
+        if let Some((_, r)) = s.take_evaluated().into_iter().find(|(i, _)| *i == id) {
+            return r.result;
+        }
+        assert!(Instant::now() < deadline, "{code}: no answer");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+#[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
+fn copy_resolves_with_the_entry_once_pages_never_shown_are_read() {
+    let dir = TempDir::new("copy");
+    let (mut s, rx) = open(Open::Pdf, &dir.0);
+    let copy = "(await temzdf.action.copy())?.text ?? null";
+    assert_eq!(eval(&mut s, &rx, copy), Ok(Some("null".into())), "nothing selected");
+    // From page 1 to deep into page 3, zoomed in: page 2 is never shown.
+    let at = |kind, x, y| MouseEvent { kind, x, y, unit: CoordUnit::Pixel, modifiers: Modifiers::NONE };
+    let left = termpix_core::input::MouseButton::Left;
+    // On the title (a press off the text pans instead), moved a little so
+    // that the selection starts.
+    s.mouse(&at(MouseEventKind::Press(left), 300, 167), Instant::now());
+    s.mouse(&at(MouseEventKind::Drag(left), 330, 167), Instant::now());
+    for cmd in ["zoom-in", "zoom-in", "zoom-in", "last-page", "page-down"] {
+        s.run_command(cmd, &[], Instant::now()).unwrap();
+        finish_animations(&mut s);
+        settle(&mut s, &rx, true, None);
+    }
+    s.mouse(&at(MouseEventKind::Drag(left), 700, 300), Instant::now());
+    settle(&mut s, &rx, true, None);
+    // Copied while the drag goes on: the Promise waits for page 2's text.
+    let json = eval(&mut s, &rx, copy).unwrap().unwrap();
+    let text: String = serde_json::from_str(&json).unwrap();
+    let notices: Vec<&str> = s.notices.iter().map(|n| n.text.as_str()).collect();
+    assert!(notices.contains(&"Copying: reading 1 pages…"), "{notices:?}");
+    for part in ["sample document", "Paragraph 1: Lorem ipsum", "Back to Section", "Conclusion"] {
+        assert!(text.contains(part), "{part:?} in {text}");
+    }
+    // It is the copy history's newest entry.
+    let newest = match s.run_command("history", &[], Instant::now()).unwrap().0 {
+        ScriptValue::List(l) => l[0].get("text").and_then(ScriptValue::as_str).map(str::to_owned),
+        v => panic!("{v:?}"),
+    };
+    assert_eq!(newest.as_deref(), Some(text.as_str()));
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 fn the_prefix_twice_reaches_the_program() {
