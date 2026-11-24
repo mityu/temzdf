@@ -76,7 +76,8 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
   after its nearest ancestor that is), files' identity (device and inode,
   volume and file ID), and whether a directory's file system ignores the
   case of names (`o.fileIgnoreCase`), used to tell whether a file is
-  already open.
+  already open; `file:` URIs of paths and the paths of `file:` URIs
+  (on Windows plain drive paths only).
 - `temzdf-watchfs`: watching a file for changes made elsewhere
   (`notify`; `watch_file` returns a `FileWatcher`, kept alive), also when
   a tool replaces it or it is a symlink: the PDF a typesetter writes

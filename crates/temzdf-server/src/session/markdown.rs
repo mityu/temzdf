@@ -620,7 +620,12 @@ impl Session {
         let urls: Vec<String> =
             d.doc.image_urls().into_iter().filter(|u| !d.images.contains_key(u) && !is_remote(u)).collect();
         for url in urls {
-            let path = dir.join(percent_decode(url.strip_prefix("file://").unwrap_or(&url)));
+            let path = if url.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("file:")) {
+                let Some(p) = temzdf_paths::file_uri_path(&url) else { continue };
+                p
+            } else {
+                dir.join(percent_decode(&url))
+            };
             if let Ok(id) = self.load_image(&path) {
                 self.md_docs.get_mut(&md).expect("open").images.insert(url, id);
             }
@@ -935,7 +940,7 @@ impl Session {
         let path = here.parent().unwrap_or(Path::new("/")).join(&file);
         let is_pdf = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
         if !is_markdown(&path) && !is_pdf {
-            let uri = format!("file://{}", path.display());
+            let uri = temzdf_paths::file_uri(&path);
             self.effects.push(Effect::OpenUri { uri, command: None });
             return Ok(());
         }

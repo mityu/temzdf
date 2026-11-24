@@ -19,6 +19,9 @@
 
 use std::path::{Component, Path, PathBuf};
 
+mod uri;
+pub use uri::{file_uri, file_uri_path};
+
 /// `path` as a document's identity: canonical (links resolved, `.` and `..`
 /// gone), so that the same file opened from another directory or through a
 /// symlink is the same document. A file that is not there (yet) keeps the

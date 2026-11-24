@@ -2910,6 +2910,31 @@ fn markdown_images_show_inline_or_below_their_line() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "the file system")]
+fn markdown_file_links_and_images_are_file_uris() {
+    let (mut s, path) = text_session("uris.md", "");
+    let dir = path.parent().unwrap().to_owned();
+    write_png(&dir.join("pic 1.png"), 20, 40);
+    // A link to another kind of file goes to the system's opener as a
+    // URI: `#` and spaces encoded, `C:/` as `/C:/` on Windows.
+    // The image's with a host (`file://localhost/...`), as some tools write them.
+    let pic = temzdf_paths::file_uri(&dir.join("pic 1.png")).replacen("file://", "file://localhost", 1);
+    std::fs::write(&path, format!("[f](a%23b%20c.txt)\n\n![abs]({pic})\n\nAfter.\n")).unwrap();
+    let p = ScriptValue::Str(path.to_str().unwrap().into());
+    let pane = ScriptValue::map([("pane", ScriptValue::Num(f64::from(s.focus)))]);
+    s.run_command("markdown.open", &[p, pane], Instant::now()).unwrap();
+    s.run_command("text.set-cursor", &[pos(4, 0)], Instant::now()).unwrap();
+    assert_eq!(s.frame().layers.len(), 1, "the image by its file: URI");
+    s.run_command("text.set-cursor", &[pos(0, 0)], Instant::now()).unwrap();
+    assert_eq!(s.run_command("markdown.follow", &[], Instant::now()).unwrap().0, ScriptValue::Bool(true));
+    let want = temzdf_paths::file_uri(&dir.join("a#b c.txt"));
+    assert!(want.ends_with("/a%23b%20c.txt"), "{want}");
+    let effects = s.take_effects();
+    assert!(effects.iter().any(|e| matches!(e, Effect::OpenUri { uri, .. } if *uri == want)), "{effects:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 #[cfg_attr(miri, ignore = "sockets and threads")]
 fn markdown_remote_images_come_when_asked_for() {
     use std::io::{Read, Write};
