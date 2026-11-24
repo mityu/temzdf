@@ -576,13 +576,10 @@ server on one `Session`). Next and open:
     passed, this one 3.02 s and failed under `-j 8` (2026-11-24). Fix:
     wait for the notice to go first, as `markdown` does (it changes the
     scenario: ask the user).
-- A lock on the Windows VM in `scripts/windows-vm.sh` (asked by the user,
-  2026-11-24): it only checks whether the VM runs, so two sessions using
-  it agree by hand (C:\t and C:/e2e would be shared). `flock` on a file
-  per VM in its state directory, taken by every command that uses the VM
-  (`start`, `check`, `run`, `cp-in`/`cp-out`, `e2e.sh -d windows`), saying
-  who holds it (PID, what for) and waiting, or failing with `--no-wait`;
-  `lock REASON`/`unlock` to hold it across commands by hand.
+- The VM lock (`scripts/lib/vm-lease.sh`, "Windows in a VM" in
+  `doc/dev/testing.md`) stops only what goes through `scripts/windows-vm.sh`
+  and `scripts/macos-vm.sh`: vitro, ssh, QMP or tart used directly pass,
+  and an e2e run checks the lock once, at its start.
 - Judged e2e (`expect` in `scripts/e2e/helpers.ts`, `doc/dev/testing.md`) covers keys and
   mouse input in kitty, WezTerm and Ghostty (keys also in tmux and zellij);
   sessions are judged against `temzdf render-session` (the text too in kitty

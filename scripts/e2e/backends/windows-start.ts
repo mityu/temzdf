@@ -18,6 +18,13 @@ export async function startWindows(r: Run): Promise<void> {
   const cfg = path.join(r.runtimeDir, "ssh_config");
   const sshConfig = await r.procs.exec("scripts/windows-vm.sh", ["ssh-config"]);
   writeFileSync(r.path("guest.log"), sshConfig.stderr);
+  // Status 3: the VM lock (scripts/lib/vm-lease.sh) is not this worktree's;
+  // the script said who holds it, if anybody.
+  if (sshConfig.code === 3) {
+    throw new StartError(
+      `e2e: the Windows VM lock is not this worktree's; run under scripts/windows-vm.sh hold --as NAME --why TEXT -- scripts/e2e.sh ...\n${sshConfig.stderr.trimEnd()}`,
+    );
+  }
   if (sshConfig.code !== 0) {
     throw new StartError(
       `e2e: no Windows VM ${process.env.TEMZDF_WINDOWS_VM || "temzdf-windows"} running (scripts/windows-vm.sh start)`,

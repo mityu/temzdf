@@ -166,7 +166,10 @@ The same runs inside a macOS VM, so they take neither the host's front
 window nor its pointer, and the test environment is rebuilt the same way on
 another Mac. It needs Apple Silicon, Tart (in the dev shell on macOS; its
 licence, FSL, is unfree to nixpkgs, which the flake allows for it alone) and
-about 60 GB of disk. One VM, `temzdf-e2e`, kept between runs:
+about 60 GB of disk. One VM, `temzdf-e2e`, kept between runs, used under
+the same lock as the Windows VM (take it first: `scripts/macos-vm.sh lock
+--as NAME --why TEXT`, or `hold ... -- CMD`; "Windows in a VM" in
+`doc/dev/testing.md`):
 
 ```sh
 scripts/macos-vm.sh create        # clone the base image, 4 CPUs, 6 GB, 1600x1000 at scale 1

@@ -589,6 +589,7 @@ resets the VM from it, runs the gate there, and is where
 `scripts/e2e.sh -d windows` runs the GUI's e2e scenarios (below):
 
 ```sh
+scripts/windows-vm.sh lock --as NAME --why TEXT  # first: the VM lock (below)
 scripts/windows-vm.sh build Win11_x64_en-us.iso  # about 20 minutes
 scripts/windows-vm.sh provision              # tools; the next golden image
 scripts/windows-vm.sh start                  # waits for the desktop
@@ -599,6 +600,21 @@ scripts/windows-vm.sh reset                  # a fresh overlay; stop: delete it
 scripts/windows-vm.sh check [--fresh] [REV]  # the gate on REV in the guest
 scripts/windows-vm.sh cursor hidden          # a transparent pointer; default: back
 ```
+
+The VMs are shared by every worktree of the host (the Windows VM's `C:\t`
+too), so they are used one worktree at a time, under a hand-held lock
+(`scripts/lib/vm-lease.sh`, for `scripts/macos-vm.sh` as well): every
+command that touches a VM (all but `tools`, `status`, `lock`, `unlock` and
+`hold`) fails with status 3 unless this worktree holds it, and says who
+does (the `--as` name, the `--why` text, since when). `lock` takes it
+(`--wait`: until it is free) and `unlock` gives it back; `hold --as NAME
+--why TEXT -- CMD...` holds it while CMD runs and gives it back afterwards
+(also on Ctrl+C), so it cannot be forgotten. The holder is the worktree
+(a hash of its path, or of `TEMZDF_VM_HOLDER`), so every command run from
+it passes. Like pacman's `db.lck`, the lock never expires: a lock left
+behind by a crashed run is removed with `unlock --force`, by a person who
+checked nobody uses the VM. It only stops what goes through the scripts:
+vitro, ssh or QMP used directly pass. `status` shows the holder.
 
 - `build` takes an English x64 ISO (vitro's answer file is en-US). With
   Windows 11 build 26300 it ran through unattended in 20 minutes
@@ -675,7 +691,8 @@ and their workarounds.
 ### e2e runs on Windows
 
 `scripts/e2e.sh -d windows -t gui SCENARIO -- C:/t/target/release/temzdf-gui.exe
---clean FILE` runs a GUI scenario in the running VM
+--clean FILE` (under the lock: `scripts/windows-vm.sh hold --as NAME --why
+TEXT -- scripts/e2e.sh ...`, or after `lock`) runs a GUI scenario in the running VM
 (`TEMZDF_WINDOWS_VM`), driven from the Linux host; arguments naming files
 of the host (the fixture) are copied into the guest. Build first, in the
 guest (about 14 minutes; afterwards copy only the files that changed and

@@ -42,6 +42,14 @@ Run `npm ci` in
 `crates/temzdf-script/runtime/` once after cloning and whenever its
 `package-lock.json` changes. Miri: `env -u IN_NIX_SHELL scripts/miri.sh`.
 
+The development VMs (`scripts/windows-vm.sh`, `scripts/macos-vm.sh`) are
+shared by every worktree of the host, one at a time. Use them only through
+those scripts (never vitro, ssh, QMP or tart directly), take the lock
+first (`lock --as NAME --why TEXT`, or `hold ... -- CMD` for one
+command) and `unlock` when done. Never remove another worktree's lock
+(`unlock --force` is for the user): when it is taken, say so and wait
+(`lock --wait`). "Windows in a VM" in `doc/dev/testing.md`.
+
 Run the gate before every commit:
 
 ```sh
