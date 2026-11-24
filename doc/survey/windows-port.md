@@ -146,6 +146,24 @@ and console programs had a second (none when the server crashed) for
   Windows 11's Notepad stayed in every case, the job's included (not
   understood); `start "" cmd` went to Windows Terminal, the VM's default
   terminal.
+- How long a console program lives after the close depends on the
+  order the programs attached, not on how the pane was closed (measured
+  2026-11-24 with a probe that logs a heartbeat, its console writes and
+  its control events every 50 ms; `delete-buffer`, `kill-session` and a
+  killed server, debug and release builds). The console host sends
+  `CTRL_CLOSE_EVENT` one process at a time, newest attached first, so a
+  program slow on it holds up every program attached before it for its
+  five seconds, whichever way the pane closed. With no such program,
+  everything on the console ended within 0.3 s; a background ping
+  started before a slow program ended after 5.1 to 5.3 s on all three
+  (fast in 2 of 23 runs on `delete-buffer`: chance, Fisher's p about
+  0.5), one started after it within 0.3 s on all three. `start /b`
+  returns before its child attaches to the console, so programs started
+  back to back can attach in either order: that, not the way of closing,
+  was the "about 1.3 s on `delete-buffer`" seen at first (2 runs
+  against 4, times of snapshots). Console writes kept succeeding until
+  the event in every case, whether the pane's output was still read or
+  not.
 - So the job went: closing ConPTY alone matches Windows Terminal, when
   the pane is deleted and however the server ends. Not tried: Windows
   before 24H2, where `ClosePseudoConsole` waits until its output was

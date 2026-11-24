@@ -283,9 +283,7 @@ server on one `Session`). Next and open:
     Object: "Closing a pane" in `doc/survey/windows-port.md`); cmd.exe
     stays the default shell. Still to do for them: Windows before 24H2
     (`ClosePseudoConsole` waits there, and the five-second end may be
-    missing); why a `start /b` program ended after about 1.3 s when the
-    pane was deleted but after 4 to 7 s on `kill-session`, a killed
-    server and in Windows Terminal. What the server
+    missing). What the server
     lacks on Windows otherwise: "The server on Windows" in
     `doc/survey/windows-port.md`.
   - The product: compile (gate `rustix`, `signal-hook`, `libc`;
@@ -297,9 +295,10 @@ server on one `Session`). Next and open:
     `temzdf-gui` (cross-checked; their tests not run on Windows yet),
     and the server moved to them (gaps in
     `doc/design/session-server.md`, "Windows"). Terminal panes run in
-    the in-box ConPTY (2026-11-23); the pane tests that start programs
-    are still ignored there ("pane tests not ported to Windows yet"),
-    tests of their own run cmd (`temzdf-term`'s `tests::conpty`). The
+    the in-box ConPTY (2026-11-23); the pane tests start
+    `temzdf-testhelper` and run there too (2026-11-24, but for those
+    ignored with their reason), tests of their own run cmd
+    (`temzdf-term`'s `tests::conpty`). The
     terminal frontend (`termpix`, `temzdf-tty`; `attach`, `standalone`,
     `render-session`) is Unix only: on Windows `temzdf` is the server
     and the client commands, `temzdf FILE` points at `temzdf-gui`,
