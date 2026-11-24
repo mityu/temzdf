@@ -39,7 +39,7 @@ pub(super) struct MdDoc {
     mtime: Option<std::time::SystemTime>,
     /// Its images read so far (by the URL or path written): their ids in
     /// the session's loaded images.
-    images: std::collections::HashMap<String, u64>,
+    pub(super) images: std::collections::HashMap<String, u64>,
     /// Remote images fetched (`markdown.loadRemoteImages`), for the
     /// graphics mode's pages.
     fetched: std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
@@ -570,9 +570,10 @@ impl Session {
     }
 
     /// The document of `path`: the one open, or read now.
-    fn md_doc(&mut self, path: &Path) -> Result<MdId, String> {
-        let canonical = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        if let Some((&id, _)) = self.md_docs.iter().find(|(_, d)| d.path == canonical) {
+    pub(super) fn md_doc(&mut self, path: &Path) -> Result<MdId, String> {
+        let canonical = crate::paths::canonical(path);
+        let open = self.md_docs.iter().map(|(&id, d)| (id, d.path.as_path()));
+        if let Some(id) = temzdf_paths::find(&canonical, open, self.options.fileignorecase) {
             return Ok(id);
         }
         let source = std::fs::read_to_string(&canonical).map_err(|e| format!("{}: {e}", path.display()))?;

@@ -46,8 +46,12 @@ impl Session {
     /// Read the image at `path` (again: replaced under its id).
     pub(super) fn load_image(&mut self, path: &Path) -> Result<u64, String> {
         let shown = path.display();
-        let canonical = std::fs::canonicalize(path).map_err(|e| format!("{shown}: {e}"))?;
+        let canonical = crate::paths::canonical(path);
         let bytes = std::fs::read(&canonical).map_err(|e| format!("{shown}: {e}"))?;
+        // Read before by another name (a link): replaced under its id.
+        let loaded = self.loaded_images.values().map(|l| (&l.path, l.path.as_path()));
+        let canonical =
+            temzdf_paths::find(&canonical, loaded, self.options.fileignorecase).cloned().unwrap_or(canonical);
         let (width, height, rgba) =
             decode(&bytes, is_svg(&canonical)).ok_or_else(|| format!("{shown}: not an image"))?;
         Ok(self.add_loaded(canonical, width, height, rgba))

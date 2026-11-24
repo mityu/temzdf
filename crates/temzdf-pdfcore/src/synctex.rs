@@ -5,6 +5,8 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_long, c_void};
 use std::path::{Path, PathBuf};
 
+use temzdf_paths::IgnoreCase;
+
 // The parser needs zlib; make sure it is linked.
 use libz_sys as _;
 
@@ -105,8 +107,8 @@ impl Scanner {
         // SAFETY: valid NUL-terminated path; a null build directory is allowed.
         let mut ptr = unsafe { synctex_scanner_new_with_output_file(c.as_ptr(), std::ptr::null(), 1) };
         // Opened through a symlink: the SyncTeX file is next to the real PDF.
+        let real = temzdf_paths::canonical(&pdf);
         if ptr.is_null()
-            && let Ok(real) = std::fs::canonicalize(&pdf)
             && real != pdf
             && let Ok(c) = CString::new(real.as_os_str().as_encoded_bytes())
         {
@@ -138,12 +140,21 @@ impl Scanner {
 
     /// Forward search: the boxes typeset from `line` (1-based) of `source`. The
     /// first box is the best match. `page_hint` (0-based) breaks ties.
-    pub fn forward(&mut self, source: &Path, line: u32, column: u32, page_hint: Option<usize>) -> Vec<PdfBox> {
+    /// Names of files not there are compared ignoring case as `ignore_case`
+    /// says.
+    pub fn forward(
+        &mut self,
+        source: &Path,
+        line: u32,
+        column: u32,
+        page_hint: Option<usize>,
+        ignore_case: IgnoreCase,
+    ) -> Vec<PdfBox> {
         let mut out = Vec::new();
         // Query with the name exactly as SyncTeX recorded it (see resolve_input),
         // falling back to the name as given.
         let mut names = Vec::new();
-        names.extend(self.resolve_input(source));
+        names.extend(self.resolve_input(source, ignore_case));
         names.push(source.as_os_str().to_owned());
         for name in names {
             let Ok(c) = CString::new(name.as_encoded_bytes()) else { continue };
@@ -211,9 +222,9 @@ impl Scanner {
     /// them (`./ch1.tex`, `/abs/dir/./main.tex`, ...). Prefer the same absolute
     /// path, then a recorded name ending with the given path's components, then
     /// the same file name.
-    fn resolve_input(&self, source: &Path) -> Option<std::ffi::OsString> {
+    fn resolve_input(&self, source: &Path, ignore_case: IgnoreCase) -> Option<std::ffi::OsString> {
         let inputs = self.inputs();
-        choose_input(&inputs, |p| self.absolute(p), source).map(Into::into)
+        choose_input(&inputs, |p| self.absolute(p), source, ignore_case).map(Into::into)
     }
 
     /// Inverse search: the source location that produced the point (`x`, `y`,
@@ -244,27 +255,36 @@ impl Scanner {
 }
 
 /// The recorded input name (of `inputs`) that `source` refers to: the same
-/// file on disk (through symlinks and `..`, ignoring case on macOS), the
-/// same absolute path, one ending with the given path's components, or the
-/// same file name, in that order.
-fn choose_input<'a>(inputs: &'a [String], absolute: impl Fn(&Path) -> PathBuf, source: &Path) -> Option<&'a String> {
+/// file on disk (through symlinks, hard links and `..`; another case where
+/// the file system ignores it), else by name (files not there): the same
+/// absolute path, one ending with the given path's components, or the same
+/// file name, in that order, each ignoring case as `ignore_case` says.
+fn choose_input<'a>(
+    inputs: &'a [String],
+    absolute: impl Fn(&Path) -> PathBuf,
+    source: &Path,
+    ignore_case: IgnoreCase,
+) -> Option<&'a String> {
     let wanted = normalize(&std::path::absolute(source).unwrap_or_else(|_| source.to_owned()));
     let given = normalize(source);
-    let same_file = |a: &Path, b: &Path| {
-        let (Ok(a), Ok(b)) = (std::fs::canonicalize(a), std::fs::canonicalize(b)) else { return false };
-        if cfg!(target_os = "macos") {
-            a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
-        } else {
-            a == b
-        }
-    };
     let abs = |n: &String| absolute(Path::new(n));
+    if let Some(id) = temzdf_paths::file_id(&wanted)
+        && let Some(n) = inputs.iter().find(|n| temzdf_paths::file_id(&abs(n)) == Some(id))
+    {
+        return Some(n);
+    }
+    let fold = ignore_case.at(&wanted);
+    let folded = |p: &Path| if fold { temzdf_paths::fold(p) } else { p.to_string_lossy().into_owned() };
+    let same = |a: &Path, b: &Path| a == b || (fold && folded(a) == folded(b));
+    let given_folded = folded(&given);
+    let ends_with = |p: &Path| p.ends_with(&given) || (fold && Path::new(&folded(p)).ends_with(&given_folded));
+    let file_name =
+        |p: &Path| p.file_name().map(|n| folded(Path::new(n))) == source.file_name().map(|n| folded(Path::new(n)));
     inputs
         .iter()
-        .find(|n| same_file(&abs(n), &wanted))
-        .or_else(|| inputs.iter().find(|n| abs(n) == wanted))
-        .or_else(|| inputs.iter().find(|n| abs(n).ends_with(&given)))
-        .or_else(|| inputs.iter().find(|n| Path::new(n).file_name() == source.file_name()))
+        .find(|n| same(&abs(n), &wanted))
+        .or_else(|| inputs.iter().find(|n| ends_with(&abs(n))))
+        .or_else(|| inputs.iter().find(|n| file_name(Path::new(n))))
 }
 
 /// Where TeX ran: SyncTeX records the main input as `<that dir>/./<name>`,
@@ -312,12 +332,30 @@ mod tests {
         let inputs = vec![format!("{}/./a/intro.tex", dir.display()), "./b/intro.tex".to_owned()];
         let absolute = |p: &Path| if p.is_absolute() { normalize(p) } else { normalize(&dir.join(p)) };
         // Through the symlink: b's, not the first intro.tex by name.
-        let picked = choose_input(&inputs, absolute, &dir.join("link/intro.tex"));
+        let picked = choose_input(&inputs, absolute, &dir.join("link/intro.tex"), IgnoreCase::No);
         assert_eq!(picked.map(String::as_str), Some("./b/intro.tex"));
         // And through `..`.
-        let picked = choose_input(&inputs, absolute, &dir.join("a/../b/intro.tex"));
+        let picked = choose_input(&inputs, absolute, &dir.join("a/../b/intro.tex"), IgnoreCase::No);
         assert_eq!(picked.map(String::as_str), Some("./b/intro.tex"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "the file system")]
+    fn names_of_inputs_not_there_follow_the_setting() {
+        // Built elsewhere: nothing to compare but names.
+        let proj = std::env::temp_dir().join(format!("temzdf-no-such-project-{}", std::process::id()));
+        let inputs = vec![format!("{}/./Main.tex", proj.display())];
+        let absolute = |p: &Path| normalize(p);
+        for (source, ic, found) in [
+            (proj.join("main.tex"), IgnoreCase::Yes, true),
+            (proj.join("main.tex"), IgnoreCase::No, false),
+            (PathBuf::from("MAIN.TEX"), IgnoreCase::Yes, true),
+            (PathBuf::from("MAIN.TEX"), IgnoreCase::No, false),
+            (proj.join("Main.tex"), IgnoreCase::No, true),
+        ] {
+            assert_eq!(choose_input(&inputs, absolute, &source, ic).is_some(), found, "{source:?} {ic:?}");
+        }
     }
 
     #[test]
@@ -352,7 +390,7 @@ mod tests {
 
         // "Back to Section" is in the second filler subsection, on page 2.
         let line = line_of(&tex, "Back to Section");
-        let boxes = s.forward(Path::new("sample.tex"), line, 0, None);
+        let boxes = s.forward(Path::new("sample.tex"), line, 0, None, IgnoreCase::Auto);
         assert!(!boxes.is_empty());
         let b = boxes[0];
         assert_eq!(b.page, 1, "{boxes:?}");
@@ -360,7 +398,7 @@ mod tests {
 
         // The same line found through other spellings of the source path.
         for name in [pdf::fixture("sample.tex"), "tests/fixtures/sample.tex".into(), "fixtures/sample.tex".into()] {
-            assert_eq!(s.forward(&name, line, 0, None).first().map(|b| b.page), Some(1), "{name:?}");
+            assert_eq!(s.forward(&name, line, 0, None, IgnoreCase::Auto).first().map(|b| b.page), Some(1), "{name:?}");
         }
 
         // Inverse from the middle of that box leads back to the same line.

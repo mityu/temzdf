@@ -30,6 +30,9 @@ pub struct HostOptions {
     pub debounce: Duration,
     /// Inverse search command template (`%{input}`, `%{line}`, `%{column}`).
     pub editor: Option<String>,
+    /// Whether a forward search's file not there is compared to the ones
+    /// SyncTeX recorded ignoring case (`o.fileIgnoreCase`).
+    pub ignore_case: temzdf_paths::IgnoreCase,
 }
 
 /// A forward-search request: show what `line` of `file` produced.
@@ -125,7 +128,13 @@ impl DocumentHost {
 
     fn send_forward(&mut self, req: Forward, pane: &PdfPane) {
         let page_hint = pane.viewer.current_page();
-        let cmd = SynctexCmd::Forward { file: req.file, line: req.line, column: req.column, page_hint };
+        let cmd = SynctexCmd::Forward {
+            file: req.file,
+            line: req.line,
+            column: req.column,
+            page_hint,
+            ignore_case: self.options.ignore_case,
+        };
         if self.synctex.send(cmd).is_ok() {
             self.synctex_pending += 1;
         }

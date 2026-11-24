@@ -40,6 +40,7 @@ const WINDOWS_CRATES: &[&str] = &[
     "temzdf-gui",
     "temzdf-markdown",
     "temzdf-mdview",
+    "temzdf-paths",
     "temzdf-protocol",
     "temzdf-scene",
     "temzdf-texteditor",

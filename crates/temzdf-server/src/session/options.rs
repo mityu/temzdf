@@ -62,6 +62,9 @@ pub struct Options {
     pub undofile: bool,
     /// Keep text buffers' text in swap files while they are edited.
     pub swapfile: bool,
+    /// Whether names of files that differ only in case name the same file,
+    /// for files not there to compare (`temzdf_paths`).
+    pub fileignorecase: temzdf_paths::IgnoreCase,
     /// The mode Markdown viewers open in: "text" or "graphics".
     pub markdownmode: String,
     /// How long after the last change a swap file is written.
@@ -144,6 +147,7 @@ impl Default for Options {
             timeoutlen: Duration::from_millis(1000),
             splitright: true,
             swapfile: true,
+            fileignorecase: temzdf_paths::IgnoreCase::Auto,
             markdownmode: "text".into(),
             updatetime: Duration::from_millis(4000),
             undofile: false,
@@ -190,7 +194,11 @@ impl Options {
     }
 
     pub(super) fn host(&self) -> HostOptions {
-        HostOptions { debounce: self.reloaddebounce, editor: self.synctexeditor.clone() }
+        HostOptions {
+            debounce: self.reloaddebounce,
+            editor: self.synctexeditor.clone(),
+            ignore_case: self.fileignorecase,
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 //! Watching a file for changes made elsewhere: a document a typesetter
 //! rewrites, a text or Markdown buffer's file edited in another program.
 
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
 use notify::{RecursiveMode, Watcher};
@@ -23,21 +24,29 @@ impl std::fmt::Debug for FileWatcher {
 /// (write a new file, rename over the old one), so the parent directory is
 /// watched and events are filtered by file name; that survives the inode
 /// changing. Symlinks are resolved and their target is watched as well.
+/// Where the file system ignores the case of names, names are compared
+/// ignoring it: events may name the file in another case than `path`.
 pub fn watch_file(path: &Path, on_change: impl Fn() + Send + 'static) -> Result<FileWatcher> {
     let abs = std::path::absolute(path)?;
     let mut targets = vec![abs.clone()];
-    if let Ok(real) = std::fs::canonicalize(&abs)
-        && real != abs
-    {
+    // Canonical without Windows' `\\?\` (`dunce`): the same directory is
+    // not watched twice.
+    let real = temzdf_paths::canonical(&abs);
+    if real != abs {
         targets.push(real);
     }
-    let names: Vec<_> = targets.iter().filter_map(|t| t.file_name().map(|n| n.to_owned())).collect();
+    let names: Vec<(OsString, bool)> =
+        targets.iter().filter_map(|t| Some((t.file_name()?.to_owned(), temzdf_paths::fs_ignores_case(t)))).collect();
+    let named = move |n: &OsStr| {
+        use temzdf_paths::fold as f;
+        names.iter().any(|(m, fold)| m == n || (*fold && f(Path::new(m)) == f(Path::new(n))))
+    };
     let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event>| {
         let Ok(ev) = res else { return };
         if ev.kind.is_access() {
             return;
         }
-        if ev.paths.iter().any(|p| p.file_name().is_some_and(|n| names.iter().any(|m| m == n))) {
+        if ev.paths.iter().any(|p| p.file_name().is_some_and(&named)) {
             on_change();
         }
     })?;

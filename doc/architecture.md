@@ -22,9 +22,10 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
 | `temzdf-scene` | `termpix-core` |
 | `temzdf-protocol` | `temzdf-scene`, `termpix-core` |
 | `temzdf-client` | `temzdf-protocol`, `temzdf-scene`, `termpix-core` |
-| `temzdf-watchfs` | - (`notify`) |
-| `temzdf-pdfcore` | `temzdf-scene`, `temzdf-watchfs` |
-| `temzdf-pdfview` | `temzdf-pdfcore`, `temzdf-watchfs`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
+| `temzdf-paths` | - |
+| `temzdf-watchfs` | `temzdf-paths` (and `notify`) |
+| `temzdf-pdfcore` | `temzdf-scene`, `temzdf-paths`, `temzdf-watchfs` |
+| `temzdf-pdfview` | `temzdf-pdfcore`, `temzdf-paths`, `temzdf-watchfs`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf-term` | `temzdf-scene`, `termpix-core` (and `libghostty-vt`, `portable-pty`) |
 | `temzdf-texteditor` | `temzdf-scene` (and `ropey`) |
 | `temzdf-markdown` | `temzdf-texteditor` (and `comrak`, `syntect`) |
@@ -33,7 +34,7 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
 | `temzdf-script` | `temzdf-protocol` (and `rquickjs`, `swc_ts_fast_strip`) |
 | `temzdf-script-guest` | `temzdf-script`, `temzdf-protocol` (on `wasm32-wasip1` only) |
 | `temzdf-script-runner` | `temzdf-protocol`, `temzdf-script` (and wasmtime; builds the guest) |
-| `temzdf-server` | `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-texteditor`, `temzdf-markdown`, `temzdf-mdview`, `temzdf-watchfs`, `texprintf`, `temzdf-script-runner`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
+| `temzdf-server` | `temzdf-paths`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-texteditor`, `temzdf-markdown`, `temzdf-mdview`, `temzdf-watchfs`, `texprintf`, `temzdf-script-runner`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
 | `temzdf-tty` | `temzdf-client`, `temzdf-scene`, `termpix` |
 | `temzdf` (bin) | `temzdf-server`, `temzdf-client`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-script`, `temzdf-tty`, `temzdf-scene`, `termpix` |
 | `temzdf-gui` (bin) | `temzdf-client`, `temzdf-protocol`, `temzdf-scene`, `termpix-core` (and winit, wgpu, glyphon) |
@@ -70,6 +71,12 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
   starting sessions (`spawn_server`), the connection to a session
   (`Connection`, one-shot `request`s), log locations, carrying out effects
   (links, inverse search). No terminal or window code.
+- `temzdf-paths`: which file a path names, as the host's file system
+  sees it: canonical names documents are known by (a file not there yet
+  after its nearest ancestor that is), files' identity (device and inode,
+  volume and file ID), and whether a directory's file system ignores the
+  case of names (`o.fileIgnoreCase`), used to tell whether a file is
+  already open.
 - `temzdf-watchfs`: watching a file for changes made elsewhere
   (`notify`; `watch_file` returns a `FileWatcher`, kept alive), also when
   a tool replaces it or it is a symlink: the PDF a typesetter writes

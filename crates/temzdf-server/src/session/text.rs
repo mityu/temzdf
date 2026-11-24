@@ -363,9 +363,9 @@ impl Session {
         encoding: Option<&str>,
     ) -> anyhow::Result<PaneId> {
         let canonical = crate::paths::canonical(path);
-        let existing = self.texts.iter().find(|(_, t)| t.file.as_ref().is_some_and(|f| f.path == canonical));
-        let buf = match existing {
-            Some((&id, _)) => id,
+        let open = self.texts.iter().filter_map(|(&id, t)| Some((id, t.file.as_ref()?.path.as_path())));
+        let buf = match temzdf_paths::find(&canonical, open, self.options.fileignorecase) {
+            Some(id) => id,
             None => {
                 let (text, info) = match file::read_as(&canonical, encoding) {
                     Ok(read) => read,

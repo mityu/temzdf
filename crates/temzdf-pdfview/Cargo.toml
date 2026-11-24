@@ -10,6 +10,7 @@ repository.workspace = true
 mupdf.workspace = true
 temzdf-watchfs.workspace = true
 temzdf-pdfcore.workspace = true
+temzdf-paths.workspace = true
 temzdf-scene.workspace = true
 termpix-core.workspace = true
 termpix-ui.workspace = true

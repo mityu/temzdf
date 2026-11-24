@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 notify = "8.2.0"
+temzdf-paths.workspace = true
 
 [lints]
 workspace = true

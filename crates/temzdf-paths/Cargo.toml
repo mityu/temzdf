@@ -1,0 +1,25 @@
+[package]
+name = "temzdf-paths"
+description = "temzdf's paths of files: canonical names, the same file by another name, and whether the file system ignores the case of names."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+dunce = "1.0.5"
+
+# The casefold flag of a directory (FS_IOC_GETFLAGS).
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+rustix = { version = "1.1.5", features = ["fs"] }
+
+# pathconf(_PC_CASE_SENSITIVE).
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.191"
+
+# Files' identity and directories' case sensitivity.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_SystemServices"] }
+
+[lints]
+workspace = true

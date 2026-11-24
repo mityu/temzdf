@@ -35,8 +35,9 @@ impl Session {
             return self.open_text(path, spot, true).map(drop);
         }
         let canonical = crate::paths::canonical(path);
-        if let Some((&id, entry)) = self.docs.iter_mut().find(|(_, d)| d.path == canonical) {
-            if entry.host.is_some() {
+        let open = self.docs.iter().map(|(&id, d)| (id, d.path.as_path()));
+        if let Some(id) = temzdf_paths::find(&canonical, open, self.options.fileignorecase) {
+            if self.docs[&id].host.is_some() {
                 self.add_pdf_pane(id, spot);
             } else {
                 let spot = self.pin_spot(spot);

@@ -50,6 +50,8 @@ pub enum SynctexCmd {
         line: u32,
         column: u32,
         page_hint: usize,
+        /// Names of files not there are compared ignoring case so.
+        ignore_case: temzdf_paths::IgnoreCase,
     },
     Inverse {
         page: usize,
@@ -99,8 +101,8 @@ pub fn spawn_synctex(pdf: PathBuf, events: Sink) -> std::io::Result<Sender<Synct
                 continue;
             };
             let ev = match cmd {
-                SynctexCmd::Forward { file, line, column, page_hint } => {
-                    let boxes = s.forward(&file, line, column, Some(page_hint));
+                SynctexCmd::Forward { file, line, column, page_hint, ignore_case } => {
+                    let boxes = s.forward(&file, line, column, Some(page_hint), ignore_case);
                     if boxes.is_empty() {
                         DocEvent::SynctexFailed(format!("{}:{} is not in the PDF", file.display(), line))
                     } else {
@@ -125,7 +127,7 @@ pub fn spawn_synctex(pdf: PathBuf, events: Sink) -> std::io::Result<Sender<Synct
 /// it, or to the real file when `pdf` is a symlink.
 fn synctex_files(pdf: &Path) -> Vec<PathBuf> {
     let pdf = std::path::absolute(pdf).unwrap_or_else(|_| pdf.to_owned());
-    let real = std::fs::canonicalize(&pdf).ok().filter(|r| *r != pdf);
+    let real = Some(temzdf_paths::canonical(&pdf)).filter(|r| *r != pdf);
     [Some(pdf), real]
         .into_iter()
         .flatten()
@@ -702,7 +704,13 @@ mod tests {
             .unwrap();
         let (tx, rx) = mpsc::channel::<DocEvent>();
         let cmds = spawn_synctex(pdf.clone(), channel_sink(tx, |e| e)).unwrap();
-        let forward = || SynctexCmd::Forward { file: "sample.tex".into(), line: 20, column: 0, page_hint: 0 };
+        let forward = || SynctexCmd::Forward {
+            file: "sample.tex".into(),
+            line: 20,
+            column: 0,
+            page_hint: 0,
+            ignore_case: Default::default(),
+        };
         let answer = || rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap();
         cmds.send(forward()).unwrap();
         assert!(matches!(answer(), DocEvent::ForwardResult(_)));
@@ -729,7 +737,13 @@ mod tests {
         std::os::unix::fs::symlink(&real, &link).unwrap();
         let (tx, rx) = mpsc::channel::<DocEvent>();
         let cmds = spawn_synctex(link.clone(), channel_sink(tx, |e| e)).unwrap();
-        let forward = || SynctexCmd::Forward { file: "sample.tex".into(), line: 20, column: 0, page_hint: 0 };
+        let forward = || SynctexCmd::Forward {
+            file: "sample.tex".into(),
+            line: 20,
+            column: 0,
+            page_hint: 0,
+            ignore_case: Default::default(),
+        };
         let answer = || rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap();
         cmds.send(forward()).unwrap();
         assert!(matches!(answer(), DocEvent::ForwardResult(_)));
