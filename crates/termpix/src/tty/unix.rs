@@ -12,82 +12,8 @@ use std::time::Duration;
 use rustix::event::Timespec;
 use rustix::termios::{self, OptionalActions, Termios};
 
-use super::{Modes, TermEvent, Winsize};
-use crate::input::Parser;
+use super::{CLOSE_TIMEOUT, DA1, GRAPHICS_CLEANUP, InputSource, Modes, TermEvent, Winsize};
 use crate::output::Output;
-
-/// How long exiting waits for the terminal to take the reset sequence.
-const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
-/// How long exiting waits for replies to earlier queries (see [`drain_replies`]).
-const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
-/// Primary device attributes: every terminal answers, in order with earlier replies.
-const DA1: &[u8] = b"\x1b[c";
-
-/// Set to stop the input thread (on exit), and whether it still runs.
-static INPUT_STOP: AtomicBool = AtomicBool::new(false);
-static INPUT_RUNNING: AtomicBool = AtomicBool::new(false);
-
-impl Modes {
-    fn enable_sequence(&self) -> Vec<u8> {
-        let mut s = Vec::new();
-        if self.alternate_screen {
-            s.extend_from_slice(b"\x1b[?1049h");
-        }
-        // Save the window title (XTWINOPS 22); applications retitle the window.
-        s.extend_from_slice(b"\x1b[22;0t\x1b[?25l\x1b[2J");
-        if self.mouse {
-            s.extend_from_slice(b"\x1b[?1003h\x1b[?1006h");
-        }
-        if self.pixel_mouse {
-            s.extend_from_slice(b"\x1b[?1016h");
-        }
-        if self.keyboard_flags != 0 {
-            s.extend_from_slice(format!("\x1b[>{}u", self.keyboard_flags).as_bytes());
-        }
-        if self.bracketed_paste {
-            s.extend_from_slice(b"\x1b[?2004h");
-        }
-        if self.focus_events {
-            s.extend_from_slice(b"\x1b[?1004h");
-        }
-        if self.resize_reports {
-            s.extend_from_slice(b"\x1b[?2048h");
-        }
-        s
-    }
-
-    fn disable_sequence(&self) -> Vec<u8> {
-        let mut s = Vec::new();
-        if self.resize_reports {
-            s.extend_from_slice(b"\x1b[?2048l");
-        }
-        if self.focus_events {
-            s.extend_from_slice(b"\x1b[?1004l");
-        }
-        if self.bracketed_paste {
-            s.extend_from_slice(b"\x1b[?2004l");
-        }
-        if self.keyboard_flags != 0 {
-            s.extend_from_slice(b"\x1b[<u");
-        }
-        if self.pixel_mouse {
-            s.extend_from_slice(b"\x1b[?1016l");
-        }
-        if self.mouse {
-            s.extend_from_slice(b"\x1b[?1006l\x1b[?1003l");
-        }
-        // Free every image we may have left, end any pending synchronized update.
-        // Back to the default cursor shape, in case it was changed.
-        s.extend_from_slice(GRAPHICS_CLEANUP);
-        s.extend_from_slice(b"\x1b[?2026l\x1b[?25h\x1b[0 q");
-        if self.alternate_screen {
-            s.extend_from_slice(b"\x1b[?1049l");
-        }
-        // Restore the saved window title.
-        s.extend_from_slice(b"\x1b[23;0t");
-        s
-    }
-}
 
 /// What the panic hook needs to restore the terminal.
 struct RestoreState {
@@ -101,8 +27,6 @@ struct RestoreState {
 }
 
 static RESTORE: Mutex<Option<RestoreState>> = Mutex::new(None);
-/// Delete every image we placed (on exit).
-const GRAPHICS_CLEANUP: &[u8] = b"\x1b_Ga=d,d=A,q=2\x1b\\";
 static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// Put the terminal back. With `drain_input`, also swallow replies to queries
@@ -122,45 +46,11 @@ fn restore_now(drain_input: bool) {
             }
         }
         if drain_input {
-            drain_replies(state.fd.as_fd());
+            super::drain_replies(|buf, timeout| read_timeout(state.fd.as_fd(), buf, Some(timeout)));
             let _ = termios::tcflush(&state.fd, termios::QueueSelector::IFlush);
         }
         let _ = termios::tcsetattr(&state.fd, OptionalActions::Now, &state.termios);
     }
-}
-
-/// Read and discard input until the reply to the DA1 query sent last (at most
-/// [`REPLY_TIMEOUT`]). Terminals answer in order, so every earlier reply has
-/// arrived by then.
-fn drain_replies(fd: BorrowedFd<'_>) {
-    let deadline = std::time::Instant::now() + REPLY_TIMEOUT;
-    let mut seen = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        if left.is_zero() {
-            return;
-        }
-        match read_timeout(fd, &mut buf, Some(left)) {
-            Ok(Some(n)) if n > 0 => seen.extend_from_slice(&buf[..n]),
-            Ok(None) => continue,
-            _ => return,
-        }
-        if has_da1_reply(&seen) {
-            return;
-        }
-    }
-}
-
-/// Whether `bytes` contain a DA1 reply, `ESC [ ? <digits and ;> c`.
-fn has_da1_reply(bytes: &[u8]) -> bool {
-    bytes.windows(3).enumerate().any(|(i, w)| {
-        w == b"\x1b[?" && {
-            let rest = &bytes[i + 3..];
-            let end = rest.iter().position(|b| !(b.is_ascii_digit() || *b == b';'));
-            end.is_some_and(|e| rest[e] == b'c')
-        }
-    })
 }
 
 fn install_panic_hook() {
@@ -293,11 +183,7 @@ impl Tty {
 impl Drop for Tty {
     fn drop(&mut self) {
         // Stop the input thread first: the replies drained below are not input.
-        INPUT_STOP.store(true, Ordering::SeqCst);
-        let deadline = std::time::Instant::now() + Duration::from_millis(300);
-        while INPUT_RUNNING.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        super::stop_input();
         restore_now(true);
     }
 }
@@ -362,8 +248,11 @@ impl Read for TtyReader {
     }
 }
 
-/// How long to wait after a lone `ESC` before reporting it as the Escape key.
-const ESC_TIMEOUT: Duration = Duration::from_millis(25);
+impl InputSource for TtyReader {
+    fn read(&mut self, buf: &mut [u8], timeout: Duration) -> io::Result<Option<usize>> {
+        read_timeout(self.file.as_fd(), buf, Some(timeout))
+    }
+}
 
 /// Spawn threads that parse terminal input and watch signals, sending events
 /// through `map(event)` into `tx`. They stop when the receiver is dropped.
@@ -391,62 +280,7 @@ pub fn spawn_input<T: Send + 'static>(
             }
         })?;
     }
-    INPUT_STOP.store(false, Ordering::SeqCst);
-    INPUT_RUNNING.store(true, Ordering::SeqCst);
-    std::thread::Builder::new().name("termpix-input".into()).spawn(move || {
-        input_loop(reader.file.as_fd(), pixel_mouse, &tx, &map, &INPUT_STOP);
-        INPUT_RUNNING.store(false, Ordering::SeqCst);
-    })?;
-    Ok(())
-}
-
-/// Parse input from `fd` into `tx` until `stop` (or nobody listens). Ending
-/// otherwise (a read error, end of file, a panic) leaves the application
-/// without keys, in raw mode where Ctrl-C sends no signal: it is told to
-/// exit ([`TermEvent::Terminate`]).
-fn input_loop<T>(
-    fd: BorrowedFd<'_>,
-    pixel_mouse: bool,
-    tx: &Sender<T>,
-    map: &impl Fn(TermEvent) -> T,
-    stop: &AtomicBool,
-) {
-    /// Sends `Terminate` when dropped armed, unwinding included.
-    struct Guard<'a, T, F: Fn(TermEvent) -> T> {
-        tx: &'a Sender<T>,
-        map: &'a F,
-        armed: bool,
-    }
-    impl<T, F: Fn(TermEvent) -> T> Drop for Guard<'_, T, F> {
-        fn drop(&mut self) {
-            if self.armed {
-                let _ = self.tx.send((self.map)(TermEvent::Terminate));
-            }
-        }
-    }
-    let mut guard = Guard { tx, map, armed: true };
-    let mut parser = Parser::new();
-    parser.set_pixel_mouse(pixel_mouse);
-    let mut buf = [0u8; 4096];
-    // Wake up now and then to notice `stop`.
-    let idle = Duration::from_millis(50);
-    while !stop.load(Ordering::SeqCst) {
-        let pending = parser.has_pending();
-        let timeout = if pending { ESC_TIMEOUT } else { idle };
-        let events = match read_timeout(fd, &mut buf, Some(timeout)) {
-            Ok(None) if pending => parser.flush(),
-            Ok(None) => continue,
-            Ok(Some(0)) | Err(_) => return,
-            Ok(Some(n)) => parser.feed(&buf[..n]),
-        };
-        for ev in events {
-            if tx.send(map(TermEvent::Input(ev))).is_err() {
-                guard.armed = false;
-                return;
-            }
-        }
-    }
-    guard.armed = false;
+    super::spawn_input_thread(reader, pixel_mouse, tx, map)
 }
 
 /// Redirects the process's stdout and stderr (file descriptors 1 and 2) to a
@@ -497,13 +331,10 @@ mod tests {
         let (reader, mut writer) = std::io::pipe().unwrap();
         writer.write_all(b"q").unwrap();
         drop(writer);
-        input_loop(reader.as_fd(), false, &tx, &|e| e, &AtomicBool::new(false));
+        let mut reader = TtyReader { file: File::from(std::os::fd::OwnedFd::from(reader)) };
+        super::super::input_loop(&mut reader, false, &tx, &|e| e, &AtomicBool::new(false));
         let events: Vec<_> = rx.try_iter().collect();
         assert!(matches!(events[..], [TermEvent::Input(_), TermEvent::Terminate]), "{events:?}");
-        // Stopped on purpose: nothing.
-        let (reader, _writer) = std::io::pipe().unwrap();
-        input_loop(reader.as_fd(), false, &tx, &|e| e, &AtomicBool::new(true));
-        assert_eq!(rx.try_iter().count(), 0);
     }
 
     #[test]
@@ -556,13 +387,5 @@ mod tests {
         assert!(wait_fd(a.as_fd(), false, Some(Duration::from_secs(1))).unwrap());
         let mut buf = [0u8; 4];
         assert_eq!(read_timeout(a.as_fd(), &mut buf, Some(Duration::ZERO)).unwrap(), Some(1));
-    }
-
-    #[test]
-    fn finds_the_da1_reply_behind_other_replies() {
-        assert!(has_da1_reply(b"\x1b_Gi=8323307;OK\x1b\\\x1b[?62;22;52c"));
-        assert!(has_da1_reply(b"\x1b[?1c"));
-        assert!(!has_da1_reply(b"\x1b_Gi=8323307;OK\x1b\\\x1b[?62;22"));
-        assert!(!has_da1_reply(b"\x1b[?2026;2$y"));
     }
 }

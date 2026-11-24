@@ -5984,6 +5984,7 @@ dependencies = [
  "rustix",
  "signal-hook",
  "termpix-core",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
