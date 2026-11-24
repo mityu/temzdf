@@ -2636,6 +2636,70 @@ export function exists(path: string, options?: {
 
 }
 
+declare module "temzdf/process" {
+/** Why a command could not run or was stopped, by class. A relative `cwd`
+ * throws a `TypeError` instead, an aborted `signal` its reason. */
+export class ProcessError extends Error {
+}
+class NotFound extends ProcessError {
+	name: string;
+}
+class PermissionDenied extends ProcessError {
+	name: string;
+}
+class TimedOut extends ProcessError {
+	name: string;
+}
+class TooLarge extends ProcessError {
+	name: string;
+}
+class Other extends ProcessError {
+	name: string;
+}
+/** The error classes: `e instanceof errors.NotFound`. */
+export const errors: {
+	readonly NotFound: typeof NotFound;
+	readonly PermissionDenied: typeof PermissionDenied;
+	readonly TimedOut: typeof TimedOut;
+	readonly TooLarge: typeof TooLarge;
+	readonly Other: typeof Other;
+};
+export interface RunOptions {
+	/** Where it runs, an absolute path (default: the session server's working directory). */
+	cwd?: string;
+	/** Variables added to the server's environment (a `PATH` here is where the command is looked for). */
+	env?: Record<string, string>;
+	/** Written to its standard input, then closed (default: an empty input). */
+	stdin?: string | Uint8Array;
+	/** Milliseconds after which it is killed and the call fails with `errors.TimedOut`. */
+	timeout?: number;
+	/** Aborting it kills the command and rejects with the signal's reason. */
+	signal?: AbortSignal;
+}
+/** How a command ended, and what it wrote. */
+export interface RunResult {
+	/** Its exit code; undefined when a signal ended it. */
+	code: number | undefined;
+	/** The signal that ended it (Unix), else undefined. */
+	signal: number | undefined;
+	/** Whether it exited with 0. */
+	success: boolean;
+	/** Its output as bytes: `new TextDecoder().decode(r.stdout)` for text. */
+	stdout: Uint8Array;
+	stderr: Uint8Array;
+}
+/** Where command `name` is, as `run` would find it: its absolute path, or
+ * undefined (Vim's `exepath()`). A name with a directory in it is that file;
+ * on Windows PATHEXT's extensions are tried. */
+export function exepath(command: string): Promise<string | undefined>;
+/** Whether command `name` can be run (Vim's `executable()`). */
+export function executable(command: string): Promise<boolean>;
+/** Run `argv` (the command, then its arguments; no shell) to its end. A
+ * command that fails is not an error: see `code` and `success`. */
+export function run(argv: readonly string[], options?: RunOptions): Promise<RunResult>;
+
+}
+
 declare module "temzdf/path" {
 function basename(path: string | URL, suffix?: string): string;
 function dirname(path: string | URL): string;

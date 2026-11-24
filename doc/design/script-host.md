@@ -43,7 +43,12 @@ take the session down:
   (`crates/temzdf-script/src/native_fs.rs`), with the OS's own paths, and
   so are `temzdf/fs`'s, asynchronously: `fs_start` hands an operation to
   four threads, whose results come back through `recv` among the
-  session's messages (`ToGuest`); the host starts at most four at once
+  session's messages (`ToGuest`); `temzdf/process`'s commands take the
+  same way (`FsOp::Run`, `crates/temzdf-script/src/native_process.rs`), each
+  on a thread of its own and outside the four's count, no shell, at most
+  64 MiB of output each, killed by `Kill` (an aborted signal) and all of
+  them when the host stops (`Children::kill_all` in `ScriptHost::stop` and
+  when `Workers` go); the host starts at most four at once
   (the rest wait in the guest), so results waiting on the server's side
   take at most four times the largest read. They settle once nothing
   runs, as commands' later answers do. `stop` sends `Shutdown` itself and never joins the

@@ -13,6 +13,8 @@ use std::time::SystemTime;
 
 use temzdf_protocol::script_fs::{DirEntry, FileInfo, FsError, FsErrorKind, FsOp, FsReply, FsResult};
 
+use crate::native_process::Children;
+
 /// The largest file read at once: a read takes a few times its size in the
 /// guest (the bytes, then a string), well inside its memory cap.
 pub const READ_LIMIT: u64 = 64 << 20;
@@ -35,6 +37,13 @@ pub fn run_with(op: &FsOp, read_limit: u64, dir_limit: usize) -> FsResult {
             let real = fs::canonicalize(absolute(p)?).map_err(|e| error(p, &e))?;
             Ok(FsReply::Path(plain(&real.to_string_lossy()).into_owned()))
         }
+        FsOp::Exepath(name) => {
+            Ok(FsReply::Exe(crate::native_process::exepath(name).map(|p| plain(&p.to_string_lossy()).into_owned())))
+        }
+        // Started by `Workers` only, each on a thread of its own.
+        FsOp::Run(_) | FsOp::Kill(_) => {
+            Err(FsError { kind: FsErrorKind::Other, message: "a command is not run here".into() })
+        }
     }
 }
 
@@ -45,6 +54,8 @@ pub fn run_with(op: &FsOp, read_limit: u64, dir_limit: usize) -> FsResult {
 pub struct Workers {
     jobs: Option<Sender<(u64, FsOp)>>,
     done: Arc<dyn Fn(u64, FsResult) + Send + Sync>,
+    /// The commands running (`FsOp::Run`), killed when these go.
+    children: Arc<Children>,
 }
 
 impl Workers {
@@ -72,17 +83,45 @@ impl Workers {
             started += usize::from(spawned.is_ok());
         }
         // No thread: done where started (still answered, later than asked).
-        Self { jobs: (started > 0).then_some(tx), done }
+        Self { jobs: (started > 0).then_some(tx), done, children: Arc::default() }
     }
 
-    /// Start operation `id`.
+    /// The commands running, to kill from elsewhere (the host stopping).
+    pub fn children(&self) -> Arc<Children> {
+        self.children.clone()
+    }
+
+    /// Start operation `id`: a command on a thread of its own (answered
+    /// when it ends), a kill at once (answering nothing), the rest on the
+    /// threads above.
     pub fn start(&self, id: u64, op: FsOp) {
+        let op = match op {
+            FsOp::Run(spec) => {
+                let (done, children) = (self.done.clone(), self.children.clone());
+                let spawned = std::thread::Builder::new()
+                    .name("temzdf-process".into())
+                    .spawn(move || done(id, crate::native_process::run(id, &spec, &children)));
+                if spawned.is_err() {
+                    let why = FsError { kind: FsErrorKind::Other, message: "no thread to run a command on".into() };
+                    (self.done)(id, Err(why));
+                }
+                return;
+            }
+            FsOp::Kill(target) => return self.children.kill(target),
+            op => op,
+        };
         if let Some(jobs) = &self.jobs
             && jobs.send((id, op.clone())).is_ok()
         {
             return;
         }
         (self.done)(id, run(&op));
+    }
+}
+
+impl Drop for Workers {
+    fn drop(&mut self) {
+        self.children.kill_all();
     }
 }
 

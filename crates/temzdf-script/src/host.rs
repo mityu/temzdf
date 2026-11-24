@@ -23,7 +23,7 @@ use temzdf_protocol::script::{
     Code, CodeResult, Fallback, FromHost, FuncId, HostOp, Keepalive, PathStyle, Printed, ScriptError, ScriptValue,
     TaskId, ToHost, Token,
 };
-use temzdf_protocol::script_fs::{FileInfo, FsOp, FsReply, FsResult};
+use temzdf_protocol::script_fs::{Exit, FileInfo, FsOp, FsReply, FsResult, RunSpec};
 
 use crate::paths;
 
@@ -368,7 +368,13 @@ impl State {
     }
 
     /// Start file operation `id`, or queue it while [`FS_RUNNING`] run.
+    /// A command (`Run`) and a kill start at once, uncounted: a command
+    /// may run for long, on a thread of its own.
     fn fs_start(&self, id: u64, op: FsOp) {
+        if matches!(op, FsOp::Run(_) | FsOp::Kill(_)) {
+            self.link.borrow_mut().fs_start(id, op);
+            return;
+        }
         self.fs_queued.borrow_mut().push_back((id, op));
         self.fs_start_queued();
     }
@@ -393,8 +399,11 @@ impl State {
             match got {
                 Received::Msg(m) => return Ok(m),
                 Received::FsDone { id, result } => {
+                    let command = self.fs_waiting.borrow().get(&id).is_some_and(|(_, r)| *r == FsRead::Command);
                     self.settled.borrow_mut().push_back(Settled::Fs(id, result));
-                    self.fs_running.set(self.fs_running.get().saturating_sub(1));
+                    if !command {
+                        self.fs_running.set(self.fs_running.get().saturating_sub(1));
+                    }
                     self.fs_start_queued();
                     if timeout.is_some() {
                         return Err(false);
@@ -519,6 +528,47 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
             s.fs_waiting.borrow_mut().insert(id, (Persistent::save(&ctx, settle), read));
             s.fs_start(id, op);
             Ok(())
+        })?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "processStart",
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>,
+                  op: String,
+                  arg: String,
+                  stdin: Option<rquickjs::TypedArray<'js, u8>>,
+                  settle: Function<'js>| {
+                let (op, read) = match op.as_str() {
+                    "exepath" => (FsOp::Exepath(arg), FsRead::Json),
+                    "run" => {
+                        let mut spec: RunSpec = serde_json::from_str::<RunJson>(&arg)
+                            .map_err(|e| Exception::throw_message(&ctx, &format!("internal: run: {e}")))?
+                            .into();
+                        // SAFETY: copied at once, no JavaScript running meanwhile.
+                        spec.stdin = stdin.map(|b| unsafe { b.as_slice() }.to_vec());
+                        (FsOp::Run(spec), FsRead::Command)
+                    }
+                    _ => return Err(Exception::throw_message(&ctx, &format!("internal: no process operation {op:?}"))),
+                };
+                let id = s.next_fs.get();
+                s.next_fs.set(id + 1);
+                s.fs_waiting.borrow_mut().insert(id, (Persistent::save(&ctx, settle), read));
+                s.fs_start(id, op);
+                Ok(id as f64)
+            },
+        )?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "processKill",
+        Function::new(ctx.clone(), move |id: f64| {
+            // Only a command still waited for (an id reused never is).
+            let id = id as u64;
+            if s.fs_waiting.borrow().get(&id).is_some_and(|(_, r)| *r == FsRead::Command) {
+                s.fs_start(id, FsOp::Kill(id));
+            }
         })?,
     )?;
     let s = st.clone();
@@ -1064,6 +1114,7 @@ fn settle_promises(ctx: &Ctx<'_>, st: &Rc<State>) {
             let value = match value {
                 FsValue::Text(t) => rquickjs::String::from_str(ctx.clone(), &t).map(|s| s.into_value()),
                 FsValue::Bytes(b) => rquickjs::ArrayBuffer::new(ctx.clone(), b).map(|b| b.into_value()),
+                FsValue::Exited(e) => exit_object(ctx, e),
             };
             if let Err(e) = value.and_then(|v| f.restore(ctx).and_then(|f| f.call::<_, ()>((ok, v)))) {
                 st.log(&format!("temzdf script: settling a promise failed: {}", error_of(ctx, e)));
@@ -1097,6 +1148,41 @@ enum FsRead {
     Text,
     /// Anything else: JSON (a path is a JSON string too).
     Json,
+    /// A command's end (`temzdf/process`'s `run`): an object, its output
+    /// as ArrayBuffers.
+    Command,
+}
+
+/// `run`'s spec as `temzdf/process` sends it (its stdin comes apart, as
+/// bytes).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunJson {
+    program: String,
+    args: Vec<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    env: Vec<(String, String)>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+impl From<RunJson> for RunSpec {
+    fn from(j: RunJson) -> Self {
+        RunSpec { program: j.program, args: j.args, cwd: j.cwd, env: j.env, stdin: None, timeout_ms: j.timeout_ms }
+    }
+}
+
+/// A command's end as `{ code, signal, stdout, stderr }` (codes and signals
+/// undefined when there are none; the output as ArrayBuffers).
+fn exit_object<'js>(ctx: &Ctx<'js>, e: Exit) -> rquickjs::Result<Value<'js>> {
+    let o = rquickjs::Object::new(ctx.clone())?;
+    o.set("code", e.code)?;
+    o.set("signal", e.signal)?;
+    o.set("stdout", rquickjs::ArrayBuffer::new(ctx.clone(), e.stdout)?)?;
+    o.set("stderr", rquickjs::ArrayBuffer::new(ctx.clone(), e.stderr)?)?;
+    Ok(o.into_value())
 }
 
 /// A value a promise is settled with: a string, or the bytes as an
@@ -1104,6 +1190,7 @@ enum FsRead {
 enum FsValue {
     Text(String),
     Bytes(Vec<u8>),
+    Exited(Exit),
 }
 
 /// A file operation's result as the settling function takes it: whether
@@ -1114,6 +1201,8 @@ fn fs_value(read: FsRead, result: FsResult) -> (bool, FsValue) {
         (FsRead::Bytes, Ok(FsReply::Bytes(b))) => (true, FsValue::Bytes(b)),
         (FsRead::Text, Ok(FsReply::Bytes(b))) => (true, FsValue::Text(String::from_utf8_lossy(&b).into_owned())),
         (FsRead::Json, Ok(FsReply::Path(p))) => (true, to_json(p.into())),
+        (FsRead::Json, Ok(FsReply::Exe(p))) => (true, to_json(p.map_or(serde_json::Value::Null, Into::into))),
+        (FsRead::Command, Ok(FsReply::Exited(e))) => (true, FsValue::Exited(e)),
         (FsRead::Json, Ok(FsReply::Info(i))) => (true, to_json(file_info_json(&i))),
         (FsRead::Json, Ok(FsReply::Entries(es))) => (
             true,

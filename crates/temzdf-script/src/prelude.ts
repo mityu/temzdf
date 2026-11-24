@@ -45,6 +45,18 @@ type Host = {
    * nothing runs: the bytes (readFile), the text (readTextFile), else JSON
    * (an error: `{ kind, message }`). */
   fsStart(op: string, path: string, settle: (ok: boolean, value: string | ArrayBuffer) => void): void;
+  /** Start a `temzdf/process` operation, as `fsStart` does: "exepath" of
+   * a name (settled with JSON, the path or null), or "run" of a command
+   * (`arg`: its spec as JSON, `stdin` apart; settled with `{ code, signal,
+   * stdout, stderr }`). Its number, for `processKill`. */
+  processStart(
+    op: "exepath" | "run",
+    arg: string,
+    stdin: Uint8Array | undefined,
+    settle: (ok: boolean, value: unknown) => void,
+  ): number;
+  /** Kill the command `processStart` numbered so, if it still runs. */
+  processKill(id: number): void;
   /** Write a line to the log. */
   print(level: string, text: string): void;
   /** A line `temzdf eval`'s code printed (task `task`), to stderr when `err`. */
@@ -99,6 +111,23 @@ const fromSession = (json: string): unknown => noNull(JSON.parse(json));
 // rejections' `{ kind, message }` into its error classes.
 g.__temzdfFs = (op: string, path: string): Promise<string | ArrayBuffer> =>
   new Promise((resolve, reject) => host.fsStart(op, path, (ok, value) => (ok ? resolve(value) : reject(value))));
+
+// Commands for runtime/process.ts (`temzdf/process`): rejections are JSON
+// `{ kind, message }`, as `__temzdfFs`'s.
+g.__temzdfProcess = {
+  exepath: (name: string): Promise<unknown> =>
+    new Promise((resolve, reject) =>
+      host.processStart("exepath", name, undefined, (ok, value) => (ok ? resolve(value) : reject(value))),
+    ),
+  run(spec: string, stdin: Uint8Array | undefined): { id: number; done: Promise<unknown> } {
+    let id = 0;
+    const done = new Promise((resolve, reject) => {
+      id = host.processStart("run", spec, stdin, (ok, value) => (ok ? resolve(value) : reject(value)));
+    });
+    return { id, done };
+  },
+  kill: (id: number): void => host.processKill(id),
+};
 
 // A command answering later answers `{ $promise: n }`: a Promise, settled
 // when the session sends ToHost::Resolve.

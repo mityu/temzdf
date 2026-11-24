@@ -118,6 +118,33 @@ dispatch(async (ctx) => {
 });
 ```
 
+Commands: `temzdf/process` runs them and finds them, asynchronously.
+`run(argv, { cwd?, env?, stdin?, timeout?, signal? })` runs `argv[0]` with
+the rest as its arguments (no shell) to its end and gives `{ code, signal,
+success, stdout, stderr }`, the output as `Uint8Array`s (`TextDecoder` makes
+text of them); a command that fails is a result, not an error. `cwd` is
+absolute (default: the session server's working directory), `env` is added
+to the server's environment, `stdin` (a string or bytes) is written to it,
+`timeout` (milliseconds) kills it, as aborting `signal` does. Failures are
+classes of `errors` (`NotFound`, `PermissionDenied`, `TimedOut`, `TooLarge`:
+more than 64 MiB of output, `Other`). `exepath(name)` is where a command is
+(an absolute path, or `undefined`) as `run` finds it, `executable(name)`
+whether there is one (Vim's `exepath()` and `executable()`): PATH's
+directories in order, on Windows with PATHEXT's extensions. Each command
+runs on a thread of its own; those still running when the configuration is
+loaded again or the session ends are killed. Await them in a dispatched
+task: a mapping waiting holds the keys typed meanwhile.
+
+```ts
+import { dispatch } from "temzdf";
+import { executable, run } from "temzdf/process";
+dispatch(async (ctx) => {
+  if (!(await executable("git"))) return;
+  const r = await run(["git", "rev-parse", "--short", "HEAD"], { cwd: "/home/me/doc", timeout: 5000 });
+  if (r.success) ctx.action.message(`at ${new TextDecoder().decode(r.stdout).trim()}`);
+});
+```
+
 A value the API may leave out (no count typed, no focused pane, an unset
 option) is `undefined`, never `null`; `x == null` checks for either.
 

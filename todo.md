@@ -149,6 +149,17 @@ server on one `Session`). Next and open:
   which task a stopped promise job was; `doc/design/script-host.md`,
   "temzdf eval").
 
+- `temzdf/process` (`run`, `exepath`, `executable`), what is left:
+  - Where a command runs without `cwd`: the session server's working
+    directory for now (where the first client started it); perhaps the
+    focused pane's (a terminal's directory, a document's folder).
+  - The API's shape: `run(argv, options)` waits for the end. Deno's
+    `Command` (`new Command(cmd, { args, ... }).output()`, and `spawn()`
+    reading the output as it comes, writing to stdin as it runs) may be
+    the shape to grow into.
+  - A kill reaches the command only, not what it started (`sh -c` leaves
+    its children): a process group on Unix, a Job object on Windows.
+
 - Completion and fuzzy finding for scripts (`doc/design/completion.md`,
   a draft; the shared foundation and completion's sources are decided).
   Built: `temzdf/ff`'s types, combinators and engine without a UI, and

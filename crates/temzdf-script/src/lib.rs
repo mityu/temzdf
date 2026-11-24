@@ -11,6 +11,7 @@ mod host;
 #[cfg(feature = "host")]
 pub mod link;
 pub mod native_fs;
+pub mod native_process;
 #[cfg(feature = "host")]
 mod paths;
 #[cfg(feature = "host")]

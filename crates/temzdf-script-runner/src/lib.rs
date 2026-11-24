@@ -94,6 +94,8 @@ pub struct ScriptHost {
     thread: Option<JoinHandle<()>>,
     /// Where the thread is (`AT_*`).
     at: Arc<AtomicU8>,
+    /// The commands the guest runs (`temzdf/process`), killed by `stop`.
+    children: Arc<temzdf_script::native_process::Children>,
 }
 
 /// The engine and the guest, loaded once per process.
@@ -146,6 +148,7 @@ impl ScriptHost {
         let workers = Workers::new(move |id, result| {
             let _ = done.send(ToGuest::FsDone { id, result });
         });
+        let children = workers.children();
         let interrupts = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         let at = Arc::new(AtomicU8::new(AT_STARTING));
@@ -197,7 +200,7 @@ impl ScriptHost {
                 here.store(AT_ENDED, Ordering::SeqCst);
             })
             .map_err(|e| format!("cannot start the script host's thread: {e}"))?;
-        Ok(Self { tx: Some(tx), interrupts, stop, thread: Some(thread), at })
+        Ok(Self { tx: Some(tx), interrupts, stop, thread: Some(thread), at, children })
     }
 
     /// Send the guest a message; false when it is gone. An interrupt counts
@@ -224,6 +227,8 @@ impl ScriptHost {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(ToGuest::Msg(ToHost::Shutdown));
         }
+        // Its commands go with it (a reload, the session's end).
+        self.children.kill_all();
     }
 }
 

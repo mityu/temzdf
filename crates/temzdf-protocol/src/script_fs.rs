@@ -1,6 +1,6 @@
-//! File access for the script host: what the guest asks of the server's
-//! side (crates/temzdf-script/src/native_fs.rs does it, with the OS's own
-//! paths) and the answers. They cross the guest's imports `temzdf.fs_*`
+//! File access and commands for the script host: what the guest asks of
+//! the server's side (crates/temzdf-script/src/native_fs.rs and
+//! native_process.rs do it, with the OS's own paths) and the answers. They cross the guest's imports `temzdf.fs_*`
 //! (waited for) and `temzdf.recv` (asynchronous ones, [`ToGuest`]), framed
 //! as [`crate::send`] frames them; the guest has no file system of its own
 //! (doc/design/script-host.md, "The sandbox").
@@ -21,6 +21,42 @@ pub enum FsOp {
     ReadDir(String),
     /// The path with every symbolic link resolved.
     RealPath(String),
+    /// Where a command is: its absolute path, as `Run` would find it
+    /// (`temzdf/process`'s `exepath`, Vim's `exepath()`).
+    Exepath(String),
+    /// Run a command to its end (`temzdf/process`'s `run`), each on a
+    /// thread of its own.
+    Run(RunSpec),
+    /// Kill the command the operation of this id runs, answering nothing
+    /// (its `Run` answers, killed).
+    Kill(u64),
+}
+
+/// A command to run: no shell; `program` is found as [`FsOp::Exepath`]
+/// finds it (with `env`'s `PATH` when it has one).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RunSpec {
+    pub program: String,
+    pub args: Vec<String>,
+    /// Absolute; `None`: the server's working directory.
+    pub cwd: Option<String>,
+    /// Added to the server's environment.
+    pub env: Vec<(String, String)>,
+    /// Written to its standard input, then closed; `None`: none (null).
+    pub stdin: Option<Vec<u8>>,
+    /// Killed after this long (an error, `TimedOut`).
+    pub timeout_ms: Option<u64>,
+}
+
+/// How a command ended, and what it wrote.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Exit {
+    /// Its exit code (none when a signal ended it).
+    pub code: Option<i32>,
+    /// The signal that ended it (Unix).
+    pub signal: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
 /// What an operation answers.
@@ -30,6 +66,9 @@ pub enum FsReply {
     Info(FileInfo),
     Entries(Vec<DirEntry>),
     Path(String),
+    /// A command's path (`Exepath`), if found.
+    Exe(Option<String>),
+    Exited(Exit),
 }
 
 pub type FsResult = Result<FsReply, FsError>;
@@ -84,8 +123,10 @@ pub enum FsErrorKind {
     /// Neither a regular file nor a directory where one is read (a FIFO, a
     /// device).
     NotAFile,
-    /// Larger than the host reads at once.
+    /// Larger than the host reads at once (a file; a command's output).
     TooLarge,
+    /// A command ran longer than its timeout.
+    TimedOut,
     /// More entries than the host lists at once.
     TooMany,
     NotAbsolute,
@@ -105,6 +146,15 @@ mod tests {
     #[test]
     fn operations_and_answers_cross() {
         round_trip(&FsOp::ReadDir("/a".into()));
+        round_trip(&FsOp::Run(RunSpec {
+            program: "git".into(),
+            args: vec!["status".into()],
+            cwd: Some("/a".into()),
+            env: vec![("K".into(), "V".into())],
+            stdin: Some(b"in".to_vec()),
+            timeout_ms: Some(5),
+        }));
+        round_trip(&FsReply::Exited(Exit { code: Some(1), signal: None, stdout: b"o".to_vec(), stderr: Vec::new() }));
         let info = FileInfo {
             is_file: true,
             is_directory: false,
