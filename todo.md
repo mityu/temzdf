@@ -283,7 +283,12 @@ server on one `Session`). Next and open:
     Object: "Closing a pane" in `doc/survey/windows-port.md`); cmd.exe
     stays the default shell. Still to do for them: Windows before 24H2
     (`ClosePseudoConsole` waits there, and the five-second end may be
-    missing). What the server
+    missing); a terminal tab's name on Windows: ConPTY titles the
+    console with the program's full path (`C:\...\cmd.exe`), so the tab
+    shows that instead of a short name (the tests set their own title,
+    `the_tab_line_takes_the_top_row_and_its_clicks_switch_and_close`);
+    decide what the label should be, e.g. the file name without `.exe`.
+    What the server
     lacks on Windows otherwise: "The server on Windows" in
     `doc/survey/windows-port.md`.
   - The product: compile (gate `rustix`, `signal-hook`, `libc`;
