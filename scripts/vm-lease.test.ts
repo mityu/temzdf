@@ -159,7 +159,8 @@ test(
       err += d;
     });
     const done = new Promise<number | null>((r) => b.on("exit", (c) => r(c)));
-    await new Promise((r) => setTimeout(r, 500));
+    // Until it says it waits (bash starts slowly on Windows), not a fixed time.
+    for (let i = 0; i < 200 && !/waiting/.test(err); i++) await new Promise((r) => setTimeout(r, 50));
     assert.match(err, /alice/);
     assert.match(err, /waiting/);
     cli(e, "a", "unlock");
