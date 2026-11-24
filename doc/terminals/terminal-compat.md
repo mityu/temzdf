@@ -76,6 +76,23 @@ Known problems:
   `Microsoft.Windows.Console.ConPTY` 1.25.261109001) passes kitty graphics
   and XTGETTCAP, forwards DA1 and DECRQM, and does not redraw, with either
   flag.
+- Terminals on Windows run console programs through ConPTY, so what a
+  program sees there is the terminal and its ConPTY together (measured
+  2026-11-24, Windows 11 build 26300; `doc/terminals/conpty.md`, "Inside
+  Windows Terminal and WezTerm", has the raw answers):
+
+  | Feature | Windows Terminal 1.24 | WezTerm 20240203 (Windows) |
+  |---|---|---|
+  | kitty graphics (`t=d`, `a=q`) | no image, no answer | no image, no answer (its `conpty.dll` drops APC) |
+  | DA1 | ConPTY's or WT's, at once | ConPTY's, at once |
+  | XTVERSION | no answer | WezTerm's, about 30 ms after DA1's |
+  | XTGETTCAP | no answer | no answer |
+  | DECRQM 2026 / 1016 | `2` / `0` | `0` / `0` (ConPTY's) |
+  | Synchronized output (2026) | known (DECRQM) | not seen by DECRQM |
+  | SGR-pixel mouse (1016) | no: cell reports | yes |
+  | Kitty keyboard protocol | no (no answer, legacy keys) | with `enable_kitty_keyboard=true`: yes |
+  | `CSI 14 t` / `16 t` | answered, a fixed 10x20 cell, not the drawn one | the drawn sizes |
+  | `CSI 18 t` | the grid | the grid |
 
 ## Verified in practice
 

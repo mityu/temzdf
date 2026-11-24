@@ -65,8 +65,8 @@ for focus reports itself).
   whatever the terminal is. The GUI client stays the frontend there.
 - A side-loaded `conpty.dll` with its `OpenConsole.exe` changes this, see
   the next section.
-- Not tried yet: the same probes inside real terminals (Windows Terminal,
-  WezTerm).
+- Inside real terminals (Windows Terminal, WezTerm) the same holds:
+  "Inside Windows Terminal and WezTerm" below.
 
 ## Side-loaded conpty.dll
 
@@ -104,6 +104,73 @@ It needs `conpty.dll` and `OpenConsole.exe` shipped beside temzdf, and
 portable-pty (or temzdf's own wrapper) to load `conpty.dll` instead of
 kernel32's functions. Not checked: whether a real terminal then shows the
 image, and what an unmatched `conpty.dll` / `OpenConsole.exe` pair does.
+
+## Inside Windows Terminal and WezTerm
+
+What a console program sees when a real terminal runs it, measured on
+2026-11-24 in the VM (Windows 11 build 26300) with Windows Terminal
+1.24.11911.0 (in the image; the default terminal) and WezTerm
+20240203-110809-5046fc22 (winget `wez.wezterm`, the latest stable; it
+ships its own `conpty.dll` and `OpenConsole.exe`). The probe, a C#
+console program like `Child.cs` started on the desktop by a scheduled
+task (`wt.exe -w new PROBE`, `wezterm-gui start -- PROBE`, and PROBE
+alone, which the default terminal takes over), set
+`ENABLE_VIRTUAL_TERMINAL_INPUT`, wrote each query 500 ms after the last
+and logged every byte it read with the time; then a 96x96 RGB image with
+`a=T,t=d` (chunked), then mouse modes 1000, 1002, 1006 and 1016 and kitty
+keyboard flags 9 (`CSI > 9 u`), and logged the input QMP sent (a click,
+a drag, a wheel notch, `a`, Ctrl+A, Escape, Up). WezTerm needed
+`--config "front_end='WebGpu'"` in the VM (with the default OpenGL and
+with `Software` it failed: "The OpenGL implementation is too old to work
+with glium"). Raw logs and screenshots: `target/conpty-terminals/` (not
+committed).
+
+| Item | Windows Terminal 1.24 | WezTerm 20240203 |
+|---|---|---|
+| kitty graphics `a=T,t=d` | **not shown** (screenshot: blank lines) | **not shown** |
+| kitty graphics `a=q` | no answer | no answer |
+| DA1 `CSI c` | `CSI ? 61;4;6;7;14;21;22;23;24;28;32;42;52 c`, within 2 ms | `CSI ? 61;6;7;22;23;24;28;32;42 c`, within 1 ms (ConPTY's; WezTerm's own is never seen) |
+| XTVERSION `CSI > 0 q` | no answer | `DCS > \| WezTerm 20240203-110809-5046fc22 ST`, after 25 to 35 ms |
+| XTGETTCAP `TN` | no answer | no answer |
+| DECRQM 2026 | `CSI ? 2026;2 $ y` (reset: known) | `CSI ? 2026;0 $ y` (not recognised; ConPTY's answer, at once) |
+| DECRQM 1016 | `CSI ? 1016;0 $ y` | `CSI ? 1016;0 $ y` (but 1016 works, below) |
+| kitty keyboard `CSI ? u` | no answer | no answer; with `enable_kitty_keyboard=true`: `CSI ? 0 u`, and `CSI ? 9 u` after `CSI > 9 u` |
+| `CSI 14 t` | `CSI 4;600;1200 t` | `CSI 4;528;800 t`, after about 30 ms |
+| `CSI 16 t` | `CSI 6;20;10 t` | `CSI 6;22;10 t`, after about 30 ms |
+| `CSI 18 t` | `CSI 8;30;120 t` (the grid) | `CSI 8;24;80 t` (the grid), at once |
+| SGR mouse with 1016 | **cells**: `CSI < 0;44;20 M` (column 44, row 20 of 9x19 cells) | **pixels**: `CSI < 0;332;330 M`; drag `32`, wheel `65` |
+| keys with kitty flags 9 | legacy: `a`, `0x01`, `ESC`, `CSI A` | legacy as WT; with `enable_kitty_keyboard=true`: `a`, `CSI 57442;5 u` (Ctrl alone), `CSI 97;5 u`, `CSI 27;1 u`, `CSI 1;1 A` |
+
+- Windows Terminal answers `CSI 14 t` and `CSI 16 t` at once with a cell
+  of 10x20 that is not the one drawn: the screenshots show 9x19 cells
+  (and the mouse's cells fit 9x19), and after three Ctrl+= zooms the
+  glyphs grew while `16 t` still said 10x20 and `14 t` the grid times
+  10x20 (`CSI 8;24;90 t`, `CSI 4;480;900 t`). There is no usable cell
+  size in pixels in Windows Terminal. WezTerm's are the drawn ones
+  (after two zooms `CSI 6;26;11 t`).
+- The default terminal (a console program started alone) is Windows
+  Terminal: same answers, but `WT_SESSION` is not set there. WezTerm sets
+  `TERM=xterm-256color` and `TERM_PROGRAM=WezTerm`.
+- WezTerm's `conpty.dll` with `Host.cs` (`run.ps1 -ConptyDir`, flags 0)
+  behaves as the in-box ConPTY above: kitty graphics (transmit and query)
+  and XTGETTCAP dropped, DA1 and DECRQM answered by ConPTY, the text
+  redrawn, 14t and 16t and the rest passed, input unchanged. So WezTerm's
+  missing image is its ConPTY's doing; whether WezTerm draws kitty
+  graphics on Windows through a newer `conpty.dll` was not tried. Windows
+  Terminal's package has `OpenConsole.exe` but no `conpty.dll` to load
+  that way.
+- termpix's probe (`crates/termpix/src/probe.rs`) writes its queries in
+  one write and stops at the DA1 answer. Sent that way: in Windows
+  Terminal DECRQM 1016, 2026, `16 t` and DA1 came at once, nothing else;
+  in WezTerm DECRQM 1016 and 2026 and DA1 came within 2 ms and XTVERSION
+  and `16 t` 32 ms later, after DA1: the probe would miss WezTerm's
+  name and cell size.
+
+What follows: from a console program on Windows, neither terminal shows
+kitty graphics, so temzdf's terminal frontend shows no page in either;
+the GUI client is the frontend on Windows. WezTerm passes the SGR-pixel
+mouse and, when enabled, the kitty keyboard; Windows Terminal gives cell
+mouse reports, legacy keys and a made-up pixel size.
 
 ## In temzdf's terminal panes
 
