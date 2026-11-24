@@ -164,8 +164,9 @@ fn changing_the_setting_never_merges_documents_already_open() {
 #[test]
 #[cfg_attr(miri, ignore = "the file system")]
 fn a_markdown_file_reads_images_below_its_directory_by_one_name() {
-    // On Windows std's canonical paths are `\\?\C:\...`, where `img/x.png`
-    // joined is no path: the image did not load.
+    // Relative to the document's canonical directory (on Windows std's
+    // was `\\?\C:\...`; std's join turns `/` into `\` there, so
+    // `img/pic.png` loaded with it as well: checked in the VM, 2026-11-24).
     let dir = scratch("markdown");
     std::fs::create_dir(dir.join("img")).unwrap();
     write_png(&dir.join("img/pic.png"));
