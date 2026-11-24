@@ -1,5 +1,6 @@
-// The terminal frontend (termpix, temzdf-tty) is Unix only: on Windows
-// `temzdf` runs servers and talks to them, and temzdf-gui shows sessions.
+// The terminal frontend (attach, standalone) is Unix only: on Windows
+// `temzdf` runs servers and talks to them, render-session draws a frame
+// into the mock terminal, and temzdf-gui shows sessions.
 #[cfg(unix)]
 mod app;
 #[cfg(unix)]
@@ -10,7 +11,6 @@ mod config;
 mod headless;
 mod lsfonts;
 mod script_tests;
-#[cfg(unix)]
 mod snapshot;
 
 use temzdf_server::forward as ipc;
@@ -19,7 +19,6 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-#[cfg(unix)]
 use termpix::geom::{CellSize, Geometry};
 
 /// Terminal PDF viewer drawn with the kitty graphics protocol, in sessions.
@@ -268,7 +267,6 @@ enum Cmd {
     },
     /// Draw session NAME's frame as a terminal client of this geometry would
     /// show it, into a PNG (scripts/e2e.sh compares terminals against it).
-    #[cfg(unix)]
     #[command(hide = true)]
     RenderSession {
         name: String,
@@ -321,7 +319,6 @@ enum Cmd {
 
 /// `COLSxROWS` and `WIDTHxHEIGHT` (a cell, in pixels) as a geometry; a count
 /// that does not fit is an error.
-#[cfg(unix)]
 fn parse_geometry(size: &str, cell: &str) -> Result<Geometry> {
     let (cols, rows) = parse_pair(size)?;
     let (width, height) = parse_pair(cell)?;
@@ -331,7 +328,6 @@ fn parse_geometry(size: &str, cell: &str) -> Result<Geometry> {
     Ok(Geometry { cols: fit(cols, "columns")?, rows: fit(rows, "rows")?, cell: CellSize { width, height } })
 }
 
-#[cfg(unix)]
 fn parse_pair(s: &str) -> Result<(u32, u32)> {
     let (a, b) = s.split_once('x').with_context(|| format!("expected AxB, got {s:?}"))?;
     Ok((a.parse()?, b.parse()?))
@@ -452,7 +448,6 @@ fn main() -> Result<()> {
             print!("{}", temzdf_script::types::DECLARATIONS);
             return Ok(());
         }
-        #[cfg(unix)]
         Some(Cmd::RenderSession {
             name,
             out,
@@ -662,8 +657,7 @@ fn standalone_pdf(args: PdfArgs, cli: &Cli) -> Result<()> {
     )
 }
 
-// Standalone, attach and the geometry: Unix only.
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -676,6 +670,8 @@ mod tests {
         assert!(parse_geometry("80", "8x16").is_err());
     }
 
+    // Standalone and attach: Unix only.
+    #[cfg(unix)]
     #[test]
     fn options_that_do_not_apply_are_named() {
         let cli = |args: &[&str]| Cli::try_parse_from(std::iter::once("temzdf").chain(args.iter().copied())).unwrap();

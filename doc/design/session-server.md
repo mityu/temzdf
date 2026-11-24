@@ -353,9 +353,11 @@ git log), and why:
   asked (it would panic), and the split, float or tab reports that to
   the client, as any pane that cannot start does. The shell is
   `%COMSPEC%` (cmd.exe; the user, 2026-11-23). The terminal frontend
-  (`termpix`, `temzdf-tty`) is Unix only too: there `temzdf` runs
-  servers (`temzdf server`, which temzdf-gui starts) and the client
-  commands (`ls`, `kill-session`, `action`, `eval`, ...), and
+  (`termpix`'s `Tty`, so `attach` and `standalone`) is Unix only too:
+  `termpix` and `temzdf-tty` build there, but opening the terminal fails
+  with `Unsupported`. There `temzdf` runs servers (`temzdf server`,
+  which temzdf-gui starts), the client commands (`ls`, `kill-session`,
+  `action`, `eval`, ...) and `render-session` (the mock terminal), and
   `temzdf FILE` says to use `temzdf-gui FILE`. Inverse search runs
   `cmd /S /C "COMMAND"`, and links open with `rundll32
   url.dll,FileProtocolHandler` (`explorer` exits with 1 when it worked;

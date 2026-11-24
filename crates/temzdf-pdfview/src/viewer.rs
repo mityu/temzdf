@@ -829,8 +829,7 @@ mod tests {
     }
     use crate::pdf;
     use termpix_core::geom::{CellSize, Geometry};
-    // The mock terminal (termpix, temzdf-tty: Unix only).
-    #[cfg(unix)]
+    // The mock terminal.
     use {
         temzdf_tty::Presenter,
         termpix::compositor::{Backend, Compositor},
@@ -841,7 +840,6 @@ mod tests {
     const GEOMETRY: Geometry = Geometry { cols: 90, rows: 30, cell: CellSize { width: 10, height: 20 } };
 
     /// Do the viewer's work inline until it needs nothing more.
-    #[cfg(unix)]
     fn settle(v: &mut Viewer, images: &mut Images, doc: &pdf::Doc) {
         loop {
             let (_, needs) = v.frame(images);
@@ -865,7 +863,6 @@ mod tests {
     /// the content is from where it should be, mostly regardless of how sharp it
     /// is (the mock terminal scales with nearest neighbour, so scaled tiles are
     /// jagged and the blurry thumbnail would win a per-pixel comparison).
-    #[cfg(unix)]
     fn diff(a: &termpix::raster::RgbaImage, b: &termpix::raster::RgbaImage) -> f64 {
         let block = |img: &termpix::raster::RgbaImage, bx: u32, by: u32, ch: usize| -> f64 {
             let mut sum = 0u32;
@@ -890,7 +887,6 @@ mod tests {
 
     /// The screen right after zooming in (before any new tile arrives), and once
     /// everything is rendered, and how many stand-in layers the first one had.
-    #[cfg(unix)]
     fn zoom_frames(backend: Backend, mode: StandIn) -> (termpix::raster::RgbaImage, termpix::raster::RgbaImage, usize) {
         let doc = pdf::open(&pdf::fixture("sample.pdf")).unwrap();
         let bounds = pdf::doc_info(&doc).unwrap().bounds;
@@ -1045,8 +1041,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     #[cfg_attr(miri, ignore = "Miri cannot spawn processes (fixtures, programs)")]
+    #[cfg_attr(not(unix), ignore = "the fixtures need TeX (none on Windows yet)")]
     fn zooming_shows_old_tiles_scaled_until_new_ones_arrive() {
         for (backend, mode) in [(Backend::composited(), StandIn::ScaledTiles), (Backend::Layered, StandIn::Composed)] {
             let (early, done, count) = zoom_frames(backend, mode);

@@ -16,9 +16,7 @@ termpix-ui.workspace = true
 
 [dev-dependencies]
 temzdf-pdfcore = { workspace = true, features = ["test-support"] }
-
-# The mock terminal in tests: termpix is Unix only.
-[target.'cfg(unix)'.dev-dependencies]
+# The mock terminal in tests.
 temzdf-tty.workspace = true
 termpix.workspace = true
 
