@@ -267,8 +267,16 @@ server on one `Session`). Next and open:
     keyboard, the SGR-pixel mouse and OSC 52 pass, the pass-through flag
     changes nothing. A side-loaded `conpty.dll` + `OpenConsole.exe`
     (NuGet `Microsoft.Windows.Console.ConPTY` 1.25.261109001) passes kitty
-    graphics, XTGETTCAP, DA1 and DECRQM through, with either flag. Still
-    to try: the probes inside Windows Terminal and WezTerm.
+    graphics, XTGETTCAP, DA1 and DECRQM through, with either flag. Inside
+    real terminals (2026-11-24, "Inside Windows Terminal and WezTerm"
+    in `doc/terminals/conpty.md`): neither Windows Terminal 1.24 nor
+    WezTerm 20240203 shows kitty graphics from a console program (both
+    through an old ConPTY; Windows Terminal also makes up its cell size
+    and turns pixel mouse reports into cells); WezTerm with the NuGet
+    ConPTY 1.25 swapped in shows them and answers every query itself.
+    So the terminal frontend on Windows needs WezTerm with a newer
+    ConPTY (or a Windows that ships one); with an old ConPTY termpix's
+    probe must not stop at the ConPTY's own early DA1.
     Terminal panes on Windows start with the in-box ConPTY through
     portable-pty, not a shipped one (the user, 2026-11-23): only images
     from programs in terminal panes are lost, PDF panes and the GUI draw
@@ -281,7 +289,17 @@ server on one `Session`). Next and open:
     (2026-11-23): terminal panes on Windows, in the in-box ConPTY;
     closing one closes ConPTY only, as Windows Terminal does (no Job
     Object: "Closing a pane" in `doc/survey/windows-port.md`); cmd.exe
-    stays the default shell. Still to do for them: Windows before 24H2
+    stays the default shell. Which ConPTY: only a `conpty.dll` beside
+    the executable, else kernel32's (2026-11-24; portable-pty took one
+    from `PATH` or the current directory). ConPTY's startup cursor query
+    is answered by the pty (`StartupQuery`), as a host never answered
+    stayed with its program; drop that once portable-pty can open
+    ConPTY without `PSEUDOCONSOLE_INHERIT_CURSOR` (wezterm#8256). Hosts
+    whose pseudoconsole goes within milliseconds of their start still
+    stay: the session tests leave a few `conhost.exe --headless` with
+    their `temzdf-testhelper` in the VM after each run, to be cleared
+    after `scripts/windows-vm.sh check` or understood ("The startup
+    cursor query" in `doc/terminals/conpty.md`). Still to do for them: Windows before 24H2
     (`ClosePseudoConsole` waits there, and the five-second end may be
     missing); a terminal tab's name on Windows: ConPTY titles the
     console with the program's full path (`C:\...\cmd.exe`), so the tab
@@ -304,8 +322,11 @@ server on one `Session`). Next and open:
     `temzdf-testhelper` and run there too (2026-11-24, but for those
     ignored with their reason), tests of their own run cmd
     (`temzdf-term`'s `tests::conpty`). The
-    terminal frontend (`termpix`, `temzdf-tty`; `attach`, `standalone`,
-    `render-session`) is Unix only: on Windows `temzdf` is the server
+    terminal frontend's real terminal (termpix's `Tty`, so `attach` and
+    `standalone`) is Unix only; termpix and `temzdf-tty` build and test
+    on Windows and `render-session` works there (2026-11-24; the shared
+    memory medium is Unix only; next: a console `Tty` in
+    `crates/termpix/src/tty/windows.rs`). On Windows `temzdf` is the server
     and the client commands, `temzdf FILE` points at `temzdf-gui`,
     inverse search runs `cmd /S /C` and links open through rundll32's
     `url.dll`. With that, `cargo check --workspace --all-targets

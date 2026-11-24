@@ -228,10 +228,8 @@ PowerShell 5.1 in `temzdf-gui`):
 
 - portable-pty passes `PSEUDOCONSOLE_INHERIT_CURSOR | RESIZE_QUIRK |
   WIN32_INPUT_MODE`. With the inherited cursor ConPTY starts by asking
-  `CSI 6 n`, which portable-pty's users must answer (it waits for the
-  reply; not tried here without one); the pane's terminal
-  (libghostty) answers it as any query (`tests::conpty` in
-  `crates/temzdf-term/src/lib.rs`). ConPTY also asks for win32-input-mode
+  `CSI 6 n` and does nothing else until it is answered: see "The startup
+  cursor query" below. ConPTY also asks for win32-input-mode
   (`CSI ? 9001 h`); the pane's keys still went as plain VT bytes, and
   ConPTY took them. Typing, Backspace, the arrows (cmd's and
   PowerShell's history), Tab completion, PowerShell's colours, resizing
@@ -266,3 +264,56 @@ PowerShell 5.1 in `temzdf-gui`):
   tracking modes, OSC 8, the kitty keyboard protocol's `CSI 104;5u`,
   sizes after a resize and a background job left on the console all
   behaved as on Unix.
+
+### Which ConPTY
+
+portable-pty 0.9.0 (`src/win/psuedocon.rs`, `load_conpty`) loads
+`conpty.dll` by name (`LoadLibraryW`) and prefers it to kernel32's
+`CreatePseudoConsole`; a `conpty.dll` starts the `OpenConsole.exe` beside
+it. System32 has no `conpty.dll`, so Windows' default search order finds
+only someone else's copy: beside the executable, in the current directory
+(the server inherits the client's, often a document's directory: a
+`conpty.dll` there ran in the server, tried in the VM) or on `PATH`.
+WezTerm's installer puts its directory on `PATH`; from then on the VM's
+panes and tests ran on WezTerm's 2023 ConPTY (2026-11-24, found by 118
+spinning `OpenConsole.exe`). Since then `dll_search_restricted` in
+`crates/temzdf-term/src/pty.rs` (and tuitest) sets
+`SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+LOAD_LIBRARY_SEARCH_SYSTEM32)` before the first ConPTY: a `conpty.dll`
+beside `temzdf.exe` is still used (whether to ship one is open), any
+other is not, and otherwise kernel32's is. Rio loads only its own copy by
+full path, psmux and Go's and Python's libraries use kernel32's; WezTerm
+and Zed ship theirs beside the executable, which comes first.
+
+### The startup cursor query
+
+With `PSEUDOCONSOLE_INHERIT_CURSOR` the console host asks `CSI 6 n` first
+and waits for the answer before anything else, closing included
+(`VtIo::StartIfNeeded` before microsoft/terminal#17574's 3 s timeout;
+microsoft/terminal#11213). A pane closed, or a server that ended, before
+the terminal emulator saw the query left the host and its program
+running for good: the in-box conhost of build 26300 waits, WezTerm's
+2023 OpenConsole spins a core. Measured in the VM with 20 panes of a
+program that never ends (2026-11-24): closed unread, 3 stayed; left open
+while the process exited, 14 stayed; answered, none. portable-pty's
+users answer it themselves (turborepo, deno-pty, distant and others);
+Windows Terminal, Alacritty, Zed, Rio, psmux and VS Code do not pass the
+flag at all, and wezterm#8256 (open) would let portable-pty's users drop
+it.
+
+temzdf answers it in the pty's reader thread (`StartupQuery` in
+`crates/temzdf-term/src/pty.rs`), until portable-pty can open ConPTY
+without the flag: when the query comes within the first 256 bytes of the
+output (possibly split between reads) it writes `CSI 1;1 R` (a new pane's
+cursor is at the top left) and takes the query out of the output, so the
+pane does not answer it again; a program's own query later reaches the
+pane. It answers only after the query: an answer sent ahead takes the
+program's first key under win32-input-mode (psmux#313). The reader
+writes the answer itself, also after the pane was deleted. With it, of
+20 panes none stayed when closed, and 1 or 2 when the process ended at
+once after opening or closing them; none when it ended 3 s later. What
+still stays is a host whose pseudoconsole went within milliseconds of
+its start: the session tests, which split and delete panes and end at
+once, leave a few `conhost.exe --headless` with their
+`temzdf-testhelper` in the VM after each run (`todo.md`).
+
