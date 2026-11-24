@@ -550,6 +550,7 @@ impl Term {
             pixel_width: opts.cols * opts.cell.0 as u16,
             pixel_height: opts.rows * opts.cell.1 as u16,
         };
+        dll_search_restricted();
         let pair = native_pty_system().openpty(size).expect("pty");
         let mut cmd = CommandBuilder::new(argv[0]);
         cmd.args(&argv[1..]);
@@ -1174,6 +1175,25 @@ pub fn shell_quote(s: &str) -> String {
         format!("'{}'", s.replace('\'', "'\\''"))
     }
 }
+
+/// Keep portable-pty's `conpty.dll` to the executable's directory, as
+/// temzdf-term does for terminal panes (`dll_search_restricted` in
+/// `crates/temzdf-term/src/pty.rs`): a copy on `PATH`, such as WezTerm's,
+/// would otherwise run the tests' terminals on another ConPTY.
+#[cfg(windows)]
+fn dll_search_restricted() {
+    use windows_sys::Win32::System::LibraryLoader::{
+        LOAD_LIBRARY_SEARCH_APPLICATION_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories,
+    };
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    // SAFETY: flags only; it changes where later loads by name look.
+    ONCE.call_once(|| unsafe {
+        SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    });
+}
+
+#[cfg(not(windows))]
+fn dll_search_restricted() {}
 
 #[cfg(test)]
 mod tests {

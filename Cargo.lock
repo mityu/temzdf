@@ -6288,6 +6288,7 @@ dependencies = [
  "temzdf-testhelper",
  "termpix-core",
  "termpix-ui",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

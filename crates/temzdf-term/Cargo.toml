@@ -22,7 +22,8 @@ termpix-core.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", features = ["event", "process"] }
 
-# Whether ConPTY is there, and Ctrl+C for a pane's program (`src/pty.rs`).
+# Whether ConPTY is there, where its DLL may come from, and Ctrl+C for a
+# pane's program (`src/pty.rs`).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_LibraryLoader"] }
 

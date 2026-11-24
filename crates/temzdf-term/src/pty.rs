@@ -73,10 +73,13 @@ pub(crate) fn supported() -> io::Result<()> {
 
 /// Whether terminal panes can start here: on Windows they need ConPTY
 /// (Windows 10 1809 and later), and portable-pty panics without it, so
-/// this is asked before it opens one.
+/// this is asked before it opens one. It also keeps portable-pty from
+/// loading a `conpty.dll` from anywhere but beside the executable
+/// ([`dll_search_restricted`]).
 #[cfg(windows)]
 pub(crate) fn supported() -> io::Result<()> {
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    dll_search_restricted();
     let kernel32: Vec<u16> = "kernel32.dll".encode_utf16().chain([0]).collect();
     // SAFETY: both names are NUL-terminated and outlive the calls; kernel32
     // is loaded in every process, and its handle is not freed.
@@ -89,6 +92,33 @@ pub(crate) fn supported() -> io::Result<()> {
     } else {
         Err(io::Error::new(io::ErrorKind::Unsupported, "terminal panes need ConPTY (Windows 10 version 1809 or later)"))
     }
+}
+
+/// Load DLLs named without a path only from the executable's directory and
+/// System32, once per process, before portable-pty opens its first ConPTY.
+///
+/// portable-pty loads `conpty.dll` by name (`LoadLibraryW`) and prefers it
+/// to the in-box ConPTY of kernel32. System32 has none, so by Windows'
+/// default search order only someone else's copy is found: one on `PATH`
+/// (WezTerm's installer puts its directory there, with a 2023 ConPTY whose
+/// `ClosePseudoConsole` hangs and whose `OpenConsole.exe` spins forever
+/// when a pane closes before ConPTY's cursor query is answered), or one in
+/// the current directory, which the server inherits from the client (a
+/// `conpty.dll` in a document's directory would run in the server). With
+/// this, a name finds only a `conpty.dll` shipped beside `temzdf.exe`, and
+/// otherwise portable-pty uses kernel32's. It holds for the rest of the
+/// process; loads by full path, or with their own `LoadLibraryExW` flags,
+/// are not affected ("Which ConPTY" in `doc/terminals/conpty.md`).
+#[cfg(windows)]
+pub(crate) fn dll_search_restricted() {
+    use windows_sys::Win32::System::LibraryLoader::{
+        LOAD_LIBRARY_SEARCH_APPLICATION_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories,
+    };
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    // SAFETY: flags only; it changes where later loads by name look.
+    ONCE.call_once(|| unsafe {
+        SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    });
 }
 
 /// Ready this process to start a program in a pane. On Windows: a
@@ -426,6 +456,46 @@ fn read_loop(mut pty: impl Read, sink: &Sink, backlog: &Backlog, stop: &AtomicBo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// After `supported`, a DLL named without a path is not found on
+    /// `PATH` (where WezTerm's `conpty.dll` was picked up). A copy of a
+    /// System32 DLL under a name of its own stands in for it: loaded by
+    /// its full path it loads, so only the search keeps it out.
+    #[test]
+    #[cfg(windows)]
+    fn dlls_by_name_are_not_looked_for_on_path() {
+        use windows_sys::Win32::Foundation::FreeLibrary;
+        use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
+        let wide = |s: &std::ffi::OsStr| {
+            use std::os::windows::ffi::OsStrExt;
+            s.encode_wide().chain([0]).collect::<Vec<u16>>()
+        };
+        let dir = std::env::temp_dir().join(format!("temzdf-dll-search-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = "temzdf-dll-search-probe.dll";
+        let system = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap().join("System32");
+        std::fs::copy(system.join("version.dll"), dir.join(name)).unwrap();
+        let mut path = std::ffi::OsString::from(&dir);
+        path.push(";");
+        path.push(std::env::var_os("PATH").unwrap_or_default());
+        // SAFETY: on Windows std serialises its environment accesses, and
+        // the directory only adds to PATH for the other tests.
+        unsafe { std::env::set_var("PATH", &path) };
+        supported().unwrap();
+        // SAFETY: NUL-terminated names that outlive the calls; a module
+        // loaded is freed again.
+        unsafe {
+            let by_name = LoadLibraryW(wide(name.as_ref()).as_ptr());
+            if !by_name.is_null() {
+                FreeLibrary(by_name);
+            }
+            assert!(by_name.is_null(), "{name} was found on PATH");
+            let by_path = LoadLibraryW(wide(dir.join(name).as_os_str()).as_ptr());
+            assert!(!by_path.is_null(), "the copy loads by its full path");
+            FreeLibrary(by_path);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn input_beyond_the_limit_is_dropped_not_waited_for() {
