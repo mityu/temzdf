@@ -1179,10 +1179,17 @@ pub fn shell_quote(s: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The command line of `temzdf-testhelper` (a program for tests to run
+    /// instead of `sh -c`) with these commands.
+    fn helper<'a>(commands: &[&'a str]) -> Vec<&'a str> {
+        std::iter::once(temzdf_testhelper::path()).chain(commands.iter().copied()).collect()
+    }
+
     #[test]
     #[cfg_attr(not(unix), ignore = "runs sh on a pty: not on Windows yet")]
     fn shows_output_colours_and_wide_characters() {
-        let mut t = Term::spawn(&["sh", "-c", "printf 'a \\033[31mred\\033[0m 数式\\n'; sleep 5"], &Options::default());
+        let mut t =
+            Term::spawn(&helper(&["print", "a \\e[31mred\\e[0m 数式\\n", "sleep", "5000"]), &Options::default());
         let s = t.wait_text("red");
         assert_eq!(s.lines()[0], "a red 数式");
         assert_eq!(s.cell(2, 0).fg, Color::Palette(1));
@@ -1193,19 +1200,20 @@ mod tests {
     #[test]
     #[cfg_attr(not(unix), ignore = "runs sh on a pty: not on Windows yet")]
     fn keys_follow_the_programs_keyboard_mode() {
-        // `od` shows what arrives: legacy C-h is 0x08; with the kitty keyboard
-        // protocol on, `CSI 104;5u`.
-        let script = "stty raw -echo; printf 'ready\\n'; head -c 1 | od -An -c; printf '\\033[>1u'; \
-                      printf 'kitty\\n'; head -c 8 | od -An -c; sleep 5";
-        let mut t = Term::spawn(&["sh", "-c", script], &Options::default());
+        // What arrives: legacy C-h is 0x08 (a line of its own, ended by
+        // Enter); with the kitty keyboard protocol on, `CSI 104;5u` (in hex).
+        let argv = helper(&["raw", "print", "ready\\r\\n", "read-line", "said", "print", "\\e[>1ukitty\\r\\n", "hex"]);
+        let mut t = Term::spawn(&argv, &Options::default());
         t.wait_text("ready");
         t.key("C-h");
+        t.key("Enter");
         t.wait_text("kitty");
         t.key("C-h");
-        let s = t.wait_for("the kitty encoding", |s| s.contains("u"));
+        let kitty = "1b 5b 31 30 34 3b 35 75";
+        let s = t.wait_for("the kitty encoding", |s| s.contains(kitty));
         let text = s.text();
-        assert!(text.contains("\\b"), "{text}");
-        assert!(text.contains("033   [   1   0   4   ;   5   u"), "{text}");
+        assert!(text.contains("said:\\x08"), "{text}");
+        assert!(text.contains(kitty), "{text}");
     }
 
     #[test]
@@ -1216,12 +1224,12 @@ mod tests {
         // backgrounds at row 6 below a red cell and in the default
         // background.
         let img = "f=24,s=2,v=2,C=1,q=2;/wAAAP8AAAD/////";
-        let script = format!(
-            "printf '\\033_Ga=T,i=1,X=3,Y=4,{img}\\033\\\\\\033[4;1H\\033_Ga=T,i=2,c=2,r=1,{img}\\033\\\\\
-             \\033[6;1H\\033[41m  \\033[0m\\033[6;1H\\033_Ga=T,i=3,z=-1073741825,{img}\\033\\\\\
-             \\033[6;6H\\033_Ga=T,i=4,z=-1073741825,{img}\\033\\\\\\033[8;1Hdone'; sleep 5"
+        let text = format!(
+            "\\e_Ga=T,i=1,X=3,Y=4,{img}\\e\\\\\\e[4;1H\\e_Ga=T,i=2,c=2,r=1,{img}\\e\\\\\
+             \\e[6;1H\\e[41m  \\e[0m\\e[6;1H\\e_Ga=T,i=3,z=-1073741825,{img}\\e\\\\\
+             \\e[6;6H\\e_Ga=T,i=4,z=-1073741825,{img}\\e\\\\\\e[8;1Hdone"
         );
-        let mut t = Term::spawn(&["sh", "-c", &script], &Options::default());
+        let mut t = Term::spawn(&helper(&["print", &text, "sleep", "5000"]), &Options::default());
         let s = t.wait_for("the images", |s| s.images.len() == 4 && s.contains("done"));
         let out = s.render();
         assert_eq!((out.width, out.height), (1000, 600));
@@ -1254,15 +1262,15 @@ mod tests {
         // default colours and in green on blue. Rows 6 and 7: text with a
         // red image over its two cells, below the text (z -1) and above it
         // (z 1).
-        let red_image = |id: u32, z: i32| format!("\\033_Ga=T,i={id},c=2,r=1,z={z},C=1,q=2,f=24,s=1,v=1;/wAA\\033\\\\");
-        let script = format!(
-            "printf '\\033[31mHello\\033[0m\\nHHHH\\n\\033[1mHHHH\\033[0m\\n数😀\\n\
-             \\033[7mXX\\033[0m \\033[7;32;44mXX\\033[0m\\n\
-             \\033[7;1HWW\\033[7;1H{}\\033[8;1HWW\\033[8;1H{}\\033[10;1Hdone'; sleep 5",
+        let red_image = |id: u32, z: i32| format!("\\e_Ga=T,i={id},c=2,r=1,z={z},C=1,q=2,f=24,s=1,v=1;/wAA\\e\\\\");
+        let text = format!(
+            "\\e[31mHello\\e[0m\\nHHHH\\n\\e[1mHHHH\\e[0m\\n数😀\\n\
+             \\e[7mXX\\e[0m \\e[7;32;44mXX\\e[0m\\n\
+             \\e[7;1HWW\\e[7;1H{}\\e[8;1HWW\\e[8;1H{}\\e[10;1Hdone",
             red_image(1, -1),
             red_image(2, 1),
         );
-        let mut t = Term::spawn(&["sh", "-c", &script], &Options::default());
+        let mut t = Term::spawn(&helper(&["print", &text, "sleep", "5000"]), &Options::default());
         let s = t.wait_for("the text and images", |s| s.images.len() == 2 && s.contains("done"));
         let out = s.render();
         let _ = std::fs::create_dir_all(out_dir());
@@ -1337,7 +1345,7 @@ mod tests {
     #[test]
     #[cfg_attr(not(unix), ignore = "runs sh on a pty: not on Windows yet")]
     fn exit_codes() {
-        let mut t = Term::spawn(&["sh", "-c", "exit 3"], &Options::default());
+        let mut t = Term::spawn(&helper(&["exit", "3"]), &Options::default());
         assert_eq!(t.wait_exit(), 3);
     }
 

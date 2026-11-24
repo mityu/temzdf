@@ -194,7 +194,7 @@ fn searches_go_to_the_pdf_pane_given() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn search_for_needs_a_pdf() {
-    let (mut s, _rx) = terminal_session(&["sh", "-c", "sleep 5"]);
+    let (mut s, _rx) = terminal_session(&helper(&["sleep", "5000"]));
     let e = s.run_cli(&["search-for".into(), "x".into()]).unwrap_err();
     assert!(e.to_string().contains("not a PDF"), "{e}");
 }
@@ -287,12 +287,12 @@ fn panes_split_focus_close_detach_and_quit() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_float_for_another_tab_page_does_not_take_the_focus_here() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let one = s.focus;
-    new_tab(&mut s, &["sleep", "30"]);
+    new_tab(&mut s, &helper(&["sleep", "30000"]));
     cmd(&mut s, "goto-tab", &["1"]).unwrap();
-    let f = float(&mut s, &["sleep", "30"], &[("tabpage", ScriptValue::Num(2.0))]);
+    let f = float(&mut s, &helper(&["sleep", "30000"]), &[("tabpage", ScriptValue::Num(2.0))]);
     assert_eq!(s.focus, one, "keys must not go to a pane nobody sees");
     assert!(s.here_panes().contains(&s.focus));
     assert!(s.shown_floats().is_empty());
@@ -308,9 +308,9 @@ fn a_tab_opened_while_the_configuration_loads_leaves_no_tab_page_empty() {
     let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
-    s.shell = Some(vec!["/bin/sh".into()]);
+    s.shell = Some(test_shell());
     // config.ts: action.newTab({ command: [...] }) at the top level.
-    new_tab(&mut s, &["sleep", "30"]);
+    new_tab(&mut s, &helper(&["sleep", "30000"]));
     // Then the session's first pane, once the configuration loaded.
     s.script.first = Some((PaneSpec::Shell, None));
     let _ = s.open_first();
@@ -579,13 +579,31 @@ fn resizing_split_panes_redraws_like_a_fresh_start() {
     assert_eq!(differing, 0, "{differing} pixels differ");
 }
 
+/// The command line of `temzdf-testhelper` (a program for tests to run
+/// instead of `sh -c`) with these commands.
+pub(super) fn helper<'a>(commands: &[&'a str]) -> Vec<&'a str> {
+    std::iter::once(temzdf_testhelper::path()).chain(commands.iter().copied()).collect()
+}
+
+/// The shell splits start in tests (not the user's): the helper, answering
+/// every line typed with `said:LINE`.
+pub(super) fn test_shell() -> Vec<String> {
+    helper(&["raw", "each-line", "said"]).into_iter().map(String::from).collect()
+}
+
+/// Bytes as the helper's `hex` writes them, without the spaces (the hex
+/// digits of the rows of its output, joined, contain it).
+fn hex_of(bytes: &str) -> String {
+    bytes.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
 fn terminal_session(argv: &[&str]) -> (Session, Receiver<SessionEvent>) {
     let (tx, rx) = mpsc::channel();
     let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("term".into(), GEOMETRY, Hints::default(), settings, sink);
     // Splits start this instead of the user's $SHELL.
-    s.shell = Some(vec!["/bin/sh".into()]);
+    s.shell = Some(test_shell());
     default_mappings(&mut s.modes);
     let spec = PaneSpec::Command(argv.iter().map(|a| a.to_string()).collect());
     s.new_pane(&spec, None).unwrap();
@@ -615,7 +633,7 @@ fn cols(row: &str, a: usize, b: usize) -> String {
 }
 
 /// The frame's text as screen rows (trailing blanks trimmed).
-fn screen_text(frame: &Frame, g: Geometry) -> Vec<String> {
+pub(super) fn screen_text(frame: &Frame, g: Geometry) -> Vec<String> {
     let mut screen = vec![vec![' '; g.cols as usize]; g.rows as usize];
     for grid in &frame.text {
         for (dy, row) in grid.rows.iter().enumerate() {
@@ -634,8 +652,16 @@ fn screen_text(frame: &Frame, g: Geometry) -> Vec<String> {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_synchronized_update_left_on_shows_after_its_time() {
-    let script = r"printf 'before\n'; sleep 0.3; printf '\033[?2026hduring'; sleep 100";
-    let (mut s, rx) = terminal_session(&["sh", "-c", script]);
+    let (mut s, rx) = terminal_session(&helper(&[
+        "print",
+        "before\\n",
+        "sleep",
+        "300",
+        "print",
+        "\\e[?2026hduring",
+        "sleep",
+        "100000",
+    ]));
     wait_text(&mut s, &rx, |rows| rows.iter().any(|r| r.contains("before")));
     // The update began: the session wakes when it stops holding.
     let until = Instant::now() + Duration::from_secs(10);
@@ -659,18 +685,14 @@ fn a_synchronized_update_left_on_shows_after_its_time() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn terminal_panes_show_output_take_keys_and_close_when_the_program_exits() {
-    let (mut s, rx) = terminal_session(&[
-        "sh",
-        "-c",
-        "stty -echo -ixon; echo ready; read l; echo \"got:$(printf %s \"$l\" | od -An -tx1 | tr -d ' ')\"; read l",
-    ]);
+    let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n", "read-line", "said", "read-line"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
     // The prefix twice sends it itself.
     key(&mut s, "<C-b>");
     key(&mut s, "<C-b>");
     key(&mut s, "a<CR>");
-    let (_, rows) = wait_text(&mut s, &rx, |r| r[1].starts_with("got:"));
-    assert_eq!(rows[1], "got:0261", "C-b (0x02), then a");
+    let (_, rows) = wait_text(&mut s, &rx, |r| r[1].starts_with("said:"));
+    assert_eq!(rows[1], "said:\\x02a", "C-b (0x02), then a");
     assert!(s.frame().cursor.is_some());
     key(&mut s, "<CR>");
     let (outcome, _) = wait_text(&mut s, &rx, |_| false);
@@ -681,19 +703,19 @@ fn terminal_panes_show_output_take_keys_and_close_when_the_program_exits() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn splitting_a_terminal_starts_another_shell_beside_it() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo left; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "left\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "left");
     assert_eq!(cmd(&mut s, "split", &["right"]), Ok(Outcome::Redraw));
     assert_eq!(s.pane_count(), 2);
-    for c in "echo right-$((40+2))".chars() {
+    for c in "right-42".chars() {
         s.key(&KeyEvent::new(KeyCode::Char(c), Modifiers::NONE), Instant::now());
     }
     key(&mut s, "<CR>");
-    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("right-42")));
+    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("said:right-42")));
     // The left pane keeps its text in its half; the new shell is in the right one.
     assert!(rows[0].starts_with("left"), "{rows:?}");
-    let line = rows.iter().find(|l| l.contains("right-42")).unwrap();
-    assert!(line.find("right-42").unwrap() >= 45, "{line:?}");
+    let line = rows.iter().find(|l| l.contains("said:right-42")).unwrap();
+    assert!(line.find("said:right-42").unwrap() >= 45, "{line:?}");
     // Closing it gives the first pane the whole screen again.
     cmd(&mut s, "close-pane", &[]).unwrap();
     assert_eq!(s.pane_count(), 1);
@@ -721,7 +743,7 @@ fn pump(s: &mut Session, rx: &Receiver<SessionEvent>, done: impl Fn(&Session) ->
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn closed_terminals_keep_running_hidden() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo first; read l; echo \"got:$l\"; read l"]);
+    let (mut s, rx) = terminal_session(&helper(&["raw", "print", "first\\r\\n", "read-line", "said", "read-line"]));
     wait_text(&mut s, &rx, |r| r[0] == "first");
     let first = s.panes[&s.focus].buffer();
     cmd(&mut s, "split", &["right"]).unwrap();
@@ -734,7 +756,7 @@ fn closed_terminals_keep_running_hidden() {
     assert_eq!(s.show_in(s.focus, first), Ok(Outcome::Redraw));
     assert_eq!(s.current_mode(), "terminal");
     key(&mut s, "hi<CR>");
-    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "got:hi"));
+    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l == "said:hi"));
     assert_eq!(rows[0], "first", "{rows:?}");
     // Its program ends: the last pane closes, and the session ends
     // although the other shell still runs hidden.
@@ -748,7 +770,7 @@ fn closed_terminals_keep_running_hidden() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_hidden_terminal_that_ended_stays_until_it_was_shown() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo started; sleep 1; echo bye"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "started\\n", "sleep", "1000", "print", "bye\\n"]));
     wait_text(&mut s, &rx, |r| r[0] == "started");
     let first = s.panes[&s.focus].buffer();
     cmd(&mut s, "split", &["right"]).unwrap();
@@ -775,7 +797,7 @@ fn a_hidden_terminal_that_ended_stays_until_it_was_shown() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_terminal_in_two_panes_is_as_large_as_the_larger() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo ready; while read l; do stty size; done"]);
+    let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n", "each-line", "size"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
     let first = s.panes[&s.focus].buffer();
     key(&mut s, "<CR>");
@@ -801,7 +823,7 @@ fn a_terminal_in_two_panes_is_as_large_as_the_larger() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn dragging_a_border_resizes_panes_and_their_programs_on_release() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "ready\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
     let left = s.focus;
     cmd(&mut s, "split", &["right"]).unwrap();
@@ -842,7 +864,7 @@ fn dragging_a_border_resizes_panes_and_their_programs_on_release() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn panes_move_to_edges_and_rotate() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "ready\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
     let one = s.focus;
     cmd(&mut s, "split", &["right"]).unwrap();
@@ -909,7 +931,7 @@ fn a_float_opened_while_the_first_document_fails_leaves_a_session_that_shows() {
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
     // The configuration opens a float; then the first pane's PDF fails.
-    let f = float(&mut s, &["sleep", "30"], &[]);
+    let f = float(&mut s, &helper(&["sleep", "30000"]), &[]);
     let bad = std::env::temp_dir().join(format!("temzdf-bad-{}.pdf", std::process::id()));
     std::fs::write(&bad, "not a PDF").unwrap();
     s.open(&bad).unwrap();
@@ -929,8 +951,8 @@ fn a_float_opened_while_the_first_document_fails_leaves_a_session_that_shows() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_float_covers_the_panes_below_it() {
-    let (mut s, rx) =
-        terminal_session(&["sh", "-c", "for i in 1 2 3 4 5 6 7 8; do printf '%080d\\n' 0; done; sleep 30"]);
+    let zeros = format!("{}\\n", "0".repeat(80)).repeat(8);
+    let (mut s, rx) = terminal_session(&helper(&["print", &zeros, "sleep", "30000"]));
     let zeros = "0".repeat(80);
     wait_text(&mut s, &rx, |r| r[7] == zeros);
     let n = |v: f64| ScriptValue::Num(v);
@@ -941,7 +963,7 @@ fn a_float_covers_the_panes_below_it() {
         ("row", n(2.0)),
         ("title", ScriptValue::Str("pop".into())),
     ];
-    let pane = float(&mut s, &["sh", "-c", "echo FLOAT; sleep 30"], &opts);
+    let pane = float(&mut s, &helper(&["print", "FLOAT\\n", "sleep", "30000"]), &opts);
     assert_eq!((s.focus, s.current_mode()), (pane, "terminal"));
     // The frame is 22 x 6 cells at (5, 2); the content inside it.
     assert_eq!(s.panes[&pane].rect, Rect::new(6, 3, 20, 4));
@@ -967,10 +989,10 @@ fn a_float_covers_the_panes_below_it() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn floats_cascade_raise_take_turns_and_hide_together() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     let tiled = s.focus;
-    let a = float(&mut s, &["sleep", "30"], &[]);
+    let a = float(&mut s, &helper(&["sleep", "30000"]), &[]);
     // Splitting a float opens another float beside it.
     cmd(&mut s, "split", &["right"]).unwrap();
     let b = s.focus;
@@ -1020,13 +1042,13 @@ fn floats_cascade_raise_take_turns_and_hide_together() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_last_tiled_pane_gives_way_to_a_shown_float() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     let tiled = s.focus;
     // The last tiled pane does not float.
     let err = s.run_command("toggle-floating", &[], Instant::now()).unwrap_err();
     assert!(err.contains("last tiled pane"), "{err}");
-    let f = float(&mut s, &["sh", "-c", "echo floating; sleep 30"], &[]);
+    let f = float(&mut s, &helper(&["print", "floating\\n", "sleep", "30000"]), &[]);
     // Hidden floats do not keep the session.
     s.run_command("toggle-floats", &[], Instant::now()).unwrap();
     assert_eq!(s.close(tiled), Outcome::Quit);
@@ -1050,17 +1072,17 @@ fn the_last_tiled_pane_gives_way_to_a_shown_float() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_floating_terminal_closes_when_its_program_exits() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     let tiled = s.focus;
-    float(&mut s, &["sh", "-c", "sleep 0.2"], &[]);
+    float(&mut s, &helper(&["sleep", "200"]), &[]);
     let out = pump(&mut s, &rx, |s| s.floats.is_empty());
     assert_ne!(out, Outcome::Quit);
     assert_eq!((s.floats.len(), s.focus), (0, tiled));
     // The tiled pane to return to closes while a float has the focus.
     cmd(&mut s, "split", &["right"]).unwrap();
     let right = s.focus;
-    float(&mut s, &["sleep", "30"], &[]);
+    float(&mut s, &helper(&["sleep", "30000"]), &[]);
     assert_eq!(s.close(right), Outcome::Redraw);
     s.run_command("toggle-floats", &[], Instant::now()).unwrap();
     assert_eq!(s.focus, tiled, "hiding the floats focuses a tiled pane that is there");
@@ -1079,12 +1101,15 @@ fn a_floating_terminal_closes_when_its_program_exits() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn dragging_a_float_moves_and_resizes_it_and_its_program_on_release() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     let tiled = s.focus;
     let n = |v: f64| ScriptValue::Num(v);
-    let f =
-        float(&mut s, &["sleep", "30"], &[("width", n(20.0)), ("height", n(6.0)), ("col", n(10.0)), ("row", n(5.0))]);
+    let f = float(
+        &mut s,
+        &helper(&["sleep", "30000"]),
+        &[("width", n(20.0)), ("height", n(6.0)), ("col", n(10.0)), ("row", n(5.0))],
+    );
     let frame = |s: &Session| s.floats.iter().find(|x| x.pane == f).unwrap().frame;
     let cols = |s: &Session| s.terms[&s.panes[&f].buffer()].term.geometry().cols;
     assert_eq!(frame(&s), Rect::new(10, 5, 22, 8));
@@ -1140,7 +1165,7 @@ fn dragging_a_float_moves_and_resizes_it_and_its_program_on_release() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn floats_open_hide_and_embed() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     let tiled = s.focus;
     cmd(&mut s, "open-float", &[]).unwrap();
@@ -1165,11 +1190,14 @@ fn floats_open_hide_and_embed() {
 fn no_image_lies_under_text_drawn_over_it() {
     // WezTerm draws images over text whatever their z: text over images
     // (messages, a float's title) needs the images cut out below it.
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     let pct = |p: &str| ScriptValue::Str(p.into());
-    let f =
-        float(&mut s, &["sleep", "30"], &[("width", pct("100%")), ("height", pct("100%")), ("title", pct("title"))]);
+    let f = float(
+        &mut s,
+        &helper(&["sleep", "30000"]),
+        &[("width", pct("100%")), ("height", pct("100%")), ("title", pct("title"))],
+    );
     assert_eq!(s.floats[0].frame, s.area());
     s.message("a message");
     let frame = s.frame();
@@ -1190,7 +1218,7 @@ fn no_image_lies_under_text_drawn_over_it() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn recursive_mappings_stop_with_an_error() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "ready\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
     let feed = |keys: &str| Target::Actions(vec![Act::new("feedkeys", vec![ScriptValue::Str(keys.into())])]);
     let keys = |k: &str| notation::parse(k).unwrap();
@@ -1214,7 +1242,7 @@ fn recursive_mappings_stop_with_an_error() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn keys_fed_without_typing_do_not_add_up_to_a_recursive_mapping() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo ready; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "ready\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
     let act = Target::Actions(vec![Act::new("current-mode", vec![])]);
     s.modes.map("terminal", notation::parse("<F5>").unwrap(), crate::keymap::Mapping::new(act));
@@ -1234,7 +1262,7 @@ fn a_terminal_closes_when_its_program_exits_although_jobs_hold_the_pty() {
     // The shell leaves a job behind that keeps the pty open. (Linux hangs
     // the pty up when its session leader exits, so its end of file came
     // anyway there; the exit is now taken from the process itself.)
-    let (mut s, rx) = terminal_session(&["sh", "-c", "sleep 1000 & echo started"]);
+    let (mut s, rx) = terminal_session(&helper(&["spawn", "sleep", "1000000", ";", "print", "started\\n"]));
     let (outcome, rows) = wait_text(&mut s, &rx, |_| false);
     assert_eq!(outcome, Outcome::Quit, "{rows:?}");
 }
@@ -1268,8 +1296,8 @@ fn a_float_opened_while_the_configuration_loads_leaves_the_first_pane_tiled() {
     let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: None, overrides: Vec::new() };
     let mut s = Session::new("t".into(), GEOMETRY, Hints::default(), settings, sink);
-    s.shell = Some(vec!["/bin/sh".into()]);
-    float(&mut s, &["sleep", "30"], &[]);
+    s.shell = Some(test_shell());
+    float(&mut s, &helper(&["sleep", "30000"]), &[]);
     assert!(s.is_starting(), "no tiled pane yet");
     s.new_pane(&PaneSpec::Shell, None).unwrap();
     assert!(!s.is_starting());
@@ -1281,10 +1309,10 @@ fn a_float_opened_while_the_configuration_loads_leaves_the_first_pane_tiled() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn floats_on_tiny_screens_and_cells_do_not_overflow() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     let big = ScriptValue::Num(f64::from(u32::MAX));
-    float(&mut s, &["sleep", "30"], &[("width", big.clone()), ("height", big)]);
+    float(&mut s, &helper(&["sleep", "30000"]), &[("width", big.clone()), ("height", big)]);
     for g in [
         Geometry { cols: 3, rows: 2, cell: CellSize { width: 1, height: 1 } },
         Geometry { cols: 1, rows: 1, cell: CellSize { width: 10, height: 20 } },
@@ -1300,7 +1328,7 @@ fn floats_on_tiny_screens_and_cells_do_not_overflow() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_float_waiting_for_its_file_keeps_its_title_and_focus() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     let tiled = s.focus;
     let what = ScriptValue::map([(
@@ -1322,17 +1350,17 @@ fn panes_waiting_for_a_document_go_to_the_tab_they_were_asked_for() {
     let sample = temzdf_pdfcore::pdf::fixture("sample.pdf");
     let opened = |s: &Session| s.docs.values().all(|d| d.host.is_some());
     // A split, then another tab entered while the file opens.
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     s.open(&sample).unwrap();
-    let other = new_tab(&mut s, &["sleep", "30"]);
+    let other = new_tab(&mut s, &helper(&["sleep", "30000"]));
     pump(&mut s, &rx, opened);
     assert_eq!((s.tab, s.focus), (1, other), "the current tab stays");
     let first: Vec<_> = s.layouts().filter(|(i, _)| *i == 0).map(|(_, l)| l.panes().len()).collect();
     assert_eq!(first, [2], "the split went into the first tab");
     assert_eq!(s.layout.as_ref().unwrap().panes(), [other]);
     // A float, and a second one on the document still opening.
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo tiled; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "tiled\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "tiled");
     let file = ScriptValue::map([("file", ScriptValue::Str(sample.display().to_string()))]);
     s.run_command("open-float", &[file], Instant::now()).unwrap();
@@ -1340,7 +1368,7 @@ fn panes_waiting_for_a_document_go_to_the_tab_they_were_asked_for() {
     let buffer = ScriptValue::map([("buffer", ScriptValue::Num(doc as f64))]);
     s.run_command("open-float", &[buffer], Instant::now()).unwrap();
     let first_tab = s.tab_id();
-    let other = new_tab(&mut s, &["sleep", "30"]);
+    let other = new_tab(&mut s, &helper(&["sleep", "30000"]));
     pump(&mut s, &rx, |s| opened(s) && s.floats.len() == 2);
     assert_eq!(s.floats.len(), 2, "the buffer's float opened too");
     assert!(s.floats.iter().all(|f| f.tab == tabs::FloatTab::Only(first_tab)), "on the first tab");
@@ -1386,10 +1414,10 @@ fn labels(s: &mut Session) -> Vec<String> {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn tabs_open_switch_move_and_close() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let one = s.focus;
-    let two = new_tab(&mut s, &["sh", "-c", "echo two; sleep 30"]);
+    let two = new_tab(&mut s, &helper(&["print", "two\\n", "sleep", "30000"]));
     assert_eq!((s.tabs.len(), s.tab, s.focus), (2, 1, two));
     let (_, rows) = wait_text(&mut s, &rx, |r| r[1] == "two");
     assert!(!rows.iter().any(|r| r.contains("one")), "only the current tab shows");
@@ -1404,7 +1432,7 @@ fn tabs_open_switch_move_and_close() {
     assert_eq!(s.tab, 0);
     assert!(cmd(&mut s, "goto-tab", &["3"]).unwrap_err().contains("no tab page 3"));
     // A new tab goes after the current one.
-    let three = new_tab(&mut s, &["sh", "-c", "echo three; sleep 30"]);
+    let three = new_tab(&mut s, &helper(&["print", "three\\n", "sleep", "30000"]));
     assert_eq!(s.tab, 1);
     for (i, name) in ["a", "c", "b"].iter().enumerate() {
         cmd(&mut s, "goto-tab", &[&(i + 1).to_string()]).unwrap();
@@ -1443,12 +1471,12 @@ fn tabs_open_switch_move_and_close() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_tabs_last_pane_gives_way_to_its_own_float_else_the_tab_closes() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let one = s.focus;
-    let two = new_tab(&mut s, &["sleep", "30"]);
-    let own = float(&mut s, &["sleep", "30"], &[]);
-    let all = float(&mut s, &["sleep", "30"], &[("tabpage", ScriptValue::Num(-1.0))]);
+    let two = new_tab(&mut s, &helper(&["sleep", "30000"]));
+    let own = float(&mut s, &helper(&["sleep", "30000"]), &[]);
+    let all = float(&mut s, &helper(&["sleep", "30000"]), &[("tabpage", ScriptValue::Num(-1.0))]);
     // The tab's own float takes the place, not the one on all tabs.
     assert_eq!(s.close(two), Outcome::Redraw);
     assert_eq!(s.layout.as_ref().unwrap().panes(), [own]);
@@ -1466,17 +1494,17 @@ fn a_tabs_last_pane_gives_way_to_its_own_float_else_the_tab_closes() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn panes_of_other_tabs_close_there() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let one = s.focus;
     // A tab whose only program ends while another tab is current goes.
-    new_tab(&mut s, &["sh", "-c", "sleep 0.3"]);
+    new_tab(&mut s, &helper(&["sleep", "300"]));
     cmd(&mut s, "goto-tab", &["1"]).unwrap();
     let out = pump(&mut s, &rx, |s| s.tabs.len() == 1);
     assert_ne!(out, Outcome::Quit);
     assert_eq!((s.tabs.len(), s.tab, s.focus), (1, 0, one));
     // One of two panes there: the tab stays, its focus moves on.
-    let a = new_tab(&mut s, &["sleep", "30"]);
+    let a = new_tab(&mut s, &helper(&["sleep", "30000"]));
     cmd(&mut s, "split", &["right"]).unwrap();
     let b = s.focus;
     assert_ne!(a, b);
@@ -1493,11 +1521,11 @@ fn panes_of_other_tabs_close_there() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn toggle_floating_keeps_to_the_current_tab() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let left = s.focus;
     cmd(&mut s, "split", &["right"]).unwrap();
-    new_tab(&mut s, &["sleep", "30"]);
+    new_tab(&mut s, &helper(&["sleep", "30000"]));
     cmd(&mut s, "split", &["right"]).unwrap();
     let e = cmd(&mut s, "toggle-floating", &[&left.to_string()]).unwrap_err();
     assert!(e.contains("in this tab"), "{e}");
@@ -1510,10 +1538,10 @@ fn toggle_floating_keeps_to_the_current_tab() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_tab_that_cannot_start_goes_back_where_it_was() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let one = s.focus;
-    new_tab(&mut s, &["sleep", "30"]);
+    new_tab(&mut s, &helper(&["sleep", "30000"]));
     cmd(&mut s, "goto-tab", &["1"]).unwrap();
     let what = ScriptValue::map([("command", ScriptValue::List(vec![ScriptValue::Str("/nonexistent/x".into())]))]);
     assert!(s.run_command("new-tab", &[what], Instant::now()).is_err());
@@ -1524,7 +1552,7 @@ fn a_tab_that_cannot_start_goes_back_where_it_was() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn break_pane_moves_a_pane_to_a_new_tab() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let left = s.focus;
     assert!(cmd(&mut s, "break-pane", &[]).unwrap_err().contains("only tiled pane"));
@@ -1538,7 +1566,7 @@ fn break_pane_moves_a_pane_to_a_new_tab() {
     assert_eq!((s.layout.as_ref().unwrap().panes(), s.focus), (vec![left], left));
     assert_eq!(s.panes[&left].rect, s.area());
     // A float becomes the new tab's tiled pane.
-    let f = float(&mut s, &["sleep", "30"], &[]);
+    let f = float(&mut s, &helper(&["sleep", "30000"]), &[]);
     cmd(&mut s, "break-pane", &[]).unwrap();
     assert!(!s.is_float(f));
     assert_eq!((s.tab, s.layout.as_ref().unwrap().panes()), (1, vec![f]));
@@ -1549,7 +1577,7 @@ fn break_pane_moves_a_pane_to_a_new_tab() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_terminal_in_two_tabs_is_as_large_as_the_larger() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let one = s.focus;
     let buf = s.panes[&one].buffer();
@@ -1570,7 +1598,7 @@ fn only_the_current_tabs_images_are_drawn() {
     let (mut s, rx) = session();
     settle(&mut s, &rx);
     assert!(!s.frame().layers.is_empty());
-    new_tab(&mut s, &["sleep", "30"]);
+    new_tab(&mut s, &helper(&["sleep", "30000"]));
     assert!(s.frame().layers.is_empty(), "the PDF is in the other tab");
     cmd(&mut s, "prev-tab", &[]).unwrap();
     assert!(!s.frame().layers.is_empty());
@@ -1580,13 +1608,13 @@ fn only_the_current_tabs_images_are_drawn() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_tab_line_takes_the_top_row_and_its_clicks_switch_and_close() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     let one = s.focus;
     let buf = s.panes[&one].buffer();
     // (Less the pane's status line.)
     assert_eq!(s.terms[&buf].term.geometry().rows, GEOMETRY.rows - 1, "one tab: no tab line");
-    new_tab(&mut s, &["sh", "-c", "echo two; sleep 30"]);
+    new_tab(&mut s, &helper(&["print", "two\\n", "sleep", "30000"]));
     let (_, rows) = wait_text(&mut s, &rx, |r| r[1] == "two");
     assert_eq!(rows[0], " 1 shell  2 shell");
     assert_eq!(s.area(), Rect::new(0, 1, GEOMETRY.cols as u32, GEOMETRY.rows as u32 - 1));
@@ -1609,7 +1637,7 @@ fn the_tab_line_takes_the_top_row_and_its_clicks_switch_and_close() {
     assert_eq!((s.area().y, screen_text(&s.frame(), GEOMETRY)[0].as_str()), (1, " 1 shell"));
     assert_eq!(s.get_option("showtabline"), Ok(ScriptValue::Str("always".into())));
     s.set_option("showtabline", &ScriptValue::Str("never".into())).unwrap();
-    new_tab(&mut s, &["sleep", "30"]);
+    new_tab(&mut s, &helper(&["sleep", "30000"]));
     assert_eq!(s.area().y, 0);
     assert!(s.set_option("showtabline", &ScriptValue::Str("sometimes".into())).is_err());
     assert!(s.set_option("showtabline", &ScriptValue::Num(2.0)).is_err());
@@ -1775,8 +1803,9 @@ fn copied(s: &mut Session) -> Vec<String> {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_visual_mode_moves_selects_and_copies() {
-    // cat echoes what reaches it: keys in the visual mode must not.
-    let (mut s, rx) = terminal_session(&["sh", "-c", "printf 'hello world\\nsecond line\\n'; exec cat"]);
+    // The terminal echoes what reaches the program: keys in the visual
+    // mode must not.
+    let (mut s, rx) = terminal_session(&helper(&["print", "hello world\\nsecond line\\n", "hex"]));
     wait_text(&mut s, &rx, |r| r[1] == "second line");
     key(&mut s, "<C-b>[");
     assert_eq!(s.current_mode(), "visual");
@@ -1814,7 +1843,7 @@ fn the_visual_mode_moves_selects_and_copies() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_window_status_line_names_the_mode_and_the_session() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "stty size; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["size", "sleep", "30000"]));
     // The pane's own status line takes a row.
     wait_text(&mut s, &rx, |r| r[0] == format!("{} {}", GEOMETRY.rows - 1, GEOMETRY.cols));
     s.set_option("showstatusline", &ScriptValue::Str("always".into())).unwrap();
@@ -1838,7 +1867,7 @@ fn the_window_status_line_names_the_mode_and_the_session() {
     cmd(&mut s, "visual.escape", &[]).unwrap();
     cmd(&mut s, "visual.escape", &[]).unwrap();
     // With tab pages: which one, of how many.
-    new_tab(&mut s, &["sh", "-c", "sleep 30"]);
+    new_tab(&mut s, &helper(&["sleep", "30000"]));
     assert!(bottom(&mut s).ends_with("2/2  term"), "{:?}", bottom(&mut s));
     // never: the row goes back to the panes.
     s.set_option("showstatusline", &ScriptValue::Str("never".into())).unwrap();
@@ -1867,7 +1896,7 @@ fn the_visual_mode_is_for_terminals_and_waits_while_another_pane_has_the_focus()
     assert!(cmd(&mut s, "switch-mode", &["visual"]).is_err(), "not on a PDF pane");
     assert_eq!(s.current_mode(), "pdf");
 
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo first; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "first\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "first");
     let term = s.focus;
     cmd(&mut s, "switch-mode", &["visual"]).unwrap();
@@ -1907,7 +1936,7 @@ fn the_visual_mode_is_for_terminals_and_waits_while_another_pane_has_the_focus()
 /// without wrapping, `/` inline virtual text at its start), focused;
 /// returns the buffer and the pane.
 fn prompt_session() -> (Session, Receiver<SessionEvent>, BufferId, PaneId) {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo first; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "first\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "first");
     let str = |v: &str| ScriptValue::Str(v.into());
     let o = ScriptValue::map([
@@ -2015,7 +2044,7 @@ fn hidden_buffers_reach_hooks() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn split_shows_a_buffer_at_a_fixed_size_and_returns_the_pane() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo first; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "first\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "first");
     let first = s.focus;
     let buf = s.panes[&first].buffer();
@@ -2378,7 +2407,7 @@ fn frames_say_where_panes_and_their_images_are_for_frontends_without_images() {
     // A float over it cuts the line.
     let n = |v: f64| ScriptValue::Num(v);
     let opts = [("width", n(20.0)), ("height", n(5.0)), ("col", n(30.0)), ("row", n(11.0))];
-    let f = float(&mut s, &["sleep", "30"], &opts);
+    let f = float(&mut s, &helper(&["sleep", "30000"]), &opts);
     let frame = s.frame();
     let rows = screen_text(&Frame { text: frame.fallback_text.clone(), ..Frame::default() }, GEOMETRY);
     assert!(!rows[14].contains("graphics protocol"), "{:?}", rows[14]);
@@ -2390,12 +2419,19 @@ fn frames_say_where_panes_and_their_images_are_for_frontends_without_images() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_terminal_region_has_images_once_a_program_shows_one() {
-    let (mut s, rx) = terminal_session(&[
-        "sh",
-        "-c",
-        "img() { printf '\\033_Ga=T,f=32,s=2,v=2,c=4,r=2,q=2;/wAA/wD/AP8AAP///////w==\\033\\\\'; echo; }; \
-         read l; img; read l; img; echo second-done; sleep 30",
-    ]);
+    let img = "\\e_Ga=T,f=32,s=2,v=2,c=4,r=2,q=2;/wAA/wD/AP8AAP///////w==\\e\\\\\\n";
+    let (mut s, rx) = terminal_session(&helper(&[
+        "read-line",
+        "print",
+        img,
+        "read-line",
+        "print",
+        img,
+        "print",
+        "second-done\\n",
+        "sleep",
+        "30000",
+    ]));
     let pane = s.focus;
     let images = |s: &mut Session| s.frame().regions.iter().find(|r| r.pane == pane).map(|r| r.images);
     assert_eq!(images(&mut s), Some(false));
@@ -2426,7 +2462,7 @@ fn a_terminal_region_has_images_once_a_program_shows_one() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn hiding_a_status_line_gives_its_row_to_the_pane() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo ready; while read l; do stty size; done"]);
+    let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n", "each-line", "size"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
     let pane = s.focus;
     let buf = s.panes[&pane].buffer();
@@ -2453,7 +2489,7 @@ fn hiding_a_status_line_gives_its_row_to_the_pane() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn a_pane_one_row_high_shows_only_its_status_line() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; echo ready; while read l; do printf SAID; done"]);
+    let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n", "each-line", "print", "SAID"]));
     wait_text(&mut s, &rx, |r| r[0] == "ready");
     let pane = s.focus;
     let buf = s.panes[&pane].buffer();
@@ -2491,16 +2527,16 @@ fn pane_info(s: &mut Session, pane: PaneId) -> ScriptValue {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn floats_show_on_their_tab_or_on_all_and_hide_per_tab() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
-    let own = float(&mut s, &["sleep", "30"], &[]);
-    let all = float(&mut s, &["sleep", "30"], &[("tabpage", ScriptValue::Num(-1.0))]);
+    let own = float(&mut s, &helper(&["sleep", "30000"]), &[]);
+    let all = float(&mut s, &helper(&["sleep", "30000"]), &[("tabpage", ScriptValue::Num(-1.0))]);
     let shown = |s: &Session| s.shown_floats().iter().map(|f| f.pane).collect::<Vec<_>>();
     assert_eq!(shown(&s), [own, all]);
-    new_tab(&mut s, &["sleep", "30"]);
+    new_tab(&mut s, &helper(&["sleep", "30000"]));
     assert_eq!(shown(&s), [all], "only the float on all tabs");
     // The stack is one: raising here raises it there.
-    let second = float(&mut s, &["sleep", "30"], &[]);
+    let second = float(&mut s, &helper(&["sleep", "30000"]), &[]);
     assert_eq!(shown(&s), [all, second]);
     s.set_focus(all);
     assert_eq!(shown(&s), [second, all]);
@@ -2544,13 +2580,13 @@ fn floats_show_on_their_tab_or_on_all_and_hide_per_tab() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn tabs_switch_and_break_out() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "echo one; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "one\\n", "sleep", "30000"]));
     wait_text(&mut s, &rx, |r| r[0] == "one");
     cmd(&mut s, "split", &["right"]).unwrap();
     let right = s.focus;
     cmd(&mut s, "break-pane", &[]).unwrap();
     assert_eq!((s.tabs.len(), s.tab, s.focus, s.current_mode()), (2, 1, right, "terminal"));
-    new_tab(&mut s, &["sleep", "30"]);
+    new_tab(&mut s, &helper(&["sleep", "30000"]));
     cmd(&mut s, "next-tab", &[]).unwrap();
     assert_eq!((s.tab, s.current_mode()), (0, "terminal"));
     cmd(&mut s, "prev-tab", &[]).unwrap();
@@ -2565,13 +2601,13 @@ fn tabs_switch_and_break_out() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn committed_text_is_typed_in_terminals_and_keys_elsewhere() {
-    let (mut s, rx) = terminal_session(&["sh", "-c", "stty -echo; read l; echo \"got:$l\"; sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["raw", "read-line", "said", "sleep", "30000"]));
     // In the terminal mode: typed as it is (not keys, not a paste).
     s.text("日本語", Instant::now());
     key(&mut s, "<CR>");
     // (Wide characters leave a blank spacer cell in the screen's text.)
-    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
-    assert!(rows.iter().any(|l| l.replace(' ', "").contains("got:日本語")), "{rows:?}");
+    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("said:")));
+    assert!(rows.iter().any(|l| l.replace(' ', "").contains("said:日本語")), "{rows:?}");
     // In the normal mode: keys, so mappings work with an input method on.
     key(&mut s, "<C-b>");
     s.text("%", Instant::now());
@@ -2590,54 +2626,49 @@ fn committed_text_is_typed_in_terminals_and_keys_elsewhere() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_clients_focus_reaches_programs_that_asked() {
-    let script = "printf '\\033[?1004h'; stty raw -echo; printf ready; v=$(dd bs=1 count=6 2>/dev/null | od -An -c | tr -s ' '); printf 'got:%s' \"$v\"; sleep 30";
-    let (mut s, rx) = terminal_session(&["sh", "-c", script]);
+    let (mut s, rx) = terminal_session(&helper(&["print", "\\e[?1004h", "raw", "print", "ready\\r\\n", "hex"]));
     wait_text(&mut s, &rx, |r| r[0].contains("ready"));
     s.client_focus(false);
     s.client_focus(true);
-    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
-    assert!(rows.iter().any(|l| l.contains("got: 033 [ O 033 [ I")), "{rows:?}");
+    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("1b 5b 49")));
+    assert!(rows.iter().any(|l| l.contains("1b 5b 4f 1b 5b 49")), "{rows:?}");
 }
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn unthemed_terminals_report_the_gui_defaults() {
-    // One query at a time: under load two answers may come in two reads.
-    let script = "stty raw -echo min 0 time 20; printf ready; \
-        printf '\\033]4;1;?\\033\\\\'; a=$(dd bs=128 count=1 2>/dev/null | tr -d '\\033'); \
-        printf '\\033]11;?\\033\\\\'; b=$(dd bs=128 count=1 2>/dev/null | tr -d '\\033'); \
-        printf 'got:%s%s' \"$a\" \"$b\"; sleep 30";
-    let (mut s, rx) = terminal_session(&["sh", "-c", script]);
-    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
-    let all = rows.join("");
-    // xterm's red and the GUI's default background (temzdf_scene::theme).
-    assert!(all.contains("rgb:cdcd/0000/0000"), "{rows:?}");
-    assert!(all.contains("rgb:1e1e/1e1e/1e1e"), "{rows:?}");
+    let (mut s, rx) = terminal_session(&helper(&["raw", "print", "ready\\r\\n\\e]4;1;?\\e\\\\\\e]11;?\\e\\\\", "hex"]));
+    // xterm's red and the GUI's default background (temzdf_scene::theme),
+    // in the hex of the answers.
+    let (red, background) = (hex_of("rgb:cdcd/0000/0000"), hex_of("rgb:1e1e/1e1e/1e1e"));
+    let all = |r: &[String]| r.concat().chars().filter(char::is_ascii_hexdigit).collect::<String>();
+    let (_, rows) = wait_text(&mut s, &rx, |r| all(r).contains(&red) && all(r).contains(&background));
+    assert!(all(&rows).contains(&red), "{rows:?}");
+    assert!(all(&rows).contains(&background), "{rows:?}");
 }
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_theme_answers_programs_colour_queries() {
-    let script = "stty raw -echo min 0 time 20; printf ready; printf '\\033]11;?\\033\\\\'; v=$(dd bs=64 count=1 2>/dev/null | tr -d '\\033'); printf 'got:%s' \"$v\"; sleep 30";
-    let (mut s, rx) = terminal_session(&["sh", "-c", "sleep 30"]);
+    let (mut s, rx) = terminal_session(&helper(&["sleep", "30000"]));
     s.set_option("background", &ScriptValue::Str("#102030".into())).unwrap();
     s.set_option("palette", &ScriptValue::List(vec![ScriptValue::Str("#ff0000".into())])).unwrap();
     // A terminal opened after the theme was set gets it too.
     s.run_command(
         "new-pane",
-        &[
-            ScriptValue::Str("--".into()),
-            ScriptValue::Str("sh".into()),
-            ScriptValue::Str("-c".into()),
-            ScriptValue::Str(script.into()),
-        ],
+        &std::iter::once("--")
+            .chain(helper(&["raw", "print", "ready\\r\\n\\e]11;?\\e\\\\", "hex"]))
+            .map(|a| ScriptValue::Str(a.into()))
+            .collect::<Vec<_>>(),
         Instant::now(),
     )
     .unwrap();
-    let (_, rows) = wait_text(&mut s, &rx, |r| r.iter().any(|l| l.contains("got:")));
-    assert!(rows.iter().any(|l| l.contains("rgb:1010/2020/3030")), "{rows:?}");
+    let background = hex_of("rgb:1010/2020/3030");
+    let all = |r: &[String]| r.concat().chars().filter(char::is_ascii_hexdigit).collect::<String>();
+    let (_, rows) = wait_text(&mut s, &rx, |r| all(r).contains(&background));
+    assert!(all(&rows).contains(&background), "{rows:?}");
     // Options read back; bad values are refused.
     assert_eq!(s.appearance().background, Some([0x10, 0x20, 0x30]));
     assert_eq!(s.appearance().palette, [[0xff, 0, 0]]);
@@ -2654,7 +2685,7 @@ fn the_theme_answers_programs_colour_queries() {
 #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn ctrl_shift_v_asks_the_client_to_paste() {
-    let (mut s, _rx) = terminal_session(&["sleep", "30"]);
+    let (mut s, _rx) = terminal_session(&helper(&["sleep", "30000"]));
     s.take_effects();
     // As the GUI reports it: the base letter with Ctrl and Shift.
     let k = KeyEvent::new(KeyCode::Char('v'), Modifiers::CTRL | Modifiers::SHIFT);

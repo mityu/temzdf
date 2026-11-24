@@ -1013,7 +1013,8 @@ mod tests {
     /// in the visual mode.
     fn term(text: &str) -> TermBuffer {
         let sink: Sink = Arc::new(|_| true);
-        let spawn = Spawn { argv: Some(vec!["sleep".into(), "30".into()]), ..Default::default() };
+        let argv = [temzdf_testhelper::path(), "sleep", "30000"].map(String::from).to_vec();
+        let spawn = Spawn { argv: Some(argv), ..Default::default() };
         let mut t = TermBuffer::spawn(&spawn, GEOMETRY, sink).unwrap();
         t.feed(text.replace('\n', "\r\n").as_bytes());
         assert!(t.visual_begin());

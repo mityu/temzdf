@@ -42,6 +42,8 @@ swc_ecma_parser = "46.1.2"
 # Images written in tests (loadImage).
 png = "0.18.1"
 temzdf-pdfcore = { workspace = true, features = ["test-support"] }
+# The programs terminal panes run in tests, in place of `sh`.
+temzdf-testhelper.workspace = true
 
 # The mock terminal in tests: termpix is Unix only.
 [target.'cfg(unix)'.dev-dependencies]

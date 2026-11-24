@@ -14,6 +14,7 @@ use temzdf_protocol::script::ScriptValue;
 use termpix_core::geom::{CellSize, Geometry};
 use termpix_core::input::{CoordUnit, Modifiers, MouseEvent, MouseEventKind, ScrollDirection, ScrollPhase, ScrollUnit};
 
+use super::tests::helper;
 use super::*;
 use crate::keymap::notation;
 use temzdf_scene::sink::channel_sink;
@@ -66,7 +67,8 @@ pub(super) fn settle(s: &mut Session, rx: &Receiver<SessionEvent>, flush: bool, 
 
 /// A session showing `spec`, with the configuration file `config` (where
 /// it is: its relative imports resolve from there; none: the defaults
-/// alone). Splits start `/bin/sh`, not the user's shell.
+/// alone). Splits start the tests' shell (`tests::test_shell`), not the
+/// user's.
 pub(super) fn host_session(
     spec: PaneSpec,
     config: Option<PathBuf>,
@@ -75,7 +77,7 @@ pub(super) fn host_session(
     let sink: EventSink = channel_sink(tx, |e| e);
     let settings = Settings { serve_forward: false, script: Some(ScriptSettings { config }), overrides: Vec::new() };
     let mut s = Session::new("host".into(), GEOMETRY, Hints::default(), settings, sink);
-    s.shell = Some(vec!["/bin/sh".into()]);
+    s.shell = Some(super::tests::test_shell());
     s.start(spec, None).map_err(|e| format!("{e:#}"))?;
     settle(&mut s, &rx, true, None);
     Ok((s, rx))
@@ -155,7 +157,7 @@ enum Open {
 
 fn open(what: Open, dir: &Path) -> (Session, Receiver<SessionEvent>) {
     let spec = match what {
-        Open::Terminal => PaneSpec::Command(vec!["sleep".into(), "30".into()]),
+        Open::Terminal => PaneSpec::Command(helper(&["sleep", "30000"]).into_iter().map(String::from).collect()),
         Open::Pdf => PaneSpec::File(temzdf_pdfcore::pdf::fixture("sample.pdf")),
         Open::MarkdownGraphics => {
             let words = "word ".repeat(30);
@@ -323,7 +325,7 @@ fn counts_choose_the_tab_page_and_the_pdf_page() {
     for _ in 0..2 {
         let what = ScriptValue::map([(
             "command",
-            ScriptValue::List(vec![ScriptValue::Str("sleep".into()), ScriptValue::Str("30".into())]),
+            ScriptValue::List(helper(&["sleep", "30000"]).into_iter().map(|a| ScriptValue::Str(a.into())).collect()),
         )]);
         s.run_command("new-tab", &[what], Instant::now()).unwrap();
     }
@@ -386,19 +388,24 @@ fn the_prefix_and_a_colon_run_ex_commands_in_any_pane() {
 #[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
 #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
 fn the_prefix_twice_reaches_the_program() {
-    let dir = TempDir::new("prefix-twice");
-    let out = dir.0.join("got");
-    let script = format!("stty -echo; read l; printf %s \"$l\" | od -An -tx1 | tr -d ' \\n' > '{}'", out.display());
-    let spec = PaneSpec::Command(vec!["sh".into(), "-c".into(), script]);
-    let (mut s, rx) = host_session(spec, None).unwrap();
+    let argv = helper(&["raw", "print", "ready\\r\\n", "read-line", "said", "sleep", "30000"]);
+    let (mut s, rx) = host_session(PaneSpec::Command(argv.into_iter().map(String::from).collect()), None).unwrap();
+    let rows = |s: &mut Session| super::tests::screen_text(&s.frame(), GEOMETRY);
+    let wait = |s: &mut Session, what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !rows(s).iter().any(|l| l.starts_with(what)) {
+            assert!(Instant::now() < deadline, "no {what}: {:?}", rows(s));
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(20)) {
+                s.handle(ev, Instant::now());
+            }
+        }
+    };
+    wait(&mut s, "ready");
     type_keys(&mut s, &rx, "<C-b><C-b>a<CR>", None).unwrap();
     assert_eq!(s.current_mode(), "terminal");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while std::fs::read_to_string(&out).map_or(true, |t| t.is_empty()) {
-        assert!(Instant::now() < deadline, "the program read nothing");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(std::fs::read_to_string(&out).unwrap(), "0261", "C-b (0x02), then a");
+    wait(&mut s, "said:");
+    let shown = rows(&mut s);
+    assert!(shown.iter().any(|l| l == "said:\\x02a"), "C-b (0x02), then a: {shown:?}");
 }
 
 #[test]

@@ -5885,6 +5885,7 @@ dependencies = [
  "temzdf-scene",
  "temzdf-script-runner",
  "temzdf-term",
+ "temzdf-testhelper",
  "temzdf-texteditor",
  "temzdf-tty",
  "temzdf-watchfs",
@@ -5916,6 +5917,7 @@ name = "temzdf-testhelper"
 version = "0.1.0"
 dependencies = [
  "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6282,6 +6284,7 @@ dependencies = [
  "libghostty-vt",
  "libghostty-vt-sys",
  "portable-pty",
+ "temzdf-testhelper",
  "termpix-core",
  "termpix-ui",
 ]

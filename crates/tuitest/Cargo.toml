@@ -15,5 +15,8 @@ portable-pty = "0.9.0"
 termpix-core.workspace = true
 termpix-ui.workspace = true
 
+[dev-dependencies]
+temzdf-testhelper.workspace = true
+
 [lints]
 workspace = true

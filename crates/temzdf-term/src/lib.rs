@@ -1065,7 +1065,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri cannot open ptys")]
     #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn a_synchronized_update_shows_when_it_ends() {
-        let (mut pane, _rx) = start(&["sleep", "10"]);
+        let (mut pane, _rx) = start(&helper(&["sleep", "10000"]));
         pane.feed(b"old");
         assert_eq!(text(&mut pane)[0], "old");
         let cursor = pane.frame().cursor;
@@ -1204,7 +1204,7 @@ mod tests {
     #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn dragging_selects_and_releasing_copies() {
         let (mut term, _) =
-            run(&["sh", "-c", "printf 'hello world\\nsecond line'; sleep 5"], |_| {}, |r| r[1] == "second line");
+            run(&helper(&["print", "hello world\\nsecond line", "sleep", "5000"]), |_| {}, |r| r[1] == "second line");
         let none = Modifiers::NONE;
         term.mouse(&mouse(MouseEventKind::Press(LEFT), 6, 0, none), false);
         term.mouse(&mouse(MouseEventKind::Drag(LEFT), 2, 1, none), false);
@@ -1290,10 +1290,11 @@ mod tests {
         // A 2x2 RGBA image shown over 4x2 cells after "ab", then a 1x1 PNG.
         let rgba = "/wAA/wD/AP8AAP///////w==";
         let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPgEpEDAABoAD1UCKP3AAAAAElFTkSuQmCC";
-        let script = format!(
-            "printf 'ab\\033_Ga=T,i=7,f=32,s=2,v=2,c=4,r=2,q=2;{rgba}\\033\\\\\\n\\n\\033_Ga=T,i=8,f=100,q=2;{png}\\033\\\\done'; sleep 5"
+        let text = format!(
+            "ab\\e_Ga=T,i=7,f=32,s=2,v=2,c=4,r=2,q=2;{rgba}\\e\\\\\\n\\n\\e_Ga=T,i=8,f=100,q=2;{png}\\e\\\\done"
         );
-        let (mut term, _) = run(&["sh", "-c", &script], |_| {}, |r| r.iter().any(|l| l.ends_with("done")));
+        let (mut term, _) =
+            run(&helper(&["print", &text, "sleep", "5000"]), |_| {}, |r| r.iter().any(|l| l.ends_with("done")));
         let mut images = Images::new();
         let view = TermView::new(GEOMETRY);
         let frame = view.frame(&mut term, &mut images);
@@ -1320,14 +1321,14 @@ mod tests {
     #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn the_wheel_sends_arrows_to_programs_on_the_alternate_screen() {
         // Alternate screen, alternate scroll on, no mouse tracking (as less).
-        // "ready" once stty ran: raw mode is on for the arrows.
-        let script = "printf '\\033[?1049h\\033[?1007h'; stty raw -echo; printf ready; v=$(dd bs=1 count=3 2>/dev/null | od -An -tx1 | tr -d ' '); printf 'got:%s' \"$v\"; sleep 5";
-        let (mut term, rx) = start(&["sh", "-c", script]);
+        // "ready" once raw mode is on for the arrows; then what arrives,
+        // in hex.
+        let (mut term, rx) = start(&helper(&["print", "\\e[?1049h\\e[?1007h", "raw", "print", "ready", "hex"]));
         wait(&mut term, &rx, |r| r.iter().any(|l| l.contains("ready")));
         term.mouse(&mouse(MouseEventKind::Scroll(ScrollDirection::Up), 0, 0, Modifiers::NONE), false);
-        let rows = wait(&mut term, &rx, |r| r.iter().any(|l| l.contains("got:")));
-        let got = rows.iter().find(|l| l.contains("got:")).cloned().unwrap_or_default();
-        assert!(got.contains("got:1b5b41") || got.contains("got:1b4f41"), "an Up arrow: {rows:?}");
+        let arrow = |l: &String| l.contains("1b 5b 41") || l.contains("1b 4f 41");
+        let rows = wait(&mut term, &rx, |r| r.iter().any(arrow));
+        assert!(rows.iter().any(arrow), "an Up arrow: {rows:?}");
     }
 
     #[test]
@@ -1335,7 +1336,7 @@ mod tests {
     #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn scrolled_back_views_say_how_far() {
         // Until the newline after 20 is in too (the output may come in pieces).
-        let (mut term, _) = run(&["sh", "-c", "seq 1 20; sleep 5"], |_| {}, |r| r[4] == "20");
+        let (mut term, _) = run(&helper(&["lines", "20", "sleep", "5000"]), |_| {}, |r| r[4] == "20");
         let view = TermView::new(GEOMETRY);
         let top = |t: &mut TermBuffer| -> String {
             view.frame(t, &mut Images::new()).text[0].rows[0]
@@ -1375,7 +1376,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri cannot open a pty")]
     #[cfg_attr(not(unix), ignore = "pane tests not ported to Windows yet")]
     fn amounts_scroll_history_by_rows_adding_up_fractions() {
-        let (mut term, _) = run(&["sh", "-c", "seq 1 20; sleep 5"], |_| {}, |r| r[4] == "20");
+        let (mut term, _) = run(&helper(&["lines", "20", "sleep", "5000"]), |_| {}, |r| r[4] == "20");
         let view = TermView::new(GEOMETRY);
         let top = |t: &mut TermBuffer| -> String {
             view.frame(t, &mut Images::new()).text[0].rows[0].iter().map(|c| c.text.as_str()).collect::<String>()

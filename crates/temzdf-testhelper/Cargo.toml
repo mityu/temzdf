@@ -1,6 +1,6 @@
 [package]
 name = "temzdf-testhelper"
-description = "Test helper program that replaces `sh` in tests: prints bytes, sets the terminal raw, echoes input as hex, sleeps."
+description = "Test helper program that replaces `sh` in tests: prints bytes and lines, sets the terminal raw, reads and answers input, reports the terminal size, sleeps, starts itself."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,10 @@ publish = false
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.5", features = ["stdio", "termios"] }
+
+# The console's mode and size (`raw`, `size`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console"] }
 
 [lints]
 workspace = true
