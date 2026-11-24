@@ -29,10 +29,9 @@ temzdf-scene.workspace = true
 temzdf-term.workspace = true
 termpix-core.workspace = true
 termpix-ui.workspace = true
-
-# The host name in swap files (`session/swap.rs`): uname's nodename.
-[target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.5", features = ["system"] }
+# The host name in swap files (`session/swap.rs`): gethostname on Unix,
+# GetComputerNameExW on Windows.
+hostname = "0.4.2"
 
 # build.rs: the actions' names from crates/temzdf-script/ts-types/temzdf-actions.d.ts
 # (the swc crates the script host already uses to strip TypeScript).

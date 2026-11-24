@@ -74,18 +74,14 @@ pub(super) fn candidates(dir: &Path, file: &Path) -> Vec<PathBuf> {
     ('a'..='p').rev().map(|c| dir.join(format!("{base}.sw{c}"))).collect()
 }
 
-/// This host's name (an owner on another host cannot be checked): uname's
-/// node name on Unix (macOS has no `/etc/hostname`, and `HOSTNAME` is a
-/// shell variable seldom exported), `COMPUTERNAME` on Windows; empty when
-/// there is none.
+/// This host's name (an owner on another host cannot be checked), as the
+/// OS says (macOS has no `/etc/hostname`, and `HOSTNAME` is a shell
+/// variable seldom exported; Windows has neither): gethostname on Unix,
+/// GetComputerNameExW on Windows (the `hostname` crate; not uname, whose
+/// strings libc leaves partly unwritten past their end, which rustix reads
+/// as written); empty when there is none.
 pub(super) fn host() -> String {
-    #[cfg(unix)]
-    let name = rustix::system::uname().nodename().to_string_lossy().into_owned();
-    #[cfg(windows)]
-    let name = std::env::var("COMPUTERNAME").unwrap_or_default();
-    #[cfg(not(any(unix, windows)))]
-    let name = String::new();
-    name.trim().to_owned()
+    hostname::get().map(|n| n.to_string_lossy().trim().to_owned()).unwrap_or_default()
 }
 
 pub(super) fn now_ms() -> u64 {
@@ -361,10 +357,10 @@ mod tests {
     fn the_host_has_a_name() {
         let host = host();
         assert!(!host.is_empty());
-        #[cfg(unix)]
-        assert_eq!(host, rustix::system::uname().nodename().to_string_lossy());
-        #[cfg(windows)]
-        assert_eq!(host, std::env::var("COMPUTERNAME").unwrap());
+        assert!(!host.contains('\0') && host == host.trim(), "{host:?}");
+        // Linux says it in a file too (Miri answers gethostname with "Miri").
+        #[cfg(all(target_os = "linux", not(miri)))]
+        assert_eq!(host, std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap().trim());
     }
 
     #[test]
