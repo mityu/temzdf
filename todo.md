@@ -294,12 +294,13 @@ server on one `Session`). Next and open:
     from `PATH` or the current directory). ConPTY's startup cursor query
     is answered by the pty (`StartupQuery`), as a host never answered
     stayed with its program; drop that once portable-pty can open
-    ConPTY without `PSEUDOCONSOLE_INHERIT_CURSOR` (wezterm#8256). Hosts
-    whose pseudoconsole goes within milliseconds of their start still
-    stay: the session tests leave a few `conhost.exe --headless` with
-    their `temzdf-testhelper` in the VM after each run, to be cleared
-    after `scripts/windows-vm.sh check` or understood ("The startup
-    cursor query" in `doc/terminals/conpty.md`). Still to do for them: Windows before 24H2
+    ConPTY without `PSEUDOCONSOLE_INHERIT_CURSOR` (wezterm#8256). A
+    host whose pseudoconsole is closed within milliseconds of its start
+    stayed too; as Neovim does, a pane's program is ended before its
+    ConPTY is closed when ConPTY wrote nothing yet, and the tests leave
+    none since ("The startup cursor query" in
+    `doc/terminals/conpty.md`); a crash right after a pane opened still
+    can. Still to do for them: Windows before 24H2
     (`ClosePseudoConsole` waits there, and the five-second end may be
     missing); a terminal tab's name on Windows: ConPTY titles the
     console with the program's full path (`C:\...\cmd.exe`), so the tab

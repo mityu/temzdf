@@ -311,9 +311,21 @@ pane. It answers only after the query: an answer sent ahead takes the
 program's first key under win32-input-mode (psmux#313). The reader
 writes the answer itself, also after the pane was deleted. With it, of
 20 panes none stayed when closed, and 1 or 2 when the process ended at
-once after opening or closing them; none when it ended 3 s later. What
-still stays is a host whose pseudoconsole went within milliseconds of
-its start: the session tests, which split and delete panes and end at
-once, leave a few `conhost.exe --headless` with their
-`temzdf-testhelper` in the VM after each run (`todo.md`).
+once after opening or closing them; none when it ended 3 s later.
+
+A host whose pseudoconsole is closed within milliseconds of its start
+can still miss that and stay, the query answered or not: the session
+tests, which split and delete panes at once, left 55 hosts with their
+programs in a run with one thread and 89 with several. Neovim met the
+same on Windows 11 with no flags at all (neovim#38244, root cause
+unknown) and ends the program first when the host wrote nothing yet
+(`pty_proc_close_console`); temzdf's `Pty` does the same on `Drop`
+(nothing besides the startup query read yet: `TerminateProcess`, then
+`ClosePseudoConsole`). With it the session tests left none, in both
+runs, and the tests of `temzdf-term`, `temzdf-server` and tuitest
+together none (2026-11-24). Not covered: a process that ends within
+milliseconds of opening a pane without dropping it (a crash), as with
+Neovim (1 of 20 such panes stayed). Both workarounds can go once
+conhost no longer needs them; the query's once portable-pty can drop
+the flag.
 

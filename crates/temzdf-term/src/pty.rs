@@ -63,6 +63,13 @@ pub(crate) struct Pty {
     #[cfg_attr(not(unix), allow(dead_code))]
     reaped: Arc<AtomicBool>,
     pid: Option<i32>,
+    /// Ends the program when the pane goes before ConPTY wrote anything
+    /// (`Drop`).
+    #[cfg(windows)]
+    killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+    /// ConPTY wrote something besides its startup query.
+    #[cfg(windows)]
+    wrote: Arc<AtomicBool>,
 }
 
 /// Whether terminal panes can start here.
@@ -154,6 +161,8 @@ impl Pty {
         let reaped = Arc::new(AtomicBool::new(false));
         let reader_done = Arc::new((Mutex::new(false), Condvar::new()));
         let pid = child.process_id().map(|p| p as i32);
+        #[cfg(windows)]
+        let (killer, wrote) = (child.clone_killer(), Arc::new(AtomicBool::new(false)));
         {
             let (input, stop) = (input.clone(), stop.clone());
             #[cfg(windows)]
@@ -164,11 +173,13 @@ impl Pty {
         }
         {
             let (sink, backlog, stop, done) = (sink.clone(), backlog.clone(), stop.clone(), reader_done.clone());
+            #[cfg(windows)]
+            let wrote = wrote.clone();
             std::thread::Builder::new().name("temzdf-pty-read".into()).spawn(move || {
                 #[cfg(unix)]
                 read_loop(reader, &sink, &backlog, &stop);
                 #[cfg(windows)]
-                read_loop(reader, &sink, &backlog, &stop, &writer);
+                read_loop(reader, &sink, &backlog, &stop, &writer, &wrote);
                 *done.0.lock().unwrap_or_else(|p| p.into_inner()) = true;
                 done.1.notify_all();
             })?;
@@ -189,7 +200,18 @@ impl Pty {
                 }
             })?;
         }
-        Ok(Self { master: Some(master), input, backlog, stop, reaped, pid })
+        Ok(Self {
+            master: Some(master),
+            input,
+            backlog,
+            stop,
+            reaped,
+            pid,
+            #[cfg(windows)]
+            killer,
+            #[cfg(windows)]
+            wrote,
+        })
     }
 
     /// Where input for the program goes (cloneable: the terminal's replies
@@ -257,6 +279,18 @@ impl Drop for Pty {
             // and the writer. It can wait until the reader has read what
             // ConPTY still had to write (older Windows), so not here.
             // (Should the thread not start, it closes here.)
+            //
+            // A console host whose pseudoconsole is closed right after it
+            // started can miss that and stay, with the program (Windows
+            // 11; ConPTY's cursor query answered or not), so a program
+            // whose ConPTY wrote nothing yet is ended first. Neovim does
+            // the same, for the same unexplained leak
+            // (`pty_proc_close_console`, neovim#38244); it can go once
+            // conhost no longer leaks so ("The startup cursor query" in
+            // `doc/terminals/conpty.md`).
+            if !self.wrote.load(Ordering::SeqCst) && !self.reaped.load(Ordering::SeqCst) {
+                let _ = self.killer.kill();
+            }
             let master = self.master.take();
             let _ = std::thread::Builder::new().name("temzdf-pty-close".into()).spawn(move || drop(master));
         }
@@ -451,6 +485,7 @@ fn read_loop(
     backlog: &Backlog,
     stop: &AtomicBool,
     input: &Mutex<Box<dyn Write + Send>>,
+    wrote: &AtomicBool,
 ) {
     let mut buf = vec![0u8; 64 << 10];
     let mut sending = true;
@@ -465,6 +500,9 @@ fn read_loop(
                 let (out, asked) = query.feed(&buf[..n]);
                 if asked {
                     let _ = input.lock().unwrap_or_else(|p| p.into_inner()).write_all(StartupQuery::ANSWER);
+                }
+                if !out.is_empty() {
+                    wrote.store(true, Ordering::SeqCst);
                 }
                 if sending && !stop.load(Ordering::SeqCst) && !out.is_empty() {
                     backlog.reserve(out.len(), stop);
