@@ -43,6 +43,9 @@ fn run_tests(name: &str, text: &str, tests: &str) -> Run {
     let sink: EventSink = channel_sink(tx, |e| e);
     let settings =
         Settings { serve_forward: false, script: Some(ScriptSettings { config: Some(config) }), overrides: Vec::new() };
+    // Each step returns at once; one that does not (CI saw this loop hang
+    // past its deadline) is named before the process aborts.
+    let watchdog = crate::watchdog::Watchdog::new(format!("run_tests({name})"), STEPS, Duration::from_secs(45));
     let mut s = Session::new(format!("js-{name}"), GEOMETRY, Hints::default(), settings, sink);
     s.set_shell(Some(vec!["/bin/sh".into()]));
     s.enable_test_reports();
@@ -61,19 +64,25 @@ fn run_tests(name: &str, text: &str, tests: &str) -> Run {
             .next_deadline()
             .map_or(Duration::from_millis(20), |d| d.saturating_duration_since(Instant::now()))
             .min(Duration::from_millis(20));
+        watchdog.step(1);
         if let Ok(ev) = rx.recv_timeout(wait) {
+            watchdog.step(2);
             s.handle(ev, Instant::now());
             while let Ok(ev) = rx.try_recv() {
                 s.handle(ev, Instant::now());
             }
         }
+        watchdog.step(3);
         let _ = s.poll(Instant::now());
+        watchdog.step(4);
         for e in s.take_effects() {
             if let temzdf_scene::Effect::ReadClipboard { ticket, .. } = e {
                 s.clipboard_answer(ticket, Err("no clipboard".into()));
             }
         }
+        watchdog.step(5);
         let _ = s.frame();
+        watchdog.step(6);
         for r in s.take_test_reports() {
             match r {
                 TestReport::Line(l) => run.lines.push(l),
@@ -81,9 +90,24 @@ fn run_tests(name: &str, text: &str, tests: &str) -> Run {
             }
         }
     }
+    watchdog.step(7);
+    drop(s);
+    drop(watchdog);
     let _ = std::fs::remove_dir_all(&dir);
     run
 }
+
+/// `run_tests`'s steps, for its watchdog.
+const STEPS: &[&str] = &[
+    "starting",
+    "waiting for an event",
+    "handling events",
+    "poll",
+    "answering effects",
+    "frame",
+    "test reports",
+    "dropping the session",
+];
 
 /// Whether the test numbered `n` named `name` passed (`ok`) or not.
 fn result(run: &Run, name: &str) -> Option<bool> {

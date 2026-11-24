@@ -11,3 +11,4 @@ pub mod keymap;
 pub mod layout;
 mod paths;
 pub mod session;
+pub mod watchdog;

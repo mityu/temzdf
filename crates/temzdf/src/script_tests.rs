@@ -26,6 +26,7 @@ use anyhow::{Context, Result, bail};
 use temzdf_scene::{Effect, Hints};
 use temzdf_server::action::PaneSpec;
 use temzdf_server::session::{Outcome, ScriptSettings, Session, Settings, TestReport};
+use temzdf_server::watchdog::Watchdog;
 use termpix_core::geom::{CellSize, Geometry};
 
 /// The child's private directory (set for `--one` by the parent).
@@ -253,6 +254,10 @@ pub fn run_one(file: &Path) -> Result<i32> {
         out.flush()?;
         Ok(())
     };
+    // Each step returns at once; one that does not (CI saw a child that had
+    // reported every test hang) is named on stderr, which the parent shows,
+    // before it stops the child for printing nothing.
+    let watchdog = Watchdog::new(format!("temzdf test {}", file.display()), STEPS, Duration::from_secs(20));
     let (tx, rx) = mpsc::channel();
     let sink = temzdf_scene::sink::channel_sink(tx, |e| e);
     let settings =
@@ -275,13 +280,17 @@ pub fn run_one(file: &Path) -> Result<i32> {
         }
         let wait = s.next_deadline().map_or(TICK, |d| d.saturating_duration_since(Instant::now())).min(TICK);
         let mut outcomes = Vec::new();
+        watchdog.step(1);
         if let Ok(ev) = rx.recv_timeout(wait) {
+            watchdog.step(2);
             outcomes.push(s.handle(ev, Instant::now()));
             while let Ok(ev) = rx.try_recv() {
                 outcomes.push(s.handle(ev, Instant::now()));
             }
         }
+        watchdog.step(3);
         outcomes.push(s.poll(Instant::now()));
+        watchdog.step(4);
         // A clipboard of our own: what was copied is what is read.
         for e in s.take_effects() {
             match e {
@@ -294,11 +303,17 @@ pub fn run_one(file: &Path) -> Result<i32> {
                 _ => {}
             }
         }
+        watchdog.step(5);
         let _ = s.frame();
+        watchdog.step(6);
         for r in s.take_test_reports() {
             match r {
                 TestReport::Line(l) => say(&l)?,
-                TestReport::End { failed, .. } => return Ok(i32::from(failed > 0)),
+                TestReport::End { failed, .. } => {
+                    watchdog.step(7);
+                    drop(s);
+                    return Ok(i32::from(failed > 0));
+                }
             }
         }
         if outcomes.contains(&Outcome::Quit) {
@@ -307,6 +322,18 @@ pub fn run_one(file: &Path) -> Result<i32> {
         }
     }
 }
+
+/// `run_one`'s steps, for its watchdog.
+const STEPS: &[&str] = &[
+    "starting",
+    "waiting for an event",
+    "handling events",
+    "poll",
+    "answering effects",
+    "frame",
+    "test reports",
+    "ending the session",
+];
 
 /// An error message on one line (TAP's `Bail out!` takes one).
 fn one_line(text: &str) -> String {
