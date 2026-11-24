@@ -9,13 +9,21 @@
 import { scenario } from "../../scripts/e2e/scenario.ts";
 import { pdf } from "./lib/commands.ts";
 
-export default scenario(pdf(), async (_t, { pause, dragto, expect, clipboard, fs, outdir, drag }) => {
-  await pause(1);
-  await dragto(318, 188, 582, 190, 5);
-  await pause(0.5);
-  await expect("selected");
-  fs.write(`${outdir}/clipboard.txt`, (await clipboard()) ?? "");
-  await drag(50, 400, 300);
-  await pause(0.5);
-  await expect("panned");
-});
+export default scenario(
+  pdf(),
+  async (_t, { pause, dragto, expect, clipboard, fs, outdir, drag, mark, waitChange, waitStill }) => {
+    await pause(1);
+    await dragto(318, 188, 582, 190, 5);
+    await pause(0.5);
+    await mark("copied");
+    await expect("selected");
+    fs.write(`${outdir}/clipboard.txt`, (await clipboard()) ?? "");
+    // Until the "Copied" notice is gone: one fading between the screenshot
+    // and the replay would fail the next judgement.
+    await waitChange("copied");
+    await waitStill();
+    await drag(50, 400, 300);
+    await pause(0.5);
+    await expect("panned");
+  },
+);

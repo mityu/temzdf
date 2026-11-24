@@ -15,7 +15,10 @@ import { session } from "./lib/commands.ts";
 
 export default scenario(
   { ...session("e2e-x"), prepare: (fs) => fs.mkdir("target/e2e-term-extras") },
-  async (_t, { magick, outdir, keys, pause, type, expect, down, move, up, wheel, run }) => {
+  async (
+    _t,
+    { magick, outdir, keys, pause, type, expect, down, move, up, wheel, run, mark, waitChange, waitStill },
+  ) => {
     await magick(["-size", "160x80", "gradient:red-blue", `${outdir}/img.png`]);
     await keys("ctrl+b", "percent");
     await pause(1);
@@ -32,7 +35,13 @@ export default scenario(
     await pause(0.3);
     await up();
     await pause(0.5);
+    await mark("copied");
     await expect("selected");
+    // Until the "Copied" notice is gone (it covers the top right, where
+    // scrolled's "[3/N]" is): one fading between the screen and the
+    // session's frame would fail the judgement.
+    await waitChange("copied");
+    await waitStill();
     await type("seq 1 100\n");
     await pause(1);
     await wheel(-1, 700, 300);

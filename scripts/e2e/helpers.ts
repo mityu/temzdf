@@ -72,6 +72,14 @@ export interface Helpers {
   /** Until the screen stands still (three screenshots 0.3 s apart), at
    * most S seconds (default 20; past that FAIL wait_still). */
   waitStill(seconds?: number): Promise<void>;
+  /** Saves what the screen shows now (what waitStill watches) for
+   * `waitChange(NAME)`. */
+  mark(name: string): Promise<void>;
+  /** Until the screen is no longer as `mark(NAME)` saw it (screenshots
+   * 0.3 s apart), at most S seconds (default 10; past that FAIL
+   * wait_change). For something that goes by itself, such as a notice
+   * fading: mark while it shows, wait for the change, then waitStill. */
+  waitChange(name: string, seconds?: number): Promise<void>;
   /** A SyncTeX forward search from another process (`temzdf --forward
    * LINE[:COLUMN]:FILE PDF`), recorded for `expect` like the input; throws
    * when the command fails (wrap it in `check` to judge it). */
@@ -201,6 +209,8 @@ export function helpers(r: Run): Helpers {
     pause: (s) => r.sleep(s),
     waitComplete: (s) => judge.waitComplete(r, s),
     waitStill: (s) => judge.waitStill(r, s),
+    mark: (name) => judge.mark(r, name),
+    waitChange: (name, s) => judge.waitChange(r, name, s),
     async forward(spec, pdf) {
       await r.procs.run(r.forwardTemzdf, ["--forward", spec, pdf]);
       // Recorded once sent (when temzdf has it), as LINE COLUMN FILE.

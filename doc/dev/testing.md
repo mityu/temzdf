@@ -827,6 +827,12 @@ Rules for scenarios:
   input tools of your own (Biome refuses `node:child_process`,
   `node:timers` and `node:fs` in scenarios): their input is what reaches temzdf either way, but the
   harness's own record (`OUTDIR/events.txt`) times the screenshot from it.
+- Information notices ("Copied N characters") fade after 3 s of
+  temzdf's clock, and one fading between the screenshot and what it is
+  compared with (the session's frame, the replay) fails the `expect`. Wait for it by what the
+  screen shows, not by time: `mark(NAME)` while it shows,
+  `waitChange(NAME)`, then `waitStill()` (`terminal-extras.ts`,
+  `markdown.ts`, `select.ts`).
 - A moment that depends on rendering speed (the old tiles scaled right
   after a zoom, before new ones arrive) cannot be judged: the replay waits
   for the workers after each input. Take a plain `shot` there.

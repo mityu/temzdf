@@ -401,6 +401,35 @@ export async function waitStill(r: Run, limit = 20): Promise<void> {
   await r.verdict("FAIL", "wait_still", `the screen did not stand still within ${limit}s`);
 }
 
+/** Saves what waitStill watches as NAME.mark.png, for waitChange. */
+export async function mark(r: Run, name: string): Promise<void> {
+  await r.watchShot(r.path(`${name}.mark.png`));
+  r.rec.phase(`mark ${name}`);
+}
+
+/** Until the screen is no longer as `mark NAME` saw it (screenshots
+ * 0.3 s apart), at most LIMIT seconds; past that FAIL wait_change. */
+export async function waitChange(r: Run, name: string, limit = 10): Promise<void> {
+  const deadline = performance.now() + limit * 1000;
+  const marked = r.path(`${name}.mark.png`);
+  const now = r.path(`${name}.change.png`);
+  try {
+    while (performance.now() < deadline) {
+      await r.watchShot(now);
+      if (!sameBytes(marked, now)) {
+        r.rec.phase(`changed ${name}`);
+        return;
+      }
+      await r.sleep(0.3);
+    }
+  } finally {
+    rmSync(now, { force: true });
+  }
+  r.rec.phase(`changed ${name} (timed out)`);
+  // Not thrown: the line fails the run at its end.
+  await r.verdict("FAIL", "wait_change", `the screen stayed as at mark ${name} for ${limit}s`);
+}
+
 /** Until FILE exists, at most S seconds. */
 function waitFile(r: Run, file: string, s: number): Promise<boolean> {
   return until(() => existsSync(file), s, 0.05, r.signal);

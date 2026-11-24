@@ -1,15 +1,17 @@
 // What the harness decides without a terminal: how a check's result
 // becomes PASS, FAIL or SKIP, ImageMagick's "differ" told from its
-// failures, waits ending on the run's signal, and a key without a Vim
-// notation recorded without one (as scripts/e2e.sh did).
+// failures, waits ending on the run's signal or on a change of the screen,
+// and a key without a Vim notation recorded without one (as scripts/e2e.sh
+// did).
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { helpers } from "./helpers.ts";
+import { mark, waitChange } from "./judge.ts";
 import { compareAE, gradient } from "./magick.ts";
 import { pause } from "./procs.ts";
 import { Records, type Verdict } from "./record.ts";
@@ -103,6 +105,41 @@ test("compareAE: a count when the images differ, an error when it cannot compare
     assert.ok((await compareAE(a, b, path.join(dir, "diff.png"))) > 0);
     // A missing file is magick's exit 2: not "0 pixels differ".
     await assert.rejects(compareAE(a, path.join(dir, "missing.png"), path.join(dir, "x.png")));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("waitChange: ends once the screen differs from the mark, else FAIL wait_change", async () => {
+  const dir = tmp();
+  try {
+    const seen: string[] = [];
+    let screen = "notice";
+    let shots = 0;
+    const fake = {
+      path: (n: string) => path.join(dir, n),
+      async watchShot(file: string) {
+        shots++;
+        writeFileSync(file, screen);
+      },
+      sleep: async () => {
+        // The notice goes after the third look.
+        if (shots === 3) screen = "gone";
+      },
+      rec: { phase: (p: string) => seen.push(p) },
+      async verdict(v: Verdict, name: string) {
+        seen.push(`${v} ${name}`);
+      },
+    } as unknown as Run;
+    await mark(fake, "copied");
+    await waitChange(fake, "copied");
+    assert.deepEqual(seen, ["mark copied", "changed copied"]);
+    assert.equal(shots, 4);
+    // It never changes.
+    seen.length = 0;
+    await mark(fake, "still");
+    await waitChange(fake, "still", 0.05);
+    assert.deepEqual(seen, ["mark still", "changed still (timed out)", "FAIL wait_change"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -38,7 +38,7 @@ export default scenario(
       fs.copy("tests/fixtures/sample-figure.svg", "target/e2e-markdown/sample-figure.svg");
     },
   },
-  async (_t, { pause, expect, keys, dragto, type, run }) => {
+  async (_t, { pause, expect, keys, dragto, type, run, mark, waitChange, waitStill }) => {
     await pause(1);
     await expect("source");
     await keys("F5");
@@ -49,11 +49,15 @@ export default scenario(
     await expect("graphics");
     await dragto(50, 93, 530, 93, 5);
     await pause(0.5);
+    await mark("copied");
     await expect("selected");
+    // Until the "Copied" notice is gone: a notice fading between the
+    // screen and the session's frame would fail the next judgement. (Before
+    // Escape, whose own change would end the wait.)
+    await waitChange("copied");
+    await waitStill();
     await keys("Escape");
-    // Until the "Copied" notice is gone (3 s): a notice fading between the
-    // screen and the session's frame would fail the next judgement.
-    await pause(3);
+    await waitStill();
     await type("/Tables");
     await keys("Return");
     await pause(1);
