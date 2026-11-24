@@ -232,10 +232,11 @@ server on one `Session`). Next and open:
   frontend; the terminal frontend comes last. Order:
   - The toolchain: MSYS2's UCRT64 (its Rust, `x86_64-pc-windows-gnu`,
     GCC), not MSVC, since 2026-11-23 ("The toolchain" in
-    `doc/survey/windows-port.md`). Still to do: check whether the
-    executables need MSYS2's DLLs (`libwinpthread-1.dll`,
-    `libgcc_s_seh-1.dll`) and link them statically or ship them; once
-    the port has settled, build and test with UCRT64's Clang too, besides
+    `doc/survey/windows-port.md`). The executables need none of
+    MSYS2's DLLs (2026-11-24: their imports are Windows' own, the UCRT
+    included; Rust's `windows-gnu` links `libgcc_eh` and winpthread
+    statically, and the C libraries use no C++; they start with only
+    `System32` on `PATH`). Still to do: once the port has settled, build and test with UCRT64's Clang too, besides
     GCC (in CI or the VM): the order of evaluation differs between them
     (libtexprintf's `AddChild`).
   - First steps, no VM. Done: the `windows` step of the gate (clippy for

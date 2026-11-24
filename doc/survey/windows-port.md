@@ -77,7 +77,7 @@ or did differently there. "Since" notes what was done afterwards.
 | Owner and ACL checks of the directories | `crates/temzdf-client/src/lib.rs` | None on Windows (decided, `doc/design/session-server.md`, "Windows") |
 | `file:` links, path comparisons | `crates/temzdf-client/src/lib.rs`, `paths.rs` | Links do not open; comparisons are case-sensitive (known). Comparisons are to follow the host's file system (the user, 2026-11-24; how: `todo.md`). Since: comparisons do; a `file:` link to a document (by its extension) opens, another file is shown in Explorer, and anything but a plain drive path (UNC, devices, streams, names Windows changes) is refused (the user chose this over a list of what runs, which `ShellExecute`'s associations outgrow) |
 | Tests | `session/tests.rs`, `host_tests.rs`, `temzdf-term` | The pane tests that run Unix programs are ignored there; a helper program in their place comes next (`todo.md`). Since: they start `temzdf-testhelper`, and 70 of the 80 run on Windows (2026-11-24); the rest are ignored with their reasons |
-| The terminal frontend | `termpix`, `temzdf-tty` | Unix only (decided: last) |
+| The terminal frontend | `termpix`, `temzdf-tty` | Unix only (decided: last). Since: Windows' console (2026-11-24, "temzdf in a terminal on Windows" in `doc/terminals/conpty.md`); `standalone` stays Unix only |
 
 Nothing else was found that keeps the server from running.
 
@@ -246,9 +246,14 @@ retiring. What led to it:
   `shell: msys2`, `scripts/windows-vm.sh check`), which puts `usr/bin` on
   `PATH` after UCRT64's `bin`.
 
-Open: whether the executables need MSYS2's DLLs (`libwinpthread-1.dll`,
-`libgcc_s_seh-1.dll`) beside them, and MSYS2's Rust following its own
-release schedule, not the dev shell's.
+The executables need none of MSYS2's DLLs (checked 2026-11-24 with
+`objdump -p` and by starting them with only `System32` on `PATH`): Rust's
+`windows-gnu` links `libgcc_eh` and winpthread statically, the C
+libraries use no C++, and the rest are Windows' own DLLs, the UCRT
+(`api-ms-win-crt-*`, in Windows 10 and later) included.
+
+Open: MSYS2's Rust following its own release schedule, not the dev
+shell's.
 
 ## End-to-end tests in a VM
 
