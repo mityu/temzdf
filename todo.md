@@ -318,7 +318,12 @@ server on one `Session`). Next and open:
     for the target), with the tests that start programs in panes or on a
     pty, or read the TeX fixtures
     ignored there; swap file names on Windows are Neovim's
-    (`C%%Users%...`). Still to do: the server run there. The script guest
+    (`C%%Users%...`). The server runs there (the GUI's e2e, terminal
+    panes, the pane tests); what it still lacks: the table in "The
+    server on Windows" in `doc/survey/windows-port.md`, among them
+    `file:` links that do not open and path comparisons, which are to
+    follow the host's file system's case sensitivity (the user,
+    2026-11-24; how is being looked into). The script guest
     reads files on Windows since `temzdf/fs` (the host reads natively,
     no WASI preopen; 2026-11-23): the configuration, imports, `temzdf
     test`, `temzdf-script-runner` and the js tests in the gate there;

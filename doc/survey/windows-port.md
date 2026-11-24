@@ -73,10 +73,10 @@ or did differently there. "Since" notes what was done afterwards.
 | OSC 7 working directories | `path_of_url` in `crates/temzdf-term/src/lib.rs` | `file:///C:/x` became `/C:/x`. Since: `C:/x`. cmd and PowerShell do not send OSC 7 unless configured to |
 | Images from programs by file, temporary file or shared memory | `TermBuffer::spawn` | Moot with the in-box ConPTY (APC is dropped). With a shipped `conpty.dll`: Windows paths in `t=f` and `t=t` are untried, `t=s` names POSIX shared memory |
 | Shared-memory pixels | `crates/temzdf-protocol/src/shared.rs` | None on Windows: every image travels on the socket (known; only speed) |
-| The host name of swap files | `host` in `crates/temzdf-server/src/session/swap.rs` | Reads `/proc/sys/kernel/hostname`, `/etc/hostname` and `HOSTNAME`, none of which Windows has (`COMPUTERNAME` is), so the host is empty there |
+| The host name of swap files | `host` in `crates/temzdf-server/src/session/swap.rs` | Reads `/proc/sys/kernel/hostname`, `/etc/hostname` and `HOSTNAME`, none of which Windows has (`COMPUTERNAME` is), so the host is empty there (on macOS, which has no `/etc/hostname`, mostly too). Since: uname's node name on Unix, `COMPUTERNAME` on Windows |
 | Owner and ACL checks of the directories | `crates/temzdf-client/src/lib.rs` | None on Windows (decided, `doc/design/session-server.md`, "Windows") |
-| `file:` links, path comparisons | `crates/temzdf-client/src/lib.rs`, `paths.rs` | Links do not open; comparisons are case-sensitive (known) |
-| Tests | `session/tests.rs`, `host_tests.rs`, `temzdf-term` | The pane tests that run Unix programs are ignored there; a helper program in their place comes next (`todo.md`) |
+| `file:` links, path comparisons | `crates/temzdf-client/src/lib.rs`, `paths.rs` | Links do not open; comparisons are case-sensitive (known). Comparisons are to follow the host's file system (the user, 2026-11-24; how: `todo.md`) |
+| Tests | `session/tests.rs`, `host_tests.rs`, `temzdf-term` | The pane tests that run Unix programs are ignored there; a helper program in their place comes next (`todo.md`). Since: they start `temzdf-testhelper`, and 70 of the 80 run on Windows (2026-11-24); the rest are ignored with their reasons |
 | The terminal frontend | `termpix`, `temzdf-tty` | Unix only (decided: last) |
 
 Nothing else was found that keeps the server from running.
