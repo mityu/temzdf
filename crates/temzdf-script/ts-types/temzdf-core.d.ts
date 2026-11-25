@@ -428,6 +428,11 @@ declare module "temzdf" {
     /** Run `fn` with everything else held; `fn` must be synchronous. */
     atomic<T>(fn: () => T): T;
   }
+  /** What waitResolved's task gets: a dispatched task's, and its signal. */
+  export interface WaitContext extends TaskContext {
+    /** Aborted when <C-c> gives the task up. */
+    readonly signal: AbortSignal;
+  }
   /** What openPrompt is given. */
   export interface PromptOptions {
     /** Shown before the text (inline virtual text, style `style`, default `Prompt`). */
@@ -457,5 +462,7 @@ declare module "temzdf" {
   export function promptOrigin(buffer?: number): number | undefined;
   /** Start an asynchronous task without waiting for it. */
   export function dispatch(fn: (ctx: TaskContext) => Promise<void> | void): void;
+  /** Start an asynchronous task, as dispatch does, holding the user's input (keys, the mouse, pastes, other clients, `temzdf action`) until it is done: what was typed meanwhile is handled after it, as after a synchronous mapped function (Vim's `:r !cmd`). Other tasks, timers and hooks go on meanwhile. <C-c> gives it up: the held input is dropped, `ctx.signal` aborted and its further commands refused. No time limit. */
+  export function waitResolved(fn: (ctx: WaitContext) => Promise<void> | void): void;
   export function atomic<T>(fn: () => T): T;
 }

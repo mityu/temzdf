@@ -647,3 +647,73 @@ keymap.add("vim/normal", "<F7>", () => action.text.scroll(1));
         ScriptValue::Str(format!("{pane}:4-{}<3-{} {pane}:5-{}<4-{}", last + 4, last + 3, last + 5, last + 4))
     );
 }
+
+/// Press `keys` without waiting for anything in between.
+fn press(s: &mut Session, keys: &str) {
+    for k in notation::parse(keys).unwrap() {
+        s.key(&k.event(), Instant::now());
+    }
+}
+
+/// `waitResolved`'s configuration: <F6> waits, <F9> waits until <C-c>;
+/// what ran, in order, is in the pane variable `log`.
+const WAITING: &str = r#"import { action, dispatch, keymap, waitResolved } from "temzdf";
+import type { Actions } from "temzdf";
+const log: string[] = [];
+const note = (a: Actions, what: string) => { log.push(what); a.setVar("pane", "log", log.join(" ")); };
+keymap.add("vim/normal", "<F6>", () => waitResolved(async (ctx) => {
+  dispatch(async (other) => { await new Promise((r) => setTimeout(r, 10)); note(other.action, "other"); });
+  await new Promise((r) => setTimeout(r, 200));
+  ctx.action.feedkeys("<F8>");
+  note(ctx.action, "waited");
+}));
+keymap.add("vim/normal", "<F7>", () => note(action, "typed"));
+keymap.add("vim/normal", "<F8>", () => note(action, "fed"));
+keymap.add("vim/normal", "<F9>", () => waitResolved(async (ctx) => {
+  await new Promise((r) => ctx.signal.addEventListener("abort", () => r(null)));
+  let refused = "no";
+  try { ctx.action.message("after"); } catch { refused = "yes"; }
+  dispatch((c) => note(c.action, `aborted refused=${refused}`));
+}));
+"#;
+
+fn pane_log(s: &mut Session) -> ScriptValue {
+    let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("log".into())];
+    s.run_command("get-var", &args, Instant::now()).unwrap().0
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn keys_typed_while_a_task_is_waited_for_come_after_it() {
+    let dir = TempDir::new("wait-resolved");
+    let (mut s, rx) = config_session(&dir.0, "x\n", Some(WAITING)).unwrap();
+    // Typed at once: held until the task is done, though other tasks go
+    // on meanwhile; the keys it fed come first.
+    press(&mut s, "<F6><F7><F7>");
+    settle(&mut s, &rx, true, None);
+    assert_eq!(pane_log(&mut s), ScriptValue::Str("other waited fed typed typed".into()));
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn ctrl_c_gives_up_the_task_the_input_waits_for_and_its_typeahead() {
+    let dir = TempDir::new("wait-interrupted");
+    let (mut s, rx) = config_session(&dir.0, "x\n", Some(WAITING)).unwrap();
+    press(&mut s, "<F9><F7>");
+    // Until the task waits and the call of <F9> is done.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while s.script.waiting.is_empty() || s.script.busy() {
+        assert!(Instant::now() < deadline, "the task never waited");
+        if let Ok(ev) = rx.recv_timeout(Duration::from_millis(20)) {
+            s.handle(ev, Instant::now());
+        }
+    }
+    press(&mut s, "<C-c>");
+    assert!(errors(&s).contains(&"Interrupted".to_owned()), "{:?}", errors(&s));
+    assert!(!s.holds_input(), "the input goes on at once");
+    press(&mut s, "<F7>");
+    settle(&mut s, &rx, true, None);
+    // The <F7> typed before <C-c> was dropped; its signal aborted, the
+    // task's commands are refused.
+    assert_eq!(pane_log(&mut s), ScriptValue::Str("aborted refused=yes typed".into()));
+}

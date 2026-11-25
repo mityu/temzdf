@@ -34,6 +34,9 @@ type Host = {
   /** It ended: `error` is "null" or the error (JSON). */
   taskDone(task: number, error: string): void;
   atomicBegin(token: string): void;
+  /** Task `task` (waitResolved's) holds the user's input until it is
+   * done; `abort` is called when <C-c> gives it up. */
+  waitBegin(task: number, abort: () => void): void;
   atomicEnd(token: string): void;
   /** Call `fn` after `ms` milliseconds: the timer's id. */
   setTimer(ms: number, fn: () => void): number;
@@ -423,6 +426,22 @@ const temzdf: Temzdf = {
     const { task, ctx } = taskContext();
     Promise.resolve()
       .then(() => fn(ctx))
+      .then(
+        () => host.taskDone(task, "null"),
+        (e) => host.taskDone(task, errorJson(e)),
+      );
+  },
+  // A dispatched task the user's input waits for (Vim's `:r !cmd`): keys
+  // typed meanwhile are handled once it is done; <C-c> drops them, aborts
+  // `ctx.signal` and refuses its further commands.
+  waitResolved(fn) {
+    check("waitResolved", func(), fn);
+    const { task, ctx } = taskContext();
+    const controller = new AbortController();
+    host.waitBegin(task, () => controller.abort());
+    const waitCtx = Object.freeze({ ...ctx, signal: controller.signal });
+    Promise.resolve()
+      .then(() => fn(waitCtx))
       .then(
         () => host.taskDone(task, "null"),
         (e) => host.taskDone(task, errorJson(e)),

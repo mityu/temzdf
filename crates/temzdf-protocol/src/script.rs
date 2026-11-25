@@ -236,6 +236,9 @@ pub enum FromHost {
     },
     /// `dispatch` started a task; its commands carry [`Token::Task`].
     TaskStart(TaskId),
+    /// The task (`waitResolved`'s) holds the user's input until it is done
+    /// (its `TaskDone`); `<C-c>` ([`ToHost::Interrupt`]) gives it up.
+    Waiting(TaskId),
     /// The task's Promise settled.
     TaskDone {
         task: TaskId,

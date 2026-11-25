@@ -124,6 +124,17 @@ dependencies are cached apart from the server.
   everything else held, and the plain `action` works inside it (under the
   task's token), so code shared with mappings runs there unchanged. Errors
   of tasks are reported as messages and in the log.
+- **`waitResolved(async (ctx) => ...)`** is such a task the user's input
+  waits for (`doc/design/scripting.md`). The host says so
+  (`FromHost::Waiting` after `TaskStart`) and the session holds input
+  (`holds_input`, not `busy`: frames and other tasks' commands go on) until
+  its `TaskDone`. While any is waited for, the host sets no unattended
+  deadline (which task's code a job is cannot be told apart). `<C-c>` makes
+  the session drop the held input, revoke the tasks' tokens and send
+  `ToHost::Interrupt`; the host, reading it wherever it is
+  (`take_interrupt_message`), aborts their `ctx.signal`s at the next
+  microtask checkpoint, before any job runs, and the session does not
+  report how they end.
 - **Commands answering later** (`readClipboard`): the session replies
   `{ "$promise": n }` at once and settles it later with `ToHost::Resolve`;
   the prelude turns the reply into a Promise, settled (as timers fire) when

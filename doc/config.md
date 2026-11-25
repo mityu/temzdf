@@ -144,6 +144,40 @@ dispatch(async (ctx) => {
 });
 ```
 
+Waiting for one before the next key: `waitResolved(fn)` starts a task as
+`dispatch` does, but holds the user's input (keys, the mouse, pastes, other
+clients, `temzdf action`) until it is done, as a synchronous mapped function
+does: what is typed meanwhile is handled after it (Vim's `:r !cmd`). Other
+tasks, timers and hooks go on meanwhile, so the text may change under it: a
+mark keeps the place. There is no time limit; after 8 s a notice says how to
+stop it. `<C-c>` gives it up: the input held is dropped, `ctx.signal` is
+aborted (`run` given it kills the command), and its further commands are
+refused.
+
+```ts
+import { keymap, waitResolved } from "temzdf";
+import { run } from "temzdf/process";
+// Vim's :r !date: the output on the lines below the cursor's.
+keymap.add("vim/normal", "<Space>d", () =>
+  waitResolved(async (ctx) => {
+    const a = ctx.action;
+    const pane = a.focusedPane();
+    if (pane === undefined) return;
+    const line = a.text.cursor({ pane }).line;
+    const end = { line, character: a.text.line(line, { pane }).length };
+    // A mark (an empty decoration) follows edits made meanwhile.
+    const mark = a.text.addDecoration({ start: end, end }, { pane });
+    const r = await run(["date"], { signal: ctx.signal });
+    ctx.atomic(() => {
+      const at = a.text.decoration(mark, { pane });
+      const out = new TextDecoder().decode(r.stdout).replace(/\n$/, "");
+      if (at && !at.deleted) a.text.insert(`\n${out}`, at.range.start, { pane });
+      a.text.deleteDecoration(mark, { pane });
+    });
+  }),
+);
+```
+
 A value the API may leave out (no count typed, no focused pane, an unset
 option) is `undefined`, never `null`; `x == null` checks for either.
 

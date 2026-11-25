@@ -271,6 +271,24 @@ Decided (the whole model was settled with the user on 2026-10-26):
 - **`temzdf.dispatch(async () => ...)`** starts a task without waiting for it
   (like a shell's `cmd & disown`); long work and `await` belong there. Errors
   of dispatched tasks go to the message area and the log.
+- **`temzdf.waitResolved(async (ctx) => ...)`** (decided with the user on
+  2026-11-25) is `dispatch` that holds the user's input until the task is
+  done, for what must finish before the next key (Vim's `:r !cmd`). Only
+  the user's input is held (keys, mouse, pastes, other clients, `temzdf
+  action`); other tasks, timers and the hooks their commands cause go on,
+  since holding their commands would block the host's only thread and with
+  it the task's own continuation. A mark keeps the place where a result
+  goes against edits made meanwhile. No time limit (a command may take
+  long; the busy notice says how to stop it), and its code is exempt from
+  the host's unattended limit. `<C-c>` gives it up as Vim's CTRL-C does:
+  the held input is dropped, `ctx.signal` aborted (what honours it stops:
+  `temzdf/process`'s `run` kills the command), the task's token revoked
+  (its further commands fail), and code running at that moment
+  interrupted. A separate function rather than an option of `dispatch`,
+  whose second argument would be read far from its first, the function.
+  The name says what the mapping does: it waits until the function's
+  Promise settles; `blocking` suggested that other tasks stop too,
+  `holdInput`, `batch` and `foreground` (a Vim function) were declined.
 - **Hooks may be synchronous** (including ones before exit, detach or
   closing a pane), with `dispatch` for anything asynchronous, as for mappings.
 - **Errors reach JavaScript as exceptions.** Composite actions (e.g. what
@@ -530,7 +548,11 @@ with the plan.
 
 Not planned for the first version (mapped and hook functions are
 synchronous, see "Execution model"), but the user may want it later. What was
-worked out (2026-10-26):
+worked out (2026-10-26); `waitResolved` (2026-11-25, "Execution model") took
+the part needed for `:r !cmd` another way: a function of its own rather
+than an option of mappings, hooks that are not deferred (other tasks go on),
+and no timeout (`<C-c>` and a notice), which answers pitfalls 3 and 6
+below:
 
 **Idea.**
 

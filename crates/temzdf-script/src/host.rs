@@ -132,6 +132,8 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         tokens: RefCell::new(Vec::new()),
         open_atomic: RefCell::new(Vec::new()),
         running_tasks: RefCell::new(std::collections::BTreeSet::new()),
+        waits: RefCell::default(),
+        abort_waits: Cell::new(false),
         commands: RefCell::new(Vec::new()),
         evals: RefCell::default(),
         queued_code: RefCell::default(),
@@ -217,6 +219,7 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
         // the promise jobs it queued, then the answers that came, each with
         // its jobs, all before a timer fires.
         context.with(|ctx| {
+            abort_waits(&ctx, &st);
             run_jobs(&ctx, &st);
             settle_promises(&ctx, &st);
             fire_timers(&ctx, &st);
@@ -225,6 +228,7 @@ fn run(link: Box<dyn Link>, limit: Duration, log: Box<dyn Fn(&str)>) -> Result<(
     // JavaScript values kept in Rust must go before the runtime does.
     st.funcs.borrow_mut().clear();
     st.timers.borrow_mut().clear();
+    st.waits.borrow_mut().clear();
     st.rejections.unhandled.borrow_mut().clear();
     Ok(())
 }
@@ -283,6 +287,13 @@ struct State {
     /// handlers (QuickJS: uncatchable), so they are closed from here.
     open_atomic: RefCell<Vec<Token>>,
     running_tasks: RefCell<std::collections::BTreeSet<TaskId>>,
+    /// `waitResolved`'s tasks holding the user's input, each with the
+    /// function aborting its `ctx.signal`: code runs unattended no longer
+    /// (the user waits, <C-c> at hand).
+    waits: RefCell<BTreeMap<TaskId, Persistent<Function<'static>>>>,
+    /// An interrupt came while some held the input: abort them before
+    /// anything else runs.
+    abort_waits: Cell<bool>,
     commands: RefCell<Vec<String>>,
     /// The `temzdf eval`s running, by their task.
     evals: RefCell<std::collections::HashMap<TaskId, EvalRun>>,
@@ -461,6 +472,7 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
             if let Err(e) = &result {
                 s.log(&format!("temzdf script: a dispatched task failed: {e}"));
             }
+            s.waits.borrow_mut().remove(&(task as TaskId));
             // Reported already if an interrupt cut it off (close_cut_off).
             if s.running_tasks.borrow_mut().remove(&(task as TaskId)) {
                 s.send(&FromHost::TaskDone { task: task as TaskId, result });
@@ -490,6 +502,17 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<State>) -> rquickjs::Result<()> {
             })?,
         )?;
     }
+    let s = st.clone();
+    host.set(
+        "waitBegin",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, task: f64, abort: Function<'js>| {
+            let task = task as TaskId;
+            if s.running_tasks.borrow().contains(&task) {
+                s.waits.borrow_mut().insert(task, Persistent::save(&ctx, abort));
+                s.send(&FromHost::Waiting(task));
+            }
+        })?,
+    )?;
     let s = st.clone();
     host.set(
         "setTimer",
@@ -1070,6 +1093,21 @@ fn args_json(args: &[ScriptValue]) -> String {
     json(&args.iter().map(from_script).collect::<Vec<_>>())
 }
 
+/// The session gave up the tasks holding its input (`<C-c>`): abort their
+/// signals (what honours them stops; the rest finds its commands refused).
+fn abort_waits(ctx: &Ctx<'_>, st: &Rc<State>) {
+    if !st.abort_waits.replace(false) {
+        return;
+    }
+    let waits = std::mem::take(&mut *st.waits.borrow_mut());
+    for (_, abort) in waits {
+        st.stopped.set(None);
+        if let Err(e) = st.unattended(|| abort.restore(ctx).and_then(|f| f.call::<_, ()>(()))) {
+            log_failure(ctx, st, "aborting a task", e);
+        }
+    }
+}
+
 fn fire_timers(ctx: &Ctx<'_>, st: &Rc<State>) {
     let now = Instant::now();
     loop {
@@ -1353,8 +1391,12 @@ impl State {
     /// behind it) is used up, not left for the next call.
     fn unattended<R>(&self, f: impl FnOnce() -> R) -> R {
         let u = &self.unattended;
-        let deadline = (u.start.elapsed() + u.limit).as_millis() as u64;
-        u.deadline.store(deadline.max(1), Ordering::SeqCst);
+        // While a task holds the user's input, the user waits for what
+        // runs (and has <C-c>): no limit. Which task's code runs is not
+        // known, so none has one.
+        let deadline =
+            if self.waits.borrow().is_empty() { (u.start.elapsed() + u.limit).as_millis() as u64 } else { 0 };
+        u.deadline.store(deadline, Ordering::SeqCst);
         let r = f();
         u.deadline.store(0, Ordering::SeqCst);
         if self.tokens.borrow().is_empty()
@@ -1379,6 +1421,7 @@ impl State {
             if let Token::Task(t) = token
                 && self.running_tasks.borrow_mut().remove(&t)
             {
+                self.waits.borrow_mut().remove(&t);
                 // An eval's error goes to whoever ran it.
                 let eval = self.evals.borrow_mut().remove(&t);
                 let result = match eval {
@@ -1398,6 +1441,11 @@ impl State {
     /// (and now is), rather than used up already (its flag stopped code
     /// nobody waited for).
     fn take_interrupt_message(&self) -> bool {
+        // The session gave up the tasks holding its input (and their
+        // tokens) when it sent it, whatever runs.
+        if !self.waits.borrow().is_empty() {
+            self.abort_waits.set(true);
+        }
         let n = self.interrupts_read.get() + 1;
         self.interrupts_read.set(n);
         if n <= self.interrupts_used.get() {

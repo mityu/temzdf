@@ -1322,3 +1322,63 @@ fn eval_steps_share_their_declarations_print_to_the_caller_and_stop_at_a_failure
     let (_, r) = eval_code(&mut s, 7, &["undefined"], true);
     assert_eq!(r.result, Ok(Some("undefined".into())));
 }
+
+/// What the host says about task 1 until it is done, with its commands.
+fn wait_story(s: &mut Session) -> Vec<String> {
+    let mut seen = Vec::new();
+    loop {
+        let mut log = Vec::new();
+        let msg = s.serve(&mut log);
+        seen.extend(log);
+        match msg {
+            FromHost::Ready(r) => assert!(r.is_ok(), "{r:?}"),
+            FromHost::TaskStart(t) => seen.push(format!("start{t}")),
+            FromHost::Waiting(t) => seen.push(format!("waiting{t}")),
+            FromHost::TaskDone { task, result } => {
+                seen.push(format!("done{task} failed={}", result.is_err()));
+                return seen;
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn an_interrupt_aborts_the_signal_of_the_task_the_input_waits_for() {
+    let config = r#"import { waitResolved } from "temzdf";
+waitResolved(async (ctx) => {
+  await new Promise((r) => ctx.signal.addEventListener("abort", () => r()));
+  try { ctx.action.message(`aborted ${ctx.signal.aborted}`); } catch {}
+});
+"#;
+    let mut s = Session::start(&[("config.js", config)]);
+    s.load("config.js");
+    let mut seen = Vec::new();
+    while !seen.iter().any(|e| e == "waiting1") {
+        match s.serve(&mut Vec::new()) {
+            FromHost::Ready(r) => assert!(r.is_ok(), "{r:?}"),
+            FromHost::TaskStart(t) => seen.push(format!("start{t}")),
+            FromHost::Waiting(t) => seen.push(format!("waiting{t}")),
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(seen, ["start1", "waiting1"], "it says so as it starts");
+    // Nothing runs: the session's <C-c> still reaches the task.
+    s.send(ToHost::Interrupt);
+    assert_eq!(wait_story(&mut s), ["task1 message(aborted true)", "done1 failed=false"]);
+}
+
+#[test]
+fn code_the_input_waits_for_has_no_time_limit() {
+    let config = r#"import { waitResolved } from "temzdf";
+waitResolved(async (ctx) => {
+  await new Promise((r) => setTimeout(r, 10));
+  const t = Date.now();
+  while (Date.now() - t < 400) {}
+  ctx.action.message("ran on");
+});
+"#;
+    let mut s = Session::start_with_limit(&[("config.js", config)], Duration::from_millis(150));
+    s.load("config.js");
+    assert_eq!(wait_story(&mut s), ["start1", "waiting1", "task1 message(ran on)", "done1 failed=false"]);
+}

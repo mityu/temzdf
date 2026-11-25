@@ -16,6 +16,7 @@ export const {
   feedkeys,
   currentMode,
   dispatch,
+  waitResolved,
   atomic,
   schedule,
   openPrompt,

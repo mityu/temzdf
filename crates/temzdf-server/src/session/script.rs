@@ -114,6 +114,14 @@ pub struct Bridge {
     next_call: CallId,
     tasks: HashSet<TaskId>,
     atomic: Option<Token>,
+    /// `waitResolved`'s tasks: the user's input is held until they are
+    /// done, though nothing runs (they await); since when.
+    pub(super) waiting: HashSet<TaskId>,
+    wait_since: Option<Instant>,
+    wait_notice_shown: bool,
+    /// Tasks given up with `<C-c>` while they held the input: how they end
+    /// is not reported.
+    given_up: HashSet<TaskId>,
     hooks: HashMap<String, Vec<Hook>>,
     held: VecDeque<Held>,
     /// Events that happened while a script ran, for after it.
@@ -180,6 +188,7 @@ impl Bridge {
     /// itself, waiting).
     pub(super) fn quiet_but(&self, task: Option<TaskId>) -> bool {
         !self.busy()
+            && self.waiting.is_empty()
             && self.held.is_empty()
             && self.deferred_events.is_empty()
             && self.scheduled.is_empty()
@@ -337,6 +346,9 @@ impl Session {
         self.script.loading = None;
         self.script.tasks.clear();
         self.script.atomic = None;
+        self.script.waiting.clear();
+        self.script.wait_since = None;
+        self.script.given_up.clear();
         // Nothing runs any more (a host started next starts its own clock).
         self.script.busy_since = None;
         // Their Promises went with the host.
@@ -370,10 +382,11 @@ impl Session {
         self.script.exit_reason.as_deref()
     }
 
-    /// Input is held: the host runs something (frames wait too), or a
-    /// paste asked of the client has not been answered.
+    /// Input is held: the host runs something (frames wait too), a task
+    /// is waited for (`waitResolved`), or a paste asked of the client has
+    /// not been answered.
     pub fn holds_input(&self) -> bool {
-        self.script.busy() || self.awaits_paste()
+        self.script.busy() || !self.script.waiting.is_empty() || self.awaits_paste()
     }
 
     /// Frames wait while a script runs, for up to [`FRAME_HOLD`].
@@ -388,7 +401,27 @@ impl Session {
         if !self.holds_input() {
             return false;
         }
-        if is_interrupt(k) && !self.script.busy() {
+        if is_interrupt(k) && !self.script.waiting.is_empty() {
+            // Tasks the input waits for: given up (their tokens too), as
+            // what runs, if anything, and the typeahead.
+            self.matcher.cancel();
+            self.script.held.clear();
+            for t in std::mem::take(&mut self.script.waiting) {
+                self.script.tasks.remove(&t);
+                self.script.given_up.insert(t);
+            }
+            self.script.wait_since = None;
+            self.script.send(&ToHost::Interrupt);
+            if let Some(Token::Task(t)) = self.script.atomic
+                && self.script.given_up.contains(&t)
+            {
+                self.script.atomic = None;
+            }
+            self.message("Interrupted");
+            if !self.script.busy() {
+                let _ = self.after_scripts();
+            }
+        } else if is_interrupt(k) && !self.script.busy() {
             // Waiting for a paste only: it is given up, with the typeahead.
             self.cancel_pastes();
             self.matcher.cancel();
@@ -884,8 +917,22 @@ impl Session {
                 self.script.tasks.insert(t);
                 Outcome::None
             }
+            FromHost::Waiting(t) => {
+                if self.script.tasks.contains(&t) && self.script.waiting.insert(t) {
+                    self.script.wait_since.get_or_insert_with(Instant::now);
+                    self.script.wait_notice_shown = false;
+                }
+                Outcome::None
+            }
             FromHost::TaskDone { task, result } => {
                 self.script.tasks.remove(&task);
+                if self.script.given_up.remove(&task) {
+                    return Outcome::None;
+                }
+                let waited = self.script.waiting.remove(&task);
+                if self.script.waiting.is_empty() {
+                    self.script.wait_since = None;
+                }
                 // A task that ended holds no atomic section any more.
                 let released = self.script.atomic == Some(Token::Task(task));
                 if released {
@@ -896,7 +943,7 @@ impl Session {
                     self.script_error(&e);
                     out = Outcome::Redraw;
                 }
-                if released { out.merge(self.pump()) } else { out }
+                if released || waited { out.merge(self.pump()) } else { out }
             }
             FromHost::AtomicBegin(token) => {
                 if self.script.token_valid(token) && self.script.atomic.is_none() {
@@ -1011,6 +1058,11 @@ impl Session {
             self.notify(super::notices::Kind::Info, "Script is running.  Type <C-c> to interrupt.");
             return Outcome::Redraw;
         }
+        if !self.script.wait_notice_shown && self.script.wait_since.is_some_and(|t| now >= t + BUSY_NOTICE) {
+            self.script.wait_notice_shown = true;
+            self.notify(super::notices::Kind::Info, "Waiting for a script.  Type <C-c> to interrupt.");
+            return Outcome::Redraw;
+        }
         Outcome::None
     }
 
@@ -1018,7 +1070,8 @@ impl Session {
         let notice = (self.script.busy() && !self.script.notice_shown)
             .then(|| self.script.busy_since.map(|t| t + BUSY_NOTICE))
             .flatten();
-        [self.script.loading, notice].into_iter().flatten().min()
+        let wait = (!self.script.wait_notice_shown).then(|| self.script.wait_since.map(|t| t + BUSY_NOTICE)).flatten();
+        [self.script.loading, notice, wait].into_iter().flatten().min()
     }
 
     /// A request from the host: do it, run the hooks it caused, answer.
@@ -1334,6 +1387,39 @@ mod tests {
         s.script.tasks.insert(2);
         s.script.atomic = Some(Token::Task(2));
         let _ = s.handle_script(FromHost::TaskDone { task: 2, result: Err(ScriptError::new("interrupted")) });
+        assert!(!s.holds_input());
+    }
+
+    #[test]
+    fn a_waited_for_task_holds_input_but_not_frames_and_says_so_later() {
+        let sink: super::super::EventSink = std::sync::Arc::new(|_| true);
+        let settings = super::super::Settings { serve_forward: false, script: None };
+        let geometry = termpix_core::geom::Geometry {
+            cols: 80,
+            rows: 24,
+            cell: termpix_core::geom::CellSize { width: 10, height: 20 },
+        };
+        let mut s = Session::new("t".into(), geometry, Default::default(), settings, sink);
+        // Only a task the session knows waits.
+        let _ = s.handle_script(FromHost::Waiting(1));
+        assert!(!s.holds_input());
+        s.script.tasks.insert(1);
+        let _ = s.handle_script(FromHost::Waiting(1));
+        assert!(s.holds_input() && !s.holds_frames(), "keys wait, frames do not");
+        // The notice comes as for a running script.
+        let started = s.script.wait_since.unwrap();
+        assert_eq!(s.script_deadline(), Some(started + BUSY_NOTICE));
+        let notices = s.notices.len();
+        assert_eq!(s.poll(started + BUSY_NOTICE), Outcome::Redraw);
+        assert_eq!(s.notices.len(), notices + 1, "the notice says how to interrupt");
+        assert_eq!(s.script_deadline(), None, "once");
+        // Its end lets the input go.
+        let _ = s.handle_script(FromHost::TaskDone { task: 1, result: Ok(()) });
+        assert!(!s.holds_input() && s.script.wait_since.is_none());
+        // A host that goes leaves none waiting.
+        s.script.tasks.insert(2);
+        let _ = s.handle_script(FromHost::Waiting(2));
+        let _ = s.drop_host();
         assert!(!s.holds_input());
     }
 
