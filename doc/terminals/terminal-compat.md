@@ -59,6 +59,17 @@ Known problems:
   terminal forwards pixel deltas or pinch gestures to applications.
 - kitty: with mouse tracking on, trackpad deltas are accumulated and emitted as
   one button event per step. Ghostty and Konsole behave similarly.
+- kitty (0.51, `kitty/mouse.c` `scroll_event_in_window`) and Ghostty
+  (`src/Surface.zig` `scrollCallback`) cut trackpad motion into vertical
+  steps of a cell's height but horizontal steps of a cell's width, so the
+  same finger travel sends about twice as many horizontal steps. Panes
+  moving a fixed amount per step (the PDF pane) scroll faster sideways and
+  diagonally there; a tilt wheel's notch is one step in both, so the
+  application cannot tell them apart and leaves it (read from the sources,
+  2026-11-26).
+- WezTerm sends one axis per event: the larger one on macOS (the smaller
+  one's whole steps are dropped); no horizontal wheel at all on X11
+  (buttons 6/7 are not implemented). Read from the sources, 2026-11-26.
 - Shift+click bypasses application mouse reporting in most terminals.
 - A resize comes twice where in-band resize (2048) is on: SIGWINCH (the
   kernel's `winsize`) and the 2048 report, in no fixed order. Their pixel
