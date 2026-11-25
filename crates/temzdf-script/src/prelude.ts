@@ -444,7 +444,8 @@ const temzdf: Temzdf = {
       .then(() => fn(waitCtx))
       .then(
         () => host.taskDone(task, "null"),
-        (e) => host.taskDone(task, errorJson(e)),
+        // Given up with <C-c>: the session said so already.
+        (e) => host.taskDone(task, controller.signal.aborted && e === controller.signal.reason ? "null" : errorJson(e)),
       );
   },
   // Prompts: a text buffer (nofile, unlisted) in a pane below, its base

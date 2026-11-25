@@ -1382,3 +1382,34 @@ waitResolved(async (ctx) => {
     s.load("config.js");
     assert_eq!(wait_story(&mut s), ["start1", "waiting1", "task1 message(ran on)", "done1 failed=false"]);
 }
+
+#[test]
+fn the_time_limit_comes_back_once_nothing_is_waited_for() {
+    // (In an atomic section: one the limit stops still reports its end.)
+    let config = r#"import { dispatch, waitResolved } from "temzdf";
+waitResolved(async (ctx) => { ctx.action.message("waited"); });
+dispatch(async (ctx) => {
+  await new Promise((r) => setTimeout(r, 50));
+  ctx.atomic(() => {
+    const t = Date.now();
+    while (Date.now() - t < 2000) {}
+  });
+  ctx.action.message("ran on");
+});
+"#;
+    let mut s = Session::start_with_limit(&[("config.js", config)], Duration::from_millis(150));
+    s.load("config.js");
+    let mut seen = Vec::new();
+    while !seen.iter().any(|e: &String| e.starts_with("done2")) {
+        let mut log = Vec::new();
+        let msg = s.serve(&mut log);
+        seen.extend(log);
+        match msg {
+            FromHost::Ready(r) => assert!(r.is_ok(), "{r:?}"),
+            FromHost::TaskStart(_) | FromHost::Waiting(_) | FromHost::AtomicBegin(_) | FromHost::AtomicEnd(_) => {}
+            FromHost::TaskDone { task, result } => seen.push(format!("done{task} failed={}", result.is_err())),
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(seen, ["task1 message(waited)", "done1 failed=false", "done2 failed=true"], "the runaway is stopped");
+}

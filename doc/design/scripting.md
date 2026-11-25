@@ -253,7 +253,8 @@ Decided (the whole model was settled with the user on 2026-10-26):
 - **Only synchronous functions** may be mapped or used as hooks; one that
   returns a Promise is an error. Above all an `await` cannot be interrupted
   with `<C-c>` (nothing is executing). A library with an asynchronous API is
-  used from `dispatch`, without holding input. Allowing asynchronous
+  used from `dispatch`, without holding input, or from `waitResolved`,
+  holding it, whose `<C-c>` aborts a signal instead. Allowing asynchronous
   functions later is sketched, with its pitfalls, in "Future: asynchronous
   mapped and hook functions".
 - **`<C-c>` interrupts** a running mapped or hook function, as in Vim. While
@@ -263,8 +264,8 @@ Decided (the whole model was settled with the user on 2026-10-26):
   reads control messages and sets the flag rquickjs' interrupt handler checks;
   if the function is blocked in a command, the server answers that command
   with an "interrupted" error. Effects of commands already run stay, as in
-  Vim. Dispatched tasks are not interrupted (they hold no input); listing and
-  cancelling them can come later. The key is **fixed to `<C-c>`, and
+  Vim. Dispatched tasks are not interrupted (they hold no input), but for
+  `waitResolved`'s, which do; listing and cancelling them can come later. The key is **fixed to `<C-c>`, and
   mappings starting with `<C-c>` are not allowed**, so it works whatever the
   configuration (decided 2026-10-26). `<C-c>` also cancels a pending key
   sequence and count, as in Vim's Normal mode (decided).

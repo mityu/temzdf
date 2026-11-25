@@ -3,7 +3,7 @@
 // each command on a thread of its own: no shell (`argv[0]` is the command,
 // found on PATH as `exepath` finds it), output of at most 64 MiB each,
 // killed when the configuration is loaded again or the session ends.
-// Await them in a dispatched task: a mapping waiting holds the keys typed.
+// Await them in a dispatched task, or in waitResolved's for keys to wait.
 
 /** Why a command could not run or was stopped, by class. A relative `cwd`
  * throws a `TypeError` instead, an aborted `signal` its reason. */

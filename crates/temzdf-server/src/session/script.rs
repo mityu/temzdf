@@ -6,7 +6,8 @@
 //! runs a mapped or hook function (or an `atomic` section, or loads the
 //! configuration), user input is held and replayed afterwards, and frames
 //! wait (for up to a second, then a notice says how to interrupt). Background
-//! work (documents, terminals) goes on.
+//! work (documents, terminals) goes on. A `waitResolved` task holds user
+//! input too until it is done, though nothing runs meanwhile (frames go on).
 //!
 //! The work is a stack of [`Frame`]s: waiting for a call to finish, hooks
 //! still to run, an operation deferred until its "before" hooks ran, a reply
@@ -161,6 +162,14 @@ impl Bridge {
         self.host.is_some()
     }
 
+    /// No task holds the input any more, nor is one given up: their host
+    /// went.
+    fn forget_waits(&mut self) {
+        self.waiting.clear();
+        self.wait_since = None;
+        self.given_up.clear();
+    }
+
     pub(super) fn busy(&self) -> bool {
         self.loading.is_some() || !self.frames.is_empty() || self.atomic.is_some()
     }
@@ -264,8 +273,10 @@ impl Session {
 
     /// Start the host and ask it to load the configuration.
     fn spawn_host(&mut self, s: &ScriptSettings) -> bool {
-        // The old host goes first (it may hold a lot of memory).
+        // The old host goes first (it may hold a lot of memory); what it
+        // waited for went with it (the new one numbers tasks from 1 again).
         self.script.host = None;
+        self.script.forget_waits();
         let events = self.events.clone();
         let generation = self.script.generation + 1;
         let started = ScriptHost::start(Options::default(), move |e| match e {
@@ -346,9 +357,7 @@ impl Session {
         self.script.loading = None;
         self.script.tasks.clear();
         self.script.atomic = None;
-        self.script.waiting.clear();
-        self.script.wait_since = None;
-        self.script.given_up.clear();
+        self.script.forget_waits();
         // Nothing runs any more (a host started next starts its own clock).
         self.script.busy_since = None;
         // Their Promises went with the host.
@@ -926,12 +935,12 @@ impl Session {
             }
             FromHost::TaskDone { task, result } => {
                 self.script.tasks.remove(&task);
-                if self.script.given_up.remove(&task) {
-                    return Outcome::None;
-                }
                 let waited = self.script.waiting.remove(&task);
                 if self.script.waiting.is_empty() {
                     self.script.wait_since = None;
+                }
+                if self.script.given_up.remove(&task) {
+                    return if waited { self.pump() } else { Outcome::None };
                 }
                 // A task that ended holds no atomic section any more.
                 let released = self.script.atomic == Some(Token::Task(task));
@@ -1041,6 +1050,7 @@ impl Session {
     pub(super) fn script_tick(&mut self, now: Instant) -> Outcome {
         if self.script.loading.is_some_and(|d| now >= d) {
             self.script.host = None;
+            self.script.forget_waits();
             self.script.startup_error =
                 Some(format!("the configuration did not finish loading within {} s", LOAD_TIMEOUT.as_secs()));
             eprintln!("temzdf: {}", self.script.startup_error.as_deref().unwrap_or_default());
@@ -1416,6 +1426,13 @@ mod tests {
         // Its end lets the input go.
         let _ = s.handle_script(FromHost::TaskDone { task: 1, result: Ok(()) });
         assert!(!s.holds_input() && s.script.wait_since.is_none());
+        // A task given up (its end not reported) that waits again under
+        // the same number still lets the input go when it ends.
+        s.script.given_up.insert(3);
+        s.script.tasks.insert(3);
+        let _ = s.handle_script(FromHost::Waiting(3));
+        let _ = s.handle_script(FromHost::TaskDone { task: 3, result: Ok(()) });
+        assert!(!s.holds_input());
         // A host that goes leaves none waiting.
         s.script.tasks.insert(2);
         let _ = s.handle_script(FromHost::Waiting(2));

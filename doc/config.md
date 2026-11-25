@@ -132,7 +132,7 @@ whether there is one (Vim's `exepath()` and `executable()`): PATH's
 directories in order, on Windows with PATHEXT's extensions. Each command
 runs on a thread of its own; those still running when the configuration is
 loaded again or the session ends are killed. Await them in a dispatched
-task: a mapping waiting holds the keys typed meanwhile.
+task, or in `waitResolved`'s (below) for keys to wait for them.
 
 ```ts
 import { dispatch } from "temzdf";

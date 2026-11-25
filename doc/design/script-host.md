@@ -353,7 +353,7 @@ declarations. In short, `import { ... } from "temzdf"`:
   to end the session while one has them. Every hook returns what it
   likes; only "before" hooks' answers are read.
 - `dispatch(async (ctx) => ...)` with `ctx.action` and `ctx.atomic(fn)`;
-  `atomic(fn)`.
+  `waitResolved(async (ctx) => ...)`, with `ctx.signal` too; `atomic(fn)`.
 - Globals: `setTimeout`, `clearTimeout`, `console`.
 
 Mapped functions get `{ pane, paneKind, floating, mode, keys, count }`
