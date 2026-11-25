@@ -306,6 +306,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn kind(r: FsResult) -> FsErrorKind {
         r.expect_err("an error").kind
     }
