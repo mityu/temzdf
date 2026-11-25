@@ -419,7 +419,8 @@ declare module "temzdf" {
     event: E,
     // biome-ignore lint/suspicious/noConfusingVoidType: a hook may return nothing.
     fn: (...args: Events[E]) => void | HookAnswer,
-    options?: { nested?: boolean },
+    /** `once`: taken off after it ran once; `signal`: taken off when it is aborted (as addEventListener's). */
+    options?: { nested?: boolean; once?: boolean; signal?: AbortSignal },
   ): () => void;
 
   /** What a dispatched task gets: commands under its own context. */

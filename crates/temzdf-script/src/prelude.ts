@@ -290,7 +290,11 @@ const modeProperties = options(
   },
 );
 const feedOptions = options({ remap: z._default(z.boolean(), true) });
-const hookOptions = options({ nested: z._default(z.boolean(), false) });
+const hookOptions = options({
+  nested: z._default(z.boolean(), false),
+  once: z._default(z.boolean(), false),
+  signal: z.optional(z.custom<AbortSignal>((v) => v instanceof AbortSignal, { error: "expected an AbortSignal" })),
+});
 const promptOptions = options({
   prompt: z._default(z.string(), ""),
   text: z._default(z.string(), ""),
@@ -310,7 +314,7 @@ type _Options = Assert<
   | Takes<typeof getFilter, { mode?: string; namespace?: string; lhs?: string }>
   | Takes<typeof modeProperties, ModeProperties>
   | Takes<typeof feedOptions, { remap?: boolean }>
-  | Takes<typeof hookOptions, { nested?: boolean }>
+  | Takes<typeof hookOptions, { nested?: boolean; once?: boolean; signal?: AbortSignal }>
   | Takes<typeof promptOptions, PromptOptions>
 >;
 
@@ -409,10 +413,47 @@ const temzdf: Temzdf = {
   on(event, fn, opts) {
     const what = `on(${String(event)})`;
     check(what, z.string(), event, "event");
-    const { nested } = parse(what, hookOptions, opts, "options");
-    const func = register(fn, what);
-    request(current(), "on", { event, func, nested });
-    return () => request(current(), "off", { event, func });
+    check(what, func(), fn);
+    const { nested, once, signal } = parse(what, hookOptions, opts, "options");
+    // As addEventListener: an aborted signal adds nothing.
+    if (signal?.aborted) return () => {};
+    // Gone: once ran, or signal aborted. Off as soon as commands work
+    // (a hook has a context; an abort may not): a gone hook that still
+    // runs (a second event queued in the same flush, an abort where no
+    // command worked) takes itself off and does nothing.
+    let gone = false;
+    let removed = false;
+    let id = -1;
+    const remove = () => {
+      if (removed) return;
+      request(current(), "off", { event, func: id });
+      removed = true;
+    };
+    const hook = (...args: unknown[]) => {
+      if (gone) {
+        remove();
+        return undefined;
+      }
+      if (once) {
+        gone = true;
+        remove();
+      }
+      return (fn as (...a: unknown[]) => unknown)(...args);
+    };
+    id = register(hook, what);
+    request(current(), "on", { event, func: id, nested });
+    // Aborted where commands work (a mapping): off at once; elsewhere (a
+    // timer, waitResolved's <C-c>) when the event next comes.
+    const onAbort = () => {
+      gone = true;
+      if (current() !== null) remove();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    return () => {
+      signal?.removeEventListener("abort", onAbort);
+      gone = true;
+      remove();
+    };
   },
   // Run `fn` at the safe point (after the invocation and its hooks), in
   // the order scheduled: what a hook does to change anything.

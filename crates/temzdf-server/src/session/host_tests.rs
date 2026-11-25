@@ -670,7 +670,8 @@ keymap.add("vim/normal", "<F6>", () => waitResolved(async (ctx) => {
 keymap.add("vim/normal", "<F7>", () => note(action, "typed"));
 keymap.add("vim/normal", "<F8>", () => note(action, "fed"));
 keymap.add("vim/normal", "<F9>", () => waitResolved(async (ctx) => {
-  await new Promise((r) => ctx.signal.addEventListener("abort", () => r(null)));
+  // (<C-c> may come before this runs.)
+  if (!ctx.signal.aborted) await new Promise((r) => ctx.signal.addEventListener("abort", () => r(null)));
   let refused = "no";
   try { ctx.action.message("after"); } catch { refused = "yes"; }
   dispatch((c) => note(c.action, `aborted refused=${refused}`));
@@ -716,4 +717,61 @@ fn ctrl_c_gives_up_the_task_the_input_waits_for_and_its_typeahead() {
     // The <F7> typed before <C-c> was dropped; its signal aborted, the
     // task's commands are refused.
     assert_eq!(pane_log(&mut s), ScriptValue::Str("aborted refused=yes typed".into()));
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the script host (WebAssembly)")]
+fn hooks_go_after_one_run_or_when_their_signal_is_aborted() {
+    let config = r#"import { action, keymap, on, waitResolved } from "temzdf";
+const n = { once: 0, signalled: 0, early: 0, waited: 0 };
+on("ModeChanged", () => { n.once++; }, { once: true });
+const c = new AbortController();
+on("ModeChanged", () => { n.signalled++; }, { signal: c.signal });
+const aborted = new AbortController();
+aborted.abort();
+on("ModeChanged", () => { n.early++; }, { signal: aborted.signal });
+// Two changes in one mapping: two events.
+keymap.add("vim/normal", "<F6>", () => { action.switchMode("normal"); action.switchMode("vim/normal"); });
+keymap.add("vim/normal", "<F7>", () => c.abort());
+keymap.add("vim/normal", "<F8>", () => waitResolved(async (ctx) => {
+  ctx.atomic(() => on("ModeChanged", () => { n.waited++; }, { signal: ctx.signal }));
+  ctx.action.switchMode("normal");
+  ctx.action.switchMode("vim/normal");
+  ctx.action.setVar("pane", "ready", true);
+  await new Promise((r) => ctx.signal.addEventListener("abort", () => r(null)));
+}));
+keymap.add("vim/normal", "<F5>", () => action.setVar("pane", "n", `${n.once} ${n.signalled} ${n.early} ${n.waited}`));
+"#;
+    let dir = TempDir::new("hook-options");
+    let (mut s, rx) = config_session(&dir.0, "x\n", Some(config)).unwrap();
+    let n = |s: &mut Session| {
+        let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("n".into())];
+        s.run_command("get-var", &args, Instant::now()).unwrap().0
+    };
+    // The first pane's mode at startup, then the two of <F6>.
+    type_keys(&mut s, &rx, "<F6><F5>", None).unwrap();
+    assert_eq!(n(&mut s), ScriptValue::Str("1 3 0 0".into()), "once ran once, of three");
+    press(&mut s, "<F8>");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let ready = |s: &mut Session| {
+        let args = [ScriptValue::Str("pane".into()), ScriptValue::Str("ready".into())];
+        s.run_command("get-var", &args, Instant::now()).unwrap().0 == ScriptValue::Bool(true)
+    };
+    while !ready(&mut s) || s.script.busy() {
+        assert!(Instant::now() < deadline, "the task never waited");
+        if let Ok(ev) = rx.recv_timeout(Duration::from_millis(20)) {
+            s.handle(ev, Instant::now());
+        }
+    }
+    // The task's signal is aborted where no command works (waitResolved's
+    // <C-c>); c's in a mapping.
+    press(&mut s, "<C-c>");
+    type_keys(&mut s, &rx, "<F7>", None).unwrap();
+    let before = s.script.hook_count("ModeChanged");
+    type_keys(&mut s, &rx, "<F6><F5>", None).unwrap();
+    // The task's two changes reached c's hook too, none came after.
+    assert_eq!(n(&mut s), ScriptValue::Str("1 5 0 2".into()), "none ran after its signal was aborted");
+    // The one aborted where no command worked (c's went at once) took
+    // itself off as the event came.
+    assert_eq!(s.script.hook_count("ModeChanged"), before - 1);
 }

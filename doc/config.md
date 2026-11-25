@@ -304,8 +304,13 @@ stops). `action.sendText(text)` writes straight to the terminal pane.
 A command that fails throws; uncaught, its message shows as it is
 (`write: ... changed on disk`), other errors as `script error: ...`.
 
-`on(event, fn)` returns a function that removes the hook; a `KeyTyped`
-hook holds every key until it ran, so hook it only while needed.
+`on(event, fn, { nested?, once?, signal? })` returns a function that
+removes the hook; a `KeyTyped` hook holds every key until it ran, so hook
+it only while needed. As `addEventListener`'s, `once` removes it after it
+ran once, and aborting `signal` removes it (an aborted one adds none):
+`on("ModeChanged", fn, { signal: ctx.signal })` in `waitResolved` hears
+the mode only while the input waits for the task (`fn` is not called
+after `<C-c>`).
 
 `SynctexInverse(pane, { file, line, column })` hears an inverse search: a
 Ctrl+click on a PDF page whose SyncTeX file says what source produced it
