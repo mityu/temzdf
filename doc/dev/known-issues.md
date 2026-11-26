@@ -164,9 +164,10 @@ planned work stays in `todo.md`.
 
 ## Tests and CI
 
-- **CI runs tests on Linux only.** macOS gets `nix build` but not
-  `scripts/check.sh`, so platform-specific code (socket path limits,
-  `SUN_PATH` 104, shm, the pty) is tested on macOS only by hand
+- **CI runs no tests on macOS.** Linux runs the gate, Windows runs it for
+  the crates that build there (`check-windows` in `.github/workflows/ci.yml`),
+  but macOS gets `nix build` only, so platform-specific code (socket path
+  limits, `SUN_PATH` 104, shm, the pty) is tested on macOS only by hand
   (`doc/terminals/macos.md`).
 - **`Term::settle` can stop early under load.** It returns after `quiet`
   passes with no output, which says nothing came in that time, not that the
