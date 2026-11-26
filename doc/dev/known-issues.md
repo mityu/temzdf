@@ -17,11 +17,6 @@ planned work stays in `todo.md`.
   in the wrong place. A fix transforms through the page's rotation and
   CropBox origin, as MuPDF's page transform does; it needs a fixture with
   such pages to test against.
-- **Copying a long selection leaves out pages not loaded (PV-6).** Selected
-  text comes from the pages' display lists; pages whose lists are not loaded
-  (far from the view, or evicted) are skipped, and the notice says how many
-  (`1ea3f0e`). A full fix loads those pages on the workers first and copies
-  once they arrive.
 
 ## Terminal panes
 
