@@ -338,8 +338,9 @@ stops a test still running after 15 minutes (`MIRI_TEST_TIMEOUT`, in
 seconds) and reports it as failed.
 
 What Miri found so far: the output writer thread of `termpix` lived on when
-every `Output` was dropped without `close` (fixed), and zlib-rs violates
-the aliasing rules (`doc/dev/known-issues.md`; those tests are ignored).
+every `Output` was dropped without `close` (fixed), and zlib-rs 0.6.8
+violated the aliasing rules when a compressor was dropped (fixed upstream
+in 0.6.9).
 
 ## Simulated terminal tests
 

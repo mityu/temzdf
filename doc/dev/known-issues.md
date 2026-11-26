@@ -126,16 +126,6 @@ planned work stays in `todo.md`.
 
 ## Dependencies
 
-- **zlib-rs fails Miri's aliasing checks.** Compressing through flate2's
-  `zlib-rs` backend (`termpix` transmissions; the tests of `temzdf-term`'s
-  PNG and zlib images, which compress their input) makes Miri report
-  undefined behaviour inside zlib-rs 0.6.8: dropping a compressor calls
-  `deflate::end`, which deallocates the stream state (`src/allocate.rs`)
-  while a `&mut` passed as a function argument still points into it, under
-  both Stacked and Tree Borrows. No miscompilation is known
-  to come of it, and 0.6.8 is the newest release flate2 accepts. Those
-  tests are ignored under Miri; check a newer zlib-rs when one comes, or
-  report it upstream.
 - **MuPDF mishandles an ActualText that ends with the start of its
   glyphs.** In `do_extract_within_actualtext` (`source/fitz/stext-device.c`,
   MuPDF 1.27.2 and master as of 2026-11-03), an ActualText that is all of

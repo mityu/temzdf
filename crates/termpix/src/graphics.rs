@@ -589,7 +589,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
     fn compressed_transmit_round_trips() {
         let mut enc = Encoder::new(Medium::Direct { compress: true });
         let mut out = Vec::new();
@@ -613,7 +612,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
     fn zlib_level_is_configurable() {
         let data = vec![255u8; 129 * 128 * 4];
         let px = Pixels { width: 129, height: 128, format: PixelFormat::Rgba, data: &data };

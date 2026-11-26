@@ -185,7 +185,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
+    #[cfg_attr(miri, ignore = "compressing 1 MiB takes Miri over 15 minutes")]
     fn inflating_stops_at_the_image_size() {
         use std::io::Write;
         let zlib = |raw: &[u8]| {
@@ -215,7 +215,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "zlib-rs fails Miri's aliasing checks (doc/dev/known-issues.md)")]
     fn pngs_decode_to_rgba() {
         let mut out = Vec::new();
         {
