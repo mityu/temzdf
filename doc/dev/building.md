@@ -33,6 +33,16 @@ dependencies are derivations of their own (`.#deps`, `.#guest`,
 now: Magic Nix Cache ran into the cache API's rate limit and made
 rust-cache's restores fail with it (`todo.md`).
 
+On Linux, `nix build .#windows` cross-builds `temzdf.exe` and
+`temzdf-gui.exe` for `x86_64-pc-windows-gnu` (`.#windows-deps`: its
+dependencies). It uses nixpkgs' MinGW-w64 with the UCRT
+(`pkgsCross.ucrt64`), as the MSYS2 build on Windows does, and links with
+lld as `.cargo/config.toml` says (with `-no-pie`: GCC's default `-pie`
+is no option of lld's MinGW driver). libghostty-vt-sys builds
+libghostty-vt for the target itself, from the source and Zig packages of
+`nix/libghostty-vt.nix` (`GHOSTTY_SOURCE_DIR`, `GHOSTTY_ZIG_SYSTEM_DIR`).
+The executables import only Windows' own DLLs, the UCRT included.
+
 ## CI
 
 CI (`.github/workflows/ci.yml`) runs `npm ci` and

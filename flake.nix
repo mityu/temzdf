@@ -479,12 +479,80 @@
                   };
                 }
               );
+
+              # Windows (x86_64-pc-windows-gnu), cross-built on Linux:
+              # `nix build .#windows` gives temzdf.exe and temzdf-gui.exe,
+              # which need no DLLs beyond Windows' own. MinGW-w64 with the
+              # UCRT, as MSYS2's UCRT64 on Windows (doc/survey/windows-port.md).
+              # The script host's guest is the same .wasm as above.
+              mingw = pkgs.pkgsCross.ucrt64;
+              windowsTarget = "x86_64-pc-windows-gnu";
+              craneLibWindows = (crane.mkLib pkgs).overrideToolchain (
+                pkgs.rust-bin.stable.latest.minimal.override {
+                  targets = wasmTargets ++ [ windowsTarget ];
+                }
+              );
+              windowsCommon = common // {
+                pname = "temzdf-windows";
+                cargoExtraArgs = "${packageArgs} --target ${windowsTarget}";
+                nativeBuildInputs = common.nativeBuildInputs ++ [
+                  # x86_64-w64-mingw32-gcc: the linker, and the C compiler of
+                  # mupdf-sys, texprintf, SyncTeX and the rest.
+                  mingw.stdenv.cc
+                  # .cargo/config.toml links with lld (the static libghostty-vt).
+                  pkgs.buildPackages.lld
+                  # libghostty-vt-sys builds libghostty-vt for the target.
+                  pkgs.buildPackages.zig_0_15
+                ];
+                # Nothing of the build machine's (fontconfig, the Linux
+                # libghostty-vt) for a Windows build.
+                buildInputs = [ ];
+                preBuild = common.preBuild + ''
+                  # bindgen (mupdf-sys) parses the headers for the target:
+                  # MinGW's headers on top of what bindgenHook passes.
+                  export BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_gnu="$BINDGEN_EXTRA_CLANG_ARGS -isystem ${mingw.windows.mingw_w64_headers}/include"
+                '';
+                env = common.env // {
+                  TEMZDF_SCRIPT_GUEST_WASM = "${guest}/temzdf_script_guest.wasm";
+                  # libghostty-vt from the Ghostty commit of nix/libghostty-vt.nix
+                  # (the one libghostty-vt-sys was generated from), with its Zig
+                  # packages from the store: libghostty-vt-sys runs
+                  # `zig build -Dtarget=x86_64-windows-gnu` without network.
+                  GHOSTTY_SOURCE_DIR = "${pkgs.libghostty-vt.src}";
+                  GHOSTTY_ZIG_SYSTEM_DIR = "${pkgs.libghostty-vt.deps}";
+                  # The cc crate would take stdenv's CC (the build machine's).
+                  CC_x86_64_pc_windows_gnu = "${mingw.stdenv.cc.targetPrefix}cc";
+                  CXX_x86_64_pc_windows_gnu = "${mingw.stdenv.cc.targetPrefix}c++";
+                  AR_x86_64_pc_windows_gnu = "${mingw.stdenv.cc.targetPrefix}ar";
+                  CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "${mingw.stdenv.cc.targetPrefix}cc";
+                  CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=lld -C link-arg=-no-pie -L native=${mingw.windows.pthreads}/lib";
+                };
+              };
+              windowsDeps = craneLibWindows.buildDepsOnly windowsCommon;
+              windows = craneLibWindows.buildPackage (
+                windowsCommon
+                // {
+                  cargoArtifacts = windowsDeps;
+                  # The build machine's strip and patchelf know no PE files.
+                  dontStrip = true;
+                  dontPatchELF = true;
+                  postInstall = ''
+                    for exe in $out/bin/*.exe; do
+                      ${mingw.stdenv.cc.targetPrefix}strip "$exe"
+                    done
+                  '';
+                }
+              );
             in
             {
               default = temzdf;
               # The parts, to build or inspect on their own.
               inherit deps guest;
               guest-deps = guestDeps;
+            }
+            // lib.optionalAttrs isLinux {
+              inherit windows;
+              windows-deps = windowsDeps;
             };
         };
     };
