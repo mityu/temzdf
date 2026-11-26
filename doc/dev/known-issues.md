@@ -104,6 +104,22 @@ planned work stays in `todo.md`.
   task, and the session lets a task's section go on `<C-c>` and on its
   `taskDone`. A task cut off outside `atomic` still stays in `script.tasks`
   until the host is dropped; nothing waits on it.
+- **The completion popup shows empty for a frame as it opens.** Found on
+  2026-11-26: on the first `<Tab>` in the command line the popup appears
+  for a frame with no candidates (its first line blank, `~` below), then
+  with them. `layout()` in `crates/temzdf-script/runtime/ff/completion/index.ts`
+  opens the float and `attach`es the list in the atomic section that
+  `begin()`'s `merged.onChange` dispatches, but the list writes its lines
+  in a task of its own (`#kick()` in `crates/temzdf-script/runtime/ff/list.ts`), and the
+  daemon may send a frame in between. A probe test caught one such frame,
+  about 10 ms before the lines came. The list cannot write first: text
+  actions act through a pane (`text_target` in
+  `crates/temzdf-server/src/session/text.rs`). Opening the popup again
+  after nothing matched probably does the same (inferred). A fix: a list
+  option (`lazy`, say) calling `open` in the atomic section that writes
+  the first lines, and again when lines come after the pane went, with
+  completion opening its popup through it; tested in a host test that
+  looks at every frame the daemon could send (`!holds_frames()`).
 
 ## GUI client
 
