@@ -19,7 +19,20 @@ Layers of verification, cheapest first. All of them run without a human.
 Scenarios live in `tests/e2e/` (`NAME.ts`, on the harness in
 `scripts/e2e/`, Node TypeScript run on `node:test`); each holds its command
 and starts with a comment saying what it judges and what the screenshots
-should show. To look at many screenshots at once:
+should show. The harness was bash with scenarios as bash "action files"
+until 2026-11-24 (its last commit: 6ff9abb). It moved to Node so that
+e2e can run on Windows without a Linux host (CI, a Windows machine):
+bash tied it to POSIX tools, while the scenarios needed no shell beyond
+what they type into the terminal. With the move, a scenario holds its
+command as data (an argument list, whether a shell follows it, the
+options) instead of a shell string the harness parsed back and that was
+written again in `e2e-all.sh` and the docs; and `scripts/e2e.sh` and
+`scripts/e2e-all.sh` stayed, as shims that enter the dev shell and run
+`scripts/e2e/main.ts` and `all.ts`, since about 50 files and many habits
+name them. Every judgement kept its result through the move on X11,
+Wayland and Windows (both harnesses judged alike,
+`scripts/e2e/compare.ts`); macOS is still to be checked (`todo.md`). To
+look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 
 ## Where to start

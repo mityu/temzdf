@@ -601,8 +601,8 @@ server on one `Session`). Next and open:
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
 - The e2e harness in TypeScript: done on 2026-11-24 (`scripts/e2e/`,
-  `tests/e2e/*.ts`; the survey and the decisions:
-  `doc/survey/e2e-harness-typescript.md`). Every judgement agreed with
+  `tests/e2e/*.ts`; why and what was decided: `doc/dev/testing.md`).
+  Every judgement agreed with
   the bash harness's, with the input sent, the commands and the keyed
   expected screens (`scripts/e2e/compare.ts`), on X11 and Wayland (three
   runs of each harness, 70 runs each) and Windows (`gui`, five and
