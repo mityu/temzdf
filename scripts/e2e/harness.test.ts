@@ -167,7 +167,11 @@ const hasCc = (() => {
   }
 })();
 
-test("temzdfAlive: finds a temzdf started as target/debug/temzdf", { skip: !hasCc }, async () => {
+// The harness runs on Linux and macOS only (a Windows guest is driven from
+// Linux), and the program below is POSIX (`pause`).
+const unixCc = hasCc && process.platform !== "win32";
+
+test("temzdfAlive: finds a temzdf started as target/debug/temzdf", { skip: !unixCc }, async () => {
   // A program named temzdf, started as the scenarios start it: on macOS 27
   // ps's comm is then "target/debug/tem" (argv[0] cut to 16 characters).
   const dir = tmp();
