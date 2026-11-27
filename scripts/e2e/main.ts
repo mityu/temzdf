@@ -37,8 +37,9 @@
 //             How it works and why: "Windows in a VM" in doc/dev/testing.md
 //   -m MUX    run COMMAND inside a multiplexer in that terminal (zellij: no
 //             pane frames, a single pane, its config and layout in
-//             OUTDIR/zellij; tmux: a private server with passthrough and
-//             mouse on, no status)
+//             OUTDIR/zellij, a session of a new name deleted at the end;
+//             tmux: a private server with passthrough and mouse on, no
+//             status)
 //   -P PATH   how temzdf's clients take frames' pixels from the session:
 //             shared (memory, the default) or socket (inside the messages);
 //             sets TEMZDF_PIXELS for COMMAND

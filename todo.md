@@ -627,8 +627,9 @@ server on one `Session`). Next and open:
   drags on the second row now, a pause after the press. Both failed
   alike on kitty's `viewer` zoom and on a few pixels of WezTerm's
   `.cells` in `edit`, `markdown` and `resize`. Left:
-  - Both harnesses leave zellij's server running after `-m zellij`
-    (removing the runtime directory does not end it): end it at cleanup.
+  - The bash harness (6ff9abb, run only to compare) leaves zellij's
+    server running after `-m zellij`; this one names the session and
+    deletes it at cleanup.
 - The VM lock (`scripts/lib/vm-lease.sh`, "Windows in a VM" in
   `doc/dev/testing.md`) stops only what goes through `scripts/windows-vm.sh`
   and `scripts/macos-vm.sh`: vitro, ssh, QMP or tart used directly pass,

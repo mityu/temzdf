@@ -216,8 +216,8 @@ export class Run {
     writeFileSync(this.path("command.txt"), `${this.argv.join("\n")}\n`);
     this.runtimeDir = makeRuntimeDir();
     const runtimeDir = this.runtimeDir;
-    // Removing it at the end ends any session left behind (servers end once
-    // their socket is gone).
+    // Removed at the end. A multiplexer's server outlives its socket, so
+    // each is ended by name first (see launch).
     this.procs.defer(() => rmSync(runtimeDir, { recursive: true, force: true }));
     this.env.XDG_RUNTIME_DIR = runtimeDir;
     for (const k of ["ZELLIJ", "ZELLIJ_SESSION_NAME", "ZELLIJ_PANE_ID", "TMUX", "TMUX_PANE"]) delete this.env[k];
@@ -335,8 +335,26 @@ export class Run {
           .join("")}\n`;
       layout += "    }\n}\n";
       writeFileSync(path.join(zdir, "layout.kdl"), layout);
-      argv = ["zellij", "--config", path.join(zdir, "config.kdl"), "--layout", path.join(zdir, "layout.kdl")];
+      // A session of a name no other has (EXITED ones included), deleted at
+      // cleanup: the shell left after COMMAND keeps the pane open, so the
+      // server would stay, and in the user's `zellij ls` as EXITED once it
+      // saved its layout (the cache is the user's).
+      const taken = await this.procs.exec("zellij", ["list-sessions", "--short"], { env: this.env });
+      const names = new Set(taken.stdout.split("\n"));
+      let i = 0;
+      while (names.has(`temzdf-e2e-${process.pid}-${i}`)) i++;
+      const session = `temzdf-e2e-${process.pid}-${i}`;
+      argv = [
+        "zellij",
+        "--config",
+        path.join(zdir, "config.kdl"),
+        "--session",
+        session,
+        "--new-session-with-layout",
+        path.join(zdir, "layout.kdl"),
+      ];
       muxStartup = 3;
+      this.procs.defer(() => this.procs.exec("zellij", ["delete-session", "--force", session], { env: this.env }));
     } else if (mux === "tmux") {
       // A private server, no status line, passthrough and mouse on.
       const tdir = this.path("tmux");
