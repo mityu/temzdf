@@ -432,7 +432,9 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => {
+            // Destroyed: another program destroyed the window without asking
+            // (`xdotool windowclose`), as good as closing it.
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
                 // Closing the window detaches; the session goes on.
                 self.send(ClientMsg::Detach);
                 self.end(format!("[detached from session {}]", self.name));

@@ -58,7 +58,7 @@ const judged = [
   "visual",
   "scroll_demo",
 ];
-const guiJudged = process.platform === "darwin" ? ["gui"] : ["gui", "gui-focus", "gui-ime"];
+const guiJudged = process.platform === "darwin" ? ["gui"] : ["gui", "gui-focus", "gui-ime", "gui-destroyed"];
 // Scenarios that need the CPU to themselves (smooth scrolling and tiles
 // arriving within their pauses): after the others, one at a time.
 const alone: string[] = [];

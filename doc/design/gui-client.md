@@ -16,7 +16,8 @@ NAME (started with FILE if it does not exist), a new session for FILE, the
 only session, or a new shell; new sessions without a NAME are named as
 `temzdf [FILE]` names them (alfa, bravo, ...). It starts servers with the
 `temzdf` next to it (else on `PATH`). With `--clean` a session it starts runs no
-configuration script, as `temzdf --clean`. Closing the window detaches. `--render-frame PNG
+configuration script, as `temzdf --clean`. Closing the window detaches, and so does another program destroying it
+(`xdotool windowclose`). `--render-frame PNG
 [--size WxH] [--scale S]` draws the session offscreen instead.
 
 - **Protocol and server** (G0): `MouseEventKind::ScrollBy` (amounts in

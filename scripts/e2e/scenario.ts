@@ -27,6 +27,9 @@ export interface ScenarioDef extends CommandSpec {
    * scenario takes about 25 s, scroll_demo may wait for a still screen six
    * times, 20 s at most each). */
   timeout?: number;
+  /** The terminal (or the GUI) is meant to end during the scenario: its
+   * being gone at the end is no crash. */
+  ends?: boolean;
 }
 
 export type Body = (t: TestContext, h: Helpers) => Promise<void>;
@@ -89,7 +92,7 @@ async function runScenario(t: TestContext, o: Options, def: ScenarioDef, body: B
     r.rec.phase("actions");
     await body(t, helpers(r));
     await drawReferences(r);
-    result.crashed = (await r.quit()).crashed;
+    result.crashed = (await r.quit()).crashed && !def.ends;
     await r.procs.cleanup();
     r.rec.phase("done");
     result.done = true;

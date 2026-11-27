@@ -75,8 +75,8 @@ through `crates/wlinput`, screenshots with grim).
 Every judged scenario in every terminal and the GUI, summed up:
 `scripts/e2e-all.sh -R -j 8` (about a minute and a half; `-d wayland` for
 sway; `-R` renders the comparisons with release builds, `-j` runs
-scenarios at once); the GUI's `gui-focus` and `gui-ime` (`-I`) included,
-not on macOS. On macOS, read `doc/terminals/macos.md` ("Checking GUI
+scenarios at once); the GUI's `gui-focus`, `gui-ime` (`-I`) and `gui-destroyed`
+included, not on macOS. On macOS, read `doc/terminals/macos.md` ("Checking GUI
 terminals on a Mac without a human"): the same scenarios run there,
 best in a VM (`scripts/macos-vm.sh e2e ARGS...`).
 
@@ -568,10 +568,12 @@ compares cell rows: the message, nothing below but the prompt, above it the
 screen from before): the screen came back and nothing of temzdf's is left,
 in Ghostty too, whose text cannot be read. (Images left on the alternate
 screen do not show after it, so they are not caught; leaving the alternate
-screen was, in every terminal.) The GUI's scenarios are `gui`, `gui-focus` and `gui-ime` (with `-I`; the last two
-not on macOS); `gui-focus` and `gui-ime` judge what the shell wrote with
+screen was, in every terminal.) The GUI's scenarios are `gui`, `gui-focus`, `gui-ime` (with `-I`) and
+`gui-destroyed` (all but `gui` not on macOS); `gui-focus` and `gui-ime` judge what the shell wrote with
 `check` (`focus.txt`, `ime.txt`, `pasted.txt`); `gui-ime`'s composing screen
-stays unjudged.
+stays unjudged. `gui-destroyed` checks that the GUI ends when another
+program destroys its window (`xdotool windowclose`; X11 only, SKIP
+elsewhere).
 
 What makes the runs quick, on every display:
 
