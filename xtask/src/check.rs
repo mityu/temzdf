@@ -53,7 +53,7 @@ const WINDOWS_CRATES: &[&str] = &[
     "wlinput",
 ];
 /// The crates the gate on Windows also covers but the "windows" step does
-/// not: they build C for the target (texprintf, mupdf-sys, wasmtime's
+/// not: they build C for the target (temzdf-server through libtexprintf, mupdf-sys, wasmtime's
 /// helpers, QuickJS, xtask's `ring`; libghostty-vt through pkg-config,
 /// which finds the Linux one), and the dev shell has no MinGW compiler.
 /// Windows itself checks them. Their tests that read the PDF fixtures
@@ -70,7 +70,6 @@ const WINDOWS_ONLY_CRATES: &[&str] = &[
     "temzdf-script-runner",
     "temzdf-server",
     "temzdf-term",
-    "texprintf",
     "tuitest",
     "xtask",
 ];

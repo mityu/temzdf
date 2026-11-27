@@ -235,7 +235,10 @@ server on one `Session`). Next and open:
     statically, and the C libraries use no C++; they start with only
     `System32` on `PATH`). Still to do: once the port has settled, build and test with UCRT64's Clang too, besides
     GCC (in CI or the VM): the order of evaluation differs between them
-    (libtexprintf's `AddChild`).
+    (libtexprintf's `AddChild`: GCC reads the child index before the
+    call that increments it, MSVC after, which corrupts the heap; the
+    `libtexprintf` crate keeps upstream's code unmodified, so this tree
+    no longer carries the fix it had, and MSVC is out).
   - First steps, no VM. Done: the `windows` step of the gate (clippy for
     `x86_64-pc-windows-gnu` over `WINDOWS_CRATES` in
     `xtask/src/check.rs`, also in the Linux CI job) and a
@@ -350,7 +353,7 @@ server on one `Session`). Next and open:
     (2026-11-23). Since then the gate on Windows also tests `temzdf`,
     `temzdf-pdfview`, `temzdf-script`, `temzdf-script-runner`,
     `temzdf-server`, `temzdf-term`,
-    `texprintf`, `tuitest` and `xtask` (`WINDOWS_ONLY_CRATES` in
+    `tuitest` and `xtask` (`WINDOWS_ONLY_CRATES` in
     `xtask/src/check.rs`: not cross-checked from Linux, as they build C
     for the target), with the tests that start programs in panes or on a
     pty, or read the TeX fixtures

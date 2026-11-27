@@ -13,7 +13,6 @@ members = [
     "crates/temzdf-paths",
     "crates/temzdf-markdown",
     "crates/temzdf-mdview",
-    "crates/texprintf",
     "crates/temzdf-script",
     "crates/temzdf-script-guest",
     "crates/temzdf-script-runner",
@@ -49,7 +48,9 @@ temzdf-watchfs = { path = "crates/temzdf-watchfs" }
 temzdf-paths = { path = "crates/temzdf-paths" }
 temzdf-markdown = { path = "crates/temzdf-markdown" }
 temzdf-mdview = { path = "crates/temzdf-mdview" }
-texprintf = { path = "crates/texprintf" }
+# GPL-3.0-or-later (libtexprintf, unmodified, built with cc); it links into the AGPL-3.0 binary.
+# Not on crates.io: pinned by commit.
+libtexprintf = { git = "https://github.com/temzdf/libtexprintf-rs", rev = "301f5069aa72b1f1b0542d407f9736e49f1a833c" }
 temzdf-script = { path = "crates/temzdf-script", default-features = false }
 temzdf-script-runner = { path = "crates/temzdf-script-runner" }
 temzdf-tty = { path = "crates/temzdf-tty" }

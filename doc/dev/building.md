@@ -16,9 +16,10 @@ source), esbuild (on Windows `crates/temzdf-script/build.rs` finds its
 executable behind npm's `esbuild.cmd`) and npm, libclang, fontconfig and pkg-config (on Ubuntu:
 `libclang-dev libfontconfig-dev pkg-config`), and the shipped scripts' npm
 packages, which `scripts/deps-without-nix.sh PREFIX` installs (it prints
-the environment variables to set, none at the moment). libtexprintf is
-vendored and built by `cc` (`crates/texprintf/vendor/libtexprintf/README.md`);
-it needs a C compiler only.
+the environment variables to set, none at the moment). libtexprintf comes
+with the `libtexprintf` crate (https://github.com/temzdf/libtexprintf-rs,
+a git dependency: Cargo fetches it) and is built by `cc`; it needs a C
+compiler only.
 
 `cargo xtask update-fonts --check` shows newer releases,
 `cargo xtask update-fonts` rewrites the list (then run the tests and

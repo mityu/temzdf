@@ -15,7 +15,7 @@ place of a Markdown preview on a webview: `doc/survey/markdown-viewer.md`,
     clipboard) work as in any text pane; what is copied is the drawn
     text. Images (and math as images) where the kitty graphics protocol
     is there, their alt text elsewhere. Math as Unicode text by
-    libtexprintf (`crates/texprintf`, utftex's library).
+    libtexprintf (the `libtexprintf` crate, utftex's library).
   - **graphics mode**: drawn in pixels like a PDF page, with Blitz
     (`doc/survey/markdown-viewer.md`, "Blitz spike"); math as SVG by
     RaTeX. MathML comes later (Blitz lays out next to none of it).
@@ -47,16 +47,17 @@ switches. Headings get GitHub's anchors (lower case, spaces as `-`,
 punctuation dropped, `-1`, `-2` for repeats). Footnotes are numbered as
 first referred to and go at the end.
 
-## Math as text (`crates/texprintf`)
+## Math as text (`libtexprintf`)
 
+The `libtexprintf` crate (https://github.com/temzdf/libtexprintf-rs, a
+git dependency pinned by commit in `Cargo.toml`) wraps libtexprintf.
 libtexprintf keeps its settings and error state in globals: calls go
 one at a time through a lock, and its settings are never changed
 (out-of-range character widths make it `exit(1)`). Its parser recurses
 and slows down badly with nesting (10000 nested `\frac` take over 20 s),
 so formulas longer than 4096 bytes or nested deeper than 64 groups are
-shown as their source instead. It is vendored in
-`crates/texprintf/vendor/libtexprintf/` and built statically with `cc` (GPL-3.0, which the repository's AGPL-3.0 can
-combine with); none of its global symbols clash with the other C
+shown as their source instead. The crate vendors it unmodified and builds it statically with `cc`
+(GPL-3.0-or-later, which the repository's AGPL-3.0 can combine with); none of its global symbols clash with the other C
 libraries linked statically (MuPDF, SyncTeX, QuickJS, zlib), and a clash
 would fail the link rather than go unnoticed.
 

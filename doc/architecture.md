@@ -30,11 +30,10 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
 | `temzdf-texteditor` | `temzdf-scene` (and `ropey`) |
 | `temzdf-markdown` | `temzdf-texteditor` (and `comrak`, `syntect`) |
 | `temzdf-mdview` | `temzdf-scene`, `termpix-core`, `termpix-ui` (and Blitz, RaTeX) |
-| `texprintf` | - (libtexprintf, C) |
 | `temzdf-script` | `temzdf-protocol` (and `rquickjs`, `swc_ts_fast_strip`) |
 | `temzdf-script-guest` | `temzdf-script`, `temzdf-protocol` (on `wasm32-wasip1` only) |
 | `temzdf-script-runner` | `temzdf-protocol`, `temzdf-script` (and wasmtime; builds the guest) |
-| `temzdf-server` | `temzdf-paths`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-texteditor`, `temzdf-markdown`, `temzdf-mdview`, `temzdf-watchfs`, `texprintf`, `temzdf-script-runner`, `temzdf-scene`, `termpix-core`, `termpix-ui` |
+| `temzdf-server` | `temzdf-paths`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-pdfcore`, `temzdf-term`, `temzdf-texteditor`, `temzdf-markdown`, `temzdf-mdview`, `temzdf-watchfs`, `temzdf-script-runner`, `temzdf-scene`, `termpix-core`, `termpix-ui` (and `libtexprintf`) |
 | `temzdf-tty` | `temzdf-client`, `temzdf-scene`, `termpix` |
 | `temzdf` (bin) | `temzdf-server`, `temzdf-client`, `temzdf-protocol`, `temzdf-pdfview`, `temzdf-script`, `temzdf-tty`, `temzdf-scene`, `termpix` |
 | `temzdf-gui` (bin) | `temzdf-client`, `temzdf-protocol`, `temzdf-scene`, `termpix-core` (and winit, wgpu, glyphon) |
@@ -108,9 +107,11 @@ Each crate lives in `crates/NAME` (`crates/termpix-core`, `crates/termpix-ui`,
 - `temzdf-mdview`: the viewer's graphics mode: pages laid out and painted
   by Blitz in shared strips, panes scrolled, zoomed and searched over
   them, their status line; math by RaTeX. No terminal code.
-- `texprintf`: TeX math as Unicode text, wrapping libtexprintf (utftex's
-  library, C, vendored in `crates/texprintf/vendor/libtexprintf/` and
-  built with `cc`).
+- (not in this repository) `libtexprintf`: TeX math as Unicode text for
+  the Markdown viewer's text mode, wrapping libtexprintf (utftex's
+  library, C, vendored unmodified and built with `cc`), from
+  https://github.com/temzdf/libtexprintf-rs, a git dependency pinned by
+  commit (`Cargo.toml`; it is not on crates.io).
 - `temzdf-script`: the script host (QuickJS through `rquickjs`,
   TypeScript stripped with swc), see `doc/design/script-host.md`: it runs
   `config.ts`/`config.js` and talks to the session through a `Link` with

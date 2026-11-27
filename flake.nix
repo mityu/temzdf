@@ -497,7 +497,7 @@
                 cargoExtraArgs = "${packageArgs} --target ${windowsTarget}";
                 nativeBuildInputs = common.nativeBuildInputs ++ [
                   # x86_64-w64-mingw32-gcc: the linker, and the C compiler of
-                  # mupdf-sys, texprintf, SyncTeX and the rest.
+                  # mupdf-sys, libtexprintf, SyncTeX and the rest.
                   mingw.stdenv.cc
                   # .cargo/config.toml links with lld (the static libghostty-vt).
                   pkgs.buildPackages.lld

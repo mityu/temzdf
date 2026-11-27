@@ -2823,6 +2823,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "libtexprintf"
+version = "0.1.0+1.31"
+source = "git+https://github.com/temzdf/libtexprintf-rs?rev=301f5069aa72b1f1b0542d407f9736e49f1a833c#301f5069aa72b1f1b0542d407f9736e49f1a833c"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "libz-sys"
 version = "1.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5894,6 +5902,7 @@ dependencies = [
  "anyhow",
  "hostname",
  "image",
+ "libtexprintf",
  "png",
  "resvg",
  "serde",
@@ -5917,7 +5926,6 @@ dependencies = [
  "termpix",
  "termpix-core",
  "termpix-ui",
- "texprintf",
  "ureq",
 ]
 
@@ -6027,13 +6035,6 @@ dependencies = [
  "parley",
  "termpix-core",
  "vello_cpu",
-]
-
-[[package]]
-name = "texprintf"
-version = "0.1.0"
-dependencies = [
- "cc",
 ]
 
 [[package]]

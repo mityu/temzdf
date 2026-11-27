@@ -17,7 +17,7 @@ temzdf-texteditor.workspace = true
 temzdf-watchfs.workspace = true
 temzdf-markdown.workspace = true
 temzdf-mdview.workspace = true
-texprintf.workspace = true
+libtexprintf.workspace = true
 # Images in text panes (loadImage, the Markdown viewer).
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # The Markdown viewer's remote images (markdown.loadRemoteImages).

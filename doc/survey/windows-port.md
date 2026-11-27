@@ -226,8 +226,9 @@ retiring. What led to it:
   and `cl`'s `/D` cannot define a macro with parameters (a header forced
   in with `/FI` worked). libtexprintf's `AddChild` wrote one element
   past its array (`STATUS_HEAP_CORRUPTION`), MSVC reading the index
-  after the call (fixed in the vendored copy,
-  `crates/texprintf/vendor/libtexprintf/README.md`).
+  after the call (fixed then in the vendored copy in `crates/texprintf`;
+  that crate is gone, and the `libtexprintf` crate that replaced it keeps
+  upstream's code unmodified).
 - With UCRT64's GCC 16.2 and Clang 23.1 both libraries built unmodified
   and their tests passed (`temzdf-pdfcore` after a Rust-side fix in
   `synctex.rs`, `OsStrExt` being Unix-only).

@@ -119,7 +119,7 @@ pub(super) struct MdRender {
 
 /// Math as text for the text mode (libtexprintf).
 fn math(tex: &str) -> Option<Vec<String>> {
-    texprintf::render(tex)
+    libtexprintf::render(tex)
 }
 
 fn is_markdown(path: &Path) -> bool {
