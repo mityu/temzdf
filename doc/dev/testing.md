@@ -13,7 +13,7 @@ Layers of verification, cheapest first. All of them run without a human.
 | Real terminal | `scripts/e2e.sh [-t kitty\|ghostty\|wezterm] [-d x11\|wayland\|macos] [-m zellij\|tmux] SCENARIO [-- COMMAND]` | Terminal behaviour: probing, transports (shm, inline with `TERMPIX_MEDIUM=direct`), pixel mouse, actual placement semantics, terminal crashes (exit code 3). Screenshots land in `target/e2e/`. |
 | Judged e2e | `expect(NAME, KEYS?)` in a scenario (e.g. `tests/e2e/expect.ts`, `viewer.ts`) | The screen matches what `--render-frame` draws after the same input, keys or a replay of the keys and mouse input temzdf handled (exit code 4 otherwise): placements, crops, strip updates, stale images, terminal-side scaling and blending, wheel, drag, clicks, hover. Not PDF rendering itself (both sides use MuPDF). |
 | GUI client | `crates/temzdf-gui` unit tests and `--test gpu` (offscreen on lavapipe), `scripts/e2e.sh -t gui [-I]` with `tests/e2e/gui*.ts` | The draw list and key translation; layers and text drawn on a GPU; the window under xfwm4 against `temzdf-gui --render-frame` on the same session; Japanese input through fcitx5 and Mozc; the clipboard. |
-| Real terminal (macOS, by hand) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | Poking at a terminal step by step (`doc/terminals/macos.md`); `launch app` runs `temzdf-gui`, and `tests/macos/*.sh` are scripted scenarios. `scripts/e2e.sh` runs the scenarios on macOS too (not run since the move to TypeScript: `todo.md`). |
+| Real terminal (macOS, by hand) | `scripts/macos-gui.sh launch kitty\|ghostty\|wezterm -- COMMAND`, then `key`, `click`, `shot`, ... | Poking at a terminal step by step (`doc/terminals/macos.md`); `launch app` runs `temzdf-gui`, and `tests/macos/*.sh` are scripted scenarios. `scripts/e2e.sh` runs the scenarios on macOS too. |
 | User | Ghostty / WezTerm on a real desktop | The feel of scrolling and zooming. |
 
 Scenarios live in `tests/e2e/` (`NAME.ts`, on the harness in
@@ -30,8 +30,9 @@ written again in `e2e-all.sh` and the docs; and `scripts/e2e.sh` and
 `scripts/e2e-all.sh` stayed, as shims that enter the dev shell and run
 `scripts/e2e/main.ts` and `all.ts`, since about 50 files and many habits
 name them. Every judgement kept its result through the move on X11,
-Wayland and Windows (both harnesses judged alike,
-`scripts/e2e/compare.ts`); macOS is still to be checked (`todo.md`). To
+Wayland, Windows and macOS (both harnesses judged alike,
+`scripts/e2e/compare.ts`; on macOS but for one judgement new since
+then, `todo.md`). To
 look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 
@@ -544,8 +545,7 @@ WezTerm on X11 failed `viewer`'s wheel and
 zoom once in a long run and passed the reruns (it delivers wheel steps
 unevenly).
 
-`-d macos` (the default on macOS; not run since the move to TypeScript:
-`todo.md`): a virtual display at scale 1 beside the
+`-d macos` (the default on macOS): a virtual display at scale 1 beside the
 real screen (`vdisp`), so screenshot pixels are the terminal's as on Xvfb;
 windows start through `open` and move there (the command waits until they
 did, so temzdf starts at scale 1); keys and the pointer through `termctl

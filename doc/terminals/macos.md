@@ -29,6 +29,15 @@ works.
   so `crates/temzdf-term/src/keys.rs` sets it to true.
 - Ptys: closing the last descriptor of a pty's slave side drops the output
   the master has not read yet (Linux keeps it), so tests keep one open.
+- `ps -o comm=` on macOS 27.2.1 (2026-11-27) prints argv[0] cut to 16
+  characters (`target/debug/tem` for `target/debug/temzdf`); `ucomm` is the
+  executable's name, padded with spaces. The e2e harness telling whether
+  temzdf ended (`temzdfAlive` in `scripts/e2e/host.ts`) and
+  `scripts/macos-gui.sh` choosing `--global` for WezTerm read `ucomm`. With
+  `comm`, every reference drawing (`.cells`) failed with "the shell did not
+  answer": the harness took temzdf as gone and typed the shell's commands
+  into it. The same harness passed in the VM's older macOS, so `comm`
+  probably changed with 27 (not checked).
 - Miri: `confstr` returns nothing and the user id differs from the owner of
   the files Miri creates; the tests relying on them are ignored under Miri on
   macOS.

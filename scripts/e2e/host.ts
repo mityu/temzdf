@@ -34,8 +34,15 @@ export async function temzdfAlive(outdir: string, procs: Procs): Promise<boolean
     return false;
   }
   // macOS: ps -E adds the environment to the command line.
-  const ps = await procs.exec("ps", ["-Eww", "-U", String(process.getuid?.()), "-o", "comm=,command="]);
-  return ps.stdout.split("\n").some((l) => /(^|\/)temzdf$/.test(l.trim().split(/\s+/)[0] ?? "") && l.includes(want));
+  const ps = await procs.exec("ps", ["-Eww", "-U", String(process.getuid?.()), "-o", "ucomm=,command="]);
+  return psHasTemzdf(ps.stdout, want);
+}
+
+/** Whether `ps -E -o ucomm=,command=` output has a temzdf with WANT in its
+ * environment. ucomm, not comm: macOS 27's comm is argv[0] cut to 16
+ * characters (`target/debug/tem`); ucomm is the executable's name. */
+export function psHasTemzdf(stdout: string, want: string): boolean {
+  return stdout.split("\n").some((l) => l.trim().split(/\s+/)[0] === "temzdf" && l.includes(want));
 }
 
 /** Variables the command must not inherit: a multiplexer or a temzdf

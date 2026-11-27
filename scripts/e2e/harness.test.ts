@@ -1,19 +1,20 @@
 // What the harness decides without a terminal: how a check's result
 // becomes PASS, FAIL or SKIP, ImageMagick's "differ" told from its
 // failures, waits ending on the run's signal or on a change of the screen,
-// and a key without a Vim notation recorded without one (as scripts/e2e.sh
-// did).
+// a key without a Vim notation recorded without one (as scripts/e2e.sh
+// did), and this run's temzdf found in ps's output on macOS.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { helpers } from "./helpers.ts";
+import { psHasTemzdf, temzdfAlive } from "./host.ts";
 import { mark, waitChange } from "./judge.ts";
 import { compareAE, gradient } from "./magick.ts";
-import { pause } from "./procs.ts";
+import { Procs, pause } from "./procs.ts";
 import { Records, type Verdict } from "./record.ts";
 import { Run, Skip } from "./run.ts";
 
@@ -141,6 +142,55 @@ test("waitChange: ends once the screen differs from the mark, else FAIL wait_cha
     await waitChange(fake, "still", 0.05);
     assert.deepEqual(seen, ["mark still", "changed still (timed out)", "FAIL wait_change"]);
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("psHasTemzdf: a temzdf by its executable's name and this run's state", () => {
+  const want = "XDG_STATE_HOME=/r/out/state";
+  // ps -E -o ucomm=,command= on macOS 27: ucomm padded, then the command
+  // line with the environment after it.
+  const ours = "temzdf           target/debug/temzdf standalone pdf a.pdf XDG_STATE_HOME=/r/out/state HOME=/h";
+  const other = "temzdf           target/debug/temzdf standalone pdf a.pdf XDG_STATE_HOME=/r/other/state";
+  const shell = "zsh              zsh -c target/debug/temzdf XDG_STATE_HOME=/r/out/state";
+  assert.equal(psHasTemzdf(`${shell}\n${ours}\n`, want), true);
+  assert.equal(psHasTemzdf(`${shell}\n${other}\n`, want), false);
+  assert.equal(psHasTemzdf("", want), false);
+});
+
+const hasCc = (() => {
+  try {
+    execFileSync("cc", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test("temzdfAlive: finds a temzdf started as target/debug/temzdf", { skip: !hasCc }, async () => {
+  // A program named temzdf, started as the scenarios start it: on macOS 27
+  // ps's comm is then "target/debug/tem" (argv[0] cut to 16 characters).
+  const dir = tmp();
+  const exe = path.join(dir, "temzdf");
+  writeFileSync(path.join(dir, "main.c"), "#include <unistd.h>\nint main(void) { pause(); return 0; }\n");
+  execFileSync("cc", ["-o", exe, path.join(dir, "main.c")]);
+  const outdir = path.join(dir, "out");
+  const child = spawn(exe, [], {
+    argv0: "target/debug/temzdf",
+    env: { ...process.env, XDG_STATE_HOME: `${outdir}/state` },
+    stdio: "ignore",
+  });
+  try {
+    const procs = new Procs(new AbortController().signal);
+    let found = false;
+    for (let i = 0; i < 40 && !found; i++) {
+      found = await temzdfAlive(outdir, procs);
+      if (!found) await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.equal(found, true);
+    assert.equal(await temzdfAlive(path.join(dir, "other"), procs), false);
+  } finally {
+    child.kill();
     rmSync(dir, { recursive: true, force: true });
   }
 });

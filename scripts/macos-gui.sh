@@ -203,7 +203,10 @@ case $cmd in
       exit
     fi
     global=()
-    [[ $(ps -o comm= -p "$pid") == *wezterm-gui ]] && global=(--global)
+    # ucomm, not comm: macOS 27's comm is argv[0] cut to 16 characters.
+    # ps pads the column with spaces.
+    name=$(ps -o ucomm= -p "$pid")
+    [[ ${name%% *} == wezterm-gui ]] && global=(--global)
     ctl "$cmd" "$pid" "${global[@]}" "$@"
     ;;
   click | drag | scroll)
