@@ -20,7 +20,7 @@
 //   -d DISP   display server: x11 (default; Xvfb, xdotool, import), wayland
 //             (headless sway; keys and pointer through crates/wlinput,
 //             $E2E_WLINPUT or built here; screenshots with grim), macos (the
-//             default there; not run since the move to TypeScript, todo.md):
+//             default there):
 //             the terminal or the GUI on a virtual display at scale 1 beside
 //             the real screen (in a VM, scripts/macos-vm.sh: on its own
 //             screen), keys and the pointer through `termctl serve`

@@ -31,8 +31,7 @@ written again in `e2e-all.sh` and the docs; and `scripts/e2e.sh` and
 `scripts/e2e/main.ts` and `all.ts`, since about 50 files and many habits
 name them. Every judgement kept its result through the move on X11,
 Wayland, Windows and macOS (both harnesses judged alike,
-`scripts/e2e/compare.ts`; on macOS but for one judgement new since
-then, `todo.md`). To
+`scripts/e2e/compare.ts`; macOS in `todo.md`). To
 look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 

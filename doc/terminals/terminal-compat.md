@@ -260,6 +260,9 @@ Known problems:
     cursor over images even where the program hides the cursor. With the
     pointer near the top it shows a split drag handle (three dots, about
     10x2 px) at the top middle of the terminal, over what the program drew.
+    It takes the mouse there too (Ghostty 1.3, 2026-11-27): a press, drag
+    and release at (451, 10) in a 900 px wide window never reach the
+    program, only the motion before them; at (451, 30) or (600, 10) they do.
   - Ghostty started in the background (`open -g`) without restoring windows
     (`window-save-state = never`) opens its first window only once
     activated; with the saved state it restores the user's windows too.

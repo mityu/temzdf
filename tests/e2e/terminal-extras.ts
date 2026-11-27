@@ -2,7 +2,7 @@
 // position.
 // Judged: expect for image, selected and scrolled. Expected:
 //   image.png     the right pane (C-b %): a red-to-blue gradient of 16x4 cells
-//                 below "select me please" and "a link" (a PNG sent as a file
+//                 below an empty line, "select me please" and "a link" (a PNG sent as a file
 //                 path, t=f)
 //   selected.png  "select" inverted (dragged)
 //   scrolled.png  the right pane scrolled back one wheel step: "[3/N]" at its
@@ -23,15 +23,21 @@ export default scenario(
     await keys("ctrl+b", "percent");
     await pause(1);
     await type(
-      String.raw`clear; printf 'select me please\n\033]8;;https://example.org\033\\a link\033]8;;\033\\\n'; printf '\033_Ga=T,f=100,t=f,c=16,r=4,q=2;%s\033\\' "$(printf %s ${outdir}/img.png | base64 -w0)"; echo` +
+      String.raw`clear; printf '\nselect me please\n\033]8;;https://example.org\033\\a link\033]8;;\033\\\n'; printf '\033_Ga=T,f=100,t=f,c=16,r=4,q=2;%s\033\\' "$(printf %s ${outdir}/img.png | base64 -w0)"; echo` +
         "\n",
     );
     await pause(1.5);
     await expect("image");
-    // Cells are 10x20 px: "select" is columns 45-50 of the first row.
-    await down(451, 10);
-    await move(480, 10);
-    await move(508, 10);
+    // "select" on the second row: y 25 is in it with cells 14 to 20 px
+    // tall (kitty's 14, Ghostty's 17 and WezTerm's 16 on macOS, 20 on
+    // X11). Not the first row: Ghostty (1.3) takes a press at the top
+    // middle for its handle that drags the split. A pause after the
+    // press: kitty reports a press followed at once by motion at the
+    // motion's position.
+    await down(451, 25);
+    await pause(0.1);
+    await move(480, 25);
+    await move(508, 25);
     await pause(0.3);
     await up();
     await pause(0.5);

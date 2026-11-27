@@ -619,16 +619,14 @@ server on one `Session`). Next and open:
   and accessibility permissions. The differences: `select`'s `panned`
   failed in the bash harness's scenario only (the "Copied" notice still
   shown; the scenario waits for it to go now), the synctex command line
-  (the scenario changed), and the one below. Both failed alike on
-  kitty's `viewer` zoom and on a few pixels of WezTerm's `.cells` in
-  `edit`, `markdown` and `resize`. Left:
-  - `terminal-extras`' `wait_change` (new since the move) fails in kitty
-    and Ghostty on macOS: the drag selects nothing, so no "Copied"
-    notice comes. `termctl serve` puts 4 ms between the press and the
-    drags (the bash harness's subshells made it 7-8 ms); with
-    `E2E_SETTLE_MS=10` (14 ms) it passes. temzdf records the same press
-    and drags either way; why a quick drag selects nothing in a
-    terminal pane (temzdf or the terminal) is not known yet.
+  (the scenario changed), and `terminal-extras`' `wait_change` (new
+  since the move), which caught a drag that selected nothing in kitty
+  and Ghostty: kitty took the press at the motion's position 4 ms later
+  (the bash harness's subshells had made it 7-8 ms), and Ghostty took
+  the press itself for its split handle at the top middle; the scenario
+  drags on the second row now, a pause after the press. Both failed
+  alike on kitty's `viewer` zoom and on a few pixels of WezTerm's
+  `.cells` in `edit`, `markdown` and `resize`. Left:
   - Both harnesses leave zellij's server running after `-m zellij`
     (removing the runtime directory does not end it): end it at cleanup.
 - The VM lock (`scripts/lib/vm-lease.sh`, "Windows in a VM" in
