@@ -146,8 +146,7 @@ export interface Helpers {
   readGeometry(): Geometry | undefined;
   /** Runs a program with arguments (no shell) in the harness's
    * environment; its output. Throws when it fails, which stops the
-   * scenario (as a failed command did in an action file), or fails the
-   * judgement inside `check`. */
+   * scenario, or fails the judgement inside `check`. */
   run(argv: string[], opts?: ExecOptions): Promise<string>;
   /** As `run`, but its exit status and output, whatever the status. */
   exec(argv: string[], opts?: ExecOptions): Promise<Result>;

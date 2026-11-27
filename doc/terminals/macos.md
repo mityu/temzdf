@@ -92,9 +92,7 @@ is fine for now.
 In short: on macOS `scripts/e2e.sh` (`-d macos`, the default there) runs
 the same scenarios and judgements in kitty, Ghostty, WezTerm and the
 GUI on a virtual display beside the real screen; it takes the front and
-the pointer for the run and needs the screen unlocked. Not run since the
-e2e harness moved to TypeScript (2026-11-24; macOS could not run e2e then):
-`todo.md` says how to check it against the bash harness's last commit.
+the pointer for the run and needs the screen unlocked.
 `scripts/macos-vm.sh e2e ARGS...` runs it in a macOS VM (Tart) instead,
 leaving the host alone (set up once: "Running in a VM" below); that is the
 way to run them on macOS. `scripts/e2e-all.sh` (in the VM:

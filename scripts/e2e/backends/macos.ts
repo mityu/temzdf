@@ -3,8 +3,7 @@
 // 1): the pointer and keys through `termctl serve` (started once the
 // terminal is up), kitty's keys through its remote control (it ignores key
 // events posted to its process), screenshots of the display, the clipboard
-// with pbcopy/pbpaste, windows through termctl. Not run since the move to
-// TypeScript (todo.md): a copy of scripts/e2e.sh's.
+// with pbcopy/pbpaste, windows through termctl.
 
 import { kittyKey } from "../keys.ts";
 import type { Lines } from "../lines.ts";

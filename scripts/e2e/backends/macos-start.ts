@@ -1,9 +1,9 @@
-// Starting a run on macOS (scripts/e2e.sh -d macos as it was): a virtual
+// Starting a run on macOS (scripts/e2e.sh -d macos): a virtual
 // display at scale 1 (screenshot pixels are points and match the
 // terminal's) with room above the window for the menu bar every display
 // shows and for title bars, the terminal started through `open` with the
 // run's environment, `termctl serve`, and macOS's window edges masked in
-// comparisons. Not run since the move to TypeScript (todo.md).
+// comparisons.
 
 import type { ChildProcess } from "node:child_process";
 import { chmodSync, closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";

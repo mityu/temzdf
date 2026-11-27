@@ -603,33 +603,9 @@ server on one `Session`). Next and open:
     workers, ahead of the pane, through the tile schedule PDF tiles use).
 - Showing PDF annotations.
 - Check crate names (`termpix`, `termpix-ui`, `temzdf`) for collisions before publishing.
-- The e2e harness in TypeScript: done on 2026-11-24 (`scripts/e2e/`,
-  `tests/e2e/*.ts`; why and what was decided: `doc/dev/testing.md`).
-  Every judgement agreed with
-  the bash harness's, with the input sent, the commands and the keyed
-  expected screens (`scripts/e2e/compare.ts`), on X11 and Wayland (three
-  runs of each harness, 70 runs each) and Windows (`gui`, five and
-  three runs). On macOS (2026-11-27, on a Mac's own screen, macOS
-  27.2.1: kitty, Ghostty, WezTerm and the GUI, two runs of each harness
-  against 6ff9abb, the bash harness's last commit) they agreed too, the
-  input sent alike, once both read `ucomm` to tell whether temzdf ended:
-  with `comm` every `.cells` failed in both ("ps -o comm=" in
-  `doc/terminals/macos.md`). Starting `termctl serve`, `vdisp` and the
-  GUI in a session of their own changed nothing for the screen recording
-  and accessibility permissions. The differences: `select`'s `panned`
-  failed in the bash harness's scenario only (the "Copied" notice still
-  shown; the scenario waits for it to go now), the synctex command line
-  (the scenario changed), and `terminal-extras`' `wait_change` (new
-  since the move), which caught a drag that selected nothing in kitty
-  and Ghostty: kitty took the press at the motion's position 4 ms later
-  (the bash harness's subshells had made it 7-8 ms), and Ghostty took
-  the press itself for its split handle at the top middle; the scenario
-  drags on the second row now, a pause after the press. Both failed
-  alike on kitty's `viewer` zoom and on a few pixels of WezTerm's
-  `.cells` in `edit`, `markdown` and `resize`. Left:
-  - The bash harness (6ff9abb, run only to compare) leaves zellij's
-    server running after `-m zellij`; this one names the session and
-    deletes it at cleanup.
+- e2e on macOS 27.2.1 (2026-11-27, on a Mac's own screen): besides
+  kitty's `viewer` zoom (`doc/dev/testing.md`), a few pixels of WezTerm's
+  `.cells` differ in `edit`, `markdown` and `resize`. Not looked into.
 - The VM lock (`scripts/lib/vm-lease.sh`, "Windows in a VM" in
   `doc/dev/testing.md`) stops only what goes through `scripts/windows-vm.sh`
   and `scripts/macos-vm.sh`: vitro, ssh, QMP or tart used directly pass,

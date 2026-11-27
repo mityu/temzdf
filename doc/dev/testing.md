@@ -19,19 +19,13 @@ Layers of verification, cheapest first. All of them run without a human.
 Scenarios live in `tests/e2e/` (`NAME.ts`, on the harness in
 `scripts/e2e/`, Node TypeScript run on `node:test`); each holds its command
 and starts with a comment saying what it judges and what the screenshots
-should show. The harness was bash with scenarios as bash "action files"
-until 2026-11-24 (its last commit: 6ff9abb). It moved to Node so that
-e2e can run on Windows without a Linux host (CI, a Windows machine):
-bash tied it to POSIX tools, while the scenarios needed no shell beyond
-what they type into the terminal. With the move, a scenario holds its
+should show. The harness is Node, not a shell script, so that e2e runs on
+Windows without a Linux host (CI, a Windows machine); a scenario holds its
 command as data (an argument list, whether a shell follows it, the
-options) instead of a shell string the harness parsed back and that was
-written again in `e2e-all.sh` and the docs; and `scripts/e2e.sh` and
-`scripts/e2e-all.sh` stayed, as shims that enter the dev shell and run
-`scripts/e2e/main.ts` and `all.ts`, since about 50 files and many habits
-name them. Every judgement kept its result through the move on X11,
-Wayland, Windows and macOS (both harnesses judged alike,
-`scripts/e2e/compare.ts`; macOS in `todo.md`). To
+options). `scripts/e2e.sh` and `scripts/e2e-all.sh` enter the dev shell
+and run `scripts/e2e/main.ts` and `all.ts`. `scripts/e2e/compare.ts`
+compares two sets of runs (two builds, say): the judgements, the input
+sent, the commands and the keyed expected screens. To
 look at many screenshots at once:
 `montage target/e2e/*.png -tile 2x -geometry 450x300+4+4 target/e2e/montage.png`.
 
@@ -83,8 +77,7 @@ Every judged scenario in every terminal and the GUI, summed up:
 sway; `-R` renders the comparisons with release builds, `-j` runs
 scenarios at once); the GUI's `gui-focus` and `gui-ime` (`-I`) included,
 not on macOS. On macOS, read `doc/terminals/macos.md` ("Checking GUI
-terminals on a Mac without a human"): the same scenarios run there (not run since
-the move to TypeScript: `todo.md`),
+terminals on a Mac without a human"): the same scenarios run there,
 best in a VM (`scripts/macos-vm.sh e2e ARGS...`).
 
 ## The gate
@@ -535,8 +528,7 @@ could reach the desktop of whoever runs the tests, past Xvfb and sway.
 kitty, Ghostty, WezTerm and the GUI passed every judged
 scenario on both (2026-10-29; Ghostty cannot tell its text, so those checks
 SKIP); on Wayland `terminal-extras`' `scrolled` and its cells fail in
-every terminal (2026-11-24, with the bash harness and the TypeScript one
-alike: it is judged as a notice goes, `todo.md`). `-I` (fcitx5 with Mozc) works on both: over XIM on X11, over
+every terminal (2026-11-24: it is judged as a notice goes, `todo.md`). `-I` (fcitx5 with Mozc) works on both: over XIM on X11, over
 input-method-v2 (sway) and text-input-v3 (the GUI) on Wayland; the run
 ends the fcitx5 and mozc_server it started (Mozc's server daemonizes; a
 leftover one kept a pipe open, see `scripts/lib/devshell.sh`'s NIX_CONFIG note).

@@ -229,7 +229,7 @@ export class Run {
     else if (display === "wayland") await this.startWayland();
     else if (display === "macos") await mac.startMacos(this);
     else if (display === "windows") await win.startWindows(this);
-    else throw new StartError(`e2e: -d ${display} is not in the TypeScript harness yet`);
+    else throw new StartError(`e2e: unknown display: ${display}`);
     rmSync(this.path("opened.txt"), { force: true });
     this.cleanEnv = cleanEnv(this.outdir, openerShim(runtimeDir, this.outdir), this.env);
     await this.launch();

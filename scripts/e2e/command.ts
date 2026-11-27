@@ -2,7 +2,7 @@
 // from it: whether it runs temzdf (and with --clean or --config), whether a
 // shell is left after it (`sh -c 'CMD; exec sh'`), the session or the
 // standalone viewer, and the headless render `expect` compares with. One
-// path for both a scenario module's command and `ACTIONS -- COMMAND`: the
+// path for both a scenario module's command and `SCENARIO -- COMMAND`: the
 // module's is turned into the same argument list first (`commandLine`).
 
 /** Quotes a word for POSIX sh (single quotes; nothing is special inside). */

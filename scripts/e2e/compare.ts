@@ -1,4 +1,4 @@
-// Compares e2e runs of two harnesses (or two builds): the judgements, the
+// Compares two sets of e2e runs (two builds, say): the judgements, the
 // input sent, the command run, and the expected screens of `expect NAME
 // KEYS` (which depend on nothing but the keys and the geometry).
 //

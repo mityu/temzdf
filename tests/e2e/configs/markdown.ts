@@ -1,5 +1,5 @@
 // <F5> shows the focused text pane's file in the Markdown viewer: for the
-// viewer's scenario (markdown.actions).
+// viewer's scenario (tests/e2e/markdown.ts).
 import { action, keymap } from "temzdf";
 
 keymap.add("vim/normal", "<F5>", () => {
