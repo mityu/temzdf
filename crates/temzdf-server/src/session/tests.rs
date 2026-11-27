@@ -2917,7 +2917,9 @@ fn markdown_images_show_inline_or_below_their_line() {
 #[cfg_attr(miri, ignore = "the file system")]
 fn markdown_file_links_and_images_are_file_uris() {
     let (mut s, path) = text_session("uris.md", "");
-    let dir = path.parent().unwrap().to_owned();
+    // Canonical, as the session opened the file by it (`/tmp` is
+    // `/private/tmp` on macOS).
+    let dir = crate::paths::canonical(path.parent().unwrap());
     write_png(&dir.join("pic 1.png"), 20, 40);
     // A link to another kind of file goes to the system's opener as a
     // URI: `#` and spaces encoded, `C:/` as `/C:/` on Windows.
